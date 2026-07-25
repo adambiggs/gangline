@@ -14,7 +14,7 @@ the substrate.
 ## Install
 
 ```sh
-ln -sf "$(pwd)/bin/gl" ~/.local/bin/gl
+ln -sf "$(pwd)/bin/gang" ~/.local/bin/gang
 ```
 
 Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
@@ -22,33 +22,33 @@ Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 ## Quickstart
 
 ```sh
-gl spawn ada -p claude-code -d ~/my/repo   # ada is now a tmux window running claude
-gl send ada --from operator "read the failing test in ci and fix it"
-gl status ada                              # busy | idle
-gl capture ada                             # what's on ada's screen
-gl roster                                  # everyone, with state
-gl attach                                  # watch the whole team live
-gl kill ada
+gang spawn ada -p claude-code -d ~/my/repo   # ada is now a tmux window running claude
+gang send ada --from operator "read the failing test in ci and fix it"
+gang status ada                              # busy | idle
+gang capture ada                             # what's on ada's screen
+gang roster                                  # everyone, with state
+gang attach                                  # watch the whole team live
+gang kill ada
 ```
 
-Every message an agent receives is prefixed `[gl:<sender>]` — agents always know
+Every message an agent receives is prefixed `[gang:<sender>]` — agents always know
 who is speaking. Sends into a busy agent are refused (or `--wait`). Sends are
 verified in the pane before submit; an unverified send is a loud failure.
 
 ## Layout
 
 ```
-bin/gl        the whole tool
+bin/gang      the whole tool
 profiles/     one small file per harness: launch cmd, busy marker
 docs/adr/     decisions
 ```
 
 ## Components
 
-1. **Communication substrate** — `bin/gl` (this is it, in full). Proven live:
+1. **Communication substrate** — `bin/gang` (this is it, in full). Proven live:
    Claude Code and Pi agents in one team, manager→worker tasking on both, and a
-   cross-harness worker→worker relay (`ada` → `gl send` → `sol`), every hop
+   cross-harness worker→worker relay (`ada` → `gang send` → `sol`), every hop
    identity-prefixed and pane-verified.
-2. **Self-compaction primitives** — `gl compact <name>` triggers each harness's
+2. **Self-compaction primitives** — `gang compact <name>` triggers each harness's
    own compaction command (from its profile) through the same verified-injection
    path. Durable-state and handoff conventions ride in agent prompts, not code.

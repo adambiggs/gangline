@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# gl — gangline: drive a team of CLI agents as tmux windows.
+# gang — gangline: drive a team of CLI agents as tmux windows.
 # Laws: CONSTITUTION.md. Transport decision: docs/adr/0001-tmux-is-the-substrate.md
 set -euo pipefail
 
-SESSION="${GL_SESSION:-gangline}"
+SESSION="${GANG_SESSION:-gangline}"
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 
-die() { echo "gl: $*" >&2; exit 1; }
+die() { echo "gang: $*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-gl — drive a team of CLI agents as tmux windows
+gang — drive a team of CLI agents as tmux windows
 
-  gl spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
-  gl send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
-  gl compact <name>                         trigger the harness's own context compaction
-  gl status <name>                          busy | idle
-  gl wait  <name> [timeout_s]               block until idle (default 300)
-  gl capture <name> [lines]                 tail of the agent's pane (default 40)
-  gl roster                                 all agents with profile + state
-  gl attach                                 attach to the team session
-  gl kill  <name>                           kill the agent's window
-  gl profiles                               list available profiles
+  gang spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
+  gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
+  gang compact <name>                         trigger the harness's own context compaction
+  gang status <name>                          busy | idle
+  gang wait  <name> [timeout_s]               block until idle (default 300)
+  gang capture <name> [lines]                 tail of the agent's pane (default 40)
+  gang roster                                 all agents with profile + state
+  gang attach                                 attach to the team session
+  gang kill  <name>                           kill the agent's window
+  gang profiles                               list available profiles
 
-Env: GL_FROM (sender identity for send), GL_SESSION (default: gangline)
+Env: GANG_FROM (sender identity for send), GANG_SESSION (default: gangline)
 EOF
   exit 1
 }
@@ -32,13 +32,13 @@ EOF
 
 list_profiles() { local p; for p in "$ROOT"/profiles/*.sh; do basename "$p" .sh; done; }
 
-load_profile() { # $1 = profile name; sets GL_LAUNCH, GL_BUSY_REGEX, GL_COMPACT_CMD
+load_profile() { # $1 = profile name; sets GANG_LAUNCH, GANG_BUSY_REGEX, GANG_COMPACT_CMD
   local f="$ROOT/profiles/$1.sh"
   [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
-  GL_LAUNCH="" GL_BUSY_REGEX="" GL_COMPACT_CMD=""
+  GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
   # shellcheck source=/dev/null
   . "$f"
-  [ -n "$GL_LAUNCH" ] || die "profile '$1' sets no GL_LAUNCH"
+  [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
 }
 
 # --- window plumbing --------------------------------------------------------
@@ -48,7 +48,7 @@ target() { printf '%s:%s' "$SESSION" "$1"; }
 exists() { tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qxF "$1"; }
 
 win_profile() { # $1 = name
-  exists "$1" || die "no agent '$1' (see: gl roster)"
+  exists "$1" || die "no agent '$1' (see: gang roster)"
   tmux show-options -wqv -t "$(target "$1")" @gl_profile
 }
 
@@ -61,7 +61,7 @@ busy() { # $1 = name; exit 0 if busy
   local prof
   prof="$(win_profile "$1")"
   load_profile "$prof"
-  [ -n "$GL_BUSY_REGEX" ] && capture_joined "$1" | grep -qE -- "$GL_BUSY_REGEX"
+  [ -n "$GANG_BUSY_REGEX" ] && capture_joined "$1" | grep -qE -- "$GANG_BUSY_REGEX"
 }
 
 wait_idle() { # $1 = name, $2 = timeout seconds
@@ -87,23 +87,23 @@ cmd_spawn() {
   load_profile "$prof"
 
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -n "$name" -c "$dir" "$GL_LAUNCH"
+    tmux new-session -d -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
   else
     exists "$name" && die "agent '$name' already exists"
-    tmux new-window -d -t "$SESSION" -n "$name" -c "$dir" "$GL_LAUNCH"
+    tmux new-window -d -t "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
   fi
   # Window name IS the identity — the app must not rename it out from under us.
   tmux set-option -w -t "$(target "$name")" automatic-rename off
   tmux set-option -w -t "$(target "$name")" allow-rename off
   tmux set-option -w -t "$(target "$name")" @gl_profile "$prof"
   sleep 0.5
-  exists "$name" || die "'$name' died at launch (cmd: $GL_LAUNCH)"
-  echo "spawned $name ($prof) in $dir — watch: gl attach"
+  exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
+  echo "spawned $name ($prof) in $dir — watch: gang attach"
 }
 
 inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
-  printf '%s' "$2" | tmux load-buffer -b glsend -
-  tmux paste-buffer -p -d -b glsend -t "$(target "$1")"
+  printf '%s' "$2" | tmux load-buffer -b gangsend -
+  tmux paste-buffer -p -d -b gangsend -t "$(target "$1")"
   sleep 0.4
   local frag; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
   capture_joined "$1" | grep -qF -- "$frag" \
@@ -112,7 +112,7 @@ inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 
 }
 
 cmd_send() {
-  local name="" from="${GL_FROM:-}" wait=0 timeout=300
+  local name="" from="${GANG_FROM:-}" wait=0 timeout=300
   name="${1:-}"; [ -n "$name" ] || usage; shift
   while [ $# -gt 0 ]; do case "$1" in
     --from) from="$2"; shift 2 ;;
@@ -121,25 +121,25 @@ cmd_send() {
     *) break ;;
   esac; done
   [ $# -gt 0 ] || die "send: empty message"
-  [ -n "$from" ] || die "send: identity required (--from <sender> or GL_FROM) — unattributed injection is how the last harness died"
-  exists "$name" || die "no agent '$name' (see: gl roster)"
+  [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM) — unattributed injection is how the last harness died"
+  exists "$name" || die "no agent '$name' (see: gang roster)"
 
   if busy "$name"; then
-    [ "$wait" -eq 1 ] || die "'$name' is mid-turn; refusing to inject (gl send $name --wait ... to block until idle)"
+    [ "$wait" -eq 1 ] || die "'$name' is mid-turn; refusing to inject (gang send $name --wait ... to block until idle)"
     wait_idle "$name" "$timeout"
   fi
-  inject "$name" "[gl:$from] $*"
-  echo "delivered to $name as [gl:$from] (verified in pane, submitted)"
+  inject "$name" "[gang:$from] $*"
+  echo "delivered to $name as [gang:$from] (verified in pane, submitted)"
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
   local name="${1:-}"; [ -n "$name" ] || usage
   local prof; prof="$(win_profile "$name")"
   load_profile "$prof"
-  [ -n "${GL_COMPACT_CMD:-}" ] || die "profile '$prof' declares no compact command"
-  busy "$name" && die "'$name' is mid-turn; compacting now would cut a live turn (gl wait $name first)"
-  inject "$name" "$GL_COMPACT_CMD"
-  echo "compaction triggered on $name ($GL_COMPACT_CMD, verified, submitted)"
+  [ -n "${GANG_COMPACT_CMD:-}" ] || die "profile '$prof' declares no compact command"
+  busy "$name" && die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
+  inject "$name" "$GANG_COMPACT_CMD"
+  echo "compaction triggered on $name ($GANG_COMPACT_CMD, verified, submitted)"
 }
 
 cmd_status() { if busy "$1"; then echo busy; else echo idle; fi; }
@@ -182,5 +182,5 @@ case "$cmd" in
   attach)   cmd_attach ;;
   kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
   profiles) cmd_profiles ;;
-  *) die "unknown command '$cmd' (gl with no args for usage)" ;;
+  *) die "unknown command '$cmd' (gang with no args for usage)" ;;
 esac

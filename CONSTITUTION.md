@@ -9,7 +9,7 @@ components caused more defects than they prevented. Violating a law is a defect.
    options. No message buses, no databases, no IPC layers, no daemons.
 
 2. **Identity is a prefix; trust is assumed.** Every injected line carries
-   `[gl:<sender>]`, and a sender identity is required — there is no default.
+   `[gang:<sender>]`, and a sender identity is required — there is no default.
    Single-tenant by design: anyone at the keyboard is the operator. Never build
    authentication, generation fencing, or anti-tamper into this repo.
 

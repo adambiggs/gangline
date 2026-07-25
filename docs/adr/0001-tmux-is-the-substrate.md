@@ -26,7 +26,7 @@ keystrokes were mistaken for the operator. The substance of that defect was
 tmux is the communication substrate, not a fallback and not a hack.
 
 - One tmux session per team; one window per agent; window name = agent identity.
-- Sending = paste into the pane with a mandatory `[gl:<sender>]` prefix, then
+- Sending = paste into the pane with a mandatory `[gang:<sender>]` prefix, then
   submit. No default sender exists; an unattributed send is an error.
 - Delivery is verified by capturing the pane and finding the injected text before
   submitting. Unverified sends fail loudly.
