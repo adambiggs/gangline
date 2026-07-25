@@ -4,9 +4,13 @@ These laws bind every change to this repo. They exist because the predecessor ha
 reached 70,000 lines in 20 days — larger than the robot it served — and its guard
 components caused more defects than they prevented. Violating a law is a defect.
 
-1. **tmux is the substrate.** Agents are tmux windows. Messages are keystrokes.
-   Observation is `capture-pane`. Termination is `kill-window`. State lives in tmux
-   options. No message buses, no databases, no IPC layers, no daemons.
+1. **Minimize bespoke integration surface.** Integrate only through universal
+   surfaces: the tty (tmux), the shell (`gang` as a CLI), and open standards a
+   harness speaks natively (e.g. MCP). tmux is the default transport — agents are
+   tmux windows, messages are keystrokes, observation is `capture-pane`,
+   termination is `kill-window`, state lives in tmux options. A harness-specific
+   code path requires an ADR proving no universal surface can carry the value.
+   No bespoke message buses, no databases, no daemons.
 
 2. **Identity is a prefix; trust is assumed.** Every injected line carries
    `[gang:<sender>]`, and a sender identity is required — there is no default.
