@@ -52,8 +52,10 @@ This supersedes the predecessor's transport ban while keeping its safety propert
 - Offline delivery (messaging an agent not yet spawned) is a file included in the
   spawn prompt, not a store-and-forward bus.
 - Single-tenant trust is assumed (law 2); Gangline is not multi-user software.
-- tmux is the default, not a dogma: any open standard a harness speaks natively
-  (MCP included) qualifies as a universal surface under law 1. As of 2026-07-25
-  the pinned Pi client has no MCP support (zero references in its dist core/cli),
-  so the tty and the shell are the only pair-wide surfaces on this box — an MCP
-  face for gang may land when a consumer exists on a harness that speaks it.
+- tmux is the default, not a dogma: any open standard a harness speaks — natively
+  or through its own supported package system — qualifies as a universal surface
+  under law 1. MCP qualifies pair-wide here: Claude Code speaks it natively, and
+  Pi core omits it by design but supports it via installed packages (its
+  docs/usage.md: "does not include built-in MCP… build or install those workflows
+  as extensions or packages"), a one-line settings install. An MCP face for gang
+  (typed send/roster/wait/capture tools) lands when a consumer wants it.
