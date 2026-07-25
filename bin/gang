@@ -13,6 +13,7 @@ usage() {
 gang — drive a team of CLI agents as tmux windows
 
   gang spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
+  gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
   gang compact <name>                         trigger the harness's own context compaction
   gang status <name>                          busy | idle
@@ -47,9 +48,11 @@ target() { printf '%s:%s' "$SESSION" "$1"; }
 
 exists() { tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qxF "$1"; }
 
-win_profile() { # $1 = name
+win_profile() { # $1 = name; fails loud on unadopted windows
   exists "$1" || die "no agent '$1' (see: gang roster)"
-  tmux show-options -wqv -t "$(target "$1")" @gl_profile
+  local p; p="$(tmux show-options -wqv -t "$(target "$1")" @gl_profile)"
+  [ -n "$p" ] || die "window '$1' exists but is not a gang agent (gang adopt $1 -p <profile>)"
+  printf '%s' "$p"
 }
 
 capture() { tmux capture-pane -p -t "$(target "$1")"; }
@@ -149,13 +152,33 @@ cmd_roster() {
   local w prof state
   while read -r w; do
     prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
+    if [ -z "$prof" ]; then
+      printf '%-16s %-12s %s\n' "$w" "-" "unadopted"
+      continue
+    fi
     if busy "$w" 2>/dev/null; then state=busy; else state=idle; fi
-    printf '%-16s %-12s %s\n' "$w" "${prof:-?}" "$state"
+    printf '%-16s %-12s %s\n' "$w" "$prof" "$state"
   done < <(tmux list-windows -t "$SESSION" -F '#W')
 }
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
   capture "$1" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
+}
+
+cmd_adopt() { # register an EXISTING tmux window as a gang agent
+  local name="" prof=""
+  name="${1:-}"; [ -n "$name" ] || usage; shift
+  while [ $# -gt 0 ]; do case "$1" in
+    -p|--profile) prof="$2"; shift 2 ;;
+    *) die "adopt: unknown argument '$1'" ;;
+  esac; done
+  [ -n "$prof" ] || die "adopt: -p <profile> is required"
+  load_profile "$prof"
+  exists "$name" || die "no window '$name' in session '$SESSION' to adopt"
+  tmux set-option -w -t "$(target "$name")" automatic-rename off
+  tmux set-option -w -t "$(target "$name")" allow-rename off
+  tmux set-option -w -t "$(target "$name")" @gl_profile "$prof"
+  echo "adopted $name as a $prof agent"
 }
 
 cmd_kill() {
@@ -173,6 +196,7 @@ cmd_profiles() { list_profiles; }
 cmd="${1:-}"; [ -n "$cmd" ] || usage; shift || true
 case "$cmd" in
   spawn)    cmd_spawn "$@" ;;
+  adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;
   status)   [ $# -ge 1 ] || usage; cmd_status "$1" ;;
