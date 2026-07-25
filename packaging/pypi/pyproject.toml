@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "gangline"
 version = "0.0.1"
-description = "Name reservation for Gangline, a tmux-powered multi-agent harness. See https://gangline.ai"
+description = "Reserved. https://gangline.ai"
 readme = "README.md"
 requires-python = ">=3.9"
 
