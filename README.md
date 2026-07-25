@@ -45,6 +45,10 @@ docs/adr/     decisions
 
 ## Components
 
-1. **Communication substrate** — `bin/gl` (this is it, in full).
-2. **Self-compaction primitives** — durable-state files, arc-boundary handoffs,
-   compact-trigger via each harness's own command. Lands when it has a consumer.
+1. **Communication substrate** — `bin/gl` (this is it, in full). Proven live:
+   Claude Code and Pi agents in one team, manager→worker tasking on both, and a
+   cross-harness worker→worker relay (`ada` → `gl send` → `sol`), every hop
+   identity-prefixed and pane-verified.
+2. **Self-compaction primitives** — `gl compact <name>` triggers each harness's
+   own compaction command (from its profile) through the same verified-injection
+   path. Durable-state and handoff conventions ride in agent prompts, not code.
