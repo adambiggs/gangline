@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gangline"
+version = "0.0.1"
+description = "Name reservation for Gangline, a tmux-powered multi-agent harness. See https://gangline.ai"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[project.urls]
+Homepage = "https://gangline.ai"
+
+[tool.setuptools]
+py-modules = ["gangline"]

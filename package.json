@@ -1,0 +1,27 @@
+{
+  "name": "gangline",
+  "version": "0.1.0",
+  "description": "A harness harness: drive a team of CLI coding agents as tmux windows with verified, identity-prefixed messaging.",
+  "homepage": "https://gangline.ai",
+  "license": "UNLICENSED",
+  "bin": {
+    "gl": "bin/gl"
+  },
+  "files": [
+    "bin/",
+    "profiles/",
+    "CONSTITUTION.md",
+    "docs/adr/"
+  ],
+  "os": [
+    "linux",
+    "darwin"
+  ],
+  "keywords": [
+    "tmux",
+    "agents",
+    "claude-code",
+    "multi-agent",
+    "harness"
+  ]
+}
