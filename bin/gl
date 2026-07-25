@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# gl — gangline: drive a team of CLI agents as tmux windows.
+# Laws: CONSTITUTION.md. Transport decision: docs/adr/0001-tmux-is-the-substrate.md
+set -euo pipefail
+
+SESSION="${GL_SESSION:-gangline}"
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+
+die() { echo "gl: $*" >&2; exit 1; }
+
+usage() {
+  cat <<'EOF'
+gl — drive a team of CLI agents as tmux windows
+
+  gl spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
+  gl send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
+  gl status <name>                          busy | idle
+  gl wait  <name> [timeout_s]               block until idle (default 300)
+  gl capture <name> [lines]                 tail of the agent's pane (default 40)
+  gl roster                                 all agents with profile + state
+  gl attach                                 attach to the team session
+  gl kill  <name>                           kill the agent's window
+  gl profiles                               list available profiles
+
+Env: GL_FROM (sender identity for send), GL_SESSION (default: gangline)
+EOF
+  exit 1
+}
+
+# --- profiles ---------------------------------------------------------------
+
+list_profiles() { local p; for p in "$ROOT"/profiles/*.sh; do basename "$p" .sh; done; }
+
+load_profile() { # $1 = profile name; sets GL_LAUNCH, GL_BUSY_REGEX
+  local f="$ROOT/profiles/$1.sh"
+  [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
+  GL_LAUNCH="" GL_BUSY_REGEX=""
+  # shellcheck source=/dev/null
+  . "$f"
+  [ -n "$GL_LAUNCH" ] || die "profile '$1' sets no GL_LAUNCH"
+}
+
+# --- window plumbing --------------------------------------------------------
+
+target() { printf '%s:%s' "$SESSION" "$1"; }
+
+exists() { tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qxF "$1"; }
+
+win_profile() { # $1 = name
+  exists "$1" || die "no agent '$1' (see: gl roster)"
+  tmux show-options -wqv -t "$(target "$1")" @gl_profile
+}
+
+capture() { tmux capture-pane -p -t "$(target "$1")"; }
+
+# -J joins pane-width-wrapped lines so matching never breaks on a wrap boundary.
+capture_joined() { tmux capture-pane -pJ -t "$(target "$1")"; }
+
+busy() { # $1 = name; exit 0 if busy
+  local prof
+  prof="$(win_profile "$1")"
+  load_profile "$prof"
+  [ -n "$GL_BUSY_REGEX" ] && capture_joined "$1" | grep -qE -- "$GL_BUSY_REGEX"
+}
+
+wait_idle() { # $1 = name, $2 = timeout seconds
+  local t=0 timeout="${2:-300}"
+  while busy "$1"; do
+    [ "$t" -ge "$timeout" ] && die "'$1' still busy after ${timeout}s"
+    sleep 2; t=$((t + 2))
+  done
+}
+
+# --- commands ---------------------------------------------------------------
+
+cmd_spawn() {
+  local name="" prof="" dir="$PWD"
+  name="${1:-}"; [ -n "$name" ] || usage; shift
+  while [ $# -gt 0 ]; do case "$1" in
+    -p|--profile) prof="$2"; shift 2 ;;
+    -d|--dir)     dir="$2";  shift 2 ;;
+    *) die "spawn: unknown argument '$1'" ;;
+  esac; done
+  [ -n "$prof" ] || die "spawn: -p <profile> is required"
+  [ -d "$dir" ] || die "spawn: no such directory '$dir'"
+  load_profile "$prof"
+
+  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+    tmux new-session -d -s "$SESSION" -n "$name" -c "$dir" "$GL_LAUNCH"
+  else
+    exists "$name" && die "agent '$name' already exists"
+    tmux new-window -d -t "$SESSION" -n "$name" -c "$dir" "$GL_LAUNCH"
+  fi
+  # Window name IS the identity — the app must not rename it out from under us.
+  tmux set-option -w -t "$(target "$name")" automatic-rename off
+  tmux set-option -w -t "$(target "$name")" allow-rename off
+  tmux set-option -w -t "$(target "$name")" @gl_profile "$prof"
+  sleep 0.5
+  exists "$name" || die "'$name' died at launch (cmd: $GL_LAUNCH)"
+  echo "spawned $name ($prof) in $dir — watch: gl attach"
+}
+
+cmd_send() {
+  local name="" from="${GL_FROM:-}" wait=0 timeout=300
+  name="${1:-}"; [ -n "$name" ] || usage; shift
+  while [ $# -gt 0 ]; do case "$1" in
+    --from) from="$2"; shift 2 ;;
+    -w|--wait) wait=1; shift ;;
+    --timeout) timeout="$2"; shift 2 ;;
+    *) break ;;
+  esac; done
+  [ $# -gt 0 ] || die "send: empty message"
+  [ -n "$from" ] || die "send: identity required (--from <sender> or GL_FROM) — unattributed injection is how the last harness died"
+  exists "$name" || die "no agent '$name' (see: gl roster)"
+
+  local msg="[gl:$from] $*"
+  if busy "$name"; then
+    [ "$wait" -eq 1 ] || die "'$name' is mid-turn; refusing to inject (gl send $name --wait ... to block until idle)"
+    wait_idle "$name" "$timeout"
+  fi
+
+  # Bracketed paste so multi-line content doesn't submit early, then verify the
+  # text actually landed in the pane before pressing Enter. Law 3.
+  printf '%s' "$msg" | tmux load-buffer -b glsend -
+  tmux paste-buffer -p -d -b glsend -t "$(target "$name")"
+  sleep 0.4
+  local frag; frag="$(printf '%s' "$msg" | head -1 | cut -c1-40)"
+  capture_joined "$name" | grep -qF -- "$frag" \
+    || die "delivery NOT verified: '$frag' never appeared in $name's pane — nothing was submitted"
+  tmux send-keys -t "$(target "$name")" Enter
+  echo "delivered to $name as [gl:$from] (verified in pane, submitted)"
+}
+
+cmd_status() { if busy "$1"; then echo busy; else echo idle; fi; }
+
+cmd_roster() {
+  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
+  local w prof state
+  while read -r w; do
+    prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
+    if busy "$w" 2>/dev/null; then state=busy; else state=idle; fi
+    printf '%-16s %-12s %s\n' "$w" "${prof:-?}" "$state"
+  done < <(tmux list-windows -t "$SESSION" -F '#W')
+}
+
+cmd_capture() { # trailing blank pane rows are dead space, not content
+  capture "$1" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
+}
+
+cmd_kill() {
+  exists "$1" || die "no agent '$1'"
+  tmux kill-window -t "$(target "$1")"
+  echo "killed $1"
+}
+
+cmd_attach() { exec tmux attach -t "$SESSION"; }
+
+cmd_profiles() { list_profiles; }
+
+# --- dispatch ---------------------------------------------------------------
+
+cmd="${1:-}"; [ -n "$cmd" ] || usage; shift || true
+case "$cmd" in
+  spawn)    cmd_spawn "$@" ;;
+  send)     cmd_send "$@" ;;
+  status)   [ $# -ge 1 ] || usage; cmd_status "$1" ;;
+  wait)     [ $# -ge 1 ] || usage; wait_idle "$1" "${2:-300}"; echo idle ;;
+  capture)  [ $# -ge 1 ] || usage; cmd_capture "$@" ;;
+  roster)   cmd_roster ;;
+  attach)   cmd_attach ;;
+  kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
+  profiles) cmd_profiles ;;
+  *) die "unknown command '$cmd' (gl with no args for usage)" ;;
+esac
