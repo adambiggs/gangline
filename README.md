@@ -58,11 +58,17 @@ docs/adr/     decisions
    natively; Claude Code gets the shipped statusline beacon
    (`statusline/claude-code-context.sh`, wired via `settings.json`
    `statusLine`; the payload carries `context_window` figures and the beacon
-   paints them into the pane where gang can read them). Warning:
+   paints them into the pane where gang can read them). Warning, two legs:
    `gang context-hook` is a Claude Code hook (UserPromptSubmit + PostToolUse)
    injecting one in-context note per crossed `GANG_CONTEXT_BANDS` threshold
    (bare numbers = tokens, `%` suffix = percent of window; default
-   `120000,180000,250000,90%`), re-armed when compaction drops usage. Action:
+   `120000,180000,250000,90%`), re-armed when compaction drops usage; and
+   `gang patrol` is the harness-agnostic leg — a one-shot roster sweep (run
+   by hand or from cron) that injects the same band note as `[gang:patrol]`
+   into any agent that crossed a threshold since the last sweep, for
+   harnesses with no hook system (Pi's model never sees its own status bar).
+   Patrol skips busy agents without burning state (next sweep retries) and
+   re-arms on a usage drop. Action:
    `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
    command through the verified-injection path; the resume message is injected
    while compaction runs, so the harness's own input queue holds it and fires

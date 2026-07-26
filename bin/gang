@@ -24,6 +24,8 @@ gang — drive a team of CLI agents as tmux windows
   gang wait  <name> [timeout_s]               block until idle (default 300)
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
   gang roster                                 all agents with profile, state, context
+  gang patrol                                 sweep the roster; nudge any agent past a
+                                              context band (GANG_CONTEXT_BANDS ladder)
   gang attach                                 attach to the team session
   gang kill  <name>                           kill the agent's window
   gang profiles                               list available profiles
@@ -220,6 +222,64 @@ cmd_roster() {
   done < <(tmux list-windows -t "$SESSION" -F '#W')
 }
 
+cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context band
+  # The harness-agnostic leg of the warning pillar: context-hook covers Claude
+  # Code in-turn, but harnesses with no hook system (Pi) never hear their own
+  # token count. Patrol reads each agent's normalized profile_context readout
+  # ("<used>k/<win>k (<pct>%)"), and injects the band note as [gang:patrol] to
+  # anyone who crossed a GANG_CONTEXT_BANDS threshold since the last sweep.
+  # Busy agents are skipped WITHOUT advancing state, so the next patrol
+  # retries. A usage drop re-arms; state self-heals for re-spawned names the
+  # same way. Warn, don't act — compaction timing is the agent's judgment
+  # (gang compact exists for forcing it).
+  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
+  local raw="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
+  local w prof ctx tokens window band prev state crossed t n part
+  while read -r w; do
+    prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
+    [ -n "$prof" ] || { printf '%-16s %s\n' "$w" "unadopted — not patrolled"; continue; }
+    ctx="$(cmd_context "$w" 2>/dev/null | head -1)" || true
+    if [ -z "$ctx" ]; then
+      printf '%-16s %s\n' "$w" "no context readout — not patrolled (profile declares none, or beacon missing)"
+      continue
+    fi
+    [[ "$ctx" =~ ^([0-9]+)k/([0-9]+)k ]] \
+      || { printf '%-16s %s\n' "$w" "unparseable readout '$ctx' — not patrolled"; continue; }
+    tokens=$(( BASH_REMATCH[1] * 1000 )); window=$(( BASH_REMATCH[2] * 1000 ))
+    band=0; crossed=0
+    for part in ${raw//,/ }; do
+      case "$part" in
+        *%) n="${part%\%}"
+            [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
+            t=$(( n * window / 100 )) ;;
+        *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
+            t="$part" ;;
+      esac
+      [ "$t" -gt 0 ] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
+      if [ "$tokens" -ge "$t" ]; then
+        band=$((band + 1)); [ "$t" -gt "$crossed" ] && crossed="$t"
+      fi
+    done
+    state="${XDG_RUNTIME_DIR:-/tmp}/gang-patrol-band-${SESSION}-${w}"
+    prev="$(cat "$state" 2>/dev/null)" || prev=0
+    [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+    if [ "$band" -lt "$prev" ]; then
+      printf '%s' "$band" >"$state"
+      printf '%-16s %-18s %s\n' "$w" "$ctx" "re-armed (usage dropped)"
+    elif [ "$band" -gt "$prev" ]; then
+      if busy "$w" 2>/dev/null; then
+        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
+      else
+        inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
+        printf '%s' "$band" >"$state"
+        printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
+      fi
+    else
+      printf '%-16s %-18s %s\n' "$w" "$ctx" "steady (band $band)"
+    fi
+  done < <(tmux list-windows -t "$SESSION" -F '#W')
+}
+
 cmd_context_hook() { # Claude Code hook mode: stdin payload -> band-crossing note
   # Wire in hooks config as: {"type": "command", "command": "gang context-hook"}
   # on UserPromptSubmit and PostToolUse. Reads the session transcript's own
@@ -367,6 +427,7 @@ case "$cmd" in
   wait)     [ $# -ge 1 ] || usage; wait_idle "$1" "${2:-300}"; echo idle ;;
   capture)  [ $# -ge 1 ] || usage; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
+  patrol)   cmd_patrol ;;
   attach)   cmd_attach ;;
   kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
   profiles) cmd_profiles ;;
