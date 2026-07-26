@@ -86,7 +86,10 @@ docs/adr/     decisions
    ahead of a queued resume directive (lived it). A quietly idle TUI paints
    a static screen; streaming, spinners, and compaction progress bars all
    churn — so the gate scrapes no marker and cannot rot. Skips and holds
-   never burn state (next sweep retries), and a usage drop re-arms. Action:
+   never burn state (next sweep retries), and a usage drop re-arms. Which band
+   an agent has already been nudged about is a `@gl_band` window option, so it
+   is exactly as long-lived as the agent — a re-spawned name starts clean and
+   tmux deletes the state with the window. Action:
    `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
    command through the verified-injection path; the resume message is injected
    while compaction runs, so the harness's own input queue holds it and fires

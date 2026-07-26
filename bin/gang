@@ -249,12 +249,15 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
   # ("<used>k/<win>k (<pct>%)"), and injects the band note as [gang:patrol] to
   # anyone who crossed a GANG_CONTEXT_BANDS threshold since the last sweep.
   # Busy or unstable (pane_stable) agents are skipped WITHOUT advancing
-  # state, so the next patrol retries. A usage drop re-arms; state self-heals
-  # for re-spawned names the same way. Warn, don't act — compaction timing is
-  # the agent's judgment (gang compact exists for forcing it).
+  # state, so the next patrol retries. A usage drop re-arms. Which band an
+  # agent has already been nudged about is a @gl_band window option: it is
+  # exactly as long-lived as the agent, so a re-spawned name starts clean and
+  # tmux is the one that deletes it (Law 1, Law 6 — no cleanup code, no state
+  # outliving its subject). Warn, don't act — compaction timing is the agent's
+  # judgment (gang compact exists for forcing it).
   tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
   local raw="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
-  local w prof ctx tokens window band prev state crossed t n part
+  local w prof ctx tokens window band prev crossed t n part
   while read -r w; do
     prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
     [ -n "$prof" ] || { printf '%-16s %s\n' "$w" "unadopted — not patrolled"; continue; }
@@ -280,11 +283,10 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
         band=$((band + 1)); [ "$t" -gt "$crossed" ] && crossed="$t"
       fi
     done
-    state="${XDG_RUNTIME_DIR:-/tmp}/gang-patrol-band-${SESSION}-${w}"
-    prev="$(cat "$state" 2>/dev/null)" || prev=0
+    prev="$(tmux show-options -wqv -t "$(target "$w")" @gl_band)" || prev=0
     [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
     if [ "$band" -lt "$prev" ]; then
-      printf '%s' "$band" >"$state"
+      tmux set-option -w -t "$(target "$w")" @gl_band "$band"
       printf '%-16s %-18s %s\n' "$w" "$ctx" "re-armed (usage dropped)"
     elif [ "$band" -gt "$prev" ]; then
       if busy "$w" 2>/dev/null; then
@@ -310,7 +312,7 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
           if profile_input_clear "$(target "$w")"; then
             inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
             tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
-            printf '%s' "$band" >"$state"
+            tmux set-option -w -t "$(target "$w")" @gl_band "$band"
             printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band; draft preserved in stash)"
           else
             # Stash didn't clear the box (ghost text isn't stashable, or the
@@ -323,7 +325,7 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
         fi
       else
         inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
-        printf '%s' "$band" >"$state"
+        tmux set-option -w -t "$(target "$w")" @gl_band "$band"
         printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
       fi
     else
