@@ -5,21 +5,19 @@
 
 ## Context
 
-Gangline's predecessor (the tombo repo's agent-harness stack) coordinated agents
-through harness-native extensions: message facades, SQLite buses, spawn fences,
-stop guardians, status UIs. In 20 days it grew to ~70,000 lines — larger than the
-robot it served — while five independent audits found: a telemetry tool returning
-hardcoded fake health strings for live hardware, a "foundation verifier" that was a
-regex returning VERIFIED, a coordination bus whose 140 green tests never exercised
-the two principals actually deployed, and guard components that generated the
-defects they guarded against (its BUG-0165/0166/0167). Every major component was,
-at bottom, machinery replacing something tmux already does: messaging replaced
-typing into a pane, status UIs replaced looking at one, stop-guardians replaced
-Ctrl+C, hot-reload replaced restarting a process.
+Coordinating agents through harness-native extensions — message facades, SQLite
+buses, spawn fences, stop guardians, status UIs — builds machinery that replaces
+something tmux already does: messaging replaces typing into a pane, status UIs
+replace looking at one, stop-guardians replace Ctrl+C, hot-reload replaces
+restarting a process. Such stacks outgrow the work they serve, and the components
+added to guard them generate the defects they guard against: health strings no
+live system produced, a "verifier" that is a regex returning VERIFIED, a green
+test suite that never exercises the principals actually deployed.
 
-The predecessor also banned keystroke relays (its BUG-0146) after injected
-keystrokes were mistaken for the operator. The substance of that defect was
-**impersonation** — messages arriving with no sender identity — not the transport.
+Keystroke relay carries a real defect of its own — injected keystrokes mistaken
+for the operator. The substance of that is **impersonation**: messages arriving
+with no sender identity. It is a property of unattributed messages, not of the
+transport.
 
 ## Decision
 
@@ -38,9 +36,9 @@ tmux is the communication substrate, not a fallback and not a hack.
   regex, compact command). Harness-native extensions require their own ADR proving
   the value is unachievable from outside.
 
-The required sender prefix carries the predecessor's impersonation lesson into the
-substrate mechanically: an agent can always tell operator input from peer traffic.
-This supersedes the predecessor's transport ban while keeping its safety property.
+The required sender prefix answers impersonation mechanically: an agent can always
+tell operator input from peer traffic. Keystroke relay is safe here precisely
+because attribution is mandatory and unattributed sends are an error.
 
 ## Consequences
 

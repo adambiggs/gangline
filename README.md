@@ -15,7 +15,6 @@ the substrate.
 
 ```sh
 ln -sf "$(pwd)/bin/gang" ~/.local/bin/gang
-git config core.hooksPath .githooks           # commit-msg gate, if you commit here
 ```
 
 Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
@@ -45,13 +44,10 @@ verified in the pane before submit; an unverified send is a loud failure.
 bin/gang      the whole tool
 profiles/     one small file per harness: launch cmd, busy marker
 docs/adr/     decisions
-.githooks/    commit-msg: subjects are Conventional Commits or the commit fails
 ```
 
-Commits are Conventional Commits — `<type>[(scope)][!]: <description>`, scope
-being a command or component (`patrol`, `doctor`, `send`, `down`). The
-`commit-msg` hook is the gate; git's own merge and `fixup!`/`squash!` subjects
-pass through, everything else conforms or fails loud.
+Changing anything here: `CONSTITUTION.md` for the laws, `CONTRIBUTING.md` for
+setup and commit conventions.
 
 ## Components
 
@@ -78,7 +74,7 @@ pass through, everything else conforms or fails loud.
    always-on — it no-ops cheaply when no session is running:
 
    ```
-   */2 * * * * XDG_RUNTIME_DIR=/run/user/1000 $HOME/.local/bin/gang patrol 2>&1 | grep -E 'NUDGED|re-armed|holding|stash|invalid' >> $HOME/.local/state/gangline/patrol.log || true
+   */2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -E 'NUDGED|re-armed|holding|stash|invalid' >> $HOME/.local/state/gangline/patrol.log || true
    ```
    Patrol skips busy agents, holds off churning panes, and guards non-empty
    input boxes (a human draft, ghost-text suggestion, or queued-message hint

@@ -1,8 +1,8 @@
 # The Gangline Constitution
 
-These laws bind every change to this repo. They exist because the predecessor harness
-reached 70,000 lines in 20 days — larger than the robot it served — and its guard
-components caused more defects than they prevented. Violating a law is a defect.
+These laws bind every change to this repo. Harness machinery accretes faster than the
+work it serves, and components built to guard a system are a defect source in their
+own right. Violating a law is a defect.
 
 1. **Minimize bespoke integration surface.** Integrate only through universal
    surfaces: the tty (tmux), the shell (`gang` as a CLI), and open standards a
@@ -31,8 +31,8 @@ components caused more defects than they prevented. Violating a law is a defect.
    state, records — must say how and when it dies.
 
 7. **The harness never manages itself.** Gangline may not grow a component whose
-   job is watching, policing, or coordinating another Gangline component. This
-   exact loop is what ate the predecessor.
+   job is watching, policing, or coordinating another Gangline component. That
+   loop is how a harness ends up spending most of its code on itself.
 
 8. **Fail loud.** No silent fallbacks, no degraded modes that pretend to be healthy,
    no fabricated status. A regex that stops matching a new TUI version must break
