@@ -69,8 +69,14 @@ busy() { # $1 = name; exit 0 if busy
 }
 
 wait_idle() { # $1 = name, $2 = timeout seconds
-  local t=0 timeout="${2:-300}"
-  while busy "$1"; do
+  # Idle must hold for two consecutive polls: a just-submitted turn shows no
+  # busy marker for a beat, and a single-shot check falls through that gap
+  # (observed live — a send landed mid-turn and got queued).
+  local t=0 timeout="${2:-300}" streak=0
+  while :; do
+    if busy "$1"; then streak=0; else
+      streak=$((streak + 1)); [ "$streak" -ge 2 ] && return 0
+    fi
     [ "$t" -ge "$timeout" ] && die "'$1' still busy after ${timeout}s"
     sleep 2; t=$((t + 2))
   done
