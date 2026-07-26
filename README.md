@@ -31,6 +31,7 @@ gang capture ada                             # what's on ada's screen
 gang roster                                  # everyone, with state
 gang attach                                  # watch the whole team live
 gang kill ada
+gang down                                    # kill the whole team
 ```
 
 Every message an agent receives is prefixed `[gang:<sender>]` — agents always know

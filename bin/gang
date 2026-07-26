@@ -33,6 +33,7 @@ gang — drive a team of CLI agents as tmux windows
                                               issue on this repo (needs gh)
   gang attach                                 attach to the team session
   gang kill  <name>                           kill the agent's window
+  gang down                                   kill the whole session (every agent)
   gang profiles                               list available profiles
   gang context-hook                           Claude Code hook mode: stdin payload ->
                                               band-crossing note (see README)
@@ -526,6 +527,16 @@ cmd_kill() {
   echo "killed $1"
 }
 
+cmd_down() { # inverse of up: kill the whole team
+  # No state to sweep: per-agent band memory is a window option, so tmux deletes
+  # it along with the windows. context-hook bands are keyed by harness session
+  # id, not by gang session, so this command cannot know which belong to the team
+  # it is killing; those die with XDG_RUNTIME_DIR at logout.
+  tmux has-session -t "$SESSION" 2>/dev/null || die "no session '$SESSION' running"
+  echo "killing '$SESSION': $(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')"
+  tmux kill-session -t "$SESSION"
+}
+
 cmd_attach() { exec tmux attach -t "$SESSION"; }
 
 cmd_profiles() { list_profiles; }
@@ -549,6 +560,7 @@ case "$cmd" in
   doctor)   cmd_doctor "$@" ;;
   attach)   cmd_attach ;;
   kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
+  down)     cmd_down ;;
   profiles) cmd_profiles ;;
   *) die "unknown command '$cmd' (gang with no args for usage)" ;;
 esac
