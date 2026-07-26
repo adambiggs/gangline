@@ -25,7 +25,12 @@ gang — drive a team of CLI agents as tmux windows
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
   gang roster                                 all agents with profile, state, context
   gang patrol                                 sweep the roster; nudge any agent past a
-                                              context band (GANG_CONTEXT_BANDS ladder)
+                                              context band (GANG_CONTEXT_BANDS ladder);
+                                              holds if the agent's input box has content
+  gang doctor [--file-issue]                  strategy-rot check: installed harness version
+                                              vs each profile's verified pins; exits nonzero
+                                              on drift; --file-issue files a deduped rot
+                                              issue on this repo (needs gh)
   gang attach                                 attach to the team session
   gang kill  <name>                           kill the agent's window
   gang profiles                               list available profiles
@@ -43,11 +48,13 @@ EOF
 
 list_profiles() { local p; for p in "$ROOT"/profiles/*.sh; do basename "$p" .sh; done; }
 
-load_profile() { # $1 = profile name; sets GANG_LAUNCH, GANG_BUSY_REGEX, GANG_COMPACT_CMD
+load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f="$ROOT/profiles/$1.sh"
   [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
-  unset -f profile_context 2>/dev/null || true  # no stale functions across profiles
+  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
+  # no stale functions across profiles
+  unset -f profile_context profile_input_clear 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
@@ -269,6 +276,11 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
     elif [ "$band" -gt "$prev" ]; then
       if busy "$w" 2>/dev/null; then
         printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
+      elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$(target "$w")"; then
+        # A human draft, ghost-text suggestion, or queued-message hint is in
+        # the input box — injecting would interleave with it. Hold; state is
+        # not advanced, so the next sweep retries.
+        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
       else
         inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
         printf '%s' "$band" >"$state"
@@ -278,6 +290,65 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
       printf '%-16s %-18s %s\n' "$w" "$ctx" "steady (band $band)"
     fi
   done < <(tmux list-windows -t "$SESSION" -F '#W')
+}
+
+file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact title
+  command -v gh >/dev/null || die "doctor --file-issue: gh CLI not installed"
+  local title="strategy rot: $1 markers unverified against $2"
+  if [ -n "$(cd "$ROOT" && gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+    echo "  issue already open: '$title' — not duplicating"
+    return 0
+  fi
+  (cd "$ROOT" && gh issue create --title "$title" --body "\
+gang doctor detected strategy rot.
+
+- profile: \`profiles/$1.sh\`
+- installed harness version: \`$2\`
+- verified against: \`$GANG_VERIFIED_VERSIONS\`
+
+The profile's scraped TUI markers (busy regex, context readout, input-box
+shape) were verified against the versions listed above, not the installed
+one. Re-verify each marker live against the installed TUI, fix what rotted,
+and append the new version to GANG_VERIFIED_VERSIONS.")
+  echo "  filed rot issue: '$title'"
+}
+
+cmd_doctor() { # strategy-rot check: installed harness version vs each profile's pins
+  # Scraped TUI markers rot silently when a harness updates (lived it: a
+  # Claude Code build stopped painting 'esc to interrupt' and busy() false-
+  # negatived). Each profile pins the versions its markers were verified
+  # against; doctor compares and exits nonzero on drift, so cron can watch.
+  local file_issue=0
+  [ "${1:-}" = "--file-issue" ] && file_issue=1
+  local p prof installed v match drift=0
+  for p in "$ROOT"/profiles/*.sh; do
+    prof="$(basename "$p" .sh)"
+    load_profile "$prof"
+    if [ "$GANG_VERIFIED_VERSIONS" = "any" ]; then
+      printf '%-12s %-26s %s\n' "$prof" "-" "version-independent (no scraped markers)"
+      continue
+    fi
+    if [ -z "$GANG_VERSION_CMD" ] || [ -z "$GANG_VERIFIED_VERSIONS" ]; then
+      printf '%-12s %-26s %s\n' "$prof" "?" "UNPINNED — declare GANG_VERSION_CMD + GANG_VERIFIED_VERSIONS"
+      drift=1; continue
+    fi
+    if ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
+      printf '%-12s %-26s %s\n' "$prof" "?" "version command failed: $GANG_VERSION_CMD"
+      drift=1; continue
+    fi
+    match=0
+    for v in $GANG_VERIFIED_VERSIONS; do
+      case "$installed" in "$v"*) match=1 ;; esac
+    done
+    if [ "$match" -eq 1 ]; then
+      printf '%-12s %-26s %s\n' "$prof" "$installed" "OK (verified: $GANG_VERIFIED_VERSIONS)"
+    else
+      printf '%-12s %-26s %s\n' "$prof" "$installed" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS"
+      drift=1
+      [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
+    fi
+  done
+  return "$drift"
 }
 
 cmd_context_hook() { # Claude Code hook mode: stdin payload -> band-crossing note
@@ -428,6 +499,7 @@ case "$cmd" in
   capture)  [ $# -ge 1 ] || usage; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
+  doctor)   cmd_doctor "$@" ;;
   attach)   cmd_attach ;;
   kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
   profiles) cmd_profiles ;;

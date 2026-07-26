@@ -67,8 +67,10 @@ docs/adr/     decisions
    by hand or from cron) that injects the same band note as `[gang:patrol]`
    into any agent that crossed a threshold since the last sweep, for
    harnesses with no hook system (Pi's model never sees its own status bar).
-   Patrol skips busy agents without burning state (next sweep retries) and
-   re-arms on a usage drop. Action:
+   Patrol skips busy agents and holds when the agent's input box has content
+   (a human draft, ghost-text suggestion, or queued-message hint — an
+   injection would interleave with it), in both cases without burning state
+   (next sweep retries), and re-arms on a usage drop. Action:
    `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
    command through the verified-injection path; the resume message is injected
    while compaction runs, so the harness's own input queue holds it and fires
@@ -79,3 +81,17 @@ docs/adr/     decisions
    its own compact (plus a resume directive) at the next arc seam — no
    permission ask. Durable-state and handoff conventions ride in agent
    prompts, not code.
+
+## Strategy rot
+
+Profiles are scraped observations of TUIs, and TUIs change under you (lived
+it: a Claude Code release stopped painting "esc to interrupt" during tool
+execution and busy detection false-negatived). Every scraped marker — busy
+regex, context readout, input-box shape — is live-verified against specific
+harness versions and pinned in the profile: `GANG_VERSION_CMD` +
+`GANG_VERIFIED_VERSIONS` (space-separated version prefixes; `any` = no
+scraped markers). `gang doctor` compares each installed harness against its
+pin and exits nonzero on drift, so cron can watch; `gang doctor
+--file-issue` additionally files a deduped rot issue on this repo via gh.
+On a new harness release: re-verify each marker against the live TUI, fix
+what rotted, append the new version to the pin.
