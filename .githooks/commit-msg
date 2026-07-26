@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Conventional Commits gate. Enable in a clone with:
+#   git config core.hooksPath .githooks
+set -euo pipefail
+
+# The subject is the first line that is neither blank nor a git comment — the
+# message file arrives with the commented template still attached.
+subject="$(grep -vE '^[[:space:]]*(#|$)' "$1" | head -1)"
+
+# git writes these itself during merge and interactive rebase; rejecting them
+# would break those commands rather than improve the history they produce.
+# `git revert` is not on this list: revert is a Conventional type, so its
+# generated subject gets edited into one like any other commit.
+case "$subject" in
+  "Merge "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
+printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+" && exit 0
+
+cat >&2 <<EOF
+commit-msg: subject is not a Conventional Commit
+
+  ${subject}
+
+Expected: <type>[(scope)][!]: <description>
+  type   ${types//|/, }
+  scope  optional, lowercase — a command or component (patrol, doctor,
+         send, compact, up, down, context, profiles)
+  !      breaking change; add a BREAKING CHANGE: footer alongside it
+
+  fix(patrol): gate injection on pane stability
+  feat(down): tear the whole team down
+  refactor!: rename executable and protocol from gl to gang
+EOF
+exit 1
