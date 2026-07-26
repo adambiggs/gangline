@@ -52,7 +52,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f="$ROOT/profiles/$1.sh"
   [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
-  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
+  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_STASH_KEYS=""
   # no stale functions across profiles
   unset -f profile_context profile_input_clear 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -278,9 +278,30 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
         printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
       elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$(target "$w")"; then
         # A human draft, ghost-text suggestion, or queued-message hint is in
-        # the input box — injecting would interleave with it. Hold; state is
-        # not advanced, so the next sweep retries.
-        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
+        # the input box — injecting would interleave with it. If the harness
+        # has a draft stash, use it: stash the draft, inject, attempt restore.
+        # Verified on Claude Code 2.1.220: restore-during-busy leaves the
+        # draft in the stash slot (visible "› stashed" badge) rather than the
+        # box — never lost, one Ctrl+S recovers it byte-perfect; a build that
+        # honors restore-during-busy simply puts it back in the box. Without
+        # a stash, hold; state is not advanced, so the next sweep retries.
+        if [ -n "$GANG_STASH_KEYS" ]; then
+          tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
+          sleep 0.4
+          if profile_input_clear "$(target "$w")"; then
+            inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
+            tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
+            printf '%s' "$band" >"$state"
+            printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band; draft preserved in stash)"
+          else
+            # Stash didn't clear the box (ghost text isn't stashable, or the
+            # chord is rebound) — undo a stash if one took, then hold.
+            tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
+            printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — stash didn't clear the input box, holding nudge"
+          fi
+        else
+          printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
+        fi
       else
         inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
         printf '%s' "$band" >"$state"

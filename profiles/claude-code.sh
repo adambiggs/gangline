@@ -8,12 +8,21 @@
 # " for Ns", never an ellipsis. Observed false-negative: patrol nudged a
 # mid-turn manager because only "esc to interrupt" was matched.
 GANG_LAUNCH="claude"
-GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)'
+# Third busy form observed live: API-retry backoff paints
+# "✻ 529 Overloaded · Retrying in 2s · attempt 4/10" — a turn is in flight
+# but the line starts with a digit, so the gerund pattern misses it.
+GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s'
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
 # re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="claude --version"
 GANG_VERIFIED_VERSIONS="2.1.220"
+# chat:stash (docs: interactive-mode.md, keybindings.md): with text in the
+# input, Ctrl+S stashes it and clears the prompt; pressed again on an empty
+# prompt it restores text, cursor position, and pasted content. Stable,
+# default binding, hardened for submit-while-busy since v2.1.69. Assumes no
+# ~/.claude/keybindings.json rebind of chat:stash.
+GANG_STASH_KEYS="C-s"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"

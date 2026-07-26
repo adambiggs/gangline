@@ -67,10 +67,14 @@ docs/adr/     decisions
    by hand or from cron) that injects the same band note as `[gang:patrol]`
    into any agent that crossed a threshold since the last sweep, for
    harnesses with no hook system (Pi's model never sees its own status bar).
-   Patrol skips busy agents and holds when the agent's input box has content
-   (a human draft, ghost-text suggestion, or queued-message hint — an
-   injection would interleave with it), in both cases without burning state
-   (next sweep retries), and re-arms on a usage drop. Action:
+   Patrol skips busy agents and guards non-empty input boxes (a human draft,
+   ghost-text suggestion, or queued-message hint — an injection would
+   interleave with it): on a harness with a draft stash (Claude Code
+   `chat:stash`, Ctrl+S) the draft is stashed, the nudge injected, and the
+   draft preserved in the stash slot — the "› stashed" badge marks it and
+   one Ctrl+S recovers it byte-perfect; harnesses without a stash hold the
+   nudge instead. Skips and holds never burn state (next sweep retries),
+   and a usage drop re-arms. Action:
    `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
    command through the verified-injection path; the resume message is injected
    while compaction runs, so the harness's own input queue holds it and fires
