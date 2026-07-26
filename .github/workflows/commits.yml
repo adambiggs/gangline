@@ -1,0 +1,42 @@
+name: commits
+
+on: [push, pull_request]
+
+jobs:
+  conventional:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Conventional Commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Same gate the commit-msg hook runs — one regex, not two that drift.
+          # A push with no usable base (new branch, or a force-push whose old tip
+          # is gone) falls back to the full history rather than passing silently.
+          if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            range="${BASE}..${HEAD_SHA}"
+          else
+            range="$HEAD_SHA"
+            echo "no usable base ref — checking all history reachable from $HEAD_SHA"
+          fi
+
+          fail=0 n=0
+          for sha in $(git rev-list "$range"); do
+            n=$((n + 1))
+            git log -1 --format=%B "$sha" > /tmp/msg
+            if ! .githooks/commit-msg /tmp/msg; then
+              echo "  ^ $(git log -1 --format='%h by %an' "$sha")"
+              fail=$((fail + 1))
+            fi
+          done
+
+          echo "checked $n commit(s), $fail non-conforming"
+          [ "$fail" -eq 0 ]

@@ -33,10 +33,12 @@ feat(down): tear the whole team down
 refactor!: rename executable and protocol from gl to gang
 ```
 
-The `commit-msg` hook rejects anything else. Subjects git generates itself —
-merge commits, `fixup!`, `squash!`, `amend!` — pass through, since rejecting them
-breaks merge and interactive rebase. `git revert` is not exempt: `revert` is a
-type, so edit its generated subject like any other.
+The `commit-msg` hook rejects anything else, and the `commits` workflow re-runs
+that same hook over every pushed commit — one regex, so the two cannot drift.
+Subjects git generates itself — merge commits, `fixup!`, `squash!`, `amend!` —
+pass through, since rejecting them breaks merge and interactive rebase.
+`git revert` is not exempt: `revert` is a type, so edit its generated subject like
+any other.
 
 Write the body for someone deciding whether to trust the change: what failed, what
 the fix is, and what proved it. Scraped-marker changes say which harness version
