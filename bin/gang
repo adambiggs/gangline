@@ -118,12 +118,15 @@ inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 
   tmux paste-buffer -p -d -b gangsend -t "$(target "$1")"
   sleep 0.4
   # Verified = the literal text is visible, OR the TUI collapsed the paste into a
-  # placeholder whose char count equals what we sent (Pi: "[paste #N 1081 chars]").
-  # An exact count match is delivery evidence; a mismatched count is not.
-  local frag len; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
+  # placeholder whose count matches what we sent — Pi renders single-line pastes
+  # as "[paste #N 1081 chars]" and multi-line pastes as "[paste #N +13 lines]"
+  # (count = total lines in the paste). An exact count match is delivery
+  # evidence; a mismatched count is not.
+  local frag len nl; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
+  nl="$(printf '%s\n' "$2" | wc -l)"
   capture_joined "$1" | grep -qF -- "$frag" \
-    || capture_joined "$1" | grep -qE "\[paste #[0-9]+ ${len} chars\]" \
-    || die "delivery NOT verified: neither '$frag' nor a ${len}-char paste placeholder appeared in $1's pane — nothing was submitted"
+    || capture_joined "$1" | grep -qE "\[paste #[0-9]+ (${len} chars|\+${nl} lines)\]" \
+    || die "delivery NOT verified: neither '$frag' nor a matching paste placeholder (${len} chars / +${nl} lines) appeared in $1's pane — nothing was submitted"
   tmux send-keys -t "$(target "$1")" Enter
 }
 
