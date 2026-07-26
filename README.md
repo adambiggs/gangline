@@ -19,8 +19,8 @@ flowchart TB
     subgraph tmux["one tmux session · one window per agent"]
         direction LR
         m["manager<br>claude-code"]:::agent
-        a["ada<br>claude-code"]:::agent
-        s["sol<br>pi"]:::agent
+        a["worker<br>claude-code"]:::agent
+        s["reviewer<br>pi"]:::agent
     end
 
     a -.->|"agents drive gang too"| gang
@@ -61,16 +61,17 @@ compact command — about ten lines. Everything else is universal.
 ## Quickstart
 
 ```sh
-gang up -p claude-code -d ~/my/repo          # fresh start: session + your own window
-                                             # ("manager", attached) — run from outside tmux
-gang spawn ada -p claude-code -d ~/my/repo   # ada is now a tmux window running claude
-gang send ada --from manager "read the failing test in ci and fix it"
-gang status ada                              # busy | idle
-gang capture ada                             # what's on ada's screen
-gang roster                                  # everyone, with state
-gang attach                                  # watch the whole team live
-gang kill ada
-gang down                                    # kill the whole team
+gang up -p claude-code -d ~/my/repo             # fresh start: session + your own window
+                                                # ("manager", attached) — run from outside tmux
+gang spawn worker -p claude-code -d ~/my/repo   # "worker" is a name you pick: it becomes the
+                                                # tmux window name AND the agent's identity
+gang send worker --from manager "read the failing test in ci and fix it"
+gang status worker                              # busy | idle
+gang capture worker                             # what's on worker's screen
+gang roster                                     # everyone, with state
+gang attach                                     # watch the whole team live
+gang kill worker
+gang down                                       # kill the whole team
 ```
 
 ## Install
@@ -86,8 +87,13 @@ Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 ## The substrate
 
 `bin/gang` is the tool in full. Proven live: Claude Code and Pi agents in one team,
-manager→worker tasking on both, and a cross-harness worker→worker relay
-(`ada` → `gang send` → `sol`), every hop identity-prefixed and pane-verified.
+manager→worker tasking on both, and a cross-harness relay in which a Claude Code
+agent used `gang send` to task a Pi agent, which acted on it — every hop
+identity-prefixed and pane-verified.
+
+Agent names are yours. Whatever you pass to `gang spawn` becomes the tmux window
+name, the identity in every `[gang:<sender>]` prefix, and the handle every command
+takes. Name them for the role they play on the team.
 
 Delivery is confirmed before submission, never assumed:
 
