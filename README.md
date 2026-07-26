@@ -54,3 +54,15 @@ docs/adr/     decisions
 2. **Self-compaction primitives** — `gang compact <name>` triggers each harness's
    own compaction command (from its profile) through the same verified-injection
    path. Durable-state and handoff conventions ride in agent prompts, not code.
+3. **Context observability** — models cannot feel their own token count, so the
+   substrate measures it. `gang context <name>` (and a roster column) reads each
+   agent's context-window usage through its profile's own introspection: Pi's
+   status bar renders usage natively; Claude Code gets it from the shipped
+   statusline beacon (`statusline/claude-code-context.sh`, wired via
+   `settings.json` `statusLine` — the payload carries `context_window` figures,
+   and the beacon paints them into the pane where gang can read them). For
+   in-context warnings, `gang context-hook` is a Claude Code hook
+   (UserPromptSubmit + PostToolUse): it reads the session transcript's own
+   usage records and injects one note per crossed `GANG_CONTEXT_BANDS`
+   threshold (bare numbers = tokens, `%` suffix = percent of window; default
+   `120000,180000,250000,90%`), re-arming after compaction drops usage.
