@@ -108,9 +108,13 @@ inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 
   printf '%s' "$2" | tmux load-buffer -b gangsend -
   tmux paste-buffer -p -d -b gangsend -t "$(target "$1")"
   sleep 0.4
-  local frag; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
+  # Verified = the literal text is visible, OR the TUI collapsed the paste into a
+  # placeholder whose char count equals what we sent (Pi: "[paste #N 1081 chars]").
+  # An exact count match is delivery evidence; a mismatched count is not.
+  local frag len; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
   capture_joined "$1" | grep -qF -- "$frag" \
-    || die "delivery NOT verified: '$frag' never appeared in $1's pane — nothing was submitted"
+    || capture_joined "$1" | grep -qE "\[paste #[0-9]+ ${len} chars\]" \
+    || die "delivery NOT verified: neither '$frag' nor a ${len}-char paste placeholder appeared in $1's pane — nothing was submitted"
   tmux send-keys -t "$(target "$1")" Enter
 }
 
