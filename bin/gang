@@ -316,7 +316,10 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
 file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact title
   command -v gh >/dev/null || die "doctor --file-issue: gh CLI not installed"
   local title="strategy rot: $1 markers unverified against $2"
-  if [ -n "$(cd "$ROOT" && gh issue list --state open --search "\"$title\" in:title" --json number --jq '.[].number')" ]; then
+  # Dedup via the plain list endpoint, not --search: the search index is
+  # eventually-consistent and misses issues filed seconds ago (observed live —
+  # a rerun filed a duplicate).
+  if (cd "$ROOT" && gh issue list --state open -L 200 --json title --jq '.[].title') | grep -qxF "$title"; then
     echo "  issue already open: '$title' — not duplicating"
     return 0
   fi
