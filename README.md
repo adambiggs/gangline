@@ -63,10 +63,15 @@ docs/adr/     decisions
    injecting one in-context note per crossed `GANG_CONTEXT_BANDS` threshold
    (bare numbers = tokens, `%` suffix = percent of window; default
    `120000,180000,250000,90%`), re-armed when compaction drops usage; and
-   `gang patrol` is the harness-agnostic leg — a one-shot roster sweep (run
-   by hand or from cron) that injects the same band note as `[gang:patrol]`
-   into any agent that crossed a threshold since the last sweep, for
-   harnesses with no hook system (Pi's model never sees its own status bar).
+   `gang patrol` is the harness-agnostic leg — a one-shot roster sweep that
+   injects the same band note as `[gang:patrol]` into any agent that crossed
+   a threshold since the last sweep, for harnesses with no hook system (Pi's
+   model never sees its own status bar). Patrol lives on a host cron,
+   always-on — it no-ops cheaply when no session is running:
+
+   ```
+   */2 * * * * XDG_RUNTIME_DIR=/run/user/1000 $HOME/.local/bin/gang patrol 2>&1 | grep -E 'NUDGED|re-armed|holding|stash|invalid' >> $HOME/.local/state/gangline/patrol.log || true
+   ```
    Patrol skips busy agents and guards non-empty input boxes (a human draft,
    ghost-text suggestion, or queued-message hint — an injection would
    interleave with it): on a harness with a draft stash (Claude Code
@@ -95,7 +100,9 @@ regex, context readout, input-box shape — is live-verified against specific
 harness versions and pinned in the profile: `GANG_VERSION_CMD` +
 `GANG_VERIFIED_VERSIONS` (space-separated version prefixes; `any` = no
 scraped markers). `gang doctor` compares each installed harness against its
-pin and exits nonzero on drift, so cron can watch; `gang doctor
---file-issue` additionally files a deduped rot issue on this repo via gh.
-On a new harness release: re-verify each marker against the live TUI, fix
-what rotted, append the new version to the pin.
+pin and exits nonzero on drift. Doctor is a reactive diagnostic, not a cron
+job: an agent that sees scraping misbehave — false busy/idle, a missing
+context beacon, an injection that fails verification — runs `gang doctor`
+first; on ROT RISK, `gang doctor --file-issue` files a deduped rot issue on
+this repo via gh, then the markers get re-verified against the live TUI and
+the new version appended to the pin.

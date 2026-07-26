@@ -341,7 +341,9 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
   # Scraped TUI markers rot silently when a harness updates (lived it: a
   # Claude Code build stopped painting 'esc to interrupt' and busy() false-
   # negatived). Each profile pins the versions its markers were verified
-  # against; doctor compares and exits nonzero on drift, so cron can watch.
+  # against; doctor compares and exits nonzero on drift. This is a reactive
+  # diagnostic, not a cron job: agents run it when scraping misbehaves
+  # (false busy/idle, missing beacon, failed injection verify).
   local file_issue=0
   [ "${1:-}" = "--file-issue" ] && file_issue=1
   local p prof installed v match drift=0
