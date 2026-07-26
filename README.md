@@ -63,7 +63,13 @@ docs/adr/     decisions
    injecting one in-context note per crossed `GANG_CONTEXT_BANDS` threshold
    (bare numbers = tokens, `%` suffix = percent of window; default
    `120000,180000,250000,90%`), re-armed when compaction drops usage. Action:
-   `gang compact <name>` triggers the harness's own compaction command through
-   the verified-injection path, and an agent past a band self-queues its own
-   compact at the next arc seam — no permission ask. Durable-state and handoff
-   conventions ride in agent prompts, not code.
+   `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
+   command through the verified-injection path; the resume message is injected
+   while compaction runs, so the harness's own input queue holds it and fires
+   it when the compact turn ends — the agent resumes work with no idle gap
+   and no process babysitting the wait (proven live on Claude Code and Pi;
+   a failed compact still releases the queue, so the agent is never
+   stranded). An agent past a band self-queues
+   its own compact (plus a resume directive) at the next arc seam — no
+   permission ask. Durable-state and handoff conventions ride in agent
+   prompts, not code.

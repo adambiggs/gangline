@@ -16,7 +16,9 @@ gang — drive a team of CLI agents as tmux windows
   gang spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
-  gang compact <name>                         trigger the harness's own context compaction
+  gang compact <name> [--resume <msg>]        trigger the harness's own context compaction;
+                                              --resume queues a message that fires when
+                                              compaction completes (--from/GANG_FROM required)
   gang status <name>                          busy | idle
   gang context <name>                         context-window usage (profile-declared readout)
   gang wait  <name> [timeout_s]               block until idle (default 300)
@@ -164,13 +166,31 @@ cmd_send() {
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
-  local name="${1:-}"; [ -n "$name" ] || usage
+  local name="" from="${GANG_FROM:-}" resume=""
+  name="${1:-}"; [ -n "$name" ] || usage; shift || true
+  while [ $# -gt 0 ]; do case "$1" in
+    --resume) resume="$2"; shift 2 ;;
+    --from)   from="$2";   shift 2 ;;
+    *) die "compact: unknown argument '$1'" ;;
+  esac; done
   local prof; prof="$(win_profile "$name")"
   load_profile "$prof"
   [ -n "${GANG_COMPACT_CMD:-}" ] || die "profile '$prof' declares no compact command"
+  if [ -n "$resume" ] && [ -z "$from" ]; then
+    die "compact: --resume needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
+  fi
   busy "$name" && die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
   inject "$name" "$GANG_COMPACT_CMD"
-  echo "compaction triggered on $name ($GANG_COMPACT_CMD, verified, submitted)"
+  if [ -n "$resume" ]; then
+    # Compaction is now running. Harnesses queue input typed mid-turn, so the
+    # resume message parks in the input queue and fires the moment compaction
+    # completes — the agent picks its work back up with no idle gap and no
+    # gang process babysitting the wait.
+    inject "$name" "[gang:$from] $resume"
+    echo "compaction triggered on $name ($GANG_COMPACT_CMD); resume queued as [gang:$from] (verified in pane)"
+  else
+    echo "compaction triggered on $name ($GANG_COMPACT_CMD, verified, submitted)"
+  fi
 }
 
 cmd_status() { if busy "$1"; then echo busy; else echo idle; fi; }
@@ -295,7 +315,8 @@ if band > prev:
         f"[context-usage] {tokens:,} tokens in context (~{pct}% of ~{window:,}) — "
         f"crossed the {thresholds[band - 1]:,}-token band. Plan /compact at the "
         f"next natural seam (arc boundary), before auto-compact picks the seam "
-        f"for you."
+        f"for you — and queue a resume directive behind it so work continues "
+        f"unattended."
     )
 PYEOF
   exit 0
