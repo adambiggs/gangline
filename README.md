@@ -72,14 +72,21 @@ docs/adr/     decisions
    ```
    */2 * * * * XDG_RUNTIME_DIR=/run/user/1000 $HOME/.local/bin/gang patrol 2>&1 | grep -E 'NUDGED|re-armed|holding|stash|invalid' >> $HOME/.local/state/gangline/patrol.log || true
    ```
-   Patrol skips busy agents and guards non-empty input boxes (a human draft,
-   ghost-text suggestion, or queued-message hint — an injection would
-   interleave with it): on a harness with a draft stash (Claude Code
-   `chat:stash`, Ctrl+S) the draft is stashed, the nudge injected, and the
-   draft preserved in the stash slot — the "› stashed" badge marks it and
-   one Ctrl+S recovers it byte-perfect; harnesses without a stash hold the
-   nudge instead. Skips and holds never burn state (next sweep retries),
-   and a usage drop re-arms. Action:
+   Patrol skips busy agents, holds off churning panes, and guards non-empty
+   input boxes (a human draft, ghost-text suggestion, or queued-message hint
+   — an injection would interleave with it): on a harness with a draft stash
+   (Claude Code `chat:stash`, Ctrl+S) the draft is stashed, the nudge
+   injected, and the draft preserved in the stash slot — the "› stashed"
+   badge marks it and one Ctrl+S recovers it byte-perfect; harnesses without
+   a stash hold the nudge instead. The churn hold is the stability gate:
+   patrol injects only into a pane that is byte-identical across two
+   captures. Busy regexes are snapshots, and at a turn boundary or during a
+   compaction redraw every guard reads a different frame — a nudge injected
+   against a moving screen can jump the harness's own input queue and fire
+   ahead of a queued resume directive (lived it). A quietly idle TUI paints
+   a static screen; streaming, spinners, and compaction progress bars all
+   churn — so the gate scrapes no marker and cannot rot. Skips and holds
+   never burn state (next sweep retries), and a usage drop re-arms. Action:
    `gang compact <name> [--resume <msg>]` triggers the harness's own compaction
    command through the verified-injection path; the resume message is injected
    while compaction runs, so the harness's own input queue holds it and fires

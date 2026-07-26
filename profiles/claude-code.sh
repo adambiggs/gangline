@@ -11,7 +11,13 @@ GANG_LAUNCH="claude"
 # Third busy form observed live: API-retry backoff paints
 # "✻ 529 Overloaded · Retrying in 2s · attempt 4/10" — a turn is in flight
 # but the line starts with a digit, so the gerund pattern misses it.
-GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s'
+# Fourth form, compaction: /compact paints a progress bar ("▰▰▰▱▱… 42%") with
+# NO gerund spinner and no "esc to interrupt" — none of the other forms match
+# (lived it: patrol read a compacting pane as idle and its nudge jumped the
+# input queue). The bar glyphs are erased on completion, never in scrollback.
+# Literal alternation, not [▰▱]: in cron's C locale a multibyte bracket class
+# matches single BYTES, and the welcome-logo glyphs share the UTF-8 prefix.
+GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
 # re-verify + append (gang doctor watches the pin).

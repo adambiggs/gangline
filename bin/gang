@@ -85,6 +85,19 @@ busy() { # $1 = name; exit 0 if busy
   [ -n "$GANG_BUSY_REGEX" ] && capture_joined "$1" | grep -qE -- "$GANG_BUSY_REGEX"
 }
 
+pane_stable() { # $1 = name; screen byte-identical across two captures ≈ quietly idle
+  # Marker regexes are snapshots of a screen that may be actively redrawing —
+  # at a turn boundary or during compaction, one capture can miss the spinner
+  # and the next can miss the input-box content, and every guard reads a
+  # different frame (lived it: patrol nudged mid-compaction and the note
+  # jumped the harness's own input queue). A quietly idle TUI paints a static
+  # screen; streaming, spinners, timers, and compaction redraws all churn.
+  # Scrapes no marker, so it cannot rot.
+  local a b
+  a="$(capture "$1")"; sleep 0.5; b="$(capture "$1")"
+  [ "$a" = "$b" ]
+}
+
 wait_idle() { # $1 = name, $2 = timeout seconds
   # Idle must hold for two consecutive polls: a just-submitted turn shows no
   # busy marker for a beat, and a single-shot check falls through that gap
@@ -235,10 +248,10 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
   # token count. Patrol reads each agent's normalized profile_context readout
   # ("<used>k/<win>k (<pct>%)"), and injects the band note as [gang:patrol] to
   # anyone who crossed a GANG_CONTEXT_BANDS threshold since the last sweep.
-  # Busy agents are skipped WITHOUT advancing state, so the next patrol
-  # retries. A usage drop re-arms; state self-heals for re-spawned names the
-  # same way. Warn, don't act — compaction timing is the agent's judgment
-  # (gang compact exists for forcing it).
+  # Busy or unstable (pane_stable) agents are skipped WITHOUT advancing
+  # state, so the next patrol retries. A usage drop re-arms; state self-heals
+  # for re-spawned names the same way. Warn, don't act — compaction timing is
+  # the agent's judgment (gang compact exists for forcing it).
   tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
   local raw="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
   local w prof ctx tokens window band prev state crossed t n part
@@ -276,6 +289,12 @@ cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context ba
     elif [ "$band" -gt "$prev" ]; then
       if busy "$w" 2>/dev/null; then
         printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
+      elif ! pane_stable "$w" 2>/dev/null; then
+        # Screen is churning — turn boundary, compaction redraw, or a render
+        # form the busy regex doesn't know yet. Injecting against a moving
+        # screen is how a nudge jumps the harness's own input queue. Hold;
+        # state is not advanced, so the next sweep retries.
+        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge"
       elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$(target "$w")"; then
         # A human draft, ghost-text suggestion, or queued-message hint is in
         # the input box — injecting would interleave with it. If the harness
