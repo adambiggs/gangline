@@ -12,6 +12,7 @@ usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
 
+  gang up [name] -p <profile> [-d <dir>]      fresh start: spawn (name: manager) + attach
   gang spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
@@ -102,6 +103,14 @@ cmd_spawn() {
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   echo "spawned $name ($prof) in $dir — watch: gang attach"
+}
+
+cmd_up() { # fresh-session bootstrap: spawn (creates the session) then attach
+  [ -z "${TMUX:-}" ] || die "up: already inside tmux — use gang spawn / gang adopt"
+  local name="manager"
+  case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
+  cmd_spawn "$name" "$@"
+  exec tmux attach -t "$SESSION" \; select-window -t "$(target "$name")"
 }
 
 inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
@@ -199,6 +208,7 @@ cmd_profiles() { list_profiles; }
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage; shift || true
 case "$cmd" in
+  up)       cmd_up "$@" ;;
   spawn)    cmd_spawn "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;

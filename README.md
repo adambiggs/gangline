@@ -22,8 +22,10 @@ Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 ## Quickstart
 
 ```sh
+gang up -p claude-code -d ~/my/repo          # fresh start: session + your own window
+                                             # ("manager", attached) — run from outside tmux
 gang spawn ada -p claude-code -d ~/my/repo   # ada is now a tmux window running claude
-gang send ada --from operator "read the failing test in ci and fix it"
+gang send ada --from manager "read the failing test in ci and fix it"
 gang status ada                              # busy | idle
 gang capture ada                             # what's on ada's screen
 gang roster                                  # everyone, with state
