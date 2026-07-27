@@ -35,8 +35,9 @@ refactor!: rename executable and protocol from gl to gang
 
 The `commit-msg` hook rejects anything else, and the `commits` workflow re-runs
 that same hook over every pushed commit — one regex, so the two cannot drift. A
-ruleset makes the `conventional` check required on the default branch; repository
-admins bypass it, so for the maintainer the hook is still the gate that matters.
+ruleset makes the `conventional` check required on the default branch (adding
+`shell` to it is a ruleset change); repository admins bypass it, so for the
+maintainer the hook is still the gate that matters.
 Subjects git generates itself — merge commits, `fixup!`, `squash!`, `amend!` —
 pass through, since rejecting them breaks merge and interactive rebase.
 `git revert` is not exempt: `revert` is a type, so edit its generated subject like
@@ -57,7 +58,11 @@ they were verified against — that pin is what `gang doctor` reads.
 Every shell and Python file carries an `SPDX-License-Identifier` line; new ones
 need it too.
 
-Shell changes must pass `bash -n` and `shellcheck -S warning`.
+Shell changes must pass `bash -n`, `shellcheck -S warning`, and
+`test/integration.sh`; the `shell` workflow runs all three on every push. The test
+drives `bin/gang` against a real tmux server with the `bash` profile — no mocks,
+because a mocked tmux would agree with whatever the code already does. A fix to
+delivery or addressing belongs there as a case that fails without the fix.
 
 ## License
 

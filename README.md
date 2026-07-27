@@ -34,7 +34,7 @@ flowchart TB
 There is no server, no bus, and no database. tmux already holds the state, so
 `gang` is a CLI you run and it exits.
 
-## The three ideas
+## The four ideas
 
 **Agents are tmux windows.** Spawning is `new-window`, killing is `kill-window`,
 watching is `capture-pane`, and the window name *is* the agent's identity. Attach
@@ -93,7 +93,10 @@ identity-prefixed and pane-verified.
 
 Agent names are yours. Whatever you pass to `gang spawn` becomes the tmux window
 name, the identity in every `[gang:<sender>]` prefix, and the handle every command
-takes. Name them for the role they play on the team.
+takes. Name them for the role they play on the team. Underneath the handle, gang
+addresses windows by tmux window id — immutable, never reused — so a rename, a
+reorder, or a name that happens to look like a number cannot re-point a command
+at the wrong agent.
 
 Delivery is confirmed before submission, never assumed:
 
@@ -104,19 +107,23 @@ sequenceDiagram
     participant P as agent's pane
     G->>P: busy marker on screen?
     Note over G,P: refuse if mid-turn (--wait to block instead)
+    G->>P: capture-pane — count delivery evidence
     G->>P: load-buffer → paste-buffer -p (bracketed paste)
-    G->>P: capture-pane
-    alt text is on screen
+    G->>P: capture-pane — count again
+    alt the count rose
         G->>P: Enter
         Note over G,P: delivered
-    else nothing found
+    else unchanged
         G--xG: die — loud, and nothing was submitted
     end
 ```
 
-Some TUIs collapse a long paste into a placeholder rather than echoing it, so an
-exact `[paste #N 1081 chars]` / `[paste #N +13 lines]` count match counts as
-evidence too. A mismatched count does not.
+The count is taken twice because presence is not proof: an identical earlier send
+is still sitting in the transcript, and matching *that* would verify a paste that
+never landed. Only a rise means this paste arrived. Some TUIs collapse a long
+paste into a placeholder rather than echoing it, so an exact
+`[paste #N 1081 chars]` / `[paste #N +13 lines]` count match counts as evidence
+too. A mismatched count does not.
 
 Per-agent state lives in tmux window options — the profile binding (`@gl_profile`)
 and the context band already warned about (`@gl_band`) — so tmux deletes an agent's
@@ -153,23 +160,35 @@ through the profile's own introspection. Pi renders usage in its status bar
 natively; Claude Code gets the shipped statusline beacon
 (`statusline/claude-code-context.sh`, wired via `settings.json` `statusLine`) — the
 statusline payload carries `context_window` figures and the beacon paints them into
-the pane, where gang can read them.
+the pane, where gang can read them. Every consumer — `gang context`, the roster
+column, and both warning legs below — reads that one readout, so nothing in the
+system can disagree with anything else about how full a window is.
 
 **Warn.** Two legs, because one harness's hook system is not another's:
 
-- `gang context-hook` is a Claude Code hook (UserPromptSubmit + PostToolUse) that
-  injects one in-context note per crossed `GANG_CONTEXT_BANDS` threshold. Bare
-  numbers are token counts, a `%` suffix is percent of window; the default ladder is
+- `gang context-hook` runs inside the agent's own pane, invoked by the harness's
+  hook system (Claude Code: UserPromptSubmit + PostToolUse), and returns one
+  in-context note per crossed `GANG_CONTEXT_BANDS` threshold. Bare numbers are
+  token counts, a `%` suffix is percent of window; the default ladder is
   `120000,180000,250000,90%`, re-armed when compaction drops usage.
-- `gang patrol` is the harness-agnostic leg — a one-shot roster sweep that injects
-  the same band note as `[gang:patrol]` into any agent that crossed a threshold
-  since the last sweep. It exists because a harness may have no hook system at all
+- `gang patrol` is the ambient leg — a one-shot roster sweep that injects the same
+  band note as `[gang:patrol]` into any agent that crossed a threshold since the
+  last sweep. It exists because a harness may have no hook system at all
   (Pi's model never sees its own status bar). Patrol lives on a host cron, always-on,
   and no-ops cheaply when no session is running:
 
   ```
-  */2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -E 'NUDGED|re-armed|holding|stash|invalid' >> $HOME/.local/state/gangline/patrol.log || true
+  */2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
   ```
+
+  The filter drops the one boring line rather than keeping a list of interesting
+  ones, so a failure gang has not thought of yet still reaches the log. Patrol
+  sweeps `GANG_SESSION` only — a second team wants a second line.
+
+Both legs run the same ladder over the same readout and share one band memory
+(`@gl_band`, a window option), so whichever notices a crossing first advances the
+band and the other reports steady. An agent is warned once per band, not once per
+leg, and tmux deletes the memory with the window.
 
 **Act.** `gang compact <name> [--resume <msg>]` triggers the harness's own
 compaction command through the verified-injection path. The resume message is
@@ -194,10 +213,8 @@ than risks it — and a skip never burns state, so the next sweep retries.
   spinners, and compaction progress bars all churn, so this gate scrapes no marker
   and cannot rot.
 - **Non-empty input boxes** are guarded: a human draft, ghost-text suggestion, or
-  queued-message hint would interleave with an injection. On a harness with a draft
-  stash (Claude Code `chat:stash`, Ctrl+S) the draft is stashed, the nudge injected,
-  and the draft preserved in the stash slot — the "› stashed" badge marks it and one
-  Ctrl+S recovers it byte-perfect. Harnesses without a stash hold the nudge instead.
+  queued-message hint would interleave with an injection, so the nudge is held
+  until the box is clear. Holding costs one sweep; interleaving costs the turn.
 
 ## Profiles
 
@@ -209,6 +226,7 @@ context readout or detecting a non-empty input box.
 bin/gang      the whole tool
 profiles/     one small file per harness
 statusline/   the Claude Code context beacon
+test/         integration test, real tmux, no mocks
 docs/adr/     decisions
 ```
 
