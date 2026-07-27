@@ -196,7 +196,13 @@ system can disagree with anything else about how full a window is.
   band note as `[gang:patrol]` into any agent that crossed a threshold since the
   last sweep. It exists because a harness may have no hook system at all
   (Pi's model never sees its own status bar). Patrol lives on a host cron, always-on,
-  and no-ops cheaply when no session is running:
+  and no-ops cheaply when no session is running. Nothing creates the log's
+  directory for you, and cron's `|| true` would swallow the failed redirect, so
+  make it once:
+
+  ```
+  mkdir -p "$HOME/.local/state/gangline"
+  ```
 
   ```
   */2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
