@@ -1,0 +1,22 @@
+name: shell
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntax and lint
+        run: |
+          set -euo pipefail
+          files="bin/gang profiles/*.sh statusline/*.sh test/*.sh .githooks/commit-msg"
+          # bash -n reads one script per call; shellcheck takes the set.
+          for f in $files; do bash -n "$f"; done
+          shellcheck -S warning $files
+
+      - name: Integration test
+        run: |
+          command -v tmux >/dev/null || sudo apt-get install -y tmux
+          test/integration.sh
