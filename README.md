@@ -6,7 +6,9 @@ for its strengths, with minimal harness-specific integration points.
 
 The name: a gangline is the single rope that hitches many dogs, each in its own
 harness, to one sled and one musher. The integration point is the attachment clip —
-never surgery inside the dog.
+never surgery inside the dog. The rest of the vocabulary keeps the frame —
+[the musher's field guide](docs/field-guide.md) maps every term to its literal
+meaning.
 
 ```mermaid
 flowchart TB
