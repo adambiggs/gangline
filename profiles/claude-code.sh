@@ -24,12 +24,6 @@ GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retryi
 # re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="claude --version"
 GANG_VERIFIED_VERSIONS="2.1.220"
-# chat:stash (docs: interactive-mode.md, keybindings.md): with text in the
-# input, Ctrl+S stashes it and clears the prompt; pressed again on an empty
-# prompt it restores text, cursor position, and pasted content. Stable,
-# default binding, hardened for submit-while-busy since v2.1.69. Assumes no
-# ~/.claude/keybindings.json rebind of chat:stash.
-GANG_STASH_KEYS="C-s"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"

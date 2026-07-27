@@ -6,6 +6,7 @@ set -euo pipefail
 
 SESSION="${GANG_SESSION:-gangline}"
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
 
 die() { echo "gang: $*" >&2; exit 1; }
 
@@ -36,15 +37,15 @@ gang — drive a team of CLI agents as tmux windows
   gang kill  <name>                           kill the agent's window
   gang down                                   kill the whole session (every agent)
   gang profiles                               list available profiles
-  gang context-hook                           Claude Code hook mode: stdin payload ->
-                                              band-crossing note (see README)
+  gang context-hook                           harness hook mode: warn the agent in-turn when
+                                              it crosses a context band (see README)
 
 Env: GANG_FROM (sender identity for send), GANG_SESSION (default: gangline),
-     GANG_CONTEXT_BANDS (warning ladder for context-hook; tokens or %, default
-     120000,180000,250000,90%), GANG_CONTEXT_WINDOW (window-size override)
+     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,90%)
 EOF
-  exit 1
 }
+
+usage_die() { usage >&2; exit 1; }
 
 # --- profiles ---------------------------------------------------------------
 
@@ -54,7 +55,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f="$ROOT/profiles/$1.sh"
   [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
-  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_STASH_KEYS=""
+  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
   unset -f profile_context profile_input_clear 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -63,31 +64,49 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
 }
 
 # --- window plumbing --------------------------------------------------------
+#
+# Agents are addressed by tmux window id (@N), never by "session:name": tmux's
+# target grammar reads an all-digit name as a window INDEX, so a name-built
+# target delivers `2` to whatever sits at index 2 and calls it verified. An id
+# is immutable for the window's life, survives rename and reorder, and is never
+# reused — so a name resolved once cannot drift under the rest of the command.
 
-target() { printf '%s:%s' "$SESSION" "$1"; }
-
-exists() { tmux list-windows -t "$SESSION" -F '#W' 2>/dev/null | grep -qxF "$1"; }
-
-win_profile() { # $1 = name; fails loud on unadopted windows
-  exists "$1" || die "no agent '$1' (see: gang roster)"
-  local p; p="$(tmux show-options -wqv -t "$(target "$1")" @gl_profile)"
-  [ -n "$p" ] || die "window '$1' exists but is not a gang agent (gang adopt $1 -p <profile>)"
-  printf '%s' "$p"
+win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
+  local id name
+  while read -r id name; do   # `read id name` keeps spaces in the name
+    [ "$name" = "$1" ] && { printf '%s' "$id"; return 0; }
+  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W' 2>/dev/null)
+  return 1
 }
 
-capture() { tmux capture-pane -p -t "$(target "$1")"; }
+exists() { win_id "$1" >/dev/null; }
+
+# resolve() sets these two for the command that follows; the only name->agent lookup.
+AGENT_ID="" AGENT_PROFILE=""
+
+resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profile
+  AGENT_ID="$(win_id "$1")" || die "no agent '$1' (see: gang roster)"
+  AGENT_PROFILE="$(tmux show-options -wqv -t "$AGENT_ID" @gl_profile)"
+  [ -n "$AGENT_PROFILE" ] \
+    || die "window '$1' exists but is not a gang agent (gang adopt $1 -p <profile>)"
+  load_profile "$AGENT_PROFILE"
+}
+
+capture() { tmux capture-pane -p -t "$1"; }
 
 # -J joins pane-width-wrapped lines so matching never breaks on a wrap boundary.
-capture_joined() { tmux capture-pane -pJ -t "$(target "$1")"; }
+capture_joined() { tmux capture-pane -pJ -t "$1"; }
 
-busy() { # $1 = name; exit 0 if busy
-  local prof
-  prof="$(win_profile "$1")"
-  load_profile "$prof"
-  [ -n "$GANG_BUSY_REGEX" ] && capture_joined "$1" | grep -qE -- "$GANG_BUSY_REGEX"
+busy() { # $1 = window id, profile loaded; exit 0 if busy
+  # Captured into a variable, not piped: a capture that FAILS must not read as
+  # "idle" and wave an injection into a pane nobody looked at.
+  [ -n "$GANG_BUSY_REGEX" ] || return 1
+  local pane
+  pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
+  printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"
 }
 
-pane_stable() { # $1 = name; screen byte-identical across two captures ≈ quietly idle
+pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
   # Marker regexes are snapshots of a screen that may be actively redrawing —
   # at a turn boundary or during compaction, one capture can miss the spinner
   # and the next can miss the input-box content, and every guard reads a
@@ -96,32 +115,103 @@ pane_stable() { # $1 = name; screen byte-identical across two captures ≈ quiet
   # screen; streaming, spinners, timers, and compaction redraws all churn.
   # Scrapes no marker, so it cannot rot.
   local a b
-  a="$(capture "$1")"; sleep 0.5; b="$(capture "$1")"
+  a="$(capture "$1")" || die "cannot read pane $1"
+  sleep 0.5
+  b="$(capture "$1")" || die "cannot read pane $1"
   [ "$a" = "$b" ]
 }
 
-wait_idle() { # $1 = name, $2 = timeout seconds
+wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   # Idle must hold for two consecutive polls: a just-submitted turn shows no
   # busy marker for a beat, and a single-shot check falls through that gap
   # (observed live — a send landed mid-turn and got queued).
-  local t=0 timeout="${2:-300}" streak=0
+  local t=0 timeout="${3:-300}" streak=0
   while :; do
     if busy "$1"; then streak=0; else
       streak=$((streak + 1)); [ "$streak" -ge 2 ] && return 0
     fi
-    [ "$t" -ge "$timeout" ] && die "'$1' still busy after ${timeout}s"
+    [ "$t" -ge "$timeout" ] && die "'$2' still busy after ${timeout}s"
     sleep 2; t=$((t + 2))
   done
+}
+
+# --- delivery ---------------------------------------------------------------
+
+evidence() { # $1 = window id, $2 = literal fragment, $3 = placeholder ERE; matching lines
+  local pane lit ph
+  pane="$(capture_joined "$1")" || die "cannot read pane $1"
+  lit="$(printf '%s\n' "$pane" | grep -cF -- "$2")" || true
+  ph="$(printf '%s\n' "$pane" | grep -cE -- "$3")" || true
+  printf '%s' "$(( lit + ph ))"
+}
+
+inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
+  local buf="gang-$$" frag len nl ph before after
+  frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
+  nl="$(printf '%s\n' "$2" | wc -l)"
+  # Verified = the literal text is visible, OR the TUI collapsed the paste into a
+  # placeholder whose count matches what we sent — Pi renders single-line pastes
+  # as "[paste #N 1081 chars]" and multi-line pastes as "[paste #N +13 lines]"
+  # (count = total lines in the paste). An exact count match is delivery
+  # evidence; a mismatched count is not.
+  ph="\[paste #[0-9]+ (${len} chars|\+${nl} lines)\]"
+  # Counted BEFORE the paste, because "the text is somewhere on screen" is not
+  # evidence: an identical earlier send is still in the transcript, and matching
+  # it would verify a paste that never landed. Only a RISE proves this one did.
+  before="$(evidence "$1" "$frag" "$ph")"
+  # Buffer name is per-process: patrol runs on cron, and a concurrent send would
+  # otherwise overwrite the buffer between load-buffer and paste-buffer.
+  printf '%s' "$2" | tmux load-buffer -b "$buf" -
+  tmux paste-buffer -p -d -b "$buf" -t "$1"
+  sleep 0.4
+  after="$(evidence "$1" "$frag" "$ph")"
+  [ "$after" -gt "$before" ] \
+    || die "delivery NOT verified: neither '$frag' nor a matching paste placeholder (${len} chars / +${nl} lines) appeared in the pane — nothing was submitted"
+  tmux send-keys -t "$1" Enter
+}
+
+# --- context bands ----------------------------------------------------------
+
+ctx_tokens() { # $1 = "<used>k/<win>k (<pct>%)" -> "<used> <window>" in tokens
+  [[ "$1" =~ ^([0-9]+)k/([0-9]+)k ]] || return 1
+  printf '%s %s' "$(( BASH_REMATCH[1] * 1000 ))" "$(( BASH_REMATCH[2] * 1000 ))"
+}
+
+ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highest>"
+  # One evaluator for both warning legs. Two copies of a ladder is two ladders.
+  local band=0 crossed=0 part n t
+  for part in ${BANDS//,/ }; do
+    case "$part" in
+      *%) n="${part%\%}"
+          [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+          # Floored to 1k, the resolution every context readout reports in: a
+          # finer threshold would sit between what the two legs can measure.
+          t=$(( n * $2 / 100000 * 1000 )) ;;
+      *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+          t="$part" ;;
+    esac
+    [ "$t" -gt 0 ] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+    if [ "$1" -ge "$t" ]; then
+      band=$((band + 1))
+      [ "$t" -gt "$crossed" ] && crossed="$t"
+    fi
+  done
+  printf '%s %s' "$band" "$crossed"
+}
+
+band_note() { # $1 = readout, $2 = crossed threshold; the one warning text, both legs
+  printf '[context-usage] %s in context — crossed the %s-token band. Plan %s at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended.' \
+    "$1" "$2" "${GANG_COMPACT_CMD:-compaction}"
 }
 
 # --- commands ---------------------------------------------------------------
 
 cmd_spawn() {
-  local name="" prof="" dir="$PWD"
-  name="${1:-}"; [ -n "$name" ] || usage; shift
+  local name="" prof="" dir="$PWD" id
+  name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
-    -p|--profile) prof="$2"; shift 2 ;;
-    -d|--dir)     dir="$2";  shift 2 ;;
+    -p|--profile) [ $# -ge 2 ] || die "spawn: $1 needs a value"; prof="$2"; shift 2 ;;
+    -d|--dir)     [ $# -ge 2 ] || die "spawn: $1 needs a value"; dir="$2";  shift 2 ;;
     *) die "spawn: unknown argument '$1'" ;;
   esac; done
   [ -n "$prof" ] || die "spawn: -p <profile> is required"
@@ -134,10 +224,11 @@ cmd_spawn() {
     exists "$name" && die "agent '$name' already exists"
     tmux new-window -d -t "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
   fi
+  id="$(win_id "$name")" || die "'$name' never appeared in session '$SESSION'"
   # Window name IS the identity — the app must not rename it out from under us.
-  tmux set-option -w -t "$(target "$name")" automatic-rename off
-  tmux set-option -w -t "$(target "$name")" allow-rename off
-  tmux set-option -w -t "$(target "$name")" @gl_profile "$prof"
+  tmux set-option -w -t "$id" automatic-rename off
+  tmux set-option -w -t "$id" allow-rename off
+  tmux set-option -w -t "$id" @gl_profile "$prof"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   echo "spawned $name ($prof) in $dir — watch: gang attach"
@@ -145,196 +236,190 @@ cmd_spawn() {
 
 cmd_up() { # fresh-session bootstrap: spawn (creates the session) then attach
   [ -z "${TMUX:-}" ] || die "up: already inside tmux — use gang spawn / gang adopt"
-  local name="manager"
+  local name="manager" id
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   cmd_spawn "$name" "$@"
-  exec tmux attach -t "$SESSION" \; select-window -t "$(target "$name")"
-}
-
-inject() { # $1 = name, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
-  printf '%s' "$2" | tmux load-buffer -b gangsend -
-  tmux paste-buffer -p -d -b gangsend -t "$(target "$1")"
-  sleep 0.4
-  # Verified = the literal text is visible, OR the TUI collapsed the paste into a
-  # placeholder whose count matches what we sent — Pi renders single-line pastes
-  # as "[paste #N 1081 chars]" and multi-line pastes as "[paste #N +13 lines]"
-  # (count = total lines in the paste). An exact count match is delivery
-  # evidence; a mismatched count is not.
-  local frag len nl; frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
-  nl="$(printf '%s\n' "$2" | wc -l)"
-  capture_joined "$1" | grep -qF -- "$frag" \
-    || capture_joined "$1" | grep -qE "\[paste #[0-9]+ (${len} chars|\+${nl} lines)\]" \
-    || die "delivery NOT verified: neither '$frag' nor a matching paste placeholder (${len} chars / +${nl} lines) appeared in $1's pane — nothing was submitted"
-  tmux send-keys -t "$(target "$1")" Enter
+  id="$(win_id "$name")" || die "up: '$name' vanished between spawn and attach"
+  exec tmux attach -t "$SESSION" \; select-window -t "$id"
 }
 
 cmd_send() {
   local name="" from="${GANG_FROM:-}" wait=0 timeout=300
-  name="${1:-}"; [ -n "$name" ] || usage; shift
+  name="${1:-}"; [ -n "$name" ] || usage_die; shift
   while [ $# -gt 0 ]; do case "$1" in
-    --from) from="$2"; shift 2 ;;
+    --from)    [ $# -ge 2 ] || die "send: $1 needs a value"; from="$2"; shift 2 ;;
+    --timeout) [ $# -ge 2 ] || die "send: $1 needs a value"; timeout="$2"; shift 2 ;;
     -w|--wait) wait=1; shift ;;
-    --timeout) timeout="$2"; shift 2 ;;
     *) break ;;
   esac; done
   [ $# -gt 0 ] || die "send: empty message"
   [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM) — unattributed injection is how the last harness died"
-  exists "$name" || die "no agent '$name' (see: gang roster)"
+  resolve "$name"
 
-  if busy "$name"; then
+  if busy "$AGENT_ID"; then
     [ "$wait" -eq 1 ] || die "'$name' is mid-turn; refusing to inject (gang send $name --wait ... to block until idle)"
-    wait_idle "$name" "$timeout"
+    wait_idle "$AGENT_ID" "$name" "$timeout"
   fi
-  inject "$name" "[gang:$from] $*"
+  inject "$AGENT_ID" "[gang:$from] $*"
   echo "delivered to $name as [gang:$from] (verified in pane, submitted)"
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
   local name="" from="${GANG_FROM:-}" resume=""
-  name="${1:-}"; [ -n "$name" ] || usage; shift || true
+  name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   while [ $# -gt 0 ]; do case "$1" in
-    --resume) resume="$2"; shift 2 ;;
-    --from)   from="$2";   shift 2 ;;
+    --resume) [ $# -ge 2 ] || die "compact: $1 needs a value"; resume="$2"; shift 2 ;;
+    --from)   [ $# -ge 2 ] || die "compact: $1 needs a value"; from="$2";   shift 2 ;;
     *) die "compact: unknown argument '$1'" ;;
   esac; done
-  local prof; prof="$(win_profile "$name")"
-  load_profile "$prof"
-  [ -n "${GANG_COMPACT_CMD:-}" ] || die "profile '$prof' declares no compact command"
+  resolve "$name"
+  [ -n "${GANG_COMPACT_CMD:-}" ] || die "profile '$AGENT_PROFILE' declares no compact command"
   if [ -n "$resume" ] && [ -z "$from" ]; then
     die "compact: --resume needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
   fi
-  busy "$name" && die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
-  inject "$name" "$GANG_COMPACT_CMD"
+  busy "$AGENT_ID" && die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
+  inject "$AGENT_ID" "$GANG_COMPACT_CMD"
   if [ -n "$resume" ]; then
     # Compaction is now running. Harnesses queue input typed mid-turn, so the
     # resume message parks in the input queue and fires the moment compaction
     # completes — the agent picks its work back up with no idle gap and no
     # gang process babysitting the wait.
-    inject "$name" "[gang:$from] $resume"
+    inject "$AGENT_ID" "[gang:$from] $resume"
     echo "compaction triggered on $name ($GANG_COMPACT_CMD); resume queued as [gang:$from] (verified in pane)"
   else
     echo "compaction triggered on $name ($GANG_COMPACT_CMD, verified, submitted)"
   fi
 }
 
-cmd_status() { if busy "$1"; then echo busy; else echo idle; fi; }
+cmd_status() { resolve "$1"; if busy "$AGENT_ID"; then echo busy; else echo idle; fi; }
 
 cmd_context() { # context-window usage via the profile's own introspection
-  local name="${1:-}"; [ -n "$name" ] || usage
-  local prof; prof="$(win_profile "$name")"
-  load_profile "$prof"
+  local name="${1:-}"; [ -n "$name" ] || usage_die
+  resolve "$name"
   declare -F profile_context >/dev/null \
-    || die "profile '$prof' declares no context introspection"
-  profile_context "$(target "$name")"
+    || die "profile '$AGENT_PROFILE' declares no context introspection"
+  profile_context "$AGENT_ID"
 }
 
 cmd_roster() {
   tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
-  local w prof state ctx
-  while read -r w; do
-    prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
-    if [ -z "$prof" ]; then
-      printf '%-16s %-12s %-6s %s\n' "$w" "-" "-" "unadopted"
-      continue
-    fi
-    if busy "$w" 2>/dev/null; then state=busy; else state=idle; fi
-    # context column is best-effort observation; the dedicated command dies loud
-    ctx="$(cmd_context "$w" 2>/dev/null | head -1)" || true
-    printf '%-16s %-12s %-6s %s\n' "$w" "$prof" "$state" "${ctx:--}"
-  done < <(tmux list-windows -t "$SESSION" -F '#W')
+  local id name
+  while read -r id name; do
+    ( roster_row "$id" "$name" ) || true   # one sick agent must not blank the roster
+  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W')
 }
 
-cmd_patrol() { # substrate-side warning sweep: nudge any agent past a context band
-  # The harness-agnostic leg of the warning pillar: context-hook covers Claude
-  # Code in-turn, but harnesses with no hook system (Pi) never hear their own
-  # token count. Patrol reads each agent's normalized profile_context readout
-  # ("<used>k/<win>k (<pct>%)"), and injects the band note as [gang:patrol] to
-  # anyone who crossed a GANG_CONTEXT_BANDS threshold since the last sweep.
-  # Busy or unstable (pane_stable) agents are skipped WITHOUT advancing
-  # state, so the next patrol retries. A usage drop re-arms. Which band an
-  # agent has already been nudged about is a @gl_band window option: it is
-  # exactly as long-lived as the agent, so a re-spawned name starts clean and
-  # tmux is the one that deletes it (Law 1, Law 6 — no cleanup code, no state
-  # outliving its subject). Warn, don't act — compaction timing is the agent's
-  # judgment (gang compact exists for forcing it).
-  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
-  local raw="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
-  local w prof ctx tokens window band prev crossed t n part
-  while read -r w; do
-    prof="$(tmux show-options -wqv -t "$(target "$w")" @gl_profile)"
-    [ -n "$prof" ] || { printf '%-16s %s\n' "$w" "unadopted — not patrolled"; continue; }
-    ctx="$(cmd_context "$w" 2>/dev/null | head -1)" || true
-    if [ -z "$ctx" ]; then
-      printf '%-16s %s\n' "$w" "no context readout — not patrolled (profile declares none, or beacon missing)"
-      continue
-    fi
-    [[ "$ctx" =~ ^([0-9]+)k/([0-9]+)k ]] \
-      || { printf '%-16s %s\n' "$w" "unparseable readout '$ctx' — not patrolled"; continue; }
-    tokens=$(( BASH_REMATCH[1] * 1000 )); window=$(( BASH_REMATCH[2] * 1000 ))
-    band=0; crossed=0
-    for part in ${raw//,/ }; do
-      case "$part" in
-        *%) n="${part%\%}"
-            [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
-            t=$(( n * window / 100 )) ;;
-        *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
-            t="$part" ;;
-      esac
-      [ "$t" -gt 0 ] || die "invalid GANG_CONTEXT_BANDS '$raw' — fix the ladder"
-      if [ "$tokens" -ge "$t" ]; then
-        band=$((band + 1)); [ "$t" -gt "$crossed" ] && crossed="$t"
-      fi
-    done
-    prev="$(tmux show-options -wqv -t "$(target "$w")" @gl_band)" || prev=0
-    [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-    if [ "$band" -lt "$prev" ]; then
-      tmux set-option -w -t "$(target "$w")" @gl_band "$band"
-      printf '%-16s %-18s %s\n' "$w" "$ctx" "re-armed (usage dropped)"
-    elif [ "$band" -gt "$prev" ]; then
-      if busy "$w" 2>/dev/null; then
-        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
-      elif ! pane_stable "$w" 2>/dev/null; then
-        # Screen is churning — turn boundary, compaction redraw, or a render
-        # form the busy regex doesn't know yet. Injecting against a moving
-        # screen is how a nudge jumps the harness's own input queue. Hold;
-        # state is not advanced, so the next sweep retries.
-        printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge"
-      elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$(target "$w")"; then
-        # A human draft, ghost-text suggestion, or queued-message hint is in
-        # the input box — injecting would interleave with it. If the harness
-        # has a draft stash, use it: stash the draft, inject, attempt restore.
-        # Verified on Claude Code 2.1.220: restore-during-busy leaves the
-        # draft in the stash slot (visible "› stashed" badge) rather than the
-        # box — never lost, one Ctrl+S recovers it byte-perfect; a build that
-        # honors restore-during-busy simply puts it back in the box. Without
-        # a stash, hold; state is not advanced, so the next sweep retries.
-        if [ -n "$GANG_STASH_KEYS" ]; then
-          tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
-          sleep 0.4
-          if profile_input_clear "$(target "$w")"; then
-            inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
-            tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
-            tmux set-option -w -t "$(target "$w")" @gl_band "$band"
-            printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band; draft preserved in stash)"
-          else
-            # Stash didn't clear the box (ghost text isn't stashable, or the
-            # chord is rebound) — undo a stash if one took, then hold.
-            tmux send-keys -t "$(target "$w")" "$GANG_STASH_KEYS"
-            printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — stash didn't clear the input box, holding nudge"
-          fi
-        else
-          printf '%-16s %-18s %s\n' "$w" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
-        fi
-      else
-        inject "$w" "[gang:patrol] [context-usage] ${ctx} in context — crossed the ${crossed}-token band. Plan /compact at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended."
-        tmux set-option -w -t "$(target "$w")" @gl_band "$band"
-        printf '%-16s %-18s %s\n' "$w" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
-      fi
-    else
-      printf '%-16s %-18s %s\n' "$w" "$ctx" "steady (band $band)"
-    fi
-  done < <(tmux list-windows -t "$SESSION" -F '#W')
+roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one row
+  local prof state ctx="-"
+  prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
+  [ -n "$prof" ] || { printf '%-16s %-12s %-6s %s\n' "$2" "-" "-" "unadopted"; return; }
+  load_profile "$prof"
+  if busy "$1"; then state=busy; else state=idle; fi
+  # context column is best-effort observation; the dedicated command dies loud
+  if declare -F profile_context >/dev/null; then
+    ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
+  fi
+  printf '%-16s %-12s %-6s %s\n' "$2" "$prof" "$state" "${ctx%%$'\n'*}"
 }
+
+say() { printf '%-16s %-18s %s\n' "$1" "$2" "$3"; }
+
+cmd_patrol() { # ambient warning leg: nudge any agent past a context band
+  # context-hook covers harnesses whose hook system can call gang in-turn;
+  # patrol covers the rest (Pi's model never sees its own status bar). Both
+  # read the same profile readout, run the same ladder, and share the same
+  # @gl_band memory, so whichever notices a crossing first advances the band
+  # and the other reports steady — one note per band, never two.
+  #
+  # Band memory is a window option: exactly as long-lived as the agent, so a
+  # re-spawned name starts clean and tmux is the one that deletes it (Law 1,
+  # Law 6 — no cleanup code, no state outliving its subject). Warn, don't act —
+  # compaction timing is the agent's judgment (gang compact exists to force it).
+  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
+  ladder 0 200000 >/dev/null   # one loud complaint about a bad ladder, not one per agent
+  local id name
+  while read -r id name; do
+    ( patrol_one "$id" "$name" ) || true
+  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W')
+}
+
+patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
+               # not the sweep, and advances no state, so the next sweep retries.
+  local prof ctx tw tokens window band crossed prev
+  prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
+  [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
+  load_profile "$prof"
+  declare -F profile_context >/dev/null \
+    || { say "$2" "" "profile declares no context readout — not patrolled"; return; }
+  ctx="$(profile_context "$1" 2>/dev/null)" \
+    || { say "$2" "" "no context readout — not patrolled (beacon missing?)"; return; }
+  ctx="${ctx%%$'\n'*}"
+  tw="$(ctx_tokens "$ctx")" \
+    || { say "$2" "$ctx" "unparseable readout — not patrolled"; return; }
+  read -r tokens window <<<"$tw"
+  read -r band crossed <<<"$(ladder "$tokens" "$window")"
+  prev="$(tmux show-options -wqv -t "$1" @gl_band)" || prev=0
+  [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+
+  # Injecting into a pane that is not quietly idle corrupts it, so every guard
+  # below skips rather than risks it — and a skip never burns state.
+  if [ "$band" -lt "$prev" ]; then
+    tmux set-option -w -t "$1" @gl_band "$band"
+    say "$2" "$ctx" "re-armed (usage dropped)"
+  elif [ "$band" -eq "$prev" ]; then
+    say "$2" "$ctx" "steady (band $band)"
+  elif busy "$1"; then
+    say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
+  elif ! pane_stable "$1"; then
+    say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge"
+  elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$1"; then
+    # A human draft, ghost-text suggestion, or queued-message hint is in the
+    # input box; an injection would interleave with it. Holding costs one sweep.
+    say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
+  else
+    inject "$1" "[gang:patrol] $(band_note "$ctx" "$crossed")"
+    tmux set-option -w -t "$1" @gl_band "$band"
+    say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
+  fi
+}
+
+cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the agent's pane
+  # Wire in Claude Code's hooks config as:
+  #   {"type": "command", "command": "gang context-hook"}
+  # on UserPromptSubmit and PostToolUse. Measures with the same profile readout
+  # patrol uses and shares patrol's @gl_band memory, so the two legs cannot both
+  # warn about one crossing. Emits one additionalContext note per band. Never
+  # blocks a turn: anything it cannot determine is a silent exit 0.
+  local event prof ctx tw tokens window band crossed prev
+  # The payload is on stdin; the event name is the only field this needs, and it
+  # goes straight back out in the reply.
+  event="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
+    2>/dev/null)" || exit 0
+  [ -n "$event" ] || exit 0
+  # TMUX_PANE is inherited by everything the harness spawns inside its pane; no
+  # pane means this harness is not a gangline agent and has no band to track.
+  [ -n "${TMUX_PANE:-}" ] || exit 0
+  prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
+  [ -n "$prof" ] || exit 0
+  load_profile "$prof"
+  declare -F profile_context >/dev/null || exit 0
+  ctx="$(profile_context "$TMUX_PANE" 2>/dev/null)" || exit 0
+  ctx="${ctx%%$'\n'*}"
+  tw="$(ctx_tokens "$ctx")" || exit 0
+  read -r tokens window <<<"$tw"
+  read -r band crossed <<<"$(ladder "$tokens" "$window")"
+  prev="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_band)" || prev=0
+  [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+  [ "$band" -ne "$prev" ] && tmux set-option -w -t "$TMUX_PANE" @gl_band "$band"
+  if [ "$band" -gt "$prev" ]; then
+    # The note carries no quote and no backslash, so this stays a printf.
+    printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' \
+      "$event" "$(band_note "$ctx" "$crossed")"
+  fi
+  exit 0
+}
+
+# --- diagnostics ------------------------------------------------------------
 
 file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact title
   command -v gh >/dev/null || die "doctor --file-issue: gh CLI not installed"
@@ -400,139 +485,38 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
   return "$drift"
 }
 
-cmd_context_hook() { # Claude Code hook mode: stdin payload -> band-crossing note
-  # Wire in hooks config as: {"type": "command", "command": "gang context-hook"}
-  # on UserPromptSubmit and PostToolUse. Reads the session transcript's own
-  # usage records (prompt-side tokens at the last call = current window) and
-  # emits one additionalContext note per crossed GANG_CONTEXT_BANDS threshold;
-  # a usage drop (compaction) re-arms the ladder. Never blocks a turn.
-  HOOK_PAYLOAD="$(cat)" python3 - <<'PYEOF'
-import json
-import os
-import re
-import sys
-from pathlib import Path
-
-try:
-    payload = json.loads(os.environ.get("HOOK_PAYLOAD", ""))
-except json.JSONDecodeError:
-    sys.exit(0)
-transcript = payload.get("transcript_path")
-session_id = payload.get("session_id")
-if not transcript or not session_id or not Path(transcript).is_file():
-    sys.exit(0)
-
-with open(transcript, "rb") as f:
-    f.seek(0, os.SEEK_END)
-    f.seek(max(0, f.tell() - 262144))
-    tail = f.read().decode("utf-8", errors="replace")
-
-usage, model = None, ""
-for line in tail.splitlines():
-    try:
-        rec = json.loads(line)
-    except json.JSONDecodeError:
-        continue
-    msg = rec.get("message") or {}
-    u = msg.get("usage")
-    if u and "input_tokens" in u:
-        usage, model = u, msg.get("model", model)
-if usage is None:
-    sys.exit(0)
-
-tokens = (
-    usage.get("input_tokens", 0)
-    + usage.get("cache_creation_input_tokens", 0)
-    + usage.get("cache_read_input_tokens", 0)
-)
-if os.environ.get("GANG_CONTEXT_WINDOW"):
-    window = int(os.environ["GANG_CONTEXT_WINDOW"])
-elif re.match(r"claude-(fable|opus|sonnet)-5", model):
-    window = 1_000_000
-else:
-    window = 200_000
-pct = 100 * tokens // window
-
-
-def emit(note: str) -> None:
-    print(
-        json.dumps(
-            {
-                "hookSpecificOutput": {
-                    "hookEventName": payload.get("hook_event_name", "PostToolUse"),
-                    "additionalContext": note,
-                }
-            }
-        )
-    )
-
-
-raw_bands = os.environ.get("GANG_CONTEXT_BANDS", "120000,180000,250000,90%")
-try:
-    thresholds = sorted(
-        int(part[:-1].strip()) * window // 100 if part.strip().endswith("%") else int(part)
-        for part in raw_bands.split(",")
-        if part.strip()
-    )
-    if not thresholds or any(t <= 0 for t in thresholds):
-        raise ValueError(raw_bands)
-except ValueError:
-    emit(f"[context-usage] invalid GANG_CONTEXT_BANDS {raw_bands!r} — fix the ladder")
-    sys.exit(0)
-
-band = sum(1 for t in thresholds if tokens >= t)
-
-state = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / f"gang-context-band-{session_id}"
-try:
-    prev = int(state.read_text())
-except (FileNotFoundError, ValueError):
-    prev = 0
-
-if band != prev:
-    state.write_text(str(band))
-if band > prev:
-    emit(
-        f"[context-usage] {tokens:,} tokens in context (~{pct}% of ~{window:,}) — "
-        f"crossed the {thresholds[band - 1]:,}-token band. Plan /compact at the "
-        f"next natural seam (arc boundary), before auto-compact picks the seam "
-        f"for you — and queue a resume directive behind it so work continues "
-        f"unattended."
-    )
-PYEOF
-  exit 0
-}
-
 cmd_capture() { # trailing blank pane rows are dead space, not content
-  capture "$1" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
+  local id
+  id="$(win_id "$1")" || die "no window '$1' in session '$SESSION'"
+  capture "$id" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" prof=""
-  name="${1:-}"; [ -n "$name" ] || usage; shift
+  local name="" prof="" id
+  name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
-    -p|--profile) prof="$2"; shift 2 ;;
+    -p|--profile) [ $# -ge 2 ] || die "adopt: $1 needs a value"; prof="$2"; shift 2 ;;
     *) die "adopt: unknown argument '$1'" ;;
   esac; done
   [ -n "$prof" ] || die "adopt: -p <profile> is required"
   load_profile "$prof"
-  exists "$name" || die "no window '$name' in session '$SESSION' to adopt"
-  tmux set-option -w -t "$(target "$name")" automatic-rename off
-  tmux set-option -w -t "$(target "$name")" allow-rename off
-  tmux set-option -w -t "$(target "$name")" @gl_profile "$prof"
+  id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
+  tmux set-option -w -t "$id" automatic-rename off
+  tmux set-option -w -t "$id" allow-rename off
+  tmux set-option -w -t "$id" @gl_profile "$prof"
   echo "adopted $name as a $prof agent"
 }
 
 cmd_kill() {
-  exists "$1" || die "no agent '$1'"
-  tmux kill-window -t "$(target "$1")"
+  local id
+  id="$(win_id "$1")" || die "no agent '$1'"
+  tmux kill-window -t "$id"
   echo "killed $1"
 }
 
 cmd_down() { # inverse of up: kill the whole team
-  # No state to sweep: per-agent band memory is a window option, so tmux deletes
-  # it along with the windows. context-hook bands are keyed by harness session
-  # id, not by gang session, so this command cannot know which belong to the team
-  # it is killing; those die with XDG_RUNTIME_DIR at logout.
+  # No state to sweep: band memory is a window option, so tmux deletes it along
+  # with the windows it belongs to.
   tmux has-session -t "$SESSION" 2>/dev/null || die "no session '$SESSION' running"
   echo "killing '$SESSION': $(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')"
   tmux kill-session -t "$SESSION"
@@ -544,24 +528,25 @@ cmd_profiles() { list_profiles; }
 
 # --- dispatch ---------------------------------------------------------------
 
-cmd="${1:-}"; [ -n "$cmd" ] || usage; shift || true
+cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
   up)       cmd_up "$@" ;;
   spawn)    cmd_spawn "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;
-  status)   [ $# -ge 1 ] || usage; cmd_status "$1" ;;
+  status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   context)  cmd_context "$@" ;;
   context-hook) cmd_context_hook ;;
-  wait)     [ $# -ge 1 ] || usage; wait_idle "$1" "${2:-300}"; echo idle ;;
-  capture)  [ $# -ge 1 ] || usage; cmd_capture "$@" ;;
+  wait)     [ $# -ge 1 ] || usage_die; resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo idle ;;
+  capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
   doctor)   cmd_doctor "$@" ;;
   attach)   cmd_attach ;;
-  kill)     [ $# -ge 1 ] || usage; cmd_kill "$1" ;;
+  kill)     [ $# -ge 1 ] || usage_die; cmd_kill "$1" ;;
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
-  *) die "unknown command '$cmd' (gang with no args for usage)" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command '$cmd' (gang --help for usage)" ;;
 esac
