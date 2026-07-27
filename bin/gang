@@ -788,9 +788,16 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
       printf '%-12s %-26s %s\n' "$prof" "?" "version command failed: $GANG_VERSION_CMD"
       drift=1; continue
     fi
+    # Matched as a whole word anywhere in the line, not as a prefix: harnesses
+    # do not agree on where the number goes. Claude Code leads with it ("2.1.220
+    # (Claude Code)"), Codex trails it ("codex-cli 0.144.5"), and a pin cannot
+    # carry the name to make a prefix work — GANG_VERIFIED_VERSIONS is
+    # space-separated so it can list several. Word boundaries also make the
+    # comparison stricter than the prefix it replaces: 0.144.5 no longer matches
+    # a hypothetical 0.144.50, and a build suffix has to be pinned to pass.
     match=0
     for v in $GANG_VERIFIED_VERSIONS; do
-      case "$installed" in "$v"*) match=1 ;; esac
+      case " $installed " in *" $v "*) match=1 ;; esac
     done
     if [ "$match" -eq 1 ]; then
       printf '%-12s %-26s %s\n' "$prof" "$installed" "OK (verified: $GANG_VERIFIED_VERSIONS)"

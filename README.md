@@ -1,8 +1,8 @@
 # Gangline
 
 A harness harness. Gangline unifies any CLI coding agent it can get its hands on —
-Claude Code, Pi, whatever ships next — into a tmux-powered team, using each for its
-strengths, with minimal harness-specific integration points.
+Claude Code, Codex, Pi, whatever ships next — into a tmux-powered team, using each
+for its strengths, with minimal harness-specific integration points.
 
 The name: a gangline is the single rope that hitches many dogs, each in its own
 harness, to one sled and one musher. The integration point is the attachment clip —
@@ -108,7 +108,9 @@ Requires git and tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 `bin/gang` is the tool in full. Proven live: Claude Code and Pi agents in one team,
 manager→worker tasking on both, and a cross-harness relay in which a Claude Code
 agent used `gang send` to task a Pi agent, which acted on it — every hop
-identity-prefixed and pane-verified.
+identity-prefixed and pane-verified. Codex has been driven the same way end to end —
+spawned, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
+answered on the other side.
 
 Agent names are yours. Whatever you pass to `gang spawn` becomes the tmux window
 name, the identity in every `[gang:<sender>]` prefix, and the handle every command
@@ -189,6 +191,13 @@ statusline payload carries `context_window` figures and the beacon paints them i
 the pane, where gang can read them. Every consumer — `gang context`, the roster
 column, and both warning legs below — reads that one readout, so nothing in the
 system can disagree with anything else about how full a window is.
+
+A profile can also decline. Codex declares no readout, because the only place it
+prints one is a hint row that appears while the composer holds text — reading it
+would mean typing into the agent to make the number show up, and a passive observer
+that has to poke its subject is not one. So `gang context` on a Codex agent fails
+loudly, the roster column shows `-`, and patrol reports it as not patrolled instead
+of quietly skipping it. An unread window is a worse thing to hide than to admit.
 
 **Warn.** Two legs, because one harness's hook system is not another's:
 
