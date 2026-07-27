@@ -24,8 +24,16 @@ gang_root() { # $1 = path to this script; the install tree it lives in
   cd -P "$(dirname "$src")/.." && pwd
 }
 ROOT="$(gang_root "${BASH_SOURCE[0]}")"
-[ -d "$ROOT/profiles" ] \
-  || die "no profiles/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
+# Both, because list_roles skips a directory that is not there and returns 0 --
+# so a tree missing roles/ answered `gang roles` with silence and a clean exit,
+# and every caller read that as "this install has no roles" rather than "this
+# install is broken". Same shape as an unresolvable ROOT: fail where it is wrong,
+# not where it is noticed.
+for _d in profiles roles; do
+  [ -d "$ROOT/$_d" ] \
+    || die "no $_d/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
+done
+unset _d
 # Every rung absolute, because context rot tracks absolute length, not how full
 # the window happens to be: a 300k context is degraded whether the window is 200k
 # or 1M. A proportional rung scales the wrong way — 90% of 1M asserts that 900k is
