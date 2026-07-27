@@ -261,36 +261,38 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
 
 # --- delivery ---------------------------------------------------------------
 
-evidence() { # $1 = window id, $2 = literal fragment, $3 = placeholder ERE; matching lines
-  local pane lit ph
-  pane="$(capture_joined "$1")" || die "cannot read pane $1"
-  lit="$(printf '%s\n' "$pane" | grep -cF -- "$2")" || true
-  ph="$(printf '%s\n' "$pane" | grep -cE -- "$3")" || true
-  printf '%s' "$(( lit + ph ))"
+landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
+  if declare -F profile_input >/dev/null; then profile_input "$1"
+  else capture_joined "$1"; fi
 }
 
 inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
-  local buf="gang-$$" frag len nl ph before after
-  frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"; len=${#2}
-  nl="$(printf '%s\n' "$2" | wc -l)"
-  # Verified = the literal text is visible, OR the TUI collapsed the paste into a
-  # placeholder whose count matches what we sent — Pi renders single-line pastes
-  # as "[paste #N 1081 chars]" and multi-line pastes as "[paste #N +13 lines]"
-  # (count = total lines in the paste). An exact count match is delivery
-  # evidence; a mismatched count is not.
-  ph="\[paste #[0-9]+ (${len} chars|\+${nl} lines)\]"
-  # Counted BEFORE the paste, because "the text is somewhere on screen" is not
-  # evidence: an identical earlier send is still in the transcript, and matching
-  # it would verify a paste that never landed. Only a RISE proves this one did.
-  before="$(evidence "$1" "$frag" "$ph")"
+  local buf="gang-$$" frag before after
+  frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
+  # Verified = the paste changed the input box, which is where a paste lands.
+  # Reading the box asks the profile (Law 4) instead of teaching gang how each
+  # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
+  # Code writes "[Pasted text #1 +10 lines]", counting lines BEYOND the first,
+  # and collapses a long single-line paste to "[Pasted text #2]" with no count
+  # at all; Pi writes "[paste #N +13 lines]", counting every line. A short
+  # paste stays literal in both. Every one of them is a box that differs from
+  # the box before the paste.
+  #
+  # A CHANGE, not "the box is non-empty": the box may legitimately hold a draft
+  # already, and appending to a draft still changes it. Comparing against the
+  # box captured BEFORE this paste is also what keeps an identical earlier send
+  # sitting in the transcript from vouching for a paste that never landed.
+  before="$(landing_zone "$1")" \
+    || die "cannot read the input box of $1 — the harness is not taking input"
   # Buffer name is per-process: patrol runs on cron, and a concurrent send would
   # otherwise overwrite the buffer between load-buffer and paste-buffer.
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
   sleep 0.4
-  after="$(evidence "$1" "$frag" "$ph")"
-  [ "$after" -gt "$before" ] \
-    || die "delivery NOT verified: neither '$frag' nor a matching paste placeholder (${len} chars / +${nl} lines) appeared in the pane — nothing was submitted"
+  after="$(landing_zone "$1")" \
+    || die "cannot read the input box of $1 after pasting — nothing was submitted"
+  [ "$after" != "$before" ] \
+    || die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted"
   tmux send-keys -t "$1" Enter
 }
 

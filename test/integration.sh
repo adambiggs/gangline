@@ -57,6 +57,20 @@ paint() { # $1 = window name, $2 = beacon line the profile reads back
   tmux send-keys -t "$(id_of "$1")" "printf '%s\\n' '$2'" Enter; sleep 0.4
 }
 
+mkdir -p "$SHIM/custom-profiles"
+fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
+  cat > "$SHIM/custom-profiles/$1.sh" <<SH
+GANG_LAUNCH="$2"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
+SH
+}
+
 # --- lifecycle ---------------------------------------------------------------
 
 "$GANG" spawn alpha -p bash -d /tmp >/dev/null
@@ -84,6 +98,38 @@ check "a repeat of an identical message still lands" "grew" \
 # send above, a paste that never lands must NOT verify against the old echo.
 PATH="$SHIM:$PATH" "$GANG" send alpha --from tester "MARK_TWICE" >/dev/null 2>&1
 check "a paste that never lands is not reported as delivered" "1" "$?"
+
+# A real TUI does not echo a paste back — it COLLAPSES it into a placeholder, and
+# the shape of that placeholder is the harness's own business. Claude Code writes
+# "[Pasted text #1 +10 lines]", counting lines BEYOND the first, and drops the
+# count entirely for a long single-line paste ("[Pasted text #2]"); Pi writes
+# "[paste #N +13 lines]", counting every line. Verification that scrapes the pane
+# for the literal text, or for any one harness's placeholder, quietly stops
+# verifying real sends to every other harness — and because it dies BEFORE the
+# submit, the message is left parked in the agent's input box, which reads to the
+# operator as "nothing was sent" while the agent sits on an unsent draft.
+# The box changing is the harness-independent fact underneath all of them.
+cat > "$SHIM/collapsing-tui" <<'SH'
+#!/usr/bin/env bash
+stty -echo 2>/dev/null
+n=0
+printf '\033[2J\033[H❯ \n'
+while IFS= read -r _; do
+  n=$((n + 1))
+  printf '\033[2J\033[H❯ [Pasted text #%d]\n' "$n"
+done
+SH
+chmod +x "$SHIM/collapsing-tui"
+fake_harness collapsing "$SHIM/collapsing-tui"
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" spawn collapser -p collapsing -d /tmp >/dev/null 2>&1
+"$GANG" send collapser --from tester "$(printf 'first line\nsecond line\nthird line')" \
+  >/dev/null 2>&1
+check "a paste the TUI collapses instead of echoing still verifies" "0" "$?"
+# Guards the fixture: if this stand-in ever echoed the paste, the check above
+# would pass on the literal and prove nothing about collapsed ones.
+check "and the pane never showed the literal text" "no" "$(has collapser 'second line')"
+unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
 
@@ -134,19 +180,6 @@ check "GANG_ROLES overrides the shipped brief" "yes" \
 # quiet-only readiness test fires before the harness reads a byte of stdin and
 # the brief pastes into a process that is not listening. This profile is blank
 # for three seconds and then paints its box, the way a real one boots.
-mkdir -p "$SHIM/custom-profiles"
-fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
-  cat > "$SHIM/custom-profiles/$1.sh" <<SH
-GANG_LAUNCH="$2"
-GANG_BUSY_REGEX=""
-GANG_VERIFIED_VERSIONS="any"
-profile_input() {
-  local line
-  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
-  printf '%s' "\${line#❯}" | tr -d '\302\240'
-}
-SH
-}
 fake_harness slowboot "sleep 3; PS1='❯ ' bash --norc"
 
 check "GANG_PROFILES adds a harness" "yes" \
