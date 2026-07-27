@@ -2,6 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-07-25
+- **Amended:** 2026-07-27 — impersonation paragraph softened from a mechanical
+  guarantee to a trust-scoped convention; a test suite typing into the manager's
+  pane demonstrated the prefix is spoofable by any writer to the pane.
 
 ## Context
 
@@ -36,9 +39,12 @@ tmux is the communication substrate, not a fallback and not a hack.
   regex, compact command). Harness-native extensions require their own ADR proving
   the value is unachievable from outside.
 
-The required sender prefix answers impersonation mechanically: an agent can always
-tell operator input from peer traffic. Keystroke relay is safe here precisely
-because attribution is mandatory and unattributed sends are an error.
+The required sender prefix answers impersonation as a convention, not a security
+property: attributed traffic is distinguishable, but nothing stops any writer to
+the pane from typing the prefix itself. The convention holds because every writer
+is already trusted — single-tenant, one operator, one host (law 2). Keystroke
+relay is safe here because attribution is mandatory, unattributed sends are an
+error, and no untrusted principal can reach a pane.
 
 ## Consequences
 
