@@ -116,6 +116,24 @@ check "spawn registers an agent" "idle" "$("$GANG" status alpha)"
 check "roster lists it"          "alpha bash idle" \
   "$("$GANG" roster | awk '$1=="alpha"{print $1, $2, $3}')"
 
+# `gang up` is the first command a new install runs, and the only one that both
+# spawns and briefs with no arguments at all — so it is the one whose breakage a
+# stranger meets first. It ends in an exec that hands the terminal over, which is
+# why it went untested: drive it through a tmux that swallows the handover and
+# assert what it did before reaching it.
+mkdir -p "$SHIM/attach"
+cat > "$SHIM/attach/tmux" <<SH
+#!/usr/bin/env bash
+case "\${1:-}" in attach|switch-client) exit 0 ;; esac
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/attach/tmux"
+
+PATH="$SHIM/attach:$PATH" "$GANG" up -p bash -d /tmp >/dev/null
+check "up needs no agent name"  "idle" "$("$GANG" status manager)"
+sleep 0.5
+check "and briefs it as manager" "yes" "$(has manager roles/manager.md)"
+
 # --- delivery ----------------------------------------------------------------
 
 "$GANG" send alpha --from tester "MARK_ONE" >/dev/null
