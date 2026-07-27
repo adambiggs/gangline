@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # gang — gangline: drive a team of CLI agents as tmux windows.
 # Laws: CONSTITUTION.md. Transport decision: docs/adr/0001-tmux-is-the-substrate.md
 set -euo pipefail

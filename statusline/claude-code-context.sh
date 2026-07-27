@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Claude Code statusline: render the gangline context beacon.
 #
 # The statusline payload natively carries context_window numbers, so this is a

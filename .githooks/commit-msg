@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
 # Conventional Commits gate. Enable in a clone with:
 #   git config core.hooksPath .githooks
 set -euo pipefail

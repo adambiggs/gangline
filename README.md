@@ -233,3 +233,7 @@ live TUI and the new version appended to the pin.
 `CONSTITUTION.md` holds the laws that bind every change here — read it first; Law 1
 is that tmux is not a hack, it IS the substrate. `CONTRIBUTING.md` covers setup and
 commit conventions.
+
+## License
+
+Apache-2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Adam Biggs.

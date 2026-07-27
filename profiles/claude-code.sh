@@ -1,5 +1,6 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
+# SPDX-License-Identifier: Apache-2.0
 # Claude Code CLI. Busy markers verified live against the installed TUI — two
 # forms: some phases show "esc to interrupt", but tool execution and long turns
 # render only a spinner status line (glyph + gerund + ellipsis), e.g.

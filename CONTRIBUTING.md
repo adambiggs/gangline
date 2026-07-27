@@ -54,4 +54,13 @@ they were verified against — that pin is what `gang doctor` reads.
   branch in `bin/gang` needs an ADR in `docs/adr/`.
 - **Law 9** — when in doubt, the answer is prose in an agent's prompt, not code here.
 
+Every shell and Python file carries an `SPDX-License-Identifier` line; new ones
+need it too.
+
 Shell changes must pass `bash -n` and `shellcheck -S warning`.
+
+## License
+
+Contributions land under Apache-2.0, the same license the repo ships under:
+section 5 puts anything you intentionally submit for inclusion under those terms
+unless you say otherwise in the pull request. There is no CLA to sign.
