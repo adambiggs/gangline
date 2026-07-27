@@ -85,10 +85,20 @@ gang down                                       # kill the whole team
 ## Install
 
 ```sh
+curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
+```
+
+Clones to `~/.local/share/gangline` and links `gang` into `~/.local/bin`; re-run it
+to update. `GANGLINE_HOME` and `GANGLINE_BIN` move either. If you would rather not
+pipe a script into a shell, read it first — it is fifty lines.
+
+From a clone instead:
+
+```sh
 ln -sf "$(pwd)/bin/gang" ~/.local/bin/gang
 ```
 
-Requires tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
+Requires git and tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 
 ---
 
@@ -232,6 +242,7 @@ context readout or detecting a non-empty input box.
 
 ```
 bin/gang      the whole tool
+install.sh    clone + link, idempotent
 profiles/     one small file per harness
 roles/        one markdown brief per role
 statusline/   the Claude Code context beacon
