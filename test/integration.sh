@@ -43,10 +43,8 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
 has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
-paint() { # $1 = window name, $2 = beacon line; also paints an empty input box
-  # The trailing "❯ " stands in for a real TUI's prompt, so the bash profile's
-  # input-box guard sees an empty box rather than no box at all.
-  tmux send-keys -t "$(id_of "$1")" "printf '%s\\n❯ \\n' '$2'" Enter; sleep 0.4
+paint() { # $1 = window name, $2 = beacon line the profile reads back
+  tmux send-keys -t "$(id_of "$1")" "printf '%s\\n' '$2'" Enter; sleep 0.4
 }
 
 # --- lifecycle ---------------------------------------------------------------
@@ -117,24 +115,48 @@ sleep 0.5
 check "GANG_ROLES overrides the shipped brief" "yes" \
   "$(has custom "$SHIM/custom-roles/worker.md")"
 
-# GANG_PROFILES is the same extension point for harnesses.
+# --- readiness ---------------------------------------------------------------
+
+# An agent is not ready the moment its window exists. A real TUI paints nothing
+# for the first seconds, and an EMPTY pane is a perfectly STABLE pane — so a
+# quiet-only readiness test fires before the harness reads a byte of stdin and
+# the brief pastes into a process that is not listening. This profile is blank
+# for three seconds and then paints its box, the way a real one boots.
 mkdir -p "$SHIM/custom-profiles"
-fake_harness() { # $1 = profile name, $2 = launch command
+fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
   cat > "$SHIM/custom-profiles/$1.sh" <<SH
 GANG_LAUNCH="$2"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
 SH
 }
-fake_harness fakeharness "sleep 60"
+fake_harness slowboot "sleep 3; PS1='❯ ' bash --norc"
+
 check "GANG_PROFILES adds a harness" "yes" \
-  "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles | grep -qx fakeharness && echo yes || echo no)"
-GANG_PROFILES="$SHIM/custom-profiles" "$GANG" spawn faker -p fakeharness -d /tmp >/dev/null
+  "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles | grep -qx slowboot && echo yes || echo no)"
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" spawn slowpoke -p slowboot -r worker -d /tmp >/dev/null
+check "a brief waits for a harness that has not painted yet" "yes" \
+  "$(has slowpoke 'in the worker role')"
 
 # patrol runs from cron, without the GANG_PROFILES that spawned this agent. It
 # must still account for it: an agent missing from the roster reads as no agent.
-check "an unresolvable profile is reported, not dropped" "faker fakeharness" \
-  "$("$GANG" roster | awk '$1=="faker"{print $1, $2}')"
+check "an unresolvable profile is reported, not dropped" "slowpoke slowboot" \
+  "$("$GANG" roster | awk '$1=="slowpoke"{print $1, $2}')"
+
+# A first-run modal — Claude Code's "Do you trust the files in this folder?" —
+# draws a "❯" of its own, indented, as a menu cursor. It is not an input box,
+# and a brief pasted into a security prompt answers it. Refuse, and say so.
+fake_harness modal "printf '\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n'; sleep 60"
+out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_BOOT_TIMEOUT=3 \
+  "$GANG" spawn modalagent -p modal -r worker -d /tmp 2>&1)"
+check "a brief is never pasted into a first-run dialog" "yes" \
+  "$(case "$out" in *"other than its input box"*) echo yes ;; *) echo no ;; esac)"
+check "and the dialog is left untouched" "no" "$(has modalagent 'gang:spawn')"
 
 # --- context bands -------------------------------------------------------------
 

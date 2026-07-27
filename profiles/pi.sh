@@ -20,15 +20,16 @@ profile_context() { # $1 = tmux target; Pi's status bar renders "30.7%/272k" nat
   awk -v p="$pct" -v w="$win" 'BEGIN{printf "%.0fk/%sk (%s%%)\n", p*w/100, w, p}'
 }
 
-profile_input_clear() { # $1 = tmux target; Pi's input area holds no draft text
+profile_input() { # $1 = tmux target; prints Pi's input area, fails if it has none
   # The input area sits between the last two full-width horizontal rules;
   # anything non-blank there is a draft an injection would interleave with.
-  # No rule pair found = hold, conservatively.
+  # No rule pair found means Pi has not drawn its input area yet (still booting)
+  # or something else owns the screen — either way, not ready and not clear.
   tmux capture-pane -pJ -t "$1" | awk '
     /^──────────/ { r1 = r2; r2 = NR }
     { line[NR] = $0 }
     END {
       if (!r1) exit 1
-      for (i = r1 + 1; i < r2; i++) if (line[i] ~ /[^ \t]/) exit 1
+      for (i = r1 + 1; i < r2; i++) print line[i]
     }'
 }

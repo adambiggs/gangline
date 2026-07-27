@@ -39,15 +39,17 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
-profile_input_clear() { # $1 = tmux target; input box holds no draft/ghost/queued text
-  # The input box is the last "❯"-prefixed line in the pane. A human draft,
-  # a dimmed ghost-text suggestion, and the "Press up to edit queued messages"
-  # hint all render as text after the prompt char — any of them means an
-  # injection would interleave. No "❯" visible at all = hold, conservatively.
+profile_input() { # $1 = tmux target; prints the input box's contents, fails if no box
+  # The input box is the last "❯"-prefixed line in the pane. Failing when no
+  # such line exists carries real information both ways: before the TUI has
+  # painted it the harness is not yet taking input, and once it is gone the
+  # screen belongs to something else (a dialog, a pager) — either way, hold.
+  # A human draft, a dimmed ghost-text suggestion, and the "Press up to edit
+  # queued messages" hint all render as text after the prompt char.
   # The idle cursor cell captures as U+00A0 (no-break space), whose [:space:]
-  # membership is locale-dependent — strip its bytes so a cron locale can't
-  # turn every empty box into a false hold.
+  # membership is locale-dependent — strip its bytes so a cron locale cannot
+  # read every empty box as occupied.
   local line
   line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
-  ! printf '%s' "${line#❯}" | tr -d '\302\240' | grep -q '[^[:space:]]'
+  printf '%s' "${line#❯}" | tr -d '\302\240'
 }

@@ -55,7 +55,8 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      the manager with: manager), GANG_FROM (sender identity for send),
      GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
-     GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones)
+     GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
+     GANG_BOOT_TIMEOUT (seconds to wait for a spawned harness to take input: 30)
 EOF
 }
 
@@ -64,10 +65,10 @@ usage_die() { usage >&2; exit 1; }
 # --- profiles ---------------------------------------------------------------
 #
 # A profile says how to talk to one harness: how to launch it, how to tell it is
-# mid-turn, how to read its context. GANG_PROFILES points at your own directory,
-# which is searched before the shipped one, so a new harness — or a fix to a
-# shipped profile whose TUI has moved on — costs a file, never a patch to the
-# installed tree.
+# mid-turn, how to read its context, how to see its input box. GANG_PROFILES
+# points at your own directory, which is searched before the shipped one, so a
+# new harness — or a fix to a shipped profile whose TUI has moved on — costs a
+# file, never a patch to the installed tree.
 
 list_profiles() {
   local d p
@@ -92,7 +93,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
-  unset -f profile_context profile_input_clear 2>/dev/null || true
+  unset -f profile_context profile_input 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
@@ -200,21 +201,47 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   [ "$a" = "$b" ]
 }
 
+# A harness that declares an input box tells gang two things no generic screen
+# scrape can: that the TUI is up at all, and that a paste would not land on top
+# of something already typed. Profiles without one keep the generic path.
+input_painted() { # $1 = window id; the harness has drawn an input box
+  declare -F profile_input >/dev/null || return 0
+  profile_input "$1" >/dev/null
+}
+
+input_clear() { # $1 = window id; that box holds no draft, ghost text, or queued hint
+  declare -F profile_input >/dev/null || return 0
+  local box
+  box="$(profile_input "$1")" || return 1
+  ! printf '%s' "$box" | grep -q '[^[:space:]]'
+}
+
 wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
-  # A freshly spawned TUI paints its banner, checks for updates, and settles.
-  # Injecting into that is injecting into a moving screen, so wait for quiet.
+  # Two conditions, because a booting harness passes either one alone.
   #
-  # Quiet is the ONLY test here — deliberately not profile_input_clear. A fresh
-  # TUI paints a ghost-text suggestion into its empty input box (Claude Code:
-  # 'Try "create a util logging.py that..."'), which that guard reads as
-  # content. Right for patrol, which must never type over a human's draft;
-  # wrong for an agent two seconds old whose box holds nothing but a
-  # placeholder, where waiting on it never returns at all.
+  # Quiet is not enough: for the first seconds the pane is EMPTY, and an empty
+  # screen is a perfectly stable screen. Quiet alone therefore says "ready"
+  # before the harness has read a byte of stdin, and the brief pastes into a
+  # process that is not listening (lived it: `gang up` spawned a manager and
+  # then failed to verify a brief that had gone nowhere). A painted input box
+  # is the direct evidence that the TUI is up and taking input.
+  #
+  # The box's CONTENT is deliberately not tested. A fresh TUI paints ghost text
+  # into its empty box (Claude Code: 'Try "fix typecheck errors"'), which
+  # input_clear reads as content — right for patrol, which must never type over
+  # a human's draft; wrong for an agent two seconds old, where waiting on it
+  # never returns at all.
+  # Exit 2 is the settled-but-not-an-input-box case, worth telling apart because
+  # it is nearly always a first-run modal a human has to answer — Claude Code's
+  # "Do you trust the files in this folder?". Its menu cursor is a "❯" too, but
+  # indented, so no input box is found and gang refuses to paste a brief into a
+  # security prompt.
   local t=0
   while [ "$t" -lt "$2" ]; do
-    pane_stable "$1" && return 0
+    input_painted "$1" && pane_stable "$1" && return 0
     sleep 1; t=$((t + 1))
   done
+  pane_stable "$1" && return 2
   return 1
 }
 
@@ -336,8 +363,15 @@ cmd_spawn() {
   echo "spawned $name ($prof) in $dir — watch: gang attach"
   [ -n "$role" ] || return 0
   echo "waiting for $name to finish booting before briefing it..."
-  wait_ready "$id" 30 \
-    || die "'$name' is running but never went quiet, so it has no role — look at it with 'gang attach' or 'gang capture $name'"
+  # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
+  # on the very return codes the case below exists to report.
+  local ready=0
+  wait_ready "$id" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
+  case "$ready" in
+    0) ;;
+    2) die "'$name' is up but is showing something other than its input box, so it has no role — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang kill $name' and spawn again." ;;
+    *) die "'$name' is running but never went quiet, so it has no role — look at it with 'gang attach' or 'gang capture $name'" ;;
+  esac
   inject "$id" "[gang:spawn] $(role_brief "$role" "$name")"
   echo "briefed $name as $role"
 }
@@ -496,7 +530,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
   elif ! pane_stable "$1"; then
     say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge"
-  elif declare -F profile_input_clear >/dev/null && ! profile_input_clear "$1"; then
+  elif ! input_clear "$1"; then
     # A human draft, ghost-text suggestion, or queued-message hint is in the
     # input box; an injection would interleave with it. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"

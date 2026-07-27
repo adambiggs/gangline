@@ -12,7 +12,7 @@ never surgery inside the dog.
 flowchart TB
     op([you]):::human --> gang
     cron[["host cron<br>gang patrol"]]:::edge --> gang
-    prof[("profiles/<br>launch · busy marker · compact cmd")]:::edge -.-> gang
+    prof[("profiles/<br>launch · busy marker · input box · compact cmd")]:::edge -.-> gang
     gang["<b>bin/gang</b><br>one bash script, no daemon"]:::core
     gang <==>|"keystrokes in · capture-pane out"| tmux
 
@@ -241,7 +241,15 @@ than risks it — and a skip never burns state, so the next sweep retries.
 
 A profile is a few lines declaring what gang cannot know generically: the launch
 command, the busy marker, the compact command, and optional hooks for reading a
-context readout or detecting a non-empty input box.
+context readout and for finding the harness's input box.
+
+That last hook earns its keep twice. Its contents say whether a paste would land
+on top of a draft, and its mere presence says the harness is up: for the first
+seconds after launch a TUI paints nothing, and an empty pane is a perfectly
+stable one, so waiting for the screen to settle declares an agent ready before it
+can read a byte of stdin. Waiting for the box instead is direct evidence. Its
+*contents* are deliberately ignored there — a fresh TUI paints ghost text into
+its own empty box, and an agent two seconds old would never be briefed at all.
 
 ```
 bin/gang      the whole tool
