@@ -53,8 +53,18 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
 has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
+target_of() { # $1 = window name; a NON-EMPTY @id or the suite stops
+  # id_of's own `exit 1` only leaves the command substitution it runs in, so a
+  # caller that interpolates it directly still hands tmux an empty -t. Anything
+  # that WRITES to a pane resolves through here first, in the main shell.
+  local id; id="$(id_of "$1")" || exit 1
+  [ -n "$id" ] || { printf 'BUG: empty target for %s\n' "$1" >&2; exit 1; }
+  printf '%s' "$id"
+}
+
 paint() { # $1 = window name, $2 = beacon line the profile reads back
-  tmux send-keys -t "$(id_of "$1")" "printf '%s\\n' '$2'" Enter; sleep 0.4
+  local id; id="$(target_of "$1")" || exit 1
+  tmux send-keys -t "$id" "printf '%s\\n' '$2'" Enter; sleep 0.4
 }
 
 mkdir -p "$SHIM/custom-profiles"
@@ -70,6 +80,34 @@ profile_input() {
 }
 SH
 }
+
+# --- finding its own tree ------------------------------------------------------
+
+# `readlink -f` is GNU-only; a stock macOS readlink rejects -f. gang is normally
+# invoked through ~/.local/bin/gang, a symlink into the install tree, so resolving
+# that link is how it finds profiles/ and roles/ at all. When -f failed the
+# substitution came back empty, ROOT became the parent of the CALLER's cwd, and
+# gang listed no harnesses while exiting 0 — install.sh checked only the exit
+# status and printed "gang installed". A silently broken install on stock Mac.
+cat > "$SHIM/readlink" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" = -f ] && { echo "readlink: illegal option -- f" >&2; exit 1; }
+exec "$(command -v readlink)" "\$@"
+SH
+chmod +x "$SHIM/readlink"
+ln -s "$GANG" "$SHIM/gang-via-symlink"
+# From /tmp, so a ROOT derived from the caller's cwd cannot accidentally be right.
+out="$(cd /tmp && PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
+check "a BSD readlink still resolves the install tree" "yes" \
+  "$(case "$out" in *bash*claude-code*pi*) echo yes ;; *) echo no ;; esac)"
+
+# And when the tree really is absent, that is said out loud rather than reported
+# as an install with zero harnesses.
+cp "$GANG" "$SHIM/orphan-gang"
+out="$(cd /tmp && "$SHIM/orphan-gang" profiles 2>&1)"; rc=$?
+check "a gang with no tree beside it fails loudly" "1" "$rc"
+check "and names what is missing" "yes" \
+  "$(case "$out" in *"not a gangline tree"*) echo yes ;; *) echo no ;; esac)"
 
 # --- lifecycle ---------------------------------------------------------------
 
@@ -146,7 +184,8 @@ check "and no one else"                   "no"  "$(has alpha MARK_NUMERIC)"
 # Addressed through id_of, which refuses to yield an empty target: the inline
 # awk this replaced printed nothing when beta was missing, and the rename then
 # landed on the active pane.
-tmux rename-window -t "$(id_of beta)" gamma
+beta_id="$(target_of beta)" || exit 1
+tmux rename-window -t "$beta_id" gamma
 check "an agent renamed outside gang is addressable by its new name" "idle" \
   "$("$GANG" status gamma)"
 

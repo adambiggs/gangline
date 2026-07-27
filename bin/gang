@@ -5,15 +5,33 @@
 set -euo pipefail
 
 SESSION="${GANG_SESSION:-gangline}"
-ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+
+die() { echo "gang: $*" >&2; exit 1; }
+
+gang_root() { # $1 = path to this script; the install tree it lives in
+  # Plain readlink in a loop, not `readlink -f`: the -f form is GNU-only and a
+  # stock macOS rejects it. When it failed the substitution came back empty,
+  # dirname read that as ".", and ROOT silently became the parent of whatever
+  # directory the CALLER happened to be in — so gang ran with no profiles and no
+  # roles while install.sh reported success. Law 8: a tool that cannot find its
+  # own tree says so rather than running half-configured.
+  local src="$1" dir
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  cd -P "$(dirname "$src")/.." && pwd
+}
+ROOT="$(gang_root "${BASH_SOURCE[0]}")"
+[ -d "$ROOT/profiles" ] \
+  || die "no profiles/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 # Every rung absolute, because context rot tracks absolute length, not how full
 # the window happens to be: a 300k context is degraded whether the window is 200k
 # or 1M. A proportional rung scales the wrong way — 90% of 1M asserts that 900k is
 # a fine place to sit. The ladder stops at 350000 because past four ignored
 # warnings another one is noise, not advice.
 BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
-
-die() { echo "gang: $*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
