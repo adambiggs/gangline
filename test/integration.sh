@@ -406,6 +406,91 @@ check "a 1M agent below 250k sits lower" "2" "$(band_of rung1ma)"
 check "and steps at 250k"                "3" "$(band_of rung1mb)"
 check "and again at 350k"                "4" "$(band_of rung1mc)"
 
+# --- file-based context (codex) ----------------------------------------------
+
+# Codex paints no readout a passive observer can reach; its profile reads the
+# session rollout on disk instead. The stand-in here swaps only the launch
+# command for bash — profile_context, the marker lookup, and the parser are the
+# shipped codex.sh code. Every fixture record is shaped exactly as the installed
+# codex (0.145.0) writes it, because that shape IS the claim under test: the
+# same parser is doctor's format gate.
+CODEX_FIX="$SHIM/codex-home"
+DAYDIR="$CODEX_FIX/sessions/2026/07/27"
+mkdir -p "$DAYDIR"
+cat > "$SHIM/custom-profiles/codexfile.sh" <<SH
+. "${GANG%/bin/gang}/profiles/codex.sh"
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+
+out="$(CODEX_HOME="$CODEX_FIX" "$GANG" spawn filectx -p codexfile -d /tmp 2>&1)"
+fkey="$(tmux show-options -wqv -t "$(target_of filectx)" @gl_key)"
+check "a keyed profile mints a marker even with no role" "yes" \
+  "$(case "$fkey" in gl-????????????????????????????????) echo yes ;; *) echo no ;; esac)"
+sleep 0.5
+check "the marker reaches the agent's conversation" "yes" "$(has filectx "$fkey")"
+# The marker identifies the ONE transcript it was typed into. A spawner that
+# printed it would record it in its own transcript too — two matches, no agent.
+check "and never the spawner's stdout" "no" \
+  "$(case "$out" in *gl-*) echo yes ;; *) echo no ;; esac)"
+
+# The agent's rollout: meta, the marker as user input, then two token_counts —
+# the LAST one is the current occupancy, and 150k sits past the 120k band.
+{
+  printf '%s\n' '{"timestamp":"2026-07-27T00:00:01.000Z","type":"session_meta","payload":{"id":"gangtest-agent","timestamp":"2026-07-27T00:00:01.000Z","cwd":"/tmp","originator":"codex-tui","cli_version":"0.145.0","source":"cli"}}'
+  printf '{"timestamp":"2026-07-27T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:spawn] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}]}}\n' "$fkey"
+  printf '%s\n' '{"timestamp":"2026-07-27T00:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15000,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":1000,"reasoning_output_tokens":400,"total_tokens":16085},"last_token_usage":{"input_tokens":16031,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":54,"reasoning_output_tokens":36,"total_tokens":16085},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.0,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
+  printf '%s\n' '{"timestamp":"2026-07-27T00:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":290000,"cached_input_tokens":250000,"cache_write_input_tokens":0,"output_tokens":9000,"reasoning_output_tokens":2000,"total_tokens":299000},"last_token_usage":{"input_tokens":148000,"cached_input_tokens":140000,"cache_write_input_tokens":0,"output_tokens":2000,"reasoning_output_tokens":500,"total_tokens":150000},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.1,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
+} > "$DAYDIR/rollout-2026-07-27T00-00-01-gangtest-agent.jsonl"
+
+# A teammate that captured the agent's pane early re-records the marker inside a
+# tool-output record. Different shape, different rollout, different numbers — if
+# the lookup ever picks it, the readout below says 222k and the check says so.
+{
+  printf '{"timestamp":"2026-07-27T00:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_x","output":"❯ [gang:spawn] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}}\n' "$fkey"
+  printf '%s\n' '{"timestamp":"2026-07-27T00:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":222000,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":222000},"last_token_usage":{"input_tokens":222000,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":222000},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.2,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
+} > "$DAYDIR/rollout-2026-07-27T00-00-02-gangtest-capturer.jsonl"
+
+check "context reads the last token_count of the agent's own rollout" \
+  "150k/258k (58%)" "$(CODEX_HOME="$CODEX_FIX" "$GANG" context filectx)"
+
+# The marker repeated as USER input somewhere else is unresolvable, and lookup
+# must refuse rather than guess. The cache would mask the collision — drop it.
+printf '{"timestamp":"2026-07-27T00:00:07.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"look at this: Session marker: %s"}]}}\n' \
+  "$fkey" > "$DAYDIR/rollout-2026-07-27T00-00-03-gangtest-dup.jsonl"
+tmux set-option -w -t "$(target_of filectx)" @gl_session ""
+CODEX_HOME="$CODEX_FIX" "$GANG" context filectx >/dev/null 2>&1
+check "a repeated marker is refused, not guessed" "1" "$?"
+rm "$DAYDIR/rollout-2026-07-27T00-00-03-gangtest-dup.jsonl"
+
+check "a codex agent joins the band ladder" "NUDGED (crossed the 120000-token band)" \
+  "$(CODEX_HOME="$CODEX_FIX" "$GANG" patrol | verdict filectx)"
+
+# Doctor runs the same parser as a format gate against the newest rollout that
+# has a token_count at all, so a schema change in a codex release is caught the
+# day it ships, not the day an agent's readout silently lies.
+# Captured, not piped into grep -q: under this suite's pipefail, grep -q exits
+# at the match, doctor's NEXT row takes SIGPIPE, and the pipeline reads as a
+# miss — a false negative that reproduces exactly as often as doctor has a row
+# to print after the matching one.
+dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"
+check "doctor gates the rollout format" "yes" \
+  "$(printf '%s' "$dout" | grep -q 'file format: OK' && echo yes || echo no)"
+printf '%s\n' '{"timestamp":"2026-07-27T00:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.3,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}' \
+  > "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
+dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"
+check "and fails loud when the schema drifts" "yes" \
+  "$(printf '%s' "$dout" | grep -q 'file format: DRIFT' && echo yes || echo no)"
+rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
+unset GANG_PROFILES
+
 # --- refusals ----------------------------------------------------------------
 
 "$GANG" send alpha "no identity here" >/dev/null 2>&1

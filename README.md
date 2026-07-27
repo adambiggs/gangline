@@ -192,12 +192,18 @@ the pane, where gang can read them. Every consumer — `gang context`, the roste
 column, and both warning legs below — reads that one readout, so nothing in the
 system can disagree with anything else about how full a window is.
 
-A profile can also decline. Codex declares no readout, because the only place it
-prints one is a hint row that appears while the composer holds text — reading it
-would mean typing into the agent to make the number show up, and a passive observer
-that has to poke its subject is not one. So `gang context` on a Codex agent fails
-loudly, the roster column shows `-`, and patrol reports it as not patrolled instead
-of quietly skipping it. An unread window is a worse thing to hide than to admit.
+A profile can also read the harness's own files instead of the screen. Codex
+paints no readout a passive observer can reach — its hint-row figure appears only
+while the composer holds text — so its profile reads the session rollout Codex
+itself appends every turn: a `token_count` event carrying the last turn's usage
+and the model's context window. The link from a tmux window to the right rollout
+is a session marker gang mints at spawn, plants in the agent's first message
+(where the rollout records it verbatim), and keeps in window state; lookup
+refuses to guess whenever the marker is not exactly one rollout's user input. A
+profile with no path to the figure at all still declines loudly: `gang context`
+fails, the roster column shows `-`, and patrol reports it as not patrolled
+instead of quietly skipping it. An unread window is a worse thing to hide than
+to admit.
 
 **Warn.** Two legs, because one harness's hook system is not another's:
 
@@ -357,7 +363,10 @@ the profile with `GANG_VERSION_CMD` + `GANG_VERIFIED_VERSIONS` (space-separated
 version prefixes; `any` means no scraped markers).
 
 `gang doctor` compares each installed harness against its pin and exits nonzero on
-drift. It is a reactive diagnostic, not a cron job: an agent that sees scraping
+drift. A profile that reads harness files instead of the screen rots on a schema
+change rather than a TUI change, so it declares a `profile_doctor` format gate —
+doctor runs the profile's own parser against the newest session file on disk and
+counts a failure as drift. It is a reactive diagnostic, not a cron job: an agent that sees scraping
 misbehave — false busy/idle, a missing context beacon, an injection that fails
 verification — runs `gang doctor` first. On ROT RISK, `gang doctor --file-issue`
 files a deduped rot issue via `gh`, then the markers get re-verified against the

@@ -120,10 +120,10 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
-  GANG_COMPACTING_REGEX=""
+  GANG_COMPACTING_REGEX="" GANG_SESSION_KEY=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
-  unset -f profile_context profile_input 2>/dev/null || true
+  unset -f profile_context profile_input profile_doctor 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
@@ -157,6 +157,23 @@ role_file() { # $1 = role name -> path on stdout; yours wins over the shipped on
     [ -f "$d/$1.md" ] && { printf '%s' "$d/$1.md"; return 0; }
   done
   return 1
+}
+
+mint_key() { # -> a fresh session marker; unique by construction, meaningless by design
+  # The marker exists to be found later: a profile that declares GANG_SESSION_KEY=1
+  # keeps its usage figures in an on-disk session transcript, and the only durable
+  # link from a tmux window to that file is a token gang itself planted in the
+  # conversation. It is generated HERE, never taken from the command line and never
+  # echoed to stdout — a caller that typed or printed it would record it in its own
+  # transcript too, and a marker in two transcripts identifies nothing.
+  printf 'gl-%s' "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+}
+
+marker_line() { # $1 = key; the sentence that plants it, tuned to stay planted
+  # "Never repeat it" is load-bearing: the marker identifies the one transcript it
+  # was typed into, and an agent that quotes it to a peer plants it in a second
+  # transcript, where lookup finds both and refuses to guess.
+  printf 'Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere.' "$1"
 }
 
 role_brief() { # $1 = role, $2 = agent name; the message that points at the brief
@@ -486,8 +503,22 @@ cmd_spawn() {
   tmux set-option -w -t "$id" @gl_profile "$prof"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
+  # A keyed profile gets its marker on EVERY spawn, role or not: the marker is
+  # what makes the agent's context readable, and an unreadable agent is invisible
+  # to patrol. Minted after the window exists so a failed launch mints nothing.
+  local key="" msg=""
+  if [ "${GANG_SESSION_KEY:-}" = 1 ]; then
+    key="$(mint_key)"
+    tmux set-option -w -t "$id" @gl_key "$key"
+  fi
+  if [ -n "$role" ]; then
+    msg="$(role_brief "$role" "$name")"
+    [ -n "$key" ] && msg="$msg $(marker_line "$key")"
+  elif [ -n "$key" ]; then
+    msg="$(marker_line "$key")"
+  fi
   echo "spawned $name ($prof) in $dir — watch: gang attach"
-  [ -n "$role" ] || return 0
+  [ -n "$msg" ] || return 0
   echo "waiting for $name to finish booting before briefing it..."
   # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
   # on the very return codes the case below exists to report.
@@ -495,11 +526,12 @@ cmd_spawn() {
   wait_ready "$id" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
   case "$ready" in
     0) ;;
-    2) die "'$name' is up but is showing something other than its input box, so it has no role — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang kill $name' and spawn again." ;;
-    *) die "'$name' is running but never went quiet, so it has no role — look at it with 'gang attach' or 'gang capture $name'" ;;
+    2) die "'$name' is up but is showing something other than its input box, so its spawn message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang kill $name' and spawn again." ;;
+    *) die "'$name' is running but never went quiet, so its spawn message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
   esac
-  inject "$id" "[gang:spawn] $(role_brief "$role" "$name")"
-  echo "briefed $name as $role"
+  inject "$id" "[gang:spawn] $msg"
+  if [ -n "$role" ]; then echo "briefed $name as $role"
+  else echo "delivered session marker to $name"; fi
 }
 
 cmd_up() { # bare `gang up` is the whole setup: a briefed manager, and you in it
@@ -772,7 +804,7 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
   # (false busy/idle, missing beacon, failed injection verify).
   local file_issue=0
   [ "${1:-}" = "--file-issue" ] && file_issue=1
-  local p prof installed v match drift=0
+  local p prof installed v match out drift=0
   for p in "$ROOT"/profiles/*.sh; do
     prof="$(basename "$p" .sh)"
     load_profile "$prof"
@@ -805,6 +837,17 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
       printf '%-12s %-26s %s\n' "$prof" "$installed" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS"
       drift=1
       [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
+    fi
+    # A profile that reads harness files instead of the screen rots on a schema
+    # change, not a TUI change — same disease, different tissue. The profile owns
+    # the check (law 4); doctor just runs it and counts a failure as drift.
+    if declare -F profile_doctor >/dev/null; then
+      if out="$(profile_doctor 2>&1)"; then
+        printf '%-12s %-26s %s\n' '' '' "file format: $out"
+      else
+        printf '%-12s %-26s %s\n' '' '' "file format: DRIFT — $out"
+        drift=1
+      fi
     fi
   done
   return "$drift"

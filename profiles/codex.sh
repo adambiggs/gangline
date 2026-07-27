@@ -48,18 +48,132 @@ GANG_MIDTURN_INPUT=1
 # versions. New release = re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="codex --version"
 GANG_VERIFIED_VERSIONS="0.144.5 0.145.0"
+# Codex paints no context readout a passive observer can reach — the composer
+# hint row needs text typed to appear, and /status is a submitted command; both
+# mean typing into somebody's session. So this profile reads the figure where
+# Codex itself keeps it: the session rollout under
+# ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*.jsonl, appended every
+# turn with a token_count event. gang cannot know which rollout is which agent's
+# from the outside, so it asks for a marker: GANG_SESSION_KEY=1 makes spawn mint
+# a token, plant it in the agent's first message (where the rollout records it
+# verbatim), and keep it in the window's @gl_key — exactly as long-lived as the
+# agent, like every other per-agent state.
+GANG_SESSION_KEY=1
 
-# profile_context is deliberately absent, so `gang context` on a Codex agent
-# fails loudly and patrol reports it as not patrolled rather than guessing.
-# Codex does render a readout — "99% context left" — but only in the composer's
-# hint row, and only while the composer holds text: idle with an empty composer,
-# and idle with text, both show the model-and-directory row instead. Reading it
-# would mean typing into the agent to make the number appear, which is the one
-# thing a passive observer must never do. The full figure lives in /status
-# ("Context window: 99% left (14.7K used / 258K)"), and submitting a slash
-# command into somebody's session to measure it is the same trespass. If a
-# later build paints the percentage where it can simply be read, this is four
-# lines of awk and Codex joins the band ladder.
+codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
+
+codex_session_for() { # $1 = marker -> the one rollout that recorded it as user input
+  local dir hits
+  dir="$(codex_sessions_dir)"
+  [ -d "$dir" ] || die "no codex sessions tree at $dir"
+  hits="$(grep -rlF -- "$1" "$dir" 2>/dev/null)" \
+    || die "marker not in any rollout under $dir — the spawn message may not be flushed yet"
+  # grep finds every FILE carrying the marker; only the agent's own rollout
+  # carries it as a user-role message. A teammate that captured the agent's pane
+  # early can re-record the marker inside a tool-output record — a different
+  # shape, filtered here. Two user-role hits is a repeated marker, and lookup
+  # refuses to guess between them (law 8).
+  printf '%s\n' "$hits" | python3 -c '
+import json, sys
+marker = sys.argv[1]
+mine = []
+for path in (l.strip() for l in sys.stdin if l.strip()):
+    with open(path, encoding="utf-8", errors="replace") as f:
+        for line in f:
+            if marker not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            p = rec.get("payload") or {}
+            if p.get("type") == "message" and p.get("role") == "user":
+                mine.append(path)
+                break
+if len(mine) != 1:
+    n = len(mine)
+    print(f"marker matches {n} rollouts as user input — "
+          + ("not flushed yet, or the marker line never landed" if n == 0
+             else "the marker was repeated; respawn the agent: " + " ".join(mine)),
+          file=sys.stderr)
+    sys.exit(1)
+print(mine[0])
+' "$1" || die "cannot bind this agent to a codex rollout"
+}
+
+codex_context_read() { # $1 = rollout path; prints "<used>k/<win>k (<pct>%)"
+  # Occupancy is last_token_usage.total_tokens against model_context_window,
+  # verified against codex-rs rust-v0.145.0 protocol.rs: TokenUsage::
+  # tokens_in_context_window() returns `self.total_tokens`, and the TUI applies
+  # it to the LAST turn's usage — the cumulative total_token_usage sums every
+  # turn and overruns the window within minutes. Codex's own "% left" also
+  # subtracts BASELINE_TOKENS (12000) from both sides; this readout stays raw
+  # occupancy because the band ladder is absolute tokens, so the percent here
+  # reads a few points higher than Codex's. Any missing field is format drift
+  # and dies loudly — gang doctor runs this same parser as its format gate.
+  python3 -c '
+import json, sys
+path = sys.argv[1]
+info = None
+with open(path, encoding="utf-8", errors="replace") as f:
+    for line in f:
+        if "\"token_count\"" not in line:
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            continue
+        p = rec.get("payload") or {}
+        if p.get("type") == "token_count" and p.get("info"):
+            info = p["info"]
+if info is None:
+    print("no token_count event yet — codex reports usage after its first turn",
+          file=sys.stderr)
+    sys.exit(1)
+try:
+    used = info["last_token_usage"]["total_tokens"]
+    win = info["model_context_window"]
+    pct = round(100 * used / win)
+except (KeyError, TypeError, ZeroDivisionError) as e:
+    print(f"token_count schema drifted ({e!r} in {path}) — "
+          "re-verify against the installed codex and update profiles/codex.sh",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
+' "$1" || die "unreadable codex context in $1"
+}
+
+profile_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
+  local key file
+  key="$(tmux show-options -wqv -t "$1" @gl_key)"
+  [ -n "$key" ] \
+    || die "window has no @gl_key — codex context needs the spawn-time session marker; adopted windows have none (respawn via gang spawn)"
+  # The rollout path is derived once and cached on the window; the cache dies
+  # with the window like the key that built it. Re-derived if the file vanishes.
+  file="$(tmux show-options -wqv -t "$1" @gl_session)"
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    file="$(codex_session_for "$key")"
+    tmux set-option -w -t "$1" @gl_session "$file"
+  fi
+  codex_context_read "$file"
+}
+
+profile_doctor() { # format gate: the parser above against the newest rollout on disk
+  # Newest-first because drift ships with a codex release: old rollouts keep the
+  # old shape forever and would vouch for a parser the current build has already
+  # broken. A rollout with no token_count yet proves nothing either way — skip
+  # it, it is just a session that has not finished a turn.
+  local dir f
+  dir="$(codex_sessions_dir)"
+  while read -r f; do
+    grep -q '"token_count"' "$f" 2>/dev/null || continue
+    codex_context_read "$f" >/dev/null || return 1
+    echo "OK (token_count parses: $(basename "$f"))"
+    return 0
+  done < <(find "$dir" -name 'rollout-*.jsonl' 2>/dev/null | sort -r | head -20)
+  echo "no rollout with a token_count under $dir — nothing to gate"
+  return 0
+}
 
 profile_input() { # $1 = tmux target; prints the composer, fails if there is none
   # Codex marks the selected row of a dialog with the same "›", in the same
