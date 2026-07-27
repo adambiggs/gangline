@@ -63,7 +63,7 @@
 
   <p class="lede">
     A harness harness. Gangline unifies any CLI coding agent it can get its hands
-    on &mdash; Claude Code, Pi, whatever ships next &mdash; into a tmux-powered
+    on &mdash; Claude Code, Codex, opencode, Pi, whatever ships next &mdash; into a tmux-powered
     team, using each for its strengths, with minimal harness-specific integration.
   </p>
 
@@ -85,10 +85,10 @@
   <h2>Run a team</h2>
   <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
 <span class="p">$</span> gang spawn worker -p claude-code -r worker -d ~/my/repo
-<span class="p">$</span> gang send worker --from manager "read the failing test in ci and fix it"
+<span class="p">$</span> gang send worker --from lead "read the failing test in ci and fix it"
 <span class="p">$</span> gang roster
-manager   claude-code  idle  142k/1000k (14%)
-worker    claude-code  busy  38k/1000k (3%)</code></pre>
+lead      claude-code  idle (slack tug)  142k/1000k (14%)
+worker    claude-code  busy (tight tug)  38k/1000k (3%)</code></pre>
 
   <h2>How it works</h2>
   <dl>
@@ -113,7 +113,7 @@ worker    claude-code  busy  38k/1000k (3%)</code></pre>
         Everything else is universal.</dd>
 
     <dt>Batteries included, every one replaceable.</dt>
-    <dd>Agents spawn with a role brief &mdash; manager, worker, reviewer. Point
+    <dd>Agents spawn with a role brief &mdash; lead, worker, reviewer. Point
         <code>GANG_ROLES</code> at a directory of your own and any brief becomes
         yours.</dd>
   </dl>

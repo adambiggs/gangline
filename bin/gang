@@ -47,8 +47,8 @@ gang — drive a team of CLI agents as tmux windows
 
   gang up [name] [-p <prof>] [-r <role>] [-d <dir>]
                                               the whole setup, no arguments needed:
-                                              spawns "manager" here on GANG_PROFILE
-                                              with the manager role, and puts you in it
+                                              spawns "lead" here on GANG_PROFILE
+                                              with the lead role, and puts you in it
   gang spawn <name> [-p <prof>] [-r <role>] [-d <dir>]
                                               start an agent (window name = identity);
                                               -r briefs it with a role from roles/
@@ -60,7 +60,7 @@ gang — drive a team of CLI agents as tmux windows
                                               --resume fires once compaction settles.
                                               Naming yourself is allowed and is the
                                               self-compaction path (--from/GANG_FROM required)
-  gang status <name>                          busy | idle
+  gang status <name>                          busy (tight tug) | idle (slack tug)
   gang context <name>                         context-window usage (profile-declared readout)
   gang wait  <name> [timeout_s]               block until idle (default 300)
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
@@ -81,7 +81,7 @@ gang — drive a team of CLI agents as tmux windows
                                               it crosses a context band (see README)
 
 Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
-     the manager with: manager), GANG_FROM (sender identity for send),
+     the lead with: lead), GANG_FROM (sender identity for send),
      GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
@@ -467,7 +467,7 @@ band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text,
   # The exact command, not "compact soon", because the part an agent gets wrong
   # is the resume — typed in behind the compaction it overtakes it and is eaten
   # by the turn about to be compacted, and the agent wakes with nothing to do.
-  printf "[context-usage] %s in context — crossed the %s-token band. At the next natural seam (arc boundary), run: gang compact %s --from %s --resume '<where you are, what is next>' — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
+  printf "[context-usage] %s in context — crossed the %s-token band. At the next checkpoint (arc boundary), run: gang compact %s --from %s --resume '<where you are, what is next>' — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
     "$1" "$2" "$3" "$3"
 }
 
@@ -534,14 +534,14 @@ cmd_spawn() {
   else echo "delivered session marker to $name"; fi
 }
 
-cmd_up() { # bare `gang up` is the whole setup: a briefed manager, and you in it
-  local name="manager" id a role_given=0
+cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
+  local name="lead" id a role_given=0
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   for a in "$@"; do case "$a" in -r|--role) role_given=1 ;; esac; done
   if [ "$role_given" -eq 1 ]; then
     cmd_spawn "$name" "$@"
   else
-    cmd_spawn "$name" -r "${GANG_ROLE:-manager}" "$@"
+    cmd_spawn "$name" -r "${GANG_ROLE:-lead}" "$@"
   fi
   id="$(win_id "$name")" || die "up: '$name' vanished between spawn and attach"
   # Inside tmux, switch the client instead of refusing: needing to detach first
@@ -572,7 +572,7 @@ cmd_send() {
   # input during a turn puts the paste in its input box, while one that does not
   # hands it to whatever that turn is running. So the profile declares which it is
   # and only the second case is refused. Refusing the first is what made a busy
-  # manager a black hole and made --wait burn a worker's whole turn waiting on one
+  # lead a black hole and made --wait burn a worker's whole turn waiting on one
   # that never went idle.
   local midturn=0
   if busy "$AGENT_ID"; then
@@ -634,7 +634,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   fi
 }
 
-cmd_status() { resolve "$1"; if busy "$AGENT_ID"; then echo busy; else echo idle; fi; }
+cmd_status() { resolve "$1"; if busy "$AGENT_ID"; then echo "busy (tight tug)"; else echo "idle (slack tug)"; fi; }
 
 cmd_context() { # context-window usage via the profile's own introspection
   local name="${1:-}"; [ -n "$name" ] || usage_die
@@ -655,19 +655,19 @@ cmd_roster() {
 roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one row
   local prof state ctx="-"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
-  [ -n "$prof" ] || { printf '%-16s %-12s %-6s %s\n' "$2" "-" "-" "unadopted"; return; }
+  [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" "unadopted"; return; }
   # A profile gang cannot resolve is reported, never dropped: patrol runs from
   # cron, where the GANG_PROFILES that spawned this agent is not in the
   # environment, and an agent missing from the roster reads as no agent at all.
   profile_file "$prof" >/dev/null \
-    || { printf '%-16s %-12s %-6s %s\n' "$2" "$prof" "-" "profile not found (GANG_PROFILES?)"; return; }
+    || { printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "-" "profile not found (GANG_PROFILES?)"; return; }
   load_profile "$prof"
-  if busy "$1"; then state=busy; else state=idle; fi
+  if busy "$1"; then state="busy (tight tug)"; else state="idle (slack tug)"; fi
   # context column is best-effort observation; the dedicated command dies loud
   if declare -F profile_context >/dev/null; then
     ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
   fi
-  printf '%-16s %-12s %-6s %s\n' "$2" "$prof" "$state" "${ctx%%$'\n'*}"
+  printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "$state" "${ctx%%$'\n'*}"
 }
 
 say() { printf '%-16s %-18s %s\n' "$1" "$2" "$3"; }
@@ -908,7 +908,7 @@ case "$cmd" in
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   context)  cmd_context "$@" ;;
   context-hook) cmd_context_hook ;;
-  wait)     [ $# -ge 1 ] || usage_die; resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo idle ;;
+  wait)     [ $# -ge 1 ] || usage_die; resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo "idle (slack tug)" ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;

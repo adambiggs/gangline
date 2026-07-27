@@ -9,9 +9,9 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 |------|--------------|-------------|
 | **gangline** | the one line hitching many dogs, each in its own harness, to one sled and one musher | the tmux session hitching every agent, each in its own harness, to one operator |
 | **musher** | drives the sled, picks the destination, gives the commands | the operator — the human the whole line runs back to; ending an agent is their call alone |
-| **harness** | what a dog wears; the line clips to it, never surgery inside the dog | the CLI agent (Claude Code, Codex, Pi, opencode); gang clips on at the tty |
+| **harness** | what a dog wears; the line clips to it, never surgery inside the dog | the CLI agent (Claude Code, Codex, opencode, Pi); gang clips on at the tty |
 | **dog** | pulls | an agent — a named tmux window |
-| **lead** | runs front, picks the line between the musher's commands | the manager role: holds the plan, splits the work, steers |
+| **lead** | runs front, picks the line between the musher's commands | the lead role: holds the plan, splits the work, steers |
 | **swing** | runs just behind lead, swings the team true through the turns | the reviewer role: catches the drift before it becomes the direction |
 | **team dog** | the engine — the pulling power in the middle of the line | the worker role: does the work, reports back |
 | **tight tug / slack tug** | a pulling dog keeps its tugline taut; a coasting one lets it sag | busy / idle |

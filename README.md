@@ -1,7 +1,7 @@
 # Gangline
 
 A harness harness. Gangline unifies any CLI coding agent it can get its hands on —
-Claude Code, Codex, Pi, whatever ships next — into a tmux-powered team, using each
+Claude Code, Codex, opencode, Pi, whatever ships next — into a tmux-powered team, using each
 for its strengths, with minimal harness-specific integration points.
 
 The name: a gangline is the single rope that hitches many dogs, each in its own
@@ -20,7 +20,7 @@ flowchart TB
 
     subgraph tmux["one tmux session · one window per agent"]
         direction LR
-        m["manager<br>claude-code"]:::agent
+        m["lead<br>claude-code"]:::agent
         a["worker<br>claude-code"]:::agent
         s["reviewer<br>pi"]:::agent
     end
@@ -62,7 +62,7 @@ compact command — about ten lines. Everything else is universal.
 [Read more →](#profiles)
 
 **Batteries included, every one replaceable.** Agents spawn with a role brief —
-manager, worker, reviewer — telling them how to address teammates, when to compact,
+lead, worker, reviewer — telling them how to address teammates, when to compact,
 and what to do when the substrate misbehaves. Point `GANG_ROLES` at a directory of
 your own and any brief becomes yours.
 [Read more →](#the-playbook)
@@ -71,13 +71,13 @@ your own and any brief becomes yours.
 
 ```sh
 cd ~/my/repo && gang up                         # the whole setup, no arguments: spawns
-                                                # "manager" here on claude-code with the
-                                                # manager role, and puts you in the session
+                                                # "lead" here on claude-code with the
+                                                # lead role, and puts you in the session
 gang spawn worker -r worker                     # "worker" is a name you pick: it becomes the
                                                 # tmux window name AND the agent's identity;
                                                 # -r briefs it with a role (gang roles)
-gang send worker --from manager "read the failing test in ci and fix it"
-gang status worker                              # busy | idle
+gang send worker --from lead "read the failing test in ci and fix it"
+gang status worker                              # busy (tight tug) | idle (slack tug)
 gang capture worker                             # what's on worker's screen
 gang roster                                     # everyone, with state
 gang attach                                     # watch the whole team live
@@ -108,7 +108,7 @@ Requires git and tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 ## The substrate
 
 `bin/gang` is the tool in full. Proven live: Claude Code and Pi agents in one team,
-manager→worker tasking on both, and a cross-harness relay in which a Claude Code
+lead→worker tasking on both, and a cross-harness relay in which a Claude Code
 agent used `gang send` to task a Pi agent, which acted on it — every hop
 identity-prefixed and pane-verified. Codex has been driven the same way end to end —
 spawned, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
@@ -328,7 +328,7 @@ brief, because law 9 says the answer is prose in an agent's prompt.
 
 ```sh
 gang spawn worker -p claude-code -r worker -d ~/my/repo
-gang roles                                    # manager, reviewer, worker
+gang roles                                    # lead, reviewer, worker
 ```
 
 The shipped briefs carry what an agent cannot work out from its own transcript:
@@ -337,7 +337,7 @@ a send to a busy agent is accepted rather than bounced, that a
 `[context-usage]` note means finish the arc and `gang compact` yourself with a
 `--resume`, and that `gang doctor` explains a substrate behaving strangely.
 `roles/_common.md`
-holds all of that; each role file adds its own job on top — the manager splits
+holds all of that; each role file adds its own job on top — the lead splits
 work by ownership and guards its own context hardest, the worker reports what
 changed and what proves it, the reviewer verifies claims rather than reading
 diffs.

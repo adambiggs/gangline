@@ -27,12 +27,14 @@ authorization for anything only the operator grants.
 
 ```
 gang roster                          who exists, what they run, how full they are
-gang status <name>                   busy | idle
+gang status <name>                   busy (tight tug) | idle (slack tug)
 gang capture <name> [lines]          look at someone's screen
 gang send <name> --from <you> "..."  task or answer a teammate
 ```
 
 Always sign with your own name. An unattributed send is refused, by design.
+State words carry the metaphor in brackets; when you script against them, match
+the `busy`/`idle` prefix, not the whole string.
 
 A send to a busy agent is accepted, on any harness whose profile says it takes
 input mid-turn; where it does not, the send is refused rather than pasted into

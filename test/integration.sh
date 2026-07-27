@@ -112,7 +112,7 @@ check "and names what is missing" "yes" \
 # --- lifecycle ---------------------------------------------------------------
 
 "$GANG" spawn alpha -p bash -d /tmp >/dev/null
-check "spawn registers an agent" "idle" "$("$GANG" status alpha)"
+check "spawn registers an agent" "idle (slack tug)" "$("$GANG" status alpha)"
 check "roster lists it"          "alpha bash idle" \
   "$("$GANG" roster | awk '$1=="alpha"{print $1, $2, $3}')"
 
@@ -130,9 +130,9 @@ SH
 chmod +x "$SHIM/attach/tmux"
 
 PATH="$SHIM/attach:$PATH" "$GANG" up -p bash -d /tmp >/dev/null
-check "up needs no agent name"  "idle" "$("$GANG" status manager)"
+check "up needs no agent name"  "idle (slack tug)" "$("$GANG" status lead)"
 sleep 0.5
-check "and briefs it as manager" "yes" "$(has manager roles/manager.md)"
+check "and briefs it as lead" "yes" "$(has lead roles/lead.md)"
 
 # --- delivery ----------------------------------------------------------------
 
@@ -230,7 +230,7 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" spawn busybee -p working -d /tmp >/dev/null 2>&1
 sleep 0.5
 paint busybee 'WORKING...'
-check "the stand-in reads as busy" "busy" "$("$GANG" status busybee)"
+check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)"
 
 FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_QUEUED" >/dev/null 2>&1
 check "a harness that queues input takes mail mid-turn" "0" "$?"
@@ -299,12 +299,12 @@ check "and no one else"                   "no"  "$(has alpha MARK_NUMERIC)"
 # landed on the active pane.
 beta_id="$(target_of beta)" || exit 1
 tmux rename-window -t "$beta_id" gamma
-check "an agent renamed outside gang is addressable by its new name" "idle" \
+check "an agent renamed outside gang is addressable by its new name" "idle (slack tug)" \
   "$("$GANG" status gamma)"
 
 # --- roles -----------------------------------------------------------------
 
-check "roles are listed" "manager reviewer worker" \
+check "roles are listed" "lead reviewer worker" \
   "$("$GANG" roles | tr '\n' ' ' | sed 's/ $//')"
 
 "$GANG" spawn scout -p bash -r worker -d /tmp >/dev/null
