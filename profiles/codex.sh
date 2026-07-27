@@ -30,11 +30,13 @@ GANG_BUSY_REGEX="esc to interrupt"
 # compacted" in the transcript, where it stays — a marker for humans reading
 # scrollback, never a state to scrape.
 GANG_COMPACT_CMD="/compact"
-# Codex takes input during a turn, and says so itself: paste while it is
-# working and the hint row switches to "tab to queue message". Watched end to
-# end — the paste lands in the composer, Enter moves it into the transcript,
-# the running turn is not disturbed, and the message is answered when that turn
-# finishes.
+# Codex takes input during a turn, and says so itself twice over: the hint row
+# switches to "tab to queue message" while it is working, and the startup tip
+# reads "Press Tab to queue a message when a task is running; otherwise it sends
+# immediately". Watched end to end anyway — the paste lands in the composer,
+# Enter moves it into the transcript under "Messages to be submitted after next
+# tool call", the running turn is not disturbed, and the message is answered
+# when that turn finishes.
 GANG_MIDTURN_INPUT=1
 # GANG_COMPACTING_REGEX is deliberately unset, and this one is not a gap in the
 # observation — it is what the observation found. Codex draws compaction as an
@@ -45,7 +47,7 @@ GANG_MIDTURN_INPUT=1
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="codex --version"
-GANG_VERIFIED_VERSIONS="0.144.5"
+GANG_VERIFIED_VERSIONS="0.144.5 0.145.0"
 
 # profile_context is deliberately absent, so `gang context` on a Codex agent
 # fails loudly and patrol reports it as not patrolled rather than guessing.
