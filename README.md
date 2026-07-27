@@ -234,15 +234,23 @@ and without anyone watching. Naming somebody else still refuses a live turn,
 because cutting one throws away work in progress; that refusal is about what
 compaction *means*, not about whether keystrokes can be delivered.
 
-`--resume` is delivered after compaction settles rather than queued behind it.
-Queued input is not one thing: text can be handed to the turn already running
-while a queued slash command waits for that turn to end, so a resume typed in
-behind a compaction arrives *before* it and is swallowed by the turn that was
-about to be compacted — the agent then wakes up with nothing to pick up. Instead a
-detached waiter holds until the pane has been quiet for three consecutive polls
-and stopped repainting, which is also long enough that it cannot fire in the gap
-between the turn ending and compaction starting to draw. Durable-state and handoff
-conventions ride in agent prompts, not in code.
+`--resume` never rides the input queue behind its own compaction. Queued input is
+not one thing: text can be handed to the turn already running while a queued slash
+command waits for that turn to end, so a resume typed in behind a compaction
+arrives *before* it and is swallowed by the turn that was about to be compacted —
+the agent then wakes up with nothing to pick up. A detached waiter delivers it
+instead, at the first moment it cannot be overtaken. That moment is when the
+compaction is visibly *running*: the turn that could have eaten the resume is over,
+and the turn now in flight reads no input, so the message can only wait — which is
+all it ever had to do. It goes into the queue the compaction drains on its way out,
+and the agent picks it up the instant it has a context to pick it up into.
+
+Profiles declare what their compaction looks like on screen
+(`GANG_COMPACTING_REGEX`). One whose compaction nobody has watched live declares
+nothing and waits for the pane to go quiet instead — three consecutive polls and a
+screen that has stopped repainting, floored so it cannot fire in the gap between
+the turn ending and compaction starting to draw. Slower, correct, and no marker to
+rot. Durable-state and handoff conventions ride in agent prompts, not in code.
 
 ### What patrol refuses to do
 
@@ -264,8 +272,12 @@ than risks it — and a skip never burns state, so the next sweep retries.
 ## Profiles
 
 A profile is a few lines declaring what gang cannot know generically: the launch
-command, the busy marker, the compact command, and optional hooks for reading a
-context readout and for finding the harness's input box.
+command, the busy marker, the compact command, whether the harness takes input
+during a turn, what its compaction looks like while it runs, and optional hooks
+for reading a context readout and for finding the harness's input box. The two
+behavioural ones — mid-turn input, and the compaction marker — are optional in the
+honest sense: unset means nobody has watched that behaviour live, and gang takes
+the slower, safer branch rather than guessing at it.
 
 That last hook earns its keep twice. Its contents say whether a paste would land
 on top of a draft, and its mere presence says the harness is up: for the first

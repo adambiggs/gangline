@@ -120,6 +120,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
+  GANG_COMPACTING_REGEX=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
   unset -f profile_context profile_input 2>/dev/null || true
@@ -229,6 +230,20 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
   printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"
+}
+
+compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibly compacting
+  # A narrower question than busy, asked for one reason: a compaction is the one
+  # turn a message can be handed to safely. Busy says a turn is in flight, and a
+  # turn in flight is exactly what eats a resume. Compaction is a turn that reads
+  # no input, so text typed into it can only wait — which makes "compaction is
+  # running" the earliest moment a resume is safe, and the pane shows it plainly.
+  # Unset is a real answer, not a hole: a profile whose compaction nobody has
+  # watched live gets the settle path, which scrapes no marker at all.
+  [ -n "${GANG_COMPACTING_REGEX:-}" ] || return 1
+  local pane
+  pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess compaction state"
+  printf '%s\n' "$pane" | grep -qE -- "$GANG_COMPACTING_REGEX"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
@@ -358,24 +373,37 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   done
 }
 
-resume_after_compaction() { # $1 = window id, $2 = text; deliver once the pane settles
-  # A resume cannot ride the input queue behind its own compaction. Both would be
-  # typed from inside a live turn, and a harness does not treat the two alike: a
-  # queued slash command waits for the turn to genuinely end, while queued text
-  # can be handed straight to the turn already running. The text overtakes the
-  # command, gets eaten by the very turn that was about to be compacted, and the
-  # agent wakes up afterwards with nothing to pick up. Lived it. So the resume is
-  # delivered after the fact instead, by the only thing still around to do it.
+resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot overtake
+  # A resume cannot ride the input queue behind its own compaction. Both are typed
+  # from inside a live turn, and a harness does not treat the two alike: a queued
+  # slash command waits for the turn to genuinely end, while queued text can be
+  # handed straight to the turn already running. The text overtakes the command,
+  # gets eaten by the very turn that was about to be compacted, and the agent wakes
+  # up afterwards with nothing to pick up. Lived it. So the resume goes in later,
+  # delivered by the only thing still around to do it.
   #
-  # The floor matters as much as the streak. Between a turn ending and the compact
-  # command starting to paint there is a sub-second window where the pane is
-  # neither busy nor compacting, and a waiter that fires in it queues the resume
-  # AHEAD of the compaction it exists to follow — the same inversion, rebuilt.
-  # Three quiet polls plus a screen that stops moving costs six seconds; no
-  # compaction finishes that fast and no flush gap lasts that long.
+  # Later has two moments and the earlier one is better. Once compaction is visibly
+  # RUNNING, the turn that could have eaten the resume is over and the turn now in
+  # flight reads no input: the message can only wait, which is all it ever needed
+  # to do. So it goes in immediately and sits in the queue the compaction drains on
+  # its way out — the agent picks it up the instant it has a context to pick it up
+  # into, instead of after a waiter has finished convincing itself the screen has
+  # stopped moving.
+  #
+  # A profile that has not had its compaction watched live declares no marker and
+  # waits for quiet instead. There the floor matters as much as the streak: between
+  # a turn ending and the compact command starting to paint there is a sub-second
+  # window where the pane is neither busy nor compacting, and a waiter that fires
+  # in it queues the resume AHEAD of the compaction it exists to follow — the same
+  # inversion, rebuilt. Three quiet polls plus a screen that stops moving costs six
+  # seconds; no compaction finishes that fast and no flush gap lasts that long.
+  #
+  # The two are a race with no losing branch. A compaction briefer than a poll
+  # interval is simply missed, and quiet then means what it has always meant.
   local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}"
   while [ "$t" -lt "$timeout" ]; do
     sleep 2; t=$((t + 2))
+    compacting "$1" && break
     [ "$t" -ge 10 ] || continue
     if busy "$1"; then streak=0; continue; fi
     streak=$((streak + 1))

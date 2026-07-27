@@ -27,6 +27,15 @@ GANG_VERIFIED_VERSIONS="2.1.220"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"
+# The progress bar again, on its own, because it answers a second question: not
+# "is a turn in flight" but "is THIS turn the compaction" — the one a resume can
+# be handed to early. Same glyphs and the same literal-alternation reason as the
+# busy regex above; a compacting pane is necessarily busy, so this stays a subset
+# of it. Watched frame by frame through a live /compact: the bar paints ~1s after
+# submission and holds unbroken to the end (385 consecutive captures, no gap), and
+# the input box is drawn and EMPTY in every one of them — so a resume delivered
+# mid-compaction has somewhere to land and nothing to interleave with.
+GANG_COMPACTING_REGEX='▰|▱'
 # Input pasted during a turn is taken, not dropped and not fed to whatever the
 # turn is running: the box accepts the paste and Enter replaces it with "Press up
 # to edit queued messages". Verified live, which is what lets a send reach a

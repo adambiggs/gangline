@@ -13,6 +13,11 @@ GANG_COMPACT_CMD="/compact"
 # paste landing somewhere unintended. Unset, a mid-turn send is refused. Set it to
 # 1 once somebody types into a working Pi and reads the result out of its input
 # area.
+# GANG_COMPACTING_REGEX is unset for the same reason: what Pi paints while it is
+# compacting, and whether it keeps an input box up while it does, has not been
+# watched. Unset costs a resume nothing but time — it waits for the pane to go
+# quiet instead of queueing behind the compaction. Set it once somebody samples a
+# live Pi /compact and finds a marker that is gone the moment compaction ends.
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="pi --version"

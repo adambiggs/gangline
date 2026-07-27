@@ -215,8 +215,9 @@ tmux send-keys -t "$(target_of alpha)" C-u   # the draft it correctly left behin
 # is where the keystrokes LAND, and that is the harness's property to declare.
 cat > "$SHIM/custom-profiles/working.sh" <<SH
 GANG_LAUNCH="PS1='❯ ' bash --norc"
-GANG_BUSY_REGEX="WORKING\\.\\.\\."
+GANG_BUSY_REGEX="WORKING\\.\\.\\.|COMPACTING\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
+GANG_COMPACTING_REGEX="COMPACTING\\.\\.\\."
 GANG_MIDTURN_INPUT="\${FAKE_QUEUES:-}"
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
@@ -264,6 +265,21 @@ check "a resume waits while the agent is still busy" "no" "$(has busybee MARK_RE
 tmux send-keys -t "$(target_of busybee)" clear Enter   # compaction "finishes"
 sleep 22
 check "and lands once the pane settles" "yes" "$(has busybee "[gang:tester] MARK_RESUMED")"
+
+# Waiting for quiet is the fallback, not the goal. A compaction that is visibly
+# running is already past the turn that would have eaten the resume, and reads no
+# input itself, so the message can go straight into the queue it drains on the way
+# out. The clock is the assertion: the quiet path cannot deliver before its ten
+# second floor, so anything that lands inside seven took the other branch.
+paint busybee 'WORKING...'
+GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from tester --resume "MARK_FAST" >/dev/null 2>&1
+sleep 2
+check "a resume still holds while a turn that could eat it runs" "no" "$(has busybee MARK_FAST)"
+tmux send-keys -t "$(target_of busybee)" clear Enter   # that turn ends...
+paint busybee 'COMPACTING...'                          # ...and the compaction starts
+sleep 5
+check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "[gang:tester] MARK_FAST")"
 unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
