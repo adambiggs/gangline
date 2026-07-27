@@ -188,7 +188,10 @@ system can disagree with anything else about how full a window is.
   hook system (Claude Code: UserPromptSubmit + PostToolUse), and returns one
   in-context note per crossed `GANG_CONTEXT_BANDS` threshold. Bare numbers are
   token counts, a `%` suffix is percent of window; the default ladder is
-  `120000,180000,250000,90%`, re-armed when compaction drops usage.
+  `120000,180000,250000,350000`, re-armed when compaction drops usage. Every
+  default rung is absolute because context rot tracks absolute length, not how
+  full the window happens to be — a 300k context is degraded whether the window
+  is 200k or 1M, and a proportional rung would call 900k of a 1M window fine.
 - `gang patrol` is the ambient leg — a one-shot roster sweep that injects the same
   band note as `[gang:patrol]` into any agent that crossed a threshold since the
   last sweep. It exists because a harness may have no hook system at all

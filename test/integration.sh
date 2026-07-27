@@ -142,6 +142,30 @@ check "the hook warns on a fresh band" "yes" \
   "$(case "$(hook)" in *additionalContext*'120000-token band'*) echo yes ;; *) echo no ;; esac)"
 check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p" @gl_band)"
 
+# --- the band ladder ---------------------------------------------------------
+
+# Every default rung is absolute, so each must add exactly one band at any window
+# size. The proportional rung this replaced was 90%, which on a 200k window WAS
+# 180000 — two rungs firing at once, band 1 jumping straight to 3 — and on a 1M
+# window sat at 900k, leaving 250k..900k without a single further signal.
+probe() { "$GANG" spawn "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
+probe rung200a '119k/200k 59%'    # under the first rung
+probe rung200b '120k/200k 60%'
+probe rung200c '180k/200k 90%'    # 90% of this window: must not double-count
+probe rung1ma  '249k/1000k 24%'
+probe rung1mb  '250k/1000k 25%'
+probe rung1mc  '350k/1000k 35%'   # the region a proportional ladder left silent
+"$GANG" patrol >/dev/null         # first sweep nudges and records the band
+settled="$("$GANG" patrol)"       # second reports it
+band_of() { printf '%s\n' "$settled" | awk -v n="$1" '$1==n { print $NF }' | tr -d ')'; }
+
+check "no rung crossed is band 0"        "0" "$(band_of rung200a)"
+check "one rung is one band"             "1" "$(band_of rung200b)"
+check "90% of a 200k window is not a rung of its own" "2" "$(band_of rung200c)"
+check "a 1M agent below 250k sits lower" "2" "$(band_of rung1ma)"
+check "and steps at 250k"                "3" "$(band_of rung1mb)"
+check "and again at 350k"                "4" "$(band_of rung1mc)"
+
 # --- refusals ----------------------------------------------------------------
 
 "$GANG" send alpha "no identity here" >/dev/null 2>&1

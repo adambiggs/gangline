@@ -6,7 +6,12 @@ set -euo pipefail
 
 SESSION="${GANG_SESSION:-gangline}"
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
-BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,90%}"
+# Every rung absolute, because context rot tracks absolute length, not how full
+# the window happens to be: a 300k context is degraded whether the window is 200k
+# or 1M. A proportional rung scales the wrong way — 90% of 1M asserts that 900k is
+# a fine place to sit. The ladder stops at 350000 because past four ignored
+# warnings another one is noise, not advice.
+BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
 
 die() { echo "gang: $*" >&2; exit 1; }
 
@@ -45,7 +50,7 @@ gang — drive a team of CLI agents as tmux windows
                                               it crosses a context band (see README)
 
 Env: GANG_FROM (sender identity for send), GANG_SESSION (default: gangline),
-     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,90%),
+     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
      GANG_ROLES (your own roles dir, searched before the shipped one)
 EOF
 }
