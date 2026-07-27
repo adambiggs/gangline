@@ -491,6 +491,83 @@ check "and fails loud when the schema drifts" "yes" \
 rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 unset GANG_PROFILES
 
+# --- scraped context with a joined window (opencode) --------------------------
+
+# opencode paints used tokens and a rounded percent into its hint row but never
+# the window; its profile joins the window from opencode's own models catalog,
+# keyed by the painted composer badge, and cross-checks the painted percent
+# against the join. The stand-in swaps launch/busy/input for bash —
+# profile_context, the join, the cross-check, and profile_doctor are the
+# shipped opencode.sh code, and the fixture catalog entries are shaped exactly
+# as the installed opencode (1.14.39) caches them. The cursor-gated
+# profile_input is deliberately not driven here: it needs a real opencode
+# owning a keyboard, and it is live-verified against the installed TUI.
+OC_CACHE="$SHIM/oc-cache"
+mkdir -p "$OC_CACHE/opencode"
+oc_catalog() {
+  cat > "$OC_CACHE/opencode/models.json" <<'JSON'
+{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5","limit":{"context":1050000,"input":922000,"output":128000}}}},
+ "openai":{"name":"OpenAI","models":{"gpt-5.5":{"name":"GPT-5.5","limit":{"context":400000,"input":272000,"output":128000}}}}}
+JSON
+}
+oc_catalog
+cat > "$SHIM/custom-profiles/ocpaint.sh" <<SH
+. "${GANG%/bin/gang}/profiles/opencode.sh"
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+
+"$GANG" spawn ocp -p ocpaint -d /tmp >/dev/null
+XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
+check "context before the first turn is refused, not guessed" "1" "$?"
+
+# One printf paints the whole screen block: badge directly above the border,
+# hint row after. Painted as separate commands, the shell's command echo would
+# sit between badge and border, and the badge walk would read the echo.
+tmux send-keys -t "$(target_of ocp)" \
+  "printf '%s\n' '┃  Build · GPT-5.5 GitHub Copilot' '╹▀▀▀▀▀▀▀▀' '  150K (14%) · \$0.42  ctrl+p commands'" Enter
+sleep 0.4
+check "context scrapes the hint row and joins the window from the catalog" \
+  "150k/1050k (14%)" "$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp)"
+check "an opencode agent joins the band ladder" "NUDGED (crossed the 120000-token band)" \
+  "$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" patrol | verdict ocp)"
+
+# Two catalog rows concatenating to the same "<model name> <provider name>"
+# is unresolvable, and the join must refuse rather than guess between windows.
+cat > "$OC_CACHE/opencode/models.json" <<'JSON'
+{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5","limit":{"context":1050000,"input":922000,"output":128000}}}},
+ "copilot-x":{"name":"Copilot","models":{"gx":{"name":"GPT-5.5 GitHub","limit":{"context":200000,"input":136000,"output":64000}}}}}
+JSON
+XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
+check "an ambiguous catalog join is refused, not guessed" "1" "$?"
+oc_catalog
+
+# A painted percent the joined window cannot reproduce means the join picked
+# the wrong window — model switched under the badge, or catalog drift.
+tmux send-keys -t "$(target_of ocp)" \
+  "printf '%s\n' '  150K (50%) · \$0.42  ctrl+p commands'" Enter
+sleep 0.4
+XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
+check "a percent the joined window cannot reproduce is refused" "1" "$?"
+
+dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" doctor 2>/dev/null)"
+check "doctor gates the catalog format" "yes" \
+  "$(printf '%s' "$dout" | grep -q 'file format: OK (catalog join candidates' && echo yes || echo no)"
+printf '%s\n' '{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5"}}}}' \
+  > "$OC_CACHE/opencode/models.json"
+dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" doctor 2>/dev/null)"
+check "and fails loud when the catalog drifts" "yes" \
+  "$(printf '%s' "$dout" | grep -q 'file format: DRIFT — models catalog holds no named model' && echo yes || echo no)"
+oc_catalog
+unset GANG_PROFILES
+
 # --- refusals ----------------------------------------------------------------
 
 "$GANG" send alpha "no identity here" >/dev/null 2>&1

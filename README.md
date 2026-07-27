@@ -110,7 +110,8 @@ manager→worker tasking on both, and a cross-harness relay in which a Claude Co
 agent used `gang send` to task a Pi agent, which acted on it — every hop
 identity-prefixed and pane-verified. Codex has been driven the same way end to end —
 spawned, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
-answered on the other side.
+answered on the other side. So has opencode — spawned, tasked, read busy mid-turn,
+and its context read live through the catalog join described below.
 
 Agent names are yours. Whatever you pass to `gang spawn` becomes the tmux window
 name, the identity in every `[gang:<sender>]` prefix, and the handle every command
@@ -199,8 +200,13 @@ itself appends every turn: a `token_count` event carrying the last turn's usage
 and the model's context window. The link from a tmux window to the right rollout
 is a session marker gang mints at spawn, plants in the agent's first message
 (where the rollout records it verbatim), and keeps in window state; lookup
-refuses to guess whenever the marker is not exactly one rollout's user input. A
-profile with no path to the figure at all still declines loudly: `gang context`
+refuses to guess whenever the marker is not exactly one rollout's user input.
+The two sources also mix: opencode paints used tokens and a rounded percent but
+never the window, so its profile scrapes the pane for what is painted and joins
+the window from opencode's own models catalog on disk, keyed by the painted
+model badge — then requires the painted percent to reproduce from the join
+before trusting it. A profile with no path to the figure at all still declines
+loudly: `gang context`
 fails, the roster column shows `-`, and patrol reports it as not patrolled
 instead of quietly skipping it. An unread window is a worse thing to hide than
 to admit.
