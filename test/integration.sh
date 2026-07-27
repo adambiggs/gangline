@@ -117,6 +117,25 @@ sleep 0.5
 check "GANG_ROLES overrides the shipped brief" "yes" \
   "$(has custom "$SHIM/custom-roles/worker.md")"
 
+# GANG_PROFILES is the same extension point for harnesses.
+mkdir -p "$SHIM/custom-profiles"
+fake_harness() { # $1 = profile name, $2 = launch command
+  cat > "$SHIM/custom-profiles/$1.sh" <<SH
+GANG_LAUNCH="$2"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+SH
+}
+fake_harness fakeharness "sleep 60"
+check "GANG_PROFILES adds a harness" "yes" \
+  "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles | grep -qx fakeharness && echo yes || echo no)"
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" spawn faker -p fakeharness -d /tmp >/dev/null
+
+# patrol runs from cron, without the GANG_PROFILES that spawned this agent. It
+# must still account for it: an agent missing from the roster reads as no agent.
+check "an unresolvable profile is reported, not dropped" "faker fakeharness" \
+  "$("$GANG" roster | awk '$1=="faker"{print $1, $2}')"
+
 # --- context bands -------------------------------------------------------------
 
 # The bash profile reads the same beacon shape the claude-code statusline paints,

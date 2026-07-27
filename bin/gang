@@ -55,19 +55,40 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      the manager with: manager), GANG_FROM (sender identity for send),
      GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
-     GANG_ROLES (your own roles dir, searched before the shipped one)
+     GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones)
 EOF
 }
 
 usage_die() { usage >&2; exit 1; }
 
 # --- profiles ---------------------------------------------------------------
+#
+# A profile says how to talk to one harness: how to launch it, how to tell it is
+# mid-turn, how to read its context. GANG_PROFILES points at your own directory,
+# which is searched before the shipped one, so a new harness — or a fix to a
+# shipped profile whose TUI has moved on — costs a file, never a patch to the
+# installed tree.
 
-list_profiles() { local p; for p in "$ROOT"/profiles/*.sh; do basename "$p" .sh; done; }
+list_profiles() {
+  local d p
+  for d in ${GANG_PROFILES:+"$GANG_PROFILES"} "$ROOT/profiles"; do
+    [ -d "$d" ] || continue
+    for p in "$d"/*.sh; do [ -f "$p" ] && basename "$p" .sh; done
+  done | sort -u
+}
+
+profile_file() { # $1 = profile name -> path on stdout; yours wins over the shipped one
+  local d
+  for d in ${GANG_PROFILES:+"$GANG_PROFILES"} "$ROOT/profiles"; do
+    [ -f "$d/$1.sh" ] && { printf '%s' "$d/$1.sh"; return 0; }
+  done
+  return 1
+}
 
 load_profile() { # $1 = profile name; sets the GANG_* strategy surface
-  local f="$ROOT/profiles/$1.sh"
-  [ -f "$f" ] || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
+  local f
+  f="$(profile_file "$1")" \
+    || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
@@ -409,6 +430,11 @@ roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one 
   local prof state ctx="-"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { printf '%-16s %-12s %-6s %s\n' "$2" "-" "-" "unadopted"; return; }
+  # A profile gang cannot resolve is reported, never dropped: patrol runs from
+  # cron, where the GANG_PROFILES that spawned this agent is not in the
+  # environment, and an agent missing from the roster reads as no agent at all.
+  profile_file "$prof" >/dev/null \
+    || { printf '%-16s %-12s %-6s %s\n' "$2" "$prof" "-" "profile not found (GANG_PROFILES?)"; return; }
   load_profile "$prof"
   if busy "$1"; then state=busy; else state=idle; fi
   # context column is best-effort observation; the dedicated command dies loud
@@ -444,6 +470,8 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   local prof ctx tw tokens window band crossed prev
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
+  profile_file "$prof" >/dev/null \
+    || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled"; return; }
   load_profile "$prof"
   declare -F profile_context >/dev/null \
     || { say "$2" "" "profile declares no context readout — not patrolled"; return; }

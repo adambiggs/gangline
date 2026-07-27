@@ -279,11 +279,19 @@ agent reads them, and they stay on disk to be re-read after a compaction. That
 also keeps the injection short enough to verify — a paste taller than the pane
 cannot be.
 
-Replace any of it by putting a file of the same name in a directory of your own:
+Replace any of it by putting a file of the same name in a directory of your own.
+Both halves work the same way, and both are searched before the shipped ones, so
+a new harness — or a fix to a profile whose TUI has moved on — costs a file, not
+a patch to the installed tree:
 
 ```sh
 export GANG_ROLES=~/my/gangline-roles         # searched before the shipped roles/
+export GANG_PROFILES=~/my/gangline-profiles   # searched before the shipped profiles/
 ```
+
+Export them from your shell profile, not just your interactive shell: `gang
+patrol` runs from cron, and an agent whose profile it cannot resolve is listed
+with `profile not found` rather than dropped from the roster.
 
 ### Strategy rot
 
