@@ -58,6 +58,6 @@ case ":$PATH:" in
      echo "      export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 echo
-echo "Start a team:  gang up -p claude-code -r manager -d ~/your/repo"
+echo "Start a team:  cd ~/your/repo && gang up"
 echo "Claude Code also wants the context beacon wired into settings.json;"
 echo "see $HOME_DIR/README.md (Self-compaction)."

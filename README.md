@@ -67,10 +67,10 @@ your own and any brief becomes yours.
 ## Quickstart
 
 ```sh
-gang up -p claude-code -r manager -d ~/my/repo  # fresh start: session + your own window
-                                                # ("manager", attached) — run from outside tmux
-gang spawn worker -p claude-code -r worker \
-                  -d ~/my/repo                  # "worker" is a name you pick: it becomes the
+cd ~/my/repo && gang up                         # the whole setup, no arguments: spawns
+                                                # "manager" here on claude-code with the
+                                                # manager role, and puts you in the session
+gang spawn worker -r worker                     # "worker" is a name you pick: it becomes the
                                                 # tmux window name AND the agent's identity;
                                                 # -r briefs it with a role (gang roles)
 gang send worker --from manager "read the failing test in ci and fix it"

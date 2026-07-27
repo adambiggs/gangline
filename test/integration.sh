@@ -43,8 +43,10 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
 has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
-paint() { # $1 = window name, $2 = line the pane should print
-  tmux send-keys -t "$(id_of "$1")" "printf '%s\\n' '$2'" Enter; sleep 0.4
+paint() { # $1 = window name, $2 = beacon line; also paints an empty input box
+  # The trailing "❯ " stands in for a real TUI's prompt, so the bash profile's
+  # input-box guard sees an empty box rather than no box at all.
+  tmux send-keys -t "$(id_of "$1")" "printf '%s\\n❯ \\n' '$2'" Enter; sleep 0.4
 }
 
 # --- lifecycle ---------------------------------------------------------------

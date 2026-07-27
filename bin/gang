@@ -19,9 +19,11 @@ usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
 
-  gang up [name] -p <prof> [-r <role>] [-d <dir>]
-                                              fresh start: spawn (name: manager) + attach
-  gang spawn <name> -p <prof> [-r <role>] [-d <dir>]
+  gang up [name] [-p <prof>] [-r <role>] [-d <dir>]
+                                              the whole setup, no arguments needed:
+                                              spawns "manager" here on GANG_PROFILE
+                                              with the manager role, and puts you in it
+  gang spawn <name> [-p <prof>] [-r <role>] [-d <dir>]
                                               start an agent (window name = identity);
                                               -r briefs it with a role from roles/
   gang adopt <name> -p <profile>              register an existing window as an agent
@@ -49,7 +51,9 @@ gang — drive a team of CLI agents as tmux windows
   gang context-hook                           harness hook mode: warn the agent in-turn when
                                               it crosses a context band (see README)
 
-Env: GANG_FROM (sender identity for send), GANG_SESSION (default: gangline),
+Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
+     the manager with: manager), GANG_FROM (sender identity for send),
+     GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
      GANG_ROLES (your own roles dir, searched before the shipped one)
 EOF
@@ -175,16 +179,19 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   [ "$a" = "$b" ]
 }
 
-wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and waiting
+wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   # A freshly spawned TUI paints its banner, checks for updates, and settles.
-  # Injecting into that is injecting into a moving screen, so wait for the same
-  # quiet patrol requires before it nudges.
+  # Injecting into that is injecting into a moving screen, so wait for quiet.
+  #
+  # Quiet is the ONLY test here — deliberately not profile_input_clear. A fresh
+  # TUI paints a ghost-text suggestion into its empty input box (Claude Code:
+  # 'Try "create a util logging.py that..."'), which that guard reads as
+  # content. Right for patrol, which must never type over a human's draft;
+  # wrong for an agent two seconds old whose box holds nothing but a
+  # placeholder, where waiting on it never returns at all.
   local t=0
   while [ "$t" -lt "$2" ]; do
-    if pane_stable "$1"; then
-      declare -F profile_input_clear >/dev/null || return 0
-      profile_input_clear "$1" && return 0
-    fi
+    pane_stable "$1" && return 0
     sleep 1; t=$((t + 1))
   done
   return 1
@@ -276,7 +283,8 @@ band_note() { # $1 = readout, $2 = crossed threshold; the one warning text, both
 # --- commands ---------------------------------------------------------------
 
 cmd_spawn() {
-  local name="" prof="" role="" dir="$PWD" id
+  # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
+  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "spawn: $1 needs a value"; prof="$2"; shift 2 ;;
@@ -288,7 +296,6 @@ cmd_spawn() {
   # live unbriefed agent behind.
   [ -z "$role" ] || role_file "$role" >/dev/null \
     || die "spawn: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
-  [ -n "$prof" ] || die "spawn: -p <profile> is required"
   [ -d "$dir" ] || die "spawn: no such directory '$dir'"
   load_profile "$prof"
 
@@ -307,18 +314,28 @@ cmd_spawn() {
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   echo "spawned $name ($prof) in $dir — watch: gang attach"
   [ -n "$role" ] || return 0
+  echo "waiting for $name to finish booting before briefing it..."
   wait_ready "$id" 30 \
-    || die "'$name' is running but never settled enough to brief — it has no role (gang capture $name)"
+    || die "'$name' is running but never went quiet, so it has no role — look at it with 'gang attach' or 'gang capture $name'"
   inject "$id" "[gang:spawn] $(role_brief "$role" "$name")"
   echo "briefed $name as $role"
 }
 
-cmd_up() { # fresh-session bootstrap: spawn (creates the session) then attach
-  [ -z "${TMUX:-}" ] || die "up: already inside tmux — use gang spawn / gang adopt"
-  local name="manager" id
+cmd_up() { # bare `gang up` is the whole setup: a briefed manager, and you in it
+  local name="manager" id a role_given=0
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
-  cmd_spawn "$name" "$@"
+  for a in "$@"; do case "$a" in -r|--role) role_given=1 ;; esac; done
+  if [ "$role_given" -eq 1 ]; then
+    cmd_spawn "$name" "$@"
+  else
+    cmd_spawn "$name" -r "${GANG_ROLE:-manager}" "$@"
+  fi
   id="$(win_id "$name")" || die "up: '$name' vanished between spawn and attach"
+  # Inside tmux, switch the client instead of refusing: needing to detach first
+  # is friction for the one command that is supposed to need nothing.
+  if [ -n "${TMUX:-}" ]; then
+    exec tmux switch-client -t "$SESSION" \; select-window -t "$id"
+  fi
   exec tmux attach -t "$SESSION" \; select-window -t "$id"
 }
 
