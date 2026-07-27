@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gangline — many harnesses, one line</title>
+<meta name="description" content="A harness harness. Unify any CLI coding agent into a tmux-powered team.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2316171a'/%3E%3Cpath%20d='M4%2016h24'%20stroke='%235c6169'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cg%20fill='%236ea8fe'%3E%3Ccircle%20cx='9'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='23'%20cy='16'%20r='3.4'/%3E%3C/g%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #fbfbfa; --fg: #16171a; --dim: #5c6169; --rule: #e3e2df;
+    --accent: #1f6feb; --code-bg: #f2f1ee;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --fg: #e8e6e3; --dim: #9aa0a8; --rule: #24272e;
+      --accent: #6ea8fe; --code-bg: #171a20;
+    }
+  }
+
+  body {
+    background: var(--bg); color: var(--fg);
+    font: 16px/1.65 var(--mono);
+    margin: 0; padding: 4rem 1.5rem 6rem;
+    -webkit-text-size-adjust: 100%;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin: 0 0 .25rem; }
+  h2 {
+    font-size: .8rem; text-transform: uppercase; letter-spacing: .12em;
+    color: var(--dim); font-weight: 600;
+    margin: 3.5rem 0 1rem; padding-bottom: .5rem; border-bottom: 1px solid var(--rule);
+  }
+  .tag { color: var(--accent); margin: 0 0 1.75rem; }
+  .lede { color: var(--dim); max-width: 36rem; }
+  .outro { margin-top: 2rem; }
+  a { color: var(--accent); }
+
+  pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px;
+    padding: .9rem 1.1rem; overflow-x: auto; font-size: .875rem; line-height: 1.6;
+  }
+  code { font-family: var(--mono); }
+  .cmd { font-size: .95rem; }
+  .cmd .p { color: var(--dim); }
+  .note { color: var(--dim); font-size: .85rem; margin-top: .6rem; }
+
+  dl { margin: 0; }
+  dt { font-weight: 600; margin-top: 1.5rem; }
+  dd { margin: .3rem 0 0; color: var(--dim); }
+
+  footer {
+    margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
+    color: var(--dim); font-size: .85rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>gangline</h1>
+  <p class="tag">Many harnesses. One line.</p>
+
+  <p class="lede">
+    A harness harness. Gangline unifies any CLI coding agent it can get its hands
+    on &mdash; Claude Code, Pi, whatever ships next &mdash; into a tmux-powered
+    team, using each for its strengths, with minimal harness-specific integration.
+  </p>
+
+  <p class="lede">
+    A gangline is the single rope that hitches many dogs, each in its own harness,
+    to one sled and one musher. The integration point is the attachment clip &mdash;
+    never surgery inside the dog.
+  </p>
+
+  <h2>Install</h2>
+  <pre class="cmd"><code><span class="p">$</span> curl -fsSL https://gangline.ai/install | sh</code></pre>
+  <p class="note">
+    Needs git and tmux&nbsp;&ge;&nbsp;3.2. Clones to <code>~/.local/share/gangline</code>,
+    links <code>gang</code> into <code>~/.local/bin</code>, re-run to update.
+    <a href="https://github.com/adambiggs/gangline/blob/main/install.sh">Read it first</a>
+    if you would rather not pipe a script into a shell &mdash; it is sixty lines.
+  </p>
+
+  <h2>Run a team</h2>
+  <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
+<span class="p">$</span> gang spawn worker -p claude-code -r worker -d ~/my/repo
+<span class="p">$</span> gang send worker --from manager "read the failing test in ci and fix it"
+<span class="p">$</span> gang roster
+manager   claude-code  idle  142k/1000k (14%)
+worker    claude-code  busy  38k/1000k (3%)</code></pre>
+
+  <h2>How it works</h2>
+  <dl>
+    <dt>Agents are tmux windows.</dt>
+    <dd>Spawning is <code>new-window</code>, killing is <code>kill-window</code>,
+        watching is <code>capture-pane</code>, and the window name <em>is</em> the
+        agent's identity. Attach and you are looking at your team.</dd>
+
+    <dt>Every message is attributed and verified.</dt>
+    <dd>A send carries a <code>[gang:&lt;sender&gt;]</code> prefix, is confirmed by
+        capturing the pane, and only then submitted. No sender means no send.
+        Unverified means a loud failure, never a shrug.</dd>
+
+    <dt>Agents manage their own context.</dt>
+    <dd>A model cannot feel its own token count, so the substrate measures it and
+        warns at configurable bands. The agent compacts <em>itself</em> at the next
+        clean seam, queuing a resume directive behind the compaction so work
+        continues unattended.</dd>
+
+    <dt>A new harness costs a profile, not an integration.</dt>
+    <dd>Launch command, busy marker, compact command &mdash; about ten lines.
+        Everything else is universal.</dd>
+
+    <dt>Batteries included, every one replaceable.</dt>
+    <dd>Agents spawn with a role brief &mdash; manager, worker, reviewer. Point
+        <code>GANG_ROLES</code> at a directory of your own and any brief becomes
+        yours.</dd>
+  </dl>
+
+  <p class="lede outro">
+    There is no server, no bus, and no database. tmux already holds the state, so
+    <code>gang</code> is a CLI you run and it exits.
+  </p>
+
+  <footer>
+    <a href="https://github.com/adambiggs/gangline">github.com/adambiggs/gangline</a>
+    &nbsp;&middot;&nbsp; Apache-2.0
+    &nbsp;&middot;&nbsp; one bash script, no daemon
+  </footer>
+</main>
+</body>
+</html>
