@@ -29,6 +29,31 @@ blocks you for as long as they stay busy.
 
 Never run `gang kill` or `gang down`. Ending an agent is the operator's call.
 
+## Reaching past gang to raw tmux
+
+`gang` aims tmux for you. When you aim it yourself, one thing will bite you:
+**`TMUX_TMPDIR` does not isolate you from inside a pane.** Given neither `-S` nor
+`-L`, tmux takes its socket from `$TMUX` and ignores `TMUX_TMPDIR` entirely — so
+`TMUX_TMPDIR=/my/sandbox tmux kill-server` kills the server you are living in.
+The whole team, mid-turn, including you. This is not hypothetical.
+
+Want a tmux of your own — a sandbox, a probe, a test fixture? Give it an explicit
+socket and address it that way every single time:
+
+```
+tmux -L probe new-session -d -s p bash    # yours
+tmux -L probe kill-server                 # kills only yours
+```
+
+`unset TMUX` works too, but only where you actually unset it. If you build a
+sandbox that sets `TMUX_TMPDIR` and unsets `TMUX`, then the teardown has to run
+*inside that sandbox* as well — a cleanup line run from your own shell is aimed
+at the live server no matter what it exports.
+
+The same misfire applies to writes. `~/.local/bin/gang` is a symlink into the
+install tree, so a sandbox that binds `~/.local` read-only still writes straight
+through to the real `bin/gang`. Bind what the link points at, not the link.
+
 ## Your context window
 
 You cannot feel how full your context is, so the substrate measures it for you.
