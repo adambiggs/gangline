@@ -810,37 +810,39 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
     load_profile "$prof"
     if [ "$GANG_VERIFIED_VERSIONS" = "any" ]; then
       printf '%-12s %-26s %s\n' "$prof" "-" "version-independent (no scraped markers)"
-      continue
-    fi
-    if [ -z "$GANG_VERSION_CMD" ] || [ -z "$GANG_VERIFIED_VERSIONS" ]; then
+    elif [ -z "$GANG_VERSION_CMD" ] || [ -z "$GANG_VERIFIED_VERSIONS" ]; then
       printf '%-12s %-26s %s\n' "$prof" "?" "UNPINNED — declare GANG_VERSION_CMD + GANG_VERIFIED_VERSIONS"
-      drift=1; continue
-    fi
-    if ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
-      printf '%-12s %-26s %s\n' "$prof" "?" "version command failed: $GANG_VERSION_CMD"
-      drift=1; continue
-    fi
-    # Matched as a whole word anywhere in the line, not as a prefix: harnesses
-    # do not agree on where the number goes. Claude Code leads with it ("2.1.220
-    # (Claude Code)"), Codex trails it ("codex-cli 0.144.5"), and a pin cannot
-    # carry the name to make a prefix work — GANG_VERIFIED_VERSIONS is
-    # space-separated so it can list several. Word boundaries also make the
-    # comparison stricter than the prefix it replaces: 0.144.5 no longer matches
-    # a hypothetical 0.144.50, and a build suffix has to be pinned to pass.
-    match=0
-    for v in $GANG_VERIFIED_VERSIONS; do
-      case " $installed " in *" $v "*) match=1 ;; esac
-    done
-    if [ "$match" -eq 1 ]; then
-      printf '%-12s %-26s %s\n' "$prof" "$installed" "OK (verified: $GANG_VERIFIED_VERSIONS)"
-    else
-      printf '%-12s %-26s %s\n' "$prof" "$installed" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS"
       drift=1
-      [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
+    elif ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
+      printf '%-12s %-26s %s\n' "$prof" "?" "version command failed: $GANG_VERSION_CMD"
+      drift=1
+    else
+      # Matched as a whole word anywhere in the line, not as a prefix: harnesses
+      # do not agree on where the number goes. Claude Code leads with it ("2.1.220
+      # (Claude Code)"), Codex trails it ("codex-cli 0.144.5"), and a pin cannot
+      # carry the name to make a prefix work — GANG_VERIFIED_VERSIONS is
+      # space-separated so it can list several. Word boundaries also make the
+      # comparison stricter than the prefix it replaces: 0.144.5 no longer matches
+      # a hypothetical 0.144.50, and a build suffix has to be pinned to pass.
+      match=0
+      for v in $GANG_VERIFIED_VERSIONS; do
+        case " $installed " in *" $v "*) match=1 ;; esac
+      done
+      if [ "$match" -eq 1 ]; then
+        printf '%-12s %-26s %s\n' "$prof" "$installed" "OK (verified: $GANG_VERIFIED_VERSIONS)"
+      else
+        printf '%-12s %-26s %s\n' "$prof" "$installed" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS"
+        drift=1
+        [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
+      fi
     fi
     # A profile that reads harness files instead of the screen rots on a schema
     # change, not a TUI change — same disease, different tissue. The profile owns
     # the check (law 4); doctor just runs it and counts a failure as drift.
+    # Unconditionally: the version probe and the format gate are independent
+    # diagnostics, and a host without the harness binary can still hold session
+    # files worth gating (lived it: CI has no codex, and the gate silently never
+    # ran there).
     if declare -F profile_doctor >/dev/null; then
       if out="$(profile_doctor 2>&1)"; then
         printf '%-12s %-26s %s\n' '' '' "file format: $out"
