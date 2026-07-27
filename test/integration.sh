@@ -38,7 +38,17 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
   while read -r id name; do
     [ "$name" = "$1" ] && { printf '%s' "$id"; return 0; }
   done < <(tmux list-windows -t "$GANG_SESSION" -F '#{window_id} #W')
-  return 1
+  # Never return empty. An empty -t is not "no window", it is tmux's CURRENT
+  # pane — and this suite is normally run by an agent from inside a live gangline
+  # session, so a missing window turns `paint` into keystrokes typed straight
+  # into whichever teammate is on screen. Lived it: a failing spawn sent the
+  # band-ladder beacons into the manager's input box, where they read as the
+  # operator talking, and the rename below retitled the manager to "gamma".
+  # A test that cannot find its own window is broken, and a broken test must not
+  # be allowed to drive someone else's agent.
+  printf 'BUG: no window named %s in %s — refusing to fall through to the active pane\n' \
+    "$1" "$GANG_SESSION" >&2
+  exit 1
 }
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
@@ -87,8 +97,10 @@ check "a numeric name reaches its agent"  "yes" "$(has 1 MARK_NUMERIC)"
 check "and no one else"                   "no"  "$(has alpha MARK_NUMERIC)"
 
 # A rename must not re-point an in-flight command at a different window.
-tmux rename-window -t "$(tmux list-windows -t "$GANG_SESSION" -F '#{window_id} #W' |
-  awk '$2=="beta"{print $1}')" gamma
+# Addressed through id_of, which refuses to yield an empty target: the inline
+# awk this replaced printed nothing when beta was missing, and the rename then
+# landed on the active pane.
+tmux rename-window -t "$(id_of beta)" gamma
 check "an agent renamed outside gang is addressable by its new name" "idle" \
   "$("$GANG" status gamma)"
 
