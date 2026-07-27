@@ -14,8 +14,11 @@ usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
 
-  gang up [name] -p <profile> [-d <dir>]      fresh start: spawn (name: manager) + attach
-  gang spawn <name> -p <profile> [-d <dir>]   start an agent (window name = identity)
+  gang up [name] -p <prof> [-r <role>] [-d <dir>]
+                                              fresh start: spawn (name: manager) + attach
+  gang spawn <name> -p <prof> [-r <role>] [-d <dir>]
+                                              start an agent (window name = identity);
+                                              -r briefs it with a role from roles/
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
   gang compact <name> [--resume <msg>]        trigger the harness's own context compaction;
@@ -36,12 +39,14 @@ gang — drive a team of CLI agents as tmux windows
   gang attach                                 attach to the team session
   gang kill  <name>                           kill the agent's window
   gang down                                   kill the whole session (every agent)
-  gang profiles                               list available profiles
+  gang profiles                               list available profiles (harnesses)
+  gang roles                                  list available roles (briefs)
   gang context-hook                           harness hook mode: warn the agent in-turn when
                                               it crosses a context band (see README)
 
 Env: GANG_FROM (sender identity for send), GANG_SESSION (default: gangline),
-     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,90%)
+     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,90%),
+     GANG_ROLES (your own roles dir, searched before the shipped one)
 EOF
 }
 
@@ -61,6 +66,50 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
+}
+
+# --- roles ------------------------------------------------------------------
+#
+# A profile says how to talk to a harness; a role says what an agent is for.
+# Both are the same kind of extension point, and neither is code: a role is a
+# markdown brief injected as the agent's first message (law 9 — the answer is
+# prose in an agent's prompt). GANG_ROLES points at your own directory, which
+# is searched before the shipped one, so any brief here can be replaced by
+# dropping a file of the same name next to it. `_`-prefixed files are not roles
+# in their own right; `_common.md` is the part every role points at too.
+
+list_roles() {
+  local d f
+  for d in ${GANG_ROLES:+"$GANG_ROLES"} "$ROOT/roles"; do
+    [ -d "$d" ] || continue
+    for f in "$d"/*.md; do
+      [ -f "$f" ] || continue
+      case "${f##*/}" in _*) continue ;; esac
+      basename "$f" .md
+    done
+  done | sort -u
+}
+
+role_file() { # $1 = role name -> path on stdout; yours wins over the shipped one
+  local d
+  for d in ${GANG_ROLES:+"$GANG_ROLES"} "$ROOT/roles"; do
+    [ -f "$d/$1.md" ] && { printf '%s' "$d/$1.md"; return 0; }
+  done
+  return 1
+}
+
+role_brief() { # $1 = role, $2 = agent name; the message that points at the brief
+  # Pointed at, not pasted. A brief is longer than a pane is tall, and a paste
+  # whose first line has scrolled out of view cannot be verified — capture-pane
+  # sees only what is on screen. Every coding agent can read a file, so the
+  # universal surface here is the filesystem (law 1), and the brief stays on
+  # disk where the agent can re-read it after compacting.
+  local f common where
+  f="$(role_file "$1")" || die "unknown role '$1' (have: $(list_roles | tr '\n' ' '))"
+  where="$f"
+  common="$(role_file _common)" && where="$common and $f"
+  printf 'You are `%s` on a gangline team, in the %s role. Your operating brief is %s — read it now and follow it for the rest of this session.%s' \
+    "$2" "$1" "$where" "${GANG_COMPACT_CMD:+ Your compaction command is $GANG_COMPACT_CMD}"
 }
 
 # --- window plumbing --------------------------------------------------------
@@ -119,6 +168,21 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   sleep 0.5
   b="$(capture "$1")" || die "cannot read pane $1"
   [ "$a" = "$b" ]
+}
+
+wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and waiting
+  # A freshly spawned TUI paints its banner, checks for updates, and settles.
+  # Injecting into that is injecting into a moving screen, so wait for the same
+  # quiet patrol requires before it nudges.
+  local t=0
+  while [ "$t" -lt "$2" ]; do
+    if pane_stable "$1"; then
+      declare -F profile_input_clear >/dev/null || return 0
+      profile_input_clear "$1" && return 0
+    fi
+    sleep 1; t=$((t + 1))
+  done
+  return 1
 }
 
 wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
@@ -207,13 +271,18 @@ band_note() { # $1 = readout, $2 = crossed threshold; the one warning text, both
 # --- commands ---------------------------------------------------------------
 
 cmd_spawn() {
-  local name="" prof="" dir="$PWD" id
+  local name="" prof="" role="" dir="$PWD" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "spawn: $1 needs a value"; prof="$2"; shift 2 ;;
+    -r|--role)    [ $# -ge 2 ] || die "spawn: $1 needs a value"; role="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "spawn: $1 needs a value"; dir="$2";  shift 2 ;;
     *) die "spawn: unknown argument '$1'" ;;
   esac; done
+  # Resolved before anything is spawned: a typo in the role should not leave a
+  # live unbriefed agent behind.
+  [ -z "$role" ] || role_file "$role" >/dev/null \
+    || die "spawn: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
   [ -n "$prof" ] || die "spawn: -p <profile> is required"
   [ -d "$dir" ] || die "spawn: no such directory '$dir'"
   load_profile "$prof"
@@ -232,6 +301,11 @@ cmd_spawn() {
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   echo "spawned $name ($prof) in $dir — watch: gang attach"
+  [ -n "$role" ] || return 0
+  wait_ready "$id" 30 \
+    || die "'$name' is running but never settled enough to brief — it has no role (gang capture $name)"
+  inject "$id" "[gang:spawn] $(role_brief "$role" "$name")"
+  echo "briefed $name as $role"
 }
 
 cmd_up() { # fresh-session bootstrap: spawn (creates the session) then attach
@@ -547,6 +621,7 @@ case "$cmd" in
   kill)     [ $# -ge 1 ] || usage_die; cmd_kill "$1" ;;
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
+  roles)    list_roles ;;
   -h|--help|help) usage ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
 esac

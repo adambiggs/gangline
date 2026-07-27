@@ -92,6 +92,29 @@ tmux rename-window -t "$(tmux list-windows -t "$GANG_SESSION" -F '#{window_id} #
 check "an agent renamed outside gang is addressable by its new name" "idle" \
   "$("$GANG" status gamma)"
 
+# --- roles -----------------------------------------------------------------
+
+check "roles are listed" "manager reviewer worker" \
+  "$("$GANG" roles | tr '\n' ' ' | sed 's/ $//')"
+
+"$GANG" spawn scout -p bash -r worker -d /tmp >/dev/null
+sleep 0.5
+check "a spawned agent is briefed" "yes" \
+  "$(has scout '[gang:spawn] You are `scout` on a gangline team, in the worker role')"
+check "the brief is pointed at, not pasted" "yes" "$(has scout "${GANG%/bin/gang}/roles/worker.md")"
+
+"$GANG" spawn ghostrole -p bash -r nosuch -d /tmp >/dev/null 2>&1
+check "an unknown role fails" "1" "$?"
+check "before anything is spawned" "" "$("$GANG" roster | awk '$1=="ghostrole"{print $1}')"
+
+# GANG_ROLES is the extension point: your directory wins over the shipped one.
+mkdir -p "$SHIM/custom-roles"
+printf '# Role: worker\n\nCustom.\n' > "$SHIM/custom-roles/worker.md"
+GANG_ROLES="$SHIM/custom-roles" "$GANG" spawn custom -p bash -r worker -d /tmp >/dev/null
+sleep 0.5
+check "GANG_ROLES overrides the shipped brief" "yes" \
+  "$(has custom "$SHIM/custom-roles/worker.md")"
+
 # --- context bands -------------------------------------------------------------
 
 # The bash profile reads the same beacon shape the claude-code statusline paints,

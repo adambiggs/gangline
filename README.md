@@ -34,7 +34,7 @@ flowchart TB
 There is no server, no bus, and no database. tmux already holds the state, so
 `gang` is a CLI you run and it exits.
 
-## The four ideas
+## The five ideas
 
 **Agents are tmux windows.** Spawning is `new-window`, killing is `kill-window`,
 watching is `capture-pane`, and the window name *is* the agent's identity. Attach
@@ -58,13 +58,21 @@ the compaction so work continues without a human waiting on it.
 compact command — about ten lines. Everything else is universal.
 [Read more →](#profiles)
 
+**Batteries included, every one replaceable.** Agents spawn with a role brief —
+manager, worker, reviewer — telling them how to address teammates, when to compact,
+and what to do when the substrate misbehaves. Point `GANG_ROLES` at a directory of
+your own and any brief becomes yours.
+[Read more →](#the-playbook)
+
 ## Quickstart
 
 ```sh
-gang up -p claude-code -d ~/my/repo             # fresh start: session + your own window
+gang up -p claude-code -r manager -d ~/my/repo  # fresh start: session + your own window
                                                 # ("manager", attached) — run from outside tmux
-gang spawn worker -p claude-code -d ~/my/repo   # "worker" is a name you pick: it becomes the
-                                                # tmux window name AND the agent's identity
+gang spawn worker -p claude-code -r worker \
+                  -d ~/my/repo                  # "worker" is a name you pick: it becomes the
+                                                # tmux window name AND the agent's identity;
+                                                # -r briefs it with a role (gang roles)
 gang send worker --from manager "read the failing test in ci and fix it"
 gang status worker                              # busy | idle
 gang capture worker                             # what's on worker's screen
@@ -225,9 +233,42 @@ context readout or detecting a non-empty input box.
 ```
 bin/gang      the whole tool
 profiles/     one small file per harness
+roles/        one markdown brief per role
 statusline/   the Claude Code context beacon
 test/         integration test, real tmux, no mocks
 docs/adr/     decisions
+```
+
+## The playbook
+
+A profile says how to talk to a harness; a role says what an agent is for. They
+are the same kind of extension point, and neither is code — a role is a markdown
+brief, because law 9 says the answer is prose in an agent's prompt.
+
+```sh
+gang spawn worker -p claude-code -r worker -d ~/my/repo
+gang roles                                    # manager, reviewer, worker
+```
+
+The shipped briefs carry what an agent cannot work out from its own transcript:
+that a `[gang:<sender>]` line is a peer and unprefixed text is the operator, that
+a send to a busy agent is refused rather than queued, that a `[context-usage]`
+note means finish the arc and compact with a resume directive queued behind it,
+and that `gang doctor` explains a substrate behaving strangely. `roles/_common.md`
+holds all of that; each role file adds its own job on top — the manager splits
+work by ownership and guards its own context hardest, the worker reports what
+changed and what proves it, the reviewer verifies claims rather than reading
+diffs.
+
+The brief is pointed at, not pasted: gang injects one line naming the files, the
+agent reads them, and they stay on disk to be re-read after a compaction. That
+also keeps the injection short enough to verify — a paste taller than the pane
+cannot be.
+
+Replace any of it by putting a file of the same name in a directory of your own:
+
+```sh
+export GANG_ROLES=~/my/gangline-roles         # searched before the shipped roles/
 ```
 
 ### Strategy rot
