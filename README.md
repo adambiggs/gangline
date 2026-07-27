@@ -45,13 +45,14 @@ you can type into it yourself at any time.
 **Every message is attributed and verified.** A send is pasted into the target
 pane carrying a `[gang:<sender>]` prefix, confirmed by capturing the pane, and only
 then submitted. No sender means no send. Unverified means a loud failure, never a
-shrug. Sends into a mid-turn agent are refused rather than queued behind its work.
+shrug. A mid-turn agent is still reachable: where the harness takes input during a
+turn, the message is accepted instead of bouncing.
 [Read more →](#the-substrate)
 
 **Agents manage their own context.** A model cannot feel its own token count, so
 the substrate measures it, warns the agent as it crosses configurable bands, and the
-agent compacts *itself* at the next clean seam — queuing a resume directive behind
-the compaction so work continues without a human waiting on it.
+agent compacts *itself* at the next clean seam, naming what to pick back up, so
+work continues without a human waiting on it.
 [Read more →](#self-compaction)
 
 **A new harness costs a profile, not an integration.** Launch command, busy marker,
@@ -124,24 +125,31 @@ sequenceDiagram
     participant G as gang send
     participant P as agent's pane
     G->>P: busy marker on screen?
-    Note over G,P: refuse if mid-turn (--wait to block instead)
-    G->>P: capture-pane — count delivery evidence
+    Note over G,P: mid-turn: send anyway, or refuse if the harness takes no input
+    G->>P: read the input box
     G->>P: load-buffer → paste-buffer -p (bracketed paste)
-    G->>P: capture-pane — count again
-    alt the count rose
-        G->>P: Enter
-        Note over G,P: delivered
+    G->>P: read the input box again
+    alt the box changed
+        G->>P: Enter — its own keystroke
+        G->>P: read the input box once more
+        alt it changed again
+            Note over G,P: delivered
+        else the paste is still sitting there
+            G--xG: die — pasted, never submitted
+        end
     else unchanged
         G--xG: die — loud, and nothing was submitted
     end
 ```
 
-The count is taken twice because presence is not proof: an identical earlier send
-is still sitting in the transcript, and matching *that* would verify a paste that
-never landed. Only a rise means this paste arrived. Some TUIs collapse a long
-paste into a placeholder rather than echoing it, so an exact
-`[paste #N 1081 chars]` / `[paste #N +13 lines]` count match counts as evidence
-too. A mismatched count does not.
+Three reads, because neither presence nor absence proves anything alone. Matching
+the text *somewhere* on screen would verify against an identical earlier send
+still sitting in the transcript; a box that **changed** is the harness-independent
+fact underneath every TUI's rendering, whether it echoes a paste literally or
+collapses it into `[Pasted text #2]` or `[paste #N +13 lines]`. The third read is
+the submit: batch the text and the Enter into one keystroke burst and a TUI reads
+the newline as part of the paste, leaving the message parked in the box as an
+unsent draft that scrollback renders exactly like a sent one.
 
 Per-agent state lives in tmux window options — the profile binding (`@gl_profile`)
 and the context band already warned about (`@gl_band`) — so tmux deletes an agent's
@@ -161,7 +169,7 @@ flowchart LR
         patrol["gang patrol<br><i>ambient · any harness</i>"]:::warn
     end
     subgraph A["act"]
-        comp["agent runs /compact<br>+ queued resume directive"]:::agent
+        comp["agent runs gang compact<br>on itself, --resume to continue"]:::agent
     end
 
     ctx --> hook --> comp
@@ -218,13 +226,23 @@ band and the other reports steady. An agent is warned once per band, not once pe
 leg, and tmux deletes the memory with the window.
 
 **Act.** `gang compact <name> [--resume <msg>]` triggers the harness's own
-compaction command through the verified-injection path. The resume message is
-injected *while* compaction runs, so the harness's own input queue holds it and
-fires it when the compact turn ends — no idle gap, and no process babysitting the
-wait. Proven live on Claude Code and Pi; a failed compact still releases the queue,
-so an agent is never stranded. An agent past a band self-queues its own compact plus
-a resume directive at the next arc seam, with no permission ask. Durable-state and
-handoff conventions ride in agent prompts, not in code.
+compaction command through the verified-injection path. Naming *yourself* is the
+ordinary case and the one the pillar rests on: compaction queues behind the turn
+you are in — the turn that ends the moment the command returns — so an agent past
+a band compacts at its next arc seam without being idle first, without permission,
+and without anyone watching. Naming somebody else still refuses a live turn,
+because cutting one throws away work in progress; that refusal is about what
+compaction *means*, not about whether keystrokes can be delivered.
+
+`--resume` is delivered after compaction settles rather than queued behind it.
+Queued input is not one thing: text can be handed to the turn already running
+while a queued slash command waits for that turn to end, so a resume typed in
+behind a compaction arrives *before* it and is swallowed by the turn that was
+about to be compacted — the agent then wakes up with nothing to pick up. Instead a
+detached waiter holds until the pane has been quiet for three consecutive polls
+and stopped repainting, which is also long enough that it cannot fire in the gap
+between the turn ending and compaction starting to draw. Durable-state and handoff
+conventions ride in agent prompts, not in code.
 
 ### What patrol refuses to do
 
@@ -280,9 +298,10 @@ gang roles                                    # manager, reviewer, worker
 
 The shipped briefs carry what an agent cannot work out from its own transcript:
 that a `[gang:<sender>]` line is a peer and unprefixed text is the operator, that
-a send to a busy agent is refused rather than queued, that a `[context-usage]`
-note means finish the arc and compact with a resume directive queued behind it,
-and that `gang doctor` explains a substrate behaving strangely. `roles/_common.md`
+a send to a busy agent is accepted rather than bounced, that a
+`[context-usage]` note means finish the arc and `gang compact` yourself with a
+`--resume`, and that `gang doctor` explains a substrate behaving strangely.
+`roles/_common.md`
 holds all of that; each role file adds its own job on top — the manager splits
 work by ownership and guards its own context hardest, the worker reports what
 changed and what proves it, the reviewer verifies claims rather than reading

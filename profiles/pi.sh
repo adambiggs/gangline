@@ -7,6 +7,12 @@
 GANG_LAUNCH="pi"
 GANG_BUSY_REGEX="Working\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
+# GANG_MIDTURN_INPUT is deliberately unset: whether Pi takes input typed during a
+# turn, or hands the keystrokes to whatever that turn is running, has not been
+# watched live — and that is the difference between a delivered message and a
+# paste landing somewhere unintended. Unset, a mid-turn send is refused. Set it to
+# 1 once somebody types into a working Pi and reads the result out of its input
+# area.
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="pi --version"

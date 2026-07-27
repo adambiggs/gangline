@@ -53,10 +53,13 @@ gang — drive a team of CLI agents as tmux windows
                                               start an agent (window name = identity);
                                               -r briefs it with a role from roles/
   gang adopt <name> -p <profile>              register an existing window as an agent
-  gang send  <name> --from <sender> <msg...>  verified send; refuses if busy (--wait to block)
+  gang send  <name> --from <sender> <msg...>  verified send; delivered mid-turn if the
+                                              harness takes input during one (--wait to
+                                              block for idle instead)
   gang compact <name> [--resume <msg>]        trigger the harness's own context compaction;
-                                              --resume queues a message that fires when
-                                              compaction completes (--from/GANG_FROM required)
+                                              --resume fires once compaction settles.
+                                              Naming yourself is allowed and is the
+                                              self-compaction path (--from/GANG_FROM required)
   gang status <name>                          busy | idle
   gang context <name>                         context-window usage (profile-declared readout)
   gang wait  <name> [timeout_s]               block until idle (default 300)
@@ -116,7 +119,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
-  GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD=""
+  GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
   unset -f profile_context profile_input 2>/dev/null || true
@@ -186,6 +189,22 @@ win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that nam
 }
 
 exists() { win_id "$1" >/dev/null; }
+
+self_window() { # -> the window id this process is running in; nonzero if not in one
+  # tmux exports $TMUX_PANE into every pane it starts, so it names the caller
+  # exactly — unlike the attached-client list, which names whoever is LOOKING at
+  # the session, not who is running inside it. It can also be stale: a process
+  # that outlived its pane, or one that inherited the variable across an ssh or
+  # mosh hop, still carries a pane id for a pane that is gone. So the id is
+  # checked against the live session rather than trusted; a stale one matches
+  # nothing and the caller is simply not-self, which is the safe answer.
+  [ -n "${TMUX_PANE:-}" ] || return 1
+  local pid wid
+  while read -r pid wid; do
+    [ "$pid" = "$TMUX_PANE" ] && { printf '%s' "$wid"; return 0; }
+  done < <(tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{window_id}' 2>/dev/null)
+  return 1
+}
 
 # resolve() sets these two for the command that follows; the only name->agent lookup.
 AGENT_ID="" AGENT_PROFILE=""
@@ -319,7 +338,53 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
     || die "cannot read the input box of $1 after pasting — nothing was submitted"
   [ "$after" != "$before" ] \
     || die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted"
+  # Enter goes as its own keystroke, and then gets checked, because the failure
+  # it guards against is silent and reads exactly like success. Batch the text
+  # and the Enter into one send-keys and Claude Code takes the burst for a paste
+  # and the trailing newline for part of it: the message stays in the box as an
+  # unsent draft that scrollback renders identically to a sent one. Submitting
+  # empties the box — or, mid-turn, replaces it with the harness's queued-message
+  # hint — so a box still holding what we just pasted was never submitted.
   tmux send-keys -t "$1" Enter
+  local t=0 posted
+  while :; do
+    sleep 0.4
+    posted="$(landing_zone "$1")" \
+      || die "cannot read the input box of $1 after Enter — submission unverifiable"
+    [ "$posted" = "$after" ] || break
+    t=$((t + 1))
+    [ "$t" -ge 5 ] \
+      && die "submit NOT verified: '$frag' is still sitting in the input box of $1 — it was pasted but never sent"
+  done
+}
+
+resume_after_compaction() { # $1 = window id, $2 = text; deliver once the pane settles
+  # A resume cannot ride the input queue behind its own compaction. Both would be
+  # typed from inside a live turn, and a harness does not treat the two alike: a
+  # queued slash command waits for the turn to genuinely end, while queued text
+  # can be handed straight to the turn already running. The text overtakes the
+  # command, gets eaten by the very turn that was about to be compacted, and the
+  # agent wakes up afterwards with nothing to pick up. Lived it. So the resume is
+  # delivered after the fact instead, by the only thing still around to do it.
+  #
+  # The floor matters as much as the streak. Between a turn ending and the compact
+  # command starting to paint there is a sub-second window where the pane is
+  # neither busy nor compacting, and a waiter that fires in it queues the resume
+  # AHEAD of the compaction it exists to follow — the same inversion, rebuilt.
+  # Three quiet polls plus a screen that stops moving costs six seconds; no
+  # compaction finishes that fast and no flush gap lasts that long.
+  local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}"
+  while [ "$t" -lt "$timeout" ]; do
+    sleep 2; t=$((t + 2))
+    [ "$t" -ge 10 ] || continue
+    if busy "$1"; then streak=0; continue; fi
+    streak=$((streak + 1))
+    [ "$streak" -ge 3 ] && pane_stable "$1" && break
+  done
+  # Out of time still means try, not give up: inject verifies its own delivery, so
+  # the attempt either lands or fails, and a failure leaves the agent sitting idle
+  # where anyone can see it rather than passing for resumed.
+  inject "$1" "$2"
 }
 
 # --- context bands ----------------------------------------------------------
@@ -351,9 +416,14 @@ ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highe
   printf '%s %s' "$band" "$crossed"
 }
 
-band_note() { # $1 = readout, $2 = crossed threshold; the one warning text, both legs
-  printf '[context-usage] %s in context — crossed the %s-token band. Plan %s at the next natural seam (arc boundary) and queue a resume directive behind it so work continues unattended.' \
-    "$1" "$2" "${GANG_COMPACT_CMD:-compaction}"
+band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text, both legs
+  # Single quotes only: the hook leg embeds this text in JSON with printf, so a
+  # double quote or a backslash here would emit malformed output.
+  # The exact command, not "compact soon", because the part an agent gets wrong
+  # is the resume — typed in behind the compaction it overtakes it and is eaten
+  # by the turn about to be compacted, and the agent wakes with nothing to do.
+  printf "[context-usage] %s in context — crossed the %s-token band. At the next natural seam (arc boundary), run: gang compact %s --from %s --resume '<where you are, what is next>' — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
+    "$1" "$2" "$3" "$3"
 }
 
 # --- commands ---------------------------------------------------------------
@@ -435,12 +505,34 @@ cmd_send() {
   [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM) — unattributed injection is how the last harness died"
   resolve "$name"
 
+  # Busy is not, by itself, a reason to refuse. The question a send has to answer
+  # is "will this message be delivered?", and gang measures that directly, in the
+  # pane, before and after — a state guess is a worse answer than a measurement.
+  # What busy genuinely decides is where the keystrokes LAND: a harness that takes
+  # input during a turn puts the paste in its input box, while one that does not
+  # hands it to whatever that turn is running. So the profile declares which it is
+  # and only the second case is refused. Refusing the first is what made a busy
+  # manager a black hole and made --wait burn a worker's whole turn waiting on one
+  # that never went idle.
+  local midturn=0
   if busy "$AGENT_ID"; then
-    [ "$wait" -eq 1 ] || die "'$name' is mid-turn; refusing to inject (gang send $name --wait ... to block until idle)"
-    wait_idle "$AGENT_ID" "$name" "$timeout"
+    if [ "$wait" -eq 1 ]; then
+      wait_idle "$AGENT_ID" "$name" "$timeout"
+    elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ]; then
+      midturn=1
+    else
+      die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
+    fi
   fi
   inject "$AGENT_ID" "[gang:$from] $*"
-  echo "delivered to $name as [gang:$from] (verified in pane, submitted)"
+  if [ "$midturn" -eq 1 ]; then
+    # "accepted", not "queued": the box shows a queued-message hint either way,
+    # but what the harness does next is its own call — Claude Code hands queued
+    # text to the turn already running as often as it holds it for the boundary.
+    echo "delivered to $name as [gang:$from] (verified in pane, accepted mid-turn)"
+  else
+    echo "delivered to $name as [gang:$from] (verified in pane, submitted)"
+  fi
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
@@ -456,17 +548,29 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   if [ -n "$resume" ] && [ -z "$from" ]; then
     die "compact: --resume needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
   fi
-  busy "$AGENT_ID" && die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
+  # Busy is refused for a peer and expected for yourself. Cutting somebody else's
+  # live turn throws away work they are in the middle of — that refusal is about
+  # what compaction MEANS, not about whether keystrokes can be delivered, so it
+  # stays. The turn standing in your own way is the one that ends the moment this
+  # command returns, and an agent is busy by definition while it is deciding to
+  # compact: refusing there closed the only path self-compaction has.
+  local self=""
+  self="$(self_window)" || self=""
+  local mine=0; [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
+  [ "$mine" -eq 1 ] || ! busy "$AGENT_ID" \
+    || die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
+
   inject "$AGENT_ID" "$GANG_COMPACT_CMD"
+  local where="triggered on $name"
+  [ "$mine" -eq 1 ] && where="queued behind your own turn"
   if [ -n "$resume" ]; then
-    # Compaction is now running. Harnesses queue input typed mid-turn, so the
-    # resume message parks in the input queue and fires the moment compaction
-    # completes — the agent picks its work back up with no idle gap and no
-    # gang process babysitting the wait.
-    inject "$AGENT_ID" "[gang:$from] $resume"
-    echo "compaction triggered on $name ($GANG_COMPACT_CMD); resume queued as [gang:$from] (verified in pane)"
+    ( trap '' HUP INT TERM
+      resume_after_compaction "$AGENT_ID" "[gang:$from] $resume"
+    ) </dev/null >/dev/null 2>&1 &
+    disown
+    echo "compaction $where ($GANG_COMPACT_CMD, verified in pane); resume delivered as [gang:$from] once compaction settles"
   else
-    echo "compaction triggered on $name ($GANG_COMPACT_CMD, verified, submitted)"
+    echo "compaction $where ($GANG_COMPACT_CMD, verified in pane)"
   fi
 }
 
@@ -563,7 +667,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # input box; an injection would interleave with it. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
   else
-    inject "$1" "[gang:patrol] $(band_note "$ctx" "$crossed")"
+    inject "$1" "[gang:patrol] $(band_note "$ctx" "$crossed" "$2")"
     tmux set-option -w -t "$1" @gl_band "$band"
     say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
   fi
@@ -600,7 +704,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   if [ "$band" -gt "$prev" ]; then
     # The note carries no quote and no backslash, so this stays a printf.
     printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' \
-      "$event" "$(band_note "$ctx" "$crossed")"
+      "$event" "$(band_note "$ctx" "$crossed" "$(tmux display-message -p -t "$TMUX_PANE" '#W')")"
   fi
   exit 0
 }

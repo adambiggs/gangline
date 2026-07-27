@@ -27,6 +27,14 @@ GANG_VERIFIED_VERSIONS="2.1.220"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"
+# Input pasted during a turn is taken, not dropped and not fed to whatever the
+# turn is running: the box accepts the paste and Enter replaces it with "Press up
+# to edit queued messages". Verified live, which is what lets a send reach a
+# working agent instead of bouncing off it. What the flag does NOT promise is
+# when: text is often handed straight to the turn already running, while a queued
+# slash command waits for that turn to end — so text submitted after a command
+# can still arrive before it (see resume_after_compaction).
+GANG_MIDTURN_INPUT=1
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline

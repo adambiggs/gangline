@@ -187,6 +187,85 @@ check "a paste the TUI collapses instead of echoing still verifies" "0" "$?"
 check "and the pane never showed the literal text" "no" "$(has collapser 'second line')"
 unset GANG_PROFILES
 
+# Enter has to be checked, not merely sent. Batch the text and the Enter into one
+# send-keys and Claude Code reads the burst as a paste and the trailing newline
+# as part of it: the message sits in the input box as an unsent draft that
+# scrollback renders identically to a sent one. The paste verifies, the
+# submission never happened, and the sender walks away believing it did.
+mkdir -p "$SHIM/noenter"
+cat > "$SHIM/noenter/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = send-keys ]; then
+  for a in "\$@"; do [ "\$a" = Enter ] && exit 0; done
+fi
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/noenter/tmux"
+PATH="$SHIM/noenter:$PATH" "$GANG" send alpha --from tester "MARK_UNSENT" >/dev/null 2>&1
+check "a paste that is never submitted is not reported as delivered" "1" "$?"
+tmux send-keys -t "$(target_of alpha)" C-u   # the draft it correctly left behind
+
+# --- reaching an agent that is working ---------------------------------------
+
+# Busy was a refusal, and the refusal was the bug: a manager mid-turn was
+# unreachable, --wait burned the caller's whole turn waiting on one that never
+# went idle, and an agent — busy by definition while it is deciding anything —
+# could not drive its own compaction. Busy does not decide whether a message can
+# be delivered; gang measures that in the pane, before and after. What it decides
+# is where the keystrokes LAND, and that is the harness's property to declare.
+cat > "$SHIM/custom-profiles/working.sh" <<SH
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="WORKING\\.\\.\\."
+GANG_COMPACT_CMD="/compact"
+GANG_MIDTURN_INPUT="\${FAKE_QUEUES:-}"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" spawn busybee -p working -d /tmp >/dev/null 2>&1
+sleep 0.5
+paint busybee 'WORKING...'
+check "the stand-in reads as busy" "busy" "$("$GANG" status busybee)"
+
+FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_QUEUED" >/dev/null 2>&1
+check "a harness that queues input takes mail mid-turn" "0" "$?"
+sleep 0.5
+check "and it really landed" "yes" "$(has busybee "[gang:tester] MARK_QUEUED")"
+
+"$GANG" send busybee --from tester "MARK_UNQUEUED" >/dev/null 2>&1
+check "one that does not is still refused" "1" "$?"
+
+# Compacting yourself is the extreme case of a busy target: the turn in the way
+# is the caller's own and it ends the moment the command returns. Self is told
+# from peer by the pane id tmux exports into every pane it starts — checked
+# against the live session, because that variable survives its pane.
+selfpane="$(tmux list-panes -t "$(target_of busybee)" -F '#{pane_id}')"
+TMUX_PANE="$selfpane" "$GANG" compact busybee --from tester >/dev/null 2>&1
+check "an agent can compact itself mid-turn" "0" "$?"
+"$GANG" compact busybee --from tester >/dev/null 2>&1
+check "but a peer's live turn is still not cut" "1" "$?"
+TMUX_PANE="%99999" "$GANG" compact busybee --from tester >/dev/null 2>&1
+check "and a stale pane id is not mistaken for self" "1" "$?"
+
+# A resume cannot ride the input queue behind its own compaction: queued text can
+# be handed to the turn already running while a queued slash command waits for
+# that turn to end, so the resume overtakes the compaction and is eaten by the
+# very turn that was about to be compacted. It is delivered afterwards instead,
+# and not until the pane has been quiet long enough that it cannot be landing in
+# the gap between the turn ending and compaction starting to paint.
+GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from tester --resume "MARK_RESUMED" >/dev/null 2>&1
+sleep 2
+check "a resume waits while the agent is still busy" "no" "$(has busybee MARK_RESUMED)"
+tmux send-keys -t "$(target_of busybee)" clear Enter   # compaction "finishes"
+sleep 22
+check "and lands once the pane settles" "yes" "$(has busybee "[gang:tester] MARK_RESUMED")"
+unset GANG_PROFILES
+
 # --- addressing --------------------------------------------------------------
 
 # tmux reads an all-digit target as a window INDEX. alpha is at index 1, so a

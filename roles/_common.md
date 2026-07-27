@@ -22,10 +22,14 @@ gang send <name> --from <you> "..."  task or answer a teammate
 
 Always sign with your own name. An unattributed send is refused, by design.
 
-A send to a busy agent is refused rather than queued — deliberately, so your
-message never lands in the middle of someone's turn. Do something else and try
-again. Do not sit in `--wait` unless you have nothing else to do, because it
-blocks you for as long as they stay busy.
+A send to a busy agent is accepted, on any harness whose profile says it takes
+input mid-turn; where it does not, the send is refused rather than pasted into
+whatever they are running. You are told which happened. Whether an accepted
+message reaches them inside the turn already running or at its boundary is the
+harness's own call, so treat a mid-turn send as an interruption you meant to
+make. Never sit in `--wait` unless you have nothing else to do — it blocks you for
+as long as they stay busy, and a teammate who never goes idle is reachable
+without it.
 
 Never run `gang kill` or `gang down`. Ending an agent is the operator's call.
 
@@ -68,10 +72,18 @@ When you get one:
    you learned, what is left. Somewhere durable — a file in the repo, or a
    message to whoever gave you the task. Not just in your head, which is the
    thing about to be compacted.
-3. **Run your compaction command** — the message that briefed you names it — **and
-   then immediately type the message telling the post-compaction you what to pick
-   back up.** Type it while compaction is still running: it parks in the input
-   queue and fires the moment compaction ends, so nobody has to be watching.
+3. **Compact yourself, and say what to pick back up** — one command does both:
+
+   ```
+   gang compact <your own name> --from <your own name> --resume "<where you were, what is next>"
+   ```
+
+   It queues behind the turn you are in, so you never have to be idle to run it,
+   and the resume is delivered once compaction settles. Do not hand-roll that
+   second half by typing the resume in behind your compaction: queued text can be
+   handed to the turn already running while a queued slash command waits for that
+   turn to end, so the resume arrives *first* and is eaten by the very turn you
+   were about to compact — leaving post-compaction you with nothing to pick up.
    Re-reading this brief is cheap; say so in that message if it would help.
 
 Do not ask permission to compact. Do not wait to be told twice.
