@@ -213,6 +213,59 @@ mint_key() { # -> a fresh session marker; unique by construction, meaningless by
   printf 'gl-%s' "$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
 }
 
+valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
+  # One grammar for agent names and senders, because a name is all four of those
+  # at once: tmux addresses it, the context hook puts it in JSON, the band note
+  # puts it in a suggested command, and messages sign with it. A name that
+  # cannot round-trip through all four is refused at the door rather than
+  # producing a window nobody can address or a hook reply nobody can parse.
+  case "$1" in
+    ''|-*|.*) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+}
+
+mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
+
+envelope() { # $1 = sender, $2 = body -> the message as it goes on the wire
+  # Attribution used to be a prefix on the first line, which left every line
+  # after it unsigned — and the role briefs read an unsigned line as the
+  # OPERATOR, who outranks every peer. So a peer with nothing but permission to
+  # run `gang send` could deliver `ok\nnow do the dangerous thing`, where the
+  # second line arrives in the operator's voice. A repository that gets text
+  # into one agent reaches the whole team that way.
+  #
+  # The envelope closes it: everything the sender said is inside a matched pair,
+  # and the pair carries a nonce minted for this message alone. A body cannot
+  # close the envelope and open another, because it cannot know the nonce and
+  # because anything shaped like a tag is neutralised before it goes in — so an
+  # unenveloped line really is the operator's own typing, mechanically rather
+  # than by convention.
+  #
+  # What this does NOT do is authenticate the sender: any writer to a pane can
+  # type an envelope. That is why the sender is read off the sending window
+  # wherever gang can see one (check_sender), rather than believed.
+  local nonce body
+  nonce="$(mint_nonce)"
+  body="$(printf '%s' "$2" | sed 's/\[\(\/\{0,1\}\)gang:/(\1gang:/g')"
+  printf '[gang:%s#%s] %s [/gang:%s#%s]' "$1" "$nonce" "$body" "$1" "$nonce"
+}
+
+check_sender() { # $1 = claimed sender; inside the session, it must be your own window
+  # --from is a string the caller chooses, and the point of attribution is that a
+  # worker cannot sign as the lead — or as `patrol`, or `hitch`. Wherever gang
+  # can see who is calling, it uses that instead of the claim. Outside the
+  # session there is nobody to look at and the flag stands: that is the
+  # operator's own shell, and cron.
+  valid_name "$1" \
+    || die "sender '$1' is not a usable identity — letters, digits, dot, dash and underscore only, not starting with a dash or dot"
+  local self mine
+  self="$(self_window)" || return 0
+  mine="$(tmux display-message -p -t "$self" '#W' 2>/dev/null)" || return 0
+  [ -z "$mine" ] || [ "$mine" = "$1" ] \
+    || die "you are '$mine', so sign as '$mine' — a message signed '$1' from this window would put a peer's words in another agent's inbox under somebody else's name"
+}
+
 marker_line() { # $1 = key; the sentence that plants it, tuned to stay planted
   # "Never repeat it" is load-bearing: the marker identifies the one transcript it
   # was typed into, and an agent that quotes it to a peer plants it in a second
@@ -779,7 +832,7 @@ cmd_hitch() {
        return 0 ;;
   esac
   [ -n "$msg" ] || return 0
-  inject "$id" "[gang:hitch] $msg"
+  inject "$id" "$(envelope hitch "$msg")"
   if [ -n "$role" ]; then printf '%s\n' "$(colour "$C_OK" "briefed $name as $role")"
   else printf '%s\n' "$(colour "$C_OK" "delivered session marker to $name")"; fi
 }
@@ -813,6 +866,7 @@ cmd_send() {
   esac; done
   [ $# -gt 0 ] || die "send: empty message"
   [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM) — unattributed injection is how the last harness died"
+  check_sender "$from"
   resolve "$name"
 
   # Gated beats busy: a gate paints mid-turn, and the mid-turn refusal below
@@ -839,7 +893,7 @@ cmd_send() {
       die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
     fi
   fi
-  inject "$AGENT_ID" "[gang:$from] $*"
+  inject "$AGENT_ID" "$(envelope "$from" "$*")"
   if [ "$midturn" -eq 1 ]; then
     # "accepted", not "queued": the box shows a queued-message hint either way,
     # but what the harness does next is its own call — Claude Code hands queued
@@ -863,6 +917,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   if [ -n "$resume" ] && [ -z "$from" ]; then
     die "compact: --resume needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
   fi
+  [ -z "$resume" ] || check_sender "$from"
   ! gated "$AGENT_ID" \
     || die "'$name' is gated (hook set) — stopped at a permission prompt only the operator can answer (gang attach)"
   # Busy is refused for a peer and expected for yourself. Cutting somebody else's
@@ -881,11 +936,19 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   local where="triggered on $name"
   [ "$mine" -eq 1 ] && where="queued behind your own turn"
   if [ -n "$resume" ]; then
+    # The resume is delivered later by a process nobody is watching, and inject
+    # can still refuse it: a gate that painted, a window that went away, a paste
+    # that would not verify. Both streams went to /dev/null, so that failure was
+    # unobservable while the caller had already been told the resume was on its
+    # way — an agent woke with nothing to pick up and nothing said why. The
+    # verdict is recorded on the window, where status and patrol read it out.
+    tmux set-option -uw -t "$AGENT_ID" @gl_resume_failed 2>/dev/null || true
     ( trap '' HUP INT TERM
-      resume_after_compaction "$AGENT_ID" "[gang:$from] $resume"
+      err="$(resume_after_compaction "$AGENT_ID" "$(envelope "$from" "$resume")" 2>&1)" \
+        || tmux set-option -w -t "$AGENT_ID" @gl_resume_failed "${err##*$'\n'}"
     ) </dev/null >/dev/null 2>&1 &
     disown
-    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane); resume delivered as [gang:$from] once compaction settles")"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands")"
   else
     echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane)")"
   fi
@@ -1030,7 +1093,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # input box; an injection would interleave with it. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
-    inject "$1" "[gang:patrol] $(band_note "$ctx" "$crossed" "$2")"
+    inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2")")"
     tmux set-option -w -t "$1" @gl_band "$band"
     say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
   fi
