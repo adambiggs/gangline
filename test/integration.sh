@@ -378,9 +378,28 @@ check "and goes in the moment the compaction itself is running" "yes" "$(has bus
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
 verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 
+# The wording on its own is not a gate, and treating it as one is a denial of the
+# whole control plane out of ordinary prose: an agent reviewing this repo, or
+# quoting a capture, puts these exact sentences on its screen beside a perfectly
+# usable composer. Lived it — reviewers quoting dialog wording froze their own
+# lead and had their reports refused.
 paint busybee 'WORKING... Do you want to proceed?'
-check "a permission prompt reads as gated, even beside a busy marker" \
-  "gated (hook set)" "$("$GANG" status busybee)"
+check "the dialog's words beside a live input box are not a gate" "busy (tight tug)" \
+  "$("$GANG" status busybee | head -1)"
+"$GANG" send busybee --from tester "MARK_QUOTED" >/dev/null 2>&1
+check "and an agent quoting them still takes mail" "no" "$(has busybee "refusing to deliver")"
+
+# A real gate OWNS the screen: every dialog watched live drops the composer while
+# it is up, which is why an unmarked gate read idle in the first place. The
+# stand-in models that — dialog painted, prompt gone — rather than printing the
+# words underneath a live prompt and calling the false positive proof.
+gate_up()   { tmux send-keys -t "$(target_of "$1")" \
+                "clear; PS1=''; printf 'Do you want to proceed?\\n'" Enter; sleep 0.6; }
+gate_down() { tmux send-keys -t "$(target_of "$1")" "PS1='❯ '; clear" Enter; sleep 0.6; }
+
+gate_up busybee
+check "a permission prompt that owns the screen reads as gated" \
+  "gated (hook set)" "$("$GANG" status busybee | head -1)"
 check "roster shows the gate" "gated" \
   "$("$GANG" roster | awk '$1=="busybee"{print $3}')"
 out="$(FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_GATED" 2>&1)"; rc=$?
@@ -398,9 +417,8 @@ check "compact on a gated agent names the gate, not the turn" "yes" \
 check "patrol reports it for the operator instead of skipping it" \
   "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)" \
   "$("$GANG" patrol | verdict busybee)"
-tmux send-keys -t "$(target_of busybee)" clear Enter
-sleep 0.5
-check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee)"
+gate_down busybee
+check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee | head -1)"
 unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------

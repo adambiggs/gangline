@@ -260,6 +260,27 @@ capture() { tmux capture-pane -p -t "$1"; }
 # -J joins pane-width-wrapped lines so matching never breaks on a wrap boundary.
 capture_joined() { tmux capture-pane -pJ -t "$1"; }
 
+capture_status() { # $1 = window id; the bottom rows, where a TUI paints its state
+  # A dialog, a spinner and a progress bar are drawn at the bottom of the screen,
+  # above the composer, and they move up and out as the transcript grows. The
+  # transcript itself is where an agent QUOTES those same words — reading a
+  # profile, pasting a capture, reviewing this repo. Matching the whole pane
+  # cannot tell the two apart, so state reads from the region a TUI actually
+  # paints state into. Trailing blank rows are dropped first: a half-empty pane
+  # would otherwise spend its whole allowance on blank lines.
+  capture_joined "$1" \
+    | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' \
+    | tail -n "${GANG_STATUS_ROWS:-20}"
+}
+
+composer_live() { # $1 = window id; the harness's own input box is on screen NOW
+  # Nonzero for a profile with no input hook, which is the honest answer: gang
+  # cannot see a box it was never taught to find, so callers fall back to
+  # whatever they did before one existed.
+  declare -F profile_input >/dev/null || return 1
+  profile_input "$1" >/dev/null 2>&1
+}
+
 busy() { # $1 = window id, profile loaded; exit 0 if busy
   # Captured into a variable, not piped: a capture that FAILS must not read as
   # "idle" and wave an injection into a pane nobody looked at.
@@ -279,8 +300,16 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
   # watched live gets the settle path, which scrapes no marker at all.
   [ -n "${GANG_COMPACTING_REGEX:-}" ] || return 1
   local pane
-  pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess compaction state"
-  printf '%s\n' "$pane" | grep -qE -- "$GANG_COMPACTING_REGEX"
+  pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess compaction state"
+  printf '%s\n' "$pane" | grep -qE -- "$GANG_COMPACTING_REGEX" || return 1
+  # Claude Code's marker is a single bar glyph, and this repo's own profiles are
+  # full of them: an agent reading profiles/claude-code.sh puts ▰ on its screen.
+  # Believing that is worse than missing a real compaction, because the resume
+  # then goes into the turn it was supposed to follow — the exact overtaking the
+  # waiter exists to prevent. Compaction reads no input and leaves the box drawn
+  # and empty (watched frame by frame), so an occupied box says this is an
+  # ordinary turn with the glyph somewhere in it, and the waiter keeps waiting.
+  input_clear "$1"
 }
 
 gated() { # $1 = window id, profile loaded; exit 0 if a permission prompt owns the screen
@@ -297,8 +326,16 @@ gated() { # $1 = window id, profile loaded; exit 0 if a permission prompt owns t
   # and keeps exactly that old behavior.
   [ -n "${GANG_GATED_REGEX:-}" ] || return 1
   local pane
-  pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess gated state"
-  printf '%s\n' "$pane" | grep -qE -- "$GANG_GATED_REGEX"
+  pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess gated state"
+  printf '%s\n' "$pane" | grep -qE -- "$GANG_GATED_REGEX" || return 1
+  # The wording alone is not the gate. Every dialog watched live OWNS the screen
+  # while it is up: the composer is gone, which is why an unmarked gate read idle
+  # in the first place. So a match beside a live input box is the harness talking
+  # ABOUT a prompt, not stopped at one — an agent reviewing this repo, quoting a
+  # capture, or reading these very profiles. Lived it: reviewers quoting the
+  # dialog wording froze their own lead and had their reports refused, which is a
+  # denial of the whole control plane out of ordinary prose.
+  ! composer_live "$1"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
