@@ -27,12 +27,15 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
   || die "tmux >= 3.2 required for bracketed paste, found $(tmux -V)"
 
-# Not a hard requirement: gang hitches, sends and sweeps without python3. It reads
-# the Claude Code hook payload and the statusline beacon, which is the whole of
-# context measurement for that harness. macOS ships no python3 by default, so say
-# what breaks rather than let the beacon fail later with no explanation.
-command -v python3 >/dev/null 2>&1 || echo \
-  "gangline: no python3 — 'gang context', the roster context column and self-compaction warnings will not work for Claude Code agents" >&2
+# python3 is a requirement, not a nicety. Three of the four shipped profiles run
+# it: claude-code through the statusline beacon and the hook payload, codex to
+# bind an agent to its rollout and parse token_count, opencode to join the model
+# catalogue. It also builds the context-hook reply. Without it, context reading,
+# the roster's context column, patrol's band warnings and `gang vet`'s format
+# gates all fail — most of what makes a team self-managing. Naming that at
+# install time beats four different failures later, one per profile.
+command -v python3 >/dev/null 2>&1 \
+  || die "python3 required — context readouts, band warnings and vet's format gates all run it (macOS ships none by default: brew install python)"
 
 # The whole tree is the tool: bin/gang reads profiles/ and roles/ relative to
 # itself, so this clones rather than dropping a single file on the PATH.

@@ -112,7 +112,9 @@ From a clone instead:
 ln -sf "$(pwd)/bin/gang" ~/.local/bin/gang
 ```
 
-Requires git and tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
+Requires git, tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`), and python3 —
+which reads every harness's context figures, builds the context-hook reply, and
+runs `gang vet`'s file-format gates. macOS ships no python3 by default.
 
 ---
 
