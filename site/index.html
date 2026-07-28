@@ -178,6 +178,19 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     <a href="https://github.com/adambiggs/gangline/blob/main/install.sh">read it first</a>,
     or clone and symlink <code>bin/gang</code> yourself; the installer does nothing more.
   </p>
+  <p class="note">
+    <strong>One thing your harness will not tell you.</strong> gangline launches
+    each harness exactly as you configured it and sets no permission flags of its
+    own. An unattended agent cannot answer a dialog and gang will not answer one
+    for it, so the setting that stops your harness asking belongs in that
+    harness's own config &mdash; the README names the one each wants. What
+    gangline adds is traffic
+    <em>between</em> agents: one agent's output becomes another's input, so a
+    poisoned file read by one can reach the shell of the next. Treat every
+    agent's output as untrusted input to the next, and bound the machine if you
+    need a boundary &mdash; a container, a VM, an account. A separate
+    <code>$HOME</code> is not one.
+  </p>
   </section>
 
   <section id="ideas">
@@ -190,7 +203,8 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
         the transcript, and you can type into it yourself at any time.</dd>
 
     <dt>Every message is attributed and verified.</dt>
-    <dd>A send carries a <code>[gang:&lt;sender&gt;]</code> prefix, is confirmed by
+    <dd>A send is wrapped in a <code>[gang:&lt;sender&gt;#&lt;nonce&gt;]</code>
+        envelope so no line of it can pass for the operator, is confirmed by
         capturing the pane, and only then submitted. No sender means no send.
         Unverified means a loud failure, never a shrug.</dd>
 

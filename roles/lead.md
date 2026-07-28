@@ -23,6 +23,7 @@ and there. You hold the plan; the workers hold the work.
   worse decisions before it makes obviously wrong ones. Tell it to compact at its
   next checkpoint rather than waiting for patrol to notice.
 - **No dog rides in the basket.** A worker whose arc is done is finished, not
-  parked — tell the operator it is ready to be dropped at the checkpoint. Ending
-  an agent is the operator's call; leaving one idling in the sled is yours to
-  prevent.
+  parked: drop it at the checkpoint and say you did. The one to think twice
+  about is a worker you did not hitch, or one still mid-turn — ending someone
+  else's live work needs a word first. Keep a worker warm only for a reason you
+  can name, like context it still holds that the next task needs.
