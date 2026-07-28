@@ -79,6 +79,9 @@
   }
   .term-bar i { width: .65rem; height: .65rem; border-radius: 50%; background: var(--rule); }
   .term pre { background: none; border: none; border-radius: 0; margin: 0; }
+  .term video { display: block; width: 100%; height: auto; background: #0f1115; }
+  .term-cap { padding: .55rem .9rem; border-top: 1px solid var(--rule);
+              color: var(--dim); font-size: .75rem; }
 
   dl { margin: 0; }
   dt { font-weight: 600; margin-top: 1.5rem; }
@@ -132,6 +135,22 @@
     There is no server, no bus, and no database. tmux already holds the state, so
     <code>gang</code> is a CLI you run and it exits.
   </p>
+
+  <div class="term">
+  <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
+  <!-- iOS: muted+playsinline are what make autoplay legal at all, and Low Power
+       Mode still refuses it — so `controls` is the fallback, not a nicety. H.264
+       mp4 leads; iOS WebM support is too recent and too partial to lead with. -->
+  <video autoplay loop muted playsinline controls preload="metadata"
+         poster="demo-poster.jpg"
+         aria-label="A Claude Code lead spawns a Codex worker and an opencode reviewer, and the three finish a task together.">
+    <source src="demo.mp4" type="video/mp4">
+    <source src="demo.webm" type="video/webm">
+  </video>
+  <p class="term-cap">A Claude Code lead hires a Codex worker and an opencode
+  reviewer off one message. Real harnesses, real subscriptions, unedited except
+  for cuts through the waiting.</p>
+  </div>
 
   <div class="term">
   <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>

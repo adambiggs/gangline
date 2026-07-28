@@ -29,6 +29,9 @@ jobs:
           set -euo pipefail
           mkdir -p _site
           cp site/index.html _site/index.html
+          # The demo player degrades to a poster if these are missing, so a lost
+          # asset would ship as a silently still page — fail the build instead.
+          cp site/demo.mp4 site/demo.webm site/demo-poster.jpg _site/
           # Install instructions point at the raw GitHub URL on purpose — what you
           # pipe is verifiably the repo file — so no /install copy is published.
           echo gangline.ai > _site/CNAME
