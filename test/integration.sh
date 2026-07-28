@@ -274,6 +274,22 @@ sleep 0.5
 paint busybee 'WORKING...'
 check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)"
 
+# A capture that fails is not a state. `status` names the state through a command
+# substitution now, and the exit status of a substitution sitting in an argument
+# list is discarded — so an unreadable pane could print a blank line and report
+# success for an agent nobody was able to look at (law 8).
+mkdir -p "$SHIM/noread"
+cat > "$SHIM/noread/tmux" <<SH
+#!/usr/bin/env bash
+[ "\${1:-}" = capture-pane ] && exit 1
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/noread/tmux"
+out="$(PATH="$SHIM/noread:$PATH" "$GANG" status busybee 2>&1)"; rc=$?
+check "a pane gang cannot read is not a state" "1" "$rc"
+check "and it says so rather than printing a blank line" "yes" \
+  "$(case "$out" in *"refusing to guess"*) echo yes ;; *) echo no ;; esac)"
+
 FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_QUEUED" >/dev/null 2>&1
 check "a harness that queues input takes mail mid-turn" "0" "$?"
 sleep 0.5
@@ -642,6 +658,41 @@ check "and fails loud when the catalog drifts" "yes" \
   "$(printf '%s' "$dout" | grep -q 'file format: DRIFT — models catalog holds no named model' && echo yes || echo no)"
 oc_catalog
 unset GANG_PROFILES
+
+# --- colour ------------------------------------------------------------------
+
+# Every check in this file reads gang through a pipe, where colour is off — so a
+# change that emitted no colour anywhere would pass all of them. tmux is the pty:
+# a pane is a terminal, and `capture-pane -e` hands back the escape sequences it
+# received. Running gang inside alpha's own pane is the only way to see what an
+# operator sees.
+in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw output
+  # Polled, not slept: a roster of this many agents reads a session file per
+  # keyed profile, and a fixed sleep caught a screen that was still empty — which
+  # a check for "is there colour here" reads as "no", passing for a real failure.
+  local id t=0; id="$(target_of "$1")" || exit 1; shift
+  tmux send-keys -t "$id" "clear; $* ; echo IN_PANE_DONE" Enter
+  while [ "$t" -lt 60 ]; do
+    # Anchored, so the shell's echo of the command line is not the marker.
+    tmux capture-pane -p -t "$id" | grep -q '^IN_PANE_DONE' && break
+    sleep 1; t=$((t + 1))
+  done
+  tmux capture-pane -pe -t "$id"
+}
+ESC=$'\033'
+out="$(in_pane alpha "GANG_SESSION=$GANG_SESSION env -u NO_COLOR $GANG roster")"
+check "a roster on a terminal is coloured" "yes" \
+  "$(case "$out" in *"${ESC}[32m"*) echo yes ;; *) echo no ;; esac)"
+check "NO_COLOR turns it off on a terminal too" "no" \
+  "$(case "$(in_pane alpha "GANG_SESSION=$GANG_SESSION NO_COLOR=1 $GANG roster")" in
+       *"${ESC}["*) echo yes ;; *) echo no ;; esac)"
+
+# Colour changes the bytes, never the layout: printf pads by byte count, so
+# colouring a column before padding it eats nine characters of the field and the
+# roster stops lining up. Rendered on a terminal, the row is the piped row
+# character for character, or the padding went in the wrong order.
+check "and it does not move a column" "$("$GANG" roster | awk '$1=="alpha"')" \
+  "$(printf '%s' "$out" | sed "s/$ESC\[[0-9;]*m//g" | awk '$1=="alpha"{sub(/ +$/, ""); print}')"
 
 # --- refusals ----------------------------------------------------------------
 

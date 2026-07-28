@@ -86,6 +86,12 @@ gang kill worker
 gang down                                       # kill the whole team
 ```
 
+Output is coloured on a terminal and nowhere else: red for an agent that needs a
+human, amber for one that is working, green for what gang just did, dim for the
+detail behind it. A pipe, a capture, or a cron log gets the same text plain — the
+roster an agent greps must not depend on where it was run — and `NO_COLOR=1`
+turns it off everywhere.
+
 ## Install
 
 ```sh

@@ -6,7 +6,18 @@ set -euo pipefail
 
 SESSION="${GANG_SESSION:-gangline}"
 
-die() { echo "gang: $*" >&2; exit 1; }
+die() {
+  # stderr gets its own terminal test. `gang roster 2>/dev/null | grep ...` is the
+  # ordinary shape in a script, and there stdout is a pipe while stderr is still a
+  # terminal — one test for both fds would drop the colour from the one line that
+  # most wants it.
+  if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
+    printf '\033[31mgang:\033[0m %s\n' "$*" >&2
+  else
+    printf 'gang: %s\n' "$*" >&2
+  fi
+  exit 1
+}
 
 gang_root() { # $1 = path to this script; the install tree it lives in
   # Plain readlink in a loop, not `readlink -f`: the -f form is GNU-only and a
@@ -521,6 +532,34 @@ band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text,
     "$1" "$2" "$3" "$3"
 }
 
+# --- colour -----------------------------------------------------------------
+#
+# Colour marks state and outcome, never decoration. A roster is scanned rather
+# than read, and the four things the eye is looking for are: which agent needs a
+# human (red), which is working (amber), which did the thing you asked (green),
+# and which line is detail it can skip (dim). Anything that is not one of those
+# four stays plain — a tool that colours everything has told you nothing.
+#
+# Basic 3-bit codes deliberately: they resolve through the terminal's own palette,
+# so gang inherits whatever theme the operator already reads comfortably.
+#
+# Off unless stdout is a terminal, and off whenever NO_COLOR is set
+# (https://no-color.org). Every pipe, capture, and test therefore sees the same
+# plain text — including gang's own callers, since an agent greps the roster it
+# just asked for.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_OK=$'\033[32m' C_WORK=$'\033[33m' C_BAD=$'\033[31m' C_DIM=$'\033[2m' C_OFF=$'\033[0m'
+else
+  C_OK="" C_WORK="" C_BAD="" C_DIM="" C_OFF=""
+fi
+
+colour() { # $1 = colour, $2 = text — already padded to its column width
+  # Pad first, colour second, always. printf's %-18s counts bytes, and an escape
+  # sequence is nine of them, so colouring before padding eats nine characters of
+  # the field and the roster stops lining up.
+  printf '%s%s%s' "$1" "$2" "$C_OFF"
+}
+
 # --- commands ---------------------------------------------------------------
 
 cmd_spawn() {
@@ -567,9 +606,9 @@ cmd_spawn() {
   elif [ -n "$key" ]; then
     msg="$(marker_line "$key")"
   fi
-  echo "spawned $name ($prof) in $dir — watch: gang attach"
+  echo "$(colour "$C_OK" "spawned $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   [ -n "$msg" ] || return 0
-  echo "waiting for $name to finish booting before briefing it..."
+  printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting before briefing it...")"
   # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
   # on the very return codes the case below exists to report.
   local ready=0
@@ -580,8 +619,8 @@ cmd_spawn() {
     *) die "'$name' is running but never went quiet, so its spawn message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
   esac
   inject "$id" "[gang:spawn] $msg"
-  if [ -n "$role" ]; then echo "briefed $name as $role"
-  else echo "delivered session marker to $name"; fi
+  if [ -n "$role" ]; then printf '%s\n' "$(colour "$C_OK" "briefed $name as $role")"
+  else printf '%s\n' "$(colour "$C_OK" "delivered session marker to $name")"; fi
 }
 
 cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
@@ -644,9 +683,9 @@ cmd_send() {
     # "accepted", not "queued": the box shows a queued-message hint either way,
     # but what the harness does next is its own call — Claude Code hands queued
     # text to the turn already running as often as it holds it for the boundary.
-    echo "delivered to $name as [gang:$from] (verified in pane, accepted mid-turn)"
+    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane, accepted mid-turn)")"
   else
-    echo "delivered to $name as [gang:$from] (verified in pane, submitted)"
+    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane, submitted)")"
   fi
 }
 
@@ -685,17 +724,41 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
       resume_after_compaction "$AGENT_ID" "[gang:$from] $resume"
     ) </dev/null >/dev/null 2>&1 &
     disown
-    echo "compaction $where ($GANG_COMPACT_CMD, verified in pane); resume delivered as [gang:$from] once compaction settles"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane); resume delivered as [gang:$from] once compaction settles")"
   else
-    echo "compaction $where ($GANG_COMPACT_CMD, verified in pane)"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane)")"
   fi
+}
+
+state_now() { # $1 = window id, profile loaded -> the state, in words
+  # One namer for `status` and the roster column, so the two cannot answer the
+  # same question differently — and renaming a state is one edit, not two.
+  if gated "$1"; then echo "gated (hook set)"
+  elif busy "$1"; then echo "busy (tight tug)"
+  else echo "idle (slack tug)"; fi
+}
+
+paint_state() { # $1 = a state phrase, padding and all
+  # Matches on the phrase state_now just built, so the two live side by side:
+  # renaming a state means seeing this. The fallback is idle's green, which makes
+  # a missed rename a wrong colour rather than a wrong state.
+  case "$1" in
+    gated*) colour "$C_BAD"  "$1" ;;
+    busy*)  colour "$C_WORK" "$1" ;;
+    *)      colour "$C_OK"   "$1" ;;
+  esac
 }
 
 cmd_status() {
   resolve "$1"
-  if gated "$AGENT_ID"; then echo "gated (hook set)"
-  elif busy "$AGENT_ID"; then echo "busy (tight tug)"
-  else echo "idle (slack tug)"; fi
+  # Named into a variable first, not nested inside the printf argument. A pane gang
+  # cannot read makes state_now die, and the exit status of a substitution that sits
+  # in an argument list is thrown away — printf would succeed, print a blank line,
+  # and report exit 0 for a state nobody ever established. An assignment carries the
+  # failure, so errexit still ends the command (law 8).
+  local state
+  state="$(state_now "$AGENT_ID")"
+  printf '%s\n' "$(paint_state "$state")"
 }
 
 cmd_context() { # context-window usage via the profile's own introspection
@@ -707,7 +770,8 @@ cmd_context() { # context-window usage via the profile's own introspection
 }
 
 cmd_roster() {
-  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
+  tmux has-session -t "$SESSION" 2>/dev/null \
+    || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   local id name
   while read -r id name; do
     ( roster_row "$id" "$name" ) || true   # one sick agent must not blank the roster
@@ -717,24 +781,29 @@ cmd_roster() {
 roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one row
   local prof state ctx="-"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
-  [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" "unadopted"; return; }
+  [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" \
+                        "$(colour "$C_DIM" "unadopted")"; return; }
   # A profile gang cannot resolve is reported, never dropped: patrol runs from
   # cron, where the GANG_PROFILES that spawned this agent is not in the
   # environment, and an agent missing from the roster reads as no agent at all.
   profile_file "$prof" >/dev/null \
-    || { printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "-" "profile not found (GANG_PROFILES?)"; return; }
+    || { printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "-" \
+           "$(colour "$C_BAD" "profile not found (GANG_PROFILES?)")"; return; }
   load_profile "$prof"
-  if gated "$1"; then state="gated (hook set)"
-  elif busy "$1"; then state="busy (tight tug)"
-  else state="idle (slack tug)"; fi
+  state="$(state_now "$1")"
   # context column is best-effort observation; the dedicated command dies loud
   if declare -F profile_context >/dev/null; then
     ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
   fi
-  printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "$state" "${ctx%%$'\n'*}"
+  printf '%-16s %-12s %s %s\n' "$2" "$prof" \
+    "$(paint_state "$(printf '%-18s' "$state")")" "${ctx%%$'\n'*}"
 }
 
-say() { printf '%-16s %-18s %s\n' "$1" "$2" "$3"; }
+say() { # $1 = name, $2 = context readout, $3 = verdict, $4 = colour (default: dim)
+  # Dim by default because most of a sweep is "nothing to do here"; a caller with
+  # something worth an operator's eye passes the colour that says so.
+  printf '%-16s %-18s %s\n' "$1" "$2" "$(colour "${4:-$C_DIM}" "$3")"
+}
 
 cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # context-hook covers harnesses whose hook system can call gang in-turn;
@@ -747,7 +816,8 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # re-spawned name starts clean and tmux is the one that deletes it (Law 1,
   # Law 6 — no cleanup code, no state outliving its subject). Warn, don't act —
   # compaction timing is the agent's judgment (gang compact exists to force it).
-  tmux has-session -t "$SESSION" 2>/dev/null || { echo "no team (session '$SESSION' not running)"; return; }
+  tmux has-session -t "$SESSION" 2>/dev/null \
+    || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   ladder 0 200000 >/dev/null   # one loud complaint about a bad ladder, not one per agent
   local id name
   while read -r id name; do
@@ -761,22 +831,23 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
   profile_file "$prof" >/dev/null \
-    || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled"; return; }
+    || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled" "$C_BAD"; return; }
   load_profile "$prof"
   if gated "$1"; then
     # Only the operator ends a gate, so this is a report, not a nudge — and it
     # comes before the context checks so a gated agent whose readout is missing
     # still reads loud rather than skipped.
-    say "$2" "-" "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)"
+    say "$2" "-" "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)" \
+      "$C_BAD"
     return
   fi
   declare -F profile_context >/dev/null \
     || { say "$2" "" "profile declares no context readout — not patrolled"; return; }
   ctx="$(profile_context "$1" 2>/dev/null)" \
-    || { say "$2" "" "no context readout — not patrolled (beacon missing?)"; return; }
+    || { say "$2" "" "no context readout — not patrolled (beacon missing?)" "$C_BAD"; return; }
   ctx="${ctx%%$'\n'*}"
   tw="$(ctx_tokens "$ctx")" \
-    || { say "$2" "$ctx" "unparseable readout — not patrolled"; return; }
+    || { say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
   read -r band crossed <<<"$(ladder "$tokens" "$window")"
   prev="$(tmux show-options -wqv -t "$1" @gl_band)" || prev=0
@@ -790,17 +861,17 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   elif [ "$band" -eq "$prev" ]; then
     say "$2" "$ctx" "steady (band $band)"
   elif busy "$1"; then
-    say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol"
+    say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol" "$C_WORK"
   elif ! pane_stable "$1"; then
-    say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge"
+    say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"
   elif ! input_clear "$1"; then
     # A human draft, ghost-text suggestion, or queued-message hint is in the
     # input box; an injection would interleave with it. Holding costs one sweep.
-    say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge"
+    say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
     inject "$1" "[gang:patrol] $(band_note "$ctx" "$crossed" "$2")"
     tmux set-option -w -t "$1" @gl_band "$band"
-    say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)"
+    say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
   fi
 }
 
@@ -880,12 +951,15 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
     prof="$(basename "$p" .sh)"
     load_profile "$prof"
     if [ "$GANG_VERIFIED_VERSIONS" = "any" ]; then
-      printf '%-12s %-26s %s\n' "$prof" "-" "version-independent (no scraped markers)"
+      printf '%-12s %-26s %s\n' "$prof" "-" \
+        "$(colour "$C_DIM" "version-independent (no scraped markers)")"
     elif [ -z "$GANG_VERSION_CMD" ] || [ -z "$GANG_VERIFIED_VERSIONS" ]; then
-      printf '%-12s %-26s %s\n' "$prof" "?" "UNPINNED — declare GANG_VERSION_CMD + GANG_VERIFIED_VERSIONS"
+      printf '%-12s %-26s %s\n' "$prof" "?" \
+        "$(colour "$C_BAD" "UNPINNED — declare GANG_VERSION_CMD + GANG_VERIFIED_VERSIONS")"
       drift=1
     elif ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
-      printf '%-12s %-26s %s\n' "$prof" "?" "version command failed: $GANG_VERSION_CMD"
+      printf '%-12s %-26s %s\n' "$prof" "?" \
+        "$(colour "$C_BAD" "version command failed: $GANG_VERSION_CMD")"
       drift=1
     else
       # Matched as a whole word anywhere in the line, not as a prefix: harnesses
@@ -900,9 +974,11 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
         case " $installed " in *" $v "*) match=1 ;; esac
       done
       if [ "$match" -eq 1 ]; then
-        printf '%-12s %-26s %s\n' "$prof" "$installed" "OK (verified: $GANG_VERIFIED_VERSIONS)"
+        printf '%-12s %-26s %s\n' "$prof" "$installed" \
+          "$(colour "$C_OK" "OK (verified: $GANG_VERIFIED_VERSIONS)")"
       else
-        printf '%-12s %-26s %s\n' "$prof" "$installed" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS"
+        printf '%-12s %-26s %s\n' "$prof" "$installed" \
+          "$(colour "$C_BAD" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS")"
         drift=1
         [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
       fi
@@ -916,9 +992,9 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
     # ran there).
     if declare -F profile_doctor >/dev/null; then
       if out="$(profile_doctor 2>&1)"; then
-        printf '%-12s %-26s %s\n' '' '' "file format: $out"
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "file format: $out")"
       else
-        printf '%-12s %-26s %s\n' '' '' "file format: DRIFT — $out"
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_BAD" "file format: DRIFT — $out")"
         drift=1
       fi
     fi
@@ -928,7 +1004,7 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
   # versions, which UI mods never move — a theme, a replacement statusline, or a
   # TUI-drawing extension relocates a marker with every row above reading OK.
   [ "$drift" -ne 0 ] \
-    || echo "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker: shadow the profile via GANG_PROFILES and re-verify against the TUI as you actually run it (README: Strategy rot)."
+    || printf '%s\n' "$(colour "$C_DIM" "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker: shadow the profile via GANG_PROFILES and re-verify against the TUI as you actually run it (README: Strategy rot).")"
   return "$drift"
 }
 
@@ -951,21 +1027,21 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
-  echo "adopted $name as a $prof agent"
+  printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
 
 cmd_kill() {
   local id
   id="$(win_id "$1")" || die "no agent '$1'"
   tmux kill-window -t "$id"
-  echo "killed $1"
+  printf '%s\n' "$(colour "$C_OK" "killed $1")"
 }
 
 cmd_down() { # inverse of up: kill the whole team
   # No state to sweep: band memory is a window option, so tmux deletes it along
   # with the windows it belongs to.
   tmux has-session -t "$SESSION" 2>/dev/null || die "no session '$SESSION' running"
-  echo "killing '$SESSION': $(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')"
+  echo "$(colour "$C_OK" "killing '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')")"
   tmux kill-session -t "$SESSION"
 }
 

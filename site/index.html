@@ -65,6 +65,7 @@
   .c { color: var(--dim); }
   .ok { color: var(--ok); }
   .busy { color: var(--warn); }
+  .det { color: var(--dim); }
   .gate { color: var(--bad); }
   .note { color: var(--dim); font-size: .85rem; margin-top: .6rem; }
 
@@ -156,10 +157,10 @@
   <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
   <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
 <span class="p">$</span> gang spawn worker -p codex -r worker
-spawned worker (codex) in ~/my/repo — watch: gang attach
-briefed worker as worker
+<span class="ok">spawned worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
+<span class="ok">briefed worker as worker</span>
 <span class="p">$</span> gang send worker --from lead "read the failing test in ci and fix it"
-delivered to worker as [gang:lead] (verified in pane, submitted)
+<span class="ok">delivered to worker as [gang:lead]</span> <span class="det">(verified in pane, submitted)</span>
 <span class="p">$</span> gang roster
 lead             claude-code  <span class="ok">idle (slack tug)</span>   142k/1000k (14%)
 worker           codex        <span class="busy">busy (tight tug)</span>   31k/272k (11%)</code></pre>
