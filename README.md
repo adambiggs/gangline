@@ -76,6 +76,9 @@ cd ~/my/repo && gang up                         # the whole setup, no arguments:
 gang hitch worker -r worker                     # "worker" is a name you pick: it becomes the
                                                 # tmux window name AND the agent's identity;
                                                 # -r briefs it with a role (gang roles)
+gang hitch heavy -m claude-fable-5              # -m launches on a specific model, spelled
+                                                # the harness's own way; the profile knows
+                                                # which flag carries it
 gang send worker --from lead "read the failing test in ci and fix it"
 gang status worker                              # busy (tight tug) | idle (slack tug)
                                                 # | gated (hook set — see Permission gates)
@@ -347,10 +350,11 @@ Two ways to live with it, and the friction is yours to choose:
 ## Profiles
 
 A profile is a few lines declaring what gang cannot know generically: the launch
-command, the busy marker, the compact command, whether the harness takes input
-during a turn, what its compaction looks like while it runs, how its permission
-prompt reads, and optional hooks for reading a context readout and for finding
-the harness's input box. The behavioural ones — mid-turn input, the compaction
+command, the busy marker, the compact command, the flag that names a model
+(`GANG_MODEL_OPT`, what `hitch -m` appends — a profile without it refuses the
+flag), whether the harness takes input during a turn, what its compaction looks
+like while it runs, how its permission prompt reads, and optional hooks for
+reading a context readout and for finding the harness's input box. The behavioural ones — mid-turn input, the compaction
 marker, and the gate marker — are optional in the honest sense: unset means
 nobody has watched that behaviour live, and gang takes the slower, safer branch
 rather than guessing at it.

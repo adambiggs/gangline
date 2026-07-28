@@ -10,6 +10,8 @@
 # never starts. -c overrides one key for this process only, so an operator's own
 # codex still tells them about updates.
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
+# From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
+GANG_MODEL_OPT="-m"
 # One busy form that covers more than it looks like it does. A running turn
 # paints "• Working (12s • esc to interrupt)"; the leading glyph pulses between
 # • and ◦, the timer counts, and the tail grows segments when there is

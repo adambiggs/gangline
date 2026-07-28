@@ -9,6 +9,9 @@
 # " for Ns", never an ellipsis. Observed false-negative: patrol nudged a
 # mid-turn manager because only "esc to interrupt" was matched.
 GANG_LAUNCH="claude"
+# From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
+# model id ("claude-fable-5").
+GANG_MODEL_OPT="--model"
 # Third busy form observed live: API-retry backoff paints
 # "✻ 529 Overloaded · Retrying in 2s · attempt 4/10" — a turn is in flight
 # but the line starts with a digit, so the gerund pattern misses it.

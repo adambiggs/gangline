@@ -56,14 +56,17 @@ usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
 
-  gang up [name] [-p <prof>] [-r <role>] [-d <dir>]
+  gang up [name] [-p <prof>] [-r <role>] [-d <dir>] [-m <model>]
                                               the whole setup, no arguments needed:
                                               hitches "lead" here on GANG_PROFILE
                                               with the lead role, and puts you in it
-  gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>]
+  gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>] [-m <model>]
                                               hitch an agent into the team (window name =
                                               identity); -r briefs it with a role from
-                                              roles/; alias: spawn
+                                              roles/; -m launches it on a specific model,
+                                              spelled the harness's own way (codex:
+                                              gpt-5.6-sol, opencode/pi: provider/model);
+                                              alias: spawn
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; delivered mid-turn if the
                                               harness takes input during one (--wait to
@@ -138,7 +141,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
   GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY=""
-  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
+  GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
   # no stale functions across profiles
   unset -f profile_context profile_input profile_vet 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -566,12 +569,13 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
 
 cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
-  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" id
+  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
+    -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
   # Resolved before anything is hitched: a typo in the role should not leave a
@@ -580,6 +584,16 @@ cmd_hitch() {
     || die "hitch: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   load_profile "$prof"
+  # A model is one concept every harness spells differently; the profile owns the
+  # spelling (GANG_MODEL_OPT), hitch carries the intent. A profile that declares
+  # no spelling refuses rather than guessing a flag the harness may not have.
+  if [ -n "$model" ]; then
+    [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
+    # GANG_LAUNCH is handed to sh by tmux; anything outside this charset would
+    # need quoting there, and a model id never does — refuse instead.
+    case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
+    GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
+  fi
 
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
     tmux new-session -d -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
