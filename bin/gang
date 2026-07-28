@@ -6,6 +6,30 @@ set -euo pipefail
 
 SESSION="${GANG_SESSION:-gangline}"
 
+# Every marker gang matches is a glyph a TUI painted: spinners, progress-bar
+# segments, menu cursors. Matching them means nothing outside a UTF-8 locale —
+# under LC_ALL=C a bracket expression matches single BYTES and `[^ ]` eats one
+# third of a spinner glyph, so "✽ Generating…" stops matching the busy pattern
+# written for it and a live turn reads idle. cron runs in C. Rather than harden
+# every regex in every profile against byte semantics, gang states the
+# requirement it always had and satisfies it here, once. An environment that
+# already names a UTF-8 locale is left exactly as it is.
+utf8_locale() {
+  case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]8*|*[Uu][Tt][Ff]-8*) return 0 ;;
+  esac
+  local avail l
+  avail="$(locale -a 2>/dev/null)" || return 1
+  for l in C.UTF-8 C.utf8 en_US.UTF-8 en_US.utf8; do
+    case "$avail" in *"$l"*) export LC_ALL="$l"; return 0 ;; esac
+  done
+  return 1
+}
+# Non-fatal: a host with no UTF-8 locale can still hitch, send, and drop — it is
+# only marker matching that degrades, and gang vet reports the degradation
+# rather than every command refusing to run.
+utf8_locale || true
+
 die() {
   # stderr gets its own terminal test. `gang roster 2>/dev/null | grep ...` is the
   # ordinary shape in a script, and there stdout is a pipe while stderr is still a
@@ -1071,6 +1095,15 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
       fi
     fi
   done
+  # Markers are glyphs, and glyphs only match in a UTF-8 locale. gang selects one
+  # at startup; a host that offers none scrapes in byte semantics, where a
+  # spinner or a progress bar silently stops matching. That is strategy rot with
+  # no version change behind it, so it belongs in the same report.
+  if ! utf8_locale; then
+    printf '%-12s %-26s %s\n' 'locale' "${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}" \
+      "$(colour "$C_BAD" "no UTF-8 locale available — multibyte markers cannot match")"
+    drift=1
+  fi
   # Only on a clean bill, because that is when it is the remaining hypothesis:
   # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a
