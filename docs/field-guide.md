@@ -21,7 +21,7 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 | **hook set** | the snow hook dug in; the team stands anchored until the musher pulls it | gated — stopped at a permission prompt only the operator can answer; sends are refused so nothing but the operator's own hand answers the dialog |
 | **line out** | the leader holds the gangline taut while the team hooks up | a harness whose input box is up and taking keystrokes — ready to be briefed |
 | **checkpoint** | where teams rest, resupply, and leave dogs with handlers | the clean seam an arc ends on — tests green, a commit made, a question answered; where compaction and releases happen |
-| **dropped** | left at a checkpoint with the handlers — deliberate, routine, the musher's call | a released agent (`gang drop`); finishing an arc and being released is health, not failure |
+| **dropped** | left at a checkpoint with the handlers — deliberate and routine | a released agent (`gang drop`); finishing an arc and being released is health, not failure |
 | **dog in the basket** | a dog riding in the sled bag instead of pulling | an idle-parked agent still burning a context window — the anti-pattern *dropped* exists to prevent |
 | **tangle** | lines crossed; the whole team stands while the musher walks up to clear it | two agents in one file — everyone's work stops for the untangling |
 | **on by** | pass the distraction without breaking stride | a side-issue you notice is a line in your report, not a detour |

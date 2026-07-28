@@ -45,10 +45,15 @@ you can type into it yourself at any time.
 [Read more →](#the-substrate)
 
 **Every message is attributed and verified.** A send is pasted into the target
-pane carrying a `[gang:<sender>]` prefix, confirmed by capturing the pane, and only
-then submitted. No sender means no send. Unverified means a loud failure, never a
-shrug. A mid-turn agent is still reachable: where the harness takes input during a
-turn, the message is accepted instead of bouncing.
+pane inside a `[gang:<sender>#<nonce>] … [/gang:<sender>#<nonce>]` envelope,
+confirmed against the harness's input box, and only then submitted. The envelope
+is what makes attribution mechanical rather than decorative: every line the
+sender wrote is inside it, so a body cannot emit the unenveloped line a
+receiving agent reads as the operator speaking, and a caller running inside the
+session is signed as its own window rather than as whatever it claims. No sender
+means no send. Unverified means a loud failure, never a shrug. A mid-turn agent
+is still reachable: where the harness takes input during a turn, the message is
+accepted instead of bouncing.
 [Read more →](#the-substrate)
 
 **Agents manage their own context.** A model cannot feel its own token count, so
@@ -81,7 +86,7 @@ gang hitch heavy -m claude-fable-5              # -m launches on a specific mode
                                                 # which flag carries it
 gang send worker --from lead "read the failing test in ci and fix it"
 gang status worker                              # busy (tight tug) | idle (slack tug)
-                                                # | gated (hook set — see Permission gates)
+                                                # | gated (hook set — see Permissions)
 gang capture worker                             # what's on worker's screen
 gang roster                                     # everyone, with state
 gang attach                                     # watch the whole team live
@@ -431,7 +436,7 @@ gang roles                                    # lead, reviewer, worker
 ```
 
 The shipped briefs carry what an agent cannot work out from its own transcript:
-that a `[gang:<sender>]` line is a peer and unprefixed text is the operator, that
+that an enveloped message is a peer and unenveloped text is the operator, that
 a send to a busy agent is accepted rather than bounced, that a
 `[context-usage]` note means finish the arc and `gang compact` yourself with a
 `--resume`, and that `gang vet` explains a substrate behaving strangely.
