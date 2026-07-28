@@ -677,7 +677,10 @@ in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw outpu
     tmux capture-pane -p -t "$id" | grep -q '^IN_PANE_DONE' && break
     sleep 1; t=$((t + 1))
   done
-  tmux capture-pane -pe -t "$id"
+  # -J rejoins rows the pane wrapped. A roster row naming a profile gang cannot
+  # resolve runs past 80 columns, and a wrapped row read as two lines compares
+  # against nothing.
+  tmux capture-pane -peJ -t "$id"
 }
 ESC=$'\033'
 out="$(in_pane alpha "GANG_SESSION=$GANG_SESSION env -u NO_COLOR $GANG roster")"
@@ -691,8 +694,16 @@ check "NO_COLOR turns it off on a terminal too" "no" \
 # colouring a column before padding it eats nine characters of the field and the
 # roster stops lining up. Rendered on a terminal, the row is the piped row
 # character for character, or the padding went in the wrong order.
-check "and it does not move a column" "$("$GANG" roster | awk '$1=="alpha"')" \
-  "$(printf '%s' "$out" | sed "s/$ESC\[[0-9;]*m//g" | awk '$1=="alpha"{sub(/ +$/, ""); print}')"
+#
+# The LAST row, not a named one. A pane shows its last 24 lines by default and
+# this roster is longer than that, so the row to compare has to be one that
+# cannot have scrolled off the top — which is exactly what a bigger terminal
+# hides. Locally these panes inherit an attached client's height and everything
+# fits; CI has no client, and the first agent was off screen.
+row="$("$GANG" roster | tail -1)"
+check "and it does not move a column" "$row" \
+  "$(printf '%s' "$out" | sed "s/$ESC\[[0-9;]*m//g" \
+     | awk -v n="${row%% *}" '$1==n{sub(/ +$/, ""); print}')"
 
 # --- refusals ----------------------------------------------------------------
 
