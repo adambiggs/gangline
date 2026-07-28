@@ -98,10 +98,12 @@ cat > "$DEMO/.codex/config.toml" <<'EOF'
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 approval_policy = "never"
-# gang talks to tmux over its unix socket; codex's workspace-write sandbox
-# blocks socket connect() via seccomp regardless of landlock writable roots
-# (verified live: touch in the socket dir succeeds, connect() gets EPERM).
-# The demo env is a disposable throwaway HOME, so the sandbox comes off.
+# A demo takes the happiest path. Under codex's default workspace-write sandbox
+# a Codex worker can be sent to but cannot send back (README: "Codex agents
+# cannot send, under the default sandbox"), which forces the lead into
+# gang capture polling and puts a caveat on screen instead of the thing the
+# demo is for. This HOME is disposable, so the sandbox comes off and messaging
+# runs both ways — the setup the README recommends first.
 sandbox_mode = "danger-full-access"
 
 [projects."/home/demo/hello"]
@@ -156,6 +158,16 @@ fi
 # lands on the invoking user's own server.
 env -u TMUX TMUX_TMPDIR="$DEMO/.tmux" tmux kill-server 2>/dev/null || true
 rm -f "$DEMO/hello/hello.py" "$DEMO/demo.webm" "$DEMO/demo.mp4"
+
+# Agent state is per-take state. A lead that learned something in an earlier
+# take writes it to project memory, then recites it in the next one as settled
+# fact — including things a later config change has already made false. Clearing
+# transcripts and memory is what makes a take reproducible instead of
+# path-dependent. Credentials and the seeded .claude.json survive deliberately;
+# only the agents' accumulated beliefs go.
+rm -rf "$DEMO/.claude/projects" "$DEMO/.claude/history.jsonl" \
+       "$DEMO/.codex/sessions" "$DEMO/.codex/history.jsonl" \
+       "$DEMO/.local/share/opencode/storage"
 
 # ── Record ───────────────────────────────────────────────────────────────────
 # The tape's Env lines build the clean recorded environment; vhs otherwise runs
