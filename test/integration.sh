@@ -185,6 +185,47 @@ check "a paste the TUI collapses instead of echoing still verifies" "0" "$?"
 # Guards the fixture: if this stand-in ever echoed the paste, the check above
 # would pass on the literal and prove nothing about collapsed ones.
 check "and the pane never showed the literal text" "no" "$(has collapser 'second line')"
+
+# The post-Enter check used to take one unreadable box as a verdict, and there is
+# a harness where that is exactly backwards: opencode's box counts as readable
+# only while the hardware cursor sits in it, and the cursor steps out while the
+# accepted message is repainted into the transcript. The check failed BECAUSE the
+# submit it was looking for had happened, and a spawn briefing died with
+# "submission unverifiable" on a message that landed — leaving the agent running
+# with no role brief. Unreadable is an absence of evidence, so it buys another
+# look; only a box that reads back UNCHANGED is evidence of a non-submit.
+# This stand-in is blind for its two looks after Enter, the way a loaded box is.
+cat > "$SHIM/custom-profiles/blinking.sh" <<SH
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local n until line
+  n=\$(( \$(cat "$SHIM/blink-count" 2>/dev/null || echo 0) + 1 ))
+  echo "\$n" > "$SHIM/blink-count"
+  until=\$(cat "$SHIM/blink-until" 2>/dev/null || echo 0)
+  # 1 and 2 are the before/after reads around the paste; the blindness starts
+  # at 3, the first look after Enter.
+  if [ "\$n" -ge 3 ] && [ "\$n" -le "\$until" ]; then return 1; fi
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}"
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" spawn blinker -p blinking -d /tmp >/dev/null 2>&1
+echo 0 > "$SHIM/blink-count"; echo 4 > "$SHIM/blink-until"
+"$GANG" send blinker --from tester "BLINK_MSG" >/dev/null 2>&1
+check "a box briefly unreadable after Enter still verifies" "0" "$?"
+check "and the message actually landed" "yes" "$(has blinker '[gang:tester] BLINK_MSG')"
+
+# The tolerance is bounded, not infinite: a box that never comes back still fails,
+# and says which of the two things went wrong.
+echo 0 > "$SHIM/blink-count"; echo 9999 > "$SHIM/blink-until"
+out="$("$GANG" send blinker --from tester "NEVER" 2>&1)"; rc=$?
+check "a box that never comes back still fails loudly" "1" "$rc"
+check "and is not accused of holding an unsent draft" "unverifiable" \
+  "$(case "$out" in *unverifiable*) echo unverifiable ;; *"never sent"*) echo wrong-verdict ;; *) echo other ;; esac)"
+echo 0 > "$SHIM/blink-until"
 unset GANG_PROFILES
 
 # Enter has to be checked, not merely sent. Batch the text and the Enter into one

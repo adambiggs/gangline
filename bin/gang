@@ -413,15 +413,30 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # empties the box — or, mid-turn, replaces it with the harness's queued-message
   # hint — so a box still holding what we just pasted was never submitted.
   tmux send-keys -t "$1" Enter
-  local t=0 posted
+  # An unreadable box in the moments after Enter is not a failed submit — it is
+  # the submit in flight. opencode's box is only "readable" while the hardware
+  # cursor sits in it, and the cursor leaves while the accepted message is
+  # repainted into the transcript: the check that confirms submission fails
+  # precisely BECAUSE submission is happening. One bad sample is therefore not a
+  # verdict, it just buys another look.
+  #
+  # The two failures stay on separate counters because they are different
+  # accusations. A box that reads back unchanged is positive evidence the text
+  # never went — it keeps the five looks it has always had, so nothing about
+  # that verdict loosens here. Unreadable is an absence of evidence, and only
+  # the wider budget running out escalates it to "I could not tell".
+  local unchanged=0 looks=0 posted
   while :; do
     sleep 0.4
-    posted="$(landing_zone "$1")" \
-      || die "cannot read the input box of $1 after Enter — submission unverifiable"
-    [ "$posted" = "$after" ] || break
-    t=$((t + 1))
-    [ "$t" -ge 5 ] \
-      && die "submit NOT verified: '$frag' is still sitting in the input box of $1 — it was pasted but never sent"
+    if posted="$(landing_zone "$1")"; then
+      [ "$posted" = "$after" ] || break
+      unchanged=$((unchanged + 1))
+      [ "$unchanged" -ge 5 ] \
+        && die "submit NOT verified: '$frag' is still sitting in the input box of $1 — it was pasted but never sent"
+    fi
+    looks=$((looks + 1))
+    [ "$looks" -lt 15 ] \
+      || die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s)"
   done
 }
 
