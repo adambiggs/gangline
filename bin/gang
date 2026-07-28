@@ -544,6 +544,15 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # unsent draft that scrollback renders identically to a sent one. Submitting
   # empties the box — or, mid-turn, replaces it with the harness's queued-message
   # hint — so a box still holding what we just pasted was never submitted.
+  # The gate is checked again here, and this is the check that matters most: the
+  # earlier one guards the paste, but Enter is the keystroke that ANSWERS a
+  # dialog. A permission prompt can paint in the moment between the paste and
+  # this line — that is the whole hazard, an asynchronous dialog against a
+  # four-step delivery — and an Enter aimed at a composer that is no longer
+  # there selects whatever the dialog has highlighted. Nothing was submitted, so
+  # this is a clean failure: the paste is still in the box for the operator.
+  ! gated "$1" \
+    || die "refusing to submit '$frag': a permission prompt took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent (gang attach)"
   tmux send-keys -t "$1" Enter
   # An unreadable box in the moments after Enter is not a failed submit — it is
   # the submit in flight. opencode's box is only "readable" while the hardware
