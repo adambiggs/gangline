@@ -41,7 +41,7 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
   # Never return empty. An empty -t is not "no window", it is tmux's CURRENT
   # pane — and this suite is normally run by an agent from inside a live gangline
   # session, so a missing window turns `paint` into keystrokes typed straight
-  # into whichever teammate is on screen. Lived it: a failing spawn sent the
+  # into whichever teammate is on screen. Lived it: a failing hitch sent the
   # band-ladder beacons into the manager's input box, where they read as the
   # operator talking, and the rename below retitled the manager to "gamma".
   # A test that cannot find its own window is broken, and a broken test must not
@@ -111,13 +111,13 @@ check "and names what is missing" "yes" \
 
 # --- lifecycle ---------------------------------------------------------------
 
-"$GANG" spawn alpha -p bash -d /tmp >/dev/null
-check "spawn registers an agent" "idle (slack tug)" "$("$GANG" status alpha)"
+"$GANG" hitch alpha -p bash -d /tmp >/dev/null
+check "hitch registers an agent" "idle (slack tug)" "$("$GANG" status alpha)"
 check "roster lists it"          "alpha bash idle" \
   "$("$GANG" roster | awk '$1=="alpha"{print $1, $2, $3}')"
 
 # `gang up` is the first command a new install runs, and the only one that both
-# spawns and briefs with no arguments at all — so it is the one whose breakage a
+# hitches and briefs with no arguments at all — so it is the one whose breakage a
 # stranger meets first. It ends in an exec that hands the terminal over, which is
 # why it went untested: drive it through a tmux that swallows the handover and
 # assert what it did before reaching it.
@@ -178,7 +178,7 @@ SH
 chmod +x "$SHIM/collapsing-tui"
 fake_harness collapsing "$SHIM/collapsing-tui"
 export GANG_PROFILES="$SHIM/custom-profiles"
-"$GANG" spawn collapser -p collapsing -d /tmp >/dev/null 2>&1
+"$GANG" hitch collapser -p collapsing -d /tmp >/dev/null 2>&1
 "$GANG" send collapser --from tester "$(printf 'first line\nsecond line\nthird line')" \
   >/dev/null 2>&1
 check "a paste the TUI collapses instead of echoing still verifies" "0" "$?"
@@ -190,7 +190,7 @@ check "and the pane never showed the literal text" "no" "$(has collapser 'second
 # a harness where that is exactly backwards: opencode's box counts as readable
 # only while the hardware cursor sits in it, and the cursor steps out while the
 # accepted message is repainted into the transcript. The check failed BECAUSE the
-# submit it was looking for had happened, and a spawn briefing died with
+# submit it was looking for had happened, and a hitch briefing died with
 # "submission unverifiable" on a message that landed — leaving the agent running
 # with no role brief. Unreadable is an absence of evidence, so it buys another
 # look; only a box that reads back UNCHANGED is evidence of a non-submit.
@@ -212,7 +212,7 @@ profile_input() {
 }
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
-"$GANG" spawn blinker -p blinking -d /tmp >/dev/null 2>&1
+"$GANG" hitch blinker -p blinking -d /tmp >/dev/null 2>&1
 echo 0 > "$SHIM/blink-count"; echo 4 > "$SHIM/blink-until"
 "$GANG" send blinker --from tester "BLINK_MSG" >/dev/null 2>&1
 check "a box briefly unreadable after Enter still verifies" "0" "$?"
@@ -269,7 +269,7 @@ profile_input() {
 }
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
-"$GANG" spawn busybee -p working -d /tmp >/dev/null 2>&1
+"$GANG" hitch busybee -p working -d /tmp >/dev/null 2>&1
 sleep 0.5
 paint busybee 'WORKING...'
 check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)"
@@ -380,8 +380,8 @@ unset GANG_PROFILES
 
 # tmux reads an all-digit target as a window INDEX. alpha is at index 1, so a
 # name-built target sent "1" to alpha and called it delivered.
-"$GANG" spawn beta -p bash -d /tmp >/dev/null
-"$GANG" spawn 1    -p bash -d /tmp >/dev/null
+"$GANG" hitch beta -p bash -d /tmp >/dev/null
+"$GANG" hitch 1    -p bash -d /tmp >/dev/null
 "$GANG" send 1 --from tester "MARK_NUMERIC" >/dev/null
 sleep 0.5
 check "a numeric name reaches its agent"  "yes" "$(has 1 MARK_NUMERIC)"
@@ -401,20 +401,20 @@ check "an agent renamed outside gang is addressable by its new name" "idle (slac
 check "roles are listed" "lead reviewer worker" \
   "$("$GANG" roles | tr '\n' ' ' | sed 's/ $//')"
 
-"$GANG" spawn scout -p bash -r worker -d /tmp >/dev/null
+"$GANG" hitch scout -p bash -r worker -d /tmp >/dev/null
 sleep 0.5
-check "a spawned agent is briefed" "yes" \
-  "$(has scout '[gang:spawn] You are `scout` on a gangline team, in the worker role')"
+check "a hitched agent is briefed" "yes" \
+  "$(has scout '[gang:hitch] You are `scout` on a gangline team, in the worker role')"
 check "the brief is pointed at, not pasted" "yes" "$(has scout "${GANG%/bin/gang}/roles/worker.md")"
 
-"$GANG" spawn ghostrole -p bash -r nosuch -d /tmp >/dev/null 2>&1
+"$GANG" hitch ghostrole -p bash -r nosuch -d /tmp >/dev/null 2>&1
 check "an unknown role fails" "1" "$?"
-check "before anything is spawned" "" "$("$GANG" roster | awk '$1=="ghostrole"{print $1}')"
+check "before anything is hitched" "" "$("$GANG" roster | awk '$1=="ghostrole"{print $1}')"
 
 # GANG_ROLES is the extension point: your directory wins over the shipped one.
 mkdir -p "$SHIM/custom-roles"
 printf '# Role: worker\n\nCustom.\n' > "$SHIM/custom-roles/worker.md"
-GANG_ROLES="$SHIM/custom-roles" "$GANG" spawn custom -p bash -r worker -d /tmp >/dev/null
+GANG_ROLES="$SHIM/custom-roles" "$GANG" hitch custom -p bash -r worker -d /tmp >/dev/null
 sleep 0.5
 check "GANG_ROLES overrides the shipped brief" "yes" \
   "$(has custom "$SHIM/custom-roles/worker.md")"
@@ -430,11 +430,11 @@ fake_harness slowboot "sleep 3; PS1='❯ ' bash --norc"
 
 check "GANG_PROFILES adds a harness" "yes" \
   "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles | grep -qx slowboot && echo yes || echo no)"
-GANG_PROFILES="$SHIM/custom-profiles" "$GANG" spawn slowpoke -p slowboot -r worker -d /tmp >/dev/null
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch slowpoke -p slowboot -r worker -d /tmp >/dev/null
 check "a brief waits for a harness that has not painted yet" "yes" \
   "$(has slowpoke 'in the worker role')"
 
-# patrol runs from cron, without the GANG_PROFILES that spawned this agent. It
+# patrol runs from cron, without the GANG_PROFILES that hitched this agent. It
 # must still account for it: an agent missing from the roster reads as no agent.
 check "an unresolvable profile is reported, not dropped" "slowpoke slowboot" \
   "$("$GANG" roster | awk '$1=="slowpoke"{print $1, $2}')"
@@ -444,16 +444,16 @@ check "an unresolvable profile is reported, not dropped" "slowpoke slowboot" \
 # and a brief pasted into a security prompt answers it. Refuse, and say so.
 fake_harness modal "printf '\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n'; sleep 60"
 out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_BOOT_TIMEOUT=3 \
-  "$GANG" spawn modalagent -p modal -r worker -d /tmp 2>&1)"
+  "$GANG" hitch modalagent -p modal -r worker -d /tmp 2>&1)"
 check "a brief is never pasted into a first-run dialog" "yes" \
   "$(case "$out" in *"other than its input box"*) echo yes ;; *) echo no ;; esac)"
-check "and the dialog is left untouched" "no" "$(has modalagent 'gang:spawn')"
+check "and the dialog is left untouched" "no" "$(has modalagent 'gang:hitch')"
 
 # --- context bands -------------------------------------------------------------
 
 # The bash profile reads the same beacon shape the claude-code statusline paints,
 # so one printed line exercises the whole warn path with no harness installed.
-"$GANG" spawn ctxagent -p bash -d /tmp >/dev/null
+"$GANG" hitch ctxagent -p bash -d /tmp >/dev/null
 paint ctxagent 'ctx 150k/200k 75%'      # crosses the 120000 band, nothing above it
 check "context reads the beacon" "150k/200k (75%)" "$("$GANG" context ctxagent)"
 
@@ -479,7 +479,7 @@ check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p
 # size. The proportional rung this replaced was 90%, which on a 200k window WAS
 # 180000 — two rungs firing at once, band 1 jumping straight to 3 — and on a 1M
 # window sat at 900k, leaving 250k..900k without a single further signal.
-probe() { "$GANG" spawn "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
+probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
 probe rung200a '119k/200k 59%'    # under the first rung
 probe rung200b '120k/200k 60%'
 probe rung200c '180k/200k 90%'    # 90% of this window: must not double-count
@@ -504,7 +504,7 @@ check "and again at 350k"                "4" "$(band_of rung1mc)"
 # command for bash — profile_context, the marker lookup, and the parser are the
 # shipped codex.sh code. Every fixture record is shaped exactly as the installed
 # codex (0.145.0) writes it, because that shape IS the claim under test: the
-# same parser is doctor's format gate.
+# same parser is vet's format gate.
 CODEX_FIX="$SHIM/codex-home"
 DAYDIR="$CODEX_FIX/sessions/2026/07/27"
 mkdir -p "$DAYDIR"
@@ -521,7 +521,7 @@ profile_input() {
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 
-out="$(CODEX_HOME="$CODEX_FIX" "$GANG" spawn filectx -p codexfile -d /tmp 2>&1)"
+out="$(CODEX_HOME="$CODEX_FIX" "$GANG" hitch filectx -p codexfile -d /tmp 2>&1)"
 fkey="$(tmux show-options -wqv -t "$(target_of filectx)" @gl_key)"
 check "a keyed profile mints a marker even with no role" "yes" \
   "$(case "$fkey" in gl-????????????????????????????????) echo yes ;; *) echo no ;; esac)"
@@ -536,7 +536,7 @@ check "and never the spawner's stdout" "no" \
 # the LAST one is the current occupancy, and 150k sits past the 120k band.
 {
   printf '%s\n' '{"timestamp":"2026-07-27T00:00:01.000Z","type":"session_meta","payload":{"id":"gangtest-agent","timestamp":"2026-07-27T00:00:01.000Z","cwd":"/tmp","originator":"codex-tui","cli_version":"0.145.0","source":"cli"}}'
-  printf '{"timestamp":"2026-07-27T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:spawn] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}]}}\n' "$fkey"
+  printf '{"timestamp":"2026-07-27T00:00:02.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:hitch] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}]}}\n' "$fkey"
   printf '%s\n' '{"timestamp":"2026-07-27T00:00:03.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":15000,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":1000,"reasoning_output_tokens":400,"total_tokens":16085},"last_token_usage":{"input_tokens":16031,"cached_input_tokens":11008,"cache_write_input_tokens":0,"output_tokens":54,"reasoning_output_tokens":36,"total_tokens":16085},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.0,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
   printf '%s\n' '{"timestamp":"2026-07-27T00:00:04.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":290000,"cached_input_tokens":250000,"cache_write_input_tokens":0,"output_tokens":9000,"reasoning_output_tokens":2000,"total_tokens":299000},"last_token_usage":{"input_tokens":148000,"cached_input_tokens":140000,"cache_write_input_tokens":0,"output_tokens":2000,"reasoning_output_tokens":500,"total_tokens":150000},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.1,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
 } > "$DAYDIR/rollout-2026-07-27T00-00-01-gangtest-agent.jsonl"
@@ -545,7 +545,7 @@ check "and never the spawner's stdout" "no" \
 # tool-output record. Different shape, different rollout, different numbers — if
 # the lookup ever picks it, the readout below says 222k and the check says so.
 {
-  printf '{"timestamp":"2026-07-27T00:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_x","output":"❯ [gang:spawn] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}}\n' "$fkey"
+  printf '{"timestamp":"2026-07-27T00:00:05.000Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_x","output":"❯ [gang:hitch] Session marker: %s — gang bookkeeping, ignore it and never repeat it anywhere."}}\n' "$fkey"
   printf '%s\n' '{"timestamp":"2026-07-27T00:00:06.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":222000,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":222000},"last_token_usage":{"input_tokens":222000,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":0,"reasoning_output_tokens":0,"total_tokens":222000},"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.2,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}'
 } > "$DAYDIR/rollout-2026-07-27T00-00-02-gangtest-capturer.jsonl"
 
@@ -568,15 +568,15 @@ check "a codex agent joins the band ladder" "NUDGED (crossed the 120000-token ba
 # has a token_count at all, so a schema change in a codex release is caught the
 # day it ships, not the day an agent's readout silently lies.
 # Captured, not piped into grep -q: under this suite's pipefail, grep -q exits
-# at the match, doctor's NEXT row takes SIGPIPE, and the pipeline reads as a
-# miss — a false negative that reproduces exactly as often as doctor has a row
+# at the match, vet's NEXT row takes SIGPIPE, and the pipeline reads as a
+# miss — a false negative that reproduces exactly as often as vet has a row
 # to print after the matching one.
-dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"
-check "doctor gates the rollout format" "yes" \
+dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" vet 2>/dev/null)"
+check "vet gates the rollout format" "yes" \
   "$(printf '%s' "$dout" | grep -q 'file format: OK' && echo yes || echo no)"
 printf '%s\n' '{"timestamp":"2026-07-27T00:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.3,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}' \
   > "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
-dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"
+dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"   # through the alias, deliberately
 check "and fails loud when the schema drifts" "yes" \
   "$(printf '%s' "$dout" | grep -q 'file format: DRIFT' && echo yes || echo no)"
 rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
@@ -588,7 +588,7 @@ unset GANG_PROFILES
 # the window; its profile joins the window from opencode's own models catalog,
 # keyed by the painted composer badge, and cross-checks the painted percent
 # against the join. The stand-in swaps launch/busy/input for bash —
-# profile_context, the join, the cross-check, and profile_doctor are the
+# profile_context, the join, the cross-check, and profile_vet are the
 # shipped opencode.sh code, and the fixture catalog entries are shaped exactly
 # as the installed opencode (1.14.39) caches them. The cursor-gated
 # profile_input is deliberately not driven here: it needs a real opencode
@@ -615,7 +615,7 @@ profile_input() {
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 
-"$GANG" spawn ocp -p ocpaint -d /tmp >/dev/null
+"$GANG" hitch ocp -p ocpaint -d /tmp >/dev/null
 XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
 check "context before the first turn is refused, not guessed" "1" "$?"
 
@@ -648,12 +648,12 @@ sleep 0.4
 XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
 check "a percent the joined window cannot reproduce is refused" "1" "$?"
 
-dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" doctor 2>/dev/null)"
-check "doctor gates the catalog format" "yes" \
+dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
+check "vet gates the catalog format" "yes" \
   "$(printf '%s' "$dout" | grep -q 'file format: OK (catalog join candidates' && echo yes || echo no)"
 printf '%s\n' '{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5"}}}}' \
   > "$OC_CACHE/opencode/models.json"
-dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" doctor 2>/dev/null)"
+dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "and fails loud when the catalog drifts" "yes" \
   "$(printf '%s' "$dout" | grep -q 'file format: DRIFT — models catalog holds no named model' && echo yes || echo no)"
 oc_catalog
@@ -711,18 +711,35 @@ check "and it does not move a column" "$row" \
 check "send without --from is refused" "1" "$?"
 "$GANG" send ghost --from tester hi >/dev/null 2>&1
 check "send to an unknown agent fails" "1" "$?"
-"$GANG" spawn zed -p >/dev/null 2>&1
+"$GANG" hitch zed -p >/dev/null 2>&1
 check "a flag missing its value fails cleanly" "1" "$?"
-check "and spawns nothing" "" "$("$GANG" roster | awk '$1=="zed"{print $1}')"
+check "and hitches nothing" "" "$("$GANG" roster | awk '$1=="zed"{print $1}')"
 "$GANG" --help >/dev/null
 check "--help exits clean" "0" "$?"
 
+# --- verbs -------------------------------------------------------------------
+
+# hitch and vet carry aliases (spawn, doctor) so old hands and old scripts keep
+# working; kill carries none — no dogs are killed here, and a verb that is gone
+# must say so rather than half-work. (doctor's parity ran above, at the
+# schema-drift gate.)
+"$GANG" spawn aliased -p bash -d /tmp >/dev/null
+check "spawn still answers as an alias for hitch" "idle (slack tug)" \
+  "$("$GANG" status aliased)"
+out="$("$GANG" kill aliased 2>&1)"; rc=$?
+check "kill is no longer a verb" "1" "$rc"
+check "and says so by name" "yes" \
+  "$(case "$out" in *"unknown command 'kill'"*) echo yes ;; *) echo no ;; esac)"
+check "and the dog it aimed at is untouched" "aliased" \
+  "$("$GANG" roster | awk '$1=="aliased"{print $1}')"
+"$GANG" drop aliased >/dev/null
+
 # --- teardown ----------------------------------------------------------------
 
-"$GANG" kill gamma >/dev/null
-check "kill removes the agent" "" "$("$GANG" roster | awk '$1=="gamma"{print $1}')"
+"$GANG" drop gamma >/dev/null
+check "drop removes the agent" "" "$("$GANG" roster | awk '$1=="gamma"{print $1}')"
 "$GANG" down >/dev/null
-check "down kills the session" "no team (session '$GANG_SESSION' not running)" \
+check "down ends the session" "no team (session '$GANG_SESSION' not running)" \
   "$("$GANG" roster)"
 
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed")"

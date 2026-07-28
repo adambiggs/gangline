@@ -21,7 +21,7 @@ GANG_LAUNCH="claude"
 GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
-# re-verify + append (gang doctor watches the pin).
+# re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="claude --version"
 GANG_VERIFIED_VERSIONS="2.1.220"
 # Compact command verified live: /compact is the built-in context compaction
@@ -53,7 +53,7 @@ GANG_MIDTURN_INPUT=1
 # so a match means the dialog owns the screen right now. Only the shell-command
 # dialog has been watched; a variant worded differently falls back to that old
 # behavior. The first-run trust modal words its question differently and stays
-# the spawn-time exit-2 refusal, deliberately.
+# the hitch-time exit-2 refusal, deliberately.
 GANG_GATED_REGEX='Do you want to proceed\?'
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
