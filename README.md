@@ -94,7 +94,8 @@ curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh 
 
 Clones to `~/.local/share/gangline` and links `gang` into `~/.local/bin`; re-run it
 to update. `GANGLINE_HOME` and `GANGLINE_BIN` move either. If you would rather not
-pipe a script into a shell, read it first — it is fifty lines.
+pipe a script into a shell, read [`install.sh`](install.sh) first — a clone and a
+symlink is all it does.
 
 From a clone instead:
 
