@@ -46,7 +46,7 @@ GANG_GATED_REGEX='△ Permission required'
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="opencode --version"
-GANG_VERIFIED_VERSIONS="1.14.39 1.18.7"
+GANG_VERIFIED_VERSIONS="1.14.39 1.18.7 1.18.8"
 
 opencode_models_json() { printf '%s/opencode/models.json' "${XDG_CACHE_HOME:-$HOME/.cache}"; }
 
