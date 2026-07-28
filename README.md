@@ -309,6 +309,35 @@ modes, approval policies, permission blocks), graduated to the blast radius the
 environment actually bounds; keep gates on where you want the stop, and gangline
 will at least tell you loudly that a gate is what everyone is waiting on.
 
+### Codex agents cannot send, under the default sandbox
+
+gang's control path is the tmux socket, and Codex's default `workspace-write`
+sandbox denies `connect()` to it — seccomp, not landlock, so no amount of
+writable roots reaches it. Watched live: creating a file *in* the socket
+directory succeeds, connecting to the socket in it gets `EPERM`. Setting
+`TMUX_TMPDIR` does not help; the block is on the socket, not on the path to it.
+
+The traffic is one-way, not dead. gang writes into a Codex agent's pane from
+*outside* its sandbox, so briefs and messages arrive normally. What fails is
+everything the agent would run itself: `gang send` back to its lead, and
+`gang roster`, which reports `no team` from inside the pane. A lead waiting on a
+sandboxed Codex worker's report waits forever, and the worker looks stuck at the
+exact moment it has finished.
+
+Two ways to live with it, and the friction is yours to choose:
+
+- **Keep the sandbox.** Brief Codex workers to write their result into their own
+  pane, and have the lead collect it with `gang capture <name>` instead of
+  waiting on a report that cannot come. Costs the lead a polling step, and costs
+  you the discipline of remembering it for every Codex worker you hitch.
+- **`sandbox_mode = "danger-full-access"` in `config.toml`.** Messaging works in
+  both directions and nothing above applies. This is the lowest-friction setup
+  and the one to reach for first — provided you accept what the name says, which
+  is that Codex's filesystem and network confinement comes off entirely. Sound
+  when the blast radius is already bounded by something else: a container, a VM,
+  a throwaway HOME, a machine you would not mind rebuilding. Not sound on a box
+  holding anything you would mind losing.
+
 ## Profiles
 
 A profile is a few lines declaring what gang cannot know generically: the launch
