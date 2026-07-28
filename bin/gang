@@ -294,12 +294,18 @@ role_brief() { # $1 = role, $2 = agent name; the message that points at the brie
 # target delivers `2` to whatever sits at index 2 and calls it verified. An id
 # is immutable for the window's life, survives rename and reorder, and is never
 # reused — so a name resolved once cannot drift under the rest of the command.
+#
+# The session is addressed as "=$SESSION" everywhere for the same class of
+# reason: an unanchored tmux target is a PREFIX match, so GANG_SESSION=team
+# resolves to a running team-production when nothing is called team — quietly
+# hitching into the wrong team, and, through `gang down`, killing it. The "="
+# demands the whole name.
 
 win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
   local id name
   while read -r id name; do   # `read id name` keeps spaces in the name
     [ "$name" = "$1" ] && { printf '%s' "$id"; return 0; }
-  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W' 2>/dev/null)
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W' 2>/dev/null)
   return 1
 }
 
@@ -317,7 +323,7 @@ self_window() { # -> the window id this process is running in; nonzero if not in
   local pid wid
   while read -r pid wid; do
     [ "$pid" = "$TMUX_PANE" ] && { printf '%s' "$wid"; return 0; }
-  done < <(tmux list-panes -s -t "$SESSION" -F '#{pane_id} #{window_id}' 2>/dev/null)
+  done < <(tmux list-panes -s -t "=$SESSION" -F '#{pane_id} #{window_id}' 2>/dev/null)
   return 1
 }
 
@@ -750,6 +756,8 @@ cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
+  valid_name "$name" \
+    || die "hitch: '$name' is not a usable agent name — letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in the context hook's reply, and a word in the compaction command gang suggests"
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
@@ -774,13 +782,20 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
 
-  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-    tmux new-session -d -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
+  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+    id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
+      || die "could not start session '$SESSION' for '$name'"
   else
     exists "$name" && die "agent '$name' already exists"
-    tmux new-window -d -t "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH"
+    id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
+      || die "could not open a window for '$name' in session '$SESSION'"
   fi
-  id="$(win_id "$name")" || die "'$name' never appeared in session '$SESSION'"
+  # The id comes from the command that created the window, not from looking the
+  # name up afterwards. A lookup that missed left the window running and
+  # unregistered — a live agent nobody could address, reported as a failed
+  # hitch — and it missed for names tmux and `read` disagree about, like one
+  # with a leading space.
+  [ -n "$id" ] || die "'$name' never appeared in session '$SESSION'"
   # Window name IS the identity — the app must not rename it out from under us.
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
@@ -850,9 +865,9 @@ cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
   # Inside tmux, switch the client instead of refusing: needing to detach first
   # is friction for the one command that is supposed to need nothing.
   if [ -n "${TMUX:-}" ]; then
-    exec tmux switch-client -t "$SESSION" \; select-window -t "$id"
+    exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
   fi
-  exec tmux attach -t "$SESSION" \; select-window -t "$id"
+  exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
 cmd_send() {
@@ -994,12 +1009,12 @@ cmd_context() { # context-window usage via the profile's own introspection
 }
 
 cmd_roster() {
-  tmux has-session -t "$SESSION" 2>/dev/null \
+  tmux has-session -t "=$SESSION" 2>/dev/null \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   local id name
   while read -r id name; do
     ( roster_row "$id" "$name" ) || true   # one sick agent must not blank the roster
-  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W')
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')
 }
 
 roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one row
@@ -1040,13 +1055,13 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # re-hitched name starts clean and tmux is the one that deletes it (Law 1,
   # Law 6 — no cleanup code, no state outliving its subject). Warn, don't act —
   # compaction timing is the agent's judgment (gang compact exists to force it).
-  tmux has-session -t "$SESSION" 2>/dev/null \
+  tmux has-session -t "=$SESSION" 2>/dev/null \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   ladder 0 200000 >/dev/null   # one loud complaint about a bad ladder, not one per agent
   local id name
   while read -r id name; do
     ( patrol_one "$id" "$name" ) || true
-  done < <(tmux list-windows -t "$SESSION" -F '#{window_id} #W')
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')
 }
 
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
@@ -1250,6 +1265,8 @@ cmd_capture() { # trailing blank pane rows are dead space, not content
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
   local name="" prof="" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
+  valid_name "$name" \
+    || die "adopt: '$name' is not a usable agent name — letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "adopt: $1 needs a value"; prof="$2"; shift 2 ;;
     *) die "adopt: unknown argument '$1'" ;;
@@ -1273,12 +1290,12 @@ cmd_drop() {
 cmd_down() { # inverse of up: end the whole team's session
   # No state to sweep: band memory is a window option, so tmux deletes it along
   # with the windows it belongs to.
-  tmux has-session -t "$SESSION" 2>/dev/null || die "no session '$SESSION' running"
-  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')")"
-  tmux kill-session -t "$SESSION"
+  tmux has-session -t "=$SESSION" 2>/dev/null || die "no session '$SESSION' running"
+  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
+  tmux kill-session -t "=$SESSION"
 }
 
-cmd_attach() { exec tmux attach -t "$SESSION"; }
+cmd_attach() { exec tmux attach -t "=$SESSION"; }
 
 cmd_profiles() { list_profiles; }
 

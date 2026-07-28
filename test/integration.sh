@@ -499,6 +499,27 @@ unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
 
+# An unanchored tmux target is a PREFIX match, so GANG_SESSION=team resolved to a
+# running team-production when nothing was called team: hitching into somebody
+# else's team, and — through gang down — killing it.
+tmux new-session -d -s "${GANG_SESSION}-longer" bash
+check "a session name is not a prefix of somebody else's team" "yes" \
+  "$(GANG_SESSION="${GANG_SESSION}x" "$GANG" roster 2>&1 | grep -q 'no team' && echo yes || echo no)"
+check "and down refuses a team that does not exist by that exact name" "1" \
+  "$(GANG_SESSION="${GANG_SESSION}x" "$GANG" down >/dev/null 2>&1; echo $?)"
+tmux kill-session -t "=${GANG_SESSION}-longer" 2>/dev/null
+
+# A name is an identity, a tmux target, a JSON string in the hook reply, and a
+# word in the compaction command gang suggests. One that cannot round-trip
+# through all four is refused at the door rather than producing a window nobody
+# can address or a hook reply the harness cannot parse.
+for bad in 'bad"name' ' leading' 'has space' 'semi;colon'; do
+  "$GANG" hitch "$bad" -p bash -d /tmp >/dev/null 2>&1
+  check "a name that cannot round-trip is refused: [$bad]" "1" "$?"
+done
+check "and no orphan window is left running for one" "0" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W' | grep -c 'bad"name\|leading\|has space\|semi;colon')"
+
 # tmux reads an all-digit target as a window INDEX. alpha is at index 1, so a
 # name-built target sent "1" to alpha and called it delivered.
 "$GANG" hitch beta -p bash -d /tmp >/dev/null
