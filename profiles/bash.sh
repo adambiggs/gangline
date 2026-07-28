@@ -9,6 +9,7 @@
 GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
+# No GANG_MODEL_OPT: a shell has no model, so `hitch -m` on this profile refuses.
 
 profile_input() { # $1 = tmux target; same shape as a real TUI's input box
   # Mirrors the claude-code hook so gang's input-box handling is exercised

@@ -134,6 +134,33 @@ check "up needs no agent name"  "idle (slack tug)" "$("$GANG" status lead)"
 sleep 0.5
 check "and briefs it as lead" "yes" "$(has lead roles/lead.md)"
 
+# --- model at hitch ------------------------------------------------------------
+
+# One concept, four spellings: `hitch -m` appends the model behind the flag the
+# PROFILE declares (GANG_MODEL_OPT). bash declares none — a shell has no model —
+# so the refusal path runs on the shipped profile and the append on a fixture.
+out="$("$GANG" hitch nomodel -p bash -m any-model -d /tmp 2>&1)"; rc=$?
+check "a profile with no model spelling refuses -m" "1" "$rc"
+check "and names the missing declaration" "yes" \
+  "$(case "$out" in *GANG_MODEL_OPT*) echo yes ;; *) echo no ;; esac)"
+"$GANG" status nomodel >/dev/null 2>&1
+check "and no half-hitched window is left behind" "1" "$?"
+
+cat > "$SHIM/custom-profiles/modeled.sh" <<'SH'
+GANG_LAUNCH="sh -c 'echo launched:\$*; printf \"❯ \"; sleep 300' probe"
+GANG_MODEL_OPT="--model"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+SH
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch modeled -p modeled -m test-model -d /tmp >/dev/null
+check "the declared flag carries the model into the launch" "yes" \
+  "$(has modeled 'launched:--model test-model')"
+# GANG_LAUNCH is handed to sh, so a model that would need quoting there is
+# refused outright rather than escaped.
+GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" hitch quoted -p modeled -m 'pwn; touch /tmp/x' -d /tmp >/dev/null 2>&1
+check "a model sh would need quoted is refused" "1" "$?"
+
 # --- delivery ----------------------------------------------------------------
 
 "$GANG" send alpha --from tester "MARK_ONE" >/dev/null

@@ -5,6 +5,9 @@
 # turn shows a braille spinner + "Working..."; the spinner char cycles, so match
 # the stable token. Compact command from dist/core/slash-commands.js: "compact".
 GANG_LAUNCH="pi"
+# From `pi --help`: --model, spelled provider/id with an optional :<thinking>
+# suffix ("openai-codex/gpt-5.6-sol:high").
+GANG_MODEL_OPT="--model"
 GANG_BUSY_REGEX="Working\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
 # GANG_MIDTURN_INPUT is deliberately unset: whether Pi takes input typed during a

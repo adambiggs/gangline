@@ -10,6 +10,9 @@
 # change version mid-arc. Env for this process only; the operator's own
 # opencode keeps updating itself.
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
+# From `opencode --help`: -m/--model, spelled provider/model
+# ("google/gemini-3.1-pro-preview").
+GANG_MODEL_OPT="-m"
 # A running turn paints "⬝⬝⬝⬝⬝⬝⬝⬝  esc interrupt" into the hint row — the
 # dotted spinner fills and drains, the interrupt hint holds still. Compaction
 # paints this same line and nothing else (watched: /compact ran as an ordinary
