@@ -8,6 +8,15 @@
 # ("✻ Baked for 1s") persists in scrollback and must NOT match — it reads
 # " for Ns", never an ellipsis. Observed false-negative: patrol nudged a
 # mid-turn manager because only "esc to interrupt" was matched.
+# Launched as the operator has it configured — no permission flag here, on
+# purpose. A gangline agent is unattended by construction (nobody is watching
+# its pane, a dialog stops the whole team, and gang will not answer one), so a
+# harness on its interactive defaults stalls a team at the first prompt. The
+# setting that fixes it belongs in the operator's own settings.json, where they
+# can see it and change it back: "permissions": { "defaultMode": "auto" }.
+# Choosing it here would put gang's thumb on a security decision that is not
+# gang's to make. Want it in the launch line anyway? Shadow this profile via
+# GANG_PROFILES and patch this one line.
 GANG_LAUNCH="claude"
 # From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
 # model id ("claude-fable-5").
@@ -47,17 +56,19 @@ GANG_COMPACTING_REGEX='▰|▱'
 # slash command waits for that turn to end — so text submitted after a command
 # can still arrive before it (see resume_after_compaction).
 GANG_MIDTURN_INPUT=1
-# The permission dialog, watched live through a full ask→deny→erase cycle in a
-# gating permission mode: the question line holds still while the command, the
-# menu, and the footer vary around it. While the dialog is up no busy form
-# matches and the "❯" input box is gone — so before this marker a gated pane
-# read IDLE and a send died "not taking input" with nothing saying why. The
-# frame is erased the moment the prompt is answered, never left in scrollback,
-# so a match means the dialog owns the screen right now. Only the shell-command
-# dialog has been watched; a variant worded differently falls back to that old
-# behavior. The first-run trust modal words its question differently and stays
-# the hitch-time exit-2 refusal, deliberately.
-GANG_GATED_REGEX='Do you want to proceed\?'
+# Two dialogs, each watched live. The shell-command approval (first alternate),
+# through a full ask→deny→erase cycle in a gating permission mode: the question
+# line holds still while the command, the menu, and the footer vary around it.
+# The first-run trust modal (second alternate), through both answers in a
+# scratch dir: declining exits the process, accepting repaints the normal UI
+# with the wording gone — so either way a match means a dialog owns the screen
+# right now, never scrollback. While either is up no busy form matches and the
+# column-zero "❯" input box is gone (the trust modal's own "❯" menu cursor is
+# indented one space — which is why hitch's no-input-box refusal catches it
+# before a brief can answer it): unmarked, a gated pane read IDLE and a send
+# died "not taking input" with nothing saying why. A dialog worded differently
+# falls back to that old behavior.
+GANG_GATED_REGEX='Do you want to proceed\?|Is this a project you created or one you trust\?'
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline
