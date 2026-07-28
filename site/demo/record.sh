@@ -135,22 +135,39 @@ copy_auth "$REAL_HOME/.codex/auth.json"          "$DEMO/.codex/auth.json"
 copy_auth "$REAL_HOME/.local/share/opencode/auth.json" \
           "$DEMO/.local/share/opencode/auth.json"
 
-# Claude Code keeps its account identity and folder trust in ~/.claude.json;
-# seed just those so the demo boots straight past login and the trust dialog.
-if [ ! -f "$DEMO/.claude.json" ]; then
-  python3 - "$REAL_HOME/.claude.json" "$DEMO/.claude.json" <<'EOF'
+# Claude Code keeps its account identity and folder trust in ~/.claude.json; seed
+# just those so the demo boots straight past login and the trust dialog. Rewritten
+# every run rather than written once, because what lands in here ends up on screen
+# — a fix to it has to reach the next take instead of sitting behind a file that
+# already exists.
+#
+# The account identity is deliberately NOT scrubbed here. Claude Code paints the
+# signed-in organization in its boot box — for a personal account that string is
+# literally "<your email>'s Organization" — and it re-fetches that profile from the
+# server on the way up, so a neutralised emailAddress in this file is overwritten
+# seconds later. Tried it, watched it come back. The boot box is kept off camera by
+# the tape instead (demo.tape, scenes 1 and 4).
+#
+# The release note and the announcement impressions ARE carried over: a fresh HOME
+# has seen neither, and a boot box padded out with promos is a taller header for
+# the lead's own output to push off screen before its scene can start. Impressions
+# are copied by id and pushed past any plausible cap rather than invented, so this
+# suppresses exactly the announcements the operator has already worked through.
+python3 - "$REAL_HOME/.claude.json" "$DEMO/.claude.json" \
+         "$(claude --version | awk '{print $1}')" <<'EOF'
 import json, sys
 real = json.load(open(sys.argv[1]))
 seed = {
     "oauthAccount": real["oauthAccount"],
     "hasCompletedOnboarding": True,
+    "lastReleaseNotesSeen": sys.argv[3],
+    "announcementImpressions": {k: 99 for k in real.get("announcementImpressions", {})},
     "projects": {"/home/demo/hello": {"hasTrustDialogAccepted": True}},
 }
 with open(sys.argv[2], "w") as f:
     json.dump(seed, f, indent=1)
 EOF
-  chmod 600 "$DEMO/.claude.json"
-fi
+chmod 600 "$DEMO/.claude.json"
 
 # ── Per-take reset ───────────────────────────────────────────────────────────
 # `env -u TMUX` is load-bearing: a tmux client inside a tmux pane takes its
