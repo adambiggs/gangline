@@ -346,14 +346,18 @@ Each harness prints its own warning about what these modes mean, in its own
 words. That message is theirs to make; gangline does not repeat it, soften it,
 or add a second one.
 
-> **The one thing gangline has to say that your harness does not.** gang moves
-> text between agents: one agent's output becomes another agent's input, carried
-> by a tool with no way to know whether it was reasoning or an instruction a
-> repository planted. A poisoned file read by one agent can therefore reach the
-> shell of another. Treat every agent's output as untrusted input to the next,
-> keep a team on work you would run yourself, and bound the machine — a
-> container, a VM, an account — if you need a boundary. Relocating `$HOME` is
-> not one: same uid, same files, same network.
+> **The one thing gangline has to say that your harness does not.** Agents on
+> one machine already pass text to one another — through files, through a shared
+> checkout, through panes. Nothing in tmux prevents an agent from typing into a
+> neighbour's composer, and nothing in a shared repository prevents one agent
+> from reading what another wrote. gangline does not create that path; it makes
+> it routine, and gives it structure the ad-hoc versions lack: envelopes no line
+> can escape, delivery verified in the pane, refusals at permission gates, one
+> writer per pane. So treat every agent's output as untrusted input to the next —
+> a poisoned file read by one can reach the shell of another — keep a team on
+> work you would run yourself, and bound the machine if you need a boundary: a
+> container, a VM, a separate account. Relocating `$HOME` is not one; same uid,
+> same files, same network.
 
 Prefer to change a launch line instead? Every flag lives in one line of a
 profile's `GANG_LAUNCH`: shadow the profile via `GANG_PROFILES` and patch that
