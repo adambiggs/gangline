@@ -134,9 +134,11 @@ answered on the other side. So has opencode — hitched, tasked, read busy mid-t
 and its context read live through the catalog join described below.
 
 Agent names are yours. Whatever you pass to `gang hitch` becomes the tmux window
-name, the identity in every `[gang:<sender>]` prefix, and the handle every command
-takes. Name them for the role they play on the team. Underneath the handle, gang
-addresses windows by tmux window id — immutable, never reused — so a rename, a
+name, the identity every message is signed with, and the handle every command
+takes. Name them for the role they play on the team. Letters, digits, dot, dash
+and underscore only — a name also has to survive being a tmux target, a JSON
+string in a hook reply, and a word in a suggested command. Underneath the
+handle, gang addresses windows by tmux window id — immutable, never reused — so a rename, a
 reorder, or a name that happens to look like a number cannot re-point a command
 at the wrong agent.
 
