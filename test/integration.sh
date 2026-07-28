@@ -231,16 +231,17 @@ profile_input() {
   n=\$(( \$(cat "$SHIM/blink-count" 2>/dev/null || echo 0) + 1 ))
   echo "\$n" > "$SHIM/blink-count"
   until=\$(cat "$SHIM/blink-until" 2>/dev/null || echo 0)
-  # 1 and 2 are the before/after reads around the paste; the blindness starts
-  # at 3, the first look after Enter.
-  if [ "\$n" -ge 3 ] && [ "\$n" -le "\$until" ]; then return 1; fi
+  # 1 and 2 are the settle looks that check nobody is typing into the box, 3 and
+  # 4 the before/after reads around the paste; the blindness starts at 5, the
+  # first look after Enter.
+  if [ "\$n" -ge 5 ] && [ "\$n" -le "\$until" ]; then return 1; fi
   line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
   printf '%s' "\${line#❯}"
 }
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" hitch blinker -p blinking -d /tmp >/dev/null 2>&1
-echo 0 > "$SHIM/blink-count"; echo 4 > "$SHIM/blink-until"
+echo 0 > "$SHIM/blink-count"; echo 6 > "$SHIM/blink-until"
 "$GANG" send blinker --from tester "BLINK_MSG" >/dev/null 2>&1
 check "a box briefly unreadable after Enter still verifies" "0" "$?"
 check "and the message actually landed" "yes" "$(has blinker '[gang:tester] BLINK_MSG')"
@@ -272,6 +273,39 @@ chmod +x "$SHIM/noenter/tmux"
 PATH="$SHIM/noenter:$PATH" "$GANG" send alpha --from tester "MARK_UNSENT" >/dev/null 2>&1
 check "a paste that is never submitted is not reported as delivered" "1" "$?"
 tmux send-keys -t "$(target_of alpha)" C-u   # the draft it correctly left behind
+
+# --- one pane, one writer -----------------------------------------------------
+
+# A delivery is read-the-box, paste, read-it-again, Enter. Two of those
+# interleaved put both messages in the box and submit them as one, and both
+# senders are told they succeeded. Lived it: a patrol nudge merged with a lead's
+# send, and an inbound send merged mid-word with the operator's own typing.
+"$GANG" send alpha --from tester "MARK_RACE_A" >/dev/null 2>&1 &
+"$GANG" send alpha --from tester "MARK_RACE_B" >/dev/null 2>&1 &
+wait
+sleep 1
+check "concurrent deliveries both arrive" "yes yes" \
+  "$(has alpha MARK_RACE_A) $(has alpha MARK_RACE_B)"
+check "and neither was merged into the other's submission" "0" \
+  "$(pane_of alpha | grep -c 'MARK_RACE_A.*MARK_RACE_B')"
+
+# The other writer is the operator's hands. A box whose contents are MOVING is
+# somebody typing, and a paste into it interleaves mid-word — so gang holds
+# rather than garbling a half-written line. A box that merely HAS a draft is
+# static and still takes mail: inject verifies the change it makes.
+cat > "$SHIM/custom-profiles/jitter.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() { printf 'being-typed-%s' "$RANDOM"; }
+SH
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch typist -p jitter -d /tmp >/dev/null 2>&1
+out="$(GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" send typist --from tester "MARK_INTERLEAVED" 2>&1)"; rc=$?
+check "a send into a box being typed in is refused" "1" "$rc"
+check "and says whose keyboard it would have landed in" "yes" \
+  "$(case "$out" in *"typing into"*) echo yes ;; *) echo no ;; esac)"
+check "with nothing typed over the draft" "no" "$(has typist MARK_INTERLEAVED)"
 
 # --- reaching an agent that is working ---------------------------------------
 
