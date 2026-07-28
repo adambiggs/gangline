@@ -9,6 +9,12 @@
 # or this variable) — and a fleet pinned by GANG_VERIFIED_VERSIONS must not
 # change version mid-arc. Env for this process only; the operator's own
 # opencode keeps updating itself.
+# No --auto here, on purpose: an agent nobody is watching cannot answer a dialog
+# and gang will not answer it either, but clearing permissions is the operator's
+# decision to make, not this file's. Vanilla opencode asks nothing anyway — its
+# gates exist only where the operator's own opencode.json says "ask", so the
+# flag matters exactly to the operators who configured one, and they are the
+# ones who should choose it. Shadow via GANG_PROFILES to add it.
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
 # From `opencode --help`: -m/--model, spelled provider/model
 # ("google/gemini-3.1-pro-preview").

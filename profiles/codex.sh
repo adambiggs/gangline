@@ -9,6 +9,17 @@
 # gang refuses the paste (correctly: it is a menu, not a composer) and the agent
 # never starts. -c overrides one key for this process only, so an operator's own
 # codex still tells them about updates.
+# No sandbox or approval flag here: those are the operator's settings to choose,
+# in their own config.toml. What they need to know is particular to Codex, and
+# the README says it — its sandbox gates connect() on the network toggle without
+# discriminating by address family, so a Codex agent with network access denied
+# cannot open a UNIX socket either, and the tmux socket IS gangline's transport.
+# Watched live, same socket and command: under workspace-write `tmux -S <sock>
+# ls` gets EPERM; with sandbox_workspace_write.network_access = true it lists
+# the session, and a worker hitched that way answered gang roster and reported
+# home through gang send. So the sandbox stays on and network access comes on —
+# the operator sets both. Denied, the agent is reachable but mute: briefs arrive
+# (gang writes from outside the sandbox) and nothing it runs itself gets back.
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
@@ -25,15 +36,18 @@ GANG_MODEL_OPT="-m"
 # dialog: the interrupt hint is gone while the prompt is up, so busy honestly
 # answers "no turn in flight". That state belongs to GANG_GATED_REGEX below.
 GANG_BUSY_REGEX="esc to interrupt"
-# The approval dialog, watched live through a full ask→deny→erase cycle: the
-# question line holds still while the command, the reason, and the numbered
-# menu vary around it. The busy hint and the composer are both gone while it is
-# up, so an unmarked gate read idle and a paste died on the missing composer
-# with nothing saying why. Erased the moment it is answered — a match means the
-# dialog owns the screen right now. The first-run trust prompt ("Do you trust
-# the contents of this directory?") words itself differently and stays the
-# hitch-time exit-2 refusal, deliberately.
-GANG_GATED_REGEX='Would you like to run the following command\?'
+# Two dialogs, each watched live. The command approval (first alternate),
+# through a full ask→deny→erase cycle: the question line holds still while the
+# command, the reason, and the numbered menu vary around it. The first-run
+# trust prompt (second alternate), through both answers in a scratch dir:
+# declining exits the process, accepting repaints the composer with the wording
+# gone — so a match means a dialog owns the screen right now, never scrollback.
+# Its "›" menu cursor sits at column zero, the composer's own column, in the
+# "› N. " row shape profile_input refuses below. The busy hint and the composer
+# are gone while either dialog is up, so an unmarked gate read idle and a paste
+# died on the missing composer with nothing saying why. A dialog worded
+# differently falls back to that old behavior.
+GANG_GATED_REGEX='Would you like to run the following command\?|Do you trust the contents of this directory\?'
 # Verified from the live slash menu: "/compact  summarize conversation to
 # prevent hitting the context limit". A finished compaction leaves "Context
 # compacted" in the transcript, where it stays — a marker for humans reading

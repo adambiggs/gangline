@@ -309,43 +309,82 @@ than risks it — and a skip never burns state, so the next sweep retries.
   it. Every gate watched live also drops its busy hint and input box, so without
   the marker a gated agent reads idle and the team stalls with nothing saying why.
 
-## Permission gates
+## Permissions
 
-gang adds no permission machinery of its own — an approval prompt is a synchronous
-human gate, and an unattended team cannot contain one mid-arc. For agents meant to
-run unattended, pre-approve in each harness's *own* persistent config (permission
-modes, approval policies, permission blocks), graduated to the blast radius the
-environment actually bounds; keep gates on where you want the stop, and gangline
-will at least tell you loudly that a gate is what everyone is waiting on.
+**gangline launches each harness exactly as you have configured it** and sets no
+permission flags of its own. What your harness asks you, it asks a gangline
+agent too.
 
-### Codex agents cannot send, under the default sandbox
+Worth knowing before you hitch a team, because a gangline agent is unattended by
+construction: nobody is watching its pane, an approval dialog stops the whole
+team mid-arc, and gang will not answer one for you — every delivery path reports
+the gate and refuses. A harness left on its interactive defaults stalls a team at
+the first prompt. That belongs in the harness's own persistent config, where you
+can see it and change it back:
 
-gang's control path is the tmux socket, and Codex's default `workspace-write`
-sandbox denies `connect()` to it — seccomp, not landlock, so no amount of
-writable roots reaches it. Watched live: creating a file *in* the socket
-directory succeeds, connecting to the socket in it gets `EPERM`. Setting
-`TMUX_TMPDIR` does not help; the block is on the socket, not on the path to it.
+- **Claude Code** — `"permissions": { "defaultMode": "auto" }` in
+  `~/.claude/settings.json`; `acceptEdits`, `dontAsk` and `bypassPermissions` sit
+  further along the same dial.
+- **Codex** — `approval_policy = "never"` in `~/.codex/config.toml`, plus the
+  network setting below, which a Codex agent needs before it can reach the team
+  at all.
+- **opencode** — nothing to do by default: vanilla opencode asks nothing, and
+  gates exist only where your own `opencode.json` has a `"permission"` block
+  saying `"ask"`. Launch it with `--auto` to override those.
+- **pi** — no approval system to disarm.
 
-The traffic is one-way, not dead. gang writes into a Codex agent's pane from
-*outside* its sandbox, so briefs and messages arrive normally. What fails is
-everything the agent would run itself: `gang send` back to its lead, and
-`gang roster`, which reports `no team` from inside the pane. A lead waiting on a
-sandboxed Codex worker's report waits forever, and the worker looks stuck at the
-exact moment it has finished.
+Each harness prints its own warning about what these modes mean, in its own
+words. That message is theirs to make; gangline does not repeat it, soften it,
+or add a second one.
 
-Two ways to live with it, and the friction is yours to choose:
+> **The one thing gangline has to say that your harness does not.** gang moves
+> text between agents: one agent's output becomes another agent's input, carried
+> by a tool with no way to know whether it was reasoning or an instruction a
+> repository planted. A poisoned file read by one agent can therefore reach the
+> shell of another. Treat every agent's output as untrusted input to the next,
+> keep a team on work you would run yourself, and bound the machine — a
+> container, a VM, an account — if you need a boundary. Relocating `$HOME` is
+> not one: same uid, same files, same network.
 
-- **Keep the sandbox.** Brief Codex workers to write their result into their own
-  pane, and have the lead collect it with `gang capture <name>` instead of
-  waiting on a report that cannot come. Costs the lead a polling step, and costs
-  you the discipline of remembering it for every Codex worker you hitch.
-- **`sandbox_mode = "danger-full-access"` in `config.toml`.** Messaging works in
-  both directions and nothing above applies. This is the lowest-friction setup
-  and the one to reach for first — provided you accept what the name says, which
-  is that Codex's filesystem and network confinement comes off entirely. Sound
-  when the blast radius is already bounded by something else: a container, a VM,
-  a throwaway HOME, a machine you would not mind rebuilding. Not sound on a box
-  holding anything you would mind losing.
+Prefer to change a launch line instead? Every flag lives in one line of a
+profile's `GANG_LAUNCH`: shadow the profile via `GANG_PROFILES` and patch that
+line (see Profiles). Nothing else in gang changes with it — the scraping surface
+is the same file. What gang will never do is answer a dialog for you or pre-trust
+a directory on your behalf.
+
+### A sandboxed Codex agent needs network access to answer
+
+gang's control path is the tmux socket, and Codex's sandbox gates `connect()` on
+its network toggle without discriminating by address family — so a Codex agent
+with network access denied cannot open a *unix* socket either. The block is on
+the syscall, not the path to it: adding writable roots does not reach it, and
+neither does `TMUX_TMPDIR`.
+
+Watched live, same socket and command, one variable. Under `workspace-write`,
+`tmux -S <socket> ls` returns `Operation not permitted`; with `network_access`
+turned on it lists the session, and a Codex worker hitched that way answered
+`gang roster` and reported home through `gang send`.
+
+Denied, the traffic is one-way rather than dead: gang writes into the pane from
+*outside* the sandbox, so briefs and messages arrive, while everything the agent
+runs itself fails — `gang send` back to its lead, `gang roster` (`no team` from
+inside its own pane), and its own self-compaction. A lead waiting on that
+worker's report waits forever, and the worker looks stuck at the moment it
+finished.
+
+So a Codex worker wants this in `~/.codex/config.toml`, which keeps its landlock
+filesystem confinement and buys back the socket:
+
+```toml
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
+```
+
+Read what that costs before you set it: network access is network access, so the
+agent reaches the internet as well as the socket. It is still the smaller of the
+two doors — `danger-full-access` takes the filesystem boundary down with it.
 
 ## Profiles
 
@@ -354,7 +393,8 @@ command, the busy marker, the compact command, the flag that names a model
 (`GANG_MODEL_OPT`, what `hitch -m` appends — a profile without it refuses the
 flag), whether the harness takes input during a turn, what its compaction looks
 like while it runs, how its permission prompt reads, and optional hooks for
-reading a context readout and for finding the harness's input box. The behavioural ones — mid-turn input, the compaction
+reading a context readout and for finding the harness's input box. The
+behavioural ones — mid-turn input, the compaction
 marker, and the gate marker — are optional in the honest sense: unset means
 nobody has watched that behaviour live, and gang takes the slower, safer branch
 rather than guessing at it.

@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Record site/demo/demo.tape against a disposable demo HOME at /home/demo.
+# Record site/demo/demo.tape against a separate demo HOME at /home/demo.
 #
 # The demo runs three real harnesses (Claude Code lead, Codex worker, opencode
-# reviewer) on the invoking user's subscription auth, inside an isolated HOME
-# so no real path, hostname, or config can leak on screen. This script stages
-# that HOME idempotently, resets per-take state, runs vhs, and moves the
-# rendered videos into site/. Auth files are copied byte-for-byte and never
-# printed; wipe them with --wipe-auth when you are done recording.
+# reviewer) on the invoking user's subscription auth, under a HOME of its own so
+# no real path, hostname, or config lands on screen. That is a cosmetic
+# boundary, not a security one: these agents run as the invoking user, with that
+# user's files and network, and a separate HOME changes neither. Record on a
+# machine where that is fine. This script stages the demo HOME idempotently,
+# resets per-take state, runs vhs, and moves the rendered videos into site/.
+# Auth files are copied byte-for-byte and never printed; wipe them with
+# --wipe-auth when you are done recording.
 #
 # Usage:
 #   site/demo/record.sh              stage + record
@@ -30,7 +33,7 @@ if [ "${1:-}" = "--wipe-auth" ]; then
   exit 0
 fi
 
-for tool in vhs ffmpeg tmux git claude codex opencode node python3; do
+for tool in vhs ffmpeg tmux git rsync claude codex opencode node python3; do
   command -v "$tool" >/dev/null || { echo "missing: $tool" >&2; exit 1; }
 done
 if [ ! -d "$DEMO" ]; then
@@ -98,19 +101,18 @@ cat > "$DEMO/.codex/config.toml" <<'EOF'
 model = "gpt-5.6-sol"
 model_reasoning_effort = "medium"
 approval_policy = "never"
-# A demo takes the happiest path. Under codex's default workspace-write sandbox
-# a Codex worker can be sent to but cannot send back (README: "Codex agents
-# cannot send, under the default sandbox"), which forces the lead into
-# gang capture polling and puts a caveat on screen instead of the thing the
-# demo is for. This HOME is disposable, so the sandbox comes off and messaging
-# runs both ways — the setup the README recommends first.
-sandbox_mode = "danger-full-access"
+# The setup the README recommends for a Codex worker, and the demo is the place
+# to show it: the sandbox stays on, and network access buys back the tmux socket
+# a Codex agent needs to answer at all (README: "A sandboxed Codex agent needs
+# network access to answer"). Without it the lead falls back to gang capture
+# polling, which puts a caveat on screen instead of the thing the demo is for.
+sandbox_mode = "workspace-write"
+
+[sandbox_workspace_write]
+network_access = true
 
 [projects."/home/demo/hello"]
 trust_level = "trusted"
-
-[notice]
-hide_full_access_warning = true
 EOF
 
 cat > "$DEMO/.config/opencode/opencode.json" <<'EOF'
