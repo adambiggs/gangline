@@ -713,8 +713,6 @@ ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highe
 }
 
 band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text, both legs
-  # Single quotes only: the hook leg embeds this text in JSON with printf, so a
-  # double quote or a backslash here would emit malformed output.
   # The exact command, not "compact soon", because the part an agent gets wrong
   # is the resume — typed in behind the compaction it overtakes it and is eaten
   # by the turn about to be compacted, and the agent wakes with nothing to do.
@@ -875,7 +873,13 @@ cmd_send() {
   name="${1:-}"; [ -n "$name" ] || usage_die; shift
   while [ $# -gt 0 ]; do case "$1" in
     --from)    [ $# -ge 2 ] || die "send: $1 needs a value"; from="$2"; shift 2 ;;
-    --timeout) [ $# -ge 2 ] || die "send: $1 needs a value"; timeout="$2"; shift 2 ;;
+    --timeout) [ $# -ge 2 ] || die "send: $1 needs a value"
+               # An unchecked value turned the bound into an unbounded loop: the
+               # comparison sits inside an && condition, so its "integer
+               # expression expected" never trips errexit and the deadline is
+               # never reached.
+               case "$2" in ''|*[!0-9]*) die "send: --timeout takes whole seconds, got '$2'" ;; esac
+               timeout="$2"; shift 2 ;;
     -w|--wait) wait=1; shift ;;
     *) break ;;
   esac; done
@@ -995,9 +999,15 @@ cmd_status() {
   # in an argument list is thrown away — printf would succeed, print a blank line,
   # and report exit 0 for a state nobody ever established. An assignment carries the
   # failure, so errexit still ends the command (law 8).
-  local state
+  local state failed
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
+  # A resume that never landed is the one thing about an agent that its screen
+  # cannot show: it is the absence of a message. Scripts keep matching the state
+  # prefix on line one.
+  failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_failed)"
+  [ -z "$failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "resume NOT delivered after compaction: $failed")"
 }
 
 cmd_context() { # context-window usage via the profile's own introspection
@@ -1066,7 +1076,10 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
-  local prof ctx tw tokens window band crossed prev
+  local prof ctx tw tokens window band crossed prev failed
+  failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
+  [ -z "$failed" ] \
+    || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
   profile_file "$prof" >/dev/null \
@@ -1143,8 +1156,12 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
   [ "$band" -ne "$prev" ] && tmux set-option -w -t "$TMUX_PANE" @gl_band "$band"
   if [ "$band" -gt "$prev" ]; then
-    # The note carries no quote and no backslash, so this stays a printf.
-    printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' \
+    # Encoded, not interpolated. The note carries an agent name and a context
+    # readout, and a printf template that assumes neither ever holds a quote or
+    # a backslash emits invalid JSON the moment one does — silently, because the
+    # band was advanced above and nothing retries a warning the harness could
+    # not parse. python3 is a hard dependency of this command already.
+    python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
       "$event" "$(band_note "$ctx" "$crossed" "$(tmux display-message -p -t "$TMUX_PANE" '#W')")"
   fi
   exit 0
@@ -1311,7 +1328,9 @@ case "$cmd" in
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   context)  cmd_context "$@" ;;
   context-hook) cmd_context_hook ;;
-  wait)     [ $# -ge 1 ] || usage_die; resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo "idle (slack tug)" ;;
+  wait)     [ $# -ge 1 ] || usage_die
+            case "${2:-300}" in ''|*[!0-9]*) die "wait: timeout takes whole seconds, got '${2:-}'" ;; esac
+            resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo "idle (slack tug)" ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
