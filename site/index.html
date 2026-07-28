@@ -148,9 +148,9 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
 
   <section id="install">
   <h2>Install</h2>
+  <!-- Deliberately the raw URL, DNS or not: what you pipe is verifiably the file
+       in the repo, not whatever a vanity path serves today. -->
   <pre class="cmd"><code><span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
-  <!-- DNS pending: once gangline.ai resolves, swap to https://gangline.ai/install
-       (pages.yml already publishes install.sh at that path). -->
   <p class="note">
     Needs git and tmux&nbsp;&ge;&nbsp;3.2. Clones to <code>~/.local/share/gangline</code>,
     links <code>gang</code> into <code>~/.local/bin</code>, re-run to update.
