@@ -7,7 +7,20 @@
 #   test/integration.sh
 set -uo pipefail   # deliberately not -e: a failed assertion reports, not aborts
 
-GANG="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)/bin/gang"
+# The same pure-shell resolution bin/gang uses, and for the same reason: the
+# suite shims a BSD readlink below to prove gang survives one, but resolved its
+# own path with GNU-only `readlink -f` first — so on the stock macOS that test
+# is named for, the script died at this line and the test never ran there.
+gang_path() { # $1 = this script -> the bin/gang beside its tree
+  local src="$1" dir
+  while [ -L "$src" ]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    case "$src" in /*) ;; *) src="$dir/$src" ;; esac
+  done
+  printf '%s/bin/gang' "$(cd -P "$(dirname "$src")/.." && pwd)"
+}
+GANG="$(gang_path "$0")"
 export GANG_SESSION="gangtest-$$"
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
