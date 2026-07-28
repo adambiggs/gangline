@@ -74,7 +74,9 @@
   </p>
 
   <h2>Install</h2>
-  <pre class="cmd"><code><span class="p">$</span> curl -fsSL https://gangline.ai/install | sh</code></pre>
+  <!-- DNS pending: once gangline.ai resolves, swap to https://gangline.ai/install
+       (pages.yml already publishes install.sh at that path). -->
+  <pre class="cmd"><code><span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
   <p class="note">
     Needs git and tmux&nbsp;&ge;&nbsp;3.2. Clones to <code>~/.local/share/gangline</code>,
     links <code>gang</code> into <code>~/.local/bin</code>, re-run to update.
