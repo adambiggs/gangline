@@ -111,4 +111,8 @@ gangline reads your harness's screen to tell whether you are busy and how full
 you are, and that reading breaks when your harness updates. If gang reports the
 wrong state, misses your context readout, or fails to verify a send that clearly
 landed, run `gang doctor` before assuming you made the mistake. If it reports
-ROT RISK, tell the operator.
+ROT RISK, tell the operator. If it reads all-OK and scraping stays wrong, tell
+the operator that instead: doctor's pins watch harness versions, and a UI mod —
+a theme, a custom statusline, a TUI extension — can move a marker without moving
+any of them. The fix is a profile shadow re-verified against the modded TUI, and
+it is the operator's to make.

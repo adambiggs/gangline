@@ -908,6 +908,12 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
       fi
     fi
   done
+  # Only on a clean bill, because that is when it is the remaining hypothesis:
+  # doctor is run when scraping already misbehaves, and pins watch harness
+  # versions, which UI mods never move — a theme, a replacement statusline, or a
+  # TUI-drawing extension relocates a marker with every row above reading OK.
+  [ "$drift" -ne 0 ] \
+    || echo "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker: shadow the profile via GANG_PROFILES and re-verify against the TUI as you actually run it (README: Strategy rot)."
   return "$drift"
 }
 

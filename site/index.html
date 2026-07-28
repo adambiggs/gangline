@@ -110,7 +110,10 @@ worker    claude-code  busy (tight tug)  38k/1000k (3%)</code></pre>
 
     <dt>A new harness costs a profile, not an integration.</dt>
     <dd>Launch command, busy marker, compact command &mdash; about ten lines.
-        Everything else is universal.</dd>
+        Everything else is universal. Profiles scrape the stock TUI: a theme or
+        UI extension that repaints it takes a shadow profile of your own
+        (<code>GANG_PROFILES</code>), re-verified against what you actually
+        run.</dd>
 
     <dt>Batteries included, every one replaceable.</dt>
     <dd>Agents spawn with a role brief &mdash; lead, worker, reviewer. Point

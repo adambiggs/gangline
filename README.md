@@ -397,6 +397,20 @@ verification — runs `gang doctor` first. On ROT RISK, `gang doctor --file-issu
 files a deduped rot issue via `gh`, then the markers get re-verified against the
 live TUI and the new version appended to the pin.
 
+Version pins watch the harness, not its mods. A theme, a replacement statusline,
+or a TUI-drawing extension — a permission system, say — repaints chrome without
+moving any version doctor checks, so scraping can misbehave while every row
+reads OK; doctor says so whenever it hands back a clean bill. Additive
+extensions (MCP servers, hooks, slash commands) add capability without touching
+the chrome the markers match. What a mod cannot do is turn a keystroke loose:
+delivery verifies the input box changed, before and after, so a marker moved by
+a mod degrades to loud refusals and held nudges, never a paste into the wrong
+widget. When one does move a marker, the repair is the same lane a new harness
+uses — a `GANG_PROFILES` shadow re-verified against the TUI as you actually run
+it, with `GANG_VERSION_CMD` pointed at something that includes the mod's own
+version, so the pin watches the thing that owns the pixels. `profiles/pi.sh`
+documents the pattern for extension-drawn permission dialogs.
+
 ## Contributing
 
 `CONSTITUTION.md` holds the laws that bind every change here — read it first; Law 1
