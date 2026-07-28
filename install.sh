@@ -27,7 +27,7 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 [ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
   || die "tmux >= 3.2 required for bracketed paste, found $(tmux -V)"
 
-# Not a hard requirement: gang spawns, sends and sweeps without python3. It reads
+# Not a hard requirement: gang hitches, sends and sweeps without python3. It reads
 # the Claude Code hook payload and the statusline beacon, which is the whole of
 # context measurement for that harness. macOS ships no python3 by default, so say
 # what breaks rather than let the beacon fail later with no explanation.

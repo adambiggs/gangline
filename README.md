@@ -38,7 +38,7 @@ There is no server, no bus, and no database. tmux already holds the state, so
 
 ## The five ideas
 
-**Agents are tmux windows.** Spawning is `new-window`, killing is `kill-window`,
+**Agents are tmux windows.** Hitching is `new-window`, dropping is `kill-window`,
 watching is `capture-pane`, and the window name *is* the agent's identity. Attach
 to the session and you are looking at your team — the pane is the transcript, and
 you can type into it yourself at any time.
@@ -61,7 +61,7 @@ work continues without a human waiting on it.
 compact command — about ten lines. Everything else is universal.
 [Read more →](#profiles)
 
-**Batteries included, every one replaceable.** Agents spawn with a role brief —
+**Batteries included, every one replaceable.** Agents are hitched with a role brief —
 lead, worker, reviewer — telling them how to address teammates, when to compact,
 and what to do when the substrate misbehaves. Point `GANG_ROLES` at a directory of
 your own and any brief becomes yours.
@@ -70,10 +70,10 @@ your own and any brief becomes yours.
 ## Quickstart
 
 ```sh
-cd ~/my/repo && gang up                         # the whole setup, no arguments: spawns
+cd ~/my/repo && gang up                         # the whole setup, no arguments: hitches
                                                 # "lead" here on claude-code with the
                                                 # lead role, and puts you in the session
-gang spawn worker -r worker                     # "worker" is a name you pick: it becomes the
+gang hitch worker -r worker                     # "worker" is a name you pick: it becomes the
                                                 # tmux window name AND the agent's identity;
                                                 # -r briefs it with a role (gang roles)
 gang send worker --from lead "read the failing test in ci and fix it"
@@ -82,8 +82,8 @@ gang status worker                              # busy (tight tug) | idle (slack
 gang capture worker                             # what's on worker's screen
 gang roster                                     # everyone, with state
 gang attach                                     # watch the whole team live
-gang kill worker
-gang down                                       # kill the whole team
+gang drop worker                                # release the agent — deliberate, routine
+gang down                                       # end the whole session
 ```
 
 Output is coloured on a terminal and nowhere else: red for an agent that needs a
@@ -119,11 +119,11 @@ Requires git and tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`).
 lead→worker tasking on both, and a cross-harness relay in which a Claude Code
 agent used `gang send` to task a Pi agent, which acted on it — every hop
 identity-prefixed and pane-verified. Codex has been driven the same way end to end —
-spawned, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
-answered on the other side. So has opencode — spawned, tasked, read busy mid-turn,
+hitched, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
+answered on the other side. So has opencode — hitched, tasked, read busy mid-turn,
 and its context read live through the catalog join described below.
 
-Agent names are yours. Whatever you pass to `gang spawn` becomes the tmux window
+Agent names are yours. Whatever you pass to `gang hitch` becomes the tmux window
 name, the identity in every `[gang:<sender>]` prefix, and the handle every command
 takes. Name them for the role they play on the team. Underneath the handle, gang
 addresses windows by tmux window id — immutable, never reused — so a rename, a
@@ -166,7 +166,7 @@ unsent draft that scrollback renders exactly like a sent one.
 
 Per-agent state lives in tmux window options — the profile binding (`@gl_profile`)
 and the context band already warned about (`@gl_band`) — so tmux deletes an agent's
-state along with its window, and a re-spawned name starts clean.
+state along with its window, and a re-hitched name starts clean.
 
 ## Self-compaction
 
@@ -208,7 +208,7 @@ paints no readout a passive observer can reach — its hint-row figure appears o
 while the composer holds text — so its profile reads the session rollout Codex
 itself appends every turn: a `token_count` event carrying the last turn's usage
 and the model's context window. The link from a tmux window to the right rollout
-is a session marker gang mints at spawn, plants in the agent's first message
+is a session marker gang mints at hitch, plants in the agent's first message
 (where the rollout records it verbatim), and keeps in window state; lookup
 refuses to guess whenever the marker is not exactly one rollout's user input.
 The two sources also mix: opencode paints used tokens and a rounded percent but
@@ -380,7 +380,7 @@ are the same kind of extension point, and neither is code — a role is a markdo
 brief, because law 9 says the answer is prose in an agent's prompt.
 
 ```sh
-gang spawn worker -p claude-code -r worker -d ~/my/repo
+gang hitch worker -p claude-code -r worker -d ~/my/repo
 gang roles                                    # lead, reviewer, worker
 ```
 
@@ -388,7 +388,7 @@ The shipped briefs carry what an agent cannot work out from its own transcript:
 that a `[gang:<sender>]` line is a peer and unprefixed text is the operator, that
 a send to a busy agent is accepted rather than bounced, that a
 `[context-usage]` note means finish the arc and `gang compact` yourself with a
-`--resume`, and that `gang doctor` explains a substrate behaving strangely.
+`--resume`, and that `gang vet` explains a substrate behaving strangely.
 `roles/_common.md`
 holds all of that; each role file adds its own job on top — the lead splits
 work by ownership and guards its own context hardest, the worker reports what
@@ -423,20 +423,20 @@ input-box shape) is live-verified against specific harness versions and pinned i
 the profile with `GANG_VERSION_CMD` + `GANG_VERIFIED_VERSIONS` (space-separated
 version prefixes; `any` means no scraped markers).
 
-`gang doctor` compares each installed harness against its pin and exits nonzero on
+`gang vet` compares each installed harness against its pin and exits nonzero on
 drift. A profile that reads harness files instead of the screen rots on a schema
-change rather than a TUI change, so it declares a `profile_doctor` format gate —
-doctor runs the profile's own parser against the newest session file on disk and
+change rather than a TUI change, so it declares a `profile_vet` format gate —
+vet runs the profile's own parser against the newest session file on disk and
 counts a failure as drift. It is a reactive diagnostic, not a cron job: an agent that sees scraping
 misbehave — false busy/idle, a missing context beacon, an injection that fails
-verification — runs `gang doctor` first. On ROT RISK, `gang doctor --file-issue`
+verification — runs `gang vet` first. On ROT RISK, `gang vet --file-issue`
 files a deduped rot issue via `gh`, then the markers get re-verified against the
 live TUI and the new version appended to the pin.
 
 Version pins watch the harness, not its mods. A theme, a replacement statusline,
 or a TUI-drawing extension — a permission system, say — repaints chrome without
-moving any version doctor checks, so scraping can misbehave while every row
-reads OK; doctor says so whenever it hands back a clean bill. Additive
+moving any version vet checks, so scraping can misbehave while every row
+reads OK; vet says so whenever it hands back a clean bill. Additive
 extensions (MCP servers, hooks, slash commands) add capability without touching
 the chrome the markers match. What a mod cannot do is turn a keystroke loose:
 delivery verifies the input box changed, before and after, so a marker moved by

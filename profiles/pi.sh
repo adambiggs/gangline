@@ -26,9 +26,9 @@ GANG_COMPACT_CMD="/compact"
 # that wires one should shadow this file via GANG_PROFILES, declare the
 # dialog's shape there after watching a full ask→answer→erase cycle live, and
 # point GANG_VERSION_CMD at something that includes the extension version so
-# gang doctor watches the pin that can actually rot.
+# gang vet watches the pin that can actually rot.
 # Every scraped marker in this file was live-verified against these harness
-# versions. New release = re-verify + append (gang doctor watches the pin).
+# versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="pi --version"
 GANG_VERIFIED_VERSIONS="0.82.0"
 

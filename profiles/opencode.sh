@@ -35,7 +35,7 @@ GANG_GATED_REGEX='△ Permission required'
 # to scrape: compaction is drawn as an ordinary working turn with no marker of
 # its own, so a --resume waits for the pane to go quiet instead of queueing.
 # Every scraped marker in this file was live-verified against these harness
-# versions. New release = re-verify + append (gang doctor watches the pin).
+# versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="opencode --version"
 GANG_VERIFIED_VERSIONS="1.14.39 1.18.7"
 
@@ -141,7 +141,7 @@ profile_input() { # $1 = tmux target; prints the composer, fails if it has no ke
     }'
 }
 
-profile_doctor() { # format gate: the catalog side of the join, against the live cache
+profile_vet() { # format gate: the catalog side of the join, against the live cache
   # The pane side — hint row, badge — cannot be gated without an agent on
   # screen; what rots silently on disk is the catalog. Names or limit shapes
   # shifting under an opencode release would kill every join at once, so parse

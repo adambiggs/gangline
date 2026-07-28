@@ -22,7 +22,7 @@ Conventional Commits:
 
 - **type** — `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`,
   `revert`, `style`, `test`
-- **scope** — optional, lowercase; a command or component (`patrol`, `doctor`,
+- **scope** — optional, lowercase; a command or component (`patrol`, `vet`,
   `send`, `compact`, `up`, `down`, `context`, `profiles`)
 - **!** — breaking change; pair it with a `BREAKING CHANGE:` footer saying what
   callers must update
@@ -45,7 +45,7 @@ any other.
 
 Write the body for someone deciding whether to trust the change: what failed, what
 the fix is, and what proved it. Scraped-marker changes say which harness version
-they were verified against — that pin is what `gang doctor` reads.
+they were verified against — that pin is what `gang vet` reads.
 
 ## Before adding code
 

@@ -5,7 +5,7 @@
 # TUI, in the state it describes, before it was written down.
 # The update check is turned off at launch, not in anyone's config file. Left
 # on, a fresh Codex opens on "› 1. Update now / 2. Skip" whenever a release is
-# out, and a spawned agent sits on that prompt instead of reading its brief —
+# out, and a hitched agent sits on that prompt instead of reading its brief —
 # gang refuses the paste (correctly: it is a menu, not a composer) and the agent
 # never starts. -c overrides one key for this process only, so an operator's own
 # codex still tells them about updates.
@@ -30,7 +30,7 @@ GANG_BUSY_REGEX="esc to interrupt"
 # with nothing saying why. Erased the moment it is answered — a match means the
 # dialog owns the screen right now. The first-run trust prompt ("Do you trust
 # the contents of this directory?") words itself differently and stays the
-# spawn-time exit-2 refusal, deliberately.
+# hitch-time exit-2 refusal, deliberately.
 GANG_GATED_REGEX='Would you like to run the following command\?'
 # Verified from the live slash menu: "/compact  summarize conversation to
 # prevent hitting the context limit". A finished compaction leaves "Context
@@ -52,7 +52,7 @@ GANG_MIDTURN_INPUT=1
 # waits for the pane to go quiet instead of queueing behind the compaction:
 # slower by a few seconds, and correct without scraping anything.
 # Every scraped marker in this file was live-verified against these harness
-# versions. New release = re-verify + append (gang doctor watches the pin).
+# versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="codex --version"
 GANG_VERIFIED_VERSIONS="0.144.5 0.145.0"
 # Codex paints no context readout a passive observer can reach — the composer
@@ -61,7 +61,7 @@ GANG_VERIFIED_VERSIONS="0.144.5 0.145.0"
 # Codex itself keeps it: the session rollout under
 # ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-*.jsonl, appended every
 # turn with a token_count event. gang cannot know which rollout is which agent's
-# from the outside, so it asks for a marker: GANG_SESSION_KEY=1 makes spawn mint
+# from the outside, so it asks for a marker: GANG_SESSION_KEY=1 makes hitch mint
 # a token, plant it in the agent's first message (where the rollout records it
 # verbatim), and keep it in the window's @gl_key — exactly as long-lived as the
 # agent, like every other per-agent state.
@@ -74,7 +74,7 @@ codex_session_for() { # $1 = marker -> the one rollout that recorded it as user 
   dir="$(codex_sessions_dir)"
   [ -d "$dir" ] || die "no codex sessions tree at $dir"
   hits="$(grep -rlF -- "$1" "$dir" 2>/dev/null)" \
-    || die "marker not in any rollout under $dir — the spawn message may not be flushed yet"
+    || die "marker not in any rollout under $dir — the hitch message may not be flushed yet"
   # grep finds every FILE carrying the marker; only the agent's own rollout
   # carries it as a user-role message. A teammate that captured the agent's pane
   # early can re-record the marker inside a tool-output record — a different
@@ -101,7 +101,7 @@ if len(mine) != 1:
     n = len(mine)
     print(f"marker matches {n} rollouts as user input — "
           + ("not flushed yet, or the marker line never landed" if n == 0
-             else "the marker was repeated; respawn the agent: " + " ".join(mine)),
+             else "the marker was repeated; re-hitch the agent: " + " ".join(mine)),
           file=sys.stderr)
     sys.exit(1)
 print(mine[0])
@@ -117,7 +117,7 @@ codex_context_read() { # $1 = rollout path; prints "<used>k/<win>k (<pct>%)"
   # subtracts BASELINE_TOKENS (12000) from both sides; this readout stays raw
   # occupancy because the band ladder is absolute tokens, so the percent here
   # reads a few points higher than Codex's. Any missing field is format drift
-  # and dies loudly — gang doctor runs this same parser as its format gate.
+  # and dies loudly — gang vet runs this same parser as its format gate.
   python3 -c '
 import json, sys
 path = sys.argv[1]
@@ -154,7 +154,7 @@ profile_context() { # $1 = tmux target; file-based — reads the rollout, never 
   local key file
   key="$(tmux show-options -wqv -t "$1" @gl_key)"
   [ -n "$key" ] \
-    || die "window has no @gl_key — codex context needs the spawn-time session marker; adopted windows have none (respawn via gang spawn)"
+    || die "window has no @gl_key — codex context needs the hitch-time session marker; adopted windows have none (re-hitch via gang hitch)"
   # The rollout path is derived once and cached on the window; the cache dies
   # with the window like the key that built it. Re-derived if the file vanishes.
   file="$(tmux show-options -wqv -t "$1" @gl_session)"
@@ -165,7 +165,7 @@ profile_context() { # $1 = tmux target; file-based — reads the rollout, never 
   codex_context_read "$file"
 }
 
-profile_doctor() { # format gate: the parser above against the newest rollout on disk
+profile_vet() { # format gate: the parser above against the newest rollout on disk
   # Newest-first because drift ships with a codex release: old rollouts keep the
   # old shape forever and would vouch for a parser the current build has already
   # broken. A rollout with no token_count yet proves nothing either way — skip

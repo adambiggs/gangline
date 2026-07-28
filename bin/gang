@@ -58,11 +58,12 @@ gang — drive a team of CLI agents as tmux windows
 
   gang up [name] [-p <prof>] [-r <role>] [-d <dir>]
                                               the whole setup, no arguments needed:
-                                              spawns "lead" here on GANG_PROFILE
+                                              hitches "lead" here on GANG_PROFILE
                                               with the lead role, and puts you in it
-  gang spawn <name> [-p <prof>] [-r <role>] [-d <dir>]
-                                              start an agent (window name = identity);
-                                              -r briefs it with a role from roles/
+  gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>]
+                                              hitch an agent into the team (window name =
+                                              identity); -r briefs it with a role from
+                                              roles/; alias: spawn
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> <msg...>  verified send; delivered mid-turn if the
                                               harness takes input during one (--wait to
@@ -82,13 +83,14 @@ gang — drive a team of CLI agents as tmux windows
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
                                               reports any agent gated at a permission prompt
-  gang doctor [--file-issue]                  strategy-rot check: installed harness version
+  gang vet [--file-issue]                     strategy-rot check: installed harness version
                                               vs each profile's verified pins; exits nonzero
                                               on drift; --file-issue files a deduped rot
-                                              issue on this repo (needs gh)
+                                              issue on this repo (needs gh); alias: doctor
   gang attach                                 attach to the team session
-  gang kill  <name>                           kill the agent's window
-  gang down                                   kill the whole session (every agent)
+  gang drop  <name>                           release the agent — its window and
+                                              state go with it
+  gang down                                   end the whole session (every agent)
   gang profiles                               list available profiles (harnesses)
   gang roles                                  list available roles (briefs)
   gang context-hook                           harness hook mode: warn the agent in-turn when
@@ -99,7 +101,7 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
-     GANG_BOOT_TIMEOUT (seconds to wait for a spawned harness to take input: 30)
+     GANG_BOOT_TIMEOUT (seconds to wait for a hitched harness to take input: 30)
 EOF
 }
 
@@ -138,7 +140,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS=""
   # no stale functions across profiles
-  unset -f profile_context profile_input profile_doctor 2>/dev/null || true
+  unset -f profile_context profile_input profile_vet 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
@@ -332,7 +334,7 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   # Quiet is not enough: for the first seconds the pane is EMPTY, and an empty
   # screen is a perfectly stable screen. Quiet alone therefore says "ready"
   # before the harness has read a byte of stdin, and the brief pastes into a
-  # process that is not listening (lived it: `gang up` spawned a manager and
+  # process that is not listening (lived it: `gang up` hitched a manager and
   # then failed to verify a brief that had gone nowhere). A painted input box
   # is the direct evidence that the TUI is up and taking input.
   #
@@ -388,7 +390,7 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # The one delivery no before/after verification can make safe: while a
   # permission dialog owns the screen, keystrokes are ANSWERS. Checked here at
   # the chokepoint — immediately before the paste — so every path in (send,
-  # compact, patrol, spawn, resume) hits it, including a gate that painted
+  # compact, patrol, hitch, resume) hits it, including a gate that painted
   # after the caller's own earlier check.
   ! gated "$1" \
     || die "refusing to deliver '$frag': $1 is gated (hook set) — a permission prompt only the operator can answer owns the screen (gang attach)"
@@ -562,21 +564,21 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
 
 # --- commands ---------------------------------------------------------------
 
-cmd_spawn() {
+cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   while [ $# -gt 0 ]; do case "$1" in
-    -p|--profile) [ $# -ge 2 ] || die "spawn: $1 needs a value"; prof="$2"; shift 2 ;;
-    -r|--role)    [ $# -ge 2 ] || die "spawn: $1 needs a value"; role="$2"; shift 2 ;;
-    -d|--dir)     [ $# -ge 2 ] || die "spawn: $1 needs a value"; dir="$2";  shift 2 ;;
-    *) die "spawn: unknown argument '$1'" ;;
+    -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
+    -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
+    -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
+    *) die "hitch: unknown argument '$1'" ;;
   esac; done
-  # Resolved before anything is spawned: a typo in the role should not leave a
+  # Resolved before anything is hitched: a typo in the role should not leave a
   # live unbriefed agent behind.
   [ -z "$role" ] || role_file "$role" >/dev/null \
-    || die "spawn: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
-  [ -d "$dir" ] || die "spawn: no such directory '$dir'"
+    || die "hitch: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
+  [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   load_profile "$prof"
 
   if ! tmux has-session -t "$SESSION" 2>/dev/null; then
@@ -592,7 +594,7 @@ cmd_spawn() {
   tmux set-option -w -t "$id" @gl_profile "$prof"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
-  # A keyed profile gets its marker on EVERY spawn, role or not: the marker is
+  # A keyed profile gets its marker on EVERY hitch, role or not: the marker is
   # what makes the agent's context readable, and an unreadable agent is invisible
   # to patrol. Minted after the window exists so a failed launch mints nothing.
   local key="" msg=""
@@ -606,7 +608,7 @@ cmd_spawn() {
   elif [ -n "$key" ]; then
     msg="$(marker_line "$key")"
   fi
-  echo "$(colour "$C_OK" "spawned $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
+  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   [ -n "$msg" ] || return 0
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting before briefing it...")"
   # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
@@ -615,10 +617,10 @@ cmd_spawn() {
   wait_ready "$id" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
   case "$ready" in
     0) ;;
-    2) die "'$name' is up but is showing something other than its input box, so its spawn message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang kill $name' and spawn again." ;;
-    *) die "'$name' is running but never went quiet, so its spawn message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
+    2) die "'$name' is up but is showing something other than its input box, so its hitch message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang drop $name' and hitch again." ;;
+    *) die "'$name' is running but never went quiet, so its hitch message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
   esac
-  inject "$id" "[gang:spawn] $msg"
+  inject "$id" "[gang:hitch] $msg"
   if [ -n "$role" ]; then printf '%s\n' "$(colour "$C_OK" "briefed $name as $role")"
   else printf '%s\n' "$(colour "$C_OK" "delivered session marker to $name")"; fi
 }
@@ -628,11 +630,11 @@ cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   for a in "$@"; do case "$a" in -r|--role) role_given=1 ;; esac; done
   if [ "$role_given" -eq 1 ]; then
-    cmd_spawn "$name" "$@"
+    cmd_hitch "$name" "$@"
   else
-    cmd_spawn "$name" -r "${GANG_ROLE:-lead}" "$@"
+    cmd_hitch "$name" -r "${GANG_ROLE:-lead}" "$@"
   fi
-  id="$(win_id "$name")" || die "up: '$name' vanished between spawn and attach"
+  id="$(win_id "$name")" || die "up: '$name' vanished between hitch and attach"
   # Inside tmux, switch the client instead of refusing: needing to detach first
   # is friction for the one command that is supposed to need nothing.
   if [ -n "${TMUX:-}" ]; then
@@ -784,7 +786,7 @@ roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one 
   [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" \
                         "$(colour "$C_DIM" "unadopted")"; return; }
   # A profile gang cannot resolve is reported, never dropped: patrol runs from
-  # cron, where the GANG_PROFILES that spawned this agent is not in the
+  # cron, where the GANG_PROFILES that hitched this agent is not in the
   # environment, and an agent missing from the roster reads as no agent at all.
   profile_file "$prof" >/dev/null \
     || { printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "-" \
@@ -813,7 +815,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # and the other reports steady — one note per band, never two.
   #
   # Band memory is a window option: exactly as long-lived as the agent, so a
-  # re-spawned name starts clean and tmux is the one that deletes it (Law 1,
+  # re-hitched name starts clean and tmux is the one that deletes it (Law 1,
   # Law 6 — no cleanup code, no state outliving its subject). Warn, don't act —
   # compaction timing is the agent's judgment (gang compact exists to force it).
   tmux has-session -t "$SESSION" 2>/dev/null \
@@ -914,7 +916,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
 # --- diagnostics ------------------------------------------------------------
 
 file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact title
-  command -v gh >/dev/null || die "doctor --file-issue: gh CLI not installed"
+  command -v gh >/dev/null || die "vet --file-issue: gh CLI not installed"
   local title="strategy rot: $1 markers unverified against $2"
   # Dedup via the plain list endpoint, not --search: the search index is
   # eventually-consistent and misses issues filed seconds ago (observed live —
@@ -924,7 +926,7 @@ file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact t
     return 0
   fi
   (cd "$ROOT" && gh issue create --title "$title" --body "\
-gang doctor detected strategy rot.
+gang vet detected strategy rot.
 
 - profile: \`profiles/$1.sh\`
 - installed harness version: \`$2\`
@@ -937,11 +939,11 @@ and append the new version to GANG_VERIFIED_VERSIONS.")
   echo "  filed rot issue: '$title'"
 }
 
-cmd_doctor() { # strategy-rot check: installed harness version vs each profile's pins
+cmd_vet() { # strategy-rot check: installed harness version vs each profile's pins
   # Scraped TUI markers rot silently when a harness updates (lived it: a
   # Claude Code build stopped painting 'esc to interrupt' and busy() false-
   # negatived). Each profile pins the versions its markers were verified
-  # against; doctor compares and exits nonzero on drift. This is a reactive
+  # against; vet compares and exits nonzero on drift. This is a reactive
   # diagnostic, not a cron job: agents run it when scraping misbehaves
   # (false busy/idle, missing beacon, failed injection verify).
   local file_issue=0
@@ -985,13 +987,13 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
     fi
     # A profile that reads harness files instead of the screen rots on a schema
     # change, not a TUI change — same disease, different tissue. The profile owns
-    # the check (law 4); doctor just runs it and counts a failure as drift.
+    # the check (law 4); vet just runs it and counts a failure as drift.
     # Unconditionally: the version probe and the format gate are independent
     # diagnostics, and a host without the harness binary can still hold session
     # files worth gating (lived it: CI has no codex, and the gate silently never
     # ran there).
-    if declare -F profile_doctor >/dev/null; then
-      if out="$(profile_doctor 2>&1)"; then
+    if declare -F profile_vet >/dev/null; then
+      if out="$(profile_vet 2>&1)"; then
         printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "file format: $out")"
       else
         printf '%-12s %-26s %s\n' '' '' "$(colour "$C_BAD" "file format: DRIFT — $out")"
@@ -1000,7 +1002,7 @@ cmd_doctor() { # strategy-rot check: installed harness version vs each profile's
     fi
   done
   # Only on a clean bill, because that is when it is the remaining hypothesis:
-  # doctor is run when scraping already misbehaves, and pins watch harness
+  # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a
   # TUI-drawing extension relocates a marker with every row above reading OK.
   [ "$drift" -ne 0 ] \
@@ -1030,18 +1032,18 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
 
-cmd_kill() {
+cmd_drop() {
   local id
   id="$(win_id "$1")" || die "no agent '$1'"
   tmux kill-window -t "$id"
-  printf '%s\n' "$(colour "$C_OK" "killed $1")"
+  printf '%s\n' "$(colour "$C_OK" "dropped $1")"
 }
 
-cmd_down() { # inverse of up: kill the whole team
+cmd_down() { # inverse of up: end the whole team's session
   # No state to sweep: band memory is a window option, so tmux deletes it along
   # with the windows it belongs to.
   tmux has-session -t "$SESSION" 2>/dev/null || die "no session '$SESSION' running"
-  echo "$(colour "$C_OK" "killing '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')")"
+  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "$SESSION" -F '#W' | tr '\n' ' ')")"
   tmux kill-session -t "$SESSION"
 }
 
@@ -1054,7 +1056,7 @@ cmd_profiles() { list_profiles; }
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
   up)       cmd_up "$@" ;;
-  spawn)    cmd_spawn "$@" ;;
+  hitch|spawn) cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;
@@ -1065,9 +1067,9 @@ case "$cmd" in
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
-  doctor)   cmd_doctor "$@" ;;
+  vet|doctor) cmd_vet "$@" ;;
   attach)   cmd_attach ;;
-  kill)     [ $# -ge 1 ] || usage_die; cmd_kill "$1" ;;
+  drop)     [ $# -ge 1 ] || usage_die; cmd_drop "$1" ;;
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
   roles)    list_roles ;;

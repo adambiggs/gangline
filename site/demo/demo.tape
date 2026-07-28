@@ -55,7 +55,7 @@ Hide
 # on is the shell gang up printed to, with the whole exchange still above the
 # prompt. The lead's own pane gets its scene once its output has pushed that box
 # off the screen, which scene 4 waits for explicitly.
-Wait+Screen@120s /spawned lead/
+Wait+Screen@120s /hitched lead/
 Wait+Screen@300s /briefed lead as lead/
 Sleep 3s
 Ctrl+B
@@ -71,7 +71,7 @@ Enter
 Sleep 300ms
 # The names are pinned, not left to the lead: the gates below select windows by
 # name, and a lead free to call its worker whatever it likes will.
-Type@20ms `gang send lead --from adam "spawn a codex agent named worker (role worker, dir ~/hello): build hello.py that prints Hello, world! and run it to prove it. once worker reports done, spawn an opencode agent named reviewer (role reviewer, dir ~/hello) to check the work and report to you. when the review is clean, summarize in your pane and go idle - i'm watching from outside tmux."`
+Type@20ms `gang send lead --from adam "hitch a codex agent named worker (role worker, dir ~/hello): build hello.py that prints Hello, world! and run it to prove it. once worker reports done, hitch an opencode agent named reviewer (role reviewer, dir ~/hello) to check the work and report to you. when the review is clean, summarize in your pane and go idle - i'm watching from outside tmux."`
 Sleep 600ms
 Enter
 Hide

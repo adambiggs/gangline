@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
 # SPDX-License-Identifier: Apache-2.0
 # Plain bash — for testing gangline's own mechanics. Never busy. No scraped
-# TUI markers, so no version pin ("any" = version-independent to gang doctor).
+# TUI markers, so no version pin ("any" = version-independent to gang vet).
 # Prompted with "❯ " so this stand-in has a real input box, painted when the
 # shell is actually ready for input — the same signal a TUI gives, from a
 # process gang has no special knowledge of.

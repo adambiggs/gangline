@@ -144,7 +144,7 @@
        mp4 leads; iOS WebM support is too recent and too partial to lead with. -->
   <video autoplay loop muted playsinline controls preload="metadata"
          poster="demo-poster.jpg"
-         aria-label="gang up spawns a Claude Code lead, which hires a Codex worker off one message and then an opencode reviewer once there is work to review.">
+         aria-label="gang up hitches a Claude Code lead, which hires a Codex worker off one message and then an opencode reviewer once there is work to review.">
     <source src="demo.mp4" type="video/mp4">
     <source src="demo.webm" type="video/webm">
   </video>
@@ -156,8 +156,8 @@
   <div class="term">
   <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
   <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
-<span class="p">$</span> gang spawn worker -p codex -r worker
-<span class="ok">spawned worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
+<span class="p">$</span> gang hitch worker -p codex -r worker
+<span class="ok">hitched worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
 <span class="ok">briefed worker as worker</span>
 <span class="p">$</span> gang send worker --from lead "read the failing test in ci and fix it"
 <span class="ok">delivered to worker as [gang:lead]</span> <span class="det">(verified in pane, submitted)</span>
@@ -184,7 +184,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <h2>How it works</h2>
   <dl>
     <dt>Agents are tmux windows.</dt>
-    <dd>Spawning is <code>new-window</code>, killing is <code>kill-window</code>,
+    <dd>Hitching is <code>new-window</code>, dropping is <code>kill-window</code>,
         watching is <code>capture-pane</code>, and the window name <em>is</em> the
         agent's identity. Attach and you are looking at your team &mdash; the pane is
         the transcript, and you can type into it yourself at any time.</dd>
@@ -208,7 +208,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
         run.</dd>
 
     <dt>Batteries included, every one replaceable.</dt>
-    <dd>Agents spawn with a role brief &mdash; lead, worker, reviewer. Point
+    <dd>Agents are hitched with a role brief &mdash; lead, worker, reviewer. Point
         <code>GANG_ROLES</code> at a directory of your own and any brief becomes
         yours.</dd>
   </dl>
@@ -281,7 +281,7 @@ permission prompt only the operator can answer owns the screen (gang attach)</co
         readout gang cannot reach shows as <code>-</code> in the roster and is
         reported as not patrolled, never quietly skipped.</li>
     <li><strong>Scrape drift is diagnosed, not endured.</strong> Every scraped
-        marker is pinned to live-verified harness versions; <code>gang doctor</code>
+        marker is pinned to live-verified harness versions; <code>gang vet</code>
         exits nonzero on drift &mdash; and says so when a clean bill can't explain
         misbehavior, because version pins don't watch your UI mods.</li>
   </ul>
@@ -293,9 +293,9 @@ permission prompt only the operator can answer owns the screen (gang attach)</co
   <table>
     <tr><th>command</th><th>what it does</th></tr>
     <tr><td><code>gang up</code></td>
-        <td>the whole setup, no arguments: spawns <code>lead</code> in the current
+        <td>the whole setup, no arguments: hitches <code>lead</code> in the current
             repo and puts you in the session</td></tr>
-    <tr><td><code>gang spawn &lt;name&gt; -p &lt;profile&gt; -r &lt;role&gt;</code></td>
+    <tr><td><code>gang hitch &lt;name&gt; -p &lt;profile&gt; -r &lt;role&gt;</code></td>
         <td>start an agent &mdash; the name becomes its tmux window, its identity,
             and its handle</td></tr>
     <tr><td><code>gang send &lt;name&gt; --from &lt;you&gt; "…"</code></td>
@@ -310,10 +310,10 @@ permission prompt only the operator can answer owns the screen (gang attach)</co
             Naming yourself is the ordinary case</td></tr>
     <tr><td><code>gang patrol</code></td>
         <td>ambient roster sweep from cron: band warnings in, gate reports out</td></tr>
-    <tr><td><code>gang doctor</code></td>
+    <tr><td><code>gang vet</code></td>
         <td>strategy-rot check: installed harness versions against each profile's
             verified pins</td></tr>
-    <tr><td><code>gang attach</code> / <code>kill</code> / <code>down</code></td>
+    <tr><td><code>gang attach</code> / <code>drop</code> / <code>down</code></td>
         <td>watch the team live; end an agent; end the session</td></tr>
   </table>
   </div>

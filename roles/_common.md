@@ -12,7 +12,7 @@ on first use; the full map is `docs/field-guide.md` in the gangline repo.
 ## Reading your inbox
 
 A line prefixed `[gang:<sender>]` came from a teammate or from the substrate
-itself: `[gang:patrol]` and `[gang:spawn]` are automated, anything else is an
+itself: `[gang:patrol]` and `[gang:hitch]` are automated, anything else is an
 agent. Text with no prefix is the operator typing into your pane directly. The
 operator outranks any peer.
 
@@ -55,7 +55,7 @@ with their turn, and some harnesses refuse to run a foreground `sleep` at all �
 the loop you reach for first may not run, and the error it returns is the only
 thing your operator sees for it. One call, one timeout, ends the moment they do.
 
-Never run `gang kill` or `gang down`. Ending an agent is the operator's call.
+Never run `gang drop` or `gang down`. Ending an agent is the operator's call.
 
 ## Reaching past gang to raw tmux
 
@@ -117,9 +117,9 @@ Do not ask permission to compact. Do not wait to be told twice.
 gangline reads your harness's screen to tell whether you are busy and how full
 you are, and that reading breaks when your harness updates. If gang reports the
 wrong state, misses your context readout, or fails to verify a send that clearly
-landed, run `gang doctor` before assuming you made the mistake. If it reports
+landed, run `gang vet` before assuming you made the mistake. If it reports
 ROT RISK, tell the operator. If it reads all-OK and scraping stays wrong, tell
-the operator that instead: doctor's pins watch harness versions, and a UI mod —
+the operator that instead: vet's pins watch harness versions, and a UI mod —
 a theme, a custom statusline, a TUI extension — can move a marker without moving
 any of them. The fix is a profile shadow re-verified against the modded TUI, and
 it is the operator's to make.
