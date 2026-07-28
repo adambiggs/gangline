@@ -660,17 +660,36 @@ cmd_hitch() {
     msg="$(marker_line "$key")"
   fi
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
-  [ -n "$msg" ] || return 0
-  printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting before briefing it...")"
+  # Readiness is checked whether or not there is a brief to deliver. A role-less
+  # hitch used to return right here, reporting success while a first-run dialog
+  # owned the screen — and no later surface said so either: a dialog drops the
+  # busy hint and the input box, so the agent read idle, sends died on the
+  # missing box, and the team stalled on a security prompt nobody was told
+  # about. Gang never answers a dialog; what it owes the operator is the loud
+  # report that one is up, and the profile's own words for the way past it.
+  [ -z "$msg" ] || printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting before briefing it...")"
   # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
   # on the very return codes the case below exists to report.
   local ready=0
   wait_ready "$id" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
   case "$ready" in
     0) ;;
-    2) die "'$name' is up but is showing something other than its input box, so its hitch message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang drop $name' and hitch again." ;;
-    *) die "'$name' is running but never went quiet, so its hitch message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
+    2) # Settled screen, no input box: nearly always a dialog only a human may
+       # answer. With a brief pending that is a failed hitch — the brief went
+       # nowhere. Without one the hitch itself is done, so the same discovery is
+       # a warning: the window is real, registered, and waiting on the operator.
+       if [ -n "$msg" ]; then
+         die "'$name' is up but is showing something other than its input box, so its hitch message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang drop $name' and hitch again."
+       fi
+       printf '%s\n' "$(colour "$C_BAD" "hitched, but a dialog owns ${name}'s screen — answer it with 'gang attach'; deliveries are refused until you do")"
+       return 0 ;;
+    *) if [ -n "$msg" ]; then
+         die "'$name' is running but never went quiet, so its hitch message was not delivered — look at it with 'gang attach' or 'gang capture $name'"
+       fi
+       printf '%s\n' "$(colour "$C_BAD" "hitched, but $name never went quiet — look at it with 'gang capture $name'")"
+       return 0 ;;
   esac
+  [ -n "$msg" ] || return 0
   inject "$id" "[gang:hitch] $msg"
   if [ -n "$role" ]; then printf '%s\n' "$(colour "$C_OK" "briefed $name as $role")"
   else printf '%s\n' "$(colour "$C_OK" "delivered session marker to $name")"; fi
