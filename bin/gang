@@ -448,6 +448,55 @@ landing_zone() { # $1 = window id; the input box, or the whole pane if none is d
   else capture_joined "$1"; fi
 }
 
+# One pane, one writer. A delivery is read-the-box, paste, read-it-again, Enter —
+# four steps against a screen anyone else can also write to. Two of them
+# interleaved put both messages in the box and submit them as one, with both
+# senders told they succeeded; the same collision happens between a send and the
+# operator's own hands. Lived it, twice in one afternoon: a patrol nudge merged
+# with a lead's send, and an inbound send merged mid-word with what the operator
+# was typing.
+#
+# mkdir, not flock(1): flock is util-linux and a stock macOS ships none, while
+# mkdir is atomic on every filesystem worth running on. The holder's pid goes
+# inside so a crashed writer's lock is reclaimed instead of blocking the pane
+# until someone notices.
+LOCK_PATH=""
+lock_release() { [ -z "$LOCK_PATH" ] || rm -rf "$LOCK_PATH"; LOCK_PATH=""; }
+
+lock_pane() { # $1 = window id; held until lock_release or this process exits
+  local base holder t=0 path
+  base="${GANG_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}/gangline-$(id -u)}"
+  mkdir -p "$base" 2>/dev/null || die "cannot create a lock directory at $base"
+  path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
+  while ! mkdir "$path" 2>/dev/null; do
+    holder="$(cat "$path/pid" 2>/dev/null)" || holder=""
+    if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
+      rm -rf "$path"; continue          # the writer died mid-delivery
+    fi
+    t=$((t + 1))
+    [ "$t" -lt "${GANG_LOCK_WAIT:-150}" ] \
+      || die "another gang process has been delivering to $1 for 30s and has not finished — look at it with gang capture before retrying"
+    sleep 0.2
+  done
+  printf '%s' "$$" > "$path/pid"
+  LOCK_PATH="$path"
+  trap 'lock_release' EXIT
+}
+
+composer_settled() { # $1 = window id; nobody is typing into the box right now
+  # A static box may hold a draft, ghost text, or nothing, and appending to any
+  # of those is safe — inject verifies the change it makes. A box whose contents
+  # are MOVING is a human at the keyboard, and a paste into that interleaves
+  # mid-word with what they are writing. Two looks, because typing is continuous
+  # and a single sample cannot tell a draft from a hand.
+  declare -F profile_input >/dev/null || return 0
+  local a b
+  a="$(profile_input "$1")" || return 0   # no box: other guards own that case
+  sleep 0.3
+  b="$(profile_input "$1")" || return 0
+  [ "$a" = "$b" ]
+}
+
 inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
   frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
@@ -456,8 +505,14 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # the chokepoint — immediately before the paste — so every path in (send,
   # compact, patrol, hitch, resume) hits it, including a gate that painted
   # after the caller's own earlier check.
+  # Taken before the gate check, and held past the Enter: everything below reads
+  # the pane and then acts on what it read, so another writer between any two of
+  # those steps invalidates the rest.
+  lock_pane "$1"
   ! gated "$1" \
     || die "refusing to deliver '$frag': $1 is gated (hook set) — a permission prompt only the operator can answer owns the screen (gang attach)"
+  composer_settled "$1" \
+    || die "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
   # Verified = the paste changed the input box, which is where a paste lands.
   # Reading the box asks the profile (Law 4) instead of teaching gang how each
   # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
@@ -515,6 +570,7 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
     [ "$looks" -lt 15 ] \
       || die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s)"
   done
+  lock_release
 }
 
 resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot overtake
