@@ -78,6 +78,7 @@ gang spawn worker -r worker                     # "worker" is a name you pick: i
                                                 # -r briefs it with a role (gang roles)
 gang send worker --from lead "read the failing test in ci and fix it"
 gang status worker                              # busy (tight tug) | idle (slack tug)
+                                                # | gated (hook set — see Permission gates)
 gang capture worker                             # what's on worker's screen
 gang roster                                     # everyone, with state
 gang attach                                     # watch the whole team live
@@ -291,16 +292,32 @@ than risks it — and a skip never burns state, so the next sweep retries.
 - **Non-empty input boxes** are guarded: a human draft, ghost-text suggestion, or
   queued-message hint would interleave with an injection, so the nudge is held
   until the box is clear. Holding costs one sweep; interleaving costs the turn.
+- **Gated agents** are reported, never nudged: a harness stopped at a permission
+  prompt (`GANG_GATED_REGEX`) is waiting on the operator, and keystrokes sent to
+  it would *answer the dialog* — so every delivery path refuses, `status` and
+  `roster` say `gated (hook set)`, and patrol names it loudly instead of skipping
+  it. Every gate watched live also drops its busy hint and input box, so without
+  the marker a gated agent reads idle and the team stalls with nothing saying why.
+
+## Permission gates
+
+gang adds no permission machinery of its own — an approval prompt is a synchronous
+human gate, and an unattended team cannot contain one mid-arc. For agents meant to
+run unattended, pre-approve in each harness's *own* persistent config (permission
+modes, approval policies, permission blocks), graduated to the blast radius the
+environment actually bounds; keep gates on where you want the stop, and gangline
+will at least tell you loudly that a gate is what everyone is waiting on.
 
 ## Profiles
 
 A profile is a few lines declaring what gang cannot know generically: the launch
 command, the busy marker, the compact command, whether the harness takes input
-during a turn, what its compaction looks like while it runs, and optional hooks
-for reading a context readout and for finding the harness's input box. The two
-behavioural ones — mid-turn input, and the compaction marker — are optional in the
-honest sense: unset means nobody has watched that behaviour live, and gang takes
-the slower, safer branch rather than guessing at it.
+during a turn, what its compaction looks like while it runs, how its permission
+prompt reads, and optional hooks for reading a context readout and for finding
+the harness's input box. The behavioural ones — mid-turn input, the compaction
+marker, and the gate marker — are optional in the honest sense: unset means
+nobody has watched that behaviour live, and gang takes the slower, safer branch
+rather than guessing at it.
 
 That last hook earns its keep twice. Its contents say whether a paste would land
 on top of a draft, and its mere presence says the harness is up: for the first

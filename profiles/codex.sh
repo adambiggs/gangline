@@ -20,11 +20,18 @@ GANG_LAUNCH="codex -c check_for_update_on_startup=false"
 # a naive "is it done yet" marker would get wrong.
 #
 # What this deliberately does NOT match is a Codex waiting on an approval
-# dialog: the interrupt hint is gone while the prompt is up, so such an agent
-# reads idle. That is the honest answer to "is a turn in flight" — none is —
-# and the guard that matters is the input box below, which finds no composer
-# and refuses the paste rather than answering somebody's security prompt.
+# dialog: the interrupt hint is gone while the prompt is up, so busy honestly
+# answers "no turn in flight". That state belongs to GANG_GATED_REGEX below.
 GANG_BUSY_REGEX="esc to interrupt"
+# The approval dialog, watched live through a full ask→deny→erase cycle: the
+# question line holds still while the command, the reason, and the numbered
+# menu vary around it. The busy hint and the composer are both gone while it is
+# up, so an unmarked gate read idle and a paste died on the missing composer
+# with nothing saying why. Erased the moment it is answered — a match means the
+# dialog owns the screen right now. The first-run trust prompt ("Do you trust
+# the contents of this directory?") words itself differently and stays the
+# spawn-time exit-2 refusal, deliberately.
+GANG_GATED_REGEX='Would you like to run the following command\?'
 # Verified from the live slash menu: "/compact  summarize conversation to
 # prevent hitting the context limit". A finished compaction leaves "Context
 # compacted" in the transcript, where it stays — a marker for humans reading

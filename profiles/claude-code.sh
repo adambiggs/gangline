@@ -44,6 +44,17 @@ GANG_COMPACTING_REGEX='▰|▱'
 # slash command waits for that turn to end — so text submitted after a command
 # can still arrive before it (see resume_after_compaction).
 GANG_MIDTURN_INPUT=1
+# The permission dialog, watched live through a full ask→deny→erase cycle in a
+# gating permission mode: the question line holds still while the command, the
+# menu, and the footer vary around it. While the dialog is up no busy form
+# matches and the "❯" input box is gone — so before this marker a gated pane
+# read IDLE and a send died "not taking input" with nothing saying why. The
+# frame is erased the moment the prompt is answered, never left in scrollback,
+# so a match means the dialog owns the screen right now. Only the shell-command
+# dialog has been watched; a variant worded differently falls back to that old
+# behavior. The first-run trust modal words its question differently and stays
+# the spawn-time exit-2 refusal, deliberately.
+GANG_GATED_REGEX='Do you want to proceed\?'
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline

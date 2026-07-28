@@ -218,6 +218,7 @@ GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX="WORKING\\.\\.\\.|COMPACTING\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
 GANG_COMPACTING_REGEX="COMPACTING\\.\\.\\."
+GANG_GATED_REGEX="Do you want to proceed\\?"
 GANG_MIDTURN_INPUT="\${FAKE_QUEUES:-}"
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
@@ -280,6 +281,42 @@ tmux send-keys -t "$(target_of busybee)" clear Enter   # that turn ends...
 paint busybee 'COMPACTING...'                          # ...and the compaction starts
 sleep 5
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "[gang:tester] MARK_FAST")"
+
+# --- permission gates ---------------------------------------------------------
+
+# A harness stopped at an approval prompt is neither working nor reachable: it
+# is waiting on a human, and keystrokes sent to it land IN the dialog, where
+# they answer it. Every gate watched live also drops the busy hint and the
+# input box, so before the gated marker such an agent read idle and the team
+# stalled with nothing on any surface saying why. Gated is checked before busy
+# because a gate paints mid-turn — the busy marker can still be on screen.
+
+# patrol prints "%-16s %-18s %s", so the verdict starts at column 37
+verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
+
+paint busybee 'WORKING... Do you want to proceed?'
+check "a permission prompt reads as gated, even beside a busy marker" \
+  "gated (hook set)" "$("$GANG" status busybee)"
+check "roster shows the gate" "gated" \
+  "$("$GANG" roster | awk '$1=="busybee"{print $3}')"
+out="$(FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_GATED" 2>&1)"; rc=$?
+check "a send to a gated agent is refused, even where mid-turn input queues" "1" "$rc"
+check "and says the prompt owns the screen" "yes" \
+  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+check "and nothing was typed into the dialog" "no" "$(has busybee MARK_GATED)"
+out="$("$GANG" wait busybee 30 2>&1)"; rc=$?
+check "wait on a gated agent fails loud, not slow" "1" "$rc"
+check "naming the gate rather than timing out" "yes" \
+  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+out="$("$GANG" compact busybee --from tester 2>&1)"
+check "compact on a gated agent names the gate, not the turn" "yes" \
+  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+check "patrol reports it for the operator instead of skipping it" \
+  "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)" \
+  "$("$GANG" patrol | verdict busybee)"
+tmux send-keys -t "$(target_of busybee)" clear Enter
+sleep 0.5
+check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee)"
 unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
@@ -362,9 +399,6 @@ check "and the dialog is left untouched" "no" "$(has modalagent 'gang:spawn')"
 "$GANG" spawn ctxagent -p bash -d /tmp >/dev/null
 paint ctxagent 'ctx 150k/200k 75%'      # crosses the 120000 band, nothing above it
 check "context reads the beacon" "150k/200k (75%)" "$("$GANG" context ctxagent)"
-
-# patrol prints "%-16s %-18s %s", so the verdict starts at column 37
-verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 
 check "patrol nudges past a band" "NUDGED (crossed the 120000-token band)" \
   "$("$GANG" patrol | verdict ctxagent)"

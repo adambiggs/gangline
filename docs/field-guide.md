@@ -15,6 +15,7 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 | **swing** | runs just behind lead, swings the team true through the turns | the reviewer role: catches the drift before it becomes the direction |
 | **team dog** | the engine — the pulling power in the middle of the line | the worker role: does the work, reports back |
 | **tight tug / slack tug** | a pulling dog keeps its tugline taut; a coasting one lets it sag | busy / idle |
+| **hook set** | the snow hook dug in; the team stands anchored until the musher pulls it | gated — stopped at a permission prompt only the operator can answer; sends are refused so nothing but the operator's own hand answers the dialog |
 | **line out** | the leader holds the gangline taut while the team hooks up | a harness whose input box is up and taking keystrokes — ready to be briefed |
 | **checkpoint** | where teams rest, resupply, and leave dogs with handlers | the clean seam an arc ends on — tests green, a commit made, a question answered; where compaction and releases happen |
 | **dropped** | left at a checkpoint with the handlers — deliberate, routine, the musher's call | a released agent; finishing an arc and being released is health, not failure |

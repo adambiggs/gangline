@@ -22,6 +22,15 @@ GANG_COMPACT_CMD="/compact"
 # moves it into the transcript flagged "QUEUED", and it is submitted and
 # answered the moment the running turn finishes.
 GANG_MIDTURN_INPUT=1
+# The permission dialog — config-enabled: vanilla opencode allows every tool
+# until a permission block in opencode.json says "ask". Watched live through a
+# full ask→answer→erase cycle: the header glyph and words hold still while the
+# tool detail varies, and the busy hint row is replaced by the dialog's own key
+# hints, so an unmarked gate read idle. Erased the moment it is answered — a
+# match means the dialog owns the screen right now. A literal multibyte STRING
+# is safe in cron's C locale (it matches as a byte sequence); only bracket
+# classes break there.
+GANG_GATED_REGEX='△ Permission required'
 # GANG_COMPACTING_REGEX is deliberately unset — the observation found nothing
 # to scrape: compaction is drawn as an ordinary working turn with no marker of
 # its own, so a --resume waits for the pane to go quiet instead of queueing.

@@ -18,6 +18,15 @@ GANG_COMPACT_CMD="/compact"
 # watched. Unset costs a resume nothing but time — it waits for the pane to go
 # quiet instead of queueing behind the compaction. Set it once somebody samples a
 # live Pi /compact and finds a marker that is gone the moment compaction ends.
+# GANG_GATED_REGEX is unset because there is nothing of Pi's to scrape: core Pi
+# ships no tool-approval system (verified in the installed dist source), so a
+# vanilla Pi never paints a permission dialog. Gates appear only when a project
+# loads a permission extension, and that dialog is the EXTENSION's TUI — it
+# rots on the extension's version, which `pi --version` cannot see. A project
+# that wires one should shadow this file via GANG_PROFILES, declare the
+# dialog's shape there after watching a full ask→answer→erase cycle live, and
+# point GANG_VERSION_CMD at something that includes the extension version so
+# gang doctor watches the pin that can actually rot.
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang doctor watches the pin).
 GANG_VERSION_CMD="pi --version"
