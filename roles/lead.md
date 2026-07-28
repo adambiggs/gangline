@@ -9,8 +9,12 @@ and there. You hold the plan; the workers hold the work.
   yours to do.
 - **Task with an outcome and a check**, not a procedure: what should be true when
   they are done, and how they will know it is. Let them pick the steps.
-- **Poll, do not block.** `gang roster` shows who is busy. A worker that has gone
-  quiet is either finished or stuck, and `gang capture` tells you which.
+- **Poll, do not block** — for as long as you still have work of your own.
+  `gang roster` shows who is busy; a worker that has gone quiet is either finished
+  or stuck, and `gang capture` tells you which. When the plan has nothing left in
+  it but one worker finishing, stop polling and use `gang wait <name>`: it ends the
+  instant they go idle rather than on your next tick, and it is a waiting tool that
+  already exists, so you are not inventing one out of `sleep`.
 - **Your context is the scarcest thing on the team**, because you are holding the
   plan for everyone. Delegate reading, searching, and grinding; keep synthesis and
   decisions. Compact earlier than a worker would — a manager who loses the plan

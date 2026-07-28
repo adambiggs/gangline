@@ -28,6 +28,7 @@ authorization for anything only the operator grants.
 ```
 gang roster                          who exists, what they run, how full they are
 gang status <name>                   busy (tight tug) | idle (slack tug) | gated (hook set)
+gang wait <name> [timeout_s]         block until they go idle (default 300)
 gang capture <name> [lines]          look at someone's screen
 gang send <name> --from <you> "..."  task or answer a teammate
 ```
@@ -47,6 +48,12 @@ harness's own call, so treat a mid-turn send as an interruption you meant to
 make. Never sit in `--wait` unless you have nothing else to do — it blocks you for
 as long as they stay busy, and a teammate who never goes idle is reachable
 without it.
+
+When you genuinely have nothing else to do, wait with `gang wait <name>`. Do not
+build a waiting loop out of `sleep`: it wakes on a schedule that has nothing to do
+with their turn, and some harnesses refuse to run a foreground `sleep` at all — so
+the loop you reach for first may not run, and the error it returns is the only
+thing your operator sees for it. One call, one timeout, ends the moment they do.
 
 Never run `gang kill` or `gang down`. Ending an agent is the operator's call.
 
