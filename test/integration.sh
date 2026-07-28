@@ -494,6 +494,19 @@ check "a brief is never pasted into a first-run dialog" "yes" \
   "$(case "$out" in *"other than its input box"*) echo yes ;; *) echo no ;; esac)"
 check "and the dialog is left untouched" "no" "$(has modalagent 'gang:hitch')"
 
+# The same modal, hitched with nothing to deliver. This used to report success
+# and walk away: the dialog dropped the busy hint and the input box, so the
+# agent read idle from then on and nothing on any surface said a security
+# prompt was what it was waiting on. The hitch itself is real — window up,
+# profile registered — so the discovery is a warning, not a failure.
+out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_BOOT_TIMEOUT=3 \
+  "$GANG" hitch quietmodal -p modal -d /tmp 2>&1)"; rc=$?
+check "a role-less hitch still spots the dialog" "yes" \
+  "$(case "$out" in *"dialog owns"*) echo yes ;; *) echo no ;; esac)"
+check "and reports it as a warning, not a failure" "0" "$rc"
+check "with nothing typed into the dialog" "no" "$(has quietmodal 'gang:')"
+
+
 # --- context bands -------------------------------------------------------------
 
 # The bash profile reads the same beacon shape the claude-code statusline paints,
