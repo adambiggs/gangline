@@ -46,6 +46,12 @@ owns that agent's input box — a permission prompt, a picker, anything that tak
 the screen — so sends to it are refused and no keystroke of yours can answer the
 dialog. Tell the operator — nothing you can send will unstick it.
 
+A line that says `undelivered paste` in red means a message was pasted into that
+agent's box and never sent, and gang could not prove it was safe to take back
+out. It clears itself once that box reads empty. If it persists, tell the
+operator: the next thing that agent types goes out with somebody else's message
+glued to the front of it.
+
 A send to a busy agent is accepted, on any harness whose profile says it takes
 input mid-turn; where it does not, the send is refused rather than pasted into
 whatever they are running. You are told which happened. Whether an accepted

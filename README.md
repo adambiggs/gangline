@@ -160,7 +160,8 @@ sequenceDiagram
         alt it changed again
             Note over G,P: delivered
         else the paste is still sitting there
-            G--xG: die — pasted, never submitted
+            G->>P: clear it out, or record it where clearing is not provable
+            G--xG: die — nothing was submitted
         end
     else unchanged
         G--xG: die — loud, and nothing was submitted
@@ -176,9 +177,24 @@ the submit: batch the text and the Enter into one keystroke burst and a TUI read
 the newline as part of the paste, leaving the message parked in the box as an
 unsent draft that scrollback renders exactly like a sent one.
 
-Per-agent state lives in tmux window options — the profile binding (`@gl_profile`)
-and the context band already warned about (`@gl_band`) — so tmux deletes an agent's
-state along with its window, and a re-hitched name starts clean.
+**A delivery that fails after the paste has landed does not leave its text in
+somebody's box.** Text stranded there is not a clean failure: the next thing that
+agent types gets submitted with a stranger's message glued to the front of it.
+But clearing it blindly is worse, because most of the paths that strand text are
+paths where a modal owns the box, and a keystroke into a modal is the very thing
+the withheld Enter refused to send. So gang clears only where it can prove both
+halves — the composer is live and settled, and the box still holds precisely what
+gang pasted — and verifies the clear afterwards, so a harness that ignores the
+clear key is reported rather than called tidy. Everywhere else the paste is
+recorded against the agent and named in red on `status`, `roster` and every
+patrol sweep until it is gone. The record clears itself the moment the box reads
+back empty, whoever emptied it, so an Enter that landed after all stops being
+reported as a problem.
+
+Per-agent state lives in tmux window options — the profile binding (`@gl_profile`),
+the context band already warned about (`@gl_band`), and any stranded paste
+(`@gl_staged`) — so tmux deletes an agent's state along with its window, and a
+re-hitched name starts clean.
 
 ## Self-compaction
 
@@ -324,9 +340,12 @@ than risks it — and a skip never burns state, so the next sweep retries.
 
 ## Permissions
 
-**gangline launches each harness exactly as you have configured it** and sets no
-permission flags of its own. What your harness asks you, it asks a gangline
-agent too.
+**gangline launches each harness exactly as you have configured it.** What your
+harness asks you, it asks a gangline agent too. gang sets no permission flags of
+its own, with one bounded exception: where a harness gates on reaching outside
+the project, gang pre-authorizes the role-brief directories it is itself pointing
+the agent at, and nothing else. That grant is merged into your configuration
+rather than replacing it, so every gate you set survives beside it.
 
 Worth knowing before you hitch a team, because a gangline agent is unattended by
 construction: nobody is watching its pane, an approval dialog stops the whole
@@ -343,7 +362,9 @@ can see it and change it back:
   at all.
 - **opencode** — nothing to do by default: vanilla opencode asks nothing, and
   gates exist only where your own `opencode.json` has a `"permission"` block
-  saying `"ask"`. Launch it with `--auto` to override those.
+  saying `"ask"`. Launch it with `--auto` to override those. This is the harness
+  the role-brief exception above is for: opencode gates on directories outside
+  the project, and the briefs live in gangline's tree rather than yours.
 - **pi** — no approval system to disarm.
 
 Each harness prints its own warning about what these modes mean, in its own
@@ -366,8 +387,8 @@ or add a second one.
 Prefer to change a launch line instead? Every flag lives in one line of a
 profile's `GANG_LAUNCH`: shadow the profile via `GANG_PROFILES` and patch that
 line (see Profiles). Nothing else in gang changes with it — the scraping surface
-is the same file. What gang will never do is answer a dialog for you or pre-trust
-a directory on your behalf.
+is the same file. What gang will never do is answer a dialog for you, or pre-trust
+a directory it did not itself send the agent into.
 
 ### A sandboxed Codex agent needs network access to answer
 
