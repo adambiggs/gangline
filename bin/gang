@@ -240,15 +240,26 @@ all_profiles() {
 }
 
 list_profiles() { # what an operator may pick from
-  # Built whole and written ONCE, which is load-bearing and not tidiness. Callers
-  # pipe this into `grep -q`, and a reader that exits at its match closes the pipe
-  # while a line-at-a-time writer still has lines to write: the writer takes
-  # SIGPIPE, and under the caller's pipefail the whole pipeline reads as a MISS —
-  # a name that is in the list reported as absent. Measured at exactly that, one
-  # run in five, and a one-in-five miss is the failure that gets called flaky and
-  # closed rather than fixed. A single write lands in the pipe buffer before any
-  # reader can have matched anything, which is the property the pipe through
-  # `sort` used to provide by accident; here it is on purpose.
+  # Built whole rather than a line at a time, which helps and saves nobody. The
+  # hazard is real: a caller piping this into `grep -q` gets a reader that exits
+  # at its match while the writer still has lines to write, the writer takes
+  # SIGPIPE, and under the caller's pipefail the pipeline reads as a MISS — a
+  # name that IS in the list reported absent, one run in five.
+  #
+  # What this comment used to claim, and what is false: that one printf of one
+  # variable is ONE write, so the payload lands in the pipe buffer before any
+  # reader can have matched. bash line-buffers stdout, so printf emits one write
+  # PER LINE and the payload size never enters into it. Measured on this tree:
+  # `gang profiles | grep -q bash` fails 155 times in 1000, PIPESTATUS 141,0,
+  # against exactly this function — while the same payload with the match on the
+  # LAST line fails 0 in 500, because there the reader must consume everything
+  # before it can exit. Attributed by sigpipe under GDB (issue #6): five writes,
+  # one per profile name.
+  #
+  # So this function cannot make a piping caller safe and nothing it does will.
+  # The rule lives at the CONSUMER: capture first, match off a here-string. That
+  # is structural — no pipe is left to raise a signal — and it is what this tree
+  # now does everywhere, including the eight predicates in this file.
   local n out=""
   while read -r n; do
     [ -n "$n" ] || continue
@@ -571,12 +582,23 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   # marks up quoted text anyway.
   #
   # What is left is excluding prose by pattern, and prose is not a thing to
-  # pattern-match. So what guards this is the failure DIRECTION, and that is why
-  # doing nothing beats guessing: text on a pane can only ADD marker matches.
-  # Contamination makes an idle agent read busy — sends queue or are refused,
-  # `gang wait` runs to its timeout — and can never make a busy agent read idle,
-  # which is the reading that would paste into a live turn. Bounded, and paid in
-  # waiting rather than in a message landing somewhere it should not.
+  # pattern-match. So what guards this is the failure DIRECTION — stated as
+  # MEASURED, because the reasoned version of it was written here and was wrong.
+  # Contamination is one-way: pane text can only ADD matches, so a contaminated
+  # pane makes an idle agent read busy — sends queue or are refused, `gang wait`
+  # runs to its timeout — and it cannot subtract the match a real turn paints.
+  #
+  # What does NOT follow, and was claimed here anyway, is that a busy agent can
+  # therefore never read idle. It can, by two mechanisms, neither of them
+  # contamination. This predicate's own pipeline was one: `printf | grep -q` with
+  # the marker on an early line lost the race 3 times in 500 and returned
+  # not-busy on a working pane, which is why the match is now taken off a
+  # here-string with no pipe in it to raise a signal. The other is busy() itself,
+  # which overrides to not-busy for an agent parked in `gang wait` wherever the
+  # harness takes mid-turn input — measured live on opencode 1.18.8 at twenty
+  # consecutive idles on a pane painting this marker, for the length of the wait.
+  # That one is deliberate and filed on its own. It is named here so this
+  # function is never read as the whole answer to "is this agent working".
   #
   # The two signals that CAN tell a live turn from static text — recently_active
   # and churn — are ORed into busy() and have to stay that way. Conjoined into a
@@ -587,7 +609,7 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
-  printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"
+  grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"
 }
 
 recently_active() { # $1 = window id, profile loaded; tmux stamped output here lately
@@ -758,7 +780,7 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
   [ -n "${GANG_COMPACTING_REGEX:-}" ] || return 1
   local pane
   pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess compaction state"
-  printf '%s\n' "$pane" | grep -qE -- "$GANG_COMPACTING_REGEX" || return 1
+  grep -qE -- "$GANG_COMPACTING_REGEX" <<<"$pane" || return 1
   # Claude Code's marker is a single bar glyph, and this repo's own profiles are
   # full of them: an agent reading profiles/claude-code.sh puts ▰ on its screen.
   # Believing that is worse than missing a real compaction, because the resume
@@ -865,7 +887,7 @@ gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
     # Nothing catches that by auditing markers for liveness — the marker is not
     # dead, only unreachable — so the scan is what has to widen.
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess gated state"
-    if printf '%s\n' "$pane" | grep -qE -- "$GANG_GATED_REGEX"; then
+    if grep -qE -- "$GANG_GATED_REGEX" <<<"$pane"; then
       # The wording alone is not the gate. Every dialog watched live OWNS the
       # screen while it is up: the composer is gone, which is why an unmarked gate
       # read idle in the first place. So a match beside a live input box is the
@@ -949,7 +971,7 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
   declare -F profile_input >/dev/null || return 0
   local box
   box="$(profile_input "$1")" || return 1
-  ! printf '%s' "$box" | grep -q '[^[:space:]]'
+  ! grep -q '[^[:space:]]' <<<"$box"
 }
 
 wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
@@ -1200,7 +1222,7 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   if gated "$1"; then return 0; fi          # a keystroke here would answer the dialog
   composer_settled "$1" || return 0         # somebody is typing: not gang's box to touch
   box="$(landing_zone "$1")" || return 0    # cannot see it: the record stands
-  if ! printf '%s' "$box" | grep -q '[^[:space:]]'; then
+  if ! grep -q '[^[:space:]]' <<<"$box"; then
     stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
   fi
   want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
@@ -2027,6 +2049,18 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
 
 # --- diagnostics ------------------------------------------------------------
 
+version_line() { # $1 = a version command -> its first line of output, or nonzero
+  # Captured whole and trimmed by expansion, never piped into `head -1`. head
+  # exits at line one; a version command that prints a second line then writes
+  # into a closed pipe, and under this file's pipefail that SIGPIPE reads as a
+  # command that FAILED — reported as "not installed here" about a harness that
+  # is installed, or as a version probe that could not run.
+  local out
+  # shellcheck disable=SC2086  # a profile declares this as a command STRING
+  out="$($1 2>/dev/null)" || return 1
+  printf '%s' "${out%%$'\n'*}"
+}
+
 version_word() { # $1 = a version line -> the one dotted-numeric word in it, or nonzero
   # Certainty is the whole product here, so this refuses far more than it
   # accepts. A word qualifies only if it is digits and dots, has at least one
@@ -2301,7 +2335,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
     return 2
   fi
   if [ -n "$GANG_VERSION_CMD" ]; then
-    if ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
+    if ! installed="$(version_line "$GANG_VERSION_CMD")" || [ -z "$installed" ]; then
       probe_row "$prof" "-" "$C_DIM" "not probed — not installed here ($GANG_VERSION_CMD)"
       return 2
     fi
@@ -2408,7 +2442,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   deadline=$(( $(date +%s) + GANG_PROBE_TURN ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane — refusing to call a marker dead off a failed capture"
-    if printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"; then marked=1; break; fi
+    if grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"; then marked=1; break; fi
     [ -z "$prev" ] || [ "$pane" = "$prev" ] || churned=1
     prev="$pane"
     sleep "$GANG_PROBE_RATE"
@@ -2482,7 +2516,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # caught here rather than above, and marker alive with the same accident is a
   # false alarm on a healthy harness. The residual runs toward false alarm and
   # never toward false pass.
-  if printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"; then
+  if grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"; then
     probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — painted, and still painted once the pane went quiet: $GANG_BUSY_REGEX"
     probe_evidence "$prof" "$pane"
     tmux kill-window -t "$id" 2>/dev/null || true
@@ -2577,7 +2611,7 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
     # caller cannot see from outside.
     local installed_names
     installed_names="$(all_profiles)"
-    printf '%s\n' "$installed_names" | grep -qxF -- "$only" \
+    grep -qxF -- "$only" <<<"$installed_names" \
       || die "vet: no profile '$only' is installed. Installed: $(printf '%s' "$installed_names" | tr '\n' ' ')(GANG_PROFILES=${GANG_PROFILES:-unset})"
   fi
   while read -r prof <&3; do
@@ -2591,7 +2625,7 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
       printf '%-12s %-26s %s\n' "$prof" "?" \
         "$(colour "$C_BAD" "UNPINNED — declare GANG_VERSION_CMD + GANG_VERIFIED_VERSIONS")"
       drift=1
-    elif ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
+    elif ! installed="$(version_line "$GANG_VERSION_CMD")" || [ -z "$installed" ]; then
       printf '%-12s %-26s %s\n' "$prof" "?" \
         "$(colour "$C_BAD" "version command failed: $GANG_VERSION_CMD")"
       drift=1
