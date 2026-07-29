@@ -1117,6 +1117,25 @@ check "a context drop clears the mark rather than waiting out the clock" \
   "NUDGED (crossed the 250000-token band)" "$("$GANG" patrol | verdict dropagent)"
 check "and the mark is gone once it has served its purpose" "" \
   "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
+
+# The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
+# busy_painted, which is false for most of a turn, so after about sixteen seconds
+# it fires at the first still frame. Streaming is not the exposure — streaming
+# moves the screen — SILENCE is, and a test run or a large read is exactly that.
+# The resume then rides ahead of the queued compaction and is eaten by the turn
+# it was meant to follow. Where gang issued the compaction it waits for the
+# context to DROP instead, which a merely quiet turn cannot fake.
+"$GANG" hitch resumer -p compactable -d /tmp >/dev/null
+paint resumer 'ctx 900k/1000k 90%'
+sleep 2
+"$GANG" compact resumer --from tester --resume "MARK_RESUME" >/dev/null 2>&1
+sleep 22          # past where the settle path would have fired
+check "a resume is held while the context says no compaction has happened" "no" \
+  "$(has resumer MARK_RESUME)"
+paint resumer 'ctx 250k/1000k 25%'
+n=0
+while [ "$(has resumer MARK_RESUME)" = no ] && [ "$n" -lt 30 ]; do sleep 1; n=$((n + 1)); done
+check "and lands once the drop shows one has" "yes" "$(has resumer MARK_RESUME)"
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on

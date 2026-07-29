@@ -1129,10 +1129,51 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   #
   # The two are a race with no losing branch. A compaction briefer than a poll
   # interval is simply missed, and quiet then means what it has always meant.
+  #
+  # The settle path alone is weaker than it reads. Its streak resets on
+  # busy_painted, which is false for most of a turn, so it is a one-time FLOOR
+  # rather than sustained quiet: after about sixteen seconds it fires at the
+  # first still frame. Streaming is not the exposure, because streaming moves the
+  # screen — SILENCE is, and a test run, a fetch or a large read is exactly that.
+  # The resume then rides ahead of the queued compaction and is eaten by the turn
+  # it was supposed to follow.
+  #
+  # So where gang issued the compaction itself it waits for proof instead: the
+  # context DROPPING below where it stood when the command was typed. That is
+  # later than visibly-running and still safe, because a compaction reads no
+  # input, and unlike a still screen it cannot be true of a turn that is merely
+  # quiet.
   local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}"
+  local at_issue="" mark ctx tw tokens window
+  # Read ONCE, here. compaction_pending CLEARS the mark the moment it sees the
+  # drop and patrol polls it too, so whichever poller gets there first takes the
+  # value away from the other. This must not depend on the mark still existing
+  # when it looks, so it keeps its own copy and polls the context itself.
+  mark="$(tmux show-options -wqv -t "$1" @gl_compacting 2>/dev/null)" || mark=""
+  case "$mark" in
+    *' '*) at_issue="${mark##* }" ;;
+  esac
+  [[ "$at_issue" =~ ^[0-9]+$ ]] && [ "$at_issue" -gt 0 ] || at_issue=""
+  declare -F profile_context >/dev/null || at_issue=""
   while [ "$t" -lt "$timeout" ]; do
     sleep 2; t=$((t + 2))
     compacting "$1" && break
+    if [ -n "$at_issue" ]; then
+      if [ "$t" -ge "${GANG_COMPACT_GRACE:-300}" ]; then
+        # The drop never came, so the compaction never happened: `/compact` under
+        # a harness's own threshold runs and leaves the context exactly where it
+        # was (measured). Fall back rather than hold the resume for the whole
+        # timeout over a compaction that was never going to occur.
+        at_issue=""
+      else
+        if ctx="$(profile_context "$1" 2>/dev/null)" \
+           && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
+          read -r tokens window <<<"$tw"
+          if [ "$tokens" -lt $(( at_issue / 2 )) ]; then break; fi
+        fi
+        continue
+      fi
+    fi
     [ "$t" -ge 10 ] || continue
     # The pane question: this loop is waiting for a turn to STOP, and it pairs
     # with pane_stable below. Availability is a different thing and not what a
