@@ -21,16 +21,35 @@ GANG_LAUNCH="claude"
 # From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
 # model id ("claude-fable-5").
 GANG_MODEL_OPT="--model"
-# Third busy form observed live: API-retry backoff paints
-# "✻ 529 Overloaded · Retrying in 2s · attempt 4/10" — a turn is in flight
-# but the line starts with a digit, so the gerund pattern misses it.
-# Fourth form, compaction: /compact paints a progress bar ("▰▰▰▱▱… 42%") with
-# NO gerund spinner and no "esc to interrupt" — none of the other forms match
-# (lived it: patrol read a compacting pane as idle and its nudge jumped the
-# input queue). The bar glyphs are erased on completion, never in scrollback.
-# Literal alternation, not [▰▱]: in cron's C locale a multibyte bracket class
-# matches single BYTES, and the welcome-logo glyphs share the UTF-8 prefix.
-GANG_BUSY_REGEX='esc to interrupt|^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
+# READ THIS BEFORE ADDING AN ALTERNATE. These branches do not back each other
+# up. Each one covers a DIFFERENT state, so every state below is read by exactly
+# one branch, and a branch that dies takes its whole state with it. The pipes
+# make this look like redundancy. It is not, and one branch was dead here for a
+# release without anything failing, because the ones covering the other states
+# went on matching and no check ever asked which branch fired.
+#
+# First form, the ordinary turn: "✶ Zesting… (29s · ↓ 313 tokens · thought for
+# 26s)". A spinner glyph, a gerund, then a parenthetical of telemetry. The glyph
+# cycles (* · ✢ ✶ ✻ ✽) and the gerund is drawn from a whimsical vocabulary
+# (Zesting, Cultivating, Stewing, Inferring), so the SHAPE is the marker and the
+# words are not — do not enumerate them. This is the only thing on screen that
+# says a turn is running: a busy pane and an idle one differ by this one line
+# and nothing else, which is why there is no second branch to add here.
+# Second form, API-retry backoff: "✻ 529 Overloaded · Retrying in 2s ·
+# attempt 4/10" — a turn is in flight but a digit follows the glyph, so the
+# gerund shape misses it and this needs its own branch.
+# Third form, compaction: /compact paints a progress bar ("▰▰▰▱▱… 42%") with NO
+# gerund spinner (lived it: patrol read a compacting pane as idle and its nudge
+# jumped the input queue). The bar glyphs are erased on completion, never in
+# scrollback. Literal alternation, not [▰▱]: in cron's C locale a multibyte
+# bracket class matches single BYTES, and the welcome-logo glyphs share the
+# UTF-8 prefix.
+#
+# The bar is also the whole of GANG_COMPACTING_REGEX below, so it is one
+# dependency answering two questions: restyle the bar and both busy-during-
+# compaction and compaction-detection go at once. The installed binary already
+# carries other progress-bar glyph sets, so that is a live risk, not a theory.
+GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
 # re-verify + append (gang vet watches the pin).
