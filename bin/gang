@@ -2046,9 +2046,11 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
        # the price of the directory being clean. Not a failure of the marker and
        # not a pass: gang never answers a dialog, and neither does its probe.
        probe_row "$prof" "$installed" "$C_BAD" "not probed — a dialog owns the screen; answer it once, or point GANG_PROBE_DIR at an EMPTY directory this harness already trusts"
+       probe_evidence "$prof" "$(capture_joined "$id")"
        tmux kill-window -t "$id" 2>/dev/null || true
        return 2 ;;
     1) probe_row "$prof" "$installed" "$C_BAD" "not probed — no input box after ${GANG_PROBE_BOOT}s"
+       probe_evidence "$prof" "$(capture_joined "$id")"
        tmux kill-window -t "$id" 2>/dev/null || true
        return 2 ;;
   esac
@@ -2079,6 +2081,22 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
     msg="$msg $(marker_line "$key")"
   fi
   tmux send-keys -t "$id" "$msg" 2>/dev/null || true
+  # The box is READ between the text and the Enter, which is gang's own delivery
+  # discipline rather than caution about it. An Enter that arrives before the
+  # composer has ingested the paste submits nothing, and the failure is silent and
+  # reads exactly like a harness that would not work: codex took the prompt into
+  # its composer and sat there for the whole 90s window, and the probe reported
+  # "never got busy" — true, and useless. Bounded, because a harness that never
+  # shows the text is its own finding and not a reason to hang; and skipped
+  # entirely where the profile declares no box, since then there is nothing to
+  # read and no claim to make.
+  if declare -F profile_input >/dev/null; then
+    deadline=$(( $(date +%s) + 15 ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      input_clear "$id" || break
+      sleep 0.25
+    done
+  fi
   tmux send-keys -t "$id" Enter 2>/dev/null || true
 
   # The declared regex, never busy(). busy() is busy_painted OR churn, so asking it
@@ -2108,6 +2126,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   if [ "$marked" -eq 0 ]; then
     if [ "$churned" -eq 0 ]; then
       probe_row "$prof" "$installed" "$C_BAD" "not probed — the harness never got busy: nothing moved on screen in ${GANG_PROBE_TURN}s"
+      probe_evidence "$prof" "$pane"
       rc=2
     else
       probe_row "$prof" "$installed" "$C_BAD" "MARKER DEAD — the pane was working and never painted it: $GANG_BUSY_REGEX"
@@ -2156,6 +2175,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   done
   if [ "$settled" -eq 0 ]; then
     probe_row "$prof" "$installed" "$C_BAD" "not probed — the pane never stopped moving in ${GANG_PROBE_SETTLE}s, so there is no rest state to hold the marker against"
+    probe_evidence "$prof" "$pane"
     tmux kill-window -t "$id" 2>/dev/null || true
     return 2
   fi
