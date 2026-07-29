@@ -49,10 +49,19 @@ GANG_MODEL_OPT="--model"
 # regex — 8.6% — and the longest unbroken run of live-but-unmarked samples was
 # 64, about 16 seconds. Streaming is most of a long turn. So busy() reading
 # false does NOT mean no turn is in flight on this harness, and every caller
-# that assumes it does is wrong for the length of the answer. What marks a
-# streaming turn, if anything does, is open. Do not close it by widening this
-# branch: a guessed alternate is a fourth single point of failure sharing this
-# one variable.
+# that assumes it does is wrong for the length of the answer.
+#
+# NOTHING MARKS A STREAMING TURN, and that was measured rather than assumed. 201
+# streaming frames compared line for line against an idle one: no line persists
+# while streaming that is absent when idle, ANYWHERE on the pane — not merely
+# outside the rows capture_status reads, so widening the scan reaches nothing.
+# A streaming pane and an idle pane differ in exactly one way, that one of them
+# keeps changing, and no single frame can be asked that. The same comparison
+# picks the thinking spinner out immediately, so the instrument was not blind;
+# and gang captures without -e, so a state marked by colour alone would be
+# invisible to gang whatever this file declared. Do not close this by widening
+# the branch above: a guessed alternate is a fourth single point of failure
+# sharing this one variable.
 #
 # Latent, in this same branch, and NOT the cause of the above: the gerund shape
 # accepts a SINGLE capitalised word. Every label yet observed is one word, so it
