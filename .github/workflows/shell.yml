@@ -37,31 +37,24 @@ jobs:
       - name: Dependencies
         run: |
           set -eu
-          # Every tool the later steps need. `timeout` is in the list because the
-          # suite bounds its probe with it and macOS ships no such command — an
-          # earlier guard that named only tmux and shellcheck skipped the fix
-          # below on a runner that already had those two.
+          # Every tool the later steps need. Keep this list and the installs
+          # below in step: a guard that names fewer tools than the case installs
+          # will skip an install on a runner that happens to have the named ones.
           have_all=yes
-          for t in tmux shellcheck timeout; do
+          for t in tmux shellcheck; do
             command -v "$t" >/dev/null || have_all=no
           done
           [ "$have_all" = no ] || exit 0
           case "${{ runner.os }}" in
             Linux) sudo apt-get install -y tmux shellcheck ;;
             macOS)
-              brew install tmux shellcheck coreutils
-              # test/integration.sh bounds the probe with `timeout`, which macOS
-              # does not ship. coreutils provides it as `gtimeout`.
-              #
-              # Expose THAT ONE BINARY under its GNU name, deliberately. Brew's
-              # own advice is to put coreutils' gnubin on PATH, which would also
-              # put GNU readlink, grep, sed and awk ahead of the BSD ones — and
-              # the BSD userland is the entire reason this cell exists. Doing
-              # that would leave the cell green while testing nothing it was
-              # added to test.
-              mkdir -p "$RUNNER_TEMP/gnu-timeout"
-              ln -sf "$(brew --prefix)/bin/gtimeout" "$RUNNER_TEMP/gnu-timeout/timeout"
-              echo "$RUNNER_TEMP/gnu-timeout" >> "$GITHUB_PATH"
+              # No coreutils here, on purpose. The suite once needed `timeout`,
+              # which macOS does not ship, and brew's own advice for coreutils is
+              # to put its gnubin on PATH — which would also put GNU readlink,
+              # grep, sed and awk ahead of the BSD ones and leave this cell green
+              # while testing nothing it was added to test. If something here ever
+              # needs a GNU tool again, expose that ONE binary, never gnubin.
+              brew install tmux shellcheck
               ;;
             *) echo "no dependency recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
           esac
@@ -80,11 +73,6 @@ jobs:
           "$interp" --version | head -1
 
           tmux -V
-
-          # A missing `timeout` cost the macOS cell ten checks before it was
-          # installed; naming it here means the next absence reads as a missing
-          # tool rather than as ten unrelated probe failures.
-          echo "timeout: $(command -v timeout)"
 
           # awk is the reason this step exists, and the implementations differ on
           # how to ask. gawk/BSD awk take --version, mawk takes -W version, and
