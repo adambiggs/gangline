@@ -235,8 +235,12 @@ unknown widget.
 
 An agent blocked in its own `gang wait` is special. Gangline stores the waiter's
 PID in `@gl_waiting`; if that agent's profile accepts mid-turn input, status can
-show it available and a teammate can send to it. A dead waiter PID is reclaimed
-when observed.
+show it idle and a teammate can send to it. That does **not** prove it can answer:
+opencode 1.18.8 was observed holding an accepted message until the wait call—and
+therefore the harness turn—ended, while status reported idle. Do not assign work
+from that state without accounting for the wait timeout; [issue
+#16](https://github.com/adambiggs/gangline/issues/16) tracks a distinct parked
+state. A dead waiter PID is reclaimed when observed.
 
 ## Undelivered pastes
 

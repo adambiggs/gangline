@@ -143,7 +143,10 @@ can clear it. The timeout must be whole seconds.
 
 When an agent calls `wait` from its own pane, Gangline records that fact for the
 call's lifetime. Profiles that accept mid-turn input can then report that waiting
-agent as available to teammates.
+agent as available to teammates. This is delivery availability, not response
+availability: a harness that queues accepted text until the current turn ends may
+show idle while the message waits for `gang wait` itself to return ([issue
+#16](https://github.com/adambiggs/gangline/issues/16)).
 
 ### `gang capture <name> [lines]`
 
