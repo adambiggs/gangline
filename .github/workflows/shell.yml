@@ -2,16 +2,54 @@ name: shell
 
 on: [push, pull_request]
 
+# Matrix axes are chosen, not accumulated — see issue #8.
+#
+#   os        LIVE. The suite asserts "a BSD readlink still resolves the install
+#             tree" and until this cell existed it had never run on a BSD. macOS
+#             covers BSD readlink/grep/sed/awk and the bash 3.2 userland.
+#
+#   awk       DEFERRED, not rejected. Note the DIRECTION before adding it: every
+#             runner here already has gawk, so gawk cells buy nothing. The
+#             untested direction is the reverse — code that works under gawk and
+#             breaks under mawk or busybox awk (the substr byte-vs-character
+#             class has already shipped two bugs). Add mawk/busybox cells only,
+#             and only once the macOS cell is demonstrably stable, so a flake has
+#             one candidate cause rather than two.
+#
+#   tmux ver  REJECTED. Every cell is a source build, and the version theory was
+#             disproved — 3.4's -J was one of four wrong hypotheses burned on a
+#             CI-only failure whose real cause was awk.
+#
+#   python    REJECTED. gangline is shell; python3 appears in one place.
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false   # a macOS flake must not hide a real linux failure
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # install.sh clones from this checkout
 
       - name: Dependencies
-        run: command -v tmux >/dev/null || sudo apt-get install -y tmux
+        run: |
+          set -eu
+          command -v tmux >/dev/null && command -v shellcheck >/dev/null && exit 0
+          case "${{ runner.os }}" in
+            Linux) sudo apt-get install -y tmux shellcheck ;;
+            macOS) brew install tmux shellcheck ;;
+          esac
+
+      - name: Versions
+        # The point of the macOS cell is the userland, so name it in the log —
+        # a green run that silently used GNU tools would prove nothing.
+        run: |
+          bash --version | head -1
+          tmux -V
+          awk --version 2>/dev/null | head -1 || awk -W version 2>&1 | head -1
 
       - name: Syntax and lint
         run: |
