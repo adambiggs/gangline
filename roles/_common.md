@@ -133,8 +133,12 @@ gangline reads your harness's screen to tell whether you are busy and how full
 you are, and that reading breaks when your harness updates. If gang reports the
 wrong state, misses your context readout, or fails to verify a send that clearly
 landed, run `gang vet` before assuming you made the mistake. If it reports
-ROT RISK, tell the operator. If it reads all-OK and scraping stays wrong, tell
-the operator that instead: vet's pins watch harness versions, and a UI mod —
-a theme, a custom statusline, a TUI extension — can move a marker without moving
-any of them. The fix is a profile shadow re-verified against the modded TUI, and
-it is the operator's to make.
+ROT RISK, tell the operator.
+
+If it reads all-OK and scraping stays wrong, tell the operator that too — and do
+not read the all-OK as a verdict. vet compares harness versions against pins; it
+never fires a marker at a pane. A marker can be dead while every version matches:
+a UI mod moved it, or one branch of it stopped being painted while the others
+carry on, or it is painted somewhere gang does not look. All three are the
+operator's to fix, and all three look the same from your seat — gang saying the
+wrong word about a screen you can see.

@@ -518,11 +518,11 @@ with `profile not found` rather than dropped from the roster.
 
 ### Strategy rot
 
-Profiles are scraped observations of TUIs, and TUIs change under you — a Claude Code
-release once stopped painting "esc to interrupt" during tool execution, and busy
-detection false-negatived. Every scraped marker (busy regex, context readout,
-input-box shape) is live-verified against specific harness versions and pinned in
-the profile with `GANG_VERSION_CMD` + `GANG_VERIFIED_VERSIONS` (space-separated
+Profiles are scraped observations of TUIs, and TUIs change under you — Claude Code
+stopped painting "esc to interrupt" during tool execution, and busy detection
+false-negatived. Every scraped marker (busy regex, context readout, input-box
+shape) is verified by hand against specific harness versions and pinned in the
+profile with `GANG_VERSION_CMD` + `GANG_VERIFIED_VERSIONS` (space-separated
 version prefixes; `any` means no scraped markers).
 
 `gang vet` compares each installed harness against its pin and exits nonzero on
@@ -534,6 +534,25 @@ misbehave — false busy/idle, a missing context beacon, an injection that fails
 verification — runs `gang vet` first. On ROT RISK, `gang vet --file-issue`
 files a deduped rot issue via `gh`, then the markers get re-verified against the
 live TUI and the new version appended to the pin.
+
+**vet watches versions, not markers.** It never fires a busy or gated regex at a
+pane, and nothing else does either — re-verification is a human watching gang say
+the right word. So a clean vet means the harness is the version somebody once
+checked, and nothing stronger. Two things pass straight through it:
+
+- **A dead branch of a live marker.** These regexes are alternates covering
+  *different* states, not redundant readings of one — a spinner for an ordinary
+  turn, a backoff line, a progress bar for compaction. A human check is satisfied
+  by any one living branch, so a branch can stop being painted and nothing notices
+  until the state it covered comes up, in the field, on the one path that needed
+  it. Adding an alternate adds a failure point rather than a fallback.
+- **A marker that fires where gang is not looking.** State is read from a bounded
+  window of the pane, so *reachable* is part of a marker being correct, and no
+  liveness audit tests it — the marker is not dead. A dialog anchored so its
+  header lands outside that window is live on screen and invisible to the check.
+
+So treat a clean vet as "the version has not moved". When scraping misbehaves and
+vet reads all-OK, suspect the marker, not the harness.
 
 Version pins watch the harness, not its mods. A theme, a replacement statusline,
 or a TUI-drawing extension — a permission system, say — repaints chrome without
