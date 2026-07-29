@@ -40,3 +40,21 @@ jobs:
 
           echo "checked $n commit(s), $fail non-conforming"
           [ "$fail" -eq 0 ]
+
+  # A squash merge does not put any of the checked commits on main. This repo's
+  # squash title is COMMIT_OR_PR_TITLE, so a PR with two or more commits lands
+  # under its PR TITLE — a string the job above never sees. Without this the
+  # violation is only caught by the push event, after it is already on main.
+  title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Conventional PR title
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$TITLE" > /tmp/title
+          .githooks/commit-msg /tmp/title
