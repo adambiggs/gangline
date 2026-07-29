@@ -107,7 +107,38 @@ has() { case "$(pane_of "$1")" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 # harness code under test, and it should look like the shipped profiles it stands
 # in for, not like this file's own conventions.
 lists() { grep -qxF -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = a whole line
-holds() { grep -qE  -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = an ERE
+# `&& echo yes || echo no` spends grep's ERROR as a MISS: grep exits >=2 on a
+# pattern it cannot compile, and this answered `no`. re_match gives gang's own
+# profile regexes exactly this three-way split; the suite's evaluator never got
+# it — the guard written where the trap was met, not where its class lives.
+#
+# Three consumptions, one collapse. Most sites expect `yes`, so they went red
+# naming the BEHAVIOUR while the cause was a stray grep line on stderr: not
+# silent, MISATTRIBUTED. The "nothing was hitched" check expects `no`, so it
+# PASSED without evaluating anything. in_pane's poll asks `= yes` and spun its
+# whole timeout, failing a minute and a function away from the cause.
+#
+# The refusal cannot be centralised. Every site consumes this through `$( )`,
+# which only stdout crosses, so a die() here would end the substitution and leave
+# the caller reading an empty string — the refusal that does not return. So the
+# sentinel is what fails an assertion of EITHER polarity, and the non-zero return
+# is what a poll can carry, the way target_of's callers already carry id_of's.
+#
+# `lists` above is deliberately not given this shape: -F has no pattern to
+# compile, so grep cannot reach exit 2 through it, and a branch that cannot be
+# taken is noise.
+holds() { # $1 = text, $2 = an ERE -> yes | no, or refuses and names the pattern
+  local rc=0 err
+  err="$(grep -qE -- "$2" <<<"$1" 2>&1)" || rc=$?
+  case "$rc" in
+    0) echo yes ;;
+    1) echo no ;;
+    *) printf 'BUG: the suite gave grep a pattern it cannot evaluate (exit %s): %s\n' \
+         "$rc" "${err:-no message from grep}" >&2
+       printf 'unevaluable-ERE(%s)' "$2"
+       return "$rc" ;;
+  esac
+}
 # The two below exist because of a PARSER bug, not a style preference. bash 3.2 —
 # what macos-latest ships — scans a `$( ... )` for its closing paren without
 # understanding case patterns, so the `)` that ends the first PATTERN ends the
@@ -160,6 +191,20 @@ profile_input() {
 }
 SH
 }
+
+# --- the evaluator itself ------------------------------------------------------
+
+# First in the file, because every check below is scored by this: while holds()
+# spent grep's exit >=2 as a miss, any verdict it gave was only as trustworthy as
+# the pattern that produced it. Fix the instrument, then measure with it.
+check "a matching ERE reads as a hit" "yes" "$(holds 'abc' '^abc$')"
+check "and a genuine miss still reads as a miss" "no" "$(holds 'abc' '^zzz$')"
+check "an ERE grep cannot evaluate is not spent as a miss" "unevaluable-ERE([)" \
+  "$(holds 'abc' '[' 2>/dev/null)"
+check "and it refuses with a status a poll can carry" "yes" \
+  "$(holds 'abc' '[' >/dev/null 2>&1 && echo no || echo yes)"
+check "and names on stderr what grep could not evaluate" "yes" \
+  "$(contains "$(holds 'abc' '[' 2>&1 >/dev/null)" "cannot evaluate")"
 
 # --- finding its own tree ------------------------------------------------------
 
@@ -2164,11 +2209,18 @@ in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw outpu
   # Polled, not slept: a roster of this many agents reads a session file per
   # keyed profile, and a fixed sleep caught a screen that was still empty — which
   # a check for "is there colour here" reads as "no", passing for a real failure.
-  local id t=0; id="$(target_of "$1")" || exit 1; shift
+  local id t=0 seen; id="$(target_of "$1")" || exit 1; shift
   tmux send-keys -t "$id" "clear; $* ; echo IN_PANE_DONE" Enter
   while [ "$t" -lt 60 ]; do
-    # Anchored, so the shell's echo of the command line is not the marker.
-    [ "$(holds "$(tmux capture-pane -p -t "$id")" '^IN_PANE_DONE')" = yes ] && break
+    # Anchored, so the shell's echo of the command line is not the marker. The
+    # verdict is named and its refusal carried, because a pattern grep cannot
+    # evaluate answers "not yet" forever: a timeout wearing a miss's clothes,
+    # which then compares downstream checks against a half-drawn pane. Like
+    # target_of's above, this exit leaves only the substitution in_pane runs in —
+    # so what it buys is failing AT the cause instead of a minute later, not an
+    # abort.
+    seen="$(holds "$(tmux capture-pane -p -t "$id")" '^IN_PANE_DONE')" || exit 1
+    [ "$seen" = yes ] && break
     sleep 1; t=$((t + 1))
   done
   # -J rejoins rows the pane wrapped. A roster row naming a profile gang cannot
