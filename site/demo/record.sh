@@ -190,11 +190,45 @@ rm -rf "$DEMO/.claude/projects" "$DEMO/.claude/history.jsonl" \
 
 # ── Record ───────────────────────────────────────────────────────────────────
 # The tape's Env lines build the clean recorded environment; vhs otherwise runs
-# in the invoking env so it can find its browser — minus $TMUX, so a gang inside
-# the tape can only ever reach the demo socket. Expect several minutes of hidden
-# wall time — the cuts wait on real agents finishing real turns.
+# in the invoking env so it can find its browser. What is subtracted below is
+# everything that names the environment DOING the recording, because the tape
+# runs a real gang and a real harness that will read it.
+#
+# The rule, so the next variable gets handled without another lost take: strip
+# anything identifying this session, this pane, or the harness invoking this
+# script. TMUX and TMUX_PANE are separate facts and both are load-bearing —
+# subtracting one is not subtracting the other:
+#
+#   TMUX       a tmux client inside a pane takes its socket from $TMUX and
+#              ignores TMUX_TMPDIR, so a gang inside the tape would reach the
+#              invoking user's server instead of the demo one.
+#   TMUX_PANE  gang's self_window() resolves the CALLER's identity from it, and
+#              tmux exports it into everything a pane starts. Measured: recording
+#              from a gangline lead's own pane leaked TMUX_PANE into the tape, so
+#              `gang send lead --from adam` was refused as impersonation —
+#              correctly, since gang saw the caller as `lead` — and the take died
+#              at scene 2. Recording from inside a pane is the normal case: a
+#              gangline lead is exactly who records this.
+#   XDG_RUNTIME_DIR
+#              lock_pane() defaults its lock directory to
+#              $XDG_RUNTIME_DIR/gangline-$(id -u). A login session sets that to
+#              /run/user/<uid>, which is a real host path — and one the demo's
+#              Codex worker cannot write to, because it runs workspace-write
+#              sandboxed. Measured: the worker died mid-task on screen and had to
+#              re-send with GANG_LOCK_DIR set by hand. Unset, gang lands on
+#              /tmp/gangline-<uid>, which every harness here can reach. The
+#              underlying default is issue #19; this fence is correct regardless,
+#              because /run/user/<uid> is exactly the kind of real host path this
+#              script exists to keep off camera.
+#
+# The CLAUDE* set is stripped on principle rather than on measurement. The tape's
+# lead IS Claude Code, and a nested harness inheriting its parent's session and
+# child-session ids is not the clean environment this script exists to build.
 cd "$DEMO"
-env -u TMUX vhs "$REPO/site/demo/demo.tape"
+env -u TMUX -u TMUX_PANE -u XDG_RUNTIME_DIR \
+    -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_EXECPATH \
+    -u CLAUDE_CODE_SESSION_ID -u CLAUDE_CODE_CHILD_SESSION -u CLAUDE_PID \
+    vhs "$REPO/site/demo/demo.tape"
 
 mv "$DEMO/demo.webm" "$REPO/site/demo.webm"
 mv "$DEMO/demo.mp4"  "$REPO/site/demo.mp4"
