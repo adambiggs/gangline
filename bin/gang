@@ -435,12 +435,15 @@ gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
   # the message, and `gang wait` cannot rescue it either: the waiter keys on
   # BECOMING idle and the pane already reads idle. Gated costs a delay instead.
   #
-  # Busy first, because a turn in flight is a determined state and several
-  # harnesses stop painting their box while one runs. And a profile that declares
-  # no input hook falls through to idle as it always did: gang cannot claim a box
-  # is missing when it was never taught to find one.
-  if busy "$1"; then return 1; fi
-  ! input_painted "$1"
+  # The box is asked about first because it is the cheap question and the common
+  # answer: a box gang can find is not a box a modal has taken. It is also where
+  # a profile that declares no input hook stops — gang cannot claim a box is
+  # missing when it was never taught to find one, so such a profile keeps exactly
+  # the busy/idle reading it always had.
+  if input_painted "$1"; then return 1; fi
+  # No box, then. That is a modal unless a turn in flight explains it: several
+  # harnesses stop painting their composer while one runs.
+  ! busy "$1"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
@@ -578,6 +581,80 @@ composer_settled() { # $1 = window id; nobody is typing into the box right now
   [ "$a" = "$b" ]
 }
 
+# --- a paste that was never submitted ----------------------------------------
+#
+# A delivery that fails after the paste has landed leaves its text where the
+# paste went: in the target's input box, unsent. That is not a clean failure.
+# The next thing that agent types is submitted with somebody else's message
+# prepended to it — confirmed in the field, a full envelope sat in an agent's
+# prompt waiting for exactly that.
+#
+# The obvious repair is a trap. Clearing the box means sending a keystroke, and
+# the paths that strand text are mostly the paths where a modal owns the box —
+# where a keystroke is an ANSWER to the dialog, which is precisely what the
+# withheld Enter refused to send. So gang clears only where it can prove both
+# halves: the composer is live and settled, and the box still holds exactly what
+# gang put there. Everywhere else the paste is RECORDED on the target window,
+# read out by status, roster and patrol, and cleared by the first delivery or
+# sweep that can see the box again.
+#
+# The record is a window option, so it is exactly as long-lived as the agent it
+# describes and tmux is the one that deletes it (Law 1, Law 6) — and it has a
+# deletion path that does not need a modal to lift, because a box that reads back
+# empty proves the text is gone whoever removed it.
+
+staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste there
+  tmux show-options -wqv -t "$1" @gl_staged
+}
+
+stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (may be empty)
+  # Only for a profile that declares an input box: without one "the box" is the
+  # whole pane, nothing about it can be matched or cleared, and a record nobody
+  # can act on is noise on every roster from here on.
+  declare -F profile_input >/dev/null || return 0
+  tmux set-option -w -t "$1" @gl_staged "$2"
+  if [ -n "$3" ]; then tmux set-option -w -t "$1" @gl_staged_box "$3"
+  else tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true; fi
+}
+
+stage_forget() { # $1 = window id
+  tmux set-option -uw -t "$1" @gl_staged 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true
+}
+
+clear_box() { # $1 = window id; erase the input box, and prove it is erased
+  # C-u is the line kill every readline-shaped composer honours, and a hardcoded
+  # default whose outcome is verified beats an extension point no profile sets.
+  # Sent only where the composer is provably live — into a modal this keystroke
+  # is an answer — and the box is read back afterwards, because a harness that
+  # ignores it must not be reported as cleared. The day one turns up, the key
+  # becomes a profile declaration (Law 4); the read-back is what will say so.
+  declare -F profile_input >/dev/null || return 1
+  tmux send-keys -t "$1" C-u
+  sleep 0.4
+  input_clear "$1"
+}
+
+stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours and reachable
+  local note box want
+  note="$(staged_note "$1")"
+  [ -n "$note" ] || return 0
+  if gated "$1"; then return 0; fi          # a keystroke here would answer the dialog
+  composer_settled "$1" || return 0         # somebody is typing: not gang's box to touch
+  box="$(landing_zone "$1")" || return 0    # cannot see it: the record stands
+  if ! printf '%s' "$box" | grep -q '[^[:space:]]'; then
+    stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
+  fi
+  want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
+  # Matched, not merely present: by the time the modal lifts the box may hold the
+  # operator's own draft, and wiping that to tidy up gang's mess is a worse bug
+  # than the one being fixed. A path that never read the box records no rendering
+  # and is therefore reported until a human deals with it.
+  [ -n "$want" ] && [ "$box" = "$want" ] || return 0
+  clear_box "$1" || return 0
+  stage_forget "$1"
+}
+
 inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
   frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
@@ -594,6 +671,12 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
     || die "refusing to deliver '$frag': $1 is gated (hook set) — a modal owns its input box, so the paste would land in the dialog instead (gang attach)"
   composer_settled "$1" \
     || die "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
+  # Before anything is read or pasted: an earlier delivery that could not be
+  # verified may have left its text in this box, and appending to that would
+  # submit both as one message. This is the moment the modal that stranded it has
+  # demonstrably lifted — the gate check above just passed — so it is also the
+  # first moment gang may type into the pane at all.
+  stage_clear "$1"
   # Verified = the paste changed the input box, which is where a paste lands.
   # Reading the box asks the profile (Law 4) instead of teaching gang how each
   # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
@@ -614,8 +697,15 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
   sleep 0.4
-  after="$(landing_zone "$1")" \
-    || die "cannot read the input box of $1 after pasting — nothing was submitted"
+  # The box went unreadable with the paste already in flight, so where the text
+  # ended up is genuinely unknown: in the box behind whatever took the screen, or
+  # in that thing's own field. Gang cannot see it, so it cannot clear it — it says
+  # what it does not know and leaves a record no rendering can be matched against,
+  # which is what keeps this one being reported until a human deals with it.
+  after="$(landing_zone "$1")" || {
+    stage_record "$1" "'$frag' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent" ""
+    die "cannot read the input box of $1 after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $1)"
+  }
   [ "$after" != "$before" ] \
     || die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted"
   # Enter goes as its own keystroke, and then gets checked, because the failure
@@ -630,10 +720,14 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # dialog. A modal can paint in the moment between the paste and this line —
   # that is the whole hazard, an asynchronous dialog against a four-step
   # delivery — and an Enter aimed at a composer that is no longer there selects
-  # whatever the dialog has highlighted. Nothing was submitted, so this is a
-  # clean failure: the paste is still in the box for the operator.
-  ! gated "$1" \
-    || die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent (gang attach)"
+  # whatever the dialog has highlighted. Nothing is submitted, and the paste stays
+  # in the box behind the modal: not a clean failure, a loaded one. The box was
+  # read a line ago, so this is the path that can hand a rendering to the record —
+  # the next send or patrol after the modal lifts clears it on that evidence.
+  if gated "$1"; then
+    stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
+    die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next send or patrol once the modal is gone)"
+  fi
   tmux send-keys -t "$1" Enter
   # An unreadable box in the moments after Enter is not a failed submit — it is
   # the submit in flight. opencode's box is only "readable" while the hardware
@@ -653,12 +747,30 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
     if posted="$(landing_zone "$1")"; then
       [ "$posted" = "$after" ] || break
       unchanged=$((unchanged + 1))
-      [ "$unchanged" -ge 5 ] \
-        && die "submit NOT verified: '$frag' is still sitting in the input box of $1 — it was pasted but never sent"
+      if [ "$unchanged" -ge 5 ]; then
+        # The one path where both halves are provable without waiting for
+        # anything: the box reads back, which is only true while the composer
+        # owns the screen, and it reads back as exactly what gang pasted. So the
+        # text goes out the way it came in rather than being left for whatever
+        # this agent types next. The clear is verified too — a harness that
+        # ignores the keystroke is told about, not reported as tidy.
+        if clear_box "$1"; then
+          die "submit NOT verified: '$frag' was pasted into the input box of $1 and never sent — the paste has been cleared back out of that box"
+        fi
+        stage_record "$1" "'$frag' is staged unsent in this box — it was pasted, never sent, and would not clear" "$posted"
+        die "submit NOT verified: '$frag' was pasted into the input box of $1, never sent, and would not clear — it is staged there now and has to be cleared by hand (gang attach)"
+      fi
     fi
     looks=$((looks + 1))
-    [ "$looks" -lt 15 ] \
-      || die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s)"
+    if [ "$looks" -ge 15 ]; then
+      # Unlike the branch above this is an absence of evidence both ways: the
+      # Enter went, and a box that never reads back cannot say whether it took.
+      # opencode's box reads this way precisely BECAUSE a submit is happening, so
+      # the record is worded as the doubt it is — and it costs nothing when the
+      # send did land, because the first sweep that finds the box empty drops it.
+      stage_record "$1" "'$frag' was pasted here and Enter sent, but the box never read back — it may be sitting there unsent" ""
+      die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s); if the Enter never took, the paste is sitting unsent in that box (gang capture $1)"
+    fi
   done
   lock_release
 }
@@ -1021,7 +1133,7 @@ cmd_status() {
   # in an argument list is thrown away — printf would succeed, print a blank line,
   # and report exit 0 for a state nobody ever established. An assignment carries the
   # failure, so errexit still ends the command (law 8).
-  local state failed
+  local state failed staged
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   # A resume that never landed is the one thing about an agent that its screen
@@ -1030,6 +1142,12 @@ cmd_status() {
   failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_failed)"
   [ -z "$failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "resume NOT delivered after compaction: $failed")"
+  # A staged paste IS on the screen, but it reads as a message this agent is
+  # about to send rather than one somebody else abandoned in its box, and the
+  # damage is done by whoever types next.
+  staged="$(staged_note "$AGENT_ID")"
+  [ -z "$staged" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "undelivered paste in the input box: $staged")"
 }
 
 cmd_context() { # context-window usage via the profile's own introspection
@@ -1066,8 +1184,13 @@ roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one 
   if declare -F profile_context >/dev/null; then
     ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
   fi
+  ctx="${ctx%%$'\n'*}"
+  # The roster is the surface a lead scans, so an abandoned paste sitting in
+  # somebody's box belongs on it — three words, because the sentence explaining
+  # it is what gang status is for.
+  [ -z "$(staged_note "$1")" ] || ctx="$ctx $(colour "$C_BAD" "undelivered paste")"
   printf '%-16s %-12s %s %s\n' "$2" "$prof" \
-    "$(paint_state "$(printf '%-18s' "$state")")" "${ctx%%$'\n'*}"
+    "$(paint_state "$(printf '%-18s' "$state")")" "$ctx"
 }
 
 say() { # $1 = name, $2 = context readout, $3 = verdict, $4 = colour (default: dim)
@@ -1107,6 +1230,18 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   profile_file "$prof" >/dev/null \
     || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled" "$C_BAD"; return; }
   load_profile "$prof"
+  # The sweep is the other half of the staged-paste record: a send may never come
+  # for this agent, and patrol is what runs anyway. Clearing is attempted first —
+  # it refuses on its own account if the modal is still up — so the report below
+  # is about what actually survived, not what was true a second ago.
+  if [ -n "$(staged_note "$1")" ]; then
+    stage_clear "$1"
+    if [ -n "$(staged_note "$1")" ]; then
+      say "$2" "-" "UNDELIVERED PASTE — $(staged_note "$1") (gang attach)" "$C_BAD"
+    else
+      say "$2" "-" "cleared an undelivered paste out of the input box" "$C_OK"
+    fi
+  fi
   if gated "$1"; then
     # Only the operator clears a gate, so this is a report, not a nudge — and it
     # comes before the context checks so a gated agent whose readout is missing

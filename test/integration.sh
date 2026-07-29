@@ -66,6 +66,8 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
 has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
+# patrol prints "%-16s %-18s %s", so the verdict starts at column 37
+verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 target_of() { # $1 = window name; a NON-EMPTY @id or the suite stops
   # id_of's own `exit 1` only leaves the command substitution it runs in, so a
   # caller that interpolates it directly still hands tmux an empty -t. Anything
@@ -292,9 +294,101 @@ fi
 exec "$(command -v tmux)" "\$@"
 SH
 chmod +x "$SHIM/noenter/tmux"
-PATH="$SHIM/noenter:$PATH" "$GANG" send alpha --from tester "MARK_UNSENT" >/dev/null 2>&1
-check "a paste that is never submitted is not reported as delivered" "1" "$?"
-tmux send-keys -t "$(target_of alpha)" C-u   # the draft it correctly left behind
+out="$(PATH="$SHIM/noenter:$PATH" "$GANG" send alpha --from tester "MARK_UNSENT" 2>&1)"; rc=$?
+check "a paste that is never submitted is not reported as delivered" "1" "$rc"
+# And it does not walk away leaving the text there. A staged paste is not a clean
+# failure: the next thing this agent types would be submitted with somebody
+# else's message glued to the front of it — confirmed in the field, a full
+# envelope sat unsent in an agent's prompt. Here both halves are provable — the
+# box reads back, which only happens while the composer owns the screen, and it
+# reads back as exactly what gang pasted — so the text goes out the way it came.
+check "and the box does not keep the message nobody sent" "no" "$(has alpha MARK_UNSENT)"
+check "with the sender told it was taken back out" "yes" \
+  "$(case "$out" in *"cleared back out"*) echo yes ;; *) echo no ;; esac)"
+
+# The other two ways text is stranded never reach the Enter at all, and neither
+# can be swept up on the spot: both are a box that stops reading back with the
+# paste already in it, which is what a modal painting mid-delivery looks like —
+# and a keystroke into a modal is the very thing the withheld Enter refused to
+# send. So the paste is recorded on the window, reported everywhere the operator
+# looks, and cleared by the first delivery or sweep that can prove the box is
+# reachable AND still holds gang's own text.
+#
+# The fixture blinds itself from the Nth look at a NON-EMPTY box, and there are
+# exactly two of those before the Enter: the read that verifies the paste landed,
+# and the gate check that guards the Enter.
+cat > "$SHIM/custom-profiles/vanishing.sh" <<SH
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local n from line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  line="\${line#❯}"
+  if printf '%s' "\$line" | grep -q '[^[:space:]]'; then
+    n=\$(( \$(cat "$SHIM/vanish-count" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" > "$SHIM/vanish-count"
+    from=\$(cat "$SHIM/vanish-from" 2>/dev/null || echo 0)
+    if [ "\$from" -gt 0 ] && [ "\$n" -ge "\$from" ]; then return 1; fi
+  fi
+  printf '%s' "\$line"
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch vanisher -p vanishing -d /tmp >/dev/null 2>&1
+
+# Blind from the first loaded look: the paste has landed and the box will not
+# read back. Where the text went is genuinely unknown — the box behind the modal,
+# or the modal's own field — so gang records the doubt as doubt, with no
+# rendering to match, which is what keeps it from ever typing there on a guess.
+echo 0 > "$SHIM/vanish-count"; echo 1 > "$SHIM/vanish-from"
+out="$("$GANG" send vanisher --from tester "MARK_VANISH" 2>&1)"; rc=$?
+check "a paste into a box that stops reading back fails" "1" "$rc"
+check "and the sender is told the text may be sitting there" "yes" \
+  "$(case "$out" in *"may be sitting unsent"*) echo yes ;; *) echo no ;; esac)"
+check "status reads out the undelivered paste" "yes" \
+  "$(case "$("$GANG" status vanisher)" in *"undelivered paste"*) echo yes ;; *) echo no ;; esac)"
+check "and the roster carries it where a lead scans" "yes" \
+  "$("$GANG" roster | awk '$1=="vanisher"' | grep -q 'undelivered paste' && echo yes || echo no)"
+
+# The box comes back: whatever owned it is gone. Gang still will not type into
+# it, because this path never read the box and has no rendering to match — and by
+# now that box could just as easily hold the operator's own draft, which tidying
+# up gang's mess must not take with it.
+echo 0 > "$SHIM/vanish-from"
+check "a sweep keeps reporting what it cannot prove is gang's own text" "yes" \
+  "$("$GANG" patrol | verdict vanisher | grep -q 'UNDELIVERED PASTE' && echo yes || echo no)"
+check "and the message really is still in that box" "yes" "$(has vanisher MARK_VANISH)"
+
+# Cleared by hand, the record goes with it: a box that reads back empty proves
+# the text is gone whoever removed it, so the warning has a deletion path that
+# does not depend on gang being the one that clears it (Law 6).
+tmux send-keys -t "$(target_of vanisher)" C-u; sleep 0.5
+"$GANG" patrol >/dev/null
+check "a record whose box is empty drops itself" "" "$("$GANG" status vanisher | sed -n 2p)"
+
+# Blind from the SECOND loaded look: the paste verifies, and the box is gone
+# before the Enter. That is a modal painting in the one moment a four-step
+# delivery cannot cover, and the Enter is withheld — aimed at a composer that is
+# no longer there it would answer whatever the dialog has highlighted. Gang did
+# read the box here, so the record carries a rendering it can match later.
+echo 0 > "$SHIM/vanish-count"; echo 2 > "$SHIM/vanish-from"
+out="$("$GANG" send vanisher --from tester "MARK_WITHHELD" 2>&1)"; rc=$?
+check "an Enter withheld from a modal is still a failed send" "1" "$rc"
+check "and the sender is told the paste is staged, not that it is clean" "yes" \
+  "$(case "$out" in *"staged unsent"*) echo yes ;; *) echo no ;; esac)"
+check "which is also what the roster starts saying" "yes" \
+  "$("$GANG" roster | awk '$1=="vanisher"' | grep -q 'undelivered paste' && echo yes || echo no)"
+
+# ...and the first sweep after the modal lifts takes it back out, on that
+# evidence and no less: box reachable, contents identical to what gang pasted.
+echo 0 > "$SHIM/vanish-from"
+check "the sweep after the modal lifts clears it" \
+  "cleared an undelivered paste out of the input box" \
+  "$("$GANG" patrol | verdict vanisher | head -1)"
+check "the box no longer holds the undelivered envelope" "no" "$(has vanisher MARK_WITHHELD)"
+check "and nothing is left to report" "" "$("$GANG" status vanisher | sed -n 2p)"
+unset GANG_PROFILES
 
 # --- attribution --------------------------------------------------------------
 
@@ -470,9 +564,6 @@ check "and goes in the moment the compaction itself is running" "yes" "$(has bus
 # the gated marker such an agent read idle and the team stalled with nothing on
 # any surface saying why. Gated is checked before busy because a gate paints
 # mid-turn — the busy marker can still be on screen.
-
-# patrol prints "%-16s %-18s %s", so the verdict starts at column 37
-verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 
 # The wording on its own is not a gate, and treating it as one is a denial of the
 # whole control plane out of ordinary prose: an agent reviewing this repo, or
