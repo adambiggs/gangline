@@ -281,6 +281,26 @@ check "a repeat of an identical message still lands" "grew" \
 PATH="$SHIM:$PATH" "$GANG" send alpha --from tester "MARK_TWICE" >/dev/null 2>&1
 check "a paste that never lands is not reported as delivered" "1" "$?"
 
+# ...and what that refusal SAYS. The fragment it quotes is a label — which
+# message failed — and inject compares it against nothing, so its only job is to
+# be readable. `cut -c` cannot promise that: specified in characters, GNU
+# implements it in bytes, and forty bytes through a line that opens with
+# three-byte glyphs ends inside one. gang's own envelope is ASCII for its first
+# twenty-three characters, which is why this never bit in practice — a property
+# of the message format, not a guarantee, and the body is the half that moves.
+#
+# Asserted in BYTES, because that is the entire claim: forty CHARACTERS of text
+# containing any multibyte glyph cannot fit in forty bytes. Independent of the
+# nonce width, of where the boundary lands, and of the locale this suite runs
+# under — a byte count is a byte count. The upper bound is the other half of the
+# label's job: bounded, so a die message cannot become the whole first line.
+out="$(PATH="$SHIM:$PATH" "$GANG" send alpha --from tester \
+  "✗✗✗ delivery — a first line that opens with multibyte text" 2>&1)"
+frag="$(printf '%s\n' "$out" | sed -n "s/^.*pasting '\(.*\)' left the input box.*$/\1/p")"
+fb="$(printf '%s' "$frag" | wc -c | tr -d ' ')"
+check "and the fragment it names the message by is sized in characters" "characters" \
+  "$([ "$fb" -gt 40 ] && [ "$fb" -le 160 ] && echo characters || echo "bytes ($fb)")"
+
 # A real TUI does not echo a paste back — it COLLAPSES it into a placeholder, and
 # the shape of that placeholder is the harness's own business. Claude Code writes
 # "[Pasted text #1 +10 lines]", counting lines BEYOND the first, and drops the
@@ -564,6 +584,21 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 sleep 0.5
 paint busybee 'WORKING...'
 check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)"
+
+# That check is also this repo's contamination bug standing in the open, so name
+# it: nothing ran a turn. A shell echoed the marker and gang read the word rather
+# than the state. Issue #5, closed as accepted rather than guarded — the argument
+# is at busy_painted() in bin/gang, and its short form is that gated() is
+# protected by a structural fact (a modal owns the screen, so a live composer
+# proves the words are only talk) and busy has no equivalent available to it.
+#
+# Accepted because of the DIRECTION, which is what the check below pins. Text on
+# a pane can only ADD marker matches, so contamination costs a waiter that waits
+# out its timeout on an agent that was free the whole time — never a message
+# pasted into a live turn. Anyone who later fits a guard here has to delete this
+# case to do it, which is the point of writing the decision as a test.
+"$GANG" wait busybee 1 >/dev/null 2>&1
+check "and an agent contaminated by its own screen costs a wait, not a delivery" "1" "$?"
 
 # A capture that fails is not a state. `status` names the state through a command
 # substitution now, and the exit status of a substitution sitting in an argument
@@ -1163,7 +1198,69 @@ check "a shadowed profile is vetted against the shadow's pins" "1" \
   "$(printf '%s' "$vout" | grep -c '^claude-code .*9\.9\.9.*OK')"
 check "and is named as shadowing rather than passed off as the shipped one" "yes" \
   "$(holds "$vout" 'shadowing the shipped profile')"
+
+# One ROT RISK line covered three situations that call for different urgency, and
+# an operator could not tell which one they were holding. Newer than every pin is
+# the rot case. Older is a different failure — a declared marker can be absent
+# because it postdates the build. Between two pins was confirmed either side of
+# where it sits. The pins are real shapes: opencode ships three of them, and
+# codex prints its number LAST, so the version word cannot be assumed to lead.
+vetpin() { # $1 = profile name, $2 = what --version prints, $3 = the pins
+  printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERSION_CMD="echo %s"\nGANG_VERIFIED_VERSIONS="%s"\n' \
+    "$2" "$3" > "$SHIM/vetdir/$1.sh"
+}
+vetpin vetnewer   "1.2.4"                     "1.2.3"
+vetpin vetolder   "1.1.0"                     "1.2.3 1.3.0"
+vetpin vetbetween "1.16.0"                    "1.14.39 1.18.7"
+vetpin vetcodex   "codex-cli 0.144.6"         "0.144.5"
+vetpin vetambig   "harness 1.2.4 build 9.9.9" "1.2.3"
+vetpin vettie     "1.18"                      "1.18.0 2.0.0"
+vetpin vetword    "v1.2.4"                    "1.2.3"
+vout="$(GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
+check "a build newer than every pin is named as the rot case" "yes" \
+  "$(holds "$vout" '^vetnewer +1[.]2[.]4 +ROT RISK — NEWER than every verified version')"
+check "one older than every pin is named as the other failure" "yes" \
+  "$(holds "$vout" '^vetolder +1[.]1[.]0 +ROT RISK — OLDER than every verified version')"
+check "and one between two pins says it was confirmed either side" "yes" \
+  "$(holds "$vout" '^vetbetween +1[.]16[.]0 +ROT RISK — between verified versions')"
+check "the version word is found where the harness trails it" "yes" \
+  "$(holds "$vout" '^vetcodex +codex-cli 0[.]144[.]6 +ROT RISK — NEWER than every verified')"
+
+# The half that had to not move. An ordering nobody can be sure of keeps the
+# verdict this command has always printed, byte for byte, because the dangerous
+# direction is a wrong "confirmed either side" downgrading a version nobody has
+# ever checked. Three ways to be unsure, all of them reachable from a real
+# harness: two version-shaped words in one line and no way to say which is the
+# version; a string that does not parse at all; and a numeric TIE, which the
+# exact-match above already rejected — so 1.18 against a pinned 1.18.0 means the
+# strings differ where the numbers do not, and which of those the operator has is
+# exactly what cannot be told from here.
+check "two version-shaped words in one line order nothing" "yes" \
+  "$(holds "$vout" '^vetambig +harness 1[.]2[.]4 build 9[.]9[.]9 +ROT RISK — markers verified against: 1[.]2[.]3$')"
+check "a version string that does not parse orders nothing" "yes" \
+  "$(holds "$vout" '^vetword +v1[.]2[.]4 +ROT RISK — markers verified against: 1[.]2[.]3$')"
+check "and a numeric tie is an unknown, not a between" "yes" \
+  "$(holds "$vout" '^vettie +1[.]18 +ROT RISK — markers verified against: 1[.]18[.]0 2[.]0[.]0$')"
 rm -rf "$SHIM/vetdir"
+
+# A weaker WORDING is not a weaker verdict. The between case is the one a fix
+# here can quietly downgrade — it is the pretty case — and vet's exit status is
+# what a script and a CI job read. Isolated by shadowing every shipped pin to
+# `any` so the ambient tree cannot supply the drift, and controlled by running
+# the same dir with the between row removed: without that control a 1 proves
+# nothing, since almost anything in a real profile tree drifts.
+mkdir -p "$SHIM/vetonly"
+for p in claude-code codex opencode pi; do
+  printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERIFIED_VERSIONS="any"\n' > "$SHIM/vetonly/$p.sh"
+done
+printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERSION_CMD="echo 1.16.0"\nGANG_VERIFIED_VERSIONS="1.14.39 1.18.7"\n' \
+  > "$SHIM/vetonly/vetbetween.sh"
+GANG_PROFILES="$SHIM/vetonly" "$GANG" vet >/dev/null 2>&1
+check "a between verdict still fails the command" "1" "$?"
+rm -f "$SHIM/vetonly/vetbetween.sh"
+GANG_PROFILES="$SHIM/vetonly" "$GANG" vet >/dev/null 2>&1
+check "and that 1 was the between row, not the tree around it" "0" "$?"
+rm -rf "$SHIM/vetonly"
 
 # --- vet --probe: the markers fired at a live pane -----------------------------
 
@@ -1930,6 +2027,15 @@ check "no shipped profile sizes a multibyte glyph with substr" "0" \
 # test with.
 check "no forked producer is piped into grep -q" "0" \
   "$(grep -c ') | grep -q' "$GANG")"
+# The third member of that family, and the one that already shipped: text sized
+# with `cut -c`. The option is specified in characters, GNU implements it in
+# bytes, and the split is per PLATFORM rather than per awk build — so unlike the
+# two rules above, the behavioural check for it (in the delivery section) can
+# only fail on one side of the split. This one holds on both. Source-level for
+# the same reason as the substr rule: the behavioural version passes wherever
+# `cut -c` happens to be the character-oriented implementation.
+check "no text in gang is sized with cut -c" "0" \
+  "$(grep -c 'cut -c' "$GANG")"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'

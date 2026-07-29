@@ -552,6 +552,38 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   # The pane question, unconditioned: is this harness painting its busy marker?
   # Captured into a variable, not piped: a capture that FAILS must not read as
   # "idle" and wave an injection into a pane nobody looked at.
+  #
+  # Unconditioned includes unguarded about PROVENANCE, and that is settled rather
+  # than overlooked. An agent that displays a profile, quotes a capture, or
+  # reviews this repo puts the marker on its own screen and reads busy off its
+  # own source, and the people that lands on are almost exclusively the people
+  # working on gangline. What was looked for is the thing gated() has: a
+  # structural fact separating "the harness is painting its marker" from "the
+  # pane holds that text for another reason". Every dialog watched live OWNS the
+  # screen, so a composer that is still there proves the words are talk ABOUT a
+  # prompt. Busy has no such companion. The composer is painted through a turn on
+  # some harnesses and dropped on others, so neither its presence nor its absence
+  # says anything here. Position is not it: prose-quoted markers were measured
+  # inside the bottom twenty rows in 49 samples and outside it in the rest, which
+  # is why capture_status is one predicate's window and not a general defence.
+  # And tmux hands over cells, not provenance — capture-pane cannot say who wrote
+  # one, while styling would mean -e, which blinds the anchored gate regexes and
+  # marks up quoted text anyway.
+  #
+  # What is left is excluding prose by pattern, and prose is not a thing to
+  # pattern-match. So what guards this is the failure DIRECTION, and that is why
+  # doing nothing beats guessing: text on a pane can only ADD marker matches.
+  # Contamination makes an idle agent read busy — sends queue or are refused,
+  # `gang wait` runs to its timeout — and can never make a busy agent read idle,
+  # which is the reading that would paste into a live turn. Bounded, and paid in
+  # waiting rather than in a message landing somewhere it should not.
+  #
+  # The two signals that CAN tell a live turn from static text — recently_active
+  # and churn — are ORed into busy() and have to stay that way. Conjoined into a
+  # guard here they invert that direction: both are unavailable by default,
+  # GANG_QUIET_AT_REST is declared per harness with each profile saying why, and
+  # an AND with an unavailable signal reads every busy agent as idle. That trades
+  # a bounded cost for the unbounded one.
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
@@ -1183,7 +1215,33 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 
 inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
-  frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
+  # frag is a LABEL, not a probe. It names which message a failure is about, in
+  # the eleven human-facing strings below, and nothing here compares it against
+  # the pane: delivery is proved by the input box CHANGING across the paste. So
+  # the width is chosen for someone reading an error, not for matching, and the
+  # question "did the first N units land" is never asked. Anyone restoring a
+  # fragment-versus-pane comparison brings back the bug the before/after check
+  # replaced — a second identical send verifying against the first one's echo.
+  #
+  # Sliced by the shell, not by `cut -c`. That option is specified in characters
+  # and implemented in BYTES by GNU coreutils while BSD honours the spec, which
+  # is the same platform coin-flip that cost this repo two shipped bugs one axis
+  # over (awk's substr, 9417312 and 077cdeb). A byte cut through a multibyte
+  # first line leaves half a glyph on the end of every message quoting it, and
+  # on the record stage_record writes into tmux. Bash slices in this process's
+  # own LC_CTYPE, and gang settles that at the top of this file — a UTF-8 locale
+  # or vet reporting it could not get one — so the cut lands on a character
+  # boundary wherever any marker in this repo matches at all, and a host too
+  # bare for that degrades through the mechanism that already announces itself.
+  #
+  # It also retires a `producer | head -1` on a delivery path. bash's stdout is
+  # line-buffered, so printf emits one write per LINE: given a multi-line message
+  # head exits at line one while printf still has lines to write, and the SIGPIPE
+  # that follows reads as 141 under pipefail — with set -e, the send dies at its
+  # own first line. Issue #6's shape, and NOT bounded by payload size; measured
+  # at four lines it did not lose the race in 500 runs, but the race is there.
+  frag="${2%%$'\n'*}"
+  [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   # The one delivery no before/after verification can make safe: while a modal
   # owns the input box, keystrokes are ANSWERS. Checked here at the chokepoint —
   # immediately before the paste — so every path in (send, compact, patrol,
@@ -1969,9 +2027,100 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
 
 # --- diagnostics ------------------------------------------------------------
 
-file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact title
+version_word() { # $1 = a version line -> the one dotted-numeric word in it, or nonzero
+  # Certainty is the whole product here, so this refuses far more than it
+  # accepts. A word qualifies only if it is digits and dots, has at least one
+  # dot, and has no empty component — `2.1.220` and `0.144.5` qualify, while
+  # `codex-cli`, `(Claude`, `v1.2.3`, `1.18.7-rc1` and a bare `220` do not. Two
+  # qualifying words in one line is a refusal too: nothing here can say which of
+  # them is the version, and a wrong pick orders the wrong number.
+  #
+  # Every refusal lands the caller on vet's original undifferentiated verdict,
+  # which is the direction that stays loud. The failure this shape exists to
+  # prevent is the opposite one — concluding "verified on both sides" about a
+  # version nobody has ever checked.
+  #
+  # Walked by parameter expansion rather than `for w in $1`: an unquoted
+  # expansion is glob-expanded, so a version line carrying a `*` would be
+  # answered by whatever happens to be in the caller's cwd.
+  local rest w out=""
+  rest="${1//$'\t'/ }"
+  while :; do
+    while [ "${rest# }" != "$rest" ]; do rest="${rest# }"; done
+    [ -n "$rest" ] || break
+    w="${rest%% *}"
+    rest="${rest#"$w"}"
+    case "$w" in
+      *[!0-9.]*) continue ;;   # anything that is not a digit or a dot
+      *..*|.*|*.) continue ;;  # an empty component is not a number
+      *.*) ;;                  # digits and dots, at least one dot: a candidate
+      *) continue ;;           # a bare integer names no version this can order
+    esac
+    [ -z "$out" ] || return 1
+    out="$w"
+  done
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
+version_cmp() { # $1, $2 = dotted-numeric -> prints 1 if $1 is higher, -1 if lower, 0 if equal
+  # Component-wise, with a missing component read as zero, so 1.18 and 1.18.0
+  # compare equal. 10# because a component is a decimal string and `08` is not
+  # octal — an arithmetic base error here would be a die inside a diagnostic.
+  local a="$1" b="$2" x y
+  while [ -n "$a" ] || [ -n "$b" ]; do
+    x="${a%%.*}"; y="${b%%.*}"
+    [ -n "$x" ] || x=0
+    [ -n "$y" ] || y=0
+    if [ "$((10#$x))" -gt "$((10#$y))" ]; then printf '1'; return 0; fi
+    if [ "$((10#$x))" -lt "$((10#$y))" ]; then printf -- '-1'; return 0; fi
+    case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
+    case "$b" in *.*) b="${b#*.}" ;; *) b="" ;; esac
+  done
+  printf '0'
+}
+
+version_rank() { # $1 = installed line, $2 = the pins -> newer|older|between, or nonzero
+  # Nonzero means UNKNOWN, and unknown is not a "between". Every way this can
+  # fail to be sure — an installed line with no version word or two of them, a
+  # pin that does not parse, or a numeric tie the exact-match above already
+  # said was not a match — returns nonzero and keeps the loud verdict.
+  #
+  # A tie is deliberately in that list rather than folded into `between`. Reaching
+  # here means the strings differ while the numbers do not (`1.18` pinned against
+  # an installed `1.18.0`, or a build suffix), and which of those two the operator
+  # has is exactly what this function cannot tell them.
+  local inst pin v below=0 above=0
+  inst="$(version_word "$1")" || return 1
+  for v in $2; do
+    pin="$(version_word "$v")" || return 1
+    case "$(version_cmp "$inst" "$pin")" in
+      1)  above=$((above + 1)) ;;
+      -1) below=$((below + 1)) ;;
+      *)  return 1 ;;
+    esac
+  done
+  if [ "$below" -eq 0 ] && [ "$above" -gt 0 ]; then printf 'newer'
+  elif [ "$above" -eq 0 ] && [ "$below" -gt 0 ]; then printf 'older'
+  elif [ "$above" -gt 0 ] && [ "$below" -gt 0 ]; then printf 'between'
+  else return 1
+  fi
+}
+
+file_rot_issue() { # $1 = profile, $2 = installed version line, $3 = ordering; dedup by title
   command -v gh >/dev/null || die "vet --file-issue: gh CLI not installed"
   local title="strategy rot: $1 markers unverified against $2"
+  # The ordering goes in the BODY and never in the title, because the title is
+  # the dedup key: a rerun that ranked the same build differently — a pin
+  # appended between runs is enough — would file a second issue about the one
+  # thing this function exists to file once.
+  local ordering
+  case "$3" in
+    newer)   ordering="newer than every verified version" ;;
+    older)   ordering="older than every verified version" ;;
+    between) ordering="between two verified versions" ;;
+    *)       ordering="unknown — the version strings do not order confidently" ;;
+  esac
   # Dedup via the plain list endpoint, not --search: the search index is
   # eventually-consistent and misses issues filed seconds ago (observed live —
   # a rerun filed a duplicate).
@@ -1998,6 +2147,7 @@ gang vet detected strategy rot.
 - profile: \`profiles/$1.sh\`
 - installed harness version: \`$2\`
 - verified against: \`$GANG_VERIFIED_VERSIONS\`
+- ordering: $ordering
 
 The profile's scraped TUI markers (busy regex, context readout, input-box
 shape) were verified against the versions listed above, not the installed
@@ -2461,10 +2611,37 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
         printf '%-12s %-26s %s\n' "$prof" "$installed" \
           "$(colour "$C_OK" "OK (verified: $GANG_VERIFIED_VERSIONS)")"
       else
-        printf '%-12s %-26s %s\n' "$prof" "$installed" \
-          "$(colour "$C_BAD" "ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS")"
+        # One verdict covered three situations that call for different urgency:
+        # a build NEWER than anything verified is the rot case, where markers may
+        # have moved and nobody has looked; one OLDER is a different failure,
+        # where a declared marker can be absent because it postdates the build
+        # rather than because it rotted; and one BETWEEN two pins was confirmed
+        # either side of where it sits. The operator could not tell which they
+        # had, so the line could not say whether to re-verify now or later.
+        #
+        # Differentiated in the WORDING and the colour, and nowhere else. drift
+        # still rises for all four, the issue is still filed for all four, and
+        # the words ROT RISK still lead every one of them — the exit code and
+        # that token are what agents and scripts key on (roles/_common.md tells
+        # an agent to report ROT RISK to the operator), and quietly narrowing
+        # either would trade a verdict an operator has to read for one nothing
+        # reads at all. This makes the loud verdict specific, not quieter.
+        local rank note hue="$C_BAD"
+        rank="$(version_rank "$installed" "$GANG_VERIFIED_VERSIONS")" || rank="unknown"
+        case "$rank" in
+          newer) note="ROT RISK — NEWER than every verified version ($GANG_VERIFIED_VERSIONS): markers may have moved and nobody has looked" ;;
+          older) note="ROT RISK — OLDER than every verified version ($GANG_VERIFIED_VERSIONS): a declared marker may be absent because it postdates this build" ;;
+          between) note="ROT RISK — between verified versions ($GANG_VERIFIED_VERSIONS): confirmed either side of this build, never on it"
+                   hue="$C_WORK" ;;
+          # Unparseable, ambiguous, or a numeric tie the exact match already
+          # rejected. Byte for byte the verdict this command has always printed,
+          # because an unknown ordering is the case with the least evidence
+          # behind it and must not read as the case with the most.
+          *) note="ROT RISK — markers verified against: $GANG_VERIFIED_VERSIONS" ;;
+        esac
+        printf '%-12s %-26s %s\n' "$prof" "$installed" "$(colour "$hue" "$note")"
         drift=1
-        [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
+        [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed" "$rank"
       fi
     fi
     # Which file answered, but only when it is not the obvious one, so the common
