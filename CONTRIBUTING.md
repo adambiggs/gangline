@@ -121,13 +121,24 @@ wrap `grep` in a shell function for their own interactive use; a measurement tak
 at such a prompt reported that wrapper's exit codes as the tool's, when every
 script here runs `/usr/bin/grep` and gets different ones. Run a measurement the way
 the code runs it — in a script, through the same binary — or the number belongs to
-the stand-in. Same reason the suite refuses mocks: a mock agrees with whatever the
-code already does.
+the stand-in.
 
-The test
-drives `bin/gang` against a real tmux server with the `bash` profile — no mocks,
-because a mocked tmux would agree with whatever the code already does. A fix to
-delivery or addressing belongs there as a case that fails without the fix.
+A trap documented only where you met it is a trap the next site will hit. Twice
+already this repository held the answer and a new site walked in anyway: the unix
+socket path-length limit, documented twenty lines into the test suite, and
+command-substitution `die` semantics, documented at the one call site that
+deliberately relies on them. Both times the knowledge was attached to the place it
+was learned rather than to the class it belongs to. Write it where the class lives
+— a rule the suite enforces, or a comment on the helper every caller passes
+through. Local knowledge that does not generalise is a note to the person who
+already knew.
+
+A fixture must answer for itself, or its failure will be read as a defect in the
+thing under test.
+
+The test drives `bin/gang` against a real tmux server with the `bash` profile — no
+mocks, because a mocked tmux would agree with whatever the code already does. A fix
+to delivery or addressing belongs there as a case that fails without the fix.
 
 ## License
 
