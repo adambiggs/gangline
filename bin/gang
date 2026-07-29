@@ -1058,10 +1058,20 @@ unpark() { # drop OUR marker, never somebody else's
   tmux set-option -uw -t "$w" @gl_waiting 2>/dev/null || true
 }
 
-# One EXIT trap for both, because bash keeps only the last one installed and
-# lock_pane and park_self can be reached in either order (`send --wait` waits
-# first and locks second; `send` locks without ever waiting).
-on_exit() { lock_release; unpark; }
+# One EXIT trap for all three, because bash keeps only the last one installed and
+# lock_pane, park_self and probe_start can be reached in either order (`send
+# --wait` waits first and locks second; `send` locks without ever waiting).
+#
+# probe_teardown runs FIRST, and the order is load-bearing rather than tidy.
+# unpark calls tmux, and while a probe is up the PATH shim is still installed, so
+# running it before the shim comes off aims it at the PROBE server — precisely
+# what the shim exists to prevent. probe_teardown restores PATH, so everything
+# after it is aimed at the real one.
+#
+# Calling it unconditionally is safe by construction: it returns at its first
+# line when no probe is running, and it clears its own state, so twice costs the
+# same as once. That matters because cmd_vet also calls it on the success path.
+on_exit() { probe_teardown; lock_release; unpark; }
 
 park_self() { # mark this window as blocked in gang's own wait
   # Not being in a pane is normal, not an error: gang runs from the operator's
@@ -2324,10 +2334,17 @@ PROBE_PATH=""  # PATH as it was before the shim went on the front of it
 PROBE_CWD=""   # the specimen directory every probed harness is launched in
 
 probe_teardown() { # reached through on_exit, so it runs on die() and on ^C alike
+  # Both halves of that are measured, because the sentence was here for a while
+  # asserting an invariant on_exit did not implement — it called lock_release and
+  # unpark and nothing else, so every die() inside a probe leaked the server and
+  # the temp tree, and the comment vouched for a teardown that never ran. The ^C
+  # half was checked the way a terminal actually does it: SIGINT to the whole
+  # process group, script dies, EXIT trap still runs.
+  #
   # Explicit -L even though the shim would supply one, because this is the call
   # that must be right when nothing else is: a kill-server that resolves to the
   # default socket ends the operator's live team from inside its own diagnostic.
-  [ -n "$PROBE_L" ] || return 0
+  [ -n "${PROBE_L:-}" ] || return 0
   tmux -L "$PROBE_L" kill-server 2>/dev/null || true
   # kill-server ends the server and leaves its socket FILE behind, so a probe that
   # only killed would drop one dead socket per run into a directory shared with

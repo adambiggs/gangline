@@ -1510,6 +1510,51 @@ check "the probe leaves no server behind on its own socket" "" "${leftover# }"
 check "and the session under test is untouched by all of it" "yes" \
   "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
 
+# --- a die inside a probe must not leak the server it stood up -----------------
+#
+# The exit code cannot see this bug. A leaked tmux server and a leaked temp tree
+# change no status, so a check that reads only the refusal passes just as
+# happily with the teardown missing — which is how this survived: on_exit ran
+# lock_release and unpark and nothing else, so every die() between probe_start
+# and the end of a probe left a live server behind, in the same directory that
+# holds the live team's socket, while probe_teardown's own header said it ran
+# "on die() and on ^C alike". The comment asserted the invariant; nothing
+# implemented it.
+#
+# A malformed marker is the cheapest way in, now that an unevaluable regex dies
+# where it used to read as absent — but the leak is the trap's, not re_match's,
+# and two other die sites in the same window leak the same way.
+#
+# TMUX_TMPDIR and TMPDIR are isolated so the assertion can be ABSOLUTE. "None at
+# all" cannot be perturbed by a teammate probing at the same moment, which a
+# before/after diff in a shared directory demonstrably can.
+LEAKD="$SHIM/leak"; mkdir -p "$LEAKD/tmux" "$LEAKD/tmp" "$LEAKD/prof"
+cat > "$LEAKD/prof/leakmark.sh" <<SH
+GANG_LAUNCH="bash --rcfile $SHIM/probedir/live.rc -i"
+GANG_BUSY_REGEX="[unclosed"
+GANG_VERSION_CMD="echo 9.9.9"
+GANG_VERIFIED_VERSIONS="9.9.9"
+SH
+leakout="$(env -u TMUX TMUX_TMPDIR="$LEAKD/tmux" TMPDIR="$LEAKD/tmp" \
+  GANG_PROFILES="$LEAKD/prof" GANG_PROBE_PROMPT="probe_work" \
+  GANG_PROBE_BOOT=25 GANG_PROBE_TURN=10 GANG_PROBE_SETTLE=10 GANG_PROBE_QUIET=2 \
+  "$GANG" vet --probe leakmark 2>&1)"; leakrc=$?
+leak_names() { # $1 = a directory -> the gangvet-* entries in it, by name
+  local e
+  for e in "$1"/gangvet-*; do
+    [ -e "$e" ] || continue
+    printf '%s\n' "${e##*/}"
+  done
+}
+check "a probe whose marker cannot be evaluated refuses" "1" "$leakrc"
+check "and says which setting and file to fix" "yes" \
+  "$(contains "$leakout" "GANG_BUSY_REGEX")"
+check "the server it stood up is not left running" "" \
+  "$(leak_names "$LEAKD/tmux/tmux-$(id -u)")"
+check "and its temp tree is not left on disk" "" \
+  "$(leak_names "$LEAKD/tmp")"
+rm -rf "$LEAKD"
+
 # Finding F, as a report rather than a guard: a clean bill that leaves the reader
 # to assume a marker was fired is what let three dead markers through, and the
 # only fix for a report that overstates its scope is a report that states it.
@@ -1628,9 +1673,14 @@ check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p
 # The regex is made bad AFTER the hitch, not before, so the check is aimed at the
 # state read and not at whatever the launch path happens to evaluate. load_profile
 # re-reads the file every resolve, so overwriting it is enough.
-cat > "$SHIM/custom-profiles/badregex.sh" <<'SH'
+#
+# Rewritten whole rather than edited in place: `sed -i` takes a mandatory suffix
+# argument on BSD and none on GNU, so the one-liner that does this on the
+# development box is a syntax error on the macOS cell — the same split that put
+# `cut -c` and mawk-vs-gawk `substr` in this file's source rules.
+badprofile() { # $1 = the busy regex this fixture declares, verbatim
+  cat > "$SHIM/custom-profiles/badregex.sh" <<'SH'
 GANG_LAUNCH="PS1='❯ ' bash --norc"
-GANG_BUSY_REGEX="WORKING\\.\\.\\."
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
   local line
@@ -1638,11 +1688,14 @@ profile_input() {
   printf '%s' "${line#❯}" | tr -d '\302\240'
 }
 SH
+  printf "GANG_BUSY_REGEX='%s'\n" "$1" >> "$SHIM/custom-profiles/badregex.sh"
+}
+badprofile 'WORKING\.\.\.'
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" hitch badagent -p badregex -d /tmp >/dev/null
 check "the fixture reads a state while its marker is a regex" "yes" \
   "$(like "$("$GANG" status badagent 2>&1)" '*tug*')"
-sed -i 's/^GANG_BUSY_REGEX=.*/GANG_BUSY_REGEX="[unclosed"/' "$SHIM/custom-profiles/badregex.sh"
+badprofile '[unclosed'
 badout="$("$GANG" status badagent 2>&1)"; badrc=$?
 check "an unevaluable busy marker fails loud instead of reading idle" "1" "$badrc"
 check "and never answers with a state it could not determine" "no" \
@@ -1651,7 +1704,7 @@ check "the refusal names the setting to go and fix" "yes" \
   "$(contains "$badout" "GANG_BUSY_REGEX")"
 check "and the file that setting lives in" "yes" \
   "$(contains "$badout" "badregex.sh")"
-sed -i 's/^GANG_BUSY_REGEX=.*/GANG_BUSY_REGEX="WORKING\\.\\.\\."/' "$SHIM/custom-profiles/badregex.sh"
+badprofile 'WORKING\.\.\.'
 "$GANG" drop badagent >/dev/null 2>&1 || true
 
 # --- a compaction gang issued itself -------------------------------------------
@@ -2257,6 +2310,21 @@ check "no text in gang is sized with cut -c" "0" \
 # and a rule like that is one people learn to route around.
 check "no profile regex is evaluated outside the helper that reports errors" "0" \
   "$(grep -E 'grep .*\$GANG_[A-Z_]*REGEX' "$GANG" | grep -cv '^[[:space:]]*#')"
+# Same family as the `cut -c` rule and caught the same way — by asking what the
+# macOS cell would make of it rather than by running it here. In-place sed takes
+# a mandatory suffix argument on BSD and refuses one on GNU, so the edit that
+# works on this box is a usage error there, and it lands as a dead fixture rather
+# than as anything naming sed. -h so the two paths do not prefix the lines and
+# defeat the comment filter.
+#
+# The pattern is bracketed AND the check is named without the string it forbids,
+# because this rule scans the file it is written in and so can violate itself.
+# Dropping comment lines was enough for the three rules above, which only ever
+# scanned bin/gang. Here the shape turned up in all three places a rule can hide
+# it — the prose explaining it, the pattern implementing it, and the name
+# announcing it — and each one had to stop spelling it out separately.
+check "no file is edited in place by sed" "0" \
+  "$(grep -h 'sed -[i]' "$0" "$GANG" | grep -cv '^[[:space:]]*#')"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'
