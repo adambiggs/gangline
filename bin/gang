@@ -362,6 +362,15 @@ resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profi
   load_profile "$AGENT_PROFILE"
 }
 
+# No -e, deliberately, and this is the first thing anyone proposes on being told
+# a marker might be a colour rather than a character. Nearly every marker
+# gangline scrapes is anchored to the START of a line, which is exactly where an
+# escape sequence sits: claude-code's busy branch matches its own captured
+# thinking line with escapes stripped and does not match it with them present,
+# because the anchor eats the ESC. The same anchoring carries codex's gate
+# (^› [0-9]+\.), pi's (^→), claude-code's own (^ +❯|Esc to) and opencode's badge
+# and box parsing. Passing -e here would blind gate detection on three harnesses
+# the day it landed.
 capture() { tmux capture-pane -p -t "$1"; }
 
 # -J joins pane-width-wrapped lines so matching never breaks on a wrap boundary.
@@ -513,8 +522,16 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   # and the next can miss the input-box content, and every guard reads a
   # different frame (lived it: patrol nudged mid-compaction and the note
   # jumped the harness's own input queue). A quietly idle TUI paints a static
-  # screen; streaming, spinners, timers, and compaction redraws all churn.
-  # Scrapes no marker, so it cannot rot.
+  # screen; streaming, spinners and timers all churn. Scrapes no marker, so it
+  # cannot rot.
+  #
+  # What it cannot do is tell a finished turn from a silent one, and the gap is
+  # measured rather than supposed: a claude-code compaction paints nothing at
+  # all and holds the screen byte-identical — 633 consecutive captures over 158
+  # seconds, no marker of any kind on any of them — so this answers "stable"
+  # straight through one. Any long silent stretch reads the same way: a test
+  # run, a fetch, a large read. Stable means the PANE has stopped moving, which
+  # is not the same claim as the agent having stopped working.
   local a b
   a="$(capture "$1")" || die "cannot read pane $1"
   sleep 0.5
