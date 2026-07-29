@@ -28,27 +28,63 @@ GANG_MODEL_OPT="--model"
 # release without anything failing, because the ones covering the other states
 # went on matching and no check ever asked which branch fired.
 #
-# First form, the ordinary turn: "✶ Zesting… (29s · ↓ 313 tokens · thought for
-# 26s)". A spinner glyph, a gerund, then a parenthetical of telemetry. The glyph
-# cycles (* · ✢ ✶ ✻ ✽) and the gerund is drawn from a whimsical vocabulary
-# (Zesting, Cultivating, Stewing, Inferring), so the SHAPE is the marker and the
-# words are not — do not enumerate them. This is the only thing on screen that
-# says a turn is running: a busy pane and an idle one differ by this one line
-# and nothing else, which is why there is no second branch to add here.
-# Second form, API-retry backoff: "✻ 529 Overloaded · Retrying in 2s ·
-# attempt 4/10" — a turn is in flight but a digit follows the glyph, so the
-# gerund shape misses it and this needs its own branch.
-# Third form, compaction: /compact paints a progress bar ("▰▰▰▱▱… 42%") with NO
-# gerund spinner (lived it: patrol read a compacting pane as idle and its nudge
-# jumped the input queue). The bar glyphs are erased on completion, never in
-# scrollback. Literal alternation, not [▰▱]: in cron's C locale a multibyte
-# bracket class matches single BYTES, and the welcome-logo glyphs share the
-# UTF-8 prefix.
+# So each branch below says what was DRIVEN, what was OBSERVED, and what was
+# never driven at all. An undriven branch and a verified one are indistinguish-
+# able in a file, and that is how the dead one survived a release: nothing in
+# gang vet ever fires these at a pane — it checks harness versions and the
+# file-format parsers — so "verified" means a human watched a pane, and only
+# where it says so below. Every absence recorded here was sampled at ~4Hz, so it
+# means "not painted for a quarter second", not "never painted".
 #
-# The bar is also the whole of GANG_COMPACTING_REGEX below, so it is one
-# dependency answering two questions: restyle the bar and both busy-during-
-# compaction and compaction-detection go at once. The installed binary already
-# carries other progress-bar glyph sets, so that is a live risk, not a theory.
+# FIRST FORM, THE THINKING SPINNER: "✶ Zesting… (29s · ↓ 313 tokens · thought
+# for 26s)". A spinner glyph, a gerund, then a parenthetical of telemetry. The
+# glyph cycles (* · ✢ ✶ ✻ ✽) and the gerund is whimsical vocabulary (Zesting,
+# Billowing, Blanching, Canoodling), so the SHAPE is the marker and the words
+# are not — do not enumerate them. Driven and observed on clean panes.
+#
+# READ THIS BEFORE TRUSTING IT: it covers THINKING and nothing else. When
+# claude-code begins emitting an answer it removes the spinner and paints no
+# replacement, so a streaming turn is bare. Measured on a clean throwaway: of
+# 220 samples with the pane demonstrably changing, 19 carried any branch of this
+# regex — 8.6% — and the longest unbroken run of live-but-unmarked samples was
+# 64, about 16 seconds. Streaming is most of a long turn. So busy() reading
+# false does NOT mean no turn is in flight on this harness, and every caller
+# that assumes it does is wrong for the length of the answer. What marks a
+# streaming turn, if anything does, is open. Do not close it by widening this
+# branch: a guessed alternate is a fourth single point of failure sharing this
+# one variable.
+#
+# Latent, in this same branch, and NOT the cause of the above: the gerund shape
+# accepts a SINGLE capitalised word. Every label yet observed is one word, so it
+# matches everything the harness currently paints — and a two-word thinking
+# label would miss entirely.
+#
+# SECOND FORM, API-RETRY BACKOFF: "✻ 529 Overloaded · Retrying in 2s ·
+# attempt 4/10" — a turn is in flight but a digit follows the glyph, so the
+# gerund shape misses it and this needs its own branch. NEVER DRIVEN: a 529 does
+# not arrive on demand, and it appeared in none of the samples above. There is
+# no live observation behind this branch at all. It stays because if it is right
+# it is the sole cover for a whole state, and a false idle costs more than a
+# dead branch.
+#
+# THIRD FORM, THE PROGRESS BAR: not observed in any state, and kept anyway. It
+# was this file's compaction cover and is not any more — 2.1.220 paints no bar
+# during a compaction (637 samples bracketing a real one: zero hits for these
+# glyphs, zero for the whole of this regex) and none on an ordinary turn (0 of
+# 14862 unfiltered whole-pane frames, in a capture that recorded four other
+# multibyte glyphs from the same footer). So these two alternates are NOT
+# defending against what put them here: a compacting pane reads idle.
+#
+# They stay because absence is not death, and because the two removals are not
+# the same act. Dropping a DECLARATION whose absence is safe needs only that it
+# cannot be shown to fire. Dropping a BUSY BRANCH needs more, because if it is
+# alive in a state nobody drove — an install, a plugin setup, a download — gang
+# reads idle while the harness works: sends take the wrong path, patrol nudges a
+# live turn, wait returns early. The frames above cover a compaction and a
+# handful of turns, and say nothing about those.
+#
+# Literal alternation, not [▰▱]: in cron's C locale a multibyte bracket class
+# matches single BYTES, and the welcome-logo glyphs share the UTF-8 prefix.
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
@@ -58,15 +94,32 @@ GANG_VERIFIED_VERSIONS="2.1.220"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"
-# The progress bar again, on its own, because it answers a second question: not
-# "is a turn in flight" but "is THIS turn the compaction" — the one a resume can
-# be handed to early. Same glyphs and the same literal-alternation reason as the
-# busy regex above; a compacting pane is necessarily busy, so this stays a subset
-# of it. Watched frame by frame through a live /compact: the bar paints ~1s after
-# submission and holds unbroken to the end (385 consecutive captures, no gap), and
-# the input box is drawn and EMPTY in every one of them — so a resume delivered
-# mid-compaction has somewhere to land and nothing to interleave with.
-GANG_COMPACTING_REGEX='▰|▱'
+# GANG_COMPACTING_REGEX is deliberately unset, and that is a measurement rather
+# than an omission. It was the bar glyphs and nothing else, and 2.1.220 paints no
+# bar during a compaction: 637 samples across a real one on a clean pane, only 2
+# of them a change, zero hits for the glyphs and zero for the whole busy regex.
+# Removing it is BEHAVIOUR-NEUTRAL — a declaration that never matched bought
+# nothing, so deleting it neither opens the hole below nor closes it. It stops
+# hiding it. gang branches on the declaration, so an absent one is honest where a
+# false one buys a fast path that does not exist.
+#
+# The hole, written down so nobody has to re-derive it. A compacting pane is
+# guarded three ways and on this harness all three are blind at once:
+# compacting() is unset, busy() is false (no bar, no spinner), and pane_stable
+# PASSES because the screen does not move — 633 consecutive byte-identical
+# captures, 151 seconds, one frame. That frame replayed into a pane reads "idle".
+#
+# What actually held patrol off is an accident worth naming. The composer stays
+# drawn for the whole compaction and holds "Press up to edit queued messages", so
+# input_clear is false and patrol holds its nudge and reports "input box has
+# content" — the right action for the wrong reason, and only because that agent
+# happened to have queued input. One that compacts with an empty box gets nudged
+# mid-compaction, which is the overtaking the waiter exists to prevent.
+#
+# Two things a future marker hunt should not have to rediscover: the composer is
+# NOT a compaction signal here, because it is drawn throughout — "detect
+# compaction by the box going away" is already answered — and no bar glyph of any
+# of the three sets the binary carries was painted at any point.
 # Input pasted during a turn is taken, not dropped and not fed to whatever the
 # turn is running: the box accepts the paste and Enter replaces it with "Press up
 # to edit queued messages". Verified live, which is what lets a send reach a
