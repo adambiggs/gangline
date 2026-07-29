@@ -203,12 +203,19 @@ the session is live it also collects any per-window logging gaps — a window op
 recording that a write to the log failed — so a report cannot silently describe a
 dataset with holes in it as if it were complete.
 
-`--clear` is the deletion path: it removes the active log and its retained
-rotation, and clears the recorded gaps. Nothing else deletes measurements, and the
-log outlives the windows it describes by design.
+`--clear` is the deletion path, and it removes every artifact the measurement
+created: the active log, its retained rotation, the adjacent `.lock` coordination
+file, the recorded per-window gaps, and the per-window liveness markers. Clearing
+the liveness markers is what stops deletion leaving a contradiction behind — an
+emptied log beside windows that still believe they have already reported would read
+as "no events yet" when the truth is "the events were deleted and nobody has
+re-declared since". Stop collection before clearing. Nothing else deletes
+measurements, and the log outlives the windows it describes by design.
 
 Both forms need `lib/context_events.py` from the install tree and refuse loudly
-without it.
+without it. See [Context-compliance measurement](context-compliance.md) for the
+record format, the questions the dataset can and cannot answer, and the bounds the
+report declares.
 
 ## Diagnostics and discovery
 
