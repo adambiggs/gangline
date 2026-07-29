@@ -1,104 +1,39 @@
 # Gangline
 
-A harness harness. Gangline unifies any CLI coding agent it can get its hands on —
-Claude Code, Codex, opencode, Pi, whatever ships next — into a tmux-powered team, using each
-for its strengths, with minimal harness-specific integration points.
+Run Claude Code, Codex, opencode, and Pi as one coordinated team. Each agent is a
+named tmux window; `gang` starts them, sends attributed messages, reports their
+state and context usage, compacts them, and releases them.
 
-The name: a gangline is the single rope that hitches many dogs, each in its own
-harness, to one sled and one musher. The integration point is the attachment clip —
-never surgery inside the dog. The rest of the vocabulary keeps the frame —
-[the musher's field guide](docs/field-guide.md) maps every term to its literal
-meaning.
+Gangline is one Bash CLI over tmux. There is no daemon, message bus, database, or
+harness plugin.
 
 ```mermaid
-flowchart TB
-    op([you]):::human --> gang
-    cron[["host cron<br>gang patrol"]]:::edge --> gang
-    prof[("profiles/<br>launch · busy marker · input box · compact cmd")]:::edge -.-> gang
-    gang["<b>bin/gang</b><br>one bash script, no daemon"]:::core
-    gang <==>|"keystrokes in · capture-pane out"| tmux
-
-    subgraph tmux["one tmux session · one window per agent"]
-        direction LR
-        m["lead<br>claude-code"]:::agent
-        a["worker<br>claude-code"]:::agent
-        s["reviewer<br>pi"]:::agent
+flowchart LR
+    you([operator]) --> gang[gang CLI]
+    gang <-->|keystrokes in · pane capture out| tmux
+    subgraph tmux[one tmux session]
+      lead[lead · Claude Code]
+      worker[worker · Codex]
+      review[reviewer · Pi]
     end
-
-    a -.->|"agents drive gang too"| gang
-
-    classDef core fill:#1f6feb,stroke:#1f6feb,color:#fff
-    classDef agent fill:#238636,stroke:#238636,color:#fff
-    classDef human fill:#8957e5,stroke:#8957e5,color:#fff
-    classDef edge fill:#6e7681,stroke:#6e7681,color:#fff
+    tmux --- lead
+    tmux --- worker
+    tmux --- review
 ```
 
-There is no server, no bus, and no database. tmux already holds the state, so
-`gang` is a CLI you run and it exits.
+## Why Gangline
 
-## The five ideas
-
-**Agents are tmux windows.** Hitching is `new-window`, dropping is `kill-window`,
-watching is `capture-pane`, and the window name *is* the agent's identity. Attach
-to the session and you are looking at your team — the pane is the transcript, and
-you can type into it yourself at any time.
-[Read more →](#the-substrate)
-
-**Every message is attributed and verified.** A send is pasted into the target
-pane inside a `[gang:<sender>#<nonce>] … [/gang:<sender>#<nonce>]` envelope,
-confirmed against the harness's input box, and only then submitted. The envelope
-is what makes attribution mechanical rather than decorative: every line the
-sender wrote is inside it, so a body cannot emit the unenveloped line a
-receiving agent reads as the operator speaking, and a caller running inside the
-session is signed as its own window rather than as whatever it claims. No sender
-means no send. Unverified means a loud failure, never a shrug. A mid-turn agent
-is still reachable: where the harness takes input during a turn, the message is
-accepted instead of bouncing.
-[Read more →](#the-substrate)
-
-**Agents manage their own context.** A model cannot feel its own token count, so
-the substrate measures it, warns the agent as it crosses configurable bands, and the
-agent compacts *itself* at the next clean seam, naming what to pick back up, so
-work continues without a human waiting on it.
-[Read more →](#self-compaction)
-
-**A new harness costs a profile, not an integration.** Launch command, busy marker,
-compact command — about ten lines. Everything else is universal.
-[Read more →](#profiles)
-
-**Batteries included, every one replaceable.** Agents are hitched with a role brief —
-lead, worker, reviewer — telling them how to address teammates, when to compact,
-and what to do when the substrate misbehaves. Point `GANG_ROLES` at a directory of
-your own and any brief becomes yours.
-[Read more →](#the-playbook)
-
-## Quickstart
-
-```sh
-cd ~/my/repo && gang up                         # the whole setup, no arguments: hitches
-                                                # "lead" here on claude-code with the
-                                                # lead role, and puts you in the session
-gang hitch worker -r worker                     # "worker" is a name you pick: it becomes the
-                                                # tmux window name AND the agent's identity;
-                                                # -r briefs it with a role (gang roles)
-gang hitch heavy -m claude-fable-5              # -m launches on a specific model, spelled
-                                                # the harness's own way; the profile knows
-                                                # which flag carries it
-gang send worker --from lead "read the failing test in ci and fix it"
-gang status worker                              # busy (tight tug) | idle (slack tug)
-                                                # | gated (hook set — a modal owns the box)
-gang capture worker                             # what's on worker's screen
-gang roster                                     # everyone, with state
-gang attach                                     # watch the whole team live
-gang drop worker                                # release the agent — deliberate, routine
-gang down                                       # end the whole session
-```
-
-Output is coloured on a terminal and nowhere else: red for an agent that needs a
-human, amber for one that is working, green for what gang just did, dim for the
-detail behind it. A pipe, a capture, or a cron log gets the same text plain — the
-roster an agent greps must not depend on where it was run — and `NO_COLOR=1`
-turns it off everywhere.
+- **Use different harnesses together.** A profile declares how to launch and
+  observe each CLI; the team workflow stays the same.
+- **Keep the glass.** Attach to the session and watch, steer, or take over any
+  agent through its real TUI.
+- **Know whether a message landed.** Gangline reads the target's composer before
+  and after pasting, submits with a separate Enter, and checks again. A delivery
+  it cannot verify fails loudly.
+- **Keep long-running agents moving.** Context readouts, warning bands, and
+  `gang compact --resume` let an agent hand work to its post-compaction self.
+- **Replace policy with files.** Profiles describe harnesses; Markdown role briefs
+  describe teammates. `GANG_PROFILES` and `GANG_ROLES` let you shadow either.
 
 ## Install
 
@@ -106,520 +41,229 @@ turns it off everywhere.
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
-Clones to `~/.local/share/gangline` and links `gang` into `~/.local/bin`; re-run it
-to update. `GANGLINE_HOME` and `GANGLINE_BIN` move either. If you would rather not
-pipe a script into a shell, read [`install.sh`](install.sh) first — a clone and a
-symlink is all it does.
+The installer clones Gangline to `~/.local/share/gangline`, links `gang` into
+`~/.local/bin`, and fast-forwards the clone when run again. Set `GANGLINE_HOME`
+or `GANGLINE_BIN` to choose other locations.
 
-From a clone instead:
-
-```sh
-ln -sf "$(pwd)/bin/gang" ~/.local/bin/gang
-```
-
-Requires git, tmux ≥ 3.2 (bracketed paste via `paste-buffer -p`), and python3 —
-which reads every harness's context figures, builds the context-hook reply, and
-runs `gang vet`'s file-format gates. macOS ships no python3 by default.
-
----
-
-## The substrate
-
-`bin/gang` is the tool in full. Proven live: Claude Code and Pi agents in one team,
-lead→worker tasking on both, and a cross-harness relay in which a Claude Code
-agent used `gang send` to task a Pi agent, which acted on it — every hop
-identity-prefixed and pane-verified. Codex has been driven the same way end to end —
-hitched, briefed, tasked, reached mid-turn, and compacted with a `--resume` it
-answered on the other side. So has opencode — hitched, tasked, read busy mid-turn,
-and its context read live through the catalog join described below.
-
-Agent names are yours. Whatever you pass to `gang hitch` becomes the tmux window
-name, the identity every message is signed with, and the handle every command
-takes. Name them for the role they play on the team. Letters, digits, dot, dash
-and underscore only — a name also has to survive being a tmux target, a JSON
-string in a hook reply, and a word in a suggested command. Underneath the
-handle, gang addresses windows by tmux window id — immutable, never reused — so a rename, a
-reorder, or a name that happens to look like a number cannot re-point a command
-at the wrong agent.
-
-Delivery is confirmed before submission, never assumed:
-
-```mermaid
-sequenceDiagram
-    autonumber
-    participant G as gang send
-    participant P as agent's pane
-    G->>P: busy? — screen churning, or a marker painted
-    Note over G,P: mid-turn: send anyway, or refuse if the harness takes no input
-    G->>P: read the input box
-    G->>P: load-buffer → paste-buffer -p (bracketed paste)
-    G->>P: read the input box again
-    alt the box changed
-        G->>P: Enter — its own keystroke
-        G->>P: read the input box once more
-        alt it changed again
-            Note over G,P: delivered
-        else the paste is still sitting there
-            G->>P: clear it out, or record it where clearing is not provable
-            G--xG: die — nothing was submitted
-        end
-    else unchanged
-        G--xG: die — loud, and nothing was submitted
-    end
-```
-
-Three reads, because neither presence nor absence proves anything alone. Matching
-the text *somewhere* on screen would verify against an identical earlier send
-still sitting in the transcript; a box that **changed** is the harness-independent
-fact underneath every TUI's rendering, whether it echoes a paste literally or
-collapses it into `[Pasted text #2]` or `[paste #N +13 lines]`. The third read is
-the submit: batch the text and the Enter into one keystroke burst and a TUI reads
-the newline as part of the paste, leaving the message parked in the box as an
-unsent draft that scrollback renders exactly like a sent one.
-
-**A delivery that fails after the paste has landed does not leave its text in
-somebody's box.** Text stranded there is not a clean failure: the next thing that
-agent types gets submitted with a stranger's message glued to the front of it.
-But clearing it blindly is worse, because most of the paths that strand text are
-paths where a modal owns the box, and a keystroke into a modal is the very thing
-the withheld Enter refused to send. So gang clears only where it can prove both
-halves — the composer is live and settled, and the box still holds precisely what
-gang pasted — and verifies the clear afterwards, so a harness that ignores the
-clear key is reported rather than called tidy. Everywhere else the paste is
-recorded against the agent and named in red on `status`, `roster` and every
-patrol sweep until it is gone. The record clears itself the moment the box reads
-back empty, whoever emptied it, so an Enter that landed after all stops being
-reported as a problem.
-
-Per-agent state lives in tmux window options — the profile binding (`@gl_profile`),
-the context band already warned about (`@gl_band`), any stranded paste
-(`@gl_staged`), a compaction gang itself issued (`@gl_compacting`), and the pid of
-a process waiting on the agent (`@gl_waiting`) — so tmux deletes an agent's state
-along with its window, and a re-hitched name starts clean. Each of those is a fact
-gang owns rather than one it reads back off a screen, which is why none of them
-can rot when a harness redraws.
-
-## Self-compaction
-
-Measure, warn, act — the substrate does the first two, the agent does the third.
-
-```mermaid
-flowchart LR
-    subgraph M["measure"]
-        ctx["gang context<br>reads the harness's<br>own usage readout"]:::core
-    end
-    subgraph W["warn"]
-        hook["gang context-hook<br><i>in-turn · Claude Code</i>"]:::warn
-        patrol["gang patrol<br><i>ambient · any harness</i>"]:::warn
-    end
-    subgraph A["act"]
-        comp["agent runs gang compact<br>on itself, --resume to continue"]:::agent
-    end
-
-    ctx --> hook --> comp
-    ctx --> patrol --> comp
-    comp -.->|"usage drops · bands re-arm"| ctx
-
-    classDef core fill:#1f6feb,stroke:#1f6feb,color:#fff
-    classDef warn fill:#9e6a03,stroke:#9e6a03,color:#fff
-    classDef agent fill:#238636,stroke:#238636,color:#fff
-```
-
-**Measure.** `gang context <name>` (and a roster column) reads context-window usage
-through the profile's own introspection. Pi renders usage in its status bar
-natively; Claude Code gets the shipped statusline beacon
-(`statusline/claude-code-context.sh`, wired via `settings.json` `statusLine`) — the
-statusline payload carries `context_window` figures and the beacon paints them into
-the pane, where gang can read them. Every consumer — `gang context`, the roster
-column, and both warning legs below — reads that one readout, so nothing in the
-system can disagree with anything else about how full a window is.
-
-A profile can also read the harness's own files instead of the screen. Codex
-paints no readout a passive observer can reach — its hint-row figure appears only
-while the composer holds text — so its profile reads the session rollout Codex
-itself appends every turn: a `token_count` event carrying the last turn's usage
-and the model's context window. The link from a tmux window to the right rollout
-is a session marker gang mints at hitch, plants in the agent's first message
-(where the rollout records it verbatim), and keeps in window state; lookup
-refuses to guess whenever the marker is not exactly one rollout's user input.
-The two sources also mix: opencode paints used tokens and a rounded percent but
-never the window, so its profile scrapes the pane for what is painted and joins
-the window from opencode's own models catalog on disk, keyed by the painted
-model badge — then requires the painted percent to reproduce from the join
-before trusting it. A profile with no path to the figure at all still declines
-loudly: `gang context`
-fails, the roster column shows `-`, and patrol reports it as not patrolled
-instead of quietly skipping it. An unread window is a worse thing to hide than
-to admit.
-
-**Warn.** Two legs, because one harness's hook system is not another's:
-
-- `gang context-hook` runs inside the agent's own pane, invoked by the harness's
-  hook system (Claude Code: UserPromptSubmit + PostToolUse), and returns one
-  in-context note per crossed `GANG_CONTEXT_BANDS` threshold. Bare numbers are
-  token counts, a `%` suffix is percent of window; the default ladder is
-  `120000,180000,250000,350000`, re-armed when compaction drops usage. Every
-  default rung is absolute because context rot tracks absolute length, not how
-  full the window happens to be — a 300k context is degraded whether the window
-  is 200k or 1M, and a proportional rung would call 900k of a 1M window fine.
-- `gang patrol` is the ambient leg — a one-shot roster sweep that injects the same
-  band note as `[gang:patrol]` into any agent that crossed a threshold since the
-  last sweep. It exists because a harness may have no hook system at all
-  (Pi's model never sees its own status bar). Patrol lives on a host cron, always-on,
-  and no-ops cheaply when no session is running. Nothing creates the log's
-  directory for you, and cron's `|| true` would swallow the failed redirect, so
-  make it once:
-
-  ```
-  mkdir -p "$HOME/.local/state/gangline"
-  ```
-
-  ```
-  */2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
-  ```
-
-  The filter drops the one boring line rather than keeping a list of interesting
-  ones, so a failure gang has not thought of yet still reaches the log. Patrol
-  sweeps `GANG_SESSION` only — a second team wants a second line.
-
-Both legs run the same ladder over the same readout and share one band memory
-(`@gl_band`, a window option), so whichever notices a crossing first advances the
-band and the other reports steady. An agent is warned once per band, not once per
-leg, and tmux deletes the memory with the window.
-
-**Act.** `gang compact <name> [--resume <msg>]` triggers the harness's own
-compaction command through the verified-injection path. Naming *yourself* is the
-ordinary case and the one the pillar rests on: compaction queues behind the turn
-you are in — the turn that ends the moment the command returns — so an agent past
-a band compacts at its next arc seam without being idle first, without permission,
-and without anyone watching. Naming somebody else still refuses a live turn,
-because cutting one throws away work in progress; that refusal is about what
-compaction *means*, not about whether keystrokes can be delivered.
-
-`--resume` never rides the input queue behind its own compaction. Queued input is
-not one thing: text can be handed to the turn already running while a queued slash
-command waits for that turn to end, so a resume typed in behind a compaction
-arrives *before* it and is swallowed by the turn that was about to be compacted —
-the agent then wakes up with nothing to pick up. A detached waiter delivers it
-instead, at the first moment it cannot be overtaken. That moment is when the
-compaction is visibly *running*: the turn that could have eaten the resume is over,
-and the turn now in flight reads no input, so the message can only wait — which is
-all it ever had to do. It goes into the queue the compaction drains on its way out,
-and the agent picks it up the instant it has a context to pick it up into.
-
-Where gang issued the compaction itself there is a second moment, later than
-visibly-running and stronger: the context readout dropping below where it stood
-when the command was typed. That is proof the compaction happened rather than
-proof the screen looks calm, and unlike a still pane it cannot be true of a turn
-that is merely quiet. It is bounded by `GANG_COMPACT_GRACE`, because `/compact`
-under a harness's own threshold runs and moves nothing, so a drop that never comes
-must not wait forever.
-
-Profiles also declare what their compaction looks like on screen
-(`GANG_COMPACTING_REGEX`), and one whose compaction nobody has watched live
-declares nothing and falls back to waiting for the pane to settle. That fallback is
-weaker than it reads: its streak resets only on a *painted* busy marker, and
-claude-code paints one for 8.6% of a live turn, so it is a one-time floor rather
-than sustained quiet and fires at the first still frame. Streaming is not the
-exposure — streaming moves the screen. Silence is, and a test run, a fetch or a
-large read is exactly that. Declaring no marker is therefore a real cost, not a
-free choice; what covers for it is the drop above, on the path gang controls.
-
-Durable-state and handoff conventions ride in agent prompts, not in code.
-
-### What patrol refuses to do
-
-Injecting into a pane that is not quietly idle corrupts it, so patrol skips rather
-than risks it — and a skip never burns state, so the next sweep retries.
-
-- **A compaction gang issued** is held, and this guard is asked *before* the scraped
-  ones because it is the only signal here that cannot rot. The pane it protects
-  reads perfectly idle: a compacting Claude Code pane paints no marker and holds a
-  still screen — 633 byte-identical captures across 158 seconds, measured — so both
-  guards below would wave a nudge straight through it. gang knows only because gang
-  typed the command, and the flag clears on the context drop that proves the
-  compaction landed, or at `GANG_COMPACT_GRACE` if it never comes.
-- **Busy agents** are skipped outright.
-- **Churning panes** are held: patrol injects only into a pane that is byte-identical
-  across two captures. Busy regexes are snapshots, and at a turn boundary every guard
-  reads a different frame — a nudge injected against a moving screen can jump the
-  harness's own input queue and fire ahead of a queued resume directive. The gate
-  scrapes no marker, so it cannot rot. It is not a busy test in disguise, though: a
-  harness that is working but painting nothing holds a screen as still as an idle
-  one, so byte-identity says a pane is safe to type into, never that it is free.
-- **Non-empty input boxes** are guarded: a human draft, ghost-text suggestion, or
-  queued-message hint would interleave with an injection, so the nudge is held
-  until the box is clear. Holding costs one sweep; interleaving costs the turn.
-- **Gated agents** are reported, never nudged: a harness with a modal owning its
-  input box — a permission prompt, a model picker, anything that takes the screen
-  — is waiting on the operator, and keystrokes sent to it would *answer the
-  dialog*, so every delivery path refuses, `status` and `roster` say `gated (hook
-  set)`, and patrol names it loudly instead of skipping it. A modal is recognised
-  two ways: the profile's `GANG_GATED_REGEX`, or the absence of a readable input
-  box on a pane that is not busy. That second way is the one that matters, because
-  enumerating each TUI's modal chrome always misses one — so a pane whose state
-  cannot be positively determined resolves to `gated`, never `idle`. A missed
-  modal reading idle costs a message, silently; reading gated costs a delay.
-
-## Permissions
-
-**gangline launches each harness exactly as you have configured it.** What your
-harness asks you, it asks a gangline agent too. gang sets no permission flags of
-its own, with one bounded exception: where a harness gates on reaching outside
-the project, gang pre-authorizes the role-brief directories it is itself pointing
-the agent at, and nothing else. That grant is merged into your configuration
-rather than replacing it, so every gate you set survives beside it.
-
-Worth knowing before you hitch a team, because a gangline agent is unattended by
-construction: nobody is watching its pane, an approval dialog stops the whole
-team mid-arc, and gang will not answer one for you — every delivery path reports
-the gate and refuses. A harness left on its interactive defaults stalls a team at
-the first prompt. That belongs in the harness's own persistent config, where you
-can see it and change it back:
-
-- **Claude Code** — `"permissions": { "defaultMode": "auto" }` in
-  `~/.claude/settings.json`; `acceptEdits`, `dontAsk` and `bypassPermissions` sit
-  further along the same dial.
-- **Codex** — `approval_policy = "never"` in `~/.codex/config.toml`, plus the
-  network setting below, which a Codex agent needs before it can reach the team
-  at all.
-- **opencode** — nothing to do by default: vanilla opencode asks nothing, and
-  gates exist only where your own `opencode.json` has a `"permission"` block
-  saying `"ask"`. Launch it with `--auto` to override those. This is the harness
-  the role-brief exception above is for: opencode gates on directories outside
-  the project, and the briefs live in gangline's tree rather than yours.
-- **pi** — no approval system to disarm.
-
-Each harness prints its own warning about what these modes mean, in its own
-words. That message is theirs to make; gangline does not repeat it, soften it,
-or add a second one.
-
-> **The one thing gangline has to say that your harness does not.** Agents on
-> one machine already pass text to one another — through files, through a shared
-> checkout, through panes. Nothing in tmux prevents an agent from typing into a
-> neighbour's composer, and nothing in a shared repository prevents one agent
-> from reading what another wrote. gangline does not create that path; it makes
-> it routine, and gives it structure the ad-hoc versions lack: envelopes no line
-> can escape, delivery verified in the pane, refusals at permission gates, one
-> writer per pane. So treat every agent's output as untrusted input to the next —
-> a poisoned file read by one can reach the shell of another — keep a team on
-> work you would run yourself, and bound the machine if you need a boundary: a
-> container, a VM, a separate account. Relocating `$HOME` is not one; same uid,
-> same files, same network.
-
-Prefer to change a launch line instead? Every flag lives in one line of a
-profile's `GANG_LAUNCH`: shadow the profile via `GANG_PROFILES` and patch that
-line (see Profiles). Nothing else in gang changes with it — the scraping surface
-is the same file. What gang will never do is answer a dialog for you, or pre-trust
-a directory it did not itself send the agent into.
-
-### A sandboxed Codex agent cannot reach the team
-
-gang's control path is the tmux socket, and Codex's sandbox gates `connect()` on
-its network toggle without discriminating by address family — so a Codex agent
-with network access denied cannot open a *unix* socket either. The block is on
-the syscall, not the path to it: adding writable roots does not reach it, and
-neither does `TMUX_TMPDIR`. Nothing is stripped from the environment on the way
-in — `$TMUX` and `$TMUX_PANE` arrive intact, and would not matter if they did
-not, since tmux falls back to the same default socket without them.
-
-Watched live, same socket and command, one variable. Under `workspace-write`,
-`tmux -S <socket> ls` returns `Operation not permitted`; with `network_access`
-turned on it lists the session, and a Codex worker hitched that way answers
-`gang roster` and `gang status` from inside its own pane.
-
-**Network access is necessary and not always sufficient.** gang takes its per-pane
-delivery lock under `${XDG_RUNTIME_DIR:-/tmp}/gangline-$uid`, and under systemd
-that resolves to `/run/user/$uid`, which the sandbox mounts read-only — so
-`gang send` from inside a Codex pane fails on the lock even once the socket is
-reachable. Where `XDG_RUNTIME_DIR` is unset the base falls back to `/tmp`, which
-the sandbox leaves writable, and send works. Same flag, opposite outcome, on a
-variable neither gang nor Codex sets. The lock base is deliberately not
-configurable per profile: every gang process delivering to a pane has to agree on
-it, and one that picked a different base would hold a lock nobody else respects.
-
-**gang does not turn `network_access` on for you.** There is no narrow version of
-this grant — `[sandbox_workspace_write]` carries no unix-socket allowlist, and
-`writable_roots` is measured not to reach the block — so the only available lever
-is full outbound network for every Codex agent gang launches. That is a change to
-your sandbox, not to a directory gang itself sent the agent into, so it stays
-yours: `-c sandbox_workspace_write.network_access=true` on the launch line, via a
-shadowed profile.
-
-Denied, the traffic is one-way rather than dead: gang writes into the pane from
-*outside* the sandbox, so briefs and messages arrive, while everything the agent
-runs itself fails — `gang send` back to its lead, `gang roster` (`no team` from
-inside its own pane), and its own self-compaction. A lead waiting on that
-worker's report waits forever, and the worker looks stuck at the moment it
-finished.
-
-So a Codex worker wants this in `~/.codex/config.toml`, which keeps its landlock
-filesystem confinement and buys back the socket:
-
-```toml
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = true
-```
-
-Read what that costs before you set it: network access is network access, so the
-agent reaches the internet as well as the socket. It is still the smaller of the
-two doors — `danger-full-access` takes the filesystem boundary down with it.
-
-## Profiles
-
-A profile is a few lines declaring what gang cannot know generically: the launch
-command, the busy marker, the compact command, the flag that names a model
-(`GANG_MODEL_OPT`, what `hitch -m` appends — a profile without it refuses the
-flag), whether the harness takes input during a turn, what its compaction looks
-like while it runs, how its permission prompt reads, and optional hooks for
-reading a context readout and for finding the harness's input box. The
-behavioural ones — mid-turn input, the compaction
-marker, and the gate marker — are optional in the honest sense: unset means
-nobody has watched that behaviour live, and gang takes the slower, safer branch
-rather than guessing at it.
-
-That last hook earns its keep twice. Its contents say whether a paste would land
-on top of a draft, and its mere presence says the harness is up: for the first
-seconds after launch a TUI paints nothing, and an empty pane is a perfectly
-stable one, so waiting for the screen to settle declares an agent ready before it
-can read a byte of stdin. Waiting for the box instead is direct evidence. Its
-*contents* are deliberately ignored there — a fresh TUI paints ghost text into
-its own empty box, and an agent two seconds old would never be briefed at all.
-
-```
-bin/gang      the whole tool
-install.sh    clone + link, idempotent
-profiles/     one small file per harness
-roles/        one markdown brief per role
-statusline/   the Claude Code context beacon
-test/         integration test, real tmux, no mocks
-docs/adr/     decisions
-```
-
-## The playbook
-
-A profile says how to talk to a harness; a role says what an agent is for. They
-are the same kind of extension point, and neither is code — a role is a markdown
-brief, because law 9 says the answer is prose in an agent's prompt.
+Prefer not to pipe into a shell? Read [`install.sh`](install.sh), then clone and
+link it yourself:
 
 ```sh
-gang hitch worker -p claude-code -r worker -d ~/my/repo
-gang roles                                    # lead, reviewer, worker
+git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
+ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
 ```
 
-The shipped briefs carry what an agent cannot work out from its own transcript:
-that an enveloped message is a peer and unenveloped text is the operator, that
-a send to a busy agent is accepted rather than bounced, that a
-`[context-usage]` note means finish the arc and `gang compact` yourself with a
-`--resume`, and that `gang vet` explains a substrate behaving strangely.
-`roles/_common.md`
-holds all of that; each role file adds its own job on top — the lead splits
-work by ownership and guards its own context hardest, the worker reports what
-changed and what proves it, the reviewer verifies claims rather than reading
-diffs.
+Requirements: Bash, git, tmux 3.2 or newer, Python 3, and at least one supported
+CLI harness. `gang profiles` lists the harnesses currently offered.
 
-The brief is pointed at, not pasted: gang injects one line naming the files, the
-agent reads them, and they stay on disk to be re-read after a compaction. That
-also keeps the injection short enough to verify — a paste taller than the pane
-cannot be.
+### Before the first team
 
-Replace any of it by putting a file of the same name in a directory of your own.
-Both halves work the same way, and both are searched before the shipped ones, so
-a new harness — or a fix to a profile whose TUI has moved on — costs a file, not
-a patch to the installed tree:
+Gangline launches a harness with your existing harness configuration. It does
+not approve permission prompts for you; a modal makes the agent `gated` until
+you answer it. Configure unattended agents with the permission posture you want
+before hitching them. See [Operating a team](docs/operations.md#permission-prompts)
+for the relevant settings and the Codex sandbox caveat.
+
+Claude Code needs Gangline's statusline beacon before `gang context`, the roster
+context column, or context patrol can read its usage. Merge this into
+`~/.claude/settings.json` (adjust the path if `GANGLINE_HOME` differs):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/home/YOU/.local/share/gangline/statusline/claude-code-context.sh"
+  }
+}
+```
+
+## Your first team
+
+Start in the repository the team will work on:
 
 ```sh
-export GANG_ROLES=~/my/gangline-roles         # searched before the shipped roles/
-export GANG_PROFILES=~/my/gangline-profiles   # searched before the shipped profiles/
+cd ~/my-project
+gang up
 ```
 
-Export them from your shell profile, not just your interactive shell: `gang
-patrol` runs from cron, and an agent whose profile it cannot resolve is listed
-with `profile not found` rather than dropped from the roster.
+With no arguments, `gang up` hitches a Claude Code agent named `lead`, briefs it
+with the `lead` role, and attaches your terminal to the team. Detach with
+<kbd>Ctrl-b</kbd>, then <kbd>d</kbd>; reconnect with `gang attach`.
 
-### Strategy rot
+Leave that terminal attached and use a second shell for the walkthrough below
+(or ask the lead to run the same commands). The sender label is required. Inside
+the team it must match the calling window's name; from an outside operator shell
+you choose the label.
 
-Profiles are scraped observations of TUIs, and TUIs change under you — Claude Code
-stopped painting "esc to interrupt" during tool execution, and busy detection
-false-negatived. Every scraped marker (busy regex, context readout, input-box
-shape) is verified by hand against specific harness versions and pinned in the
-profile with `GANG_VERSION_CMD` + `GANG_VERIFIED_VERSIONS` (space-separated
-version prefixes; `any` means no scraped markers).
+```sh
+# Add a Codex teammate in the current project and give it the worker brief.
+gang hitch worker -p codex -r worker -d "$PWD"
 
-`gang vet` compares each installed harness against its pin and exits nonzero on
-drift. A profile that reads harness files instead of the screen rots on a schema
-change rather than a TUI change, so it declares a `profile_vet` format gate —
-vet runs the profile's own parser against the newest session file on disk and
-counts a failure as drift. It is a reactive diagnostic, not a cron job: an agent that sees scraping
-misbehave — false busy/idle, a missing context beacon, an injection that fails
-verification — runs `gang vet` first. On ROT RISK, `gang vet --file-issue`
-files a deduped rot issue via `gh`, then the markers get re-verified against the
-live TUI and the new version appended to the pin.
+# Send a task. Delivery is accepted mid-turn only when the profile declares that safe.
+gang send worker --from operator "inspect the failing tests and propose a fix"
 
-**Plain `vet` watches versions, not markers.** It never fires a busy or gated
-regex at a pane, so a clean `gang vet` means the harness is the version somebody
-once checked, and nothing stronger.
+# Observe it without taking over its pane.
+gang status worker
+gang capture worker 80
+gang roster
 
-**`gang vet --probe` fires them.** It launches each installed harness on a
-private tmux socket, exactly the way `hitch` launches it, sends a prompt, and
-asserts the profile's own busy marker and context readout against the live pane:
-absent at rest, present while the turn runs, absent again once the pane settles.
-Both directions are the point — a marker that matches by accident cannot pass a
-check that also requires it to go away. It asserts the *declared regex* and never
-`busy()`, because `busy()` is `busy_painted OR churn` and churn would cover for a
-stone-dead marker, making a test that cannot fail. A profile declaring no busy
-marker reports `not probed`, which is not a pass.
+# Wait for two consecutive idle readings, then compact and resume unattended.
+gang wait worker
+gang compact worker --from operator \
+  --resume "continue from your compacted summary and report the result"
 
-Because the probe reads through gang's own bounded window, **reachability is part
-of what it tests**: a marker painted somewhere gang does not look reads as dead,
-which is the correct answer. Two harnesses stop on a first-run directory-trust
-dialog that no launch flag clears — point `GANG_PROBE_DIR` at a directory you
-have trusted by hand once. gang never answers a dialog, and `GANG_LAUNCH` does
-not change, so the probe keeps measuring the line an agent actually runs.
+# Release one teammate and its tmux-owned state.
+gang drop worker
+```
 
-That closes the gap for the markers it drives. Two things still pass straight
-through:
+`gang down` ends the entire team session, including every agent. Use `gang drop`
+for the routine case of releasing one finished teammate.
 
-- **A dead branch of a live marker.** These regexes are alternates covering
-  *different* states, not redundant readings of one — a spinner for an ordinary
-  turn, a backoff line, a progress bar for compaction. The probe drives one
-  ordinary turn, so it exercises the branch that turn happens to paint and no
-  other; a branch can stop being painted and nothing notices until the state it
-  covered comes up, in the field, on the one path that needed it. Adding an
-  alternate adds a failure point rather than a fallback.
-- **Gated and compacting, which are deliberately out of scope.** Reaching a modal
-  needs per-harness choreography — which command opens which dialog — and that is
-  new profile surface rotting on its own schedule. `/compact` under a harness's
-  own threshold runs and moves nothing, so a probe cannot tell *marker dead* from
-  *nothing to compact*. Both remain a human watching gang say the right word.
+## The operating model
 
-So a clean `vet` means the version has not moved; a clean `vet --probe` means the
-busy marker and context readout were seen to work, today, on this box. When
-scraping misbehaves and plain vet reads all-OK, suspect the marker, not the
-harness — and run the probe, which is the tool that can tell you.
+### Agents are windows
 
-Version pins watch the harness, not its mods. A theme, a replacement statusline,
-or a TUI-drawing extension — a permission system, say — repaints chrome without
-moving any version vet checks, so scraping can misbehave while every row
-reads OK; vet says so whenever it hands back a clean bill. Additive
-extensions (MCP servers, hooks, slash commands) add capability without touching
-the chrome the markers match. What a mod cannot do is turn a keystroke loose:
-delivery verifies the input box changed, before and after, so a marker moved by
-a mod degrades to loud refusals and held nudges, never a paste into the wrong
-widget. When one does move a marker, the repair is the same lane a new harness
-uses — a `GANG_PROFILES` shadow re-verified against the TUI as you actually run
-it, with `GANG_VERSION_CMD` pointed at something that includes the mod's own
-version, so the pin watches the thing that owns the pixels. `profiles/pi.sh`
-documents the pattern for extension-drawn permission dialogs.
+A team is one tmux session (`gangline` by default), and each agent is one named
+window. The window name is its identity and command handle. Names may contain
+letters, digits, `.`, `_`, and `-`, but may not start with `.` or `-`.
 
-## Contributing
+Gangline resolves a name to tmux's immutable window ID before acting. Per-agent
+facts such as its profile, warning band, pending compaction, and an undelivered
+paste live in window options and disappear with the window.
 
-`CONSTITUTION.md` holds the laws that bind every change here — read it first; Law 1
-is that tmux is not a hack, it IS the substrate. `CONTRIBUTING.md` covers setup and
-commit conventions.
+### Messages are attributed and verified
 
-## License
+`gang send` wraps the body in a nonce-bearing envelope:
+
+```text
+[gang:lead#d8095dd5] inspect the failing test [/gang:lead#d8095dd5]
+```
+
+Tag-shaped text in the body is neutralised, so the body cannot end its own
+envelope. This is attribution, not authentication: Gangline is single-operator
+software, and anyone able to type into a pane is already trusted.
+
+For profiles with a composer reader, delivery is a measured sequence: read the
+composer, paste, require it to change, send Enter separately, then require a
+later read to differ from the pasted state. Gangline serialises its own writers
+per pane and refuses a moving composer or a modal. A static draft can still be
+appended to, so do not leave drafts in unattended agents.
+
+If failure strands a paste, Gangline clears it only when it can prove the live
+composer still contains exactly that paste. Otherwise `status`, `roster`, and
+`patrol` report an **undelivered paste** until the box is empty.
+
+### State is conservative
+
+`gang status <name>` reports:
+
+- `busy (tight tug)` when a declared busy marker is painted, the harness wrote to
+  the pty recently, or the pane changes between samples;
+- `idle (slack tug)` when none of those working signals applies;
+- `gated (hook set)` when a modal owns the input area or a profile with a composer
+  reader cannot otherwise identify a safe input box.
+
+A gate is never answered by Gangline. Attach and clear it yourself. Status is an
+observation of a TUI, not a scheduler guarantee; where safety matters, delivery
+still verifies the composer directly.
+
+### Busy agents can still receive messages
+
+Claude Code, Codex, and opencode profiles declare that their composers accept
+input during a turn. A send to one is verified and reported as **accepted
+mid-turn**; whether the harness uses it immediately or at a boundary is the
+harness's decision. Pi currently makes no such declaration, so Gangline refuses
+a mid-turn Pi send unless you use `--wait`.
+
+### Context is explicit
+
+`gang context <name>` asks the profile for `<used>k/<window>k (<percent>%)`.
+`gang patrol` applies `GANG_CONTEXT_BANDS` (default
+`120000,180000,250000,350000`) and sends one attributed warning per crossed
+band. It skips a painted-busy, churning, gated, gang-compacting, or non-empty input
+area without advancing the band, so a later sweep retries.
+
+Run patrol periodically if you want ambient warnings:
+
+```sh
+mkdir -p "$HOME/.local/state/gangline"
+```
+
+```cron
+*/2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
+```
+
+The cron environment must carry the same `GANG_SESSION`, `GANG_PROFILES`,
+`GANG_CONTEXT_BANDS`, and `GANG_LOCK_DIR` values as the team when you override
+them.
+
+At a clean checkpoint, an agent should compact itself in one command:
+
+```sh
+gang compact worker --from worker \
+  --resume "tests pass; next verify the packaging path"
+```
+
+Self-compaction may queue behind the caller's current turn. Compacting a busy
+peer is refused because it would cut off live work. The resume is delivered by a
+detached waiter rather than pasted behind the slash command, where the current
+turn could consume it first. A failed resume is reported by `gang status` and
+`gang patrol`.
+
+## Commands
+
+`gang` with no arguments prints the complete CLI synopsis. Common commands:
+
+| Command | Purpose |
+|---|---|
+| `gang up [name] [hitch options]` | Hitch a briefed lead and attach or switch to it. |
+| `gang hitch <name> [-p profile] [-r role] [-d dir] [-m model]` | Start and optionally brief an agent (`spawn` is an alias). |
+| `gang send <name> --from <sender> [--wait] <message>` | Send an attributed, verified message. |
+| `gang status <name>` / `gang roster` | Read one agent or the whole team. |
+| `gang wait <name> [seconds]` | Block until idle; default 300 seconds. |
+| `gang capture <name> [lines]` | Print pane tail; default 40 lines. |
+| `gang compact <name> [--from sender] [--resume message]` | Run the profile's compaction command. |
+| `gang drop <name>` / `gang down` | End one window / the whole session. |
+
+See the [command and environment reference](docs/reference.md) for every verb,
+option, environment variable, output detail, and alias.
+
+## Profiles, roles, and diagnostics
+
+The shipped harness profiles are `claude-code`, `codex`, `opencode`, and `pi`.
+A profile owns the harness-specific launch command, model flag, observable busy
+and gated states, compaction command, mid-turn input declaration, and optional
+context and composer readers. `GANG_PROFILES=/path/to/profiles` shadows shipped
+files by name.
+
+The shipped role briefs are `lead`, `worker`, and `reviewer`; all include
+`roles/_common.md`. `GANG_ROLES=/path/to/roles` shadows them by name. Gangline
+points a new agent at the brief files rather than pasting their contents, so the
+agent can reread them after compaction.
+
+Profiles observe terminal chrome and harness-owned files, both of which can
+change. `gang vet` compares installed harness versions with each profile's pins
+and runs declared file-format gates. `gang vet --probe [profile]` additionally
+launches installed harnesses on a private tmux socket, drives a real turn, and
+checks the declared busy marker and context readout. It spends tokens and does
+not exercise gated or compacting states. See
+[Operating a team](docs/operations.md#diagnosing-profile-rot).
+
+## Security boundary
+
+Gangline does not isolate agents from one another. They share the account,
+checkout, files, network, and tmux server allowed by their harness configuration.
+Treat one agent's output as untrusted input to the next. If you need a security
+boundary, use an actual boundary such as a container, VM, or separate account;
+a different `$HOME` under the same uid is not one.
+
+## Project guide
+
+- [Command and environment reference](docs/reference.md)
+- [Operating a team](docs/operations.md)
+- [Musher's field guide](docs/field-guide.md) — metaphor translated literally
+- [Contributing](CONTRIBUTING.md)
+- [Constitution](CONSTITUTION.md)
+- [Architecture decisions](docs/adr/)
 
 Apache-2.0 — see [`LICENSE`](LICENSE). Copyright 2026 Adam Biggs.
