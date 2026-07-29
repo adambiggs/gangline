@@ -2080,20 +2080,36 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
     tmux set-option -w -t "$id" @gl_key "$key"
     msg="$msg $(marker_line "$key")"
   fi
-  tmux send-keys -t "$id" "$msg" 2>/dev/null || true
   # The box is READ between the text and the Enter, which is gang's own delivery
   # discipline rather than caution about it. An Enter that arrives before the
   # composer has ingested the paste submits nothing, and the failure is silent and
   # reads exactly like a harness that would not work: codex took the prompt into
-  # its composer and sat there for the whole 90s window, and the probe reported
-  # "never got busy" — true, and useless. Bounded, because a harness that never
-  # shows the text is its own finding and not a reason to hang; and skipped
-  # entirely where the profile declares no box, since then there is nothing to
-  # read and no claim to make.
+  # its composer and sat there for a whole 90s window while the probe reported
+  # "never got busy" — true, and useless.
+  #
+  # What is waited on is a CHANGE from the box as it was a moment ago, not a box
+  # with something in it. Those come apart on every harness that paints ghost text
+  # into an empty composer — claude-code's `Try "fix typecheck errors"` — where a
+  # box-has-content test is satisfied before a key is sent and the wait it looks
+  # like never happens. Same trap as busy_painted OR churn: a condition already
+  # true cannot witness anything. before/after is what cmd_send compares, for this
+  # reason. An unreadable box takes another look rather than counting as the
+  # change, since a capture that failed is not evidence the paste landed.
+  #
+  # Bounded, because a harness that never shows the text is its own finding rather
+  # than a reason to hang; skipped where no box is declared, since there is then
+  # nothing to read and no claim to make.
+  local box_before="" box_now=""
+  if declare -F profile_input >/dev/null; then
+    box_before="$(profile_input "$id" 2>/dev/null)" || box_before=""
+  fi
+  tmux send-keys -t "$id" "$msg" 2>/dev/null || true
   if declare -F profile_input >/dev/null; then
     deadline=$(( $(date +%s) + 15 ))
     while [ "$(date +%s)" -lt "$deadline" ]; do
-      input_clear "$id" || break
+      if box_now="$(profile_input "$id" 2>/dev/null)" && [ "$box_now" != "$box_before" ]; then
+        break
+      fi
       sleep 0.25
     done
   fi

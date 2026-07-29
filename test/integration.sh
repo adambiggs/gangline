@@ -869,17 +869,33 @@ check "a pane parked in gang's own wait is not made busy by churning" "idle (sla
 tmux set-option -uw -t "$(id_of churner)" @gl_waiting
 check "and reads busy again the moment that wait is gone" "busy (tight tug)" \
   "$("$GANG" status churner | head -1)"
-tmux send-keys -t "$(target_of churner)" C-c
-# The bound here is gang's own, because for this direction one exists. `gang wait`
+# THE C-c IS VERIFIED, NOT ASSUMED, and that is the same finding as the probe's
+# Enter one commit ago: a single keystroke sent at a pane is not guaranteed to
+# take effect, and a caller that assumes it did reports the consequence instead of
+# the cause. Measured here — `gang wait` timed out at 30s with the loop still
+# running, which is not a slow settle, it is an interrupt that never landed. What
+# is under test on the next line is whether gang's state read returns to idle once
+# the screen stops, so a lost keystroke is a fixture artifact standing between the
+# check and its subject. Capped, and still fails if the pane genuinely never
+# settles — three interrupts that all fail to stop a shell loop is a finding, not
+# a flake to absorb.
+n=0
+while [ "$n" -lt 3 ]; do
+  tmux send-keys -t "$(target_of churner)" C-c
+  "$GANG" wait churner 15 >/dev/null 2>&1 && break
+  n=$((n + 1))
+  [ "$n" -lt 3 ] || echo "note: three interrupts sent to churner and it never went idle" >&2
+done
+# The bound is gang's own, because for this direction one exists. `gang wait`
 # blocks on the same busy() this check reads through, so it cannot call a pane
-# settled where status would disagree, and on its own timeout it dies loudly
-# instead of failing quietly at a guess. This is the edge that was measured: one
-# fixed second at load 23.7, expected idle, got busy — C-c has to kill the loop
-# AND let the shell draw ^C and a fresh prompt, and no constant bounds that. Its
-# stdout is dropped rather than asserted, because the line it prints is a literal
-# in the dispatch and what is under test is the one gang status DERIVES; its
-# stderr is kept, so a timeout names itself just above the failure it causes.
-"$GANG" wait churner 30 >/dev/null
+# settled where status would disagree. This is the edge that was measured failing:
+# one fixed second at load 23.7, expected idle, got busy — C-c has to kill the
+# loop AND let the shell draw ^C and a fresh prompt, and no constant bounds that.
+# Neither its stdout nor its stderr is asserted: the line it prints is a literal
+# in the dispatch while what is under test is the one gang status DERIVES, and a
+# timeout inside the loop is the retry signal rather than the verdict. The note
+# above keeps what dropping its stderr would otherwise cost — a run that exhausts
+# the interrupts says so on the line above the failure it causes.
 check "and gets back to idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 unset GANG_PROFILES
