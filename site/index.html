@@ -120,23 +120,31 @@
   </nav>
 
   <p class="lede">
-    Run Claude Code, Codex, opencode, and Pi together, using each where it is
-    strongest. Every agent is a named tmux window you can watch or steer; with
-    the shipped profiles, peer messages are attributed and checked in the target's
-    real composer before Gangline calls them delivered.
+    A gangline is the line down the middle of a dog team. Every dog is hitched to
+    it by its own tug line, the lead runs out front, and one look down the line
+    tells the musher who is working &mdash; a tight tug is pulling, a slack tug is
+    not.
   </p>
 
   <p class="lede">
-    One Bash CLI starts teammates, reports busy, idle, gated, and context state,
-    resumes work after compaction, and releases finished windows. There is no
-    server, bus, database, or harness plugin &mdash; tmux is the substrate, and
-    <code>gang</code> exits after each command.
+    This is that, for CLI coding agents. Claude Code, Codex, opencode and Pi run
+    as named tmux windows hitched to one session, each used where it is strongest;
+    <code>gang</code> hitches them, sends attributed messages, reads each tug tight
+    or slack, compacts them, and drops them when the work is done. One Bash CLI
+    over tmux &mdash; no daemon, message bus, database, or harness plugin, and
+    <code>gang</code> exits after every command.
   </p>
 
   <p class="lede">
-    The name is literal: a gangline hitches many dogs, each in its own harness,
-    to one operator. The attachment point is the terminal, not code inside the
-    agent.
+    The vocabulary is the command surface, which is why it is worth thirty seconds.
+    You <code>hitch</code> an agent into the line and <code>drop</code> it at a
+    checkpoint; the roster reports a <span class="busy">tight tug</span> or a
+    <span class="ok">slack tug</span>. That column is not decoration on top of a
+    boolean &mdash;
+    <a href="https://northernwilds.com/tugline/">mushers watch tuglines more than
+    anything else</a>, because a taut tug is a dog pulling and a bouncing one says
+    something is wrong. <code>gang status</code> performs the same reading on a
+    pane, and the attachment point is the terminal, not code inside the agent.
   </p>
 
   <div class="term">
@@ -271,10 +279,13 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     Two warning legs run the same band ladder over that one readout &mdash; an
     in-turn hook where the harness has hooks, an ambient cron patrol where it
     doesn't &mdash; and share one band memory, so an agent is warned once per band,
-    not once per leg.
+    not once per leg. The rungs default to percentages of each agent's own window
+    (<code>30%,50%,70%,85%</code>), because the shipped harnesses differ by nearly
+    4x and one absolute ladder would mean four different things across a mixed
+    team.
   </p>
   <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k/272k (69%) in context — crossed the
-180000-token band. At the next checkpoint (arc boundary), run:
+136000-token band. At the next checkpoint (arc boundary), run:
 gang compact worker --from worker --resume '&lt;where you are, what is next&gt;'
 — it queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
@@ -388,10 +399,10 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
   <section id="trail">
   <h2>The trail</h2>
   <p class="lede">
-    The vocabulary is mushing, and every term names something real in the system
-    &mdash; the
+    Every term names something real in the system, and the
     <a href="https://github.com/adambiggs/gangline/blob/main/docs/field-guide.md">musher's
-    field guide</a> maps all of it. A sample:
+    field guide</a> maps all of it &mdash; roles, states and verbs, never rules.
+    The ones worth knowing before you start:
   </p>
   <div class="tbl">
   <table>
