@@ -682,6 +682,38 @@ gate_down busybee
 check "and the pane reads idle again once the picker is gone" "idle (slack tug)" \
   "$("$GANG" status busybee | head -1)"
 
+# A dialog is drawn as tall as it needs to be, and its distinguishing wording is
+# not always in the last rows. Measured on opencode: its model picker paints its
+# declared branch on the full pane and on NOTHING inside the status window, so
+# the branch was alive in the TUI and unreachable from where gang read it — a
+# declared marker that provably cannot fire, which no liveness audit catches
+# because the marker is not dead.
+#
+# The declared branch and the unknown-is-gated fallback both answer "gated", so a
+# gate on its own cannot tell them apart and a test built on one would pass
+# either way. This one separates them: wording high on the pane, no composer, AND
+# a busy marker painted. Reaching the wording means gated; missing it means the
+# fallback finds a turn in flight that explains the absent box and says busy.
+gate_high() { tmux send-keys -t "$(target_of "$1")" \
+                "clear; PS1=''; printf 'Do you want to proceed?\\nWORKING...\\n'; seq 1 6" Enter; sleep 0.8; }
+gate_high busybee
+check "the wording sits outside the rows a status scan would read" "no" \
+  "$(case "$(tmux capture-pane -pJ -t "$(target_of busybee)" \
+       | awk 'NF{last=NR}{l[NR]=$0}END{for(i=1;i<=last;i++) print l[i]}' | tail -n 2)" in
+     *"Do you want to proceed?"*) echo yes ;; *) echo no ;; esac)"
+check "a gate painted above the status window is still reached" "gated (hook set)" \
+  "$(GANG_STATUS_ROWS=2 "$GANG" status busybee | head -1)"
+
+# Widening the scan widens the exposure to prose, and the composer requirement is
+# what carries it: an agent QUOTING the wording has a live input box beside it,
+# wherever on the pane the quote landed. Without this the widening would trade a
+# missed gate for a frozen reviewer.
+tmux send-keys -t "$(target_of busybee)" \
+  "clear; PS1='❯ '; printf 'Do you want to proceed?\\n'; seq 1 6" Enter; sleep 0.8
+check "the same wording high on the pane beside a live box is still not a gate" \
+  "idle (slack tug)" "$(GANG_STATUS_ROWS=2 "$GANG" status busybee | head -1)"
+gate_down busybee
+
 # The fallback is bounded by what gang was taught to look for: a profile that
 # declares no input box has no missing box to notice, so it keeps the plain
 # busy/idle reading rather than being declared gated on the strength of a hook
