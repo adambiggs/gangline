@@ -1849,8 +1849,19 @@ cc_paint() { # $1 = what goes after the prompt char, escapes interpreted
   # a frame Claude Code never draws and the box is not found at all. Cost an
   # hour: all three checks below came back GATED, which is what gang correctly
   # says about a pane with no box in it.
+  #
+  # The width comes from tmux, not from `tput cols` inside the pane. tput needs a
+  # terminfo entry for whatever TERM tmux exports, and a machine carrying only a
+  # base terminfo set does not have one — tput then prints NOTHING and exits 3,
+  # `seq` gets no argument, `printf '─%.0s'` repeats zero times, and both rules
+  # come out as empty lines. The ❯ line still paints, so a check grepping for it
+  # passes while every check needing the FRAME fails, which is the same GATED
+  # symptom reached by a route no developer box reproduces. tmux is authoritative
+  # about its own pane, so it is asked instead.
+  local w
+  w="$(tmux display-message -p -t "$(target_of ccbox)" '#{pane_width}')"
   tmux send-keys -t "$(target_of ccbox)" \
-    "clear; r=\$(printf '─%.0s' \$(seq \$(tput cols))); printf '%b\\n' \"\$r\" \"❯ $1\" \"\$r\" '  ctx 150k/1000k 15%'" Enter
+    "clear; r=\$(printf '─%.0s' \$(seq $w)); printf '%b\\n' \"\$r\" \"❯ $1\" \"\$r\" '  ctx 150k/1000k 15%'" Enter
   sleep 0.6
 }
 cc_boxline() { tmux capture-pane -p -t "$(target_of ccbox)" | grep '^❯' | tail -1; }
