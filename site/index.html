@@ -181,7 +181,9 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <p class="note">
     <strong>One thing your harness will not tell you.</strong> gangline launches
     each harness exactly as you configured it and sets no permission flags of its
-    own. An unattended agent cannot answer a dialog and gang will not answer one
+    own, save one: it pre-authorizes the role-brief directory it is itself
+    pointing the agent at, merged into your config rather than replacing it. An
+    unattended agent cannot answer a dialog and gang will not answer one
     for it, so the setting that stops your harness asking belongs in that
     harness's own config &mdash; the README names the one each wants. Beyond
     that: agents on one machine already pass text to one another through files, a
