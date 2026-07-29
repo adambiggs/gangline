@@ -6,7 +6,19 @@ set -euo pipefail
 
 # The subject is the first line that is neither blank nor a git comment — the
 # message file arrives with the commented template still attached.
-subject="$(grep -vE '^[[:space:]]*(#|$)' "$1" | head -1)"
+#
+# grep does its own first-match with -m1. Do NOT reintroduce `| head -1`: head
+# closes the pipe after one line, grep dies of SIGPIPE, pipefail promotes 141 to
+# the pipeline status, and set -e kills a commit-msg hook — which REJECTS a
+# perfectly conforming commit with no explanation. It only opens up once grep's
+# block buffer is full, so it is invisible on short messages and fires on long
+# ones: 0/200 at 60 lines, 61/200 at 37KB. CONTRIBUTING asks every contributor
+# for a body saying what failed and what proved it, which is the direction that
+# pushes messages toward the size where it fires.
+#
+# `|| true` because grep exits 1 on no match, and a message that is nothing but
+# comments must reach the error below rather than die silently here.
+subject="$(grep -m1 -vE '^[[:space:]]*(#|$)' -- "$1" || true)"
 
 # git writes these itself during merge and interactive rebase; rejecting them
 # would break those commands rather than improve the history they produce.
