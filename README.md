@@ -318,12 +318,12 @@ than risks it — and a skip never burns state, so the next sweep retries.
 
 - **Busy agents** are skipped outright.
 - **Churning panes** are held: patrol injects only into a pane that is byte-identical
-  across two captures. Busy regexes are snapshots, and at a turn boundary or during a
-  compaction redraw every guard reads a different frame — a nudge injected against a
-  moving screen can jump the harness's own input queue and fire ahead of a queued
-  resume directive. A quietly idle TUI paints a static screen, while streaming,
-  spinners, and compaction progress bars all churn, so this gate scrapes no marker
-  and cannot rot.
+  across two captures. Busy regexes are snapshots, and at a turn boundary every guard
+  reads a different frame — a nudge injected against a moving screen can jump the
+  harness's own input queue and fire ahead of a queued resume directive. The gate
+  scrapes no marker, so it cannot rot. It is not a busy test in disguise, though: a
+  harness that is working but painting nothing holds a screen as still as an idle
+  one, so byte-identity says a pane is safe to type into, never that it is free.
 - **Non-empty input boxes** are guarded: a human draft, ghost-text suggestion, or
   queued-message hint would interleave with an injection, so the nudge is held
   until the box is clear. Holding costs one sweep; interleaving costs the turn.
