@@ -214,6 +214,49 @@ def row_key(row):
     return (row.get("session", UNKNOWN), row.get("window_id", UNKNOWN), row.get("agent", UNKNOWN))
 
 
+def validate_record(row):
+    common = ("ts", "kind", "session", "window_id", "agent", "profile", "leg",
+              "hook_event", "seam", "tokens", "window", "band", "threshold",
+              "thresholds")
+    missing = [key for key in common if key not in row]
+    if missing:
+        return "missing required field(s): " + ",".join(missing)
+    if as_int(row.get("ts")) is None:
+        return "timestamp is not an integer"
+    if row.get("seam") not in ("yes", "no", UNKNOWN):
+        return "seam is not yes, no, or CTD"
+
+    kind = row.get("kind")
+    required = {
+        "liveness": ("first_success",),
+        "note": ("note_count",),
+        "compact_request": ("requester", "issue_tokens", "first_threshold"),
+        "context_drop": ("previous_band", "notes_since_drop", "last_note_ts",
+                         "pre_ts", "pre_tokens", "pre_window", "pre_band",
+                         "pre_thresholds", "sample_staleness", "sample_quality",
+                         "provenance", "provenance_candidates",
+                         "evidence_availability", "evidence_result",
+                         "request_quality", "issue_tokens", "first_threshold"),
+        "read_ctd": ("reason",),
+        "retention_gap": ("reason",),
+    }
+    if kind not in required:
+        return "unknown record kind: {}".format(kind)
+    missing = [key for key in required[kind] if key not in row]
+    if missing:
+        return "{} missing required field(s): {}".format(kind, ",".join(missing))
+
+    if kind in ("liveness", "note", "compact_request", "context_drop"):
+        for key in ("tokens", "window", "band", "threshold"):
+            if as_int(row.get(key)) is None:
+                return "{} has non-integer {}".format(kind, key)
+        vector = threshold_list(row.get("thresholds"))
+        band = as_int(row.get("band"))
+        if vector is None or band is None or band > len(vector):
+            return "{} has an uninterpretable resolved ladder".format(kind)
+    return None
+
+
 def seam_summary(notes, expected):
     if expected is None or expected != len(notes):
         return UNKNOWN, UNKNOWN
@@ -259,10 +302,25 @@ def report(path, live_gaps):
     if not os.path.exists(path) and not os.path.exists(path + ".1"):
         print("Context compliance report")
         print("log: {}".format(path))
-        print("COULD-NOT-DETERMINE: no retained event log exists")
+        if live_gaps:
+            print("COULD-NOT-DETERMINE: logger liveness never established; write failure is active")
+            for gap in live_gaps[:5]:
+                print("  live logger gap: " + gap)
+        else:
+            print("COULD-NOT-DETERMINE: no successful logger liveness record exists")
+            print("  an empty path is not evidence that the week was quiet")
         return 1
 
     records, malformed = read_records(path)
+    valid = []
+    for row in records:
+        error = validate_record(row)
+        if error:
+            malformed.append("{}:{} {}".format(
+                row.get("_source", path), row.get("_line", UNKNOWN), error))
+        else:
+            valid.append(row)
+    records = valid
     pending = {}
     drops = []
     interval_bands = {}
@@ -271,6 +329,8 @@ def report(path, live_gaps):
     read_ctd = 0
     retention_gaps = 0
     recovered_gaps = 0
+    liveness = set()
+    measured_events = 0
 
     def close_bands(key):
         nonlocal spent_nonseam
@@ -282,6 +342,10 @@ def report(path, live_gaps):
     for row in records:
         kind = row.get("kind", UNKNOWN)
         key = row_key(row)
+        if kind == "liveness":
+            liveness.add(key)
+            continue
+        measured_events += 1
         if row.get("prior_log_gap"):
             recovered_gaps += 1
         if kind == "read_ctd":
@@ -354,6 +418,15 @@ def report(path, live_gaps):
             outcomes["could-not-determine"] += 1
 
     structural = len(malformed) + read_ctd + retention_gaps + recovered_gaps + len(live_gaps)
+    print("")
+    print("logger liveness:")
+    print("  successful first-write records retained for {} agent window(s)".format(len(liveness)))
+    if measured_events:
+        print("  measured event rows retained: {}".format(measured_events))
+    else:
+        print("  measured event rows retained: none (logger worked; no measured event was recorded)")
+    if not liveness and measured_events:
+        print("  event rows prove writes occurred; no quiet-interval liveness row is retained")
     print("")
     print("final-band outcomes (three-way; no ambiguous row enters either proven count):")
     print("  proven-compliant: {}".format(outcomes["proven-compliant"]))

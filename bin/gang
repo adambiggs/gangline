@@ -1792,8 +1792,10 @@ context_request_evidence() { # $1 target, $2 evidence; measurement only
     "$REQUEST_FIRST" "$2" || true
 }
 
+CONTEXT_LOG_OK=0
 context_log_record() { # $1 target (may be empty), remaining args are key=value
   local target="$1" prior="" err; shift
+  CONTEXT_LOG_OK=0
   if [ -n "$target" ]; then
     prior="$(tmux show-options -wqv -t "$target" @gl_context_log_error 2>/dev/null)" || prior=""
   fi
@@ -1803,6 +1805,7 @@ context_log_record() { # $1 target (may be empty), remaining args are key=value
   elif err="$(python3 "$CONTEXT_EVENTS" append "$CONTEXT_LOG" \
                    "$CONTEXT_LOG_MAX_BYTES" "$@" 2>&1)"; then
     [ -z "$target" ] || tmux set-option -uw -t "$target" @gl_context_log_error 2>/dev/null || true
+    CONTEXT_LOG_OK=1
     return 0
   else
     err="${err##*$'\n'}"
@@ -1814,6 +1817,12 @@ context_log_record() { # $1 target (may be empty), remaining args are key=value
     tmux set-option -w -t "$target" @gl_context_log_error "$(date +%s) ${err:0:300}" 2>/dev/null || true
   fi
   return 0
+}
+
+context_log_surface() { # $1 target, $2 agent, $3 context readout
+  local gap
+  gap="$(tmux show-options -wqv -t "$1" @gl_context_log_error 2>/dev/null)" || gap=""
+  [ -z "$gap" ] || say "$2" "$3" "CONTEXT LOG INCOMPLETE — $gap" "$C_BAD"
 }
 
 context_seam() { # $1 leg, $2 hook event
@@ -1842,6 +1851,28 @@ context_log_known_ctd() { # target agent profile leg event tokens window band cr
     "window_id=$1" "agent=$2" "profile=$3" "leg=$4" "hook_event=$5" \
     "seam=$(context_seam "$4" "$5")" "tokens=$6" "window=$7" "band=$8" \
     "threshold=$9" "thresholds=${10}" "reason=${11}"
+}
+
+context_log_liveness() { # target agent profile leg event tokens window band crossed vector
+  local live now
+  live="$(tmux show-options -wqv -t "$1" @gl_context_log_live 2>/dev/null)" || live=""
+  if [[ "$live" =~ ^[0-9]+$ ]]; then
+    return
+  fi
+  if [ -n "$live" ]; then
+    context_log_known_ctd "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" \
+      "$9" "${10}" malformed-logger-liveness-state
+  fi
+  now="$(date +%s)"
+  context_log_record "$1" "ts=$now" "kind=liveness" "session=$SESSION" \
+    "window_id=$1" "agent=$2" "profile=$3" "leg=$4" "hook_event=$5" \
+    "seam=$(context_seam "$4" "$5")" "tokens=$6" "window=$7" "band=$8" \
+    "threshold=$9" "thresholds=${10}" "first_success=yes"
+  # The option is proof that the persistent row was appended, not merely that
+  # the attempt ran. A failed first write therefore retries on every observation.
+  if [ "$CONTEXT_LOG_OK" -eq 1 ]; then
+    tmux set-option -w -t "$1" @gl_context_log_live "$now" 2>/dev/null || true
+  fi
 }
 
 context_log_note() { # target agent profile leg event tokens window band threshold vector count [epoch]
@@ -2309,6 +2340,7 @@ cmd_context_report() { # analyse or explicitly delete the persistent measurement
         local id
         while read -r id; do
           tmux set-option -uw -t "$id" @gl_context_log_error 2>/dev/null || true
+          tmux set-option -uw -t "$id" @gl_context_log_live 2>/dev/null || true
         done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
       fi ;;
     *) die "context-report: unknown argument '$1'" ;;
@@ -2388,7 +2420,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
   local prof ctx tw tokens window band crossed thresholds prev failed rung now log_failed
-  local note_count note_last next_count note_ts state_rc
+  local note_count note_last next_count note_ts state_rc sample_drop=0
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
   [ -z "$failed" ] \
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
@@ -2422,13 +2454,16 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   fi
   declare -F profile_context >/dev/null \
     || { context_log_ctd "$1" "$2" "$prof" patrol - profile-declares-no-context-readout
+         context_log_surface "$1" "$2" -
          say "$2" "" "profile declares no context readout — not patrolled"; return; }
   ctx="$(profile_context "$1" 2>/dev/null)" \
     || { context_log_ctd "$1" "$2" "$prof" patrol - context-readout-unavailable
+         context_log_surface "$1" "$2" -
          say "$2" "" "no context readout — not patrolled (beacon missing?)" "$C_BAD"; return; }
   ctx="${ctx%%$'\n'*}"
   tw="$(ctx_tokens "$ctx")" \
     || { context_log_ctd "$1" "$2" "$prof" patrol - unparseable-context-readout
+         context_log_surface "$1" "$2" "$ctx"
          say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
@@ -2440,19 +2475,26 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   else
     context_log_known_ctd "$1" "$2" "$prof" patrol - "$tokens" "$window" \
       COULD-NOT-DETERMINE COULD-NOT-DETERMINE COULD-NOT-DETERMINE ladder-unavailable
+    context_log_surface "$1" "$2" "$ctx"
     return
   fi
+  context_log_liveness "$1" "$2" "$prof" patrol - "$tokens" "$window" \
+    "$band" "$crossed" "$thresholds"
   if band_state_read "$1"; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
     context_log_known_ctd "$1" "$2" "$prof" patrol - "$tokens" "$window" \
       "$band" "$crossed" "$thresholds" malformed-band-state
     now="$(date +%s)"
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
+    context_log_surface "$1" "$2" "$ctx"
     say "$2" "$ctx" "malformed context-band state — not patrolled" "$C_BAD"
     return
   fi
   prev="$BAND_STATE_BAND"; note_count="$BAND_STATE_COUNT"; note_last="$BAND_STATE_LAST"
   now="$(date +%s)"
+  if context_sample_read "$1" && [ $(( tokens * 2 )) -lt "$SAMPLE_TOKENS" ]; then
+    sample_drop=1
+  fi
 
   # Injecting into a pane that is not quietly idle corrupts it, so every guard
   # below skips rather than risks it — and a skip never burns state.
@@ -2463,9 +2505,17 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "re-armed (usage dropped)"
   elif [ "$band" -eq "$prev" ]; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "steady (band $band)"
   elif compaction_pending "$1" "$tokens"; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Asked before the scraped guards because it is the one signal here that
     # cannot rot, and because the pane it protects reads perfectly idle: a
@@ -2473,15 +2523,27 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # busy_painted and pane_stable both wave a nudge straight through it.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
   elif busy_painted "$1"; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Also the pane question, for the same reason as the guards around it: this
     # chain decides whether an injection is SAFE, and a parked agent is inside a
     # live turn however available it is. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol" "$C_WORK"
   elif ! pane_stable "$1"; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"
   elif ! input_clear "$1"; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Somebody's unsent text is in the input box and an injection would
     # interleave with it. On a profile that cannot tell typed text from the
@@ -2489,14 +2551,20 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # sweep and never costs a draft. Holding is the cheap direction either way.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
     inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2")")"
     next_count="$(count_next "$note_count")"
-    note_ts="$(context_log_note "$1" "$2" "$prof" patrol - "$tokens" "$window" \
-      "$band" "$crossed" "$thresholds" "$next_count")"
+    note_ts="$now"
+    context_log_note "$1" "$2" "$prof" patrol - "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" "$next_count" "$note_ts" >/dev/null
     band_state_write "$1" "$band" "$next_count" "$note_ts"
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
   fi
+  context_log_surface "$1" "$2" "$ctx"
 }
 
 cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the agent's pane
@@ -2507,7 +2575,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   # warn about one crossing. Emits one additionalContext note per band. Never
   # blocks a turn: anything it cannot determine is a silent exit 0.
   local event prof agent ctx tw tokens window band crossed thresholds prev rung now
-  local note_count note_last next_count note_ts state_rc
+  local note_count note_last next_count note_ts state_rc sample_drop=0
   # The payload is on stdin; the event name is the only field this needs, and it
   # goes straight back out in the reply.
   event="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
@@ -2540,6 +2608,8 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
       COULD-NOT-DETERMINE ladder-unavailable
     exit 0
   fi
+  context_log_liveness "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" \
+    "$window" "$band" "$crossed" "$thresholds"
   if band_state_read "$TMUX_PANE"; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
     context_log_known_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" \
@@ -2550,10 +2620,22 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   fi
   prev="$BAND_STATE_BAND"; note_count="$BAND_STATE_COUNT"; note_last="$BAND_STATE_LAST"
   now="$(date +%s)"
+  if context_sample_read "$TMUX_PANE" \
+     && [ $(( tokens * 2 )) -lt "$SAMPLE_TOKENS" ]; then
+    sample_drop=1
+  fi
   if [ "$band" -lt "$prev" ]; then
     context_log_drop "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" "$window" \
       "$band" "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
     band_state_write "$TMUX_PANE" "$band" 0 0
+  elif [ "$sample_drop" -eq 1 ]; then
+    context_log_drop "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    if [ "$band" -gt "$prev" ]; then
+      next_count="$(count_next "$note_count")"
+      note_ts="$now"
+      band_state_write "$TMUX_PANE" "$band" "$next_count" "$note_ts"
+    fi
   elif [ "$band" -gt "$prev" ]; then
     next_count="$(count_next "$note_count")"
     note_ts="$now"
