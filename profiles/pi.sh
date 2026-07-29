@@ -79,15 +79,20 @@ profile_input() { # $1 = tmux target; prints Pi's input area, fails if it has no
   # a brief into the picker's search field, and the gated check, which needs the
   # box to be missing, would never fire. The selection cursor at column zero is
   # what tells them apart, and it is the same marker GANG_GATED_REGEX declares
-  # above. A literal multibyte string compared by bytes: in cron's C locale
-  # substr counts bytes and "→ " is four of them, which is exactly what is wanted.
+  # above. Matched as an anchored regex rather than substr(line, 1, 4): counting
+  # to 4 assumes "→ " is four BYTES, which is true only where awk counts bytes.
+  # A character-oriented awk takes four CHARACTERS, so the test never matches,
+  # the exit below never fires, and the picker's search field is handed back as
+  # an input box — the exact paste-into-the-picker this check exists to stop,
+  # turned back on by nothing but which awk is installed. A literal in a regex
+  # matches the same way under both.
   tmux capture-pane -pJ -t "$1" | awk '
     /^──────────/ { r1 = r2; r2 = NR }
     { line[NR] = $0 }
     END {
       if (!r1) exit 1
       for (i = r1 + 1; i < r2; i++)
-        if (substr(line[i], 1, 4) == "→ ") exit 1
+        if (line[i] ~ /^→ /) exit 1
       for (i = r1 + 1; i < r2; i++) print line[i]
     }'
 }

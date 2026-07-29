@@ -1907,13 +1907,19 @@ cc_box() {
 }
 
 cc_paint '\033[2mcommit the docs\033[0m'
-# The composer is found by an anchored glyph, not by counting bytes, and this
-# section is where that broke: a character-oriented awk made substr(s,1,3) read
-# three CHARACTERS, so no line ever equalled the prompt glyph and every box was
-# rejected. Asserted here rather than trusted, because which awk is installed is
-# not something the suite otherwise varies and every developer box hid it.
-check "the composer glyph test does not assume a byte width" "YES" \
-  "$(printf '❯ commit\n' | awk '{print ($0 ~ /^❯/) ? "YES" : "NO"}')"
+# A marker glyph must never be sized with substr(). Counting to N assumes the
+# glyph is N BYTES, which holds only where awk counts bytes: a character-oriented
+# awk takes N CHARACTERS and the test silently stops matching. It broke both
+# claude-code's composer test and pi's picker guard, in opposite directions —
+# one rejected every box, the other would have handed back a picker's search
+# field as one.
+#
+# Asserted against the SOURCE, not by running a glyph through the ambient awk.
+# The behavioural version passes under either awk, so it could never fail; this
+# fails the moment the pattern comes back, on whichever awk is installed.
+check "no shipped profile sizes a multibyte glyph with substr" "0" \
+  "$(grep -h 'substr(' "${GANG%/bin/gang}"/profiles/*.sh 2>/dev/null |
+       grep -v '^[[:space:]]*#' | LC_ALL=C grep -c '[^ -~]')"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'
