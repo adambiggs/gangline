@@ -66,8 +66,15 @@ git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
 ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
 ```
 
-Requirements: Bash, git, tmux 3.2 or newer, Python 3, and at least one supported
+Requirements: Bash, git, tmux 2.1 or newer, Python 3, and at least one supported
 CLI harness. `gang profiles` lists the harnesses currently offered.
+
+The tmux floor is the oldest release providing everything `gang` calls: exact-match
+`=` targets, [added in tmux 2.1](https://github.com/tmux/tmux/blob/master/CHANGES)
+(October 2015), which every team command relies on so that a session name cannot
+prefix-match somebody else's session. Requirement is not the same as coverage — CI
+exercises tmux 3.4 and 3.7b, so anything older than 3.4 meets the feature floor
+without being tested.
 
 ### Before the first team
 
