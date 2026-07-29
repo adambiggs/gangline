@@ -118,6 +118,10 @@ holds() { grep -qE  -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = an ERE
 # inside a substitution at all. shellcheck does not catch any of this at any
 # level, which is why there is a source rule for it at the bottom of this file.
 contains() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }  # $2 = a LITERAL
+# Asserted after a fixture is REWRITTEN, which is a different question from
+# asserting the behaviour the rewrite was meant to produce. See the badregex
+# fixture for why the two are not the same check.
+declares() { contains "$(cat "$1")" "$2"; }  # $1 = a file, $2 = a LITERAL it must now hold
 # shellcheck disable=SC2254  # unquoted on purpose: $2 IS the pattern
 like() { case "$1" in $2) echo yes ;; *) echo no ;; esac; }  # $2 = a glob
 # Comment lines are dropped before counting: a comment cannot break a parser, and
@@ -1546,9 +1550,22 @@ leak_names() { # $1 = a directory -> the gangvet-* entries in it, by name
     printf '%s\n' "${e##*/}"
   done
 }
+leak_reason() { # $1 = the probe's output -> WHICH refusal it reached
+  # Classified, not substring-tested. `contains ... GANG_BUSY_REGEX` can only
+  # report that the string hoped for was absent, which is could-not-determine
+  # wearing a verdict's clothes — the same collapse this release is named after,
+  # rebuilt inside its own test. A refusal that is not the one under test names
+  # itself here, so the next round is a fix rather than an investigation.
+  case "$1" in
+    *GANG_BUSY_REGEX*)   echo marker ;;
+    *"cannot start"*)    echo no-server ;;
+    *"no input box"*)    echo no-input-box ;;
+    *"not probed"*)      echo unprobed ;;
+    *)                   echo other ;;
+  esac
+}
 check "a probe whose marker cannot be evaluated refuses" "1" "$leakrc"
-check "and says which setting and file to fix" "yes" \
-  "$(contains "$leakout" "GANG_BUSY_REGEX")"
+check "and refuses for the reason under test" "marker" "$(leak_reason "$leakout")"
 check "the server it stood up is not left running" "" \
   "$(leak_names "$LEAKD/tmux/tmux-$(id -u)")"
 check "and its temp tree is not left on disk" "" \
@@ -1696,6 +1713,15 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 check "the fixture reads a state while its marker is a regex" "yes" \
   "$(like "$("$GANG" status badagent 2>&1)" '*tug*')"
 badprofile '[unclosed'
+# The rewrite answers for ITSELF, immediately, before anything downstream is
+# asked about behaviour. A rewrite that silently fails is not undetected — the
+# checks below do go red — but they go red NAMING THE BEHAVIOUR, so a portability
+# bug in the fixture reads as a defect in the thing under test. That is not
+# hypothetical: BSD sed left this very file untouched and four checks reported it
+# as gang failing to refuse an invalid regex, which reached the lead as a finding
+# about grep and cost a diagnosis. Detection was never the gap; ATTRIBUTION was.
+check "and the rewritten fixture actually declares it" "yes" \
+  "$(declares "$SHIM/custom-profiles/badregex.sh" "GANG_BUSY_REGEX='[unclosed'")"
 badout="$("$GANG" status badagent 2>&1)"; badrc=$?
 check "an unevaluable busy marker fails loud instead of reading idle" "1" "$badrc"
 check "and never answers with a state it could not determine" "no" \
@@ -2031,6 +2057,8 @@ cat > "$OC_CACHE/opencode/models.json" <<'JSON'
 {"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5","limit":{"context":1050000,"input":922000,"output":128000}}}},
  "copilot-x":{"name":"Copilot","models":{"gx":{"name":"GPT-5.5 GitHub","limit":{"context":200000,"input":136000,"output":64000}}}}}
 JSON
+check "the catalog fixture now holds the colliding row" "yes" \
+  "$(declares "$OC_CACHE/opencode/models.json" "copilot-x")"
 XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp >/dev/null 2>&1
 check "an ambiguous catalog join is refused, not guessed" "1" "$?"
 oc_catalog
@@ -2048,6 +2076,8 @@ check "vet gates the catalog format" "yes" \
   "$(holds "$dout" 'file format: OK [(]catalog join candidates')"
 printf '%s\n' '{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5"}}}}' \
   > "$OC_CACHE/opencode/models.json"
+check "the catalog fixture now holds no limit at all" "no" \
+  "$(declares "$OC_CACHE/opencode/models.json" '"limit"')"
 dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "and fails loud when the catalog drifts" "yes" \
   "$(holds "$dout" 'file format: DRIFT — models catalog holds no named model')"
