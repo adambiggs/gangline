@@ -70,7 +70,7 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 }
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
-has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
+has() { case "$(pane_of "$1")" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 # Ask an already-captured gang output whether it holds something. Captured first
 # and matched off a here-string rather than piped, because this suite runs
 # pipefail and `grep -q` EXITS AT ITS MATCH: the producer takes SIGPIPE on the
@@ -79,10 +79,23 @@ has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
 # suite — twice in eight runs, on a line that was the FIRST one printed, so a
 # long list is not even required. A check that misses one run in five is the one
 # that gets called flaky and deleted, taking its invariant with it. The same
-# reasoning is written out at the vet format gate, which hit this first and
-# captures into a variable by hand; these two put it behind a name so the next
-# check does not have to rediscover it. Both take output that has ALREADY been
-# captured — the capture is the fix, the helper is only how it reads.
+# reasoning is written out at the vet format gate, which hit this first. Both
+# take output that has ALREADY been captured — the capture is the fix, the helper
+# is only how it reads.
+#
+# No pipe into `grep -q` survives in this file, and the reason it is a rule rather
+# than a preference is that the tempting exemption is wrong. `printf '%s' "$var"`
+# looks safe because it is a builtin rather than a forked producer, but that is
+# not the property doing the work: it is safe because it is ONE write, which
+# completes into the pipe buffer whether or not the reader has read a byte. That
+# holds only while the payload fits — it is an unexamined constant, not a
+# guarantee, and it says nothing about the next writer. The vulnerable shape is an
+# INCREMENTAL writer, which is exactly what list_profiles briefly became. And a
+# 141 was measured here that could be neither attributed nor reproduced, so
+# reasoning about which constructs stay safe is weaker than not having the
+# construct. The two fixture profiles below keep their pipe deliberately: that is
+# harness code under test, and it should look like the shipped profiles it stands
+# in for, not like this file's own conventions.
 lists() { grep -qxF -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = a whole line
 holds() { grep -qE  -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = an ERE
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
@@ -230,7 +243,7 @@ check "a model sh would need quoted is refused" "1" "$?"
 sleep 0.5
 check "send lands in the pane" "yes" "$(has alpha "MARK_ONE")"
 check "inside an envelope signed by the sender" "yes" \
-  "$(pane_of alpha | grep -qE '\[gang:tester#[0-9a-f]+\] MARK_ONE \[/gang:tester#[0-9a-f]+\]' && echo yes || echo no)"
+  "$(holds "$(pane_of alpha)" '\[gang:tester#[0-9a-f]+\] MARK_ONE \[/gang:tester#[0-9a-f]+\]')"
 
 # Verification counts evidence before and after the paste. If it just asked
 # "is this text anywhere on screen", the second of two identical sends would
@@ -447,7 +460,7 @@ unset GANG_PROFILES
 "$GANG" send alpha --from tester "$(printf 'FIRST_LINE\nSECOND_LINE')" >/dev/null 2>&1
 sleep 0.5
 check "every line of a message stays inside its envelope" "yes" \
-  "$(pane_of alpha | grep -qE 'SECOND_LINE \[/gang:tester#[0-9a-f]+\]' && echo yes || echo no)"
+  "$(holds "$(pane_of alpha)" 'SECOND_LINE \[/gang:tester#[0-9a-f]+\]')"
 
 # And a body cannot forge one of its own: it cannot know the nonce, and anything
 # shaped like a tag is neutralised before it goes in.
@@ -1150,8 +1163,7 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 paint compagent 'ctx 150k/200k 75%'
 "$GANG" compact compagent --from tester >/dev/null 2>&1
 check "a compaction gang issued is recorded on the window" "yes" \
-  "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting \
-     | grep -qE '^[0-9]+ [0-9]+$' && echo yes || echo no)"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
 check "and patrol holds its nudge while it is in flight" \
   "past the 120000-token band — compaction gang issued is in flight, holding nudge" \
   "$("$GANG" patrol | verdict compagent)"
@@ -1359,12 +1371,12 @@ check "a codex agent joins the band ladder" "NUDGED (crossed the 120000-token ba
 # to print after the matching one.
 dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" vet 2>/dev/null)"
 check "vet gates the rollout format" "yes" \
-  "$(printf '%s' "$dout" | grep -q 'file format: OK' && echo yes || echo no)"
+  "$(holds "$dout" 'file format: OK')"
 printf '%s\n' '{"timestamp":"2026-07-27T00:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.3,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}' \
   > "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"   # through the alias, deliberately
 check "and fails loud when the schema drifts" "yes" \
-  "$(printf '%s' "$dout" | grep -q 'file format: DRIFT' && echo yes || echo no)"
+  "$(holds "$dout" 'file format: DRIFT')"
 rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 unset GANG_PROFILES
 
@@ -1436,12 +1448,12 @@ check "a percent the joined window cannot reproduce is refused" "1" "$?"
 
 dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "vet gates the catalog format" "yes" \
-  "$(printf '%s' "$dout" | grep -q 'file format: OK (catalog join candidates' && echo yes || echo no)"
+  "$(holds "$dout" 'file format: OK [(]catalog join candidates')"
 printf '%s\n' '{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5"}}}}' \
   > "$OC_CACHE/opencode/models.json"
 dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "and fails loud when the catalog drifts" "yes" \
-  "$(printf '%s' "$dout" | grep -q 'file format: DRIFT — models catalog holds no named model' && echo yes || echo no)"
+  "$(holds "$dout" 'file format: DRIFT — models catalog holds no named model')"
 oc_catalog
 unset GANG_PROFILES
 
@@ -1460,7 +1472,7 @@ in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw outpu
   tmux send-keys -t "$id" "clear; $* ; echo IN_PANE_DONE" Enter
   while [ "$t" -lt 60 ]; do
     # Anchored, so the shell's echo of the command line is not the marker.
-    tmux capture-pane -p -t "$id" | grep -q '^IN_PANE_DONE' && break
+    [ "$(holds "$(tmux capture-pane -p -t "$id")" '^IN_PANE_DONE')" = yes ] && break
     sleep 1; t=$((t + 1))
   done
   # -J rejoins rows the pane wrapped. A roster row naming a profile gang cannot
