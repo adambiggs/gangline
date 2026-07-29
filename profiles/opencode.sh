@@ -15,7 +15,42 @@
 # gates exist only where the operator's own opencode.json says "ask", so the
 # flag matters exactly to the operators who configured one, and they are the
 # ones who should choose it. Shadow via GANG_PROFILES to add it.
+# The role directories are pre-authorized at launch, because gang creates the
+# need for them itself. A briefed agent is POINTED at its role file by path, and
+# those files live in gangline's own tree — outside the directory opencode was
+# started in, which is the only place opencode reads without asking. So
+# `gang hitch <name> -p opencode -r <role>` produced an agent stopped on
+# "Access external directory ~/…/gangline/roles" for the very file it had just
+# been told to read: a brief that was delivered and could not be acted on.
+# Reproduced here on a fresh trust store, and every opencode hitch with a role
+# hits it.
+#
+# This is the narrowest thing that clears it: two allow patterns, for the role
+# directories gang will actually search and nothing else. It is not a permissions
+# posture — it grants read access to the briefs gang wrote and stops there, so
+# the "no --auto here" reasoning above still holds in full.
+#
+# OPENCODE_CONFIG_CONTENT is MERGED with the operator's own config rather than
+# replacing it. Verified against the installed build with `opencode debug
+# config`: a config carrying "permission": {"bash": "ask"} keeps it and gains
+# external_directory alongside, and the resolved config grows by exactly that one
+# key. Set for this process only, like the autoupdate switch — the operator's own
+# opencode is untouched.
+#
+# Both patterns, because only "/*" is what opencode itself names in the dialog
+# while "/**" is what its own docs use for a subtree. A directory whose path
+# contains a single quote is skipped rather than escaped: the launch line is
+# handed to sh, and a broken one would stop the harness from starting at all,
+# which is far worse than one permission prompt.
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
+_gl_oc_dirs=""
+for _gl_oc_d in ${GANG_ROLES:+"$GANG_ROLES"} ${ROOT:+"$ROOT/roles"}; do
+  [ -d "$_gl_oc_d" ] || continue
+  case "$_gl_oc_d" in *\'*) continue ;; esac
+  _gl_oc_dirs="$_gl_oc_dirs\"$_gl_oc_d/*\":\"allow\",\"$_gl_oc_d/**\":\"allow\","
+done
+[ -z "$_gl_oc_dirs" ] || GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 OPENCODE_CONFIG_CONTENT='{\"permission\":{\"external_directory\":{${_gl_oc_dirs%,}}}}' opencode"
+unset _gl_oc_dirs _gl_oc_d
 # From `opencode --help`: -m/--model, spelled provider/model
 # ("google/gemini-3.1-pro-preview").
 GANG_MODEL_OPT="-m"
