@@ -88,6 +88,23 @@ JSONPath unchanged while the release workflow remains green.
   branch in `bin/gang` needs an ADR in `docs/adr/`.
 - **Law 9** — when in doubt, the answer is prose in an agent's prompt, not code here.
 
+**A profile must never lower the operator's security posture.** No shipped profile
+may put a harness into a mode that skips approval prompts or disables its sandbox —
+`--dangerously-bypass-approvals-and-sandbox`, `approval_policy = "never"`,
+`sandbox_mode = "danger-full-access"`, `--yolo`, or whatever the next harness calls
+it. A profile describes how to *drive* a harness, not how much authority to hand it.
+
+The reason it is tempting is exactly why it is banned: an agent gated behind a
+permission prompt is refused by `gang send` and no keystroke from a teammate can
+clear it, so "just turn the prompts off" reads like a fix for a coordination
+problem. It is not. It is a decision only the person at the keyboard can make, on
+their own machine, in their own config — and shipping it as a default means every
+future installer inherits a choice they never made and probably never read.
+
+Put it in `~/.codex/config.toml` (or the harness's equivalent), never in
+`profiles/`. If a gated agent is blocking a team, that is a thing to tell the
+operator, not a thing to engineer around.
+
 Every shell and Python file carries an `SPDX-License-Identifier` line; new ones
 need it too.
 
@@ -98,6 +115,15 @@ green run is not a CI prediction on the current development box: local mawk
 local Bash 5.1 is newer than macOS CI's 3.2, which rejected 37 locally valid test
 constructs; and local ShellCheck 0.8.0 is more permissive than CI's newer parser,
 which treated a comment beginning `shellcheck` as a directive and failed lint.
+
+Measure with the thing under test, not a stand-in for it. Some agent harnesses
+wrap `grep` in a shell function for their own interactive use; a measurement taken
+at such a prompt reported that wrapper's exit codes as the tool's, when every
+script here runs `/usr/bin/grep` and gets different ones. Run a measurement the way
+the code runs it — in a script, through the same binary — or the number belongs to
+the stand-in. Same reason the suite refuses mocks: a mock agrees with whatever the
+code already does.
+
 The test
 drives `bin/gang` against a real tmux server with the `bash` profile — no mocks,
 because a mocked tmux would agree with whatever the code already does. A fix to

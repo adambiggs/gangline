@@ -35,6 +35,16 @@
 # answers on two machines: where nothing sets XDG_RUNTIME_DIR the lock lands in
 # /tmp, which the sandbox does leave writable, and send works with network access
 # alone. Verify under systemd, which sets it, or the failure will not reproduce.
+#
+# What this launch line will NOT grow, however convenient it looks: anything that
+# skips approval prompts or drops the sandbox — -c approval_policy=never,
+# -c sandbox_mode=danger-full-access, --dangerously-bypass-approvals-and-sandbox.
+# The pull toward it is real, because a Codex agent sitting behind a permission
+# prompt reads `gated`, refuses every send, and no teammate can clear it. That is
+# a thing to tell the operator, not a thing to fix here. How much authority a
+# harness gets is the decision of the person at the keyboard, made in their own
+# ~/.codex/config.toml; shipping it as a default hands it to every future
+# installer without asking. See CONTRIBUTING, "Before adding code".
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
