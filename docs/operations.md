@@ -56,19 +56,23 @@ This enables ordinary network access too; Codex provides no Unix-socket-only
 allowlist. Decide whether that trade is acceptable for the work.
 
 Delivery also needs one lock directory shared by every Gangline process that can
-write to a pane. Its default is
-`${XDG_RUNTIME_DIR:-/tmp}/gangline-<uid>`. A systemd environment normally sets
-`XDG_RUNTIME_DIR=/run/user/<uid>`, which Codex may mount read-only. In that case,
-choose a path all outside and sandboxed callers can write **before** hitching the
-team, and preserve it in every shell and cron job that runs `gang`:
+write to a pane. It defaults to `/tmp/gangline-<uid>`, which every harness can
+reach — including a `workspace-write` Codex sandbox — and which does not depend on
+a login session having set anything up. The locks are empty between deliveries, and
+the directory dies at reboot or on the distribution's `tmpfiles` sweep rather than
+at logout.
 
-```sh
-export GANG_LOCK_DIR="/tmp/gangline-$(id -u)"
-```
+Point `GANG_LOCK_DIR` somewhere else only if you preserve it in **every** shell and
+cron job that runs `gang`. Writers with different lock directories stop serialising
+against one another, so Gangline fails loudly rather than falling back to a second
+path when the configured one cannot be used.
 
-Do not give different writers different lock directories: they would stop
-serialising against one another. Gangline fails loudly rather than silently
-falling back when the configured lock path cannot be created.
+Because `/tmp` is shared, Gangline establishes that directory before trusting it:
+it creates the root with mode `0700`, and refuses a path that is a symlink, is not
+a directory, or is not owned by you. A root of your own that an older version left
+more permissive is tightened instead of refused, so an upgrade needs no
+intervention. Every refusal names what is wrong with the path, and none of them
+quietly picks a different one.
 
 ## Shell-safe messages
 
@@ -145,13 +149,18 @@ mkdir -p "$HOME/.local/state/gangline"
 
 The negative filter keeps unknown future errors while removing routine steady
 rows. A patrol only sweeps `GANG_SESSION`; use one cron entry per session. Carry
-`GANG_PROFILES`, `GANG_CONTEXT_BANDS`, and `GANG_LOCK_DIR` into cron too when the
-team overrides them.
+`GANG_PROFILES`, `GANG_CONTEXT_BANDS`, `GANG_LOCK_DIR`, and `GANG_CONTEXT_LOG`
+into cron too when the team overrides them: a patrol that disagrees about the lock
+directory stops serialising with the other writers, and one that disagrees about
+the log writes its measurements into a second dataset.
 
 Bare `GANG_CONTEXT_BANDS` entries are absolute tokens; `%` entries are a
 percentage of that agent's context window. The default ladder is entirely
-absolute. The last warned band is a tmux window option, shared with
-`context-hook`, and re-arms when usage falls after compaction.
+proportional, because the shipped harnesses differ in window size by nearly 4x and
+one absolute ladder places its rungs differently on each — a rung above the
+smallest window can never be crossed at all. Pin absolute rungs if every agent on
+the team runs the same window size. The last warned band is a tmux window option,
+shared with `context-hook`, and re-arms when usage falls after compaction.
 
 ### In-turn hook
 

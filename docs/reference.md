@@ -196,6 +196,20 @@ profile-loading and band-configuration errors remain loud. The command is
 intended for hook systems such as Claude Code's `UserPromptSubmit` and
 `PostToolUse` events.
 
+### `gang context-report [--clear]`
+
+Summarises the retained warning and compaction events in `GANG_CONTEXT_LOG`. When
+the session is live it also collects any per-window logging gaps — a window option
+recording that a write to the log failed — so a report cannot silently describe a
+dataset with holes in it as if it were complete.
+
+`--clear` is the deletion path: it removes the active log and its retained
+rotation, and clears the recorded gaps. Nothing else deletes measurements, and the
+log outlives the windows it describes by design.
+
+Both forms need `lib/context_events.py` from the install tree and refuse loudly
+without it.
+
 ## Diagnostics and discovery
 
 ### `gang vet [--file-issue] [--probe [profile]]`
@@ -274,15 +288,17 @@ fragments and are not listed as roles.
 | `GANG_PROFILE` | default profile for `up` and `hitch` | `claude-code` |
 | `GANG_ROLE` | role used by `up` when `-r` is absent | `lead` |
 | `GANG_FROM` | sender identity for `send` and compact resumes | none |
-| `GANG_CONTEXT_BANDS` | comma-separated absolute token counts or percentages | `120000,180000,250000,350000` |
+| `GANG_CONTEXT_BANDS` | comma-separated percentages of each agent's own window, or absolute token counts | `30%,50%,70%,85%` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |
 | `NO_COLOR` | any non-empty value disables colour | unset |
 
 Every process that addresses one team must agree on `GANG_SESSION`. Cron must
-also receive `GANG_PROFILES`, `GANG_CONTEXT_BANDS`, and `GANG_LOCK_DIR` when the
-team overrides them.
+also receive `GANG_PROFILES`, `GANG_CONTEXT_BANDS`, `GANG_LOCK_DIR`, and
+`GANG_CONTEXT_LOG` when the team overrides them — a patrol that disagrees about
+the lock directory stops serialising with the other writers, and one that
+disagrees about the log writes its measurements into a second dataset.
 
 ### Operational settings
 
@@ -290,7 +306,9 @@ These are useful when the corresponding path is in use:
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `GANG_LOCK_DIR` | shared directory for per-pane delivery locks | `${XDG_RUNTIME_DIR:-/tmp}/gangline-<uid>` |
+| `GANG_LOCK_DIR` | shared directory for per-pane delivery locks; created `0700`, and refused if it is a symlink, not a directory, or not owned by you | `/tmp/gangline-<uid>` |
+| `GANG_CONTEXT_LOG` | persistent context-compliance event log | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/context-events.tsv` |
+| `GANG_CONTEXT_LOG_MAX_BYTES` | active log bound; one rotation is retained beside it | `8388608` |
 | `GANG_LOCK_WAIT` | lock acquisition polls at 0.2 seconds | `150` (30 seconds) |
 | `GANG_CHURN_WAIT` | interval between pane-change samples | `0.5` seconds |
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
