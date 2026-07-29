@@ -205,7 +205,16 @@ all_profiles() {
     [ -d "$d" ] || continue
     for p in "$d"/*.sh; do
       [ -f "$p" ] || continue
-      basename "$p" .sh
+      # Stripped with parameter expansion rather than basename, and that is not
+      # micro-optimisation. A fork that fails — and under real load on this box
+      # they do — drops that ONE name from the list and reports nothing: the
+      # profile silently stops being offered by `gang profiles` and silently stops
+      # being VETTED, which is a guard lost with nothing printed to say so. It is
+      # the same class this function's own comment was written about. Demonstrated
+      # with a basename shim failing on one file: codex disappeared from `gang
+      # profiles` and the exit status stayed 0. An expansion cannot fail that way.
+      p="${p##*/}"
+      printf '%s\n' "${p%.sh}"
     done
   done | sort -u
 }
@@ -271,7 +280,15 @@ list_roles() {
     for f in "$d"/*.md; do
       [ -f "$f" ] || continue
       case "${f##*/}" in _*) continue ;; esac
-      basename "$f" .md
+      # Expansion, not basename, and this one fails HARDER than the profile list
+      # it mirrors. There the fork was consumed in a substitution, so a failure
+      # dropped one name at exit 0; here it is a bare command, so set -e ends the
+      # loop's subshell and the list is empty from that file onward. Both die()
+      # sites that print "have: <roles>" then hand somebody who has already
+      # mistyped a role an empty list of what they may pick instead. The line
+      # above already strips the same variable this way.
+      f="${f##*/}"
+      printf '%s\n' "${f%.md}"
     done
   done | sort -u
 }
@@ -1889,6 +1906,7 @@ and append the new version to GANG_VERIFIED_VERSIONS.")
 GANG_PROBE_BOOT="${GANG_PROBE_BOOT:-45}"      # seconds to an input box; a cold TUI is slow
 GANG_PROBE_TURN="${GANG_PROBE_TURN:-90}"      # seconds of working pane to watch for the marker
 GANG_PROBE_SETTLE="${GANG_PROBE_SETTLE:-120}" # seconds for the pane to stop moving afterwards
+GANG_PROBE_QUIET="${GANG_PROBE_QUIET:-5}"     # seconds of byte-identical pane that count as stopped
 # A MARKED PHASE CAN BE A SMALL FRACTION OF A LIVE TURN, so the window is polled
 # and never sampled. Measured on claude-code: of 220 samples with the pane
 # demonstrably changing, 19 carried any branch of the declared regex — 8.6% — and
@@ -1984,6 +2002,17 @@ probe_row() { # $1 = name, $2 = version, $3 = colour, $4 = text
   printf '%-12s %-26s %s\n' "$1" "$2" "$(colour "$3" "$4")"
 }
 
+probe_evidence() { # $1 = profile, $2 = the pane the verdict was reached on
+  # A verdict about a screen that then throws the screen away asks to be taken on
+  # trust, and this one is about to tell somebody their profile is broken. Kept
+  # outside the probe's own temp dir so it survives teardown, and named in the row
+  # so the next question — "what did it actually look like?" — has an answer that
+  # is not "run it again and hope".
+  local f="${TMPDIR:-/tmp}/gang-probe-$1-$$.txt"
+  printf '%s\n' "$2" > "$f" 2>/dev/null || return 0
+  printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "pane it judged: $f")"
+}
+
 probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   local prof="$1" id ready out ctx key msg installed="-"
   local marked=0 churned=0 settled=0 deadline rc=0
@@ -2034,6 +2063,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # healthy — chrome that matches the regex permanently, which reads busy forever.
   if busy_painted "$id"; then
     probe_row "$prof" "$installed" "$C_BAD" "VOID — the marker was already on screen before any work was sent: contamination, or it is permanent chrome"
+    probe_evidence "$prof" "$(capture_joined "$id")"
     tmux kill-window -t "$id" 2>/dev/null || true
     return 1
   fi
@@ -2081,6 +2111,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
       rc=2
     else
       probe_row "$prof" "$installed" "$C_BAD" "MARKER DEAD — the pane was working and never painted it: $GANG_BUSY_REGEX"
+      probe_evidence "$prof" "$pane"
       rc=1
     fi
     tmux kill-window -t "$id" 2>/dev/null || true
@@ -2093,18 +2124,35 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # at all — so marker-gone fires mid-answer, and this would be asserting the rest
   # state of a pane that is still working. A still screen is the only signal here
   # that the turn is actually over.
-  local streak=0
+  # QUIET IS A DURATION, NOT A STREAK, and that distinction cost a false verdict.
+  # Two identical frames a second apart was the first gate, and it reported
+  # opencode MARKER STUCK on a marker that was demonstrably healthy — watched
+  # separately, it appears two seconds in and clears by ten. A TUI does not repaint
+  # on a schedule: mid-turn still runs measured 0.5s on a quiet server and stretch
+  # under contention, and the failing run had three TUIs on one server at load 28.
+  # Post-turn stillness measured 15.75s in the same window, so the two are cleanly
+  # separable by DURATION and not at all by consecutive-sample count.
+  #
+  # Erring long is the safe direction and the reason to prefer it is not caution:
+  # a threshold too short yields a false MARKER STUCK, which is a false alarm on a
+  # healthy harness, while too long only costs seconds and can never produce a
+  # pass. The residual is stated rather than closed — a turn that pauses longer
+  # than this mid-flight is called finished, and that too fails toward alarm.
+  local quiet_since=0 now=0
   prev=""
   deadline=$(( $(date +%s) + GANG_PROBE_SETTLE ))
-  while [ "$(date +%s)" -lt "$deadline" ]; do
+  while :; do
+    now="$(date +%s)"
+    [ "$now" -lt "$deadline" ] || break
     pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane while waiting for its turn to end"
     if [ -n "$prev" ] && [ "$pane" = "$prev" ]; then
-      streak=$((streak + 1)); [ "$streak" -ge 2 ] && { settled=1; break; }
+      [ "$quiet_since" -ne 0 ] || quiet_since="$now"
+      [ $(( now - quiet_since )) -ge "$GANG_PROBE_QUIET" ] && { settled=1; break; }
     else
-      streak=0
+      quiet_since=0
     fi
     prev="$pane"
-    sleep 1
+    sleep "$GANG_PROBE_RATE"
   done
   if [ "$settled" -eq 0 ]; then
     probe_row "$prof" "$installed" "$C_BAD" "not probed — the pane never stopped moving in ${GANG_PROBE_SETTLE}s, so there is no rest state to hold the marker against"
@@ -2125,6 +2173,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # never toward false pass.
   if printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"; then
     probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — painted, and still painted once the pane went quiet: $GANG_BUSY_REGEX"
+    probe_evidence "$prof" "$pane"
     tmux kill-window -t "$id" 2>/dev/null || true
     return 1
   fi
@@ -2211,8 +2260,14 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
   # one they did. A typo dies rather than printing an empty clean bill, which is
   # the same failure as a clean bill that overstates its scope, just emptier.
   if [ -n "$only" ]; then
-    printf '%s\n' "$(all_profiles)" | grep -qxF -- "$only" \
-      || die "vet: no profile '$only' is installed (see: gang profiles)"
+    # The list goes in the message, not just the refusal. "No profile 'x'" leaves
+    # two very different faults looking identical — a typo, and a GANG_PROFILES
+    # pointing somewhere that has nothing in it — and the second is the one a
+    # caller cannot see from outside.
+    local installed_names
+    installed_names="$(all_profiles)"
+    printf '%s\n' "$installed_names" | grep -qxF -- "$only" \
+      || die "vet: no profile '$only' is installed. Installed: $(printf '%s' "$installed_names" | tr '\n' ' ')(GANG_PROFILES=${GANG_PROFILES:-unset})"
   fi
   while read -r prof <&3; do
     [ -n "$prof" ] || continue

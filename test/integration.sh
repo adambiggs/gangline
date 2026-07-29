@@ -1090,7 +1090,7 @@ RC
 # can be MARKER DEAD rather than a shrug.
 cat > "$SHIM/probedir/dead.rc" <<'RC'
 PS1='❯ '
-probe_work() { local i=0; while [ $i -lt 12 ]; do date +%s%N; sleep 0.25; i=$((i+1)); done; clear; echo 'ctx 12k/200k 6%'; }
+probe_work() { local i=0; while [ $i -lt 24 ]; do date +%s%N; sleep 0.25; i=$((i+1)); done; clear; echo 'ctx 12k/200k 6%'; }
 RC
 # Paints it and never takes it down. A presence-only probe calls this healthy,
 # and it is the failure that costs most in production: chrome matching the regex
@@ -1135,15 +1135,32 @@ profile_context() {
 }
 SH
 done
+probe_verdict() { # $1 = probe output, $2 = stand-in; the verdict phrase on its own
+  # Asserted instead of a yes/no match, so a failure names the verdict it GOT
+  # rather than reporting "no". Both of these went intermittent under contention
+  # once, and a check that answers "no" makes the next hour a guessing game about
+  # which of five outcomes it took — the same argument that put a pane dump behind
+  # the probe's own failing verdicts.
+  local v
+  v="$(printf '%s\n' "$1" | grep "^$2 " | sed -E 's/^[^ ]+ +[^ ]+ +//; s/ —.*$//; s/;.*$//' \
+       | grep -v '^OK (verified' | tail -1)"
+  # No row at all means the probe never reached a verdict — it died on the way,
+  # most likely standing its server up under load. Surfacing its last line beats
+  # returning nothing: an empty actual says only that something went wrong before
+  # the part under test, which is the least useful thing a failing check can say.
+  [ -n "$v" ] || v="$(printf '%s\n' "$1" | grep -v '^[[:space:]]*$' | tail -1)"
+  printf '%s\n' "$v"
+}
+
 probe_run() { # $1 = stand-in; the whole probe, bounded so a hung harness cannot hang the suite
   GANG_PROFILES="$SHIM/probedir" GANG_PROBE_PROMPT="probe_work" \
-  GANG_PROBE_BOOT=20 GANG_PROBE_TURN="${2:-8}" GANG_PROBE_SETTLE="${3:-8}" \
+  GANG_PROBE_BOOT=25 GANG_PROBE_TURN="${2:-15}" GANG_PROBE_SETTLE="${3:-18}" GANG_PROBE_QUIET=2 \
     timeout 120 "$GANG" vet --probe "$1" 2>&1
 }
 
 pout="$(probe_run livemark)"; prc=$?
-check "a probe passes a harness that paints what it declares" "yes" \
-  "$(holds "$pout" 'livemark .*fired and cleared')"
+check "a probe passes a harness that paints what it declares" "busy marker fired and cleared" \
+  "$(probe_verdict "$pout" livemark)"
 check "and reads the context readout off the same pane" "yes" \
   "$(holds "$pout" 'context 12k/200k \(6%\)')"
 check "and exits clean" "0" "$prc"
@@ -1151,21 +1168,21 @@ check "and exits clean" "0" "$prc"
 pout="$(probe_run deadmark)"; prc=$?
 # The direction that matters. This one is not allowed to pass quietly: a probe
 # that cannot fail is decoration, and the pane here is demonstrably working.
-check "a probe fails a harness that is working and never paints its marker" "yes" \
-  "$(holds "$pout" 'deadmark .*MARKER DEAD')"
+check "a probe fails a harness that is working and never paints its marker" "MARKER DEAD" \
+  "$(probe_verdict "$pout" deadmark)"
 check "and names the marker it could not find, since that is what has to be fixed" "yes" \
   "$(holds "$pout" 'PROBEBUSY_NEVER')"
 check "and exits nonzero so a caller cannot read it as a clean bill" "1" "$prc"
 
-check "a marker that never clears fails too, rather than passing for having appeared" "yes" \
-  "$(holds "$(probe_run stuckmark)" 'stuckmark .*MARKER STUCK')"
-check "a marker on screen before any work voids the probe instead of passing it" "yes" \
-  "$(holds "$(probe_run dirtymark)" 'dirtymark .*VOID')"
+check "a marker that never clears fails too, rather than passing for having appeared" "MARKER STUCK" \
+  "$(probe_verdict "$(probe_run stuckmark)" stuckmark)"
+check "a marker on screen before any work voids the probe instead of passing it" "VOID" \
+  "$(probe_verdict "$(probe_run dirtymark)" dirtymark)"
 # Never a pass and never a marker verdict: with nothing moving, "the marker is
 # absent" and "the harness did nothing" are the same picture.
 pout="$(probe_run inertmark)"; prc=$?
-check "a harness that never gets busy is reported unprobed, not passed" "yes" \
-  "$(holds "$pout" 'inertmark .*not probed')"
+check "a harness that never gets busy is reported unprobed, not passed" "not probed" \
+  "$(probe_verdict "$pout" inertmark)"
 check "and its run does not claim to have confirmed anything" "yes" \
   "$(holds "$pout" '0 profile\(s\) driven, 1 not probed')"
 
