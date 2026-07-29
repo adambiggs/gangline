@@ -457,13 +457,29 @@ capture() { tmux capture-pane -p -t "$1"; }
 capture_joined() { tmux capture-pane -pJ -t "$1"; }
 
 capture_status() { # $1 = window id; the bottom rows, where a TUI paints its state
-  # A dialog, a spinner and a progress bar are drawn at the bottom of the screen,
-  # above the composer, and they move up and out as the transcript grows. The
-  # transcript itself is where an agent QUOTES those same words — reading a
-  # profile, pasting a capture, reviewing this repo. Matching the whole pane
-  # cannot tell the two apart, so state reads from the region a TUI actually
+  # ONE caller: compacting(). busy_painted() and gated() read the whole pane and
+  # are position-blind; the narrow window is for the one predicate that cannot
+  # be. A compaction marker is a glyph this repo's own profiles are full of, and
+  # an agent QUOTES those words constantly — reading a profile, pasting a
+  # capture, reviewing this repo — so matching over the whole pane believes any
+  # of them: compacting() would have read true for three minutes off a
+  # reviewer's own grep output. State reads from the region a TUI actually
   # paints state into. Trailing blank rows are dropped first: a half-empty pane
   # would otherwise spend its whole allowance on blank lines.
+  #
+  # That caller is currently unreached. compacting() returns at its first line
+  # unless GANG_COMPACTING_REGEX is set, and all four shipped profiles leave it
+  # unset deliberately, each saying why. So on every harness gang ships nothing
+  # reads this, and the number below is exercised only by the suite's fixture.
+  # Unreached is not settled, and from inside this file the two look the same.
+  #
+  # What wakes it, and what the next declarer owns: the offset this bounds is
+  # NOT fixed. claude-code renders unconsumed queued messages BETWEEN the state
+  # line and the composer, so the distance up from the bottom grows by whatever
+  # is queued — measured, a spinner at row 40 of 55 with a six-row envelope
+  # under it, four rows inside twenty. A longer queue puts it outside, and the
+  # cost lands on resume_after_compaction, which drops to the settle path when
+  # compacting() reads false. Twenty is not a number to inherit.
   capture_joined "$1" \
     | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' \
     | tail -n "${GANG_STATUS_ROWS:-20}"
