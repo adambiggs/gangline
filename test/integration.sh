@@ -2078,10 +2078,16 @@ check "no builtin producer is piped into an early-exiting reader" "0" \
 # exactly: this fires on any line that opens a command substitution and goes on to
 # write `case` — which is the shape all thirty-seven took, the multi-line ones
 # included, since every one of them opened with the two characters together. It
-# cannot see a `case` written on a line BELOW its own substitution, and no
-# shellcheck level sees any of it. Asserted against both files rather than this
-# one: bin/gang has to parse on 3.2 too, and it is clean today only because
-# nobody has happened to write the shape there.
+# cannot see a `case` written on a line BELOW its own substitution, and there is
+# no shellcheck level that sees any of it. Asserted against both files rather
+# than this one: bin/gang has to parse on 3.2 too, and it is clean today only
+# because nobody has happened to write the shape there.
+#
+# That wording is load-bearing, not style. A comment line BEGINNING with the
+# word after `#` spelled s-h-e-l-l-c-h-e-c-k is parsed as a directive, so an
+# ordinary sentence that happened to wrap onto one turned this file into two
+# SC1072/SC1073 errors — on both cells, and past a local shellcheck 0.8.0 that
+# did not read it that way. Keep the word off the start of a line.
 check "no case statement is written inside a command substitution" "0" \
   "$(bash32_traps "$0")"
 check "and none in gang either" "0" \
