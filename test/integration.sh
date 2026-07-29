@@ -31,6 +31,9 @@ trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
 SHIM="$(mktemp -d)"
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null; rm -rf "$SHIM"' EXIT
+# Context instrumentation is persistent by design; the suite owns a private log
+# so fixture rows never enter the live team's week-long dataset.
+export GANG_CONTEXT_LOG="$SHIM/context-events.tsv"
 # A tmux that silently swallows paste-buffer and passes everything else through.
 # Delivery failing loudly is the one claim worth a fault injector: the failure
 # it guards against is by nature silent.
@@ -1687,7 +1690,8 @@ check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
 tmux set-option -w -t "$p" @gl_band 0
 check "the hook warns on a fresh band" "yes" \
   "$(like "$(hook)" "*additionalContext*140000-token band*")"
-check "and advances the shared band memory" "3" "$(tmux show-options -wqv -t "$p" @gl_band)"
+check "and advances rich shared band memory" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^3 1 [0-9]+$')"
 
 # --- one ladder, windows 4x apart ---------------------------------------------
 #
@@ -1709,10 +1713,10 @@ check "a 1M agent at 90% is nudged at its own top rung" \
   "NUDGED (crossed the 850000-token band)" "$(printf '%s\n' "$bandout" | verdict bigwin)"
 check "and a 258k agent at 90% at ITS top rung, off the same ladder" \
   "NUDGED (crossed the 219000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
-check "so both sit on the same band number" "4" \
-  "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)"
-check "and the small window reaches the top one at all" "4" \
-  "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)"
+check "so both sit on the same band number" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^4 1 [0-9]+$')"
+check "and the small window reaches the top one at all" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^4 1 [0-9]+$')"
 "$GANG" drop bigwin >/dev/null 2>&1 || true
 "$GANG" drop smallwin >/dev/null 2>&1 || true
 

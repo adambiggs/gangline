@@ -93,6 +93,14 @@ unset _d
 # context still crosses a rung, which takes a first rung below half the window.
 BANDS="${GANG_CONTEXT_BANDS:-30%,50%,70%,85%}"
 
+# Context-compliance measurements outlive the window they describe. The active
+# file and one rotation are capped; lib/context_events.py owns the atomic append
+# and `gang context-report --clear` is the deletion path. The override exists so
+# separate sessions and the integration suite can keep their datasets apart.
+CONTEXT_LOG="${GANG_CONTEXT_LOG:-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/context-events.tsv}"
+CONTEXT_LOG_MAX_BYTES="${GANG_CONTEXT_LOG_MAX_BYTES:-8388608}"
+CONTEXT_EVENTS="$ROOT/lib/context_events.py"
+
 # One wait with two users: pane_stable asks it of a single pane and churn_batch
 # asks it of a whole team, and the suite asserts the two agree about the same
 # pane. Tuned in one place only, because tuning one and not the other would make
@@ -167,6 +175,8 @@ gang — drive a team of CLI agents as tmux windows
                                               anything else only the operator can clear;
                                               sends cannot land)
   gang context <name>                         context-window usage (profile-declared readout)
+  gang context-report [--clear]               analyse retained warning/drop events;
+                                              --clear deletes the active log and rotation
   gang wait  <name> [timeout_s]               block until idle (default 300)
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
   gang roster                                 all agents with profile, state, context
@@ -197,6 +207,8 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      GANG_SESSION (default: gangline),
      GANG_CONTEXT_BANDS (warning ladder; % of the window or absolute tokens,
        default 30%,50%,70%,85% — proportional so one ladder fits a mixed team),
+     GANG_CONTEXT_LOG (persistent compliance-event log),
+     GANG_CONTEXT_LOG_MAX_BYTES (active-log bound; default 8388608, plus one rotation),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
      GANG_BOOT_TIMEOUT (seconds to wait for a hitched harness to take input: 30)
 EOF
@@ -869,14 +881,32 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
 # there is precisely the overtaking the waiter exists to prevent, while an
 # auto-compaction has no pending resume, so a nudge is queued, delivered late,
 # and burns a band — noisy, not corrupting. The dangerous case is covered.
-compaction_mark() { # $1 = window id, profile loaded; record that WE issued one
-  local at=0 ctx tw tokens window
+compaction_mark() { # target, name, self-issued|peer-issued; record WE issued one
+  local at=0 ctx tw tokens window now rung band crossed thresholds first
+  now="$(date +%s)"
   if declare -F profile_context >/dev/null \
      && ctx="$(profile_context "$1" 2>/dev/null)" \
      && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
     read -r tokens window <<<"$tw"; at="$tokens"
+    if rung="$(ladder "$tokens" "$window")"; then
+      read -r band crossed thresholds <<<"$rung"
+      first="${thresholds%%,*}"
+      context_request_write "$1" "$now" "$3" "$tokens" "$first" request-only || true
+      context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
+      context_log_record "$1" "ts=$now" "kind=compact_request" "session=$SESSION" \
+        "window_id=$1" "agent=$2" "profile=$AGENT_PROFILE" "leg=compact" \
+        "hook_event=-" "seam=COULD-NOT-DETERMINE" "tokens=$tokens" \
+        "window=$window" "band=$band" "threshold=$crossed" "thresholds=$thresholds" \
+        "requester=$3" "issue_tokens=$tokens" "first_threshold=$first"
+    else
+      context_request_write "$1" "$now" "$3" 0 0 request-only || true
+      context_log_ctd "$1" "$2" "$AGENT_PROFILE" compact - ladder-unavailable-at-compact-request
+    fi
+  else
+    context_request_write "$1" "$now" "$3" 0 0 request-only || true
+    context_log_ctd "$1" "$2" "$AGENT_PROFILE" compact - context-unavailable-at-compact-request
   fi
-  tmux set-option -w -t "$1" @gl_compacting "$(date +%s) $at" 2>/dev/null || true
+  tmux set-option -w -t "$1" @gl_compacting "$now $at" 2>/dev/null || true
 }
 
 compaction_clear() { tmux set-option -uw -t "$1" @gl_compacting 2>/dev/null || true; }
@@ -902,6 +932,7 @@ compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
   if [ -n "${2:-}" ] && [[ "$2" =~ ^[0-9]+$ ]] \
      && [[ "$at_issue" =~ ^[0-9]+$ ]] && [ "$at_issue" -gt 0 ] \
      && [ "$2" -lt $(( at_issue / 2 )) ]; then
+    context_request_evidence "$1" drop-proved
     compaction_clear "$1"; return 1
   fi
   # And the clock, because a compaction that never happened shows nothing at all:
@@ -911,7 +942,8 @@ compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
   now="$(date +%s)"
   # Shared with resume_after_compaction, which uses the same number to decide when
   # to give up waiting for the drop; overrunning it there is corrupting, not noisy.
-  [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] || { compaction_clear "$1"; return 1; }
+  [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] \
+    || { context_request_evidence "$1" clock-cleared; compaction_clear "$1"; return 1; }
   return 0
 }
 
@@ -1500,7 +1532,10 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   declare -F profile_context >/dev/null || at_issue=""
   while [ "$t" -lt "$timeout" ]; do
     sleep 2; t=$((t + 2))
-    compacting "$1" && break
+    if compacting "$1"; then
+      context_request_evidence "$1" marker-seen
+      break
+    fi
     if [ -n "$at_issue" ]; then
       if [ "$t" -ge "$GANG_COMPACT_GRACE" ]; then
         # The drop never came, so the compaction never happened: `/compact` under
@@ -1521,12 +1556,16 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
         # moment earlier and makes the attempt better-behaved, and it buys the
         # measured under-threshold case, which otherwise holds for the full
         # fifteen minutes over a compaction that never happened.
+        context_request_evidence "$1" clock-cleared
         at_issue=""
       else
         if ctx="$(profile_context "$1" 2>/dev/null)" \
            && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
           read -r tokens window <<<"$tw"
-          if [ "$tokens" -lt $(( at_issue / 2 )) ]; then break; fi
+          if [ "$tokens" -lt $(( at_issue / 2 )) ]; then
+            context_request_evidence "$1" drop-proved
+            break
+          fi
         fi
         continue
       fi
@@ -1552,9 +1591,9 @@ ctx_tokens() { # $1 = "<used>k/<win>k (<pct>%)" -> "<used> <window>" in tokens
   printf '%s %s' "$(( BASH_REMATCH[1] * 1000 ))" "$(( BASH_REMATCH[2] * 1000 ))"
 }
 
-ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highest>"
+ladder() { # $1 = tokens, $2 = window -> "<bands crossed> <highest> <resolved CSV>"
   # One evaluator for both warning legs. Two copies of a ladder is two ladders.
-  local band=0 crossed=0 part n t
+  local band=0 crossed=0 part n t resolved=""
   for part in ${BANDS//,/ }; do
     case "$part" in
       *%) n="${part%\%}"
@@ -1576,12 +1615,228 @@ ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highe
     esac
     [ "$t" -gt 0 ] \
       || die "invalid GANG_CONTEXT_BANDS '$BANDS': the '$part' rung lands at 0 tokens, which every context is already past — fix the ladder"
+    resolved="${resolved:+$resolved,}$t"
     if [ "$1" -ge "$t" ]; then
       band=$((band + 1))
       [ "$t" -gt "$crossed" ] && crossed="$t"
     fi
   done
-  printf '%s %s' "$band" "$crossed"
+  printf '%s %s %s' "$band" "$crossed" "$resolved"
+}
+
+# @gl_band used to be one integer. Its richer value retains the same band while
+# adding the note count and last-note timestamp needed by the report. A legacy
+# nonzero integer proves its band but not how many notes produced it: one read can
+# jump across several rungs and emit only one note. Those two fields therefore
+# migrate as unknown, never as zero. An invalid rich value is a third answer and
+# neither warning leg may spend it as band zero.
+BAND_STATE_BAND=0 BAND_STATE_COUNT=0 BAND_STATE_LAST=0
+band_state_read() { # $1 = window id; populate BAND_STATE_*; 2 = malformed
+  local raw
+  raw="$(tmux show-options -wqv -t "$1" @gl_band 2>/dev/null)" || raw=""
+  if [ -z "$raw" ]; then
+    BAND_STATE_BAND=0 BAND_STATE_COUNT=0 BAND_STATE_LAST=0; return 0
+  fi
+  if [[ "$raw" =~ ^[0-9]+$ ]]; then
+    BAND_STATE_BAND="$raw"
+    if [ "$raw" -eq 0 ]; then BAND_STATE_COUNT=0 BAND_STATE_LAST=0
+    else BAND_STATE_COUNT="?" BAND_STATE_LAST="?"; fi
+    return 0
+  fi
+  if [[ "$raw" =~ ^([0-9]+)\ ([0-9]+|\?)\ ([0-9]+|\?)$ ]]; then
+    BAND_STATE_BAND="${BASH_REMATCH[1]}"
+    BAND_STATE_COUNT="${BASH_REMATCH[2]}"
+    BAND_STATE_LAST="${BASH_REMATCH[3]}"
+    return 0
+  fi
+  return 2
+}
+
+band_state_write() { # $1 target, $2 band, $3 count, $4 last-note epoch
+  tmux set-option -w -t "$1" @gl_band "$2 $3 $4"
+}
+
+count_next() { # $1 = numeric count or ?
+  if [[ "$1" =~ ^[0-9]+$ ]]; then printf '%s' "$(( $1 + 1 ))"
+  else printf '?'; fi
+}
+
+# The previous successful read is separate from warning memory because it is
+# refreshed on EVERY observation, including steady/held reads. A context-drop
+# row copies it before replacement, making "peak tokens" honestly mean the last
+# sampled value and carrying the sample's age as its error bar.
+SAMPLE_TS="" SAMPLE_TOKENS="" SAMPLE_WINDOW="" SAMPLE_BAND="" SAMPLE_THRESHOLDS=""
+context_sample_read() { # $1 target; 1 absent, 2 malformed
+  local raw extra
+  raw="$(tmux show-options -wqv -t "$1" @gl_context_sample 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  read -r SAMPLE_TS SAMPLE_TOKENS SAMPLE_WINDOW SAMPLE_BAND SAMPLE_THRESHOLDS extra <<<"$raw"
+  [ -z "${extra:-}" ] \
+    && [[ "$SAMPLE_TS" =~ ^[0-9]+$ ]] \
+    && [[ "$SAMPLE_TOKENS" =~ ^[0-9]+$ ]] \
+    && [[ "$SAMPLE_WINDOW" =~ ^[0-9]+$ ]] \
+    && [[ "$SAMPLE_BAND" =~ ^[0-9]+$ ]] \
+    && [[ "$SAMPLE_THRESHOLDS" =~ ^[0-9]+(,[0-9]+)*$ ]] || return 2
+}
+
+context_sample_write() { # $1 target, then epoch/tokens/window/band/thresholds
+  tmux set-option -w -t "$1" @gl_context_sample "$2 $3 $4 $5 $6" 2>/dev/null
+}
+
+# A compact request is evidence only that gang submitted a command. Issue #15
+# proves that Codex can reject that command while clearing its composer, so this
+# state never establishes cause by itself. It retains A (tokens at issue), F
+# (first resolved rung), and the independently observed evidence, allowing #22's
+# A > 2F availability boundary to be recorded rather than inferred later.
+REQUEST_TS="" REQUESTER="" REQUEST_TOKENS="" REQUEST_FIRST="" REQUEST_EVIDENCE=""
+context_request_read() { # $1 target; 1 absent, 2 malformed
+  local raw extra
+  raw="$(tmux show-options -wqv -t "$1" @gl_context_request 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  read -r REQUEST_TS REQUESTER REQUEST_TOKENS REQUEST_FIRST REQUEST_EVIDENCE extra <<<"$raw"
+  [ -z "${extra:-}" ] \
+    && [[ "$REQUEST_TS" =~ ^[0-9]+$ ]] \
+    && [[ "$REQUESTER" =~ ^(self-issued|peer-issued)$ ]] \
+    && [[ "$REQUEST_TOKENS" =~ ^[0-9]+$ ]] \
+    && [[ "$REQUEST_FIRST" =~ ^[0-9]+$ ]] \
+    && [[ "$REQUEST_EVIDENCE" =~ ^(request-only|marker-seen|drop-proved|clock-cleared)$ ]] || return 2
+}
+
+context_request_write() { # target, epoch, requester, A, F, evidence
+  tmux set-option -w -t "$1" @gl_context_request "$2 $3 $4 $5 $6" 2>/dev/null
+}
+
+context_request_evidence() { # $1 target, $2 evidence; measurement only
+  context_request_read "$1" || return 0
+  # A visible marker is stronger than the later clock and must not be erased by
+  # it. A proved drop likewise survives a clock check racing behind it.
+  case "$REQUEST_EVIDENCE:$2" in
+    marker-seen:*|drop-proved:clock-cleared) return 0 ;;
+  esac
+  context_request_write "$1" "$REQUEST_TS" "$REQUESTER" "$REQUEST_TOKENS" \
+    "$REQUEST_FIRST" "$2" || true
+}
+
+context_log_record() { # $1 target (may be empty), remaining args are key=value
+  local target="$1" prior="" err; shift
+  if [ -n "$target" ]; then
+    prior="$(tmux show-options -wqv -t "$target" @gl_context_log_error 2>/dev/null)" || prior=""
+  fi
+  [ -z "$prior" ] || set -- "$@" "prior_log_gap=$prior"
+  if [ ! -f "$CONTEXT_EVENTS" ]; then
+    err="missing atomic logger $CONTEXT_EVENTS"
+  elif err="$(python3 "$CONTEXT_EVENTS" append "$CONTEXT_LOG" \
+                   "$CONTEXT_LOG_MAX_BYTES" "$@" 2>&1)"; then
+    [ -z "$target" ] || tmux set-option -uw -t "$target" @gl_context_log_error 2>/dev/null || true
+    return 0
+  else
+    err="${err##*$'\n'}"
+  fi
+  # Logging cannot change whether a warning is delivered or whether a hook exits
+  # successfully. Bank the gap on the window; patrol and context-report consume
+  # it, and the next successful row carries it into the persistent log.
+  if [ -n "$target" ]; then
+    tmux set-option -w -t "$target" @gl_context_log_error "$(date +%s) ${err:0:300}" 2>/dev/null || true
+  fi
+  return 0
+}
+
+context_seam() { # $1 leg, $2 hook event
+  case "$1:$2" in
+    patrol:*) printf yes ;;
+    hook:UserPromptSubmit) printf yes ;;
+    hook:PostToolUse) printf no ;;
+    *) printf '%s' "COULD-NOT-DETERMINE" ;;
+  esac
+}
+
+context_log_ctd() { # target agent profile leg event reason
+  local now agent="$2" profile="$3" leg="$4" event="$5" reason="$6"
+  now="$(date +%s)"
+  context_log_record "$1" "ts=$now" "kind=read_ctd" "session=$SESSION" \
+    "window_id=${1:-COULD-NOT-DETERMINE}" "agent=$agent" "profile=$profile" \
+    "leg=$leg" "hook_event=$event" "seam=$(context_seam "$leg" "$event")" \
+    "tokens=COULD-NOT-DETERMINE" "window=COULD-NOT-DETERMINE" \
+    "band=COULD-NOT-DETERMINE" "threshold=COULD-NOT-DETERMINE" \
+    "thresholds=COULD-NOT-DETERMINE" "reason=$reason"
+}
+
+context_log_known_ctd() { # target agent profile leg event tokens window band crossed vector reason
+  local now; now="$(date +%s)"
+  context_log_record "$1" "ts=$now" "kind=read_ctd" "session=$SESSION" \
+    "window_id=$1" "agent=$2" "profile=$3" "leg=$4" "hook_event=$5" \
+    "seam=$(context_seam "$4" "$5")" "tokens=$6" "window=$7" "band=$8" \
+    "threshold=$9" "thresholds=${10}" "reason=${11}"
+}
+
+context_log_note() { # target agent profile leg event tokens window band threshold vector count [epoch]
+  local now="${12:-}"; [ -n "$now" ] || now="$(date +%s)"
+  context_log_record "$1" "ts=$now" "kind=note" "session=$SESSION" \
+    "window_id=$1" "agent=$2" "profile=$3" "leg=$4" "hook_event=$5" \
+    "seam=$(context_seam "$4" "$5")" "tokens=$6" "window=$7" "band=$8" \
+    "threshold=$9" "thresholds=${10}" "note_count=${11}"
+  printf '%s' "$now"
+}
+
+context_log_drop() { # target agent profile leg event post tokens/window/band/threshold/vector prev/count/last
+  local target="$1" agent="$2" profile="$3" leg="$4" event="$5"
+  local tokens="$6" window="$7" band="$8" crossed="$9" thresholds="${10}"
+  local prev_band="${11}" count="${12}" last_note="${13}" now pre_ts pre_tokens
+  local pre_window pre_band pre_thresholds staleness provenance evidence_availability
+  local evidence_result candidates issue_tokens first_threshold sample_quality request_quality
+  now="$(date +%s)"
+  pre_ts="COULD-NOT-DETERMINE"; pre_tokens="COULD-NOT-DETERMINE"
+  pre_window="COULD-NOT-DETERMINE"; pre_band="COULD-NOT-DETERMINE"
+  pre_thresholds="COULD-NOT-DETERMINE"; staleness="COULD-NOT-DETERMINE"
+  sample_quality=missing
+  if context_sample_read "$target"; then
+    pre_ts="$SAMPLE_TS"; pre_tokens="$SAMPLE_TOKENS"; pre_window="$SAMPLE_WINDOW"
+    pre_band="$SAMPLE_BAND"; pre_thresholds="$SAMPLE_THRESHOLDS"
+    staleness="$(( now - SAMPLE_TS ))"; sample_quality=determined
+  else
+    case "$?" in 2) sample_quality=malformed ;; esac
+  fi
+
+  provenance="COULD-NOT-DETERMINE"; evidence_availability=not-applicable
+  evidence_result=no-gang-request; candidates="harness-auto,unknown"
+  issue_tokens="COULD-NOT-DETERMINE"; first_threshold="COULD-NOT-DETERMINE"
+  request_quality=absent
+  if context_request_read "$target"; then
+    request_quality=determined; issue_tokens="$REQUEST_TOKENS"; first_threshold="$REQUEST_FIRST"
+    candidates="$REQUESTER,harness-auto,unknown"
+    if [ "$REQUEST_TOKENS" -gt 0 ] && [ "$REQUEST_FIRST" -gt 0 ]; then
+      if [ "$REQUEST_TOKENS" -gt $(( 2 * REQUEST_FIRST )) ]; then
+        evidence_availability=available
+      else
+        evidence_availability=structurally-unavailable
+      fi
+    else
+      evidence_availability="COULD-NOT-DETERMINE"
+    fi
+    evidence_result="$REQUEST_EVIDENCE"
+    case "$REQUEST_EVIDENCE" in
+      marker-seen|drop-proved) provenance="$REQUESTER"; candidates="$REQUESTER" ;;
+    esac
+  else
+    case "$?" in 2) request_quality=malformed
+      evidence_availability="COULD-NOT-DETERMINE"; evidence_result=malformed-request-state ;;
+    esac
+  fi
+
+  context_log_record "$target" "ts=$now" "kind=context_drop" "session=$SESSION" \
+    "window_id=$target" "agent=$agent" "profile=$profile" "leg=$leg" \
+    "hook_event=$event" "seam=$(context_seam "$leg" "$event")" \
+    "tokens=$tokens" "window=$window" "band=$band" "threshold=$crossed" \
+    "thresholds=$thresholds" "previous_band=$prev_band" \
+    "notes_since_drop=$count" "last_note_ts=$last_note" \
+    "pre_ts=$pre_ts" "pre_tokens=$pre_tokens" "pre_window=$pre_window" \
+    "pre_band=$pre_band" "pre_thresholds=$pre_thresholds" \
+    "sample_staleness=$staleness" "sample_quality=$sample_quality" \
+    "provenance=$provenance" "provenance_candidates=$candidates" \
+    "evidence_availability=$evidence_availability" "evidence_result=$evidence_result" \
+    "request_quality=$request_quality" "issue_tokens=$issue_tokens" \
+    "first_threshold=$first_threshold"
+  tmux set-option -uw -t "$target" @gl_context_request 2>/dev/null || true
 }
 
 band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text, both legs
@@ -1862,7 +2117,9 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   # wrong way. Typed is the whole of what it claims — the mark says WE ISSUED
   # ONE, and both readers already carry the case where nothing follows, each
   # giving up at GANG_COMPACT_GRACE.
-  compaction_mark "$AGENT_ID"
+  local request_provenance=peer-issued
+  [ "$mine" -eq 1 ] && request_provenance="self-issued"
+  compaction_mark "$AGENT_ID" "$name" "$request_provenance"
   # What inject just proved is DELIVERY: the paste changed the input box and the
   # Enter emptied it. It did not prove EXECUTION, and on some harnesses those
   # come apart — codex answers a self-issued `/compact` with "'/compact' is
@@ -1957,6 +2214,32 @@ cmd_context() { # context-window usage via the profile's own introspection
   profile_context "$AGENT_ID"
 }
 
+cmd_context_report() { # analyse or explicitly delete the persistent measurement log
+  [ -f "$CONTEXT_EVENTS" ] || die "missing context report helper at $CONTEXT_EVENTS — reinstall gangline"
+  case "${1:-}" in
+    "")
+      shift || true
+      if session_live; then
+        local id name gap
+        while read -r id name; do
+          gap="$(tmux show-options -wqv -t "$id" @gl_context_log_error 2>/dev/null)" || gap=""
+          [ -z "$gap" ] || set -- "$@" "$name: $gap"
+        done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')
+      fi
+      python3 "$CONTEXT_EVENTS" report "$CONTEXT_LOG" "$@" ;;
+    --clear)
+      [ "$#" -eq 1 ] || usage_die
+      python3 "$CONTEXT_EVENTS" clear "$CONTEXT_LOG"
+      if session_live; then
+        local id
+        while read -r id; do
+          tmux set-option -uw -t "$id" @gl_context_log_error 2>/dev/null || true
+        done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
+      fi ;;
+    *) die "context-report: unknown argument '$1'" ;;
+  esac
+}
+
 cmd_roster() {
   session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
@@ -2029,10 +2312,14 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
-  local prof ctx tw tokens window band crossed prev failed rung
+  local prof ctx tw tokens window band crossed thresholds prev failed rung now log_failed
+  local note_count note_last next_count note_ts state_rc
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
   [ -z "$failed" ] \
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
+  log_failed="$(tmux show-options -wqv -t "$1" @gl_context_log_error 2>/dev/null)" || log_failed=""
+  [ -z "$log_failed" ] \
+    || say "$2" "-" "CONTEXT LOG INCOMPLETE — $log_failed" "$C_BAD"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
   profile_file "$prof" >/dev/null \
@@ -2059,43 +2346,68 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     return
   fi
   declare -F profile_context >/dev/null \
-    || { say "$2" "" "profile declares no context readout — not patrolled"; return; }
+    || { context_log_ctd "$1" "$2" "$prof" patrol - profile-declares-no-context-readout
+         say "$2" "" "profile declares no context readout — not patrolled"; return; }
   ctx="$(profile_context "$1" 2>/dev/null)" \
-    || { say "$2" "" "no context readout — not patrolled (beacon missing?)" "$C_BAD"; return; }
+    || { context_log_ctd "$1" "$2" "$prof" patrol - context-readout-unavailable
+         say "$2" "" "no context readout — not patrolled (beacon missing?)" "$C_BAD"; return; }
   ctx="${ctx%%$'\n'*}"
   tw="$(ctx_tokens "$ctx")" \
-    || { say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
+    || { context_log_ctd "$1" "$2" "$prof" patrol - unparseable-context-readout
+         say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
   # does not refuse, reported as a shell error rather than as the thing it found.
-  rung="$(ladder "$tokens" "$window")" || return
-  read -r band crossed <<<"$rung"
-  prev="$(tmux show-options -wqv -t "$1" @gl_band)" || prev=0
-  [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+  if rung="$(ladder "$tokens" "$window")"; then
+    read -r band crossed thresholds <<<"$rung"
+  else
+    context_log_known_ctd "$1" "$2" "$prof" patrol - "$tokens" "$window" \
+      COULD-NOT-DETERMINE COULD-NOT-DETERMINE COULD-NOT-DETERMINE ladder-unavailable
+    return
+  fi
+  if band_state_read "$1"; then state_rc=0; else state_rc=$?; fi
+  if [ "$state_rc" -ne 0 ]; then
+    context_log_known_ctd "$1" "$2" "$prof" patrol - "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" malformed-band-state
+    now="$(date +%s)"
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
+    say "$2" "$ctx" "malformed context-band state — not patrolled" "$C_BAD"
+    return
+  fi
+  prev="$BAND_STATE_BAND"; note_count="$BAND_STATE_COUNT"; note_last="$BAND_STATE_LAST"
+  now="$(date +%s)"
 
   # Injecting into a pane that is not quietly idle corrupts it, so every guard
   # below skips rather than risks it — and a skip never burns state.
   if [ "$band" -lt "$prev" ]; then
-    tmux set-option -w -t "$1" @gl_band "$band"
+    context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+      "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    band_state_write "$1" "$band" 0 0
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "re-armed (usage dropped)"
   elif [ "$band" -eq "$prev" ]; then
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "steady (band $band)"
   elif compaction_pending "$1" "$tokens"; then
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Asked before the scraped guards because it is the one signal here that
     # cannot rot, and because the pane it protects reads perfectly idle: a
     # compacting claude-code pane paints no marker and holds a still screen, so
     # busy_painted and pane_stable both wave a nudge straight through it.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
   elif busy_painted "$1"; then
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Also the pane question, for the same reason as the guards around it: this
     # chain decides whether an injection is SAFE, and a parked agent is inside a
     # live turn however available it is. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol" "$C_WORK"
   elif ! pane_stable "$1"; then
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"
   elif ! input_clear "$1"; then
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     # Somebody's unsent text is in the input box and an injection would
     # interleave with it. On a profile that cannot tell typed text from the
     # harness's own suggestions this also holds for ghost text, which costs a
@@ -2103,7 +2415,11 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
     inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2")")"
-    tmux set-option -w -t "$1" @gl_band "$band"
+    next_count="$(count_next "$note_count")"
+    note_ts="$(context_log_note "$1" "$2" "$prof" patrol - "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" "$next_count")"
+    band_state_write "$1" "$band" "$next_count" "$note_ts"
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
   fi
 }
@@ -2115,7 +2431,8 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   # patrol uses and shares patrol's @gl_band memory, so the two legs cannot both
   # warn about one crossing. Emits one additionalContext note per band. Never
   # blocks a turn: anything it cannot determine is a silent exit 0.
-  local event prof ctx tw tokens window band crossed prev rung
+  local event prof agent ctx tw tokens window band crossed thresholds prev rung now
+  local note_count note_last next_count note_ts state_rc
   # The payload is on stdin; the event name is the only field this needs, and it
   # goes straight back out in the reply.
   event="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
@@ -2126,21 +2443,51 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   [ -n "${TMUX_PANE:-}" ] || exit 0
   prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
   [ -n "$prof" ] || exit 0
+  agent="$(tmux display-message -p -t "$TMUX_PANE" '#W' 2>/dev/null)" || agent=COULD-NOT-DETERMINE
   load_profile "$prof"
-  declare -F profile_context >/dev/null || exit 0
-  ctx="$(profile_context "$TMUX_PANE" 2>/dev/null)" || exit 0
+  declare -F profile_context >/dev/null \
+    || { context_log_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" profile-declares-no-context-readout; exit 0; }
+  ctx="$(profile_context "$TMUX_PANE" 2>/dev/null)" \
+    || { context_log_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" context-readout-unavailable; exit 0; }
   ctx="${ctx%%$'\n'*}"
-  tw="$(ctx_tokens "$ctx")" || exit 0
+  tw="$(ctx_tokens "$ctx")" \
+    || { context_log_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" unparseable-context-readout; exit 0; }
   read -r tokens window <<<"$tw"
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
   # does not refuse, reported as a shell error rather than as the thing it found.
-  rung="$(ladder "$tokens" "$window")" || return
-  read -r band crossed <<<"$rung"
-  prev="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_band)" || prev=0
-  [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
-  [ "$band" -ne "$prev" ] && tmux set-option -w -t "$TMUX_PANE" @gl_band "$band"
+  if rung="$(ladder "$tokens" "$window")"; then
+    read -r band crossed thresholds <<<"$rung"
+  else
+    context_log_known_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" \
+      "$tokens" "$window" COULD-NOT-DETERMINE COULD-NOT-DETERMINE \
+      COULD-NOT-DETERMINE ladder-unavailable
+    exit 0
+  fi
+  if band_state_read "$TMUX_PANE"; then state_rc=0; else state_rc=$?; fi
+  if [ "$state_rc" -ne 0 ]; then
+    context_log_known_ctd "$TMUX_PANE" "$agent" "$prof" hook "$event" \
+      "$tokens" "$window" "$band" "$crossed" "$thresholds" malformed-band-state
+    now="$(date +%s)"
+    context_sample_write "$TMUX_PANE" "$now" "$tokens" "$window" "$band" "$thresholds" || true
+    exit 0
+  fi
+  prev="$BAND_STATE_BAND"; note_count="$BAND_STATE_COUNT"; note_last="$BAND_STATE_LAST"
+  now="$(date +%s)"
+  if [ "$band" -lt "$prev" ]; then
+    context_log_drop "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    band_state_write "$TMUX_PANE" "$band" 0 0
+  elif [ "$band" -gt "$prev" ]; then
+    next_count="$(count_next "$note_count")"
+    note_ts="$now"
+    # Preserve the hook's existing dedupe order: state advances before the JSON
+    # is printed. The event row itself is appended only after Python actually
+    # emitted the reply, so a decision is never logged as a delivery.
+    band_state_write "$TMUX_PANE" "$band" "$next_count" "$note_ts"
+  fi
+  context_sample_write "$TMUX_PANE" "$now" "$tokens" "$window" "$band" "$thresholds" || true
   if [ "$band" -gt "$prev" ]; then
     # Encoded, not interpolated. The note carries an agent name and a context
     # readout, and a printf template that assumes neither ever holds a quote or
@@ -2148,7 +2495,9 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
     # band was advanced above and nothing retries a warning the harness could
     # not parse. python3 is a hard dependency of this command already.
     python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
-      "$event" "$(band_note "$ctx" "$crossed" "$(tmux display-message -p -t "$TMUX_PANE" '#W')")"
+      "$event" "$(band_note "$ctx" "$crossed" "$agent")"
+    context_log_note "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" "$window" \
+      "$band" "$crossed" "$thresholds" "$next_count" "$note_ts" >/dev/null
   fi
   exit 0
 }
@@ -2925,6 +3274,7 @@ case "$cmd" in
   compact)  cmd_compact "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   context)  cmd_context "$@" ;;
+  context-report) cmd_context_report "$@" ;;
   context-hook) cmd_context_hook ;;
   wait)     [ $# -ge 1 ] || usage_die
             case "${2:-300}" in ''|*[!0-9]*) die "wait: timeout takes whole seconds, got '${2:-}'" ;; esac
