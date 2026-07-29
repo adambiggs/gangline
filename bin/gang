@@ -100,8 +100,10 @@ gang — drive a team of CLI agents as tmux windows
                                               Naming yourself is allowed and is the
                                               self-compaction path (--from/GANG_FROM required)
   gang status <name>                          busy (tight tug) | idle (slack tug) |
-                                              gated (hook set: a permission prompt only
-                                              the operator can answer owns the screen)
+                                              gated (hook set: a modal owns the input
+                                              box — a permission prompt, a picker, or
+                                              anything else only the operator can clear;
+                                              sends cannot land)
   gang context <name>                         context-window usage (profile-declared readout)
   gang wait  <name> [timeout_s]               block until idle (default 300)
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
@@ -109,7 +111,7 @@ gang — drive a team of CLI agents as tmux windows
   gang patrol                                 sweep the roster; nudge any agent past a
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
-                                              reports any agent gated at a permission prompt
+                                              reports any agent gated behind a modal
   gang vet [--file-issue]                     strategy-rot check: installed harness version
                                               vs each profile's verified pins; exits nonzero
                                               on drift; --file-issue files a deduped rot
@@ -137,8 +139,8 @@ usage_die() { usage >&2; exit 1; }
 # --- profiles ---------------------------------------------------------------
 #
 # A profile says how to talk to one harness: how to launch it, how to tell it is
-# mid-turn, how its permission prompt reads, how to read its context, how to see
-# its input box. GANG_PROFILES
+# mid-turn, how its modals read, how to read its context, how to see its input
+# box. GANG_PROFILES
 # points at your own directory, which is searched before the shipped one, so a
 # new harness — or a fix to a shipped profile whose TUI has moved on — costs a
 # file, never a patch to the installed tree.
@@ -395,30 +397,50 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
   input_clear "$1"
 }
 
-gated() { # $1 = window id, profile loaded; exit 0 if a permission prompt owns the screen
+gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
   # The third state, and the one that must not pass for the other two: a harness
-  # stopped at an approval dialog is not working and not reachable — it is
-  # waiting on the operator, and keystrokes sent to it land IN the dialog, where
-  # they ANSWER it. Every gate watched live (claude-code, codex, opencode) also
-  # drops its busy hint and its input box while the dialog is up, so an unmarked
-  # gate reads idle: patrol holds a nudge on a box it cannot find, sends die
-  # "not taking input", and nothing on any surface says an approval prompt is
-  # what the whole team is stalled on. Lived it: three agents sat gated for
-  # minutes and the only diagnostic was capturing panes one by one. Unset is a
-  # real answer — a profile whose gate nobody has watched live declares nothing
-  # and keeps exactly that old behavior.
-  [ -n "${GANG_GATED_REGEX:-}" ] || return 1
+  # stopped at a modal is not working and not reachable — keystrokes sent to it
+  # land IN the dialog, where they ANSWER it. Every gate watched live
+  # (claude-code, codex, opencode) also drops its busy hint and its input box
+  # while the dialog is up, so an unmarked gate reads idle: patrol holds a nudge
+  # on a box it cannot find, sends die "not taking input", and nothing on any
+  # surface says a dialog is what the whole team is stalled on. Lived it: three
+  # agents sat gated for minutes and the only diagnostic was capturing panes one
+  # by one.
+  #
+  # There are two ways in, because enumerating modal chrome will always miss one.
   local pane
-  pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess gated state"
-  printf '%s\n' "$pane" | grep -qE -- "$GANG_GATED_REGEX" || return 1
-  # The wording alone is not the gate. Every dialog watched live OWNS the screen
-  # while it is up: the composer is gone, which is why an unmarked gate read idle
-  # in the first place. So a match beside a live input box is the harness talking
-  # ABOUT a prompt, not stopped at one — an agent reviewing this repo, quoting a
-  # capture, or reading these very profiles. Lived it: reviewers quoting the
-  # dialog wording froze their own lead and had their reports refused, which is a
-  # denial of the whole control plane out of ordinary prose.
-  ! composer_live "$1"
+  if [ -n "${GANG_GATED_REGEX:-}" ]; then
+    # The declared marker: the dialogs somebody has watched live, named in the
+    # profile. Unset is a real answer — a profile whose gate nobody has watched
+    # declares nothing and reaches this state only through the fallback below.
+    pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess gated state"
+    if printf '%s\n' "$pane" | grep -qE -- "$GANG_GATED_REGEX"; then
+      # The wording alone is not the gate. Every dialog watched live OWNS the
+      # screen while it is up: the composer is gone, which is why an unmarked gate
+      # read idle in the first place. So a match beside a live input box is the
+      # harness talking ABOUT a prompt, not stopped at one — an agent reviewing
+      # this repo, quoting a capture, or reading these very profiles. Lived it:
+      # reviewers quoting the dialog wording froze their own lead and had their
+      # reports refused, which is a denial of the whole control plane out of
+      # ordinary prose.
+      composer_live "$1" || return 0
+    fi
+  fi
+  # The fallback: a state gang cannot positively determine is gated, not idle.
+  # No busy hint, no marker, and no input box to be found is not evidence of an
+  # agent waiting for work — it is evidence that something gang was never taught
+  # to recognise is holding the screen (Claude Code's /model picker reads exactly
+  # this way). Idle MEANS "go ahead and send", so calling the unknown idle loses
+  # the message, and `gang wait` cannot rescue it either: the waiter keys on
+  # BECOMING idle and the pane already reads idle. Gated costs a delay instead.
+  #
+  # Busy first, because a turn in flight is a determined state and several
+  # harnesses stop painting their box while one runs. And a profile that declares
+  # no input hook falls through to idle as it always did: gang cannot claim a box
+  # is missing when it was never taught to find one.
+  if busy "$1"; then return 1; fi
+  ! input_painted "$1"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
@@ -484,13 +506,13 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   # Idle must hold for two consecutive polls: a just-submitted turn shows no
   # busy marker for a beat, and a single-shot check falls through that gap
   # (observed live — a send landed mid-turn and got queued). A gate is a dead
-  # end, not a wait: only the operator ends it, so blocking on it is blocking
+  # end, not a wait: only the operator clears it, so blocking on it is blocking
   # on a human nobody has told — and worse, a gate drops the busy hint, so a
   # waiter that cannot see it would read the dialog as idle and paste into it.
   local t=0 timeout="${3:-300}" streak=0
   while :; do
     if gated "$1"; then
-      die "'$2' is gated (hook set) — stopped at a permission prompt only the operator can answer (gang attach)"
+      die "'$2' is gated (hook set) — stopped at a modal only the operator can clear (gang attach)"
     fi
     if busy "$1"; then streak=0; else
       streak=$((streak + 1)); [ "$streak" -ge 2 ] && return 0
@@ -559,17 +581,17 @@ composer_settled() { # $1 = window id; nobody is typing into the box right now
 inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
   frag="$(printf '%s' "$2" | head -1 | cut -c1-40)"
-  # The one delivery no before/after verification can make safe: while a
-  # permission dialog owns the screen, keystrokes are ANSWERS. Checked here at
-  # the chokepoint — immediately before the paste — so every path in (send,
-  # compact, patrol, hitch, resume) hits it, including a gate that painted
-  # after the caller's own earlier check.
+  # The one delivery no before/after verification can make safe: while a modal
+  # owns the input box, keystrokes are ANSWERS. Checked here at the chokepoint —
+  # immediately before the paste — so every path in (send, compact, patrol,
+  # hitch, resume) hits it, including a modal that painted after the caller's own
+  # earlier check.
   # Taken before the gate check, and held past the Enter: everything below reads
   # the pane and then acts on what it read, so another writer between any two of
   # those steps invalidates the rest.
   lock_pane "$1"
   ! gated "$1" \
-    || die "refusing to deliver '$frag': $1 is gated (hook set) — a permission prompt only the operator can answer owns the screen (gang attach)"
+    || die "refusing to deliver '$frag': $1 is gated (hook set) — a modal owns its input box, so the paste would land in the dialog instead (gang attach)"
   composer_settled "$1" \
     || die "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
   # Verified = the paste changed the input box, which is where a paste lands.
@@ -605,13 +627,13 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # hint — so a box still holding what we just pasted was never submitted.
   # The gate is checked again here, and this is the check that matters most: the
   # earlier one guards the paste, but Enter is the keystroke that ANSWERS a
-  # dialog. A permission prompt can paint in the moment between the paste and
-  # this line — that is the whole hazard, an asynchronous dialog against a
-  # four-step delivery — and an Enter aimed at a composer that is no longer
-  # there selects whatever the dialog has highlighted. Nothing was submitted, so
-  # this is a clean failure: the paste is still in the box for the operator.
+  # dialog. A modal can paint in the moment between the paste and this line —
+  # that is the whole hazard, an asynchronous dialog against a four-step
+  # delivery — and an Enter aimed at a composer that is no longer there selects
+  # whatever the dialog has highlighted. Nothing was submitted, so this is a
+  # clean failure: the paste is still in the box for the operator.
   ! gated "$1" \
-    || die "refusing to submit '$frag': a permission prompt took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent (gang attach)"
+    || die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent (gang attach)"
   tmux send-keys -t "$1" Enter
   # An unreadable box in the moments after Enter is not a failed submit — it is
   # the submit in flight. opencode's box is only "readable" while the hardware
@@ -891,7 +913,7 @@ cmd_send() {
   # Gated beats busy: a gate paints mid-turn, and the mid-turn refusal below
   # would point at --wait, which cannot end a state only the operator can end.
   ! gated "$AGENT_ID" \
-    || die "'$name' is gated (hook set) — a permission prompt only the operator can answer owns the screen; a send would answer it (gang attach)"
+    || die "'$name' is gated (hook set) — a modal owns its input box and only the operator can clear it; a send would answer the dialog instead of landing (gang attach)"
 
   # Busy is not, by itself, a reason to refuse. The question a send has to answer
   # is "will this message be delivered?", and gang measures that directly, in the
@@ -938,7 +960,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   fi
   [ -z "$resume" ] || check_sender "$from"
   ! gated "$AGENT_ID" \
-    || die "'$name' is gated (hook set) — stopped at a permission prompt only the operator can answer (gang attach)"
+    || die "'$name' is gated (hook set) — stopped at a modal only the operator can clear (gang attach)"
   # Busy is refused for a peer and expected for yourself. Cutting somebody else's
   # live turn throws away work they are in the middle of — that refusal is about
   # what compaction MEANS, not about whether keystrokes can be delivered, so it
@@ -1086,10 +1108,10 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled" "$C_BAD"; return; }
   load_profile "$prof"
   if gated "$1"; then
-    # Only the operator ends a gate, so this is a report, not a nudge — and it
+    # Only the operator clears a gate, so this is a report, not a nudge — and it
     # comes before the context checks so a gated agent whose readout is missing
     # still reads loud rather than skipped.
-    say "$2" "-" "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)" \
+    say "$2" "-" "GATED (hook set) — a modal owns the input box and is waiting on the operator (gang attach)" \
       "$C_BAD"
     return
   fi

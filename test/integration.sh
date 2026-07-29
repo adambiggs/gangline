@@ -236,39 +236,46 @@ check "and the pane never showed the literal text" "no" "$(has collapser 'second
 # "submission unverifiable" on a message that landed — leaving the agent running
 # with no role brief. Unreadable is an absence of evidence, so it buys another
 # look; only a box that reads back UNCHANGED is evidence of a non-submit.
-# This stand-in is blind for its two looks after Enter, the way a loaded box is.
+# This stand-in is blind for its first looks after Enter, the way a loaded box is.
+# Blindness is keyed on what the box holds, not on a count of calls: it arms when
+# the paste is in the box and blinds from the moment the box comes back empty,
+# which is the submit itself. Counting calls instead pinned the fixture to how
+# many times inject happens to look, and every guard added to the delivery path
+# silently moved the window it was aiming at.
 cat > "$SHIM/custom-profiles/blinking.sh" <<SH
 GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
   local n until line
-  n=\$(( \$(cat "$SHIM/blink-count" 2>/dev/null || echo 0) + 1 ))
-  echo "\$n" > "$SHIM/blink-count"
-  until=\$(cat "$SHIM/blink-until" 2>/dev/null || echo 0)
-  # 1 and 2 are the settle looks that check nobody is typing into the box, 3 and
-  # 4 the before/after reads around the paste; the blindness starts at 5, the
-  # first look after Enter.
-  if [ "\$n" -ge 5 ] && [ "\$n" -le "\$until" ]; then return 1; fi
   line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
-  printf '%s' "\${line#❯}"
+  line="\${line#❯}"
+  if printf '%s' "\$line" | grep -q '[^[:space:]]'; then
+    : > "$SHIM/blink-armed"          # the paste is in the box
+  elif [ -f "$SHIM/blink-armed" ]; then
+    n=\$(( \$(cat "$SHIM/blink-count" 2>/dev/null || echo 0) + 1 ))
+    echo "\$n" > "$SHIM/blink-count"
+    until=\$(cat "$SHIM/blink-until" 2>/dev/null || echo 0)
+    if [ "\$n" -le "\$until" ]; then return 1; fi
+  fi
+  printf '%s' "\$line"
 }
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" hitch blinker -p blinking -d /tmp >/dev/null 2>&1
-echo 0 > "$SHIM/blink-count"; echo 6 > "$SHIM/blink-until"
+rm -f "$SHIM/blink-armed"; echo 0 > "$SHIM/blink-count"; echo 2 > "$SHIM/blink-until"
 "$GANG" send blinker --from tester "BLINK_MSG" >/dev/null 2>&1
 check "a box briefly unreadable after Enter still verifies" "0" "$?"
 check "and the message actually landed" "yes" "$(has blinker 'BLINK_MSG')"
 
 # The tolerance is bounded, not infinite: a box that never comes back still fails,
 # and says which of the two things went wrong.
-echo 0 > "$SHIM/blink-count"; echo 9999 > "$SHIM/blink-until"
+rm -f "$SHIM/blink-armed"; echo 0 > "$SHIM/blink-count"; echo 9999 > "$SHIM/blink-until"
 out="$("$GANG" send blinker --from tester "NEVER" 2>&1)"; rc=$?
 check "a box that never comes back still fails loudly" "1" "$rc"
 check "and is not accused of holding an unsent draft" "unverifiable" \
   "$(case "$out" in *unverifiable*) echo unverifiable ;; *"never sent"*) echo wrong-verdict ;; *) echo other ;; esac)"
-echo 0 > "$SHIM/blink-until"
+rm -f "$SHIM/blink-armed"; echo 0 > "$SHIM/blink-until"
 unset GANG_PROFILES
 
 # Enter has to be checked, not merely sent. Batch the text and the Enter into one
@@ -455,14 +462,14 @@ paint busybee 'COMPACTING...'                          # ...and the compaction s
 sleep 5
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
 
-# --- permission gates ---------------------------------------------------------
+# --- gates: a modal owns the input box ------------------------------------------
 
-# A harness stopped at an approval prompt is neither working nor reachable: it
-# is waiting on a human, and keystrokes sent to it land IN the dialog, where
-# they answer it. Every gate watched live also drops the busy hint and the
-# input box, so before the gated marker such an agent read idle and the team
-# stalled with nothing on any surface saying why. Gated is checked before busy
-# because a gate paints mid-turn — the busy marker can still be on screen.
+# A harness stopped at a modal is neither working nor reachable: it is waiting on
+# a human, and keystrokes sent to it land IN the dialog, where they answer it.
+# Every gate watched live also drops the busy hint and the input box, so before
+# the gated marker such an agent read idle and the team stalled with nothing on
+# any surface saying why. Gated is checked before busy because a gate paints
+# mid-turn — the busy marker can still be on screen.
 
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
 verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
@@ -504,10 +511,45 @@ out="$("$GANG" compact busybee --from tester 2>&1)"
 check "compact on a gated agent names the gate, not the turn" "yes" \
   "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
 check "patrol reports it for the operator instead of skipping it" \
-  "GATED (hook set) — a permission prompt is waiting on the operator (gang attach)" \
+  "GATED (hook set) — a modal owns the input box and is waiting on the operator (gang attach)" \
   "$("$GANG" patrol | verdict busybee)"
 gate_down busybee
 check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee | head -1)"
+
+# Enumerating modal chrome always misses one. Claude Code's /model picker is a
+# dialog no gated regex names: it paints no busy hint either, so the pane read
+# IDLE — the dangerous polarity, because idle means "go ahead and send" and every
+# send into a picker fails while `gang wait` cannot help (it keys on BECOMING
+# idle, and the pane already reads idle). No busy hint, no marker, and no input
+# box is not evidence of an agent waiting for work; it is an unknown, and an
+# unknown resolves to gated. The stand-in is a picker with nothing quotable in it.
+picker_up() { tmux send-keys -t "$(target_of "$1")" \
+                "clear; PS1=''; printf 'Select model\\n  1. opus\\n  2. sonnet\\n'" Enter; sleep 0.6; }
+picker_up busybee
+check "a modal no regex names still reads as gated" \
+  "gated (hook set)" "$("$GANG" status busybee | head -1)"
+out="$(FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_PICKER" 2>&1)"; rc=$?
+check "and a send into it is refused" "1" "$rc"
+check "naming the modal rather than timing out" "yes" \
+  "$(case "$out" in *"modal owns its input box"*) echo yes ;; *) echo no ;; esac)"
+check "with nothing typed into the picker" "no" "$(has busybee MARK_PICKER)"
+gate_down busybee
+check "and the pane reads idle again once the picker is gone" "idle (slack tug)" \
+  "$("$GANG" status busybee | head -1)"
+
+# The fallback is bounded by what gang was taught to look for: a profile that
+# declares no input box has no missing box to notice, so it keeps the plain
+# busy/idle reading rather than being declared gated on the strength of a hook
+# nobody wrote.
+cat > "$SHIM/custom-profiles/boxless.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="WORKING\\.\\.\\."
+GANG_VERIFIED_VERSIONS="any"
+SH
+"$GANG" hitch boxless -p boxless -d /tmp >/dev/null 2>&1
+tmux send-keys -t "$(target_of boxless)" "clear; PS1=''" Enter; sleep 0.6
+check "a profile with no input hook is not gated by the fallback" "idle (slack tug)" \
+  "$("$GANG" status boxless | head -1)"
 unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
