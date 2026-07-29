@@ -84,9 +84,16 @@ Want a tmux of your own — a sandbox, a probe, a test fixture? Give it an expli
 socket and address it that way every single time:
 
 ```
-tmux -L probe new-session -d -s p bash    # yours
-tmux -L probe kill-server                 # kills only yours
+tmux -L probe new-session -d -s p bash             # yours
+tmux -L probe kill-server                          # kills only yours
+rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/probe"   # kill-server leaves the socket
 ```
+
+`kill-server` ends the server and leaves the socket file behind, in the same
+directory that holds the live team's, so anything you run often litters beside
+it. Clean up after yourself — and build that path out of a name your own code
+set, never one a caller handed you. An unguarded `rm` in that directory is
+another way to end a team.
 
 `unset TMUX` works too, but only where you actually unset it. If you build a
 sandbox that sets `TMUX_TMPDIR` and unsets `TMUX`, then the teardown has to run
