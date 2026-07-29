@@ -84,20 +84,46 @@ has() { case "$(pane_of "$1")" in *"$2"*) echo yes ;; *) echo no ;; esac; }
 # is only how it reads.
 #
 # No pipe into `grep -q` survives in this file, and the reason it is a rule rather
-# than a preference is that the tempting exemption is wrong. `printf '%s' "$var"`
-# looks safe because it is a builtin rather than a forked producer, but that is
-# not the property doing the work: it is safe because it is ONE write, which
-# completes into the pipe buffer whether or not the reader has read a byte. That
-# holds only while the payload fits — it is an unexamined constant, not a
-# guarantee, and it says nothing about the next writer. The vulnerable shape is an
-# INCREMENTAL writer, which is exactly what list_profiles briefly became. And a
-# 141 was measured here that could be neither attributed nor reproduced, so
-# reasoning about which constructs stay safe is weaker than not having the
-# construct. The two fixture profiles below keep their pipe deliberately: that is
+# than a preference is that the tempting exemption is wrong — as was the reason
+# this comment used to give for it. `printf '%s' "$var"` looks safe because it is
+# a builtin rather than a forked producer, and the claim here was that the real
+# property is being ONE write that completes into the pipe buffer, bounded only
+# by payload size. It is not one write. bash line-buffers stdout, so printf emits
+# one write PER LINE, and a multi-line payload is an INCREMENTAL writer at any
+# size at all. Measured: a 36-byte payload with the match on the first line fails
+# 9 times in 500; the same payload with the match on the LAST line fails 0 in 500,
+# because there the reader must consume everything before it can exit; a
+# single-LINE payload fails 0 in 500. Payload size was never the axis — where the
+# match sits is.
+#
+# That also attributes the 141 this file could not pin down. It was the suite
+# reading `gang profiles`, whose first line is `bash`: the match is on line one,
+# so every line after it is written into a pipe whose reader has already gone.
+# Confirmed under GDB by sigpipe (issue #6) — five writes, one per profile name —
+# and reproduced against the shipped tree at 155 in 1000. The two fixture profiles below keep their pipe deliberately: that is
 # harness code under test, and it should look like the shipped profiles it stands
 # in for, not like this file's own conventions.
 lists() { grep -qxF -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = a whole line
 holds() { grep -qE  -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = an ERE
+# The two below exist because of a PARSER bug, not a style preference. bash 3.2 —
+# what macos-latest ships — scans a `$( ... )` for its closing paren without
+# understanding case patterns, so the `)` that ends the first PATTERN ends the
+# substitution and the file does not parse. Not a failing check: the whole suite
+# fails to LOAD, on the one platform whose readlink and BSD-vs-GNU behaviour half
+# these checks exist to cover. Thirty-seven sites had the shape and the macOS cell
+# had never once run green — including, exactly, the check named "a BSD readlink
+# still resolves the install tree".
+#
+# So the case statements live in functions, where the pattern's paren is not
+# inside a substitution at all. shellcheck does not catch any of this at any
+# level, which is why there is a source rule for it at the bottom of this file.
+contains() { case "$1" in *"$2"*) echo yes ;; *) echo no ;; esac; }  # $2 = a LITERAL
+# shellcheck disable=SC2254  # unquoted on purpose: $2 IS the pattern
+like() { case "$1" in $2) echo yes ;; *) echo no ;; esac; }  # $2 = a glob
+# Comment lines are dropped before counting: a comment cannot break a parser, and
+# the rule has to be able to NAME the shape it forbids without tripping itself.
+bash32_traps() { grep '[$](.*case ' "$1" | grep -cv '^[[:space:]]*#'; }
+
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
 verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 target_of() { # $1 = window name; a NON-EMPTY @id or the suite stops
@@ -147,7 +173,7 @@ ln -s "$GANG" "$SHIM/gang-via-symlink"
 # Cleared of the suite's opt-in, so this is the list an operator actually sees.
 out="$(cd /tmp && GANG_TEST_PROFILES='' PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
 check "a BSD readlink still resolves the install tree" "yes" \
-  "$(case "$out" in *claude-code*codex*opencode*pi*) echo yes ;; *) echo no ;; esac)"
+  "$(like "$out" '*claude-code*codex*opencode*pi*')"
 
 # `gang profiles` is what install.sh prints as the harnesses gangline drives, and
 # what an operator picks from. A shell in that list reads as a fifth supported
@@ -155,7 +181,7 @@ check "a BSD readlink still resolves the install tree" "yes" \
 # none. The stand-in still ships, because the suite needs it and an uninstalled
 # test dependency is not tested; it is just not offered.
 check "the harness list does not offer the test stand-in" "no" \
-  "$(case " $out " in *" bash "*) echo yes ;; *) echo no ;; esac)"
+  "$(contains " $out " " bash ")"
 check "and offers exactly the real harnesses" "claude-code codex opencode pi" \
   "$(cd /tmp && GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ' | sed 's/ *$//')"
 
@@ -165,7 +191,7 @@ cp "$GANG" "$SHIM/orphan-gang"
 out="$(cd /tmp && "$SHIM/orphan-gang" profiles 2>&1)"; rc=$?
 check "a gang with no tree beside it fails loudly" "1" "$rc"
 check "and names what is missing" "yes" \
-  "$(case "$out" in *"not a gangline tree"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "not a gangline tree")"
 
 # --- cold start ---------------------------------------------------------------
 
@@ -203,13 +229,13 @@ check "roster lists it"          "alpha bash idle" \
 out="$(GANG_TEST_PROFILES='' "$GANG" hitch standin -p bash -d /tmp 2>&1)"; rc=$?
 check "hitching the stand-in is refused" "1" "$rc"
 check "and names it a stand-in, not an unknown profile" "yes" \
-  "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "stand-in")"
 check "and nothing was hitched" "no" \
   "$(holds "$("$GANG" roster)" '^standin ')"
 out="$(GANG_TEST_PROFILES='' "$GANG" adopt nosuchwin -p bash 2>&1)"; rc=$?
 check "adopting onto the stand-in is refused too" "1" "$rc"
 check "before it even looks for the window" "yes" \
-  "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "stand-in")"
 check "and the suite's own opt-in still reaches it" "yes" \
   "$(lists "$("$GANG" profiles)" bash)"
 
@@ -239,7 +265,7 @@ check "and briefs it as lead" "yes" "$(has lead roles/lead.md)"
 out="$("$GANG" hitch nomodel -p bash -m any-model -d /tmp 2>&1)"; rc=$?
 check "a profile with no model spelling refuses -m" "1" "$rc"
 check "and names the missing declaration" "yes" \
-  "$(case "$out" in *GANG_MODEL_OPT*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "GANG_MODEL_OPT")"
 "$GANG" status nomodel >/dev/null 2>&1
 check "and no half-hitched window is left behind" "1" "$?"
 
@@ -377,8 +403,15 @@ check "and the message actually landed" "yes" "$(has blinker 'BLINK_MSG')"
 rm -f "$SHIM/blink-armed"; echo 0 > "$SHIM/blink-count"; echo 9999 > "$SHIM/blink-until"
 out="$("$GANG" send blinker --from tester "NEVER" 2>&1)"; rc=$?
 check "a box that never comes back still fails loudly" "1" "$rc"
+verdict_of() { # $1 = the refusal text -> which verdict it reached
+  case "$1" in
+    *unverifiable*) echo unverifiable ;;
+    *"never sent"*) echo wrong-verdict ;;
+    *) echo other ;;
+  esac
+}
 check "and is not accused of holding an unsent draft" "unverifiable" \
-  "$(case "$out" in *unverifiable*) echo unverifiable ;; *"never sent"*) echo wrong-verdict ;; *) echo other ;; esac)"
+  "$(verdict_of "$out")"
 rm -f "$SHIM/blink-armed"; echo 0 > "$SHIM/blink-until"
 unset GANG_PROFILES
 
@@ -406,7 +439,7 @@ check "a paste that is never submitted is not reported as delivered" "1" "$rc"
 # reads back as exactly what gang pasted — so the text goes out the way it came.
 check "and the box does not keep the message nobody sent" "no" "$(has alpha MARK_UNSENT)"
 check "with the sender told it was taken back out" "yes" \
-  "$(case "$out" in *"cleared back out"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "cleared back out")"
 
 # The other two ways text is stranded never reach the Enter at all, and neither
 # can be swept up on the spot: both are a box that stops reading back with the
@@ -447,9 +480,9 @@ echo 0 > "$SHIM/vanish-count"; echo 1 > "$SHIM/vanish-from"
 out="$("$GANG" send vanisher --from tester "MARK_VANISH" 2>&1)"; rc=$?
 check "a paste into a box that stops reading back fails" "1" "$rc"
 check "and the sender is told the text may be sitting there" "yes" \
-  "$(case "$out" in *"may be sitting unsent"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "may be sitting unsent")"
 check "status reads out the undelivered paste" "yes" \
-  "$(case "$("$GANG" status vanisher)" in *"undelivered paste"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$("$GANG" status vanisher)" "undelivered paste")"
 check "and the roster carries it where a lead scans" "yes" \
   "$(holds "$("$GANG" roster | awk '$1=="vanisher"')" 'undelivered paste')"
 
@@ -478,7 +511,7 @@ echo 0 > "$SHIM/vanish-count"; echo 2 > "$SHIM/vanish-from"
 out="$("$GANG" send vanisher --from tester "MARK_WITHHELD" 2>&1)"; rc=$?
 check "an Enter withheld from a modal is still a failed send" "1" "$rc"
 check "and the sender is told the paste is staged, not that it is clean" "yes" \
-  "$(case "$out" in *"staged unsent"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "staged unsent")"
 check "which is also what the roster starts saying" "yes" \
   "$(holds "$("$GANG" roster | awk '$1=="vanisher"')" 'undelivered paste')"
 
@@ -518,7 +551,7 @@ alphapane="$(tmux list-panes -t "$(target_of alpha)" -F '#{pane_id}')"
 out="$(TMUX_PANE="$alphapane" "$GANG" send lead --from lead "SPOOFED" 2>&1)"; rc=$?
 check "a peer cannot sign as another agent" "1" "$rc"
 check "and is told which name is actually its own" "yes" \
-  "$(case "$out" in *"you are 'alpha'"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "you are 'alpha'")"
 check "with nothing delivered under the borrowed name" "no" "$(has lead SPOOFED)"
 TMUX_PANE="$alphapane" "$GANG" send lead --from alpha "MARK_SIGNED" >/dev/null 2>&1
 sleep 0.5
@@ -554,7 +587,7 @@ out="$(GANG_PROFILES="$SHIM/custom-profiles" \
   "$GANG" send typist --from tester "MARK_INTERLEAVED" 2>&1)"; rc=$?
 check "a send into a box being typed in is refused" "1" "$rc"
 check "and says whose keyboard it would have landed in" "yes" \
-  "$(case "$out" in *"typing into"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "typing into")"
 check "with nothing typed over the draft" "no" "$(has typist MARK_INTERLEAVED)"
 
 # --- reaching an agent that is working ---------------------------------------
@@ -592,10 +625,11 @@ check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)
 # protected by a structural fact (a modal owns the screen, so a live composer
 # proves the words are only talk) and busy has no equivalent available to it.
 #
-# Accepted because of the DIRECTION, which is what the check below pins. Text on
-# a pane can only ADD marker matches, so contamination costs a waiter that waits
-# out its timeout on an agent that was free the whole time — never a message
-# pasted into a live turn. Anyone who later fits a guard here has to delete this
+# The DIRECTION is what the check below pins, and only for contamination: pane
+# text can only ADD marker matches, so this costs a waiter that waits out its
+# timeout on an agent that was free the whole time. It does NOT establish that a
+# busy agent can never read idle — two other mechanisms do exactly that, and both
+# are named at busy_painted. Anyone who later fits a guard here has to delete this
 # case to do it, which is the point of writing the decision as a test.
 "$GANG" wait busybee 1 >/dev/null 2>&1
 check "and an agent contaminated by its own screen costs a wait, not a delivery" "1" "$?"
@@ -614,7 +648,7 @@ chmod +x "$SHIM/noread/tmux"
 out="$(PATH="$SHIM/noread:$PATH" "$GANG" status busybee 2>&1)"; rc=$?
 check "a pane gang cannot read is not a state" "1" "$rc"
 check "and it says so rather than printing a blank line" "yes" \
-  "$(case "$out" in *"refusing to guess"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "refusing to guess")"
 
 FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_QUEUED" >/dev/null 2>&1
 check "a harness that queues input takes mail mid-turn" "0" "$?"
@@ -659,7 +693,7 @@ check "a send to a parked agent is not refused" "0" "$rc"
 # Available and mid-turn are different questions with different answers here, and
 # the report has to follow the pane rather than the availability verdict.
 check "and is reported as landing mid-turn, because that is what the pane did" "yes" \
-  "$(case "$out" in *"accepted mid-turn"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "accepted mid-turn")"
 
 # A window option outlives the process that set it, so the crash path is the one
 # that matters: SIGKILL leaves no chance to run the EXIT trap.
@@ -696,7 +730,7 @@ check "and a stale pane id is not mistaken for self" "1" "$?"
 out="$(TMUX_PANE="$selfpane" "$GANG" compact busybee --from lead --resume "BORROWED" 2>&1)"; rc=$?
 check "a resume cannot be signed with a borrowed name" "1" "$rc"
 check "and names the window doing the borrowing" "yes" \
-  "$(case "$out" in *"you are 'busybee'"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "you are 'busybee'")"
 
 # A resume cannot ride the input queue behind its own compaction: queued text can
 # be handed to the turn already running while a queued slash command waits for
@@ -763,15 +797,15 @@ check "roster shows the gate" "gated" \
 out="$(FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_GATED" 2>&1)"; rc=$?
 check "a send to a gated agent is refused, even where mid-turn input queues" "1" "$rc"
 check "and says the prompt owns the screen" "yes" \
-  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "hook set")"
 check "and nothing was typed into the dialog" "no" "$(has busybee MARK_GATED)"
 out="$("$GANG" wait busybee 30 2>&1)"; rc=$?
 check "wait on a gated agent fails loud, not slow" "1" "$rc"
 check "naming the gate rather than timing out" "yes" \
-  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "hook set")"
 out="$("$GANG" compact busybee --from tester 2>&1)"
 check "compact on a gated agent names the gate, not the turn" "yes" \
-  "$(case "$out" in *"hook set"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "hook set")"
 check "patrol reports it for the operator instead of skipping it" \
   "GATED (hook set) — a modal owns the input box and is waiting on the operator (gang attach)" \
   "$("$GANG" patrol | verdict busybee)"
@@ -793,7 +827,7 @@ check "a modal no regex names still reads as gated" \
 out="$(FAKE_QUEUES=1 "$GANG" send busybee --from tester "MARK_PICKER" 2>&1)"; rc=$?
 check "and a send into it is refused" "1" "$rc"
 check "naming the modal rather than timing out" "yes" \
-  "$(case "$out" in *"modal owns its input box"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "modal owns its input box")"
 check "with nothing typed into the picker" "no" "$(has busybee MARK_PICKER)"
 gate_down busybee
 check "and the pane reads idle again once the picker is gone" "idle (slack tug)" \
@@ -815,9 +849,9 @@ gate_high() { tmux send-keys -t "$(target_of "$1")" \
                 "clear; PS1=''; printf 'Do you want to proceed?\\nWORKING...\\n'; seq 1 6" Enter; sleep 0.8; }
 gate_high busybee
 check "the wording sits outside the rows a status scan would read" "no" \
-  "$(case "$(tmux capture-pane -pJ -t "$(target_of busybee)" \
-       | awk 'NF{last=NR}{l[NR]=$0}END{for(i=1;i<=last;i++) print l[i]}' | tail -n 2)" in
-     *"Do you want to proceed?"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$(tmux capture-pane -pJ -t "$(target_of busybee)" \
+       | awk 'NF{last=NR}{l[NR]=$0}END{for(i=1;i<=last;i++) print l[i]}' | tail -n 2)" \
+     "Do you want to proceed?")"
 check "a gate painted above the status window is still reached" "gated (hook set)" \
   "$(GANG_STATUS_ROWS=2 "$GANG" status busybee | head -1)"
 
@@ -913,7 +947,7 @@ check "and a still agent in the same sweep is not swept up with it" "idle" \
 out="$("$GANG" compact churner --from tester 2>&1)"; rc=$?
 check "compacting a mid-turn agent is refused now that busy can see one" "1" "$rc"
 check "and still says what it would have cut" "yes" \
-  "$(case "$out" in *"cut a live turn"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "cut a live turn")"
 
 # Churn is content-blind, so on its own it would call a pane parked in `gang
 # wait` busy — the exact false busy item 3 killed, rebuilt underneath it. It does
@@ -1043,16 +1077,15 @@ SH
 chmod +x "$SHIM/deaf/tmux"
 out="$(PATH="$SHIM/deaf:$PATH" "$GANG" roster 2>&1)"; rc=$?
 check "an unreachable tmux server is named" "yes" \
-  "$(case "$out" in *"Operation not permitted"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "Operation not permitted")"
 check "and is not reported as a team that simply is not running" "no" \
-  "$(case "$out" in *"no team"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "no team")"
 check "and fails rather than printing an empty roster successfully" "1" "$rc"
 
 # The other half, and the one that keeps this honest: absence must still read as
 # absence, or every missing session becomes a scary error.
 check "a session that genuinely is not running still reads as no team" "yes" \
-  "$(case "$(GANG_SESSION="${GANG_SESSION}-nope" "$GANG" roster 2>&1)" in
-     *"no team"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$(GANG_SESSION="${GANG_SESSION}-nope" "$GANG" roster 2>&1)" "no team")"
 
 # lock_pane treated ANY mkdir failure as contention, so a read-only runtime
 # directory spun the loop for thirty seconds and then blamed a process that does
@@ -1067,7 +1100,7 @@ t1="$(date +%s)"
 chmod 700 "$ro"
 check "a lock that cannot be created fails instead of reporting contention" "1" "$rc"
 check "and says nothing holds it, rather than blaming another process" "yes" \
-  "$(case "$out" in *"Nothing holds this lock"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "Nothing holds this lock")"
 check "and fails fast instead of spinning out the contention timeout" "yes" \
   "$([ "$((t1 - t0))" -lt 10 ] && echo yes || echo no)"
 check "and nothing was pasted into the agent it could not lock" "no" \
@@ -1419,7 +1452,7 @@ fake_harness modal "printf '\n ❯ 1. Yes, I trust this folder\n   2. No, exit\n
 out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_BOOT_TIMEOUT=3 \
   "$GANG" hitch modalagent -p modal -r worker -d /tmp 2>&1)"
 check "a brief is never pasted into a first-run dialog" "yes" \
-  "$(case "$out" in *"other than its input box"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "other than its input box")"
 check "and the dialog is left untouched" "no" "$(has modalagent 'gang:hitch')"
 
 # The same modal, hitched with nothing to deliver. This used to report success
@@ -1430,7 +1463,7 @@ check "and the dialog is left untouched" "no" "$(has modalagent 'gang:hitch')"
 out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_BOOT_TIMEOUT=3 \
   "$GANG" hitch quietmodal -p modal -d /tmp 2>&1)"; rc=$?
 check "a role-less hitch still spots the dialog" "yes" \
-  "$(case "$out" in *"dialog owns"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "dialog owns")"
 check "and reports it as a warning, not a failure" "0" "$rc"
 check "with nothing typed into the dialog" "no" "$(has quietmodal 'gang:')"
 
@@ -1463,7 +1496,7 @@ out="$(GANG_BRIEF_GATE_WAIT=9 "$GANG" hitch gatee -p lategate -r worker -d /tmp 
 # The exit code is the point: a caller scripting a fan-out reads $?, not prose.
 check "a brief that lands on a gate does not report success" "1" "$rc"
 check "and says the brief was delivered but cannot be acted on" "yes" \
-  "$(case "$out" in *"cannot be acted on"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "cannot be acted on")"
 check "and the agent is still registered, because it is real and waiting" "yes" \
   "$(holds "$("$GANG" roster)" '^gatee ')"
 
@@ -1474,7 +1507,7 @@ rm -f "$SHIM/gate-sentinel"
 out="$(GANG_BRIEF_GATE_WAIT=1 "$GANG" hitch ungated -p lategate -r worker -d /tmp 2>&1)"; rc=$?
 check "an ungated brief still reports success" "0" "$rc"
 check "and claims only the window it actually watched" "yes" \
-  "$(case "$out" in *"no gate within"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "no gate within")"
 unset GANG_PROFILES GANG_TEST_GATE
 
 
@@ -1499,7 +1532,7 @@ hook() { printf '{"hook_event_name":"PostToolUse"}' | TMUX_PANE="$p" "$GANG" con
 check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
 tmux set-option -w -t "$p" @gl_band 0
 check "the hook warns on a fresh band" "yes" \
-  "$(case "$(hook)" in *additionalContext*'120000-token band'*) echo yes ;; *) echo no ;; esac)"
+  "$(like "$(hook)" "*additionalContext*120000-token band*")"
 check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p" @gl_band)"
 
 # --- a compaction gang issued itself -------------------------------------------
@@ -1696,13 +1729,13 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 out="$(CODEX_HOME="$CODEX_FIX" "$GANG" hitch filectx -p codexfile -d /tmp 2>&1)"
 fkey="$(tmux show-options -wqv -t "$(target_of filectx)" @gl_key)"
 check "a keyed profile mints a marker even with no role" "yes" \
-  "$(case "$fkey" in gl-????????????????????????????????) echo yes ;; *) echo no ;; esac)"
+  "$(like "$fkey" 'gl-????????????????????????????????')"
 sleep 0.5
 check "the marker reaches the agent's conversation" "yes" "$(has filectx "$fkey")"
 # The marker identifies the ONE transcript it was typed into. A spawner that
 # printed it would record it in its own transcript too — two matches, no agent.
 check "and never the spawner's stdout" "no" \
-  "$(case "$out" in *gl-*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "gl-")"
 
 # The agent's rollout: meta, the marker as user input, then two token_counts —
 # the LAST one is the current occupancy, and 150k sits past the 120k band.
@@ -1857,10 +1890,9 @@ in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw outpu
 ESC=$'\033'
 out="$(in_pane alpha "GANG_SESSION=$GANG_SESSION env -u NO_COLOR $GANG roster")"
 check "a roster on a terminal is coloured" "yes" \
-  "$(case "$out" in *"${ESC}[32m"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "${ESC}[32m")"
 check "NO_COLOR turns it off on a terminal too" "no" \
-  "$(case "$(in_pane alpha "GANG_SESSION=$GANG_SESSION NO_COLOR=1 $GANG roster")" in
-       *"${ESC}["*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$(in_pane alpha "GANG_SESSION=$GANG_SESSION NO_COLOR=1 $GANG roster")" "${ESC}[")"
 
 # Colour changes the bytes, never the layout: printf pads by byte count, so
 # colouring a column before padding it eats nine characters of the field and the
@@ -1877,8 +1909,14 @@ row="$("$GANG" roster | tail -1)"
 # computed, and both sides come off the same roster — so a roster that printed
 # no agent rows at all would satisfy it against itself. Pin the row down as an
 # agent row first, and the check underneath can fail again.
+agent_row() { # $1 = a roster row -> yes when it is an agent row, not a no-team line
+  case "$1" in
+    ''|'no team'*) echo no ;;
+    *) holds "$1" '^[^ ]+ +[^ ]+ +[^ ]+' ;;
+  esac
+}
 check "the row the colour comparison uses is an agent row" "yes" \
-  "$(case "$row" in ''|'no team'*) echo no ;; *) holds "$row" '^[^ ]+ +[^ ]+ +[^ ]+' ;; esac)"
+  "$(agent_row "$row")"
 check "and it does not move a column" "$row" \
   "$(printf '%s' "$out" | sed "s/$ESC\[[0-9;]*m//g" \
      | awk -v n="${row%% *}" '$1==n{sub(/ +$/, ""); print}')"
@@ -1907,7 +1945,7 @@ check "spawn still answers as an alias for hitch" "idle (slack tug)" \
 out="$("$GANG" kill aliased 2>&1)"; rc=$?
 check "kill is no longer a verb" "1" "$rc"
 check "and says so by name" "yes" \
-  "$(case "$out" in *"unknown command 'kill'"*) echo yes ;; *) echo no ;; esac)"
+  "$(contains "$out" "unknown command 'kill'")"
 check "and the dog it aimed at is untouched" "aliased" \
   "$("$GANG" roster | awk '$1=="aliased"{print $1}')"
 "$GANG" drop aliased >/dev/null
@@ -2021,12 +2059,33 @@ check "no shipped profile sizes a multibyte glyph with substr" "0" \
 # subshell piped into `grep -q` is the SIGPIPE shape: the reader exits at its
 # first match, the forked writer still has lines, and under gang's pipefail the
 # pipeline reports failure — a hit read as a miss, silently. It survived in vet's
-# issue dedup, where a miss files a duplicate issue. Source-level for the same
-# reason as the check above: the shape only misfires on a payload big enough to
-# fill the pipe buffer, so a behavioural test passes on any tree small enough to
-# test with.
+# issue dedup, where a miss files a duplicate issue. Source-level, but NOT for
+# the reason once given here — it is not that the shape needs a payload big
+# enough to fill the pipe buffer. It misfires whenever the match is not on the
+# last line, which any tree reaches. It is source-level because it is a RACE: the
+# writer has to lose it, and at 155 in 1000 a behavioural check passes most runs
+# and gets called flaky. The source shape is there every run.
 check "no forked producer is piped into grep -q" "0" \
   "$(grep -c ') | grep -q' "$GANG")"
+# And the shape that actually shipped, which the rule above does not see: a
+# BUILTIN producer piped into an early-exiting reader. It reads as the safe case
+# and is not one, because bash writes a line at a time. Eight of these were live
+# in gang — busy_painted and gated among them, where losing the race reads a
+# working agent as idle and a modal as reachable.
+check "no builtin producer is piped into an early-exiting reader" "0" \
+  "$(grep -E 'printf .*\| *(grep|head) ' "$GANG" | grep -cv '^[[:space:]]*#')"
+# And the parser trap that kept the macOS cell from ever running. Coverage, stated
+# exactly: this fires on any line that opens a command substitution and goes on to
+# write `case` — which is the shape all thirty-seven took, the multi-line ones
+# included, since every one of them opened with the two characters together. It
+# cannot see a `case` written on a line BELOW its own substitution, and no
+# shellcheck level sees any of it. Asserted against both files rather than this
+# one: bin/gang has to parse on 3.2 too, and it is clean today only because
+# nobody has happened to write the shape there.
+check "no case statement is written inside a command substitution" "0" \
+  "$(bash32_traps "$0")"
+check "and none in gang either" "0" \
+  "$(bash32_traps "$GANG")"
 # The third member of that family, and the one that already shipped: text sized
 # with `cut -c`. The option is specified in characters, GNU implements it in
 # bytes, and the split is per PLATFORM rather than per awk build — so unlike the
@@ -2034,8 +2093,12 @@ check "no forked producer is piped into grep -q" "0" \
 # only fail on one side of the split. This one holds on both. Source-level for
 # the same reason as the substr rule: the behavioural version passes wherever
 # `cut -c` happens to be the character-oriented implementation.
+# Comment lines are dropped before counting, the same way the substr rule drops
+# them, and for a reason this check learned the hard way: the fix it guards has
+# to NAME the construct it retired, so the explanation beside it matched the
+# rule and the suite reported a violation that was its own documentation.
 check "no text in gang is sized with cut -c" "0" \
-  "$(grep -c 'cut -c' "$GANG")"
+  "$(grep 'cut -c' "$GANG" | grep -cv '^[[:space:]]*#')"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'
