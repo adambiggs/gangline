@@ -84,6 +84,23 @@ BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
 # file has had to chase in several other costumes.
 GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 
+# One number with two users, and they ask the same physical question: how long
+# after `/compact` is typed can that compaction still credibly be in flight.
+# compaction_pending asks it to decide when patrol may go back to nudging a pane;
+# resume_after_compaction asks it to decide when to stop waiting for proof of the
+# context drop. One question, so one number — but the two do not FAIL alike, and
+# whoever moves it is moving both. Overrunning it in patrol resumes nudging, so a
+# message arrives late into a compaction: noisy. Overrunning it in the resume
+# abandons the proof and drops back to the settle path, which can hand the message
+# to a turn still running: corrupting. Lower is the dangerous direction at both.
+#
+# It also has a ceiling it does not state locally: raised past GANG_RESUME_TIMEOUT
+# it deletes the resume's checked fallback outright, leaving only the timeout's
+# unconditional inject. Both defaults are here rather than written out at each use,
+# because a default spelled twice is how the churn wait above came to disagree with
+# itself.
+GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
+
 usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
@@ -643,7 +660,9 @@ compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
   # was (measured on a 30k pane — the command ran, the readout never moved), so a
   # mark trusted until the drop would hold patrol off that pane for good.
   now="$(date +%s)"
-  [ $(( now - issued )) -lt "${GANG_COMPACT_GRACE:-300}" ] || { compaction_clear "$1"; return 1; }
+  # Shared with resume_after_compaction, which uses the same number to decide when
+  # to give up waiting for the drop; overrunning it there is corrupting, not noisy.
+  [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] || { compaction_clear "$1"; return 1; }
   return 0
 }
 
@@ -1167,11 +1186,25 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
     sleep 2; t=$((t + 2))
     compacting "$1" && break
     if [ -n "$at_issue" ]; then
-      if [ "$t" -ge "${GANG_COMPACT_GRACE:-300}" ]; then
+      if [ "$t" -ge "$GANG_COMPACT_GRACE" ]; then
         # The drop never came, so the compaction never happened: `/compact` under
         # a harness's own threshold runs and leaves the context exactly where it
         # was (measured). Fall back rather than hold the resume for the whole
         # timeout over a compaction that was never going to occur.
+        #
+        # The residual is named rather than left for a reader to wonder about,
+        # because the settle path's weakness two paragraphs up does not stop
+        # applying here: a turn that has been SILENT since the mark was set can
+        # still take this resume. Five minutes is not a long turn on this
+        # hardware — the suite in this repo runs near four.
+        #
+        # It is still the better end of the trade, and not because the exposure
+        # is small. Without this branch the same message reaches the same silent
+        # turn at the timeout anyway, injected with NO checking at all; this path
+        # demands three non-busy polls and a still screen first. It moves the
+        # moment earlier and makes the attempt better-behaved, and it buys the
+        # measured under-threshold case, which otherwise holds for the full
+        # fifteen minutes over a compaction that never happened.
         at_issue=""
       else
         if ctx="$(profile_context "$1" 2>/dev/null)" \

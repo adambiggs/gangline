@@ -1146,7 +1146,7 @@ unset GANG_PROFILES
 # a path that compacts without GANG_COMPACT_CMD, and an agent typing /compact by
 # hand is stopped by roles/_common.md, which is documentation, not enforcement.
 check "the compaction command is typed in one place only (a second needs compaction_mark too)" "1" \
-  "$(grep -c 'inject "$AGENT_ID" "$GANG_COMPACT_CMD"' "$GANG")"
+  "$(grep -cF -- 'inject "$AGENT_ID" "$GANG_COMPACT_CMD"' "$GANG")"
 
 # The churn wait has two users — one pane in pane_stable, a whole team in
 # churn_batch — and the checks above assert the two agree about the same pane.
@@ -1162,9 +1162,37 @@ check "the compaction command is typed in one place only (a second needs compact
 # launch settle is a bare sleep that has nothing to do with churn, so such a
 # guard would fire on correct code.
 check "the churn wait is defined once" "1" \
-  "$(grep -c 'GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-' "$GANG")"
+  "$(grep -cF -- 'GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-' "$GANG")"
 check "and both churn paths read it instead of carrying their own" "2" \
-  "$(grep -c 'sleep "$GANG_CHURN_WAIT"' "$GANG")"
+  "$(grep -cF -- 'sleep "$GANG_CHURN_WAIT"' "$GANG")"
+
+# The compaction grace is the same shape: one physical question — how long can a
+# gang-issued compaction still be in flight — asked by patrol, to decide when it
+# may nudge again, and by the resume waiter, to decide when to stop waiting for
+# the context drop. Written out at each use, the two defaults drift and the two
+# sites start answering differently about the same pane; worse, the person who
+# raises it because patrol nudged into a slow compaction never learns they also
+# moved when a resume abandons its proof, which is the corrupting one.
+#
+# Coverage, stated exactly: this fires when either reader is replaced by a
+# literal (the count falls) and when a third site starts reading the constant
+# (the count rises). It cannot see a new caller that hardcodes 300 and never
+# names the constant. The patrol reader is separately exercised for real by the
+# GANG_COMPACT_GRACE=0 nudge check above; the resume reader is not, so for that
+# side this is the only guard there is.
+check "the compaction grace is defined once" "1" \
+  "$(grep -cF -- 'GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-' "$GANG")"
+check "and both the patrol hold and the resume proof read it" "2" \
+  "$(grep -cF -- '"$GANG_COMPACT_GRACE"' "$GANG")"
+
+# All five source-level invariants match with -F, and that is load-bearing rather
+# than tidiness. Every pattern here is a literal line of shell containing a `$`,
+# and BRE implementations disagree about a `$` that is not at the end: GNU grep
+# 3.7 takes it literally and counts 1, ugrep 7.5 reads it as an anchor and counts
+# 0. Under a regex grep these checks are portable to exactly one implementation,
+# and on any other box they report 0 against an expected 1 — a false alarm on
+# correct code, which is the direction that gets a guard deleted rather than
+# believed. -F says what was meant anyway: none of them wants a pattern.
 
 # --- the band ladder ---------------------------------------------------------
 
