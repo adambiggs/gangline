@@ -1386,6 +1386,18 @@ probe_verdict() { # $1 = probe output, $2 = stand-in; the verdict phrase on its 
   printf '%s\n' "$v"
 }
 
+probe_socks() { # the probe sockets present right now, by name
+  # A glob rather than `ls | grep`, which shellcheck rejects and which would also
+  # be a producer feeding a reader for no reason. An unmatched glob stays literal,
+  # so the -e guard is what makes "none" print nothing.
+  local s
+  for s in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/gangvet-*; do
+    [ -e "$s" ] || continue
+    printf '%s\n' "${s##*/}"
+  done
+}
+socks_before="$(probe_socks)"
+
 probe_run() { # $1 = stand-in; the whole probe, bounded so a hung harness cannot hang the suite
   # Bounded in shell rather than with `timeout(1)`, which is GNU coreutils and is
   # NOT on macOS: the cell that most needs a bound is the one where the command
@@ -1449,9 +1461,25 @@ check "and its run does not claim to have confirmed anything" "yes" \
 # The probe drives real tmux servers, and the one rule it cannot get wrong is
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would
 # drive the server gang is RUNNING IN.
-check "the probe leaves no server behind on its own socket" "0" \
-  "$(n=0; for s in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*gangvet*; do
-       [ -e "$s" ] && n=$((n + 1)); done; echo "$n")"
+# Scoped to sockets that appeared during THIS run's probes, by name, rather than
+# counting every `gangvet` socket in the directory. The probe names its socket
+# after the pid of the gang process driving it, which this suite cannot predict —
+# so a bare glob also matches a TEAMMATE's live probe, and the suite is
+# explicitly built to be run by two agents at once (PID-unique session, no
+# kill-server, its own socket). Measured: this check failed against a concurrent
+# run and passed on the same source standalone. A check that fails because
+# somebody else is working is a check that gets called flaky and deleted, taking
+# the invariant with it — and the invariant is real, since a probe that leaks a
+# server leaks it into the directory holding the live team's.
+leftover=""
+while read -r s; do
+  [ -n "$s" ] || continue
+  case "$socks_before" in *"$s"*) continue ;; esac
+  leftover="$leftover $s"
+done <<EOF
+$(probe_socks)
+EOF
+check "the probe leaves no server behind on its own socket" "" "${leftover# }"
 check "and the session under test is untouched by all of it" "yes" \
   "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
 
