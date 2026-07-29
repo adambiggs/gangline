@@ -36,18 +36,16 @@ tmux is the communication substrate, not a fallback and not a hack.
   error, and a sender running inside the session is taken from its own window
   rather than from what it claims.
 - Delivery is verified by reading the harness's input box before and after the
-  paste and requiring it to change, then sending Enter separately and requiring
-  a later read to differ from the pasted state (an empty box and a queued-message
-  hint are both valid submitted states). Unverified sends fail loudly.
+  paste and requiring it to change, then requiring submission to empty it.
+  Unverified sends fail loudly.
 - Mid-turn delivery is the profile's declaration, not a blanket rule: a harness
   that takes input during a turn is sent to, one that does not is refused rather
   than pasted into whatever that turn is running.
 - Observation = `capture-pane`. Termination = `kill-window`. Per-agent state
   (profile binding) = tmux window options.
-- Per-harness knowledge lives in a profile: launch and model syntax, observable
-  busy and gated states, compaction, mid-turn input, and optional context and
-  composer readers. Harness-native extensions require their own ADR proving the
-  value is unachievable from outside.
+- Per-harness knowledge lives in a profile of a few lines (launch command, busy
+  regex, compact command). Harness-native extensions require their own ADR proving
+  the value is unachievable from outside.
 
 The envelope answers impersonation as a convention, not a security property:
 attributed traffic is distinguishable, but nothing stops any writer to the pane
@@ -62,13 +60,11 @@ unattributed sends are an error, and no untrusted principal can reach a pane.
 
 ## Consequences
 
-- A new harness costs a profile, not a core integration. Its size follows the
-  terminal and file surfaces the harness actually exposes.
+- A new harness costs a profile (~10 lines), not an integration.
 - The operator can attach to any window and watch, steer, or kill — the transcript
   is the pane.
 - Text conventions are version-fragile: a TUI update can change a busy marker.
-  Accepted: per law 8 the break is loud, and the fix stays in that harness's
-  profile.
+  Accepted: per law 8 the break is loud, and the fix is one line in a profile.
 - Offline delivery (messaging an agent not yet spawned) is a file included in the
   spawn prompt, not a store-and-forward bus.
 - Single-tenant trust is assumed (law 2); Gangline is not multi-user software.

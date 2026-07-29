@@ -194,7 +194,10 @@ intended for hook systems such as Claude Code's `UserPromptSubmit` and
 Plain vet visits every installed profile, including custom and test-only files.
 It compares the harness's installed version with the profile's verified version
 words, runs an optional profile-owned file-format gate, checks that a UTF-8
-locale is available, and exits nonzero on drift. It does **not** fire marker
+locale is available, and exits nonzero on drift. For an unpinned dotted-numeric
+version it reports whether the installed build is newer than all pins, older than
+all pins, or between pins when that ordering is unambiguous; otherwise the
+`ROT RISK` remains deliberately unranked. Plain vet does **not** fire marker
 regexes at a pane.
 
 - `--file-issue`: for each version-pin `ROT RISK`, use `gh` to create a deduplicated
@@ -221,6 +224,15 @@ probe's coverage.
 Lists offered profile names from `GANG_PROFILES` and the shipped directory,
 deduplicated with custom files taking precedence. The shipped Bash test stand-in
 is omitted unless Gangline's own test opt-in is set.
+
+A profile is sourced shell, not a data-only record. The current contract includes
+launch/model syntax; busy, gated, compacting, and quiet-at-rest observations;
+compaction and mid-turn declarations; version pins; capture sizing; session-file
+selection; and optional `profile_input`, `profile_context`, and `profile_vet`
+functions. This is intentionally documented as current behavior rather than
+rewriting ADR-0001's historical `~10 lines` premise; [issue
+#13](https://github.com/adambiggs/gangline/issues/13) tracks the resulting
+constitutional question.
 
 ### `gang roles`
 
