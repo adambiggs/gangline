@@ -184,8 +184,11 @@ That transport permission does not make every harness's command self-safe. Codex
 a Codex agent invoking Gangline from its own pane is still in that task, so it
 cannot self-compact by this route. Let Codex compact automatically, or have
 another caller wait for it to become idle and then run `gang compact codex-name`
-(with an attributed resume if needed). For every profile, the native compaction
-command remains the authority on whether the request actually runs.
+(with an attributed resume if needed). Do not pair the rejected self-issued Codex
+command with `--resume`: Gangline proves the slash command was submitted, not
+that Codex executed it, and a fallback can eventually deliver the resume without
+a context drop. For every profile, the native compaction command remains the
+authority on whether the request actually runs.
 
 The resume is not typed immediately after the slash command. Harness queues can
 hand ordinary text to the turn still running while keeping a slash command for

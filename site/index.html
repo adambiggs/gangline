@@ -344,8 +344,9 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
     <tr><td><code>gang wait &lt;name&gt; [seconds]</code></td>
         <td>block for two consecutive idle readings; fail immediately on a gate</td></tr>
     <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume "…"</code></td>
-        <td>trigger the harness's own compaction; a detached waiter attempts the
-            resume and reports failure in status. Naming yourself is the ordinary case</td></tr>
+        <td>submit the harness's own compaction command; a detached waiter attempts
+            the resume and reports delivery failure in status. Native command rejection
+            remains the harness's verdict</td></tr>
     <tr><td><code>gang patrol</code></td>
         <td>ambient roster sweep from cron: band warnings in, gate reports out</td></tr>
     <tr><td><code>gang vet [--probe [profile]]</code></td>

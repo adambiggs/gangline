@@ -207,15 +207,17 @@ At a clean checkpoint, an agent whose harness accepts compaction during an
 active task can compact itself in one command:
 
 ```sh
-gang compact worker --from worker \
+gang compact lead --from lead \
   --resume "tests pass; next verify the packaging path"
 ```
 
 Self-compaction may queue behind the caller's current turn. Codex 0.145.0 is a
 known exception: it rejects `/compact` while a task is active, and running
 `gang compact` from its own pane is itself such a task. Let Codex auto-compact or
-have another caller compact it after it becomes idle. Compacting any busy peer is
-refused because it would cut off live work. The resume is delivered by a
+have another caller compact it after it becomes idle. Do not use a self-issued
+Codex `--resume`: Gangline verifies command delivery, not whether Codex accepted
+the native command. Compacting any busy peer is refused because it would cut off
+live work. The resume is delivered by a
 detached waiter rather than pasted behind the slash command, where the current
 turn could consume it first. A failed resume is reported by `gang status` and
 `gang patrol`.
