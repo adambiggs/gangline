@@ -894,6 +894,75 @@ check "the hook warns on a fresh band" "yes" \
   "$(case "$(hook)" in *additionalContext*'120000-token band'*) echo yes ;; *) echo no ;; esac)"
 check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p" @gl_band)"
 
+# --- a compaction gang issued itself -------------------------------------------
+
+# patrol nudges at a high context band, and a compacting pane is exactly a pane
+# at a high context band. Every scraped guard waves the nudge through: a
+# compacting claude-code pane paints no busy marker AND holds the screen
+# byte-identical, so busy_painted is false and pane_stable is true at once. What
+# actually held a nudge off one was the queued-message hint sitting in the
+# composer, which is an accident of that agent having had mail.
+#
+# gang types the compaction itself, so it can own the fact instead of hunting for
+# it. The fixture needs both halves — a compaction command and a context readout
+# — which no shipped stand-in has: "#compact" is a shell comment, so the pane
+# takes it and stays clean.
+cat > "$SHIM/custom-profiles/compactable.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="WORKING\\.\\.\\."
+GANG_COMPACT_CMD="#compact"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "${line#❯}" | tr -d '\302\240'
+}
+profile_context() {
+  local m
+  m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" || return 1
+  m="${m#ctx }"
+  printf '%s (%s)\n' "${m% *}" "${m##* }"
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch compagent -p compactable -d /tmp >/dev/null
+paint compagent 'ctx 150k/200k 75%'
+"$GANG" compact compagent --from tester >/dev/null 2>&1
+check "a compaction gang issued is recorded on the window" "yes" \
+  "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting \
+     | grep -qE '^[0-9]+ [0-9]+$' && echo yes || echo no)"
+check "and patrol holds its nudge while it is in flight" \
+  "past the 120000-token band — compaction gang issued is in flight, holding nudge" \
+  "$("$GANG" patrol | verdict compagent)"
+check "holding burns no band, so the nudge is not lost" "" \
+  "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_band)"
+
+# The mark answers patrol's question and no other. Wiring it into compacting()
+# would hand it to resume_after_compaction, which breaks the instant that is true
+# and needs it to mean the turn is OVER — while this is set with the compaction
+# still queued behind that very turn.
+check "and it does not make the agent read as compacting" "idle (slack tug)" \
+  "$("$GANG" status compagent | head -1)"
+
+# `/compact` under a harness's own threshold runs and changes nothing, so a mark
+# trusted until the context moves would hold patrol off that pane for good.
+check "an expired mark stops holding" "NUDGED (crossed the 120000-token band)" \
+  "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
+
+# The other way out, and the one that does not wait: a compaction that HAPPENED
+# says so in the readout. The drop is monotone — the context stays low — unlike
+# the momentary zero the readout flashes on its way through, which a poll can
+# step straight over.
+"$GANG" hitch dropagent -p compactable -d /tmp >/dev/null
+paint dropagent 'ctx 900k/1000k 90%'
+"$GANG" compact dropagent --from tester >/dev/null 2>&1
+paint dropagent 'ctx 250k/1000k 25%'
+check "a context drop clears the mark rather than waiting out the clock" \
+  "NUDGED (crossed the 250000-token band)" "$("$GANG" patrol | verdict dropagent)"
+check "and the mark is gone once it has served its purpose" "" \
+  "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
+unset GANG_PROFILES
+
 # --- the band ladder ---------------------------------------------------------
 
 # Every default rung is absolute, so each must add exactly one band at any window

@@ -447,6 +447,66 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
   input_clear "$1"
 }
 
+# Gang types the compaction itself — cmd_compact injects GANG_COMPACT_CMD, and an
+# agent compacting itself is told to go through `gang compact <self>` — so gang
+# KNOWS one is in flight without looking for it. That fact is recorded on the
+# window instead of inferred from the pane, because an owned signal cannot rot,
+# and rot is the whole disease here: three declared markers went dead in one
+# session, each a different way, and every one of them passed `gang vet`.
+#
+# It answers exactly ONE question: may patrol inject into this pane. It is
+# deliberately NOT wired into compacting(), which answers a different one.
+# resume_after_compaction breaks the instant compacting() is true and needs that
+# to mean "the turn that could have eaten this resume is OVER"; this mark is set
+# while the compaction is still QUEUED BEHIND that very turn, so handing it to
+# that caller would rebuild the overtaking the waiter exists to prevent. One
+# signal answering two questions is how the bar glyphs came to carry both busy
+# and compacting, and it is not being rebuilt here.
+#
+# It covers gang-issued compaction only. A harness auto-compacting at its own
+# threshold is invisible to this, and that is exactly when patrol is sweeping,
+# because patrol nudges at a high context band and a harness auto-compacts at
+# one. The split is deliberate rather than overlooked, because the two differ in
+# severity: a gang-issued compaction has a queued resume in flight, so a nudge
+# there is precisely the overtaking the waiter exists to prevent, while an
+# auto-compaction has no pending resume, so a nudge is queued, delivered late,
+# and burns a band — noisy, not corrupting. The dangerous case is covered.
+compaction_mark() { # $1 = window id, profile loaded; record that WE issued one
+  local at=0 ctx tw tokens window
+  if declare -F profile_context >/dev/null \
+     && ctx="$(profile_context "$1" 2>/dev/null)" \
+     && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
+    read -r tokens window <<<"$tw"; at="$tokens"
+  fi
+  tmux set-option -w -t "$1" @gl_compacting "$(date +%s) $at" 2>/dev/null || true
+}
+
+compaction_clear() { tmux set-option -uw -t "$1" @gl_compacting 2>/dev/null || true; }
+
+compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
+  # Two ways out, because each covers a case the other cannot see.
+  local v issued at_issue now
+  v="$(tmux show-options -wqv -t "$1" @gl_compacting 2>/dev/null)" || return 1
+  [ -n "$v" ] || return 1
+  read -r issued at_issue <<<"$v"
+  [[ "$issued" =~ ^[0-9]+$ ]] || { compaction_clear "$1"; return 1; }
+  # The context drop is the positive one: a compaction that HAPPENED shows it,
+  # and unlike the momentary zero the readout flashes on its way through, the
+  # drop is monotone — it stays low — so no poll interval can step over it.
+  if [ -n "${2:-}" ] && [[ "$2" =~ ^[0-9]+$ ]] \
+     && [[ "$at_issue" =~ ^[0-9]+$ ]] && [ "$at_issue" -gt 0 ] \
+     && [ "$2" -lt $(( at_issue / 2 )) ]; then
+    compaction_clear "$1"; return 1
+  fi
+  # And the clock, because a compaction that never happened shows nothing at all:
+  # `/compact` under a harness's own threshold leaves the context exactly where it
+  # was (measured on a 30k pane — the command ran, the readout never moved), so a
+  # mark trusted until the drop would hold patrol off that pane for good.
+  now="$(date +%s)"
+  [ $(( now - issued )) -lt "${GANG_COMPACT_GRACE:-300}" ] || { compaction_clear "$1"; return 1; }
+  return 0
+}
+
 gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
   # The third state, and the one that must not pass for the other two: a harness
   # stopped at a modal is not working and not reachable — keystrokes sent to it
@@ -1221,6 +1281,11 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     || die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
 
   inject "$AGENT_ID" "$GANG_COMPACT_CMD"
+  # Recorded only after the command verified in the pane: a mark for a compaction
+  # that was never typed would hold patrol off a working agent for the whole
+  # grace window, which is the failure this is supposed to prevent, aimed the
+  # wrong way.
+  compaction_mark "$AGENT_ID"
   local where="triggered on $name"
   [ "$mine" -eq 1 ] && where="queued behind your own turn"
   if [ -n "$resume" ]; then
@@ -1404,6 +1469,12 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     say "$2" "$ctx" "re-armed (usage dropped)"
   elif [ "$band" -eq "$prev" ]; then
     say "$2" "$ctx" "steady (band $band)"
+  elif compaction_pending "$1" "$tokens"; then
+    # Asked before the scraped guards because it is the one signal here that
+    # cannot rot, and because the pane it protects reads perfectly idle: a
+    # compacting claude-code pane paints no marker and holds a still screen, so
+    # busy_painted and pane_stable both wave a nudge straight through it.
+    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued is in flight, holding nudge" "$C_WORK"
   elif busy_painted "$1"; then
     # Also the pane question, for the same reason as the guards around it: this
     # chain decides whether an injection is SAFE, and a parked agent is inside a
