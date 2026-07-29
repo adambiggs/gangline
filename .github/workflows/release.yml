@@ -12,6 +12,18 @@ name: release
 # The repo had zero tags when this landed. The manifest is anchored at 0.0.1 —
 # the version the packaging stubs already claimed and never published — and
 # bump-minor-pre-major means the first cut off this history lands at 0.1.0.
+# Verified by dry run against release-please 17.10.4, the version the v4 action
+# pins: it plans "chore(main): release gangline 0.1.0" and five file writes —
+# CHANGELOG.md, version.txt, both packaging stubs, and the manifest.
+#
+# WATCH THE PACKAGING STUBS AFTER EVERY RELEASE. The updaters behind those two
+# extra-files entries fail silently, measured rather than assumed: GenericToml
+# logs "No entries modified in <jsonpath>" and returns the file UNCHANGED when
+# the jsonpath matches nothing, and logs a warning and returns it unchanged when
+# the file will not parse. Neither raises, so the run stays green. A typo in
+# either jsonpath therefore ships a stub left behind at the old version while
+# CHANGELOG.md, version.txt and the manifest all move — and release-please will
+# not say a word about it. If you edit those paths, re-run the dry run.
 
 on:
   push:
