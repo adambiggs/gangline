@@ -279,8 +279,11 @@ gang compact worker --from worker --resume '&lt;where you are, what is next&gt;'
 — it queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
   <p class="lede">
-    The agent then compacts itself at the next clean seam &mdash; tests green, a
-    commit made &mdash; without being idle first and without anyone watching. The
+    Where the harness accepts compaction during an active task, the agent then
+    compacts itself at the next clean seam &mdash; tests green, a commit made &mdash;
+    without being idle first and without anyone watching. Codex 0.145.0 rejects
+    <code>/compact</code> during an active task, so another caller must compact it
+    once it is idle, or Codex must reach its own automatic compaction. The
     <code>--resume</code> never rides the input queue directly behind its own
     compaction, where the turn about to be compacted could swallow it. A detached
     waiter uses a declared live compaction marker, a large context drop, or a

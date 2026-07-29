@@ -175,9 +175,17 @@ The robust self-compaction form is:
 gang compact <self> --from <self> --resume "checkpoint and next action"
 ```
 
-The calling agent can be busy: its compaction command queues behind the current
-turn. A different busy agent is refused because forced compaction would discard
-its live work.
+Gangline allows the calling agent to be busy: its compaction command can queue
+behind the current turn. A different busy agent is refused because forced
+compaction would discard its live work.
+
+That transport permission does not make every harness's command self-safe. Codex
+0.145.0 was observed rejecting `/compact` three times while a task was active;
+a Codex agent invoking Gangline from its own pane is still in that task, so it
+cannot self-compact by this route. Let Codex compact automatically, or have
+another caller wait for it to become idle and then run `gang compact codex-name`
+(with an attributed resume if needed). For every profile, the native compaction
+command remains the authority on whether the request actually runs.
 
 The resume is not typed immediately after the slash command. Harness queues can
 hand ordinary text to the turn still running while keeping a slash command for

@@ -95,9 +95,12 @@ the pane and refuses a composer that is changing while a person types.
 Pastes the profile's compaction command through the same verified injection path.
 A profile with no compaction command is refused.
 
-A busy peer cannot be compacted. An agent may compact its own busy window because
-the slash command queues behind the turn that ends when its `gang compact` call
-returns.
+A busy peer cannot be compacted. Gangline permits an agent to compact its own
+busy window because the slash command can queue behind the turn that ends when
+its `gang compact` call returns. This is permission at the transport layer, not a
+promise that every harness accepts its slash command there: Codex 0.145.0 rejects
+`/compact` while a task is active, and a self-issued Gangline call keeps that task
+active. Compact an idle Codex from another caller or let Codex auto-compact.
 
 `--resume` requires `--from` or `GANG_FROM`, checked under the same identity rule
 as `send`. Gangline starts a detached waiter that delivers the attributed resume

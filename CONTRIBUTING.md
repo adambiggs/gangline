@@ -87,7 +87,13 @@ Every shell and Python file carries an `SPDX-License-Identifier` line; new ones
 need it too.
 
 Shell changes must pass `bash -n`, `shellcheck -S warning`, and
-`test/integration.sh`; the `shell` workflow runs all three on every push. The test
+`test/integration.sh`; the `shell` workflow runs all three on every push. A local
+green run is not a CI prediction on the current development box: local mawk
+1.3.4 is more permissive than CI's gawk and hid a `substr` byte/character bug;
+local Bash 5.1 is newer than macOS CI's 3.2, which rejected 37 locally valid test
+constructs; and local ShellCheck 0.8.0 is more permissive than CI's newer parser,
+which treated a comment beginning `shellcheck` as a directive and failed lint.
+The test
 drives `bin/gang` against a real tmux server with the `bash` profile — no mocks,
 because a mocked tmux would agree with whatever the code already does. A fix to
 delivery or addressing belongs there as a case that fails without the fix.
