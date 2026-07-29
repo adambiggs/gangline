@@ -1,11 +1,23 @@
 # Gangline
 
-Run Claude Code, Codex, opencode, and Pi as one coordinated team. Each agent is a
-named tmux window; `gang` starts them, sends attributed messages, reports their
-state and context usage, compacts them, and releases them.
+A gangline is the line down the middle of a dog team. Every dog is hitched to it
+by its own tug line, the lead runs out front, and one look down the line tells the
+musher who is working — a tight tug is pulling, a slack tug is not.
 
-Gangline is one Bash CLI over tmux. There is no daemon, message bus, database, or
-harness plugin.
+This is that, for CLI coding agents. Claude Code, Codex, opencode and Pi run as
+named tmux windows hitched to one session; `gang` hitches them, sends attributed
+messages, reads each tug tight or slack, compacts them, and drops them when the
+work is done.
+
+One Bash CLI over tmux. No daemon, message bus, database, or harness plugin.
+
+The vocabulary is the command surface, which is why it is worth thirty seconds.
+You `hitch` an agent into the line and `drop` it at a checkpoint; `gang roster`
+reports a `tight tug` or a `slack tug`. Learn the line and the verbs come free.
+And the status column is not decoration on top of a boolean —
+[mushers watch tuglines more than anything else](https://northernwilds.com/tugline/),
+because a taut tug is a dog pulling and a bouncing one says something is wrong.
+That is the same reading `gang status` performs on a pane.
 
 ```mermaid
 flowchart LR
@@ -118,7 +130,12 @@ gang drop worker
 ```
 
 `gang down` ends the entire team session, including every agent. Use `gang drop`
-for the routine case of releasing one finished teammate.
+for the routine case of releasing one finished teammate. On the trail a dropped dog
+is one the musher leaves at a checkpoint to be cared for and flown home — done
+[for the dog's sake](https://iditarod.com/edu/dropped-dogs-are/), not as a
+discard. Same here: dropping an agent whose arc is finished is the healthy
+outcome, not a punishment — an agent kept running past its work is a dog riding in
+the basket instead of pulling.
 
 ## The operating model
 
@@ -184,10 +201,14 @@ while busy unless you use `--wait`.
 ### Context is explicit
 
 `gang context <name>` asks the profile for `<used>k/<window>k (<percent>%)`.
-`gang patrol` applies `GANG_CONTEXT_BANDS` (default
-`120000,180000,250000,350000`) and sends one attributed warning per crossed
-band. It skips a painted-busy, churning, gated, gang-compacting, or non-empty input
-area without advancing the band, so a later sweep retries.
+`gang patrol` applies `GANG_CONTEXT_BANDS` (default `30%,50%,70%,85%`) and sends
+one attributed warning per crossed band. The rungs are proportional because
+context windows differ by nearly 4x across the shipped harnesses, and one absolute
+ladder means four different things on a mixed team: a 350k rung is never reached on
+a 258k window, while on a 1M window it fires after the room to act on it is gone.
+Absolute token counts still work if you run one window size. Patrol skips a
+painted-busy, churning, gated, gang-compacting, or non-empty input area without
+advancing the band, so a later sweep retries.
 
 Run patrol periodically if you want ambient warnings:
 
