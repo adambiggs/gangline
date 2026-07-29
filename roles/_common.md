@@ -142,10 +142,14 @@ wrong state, misses your context readout, or fails to verify a send that clearly
 landed, run `gang vet` before assuming you made the mistake. If it reports
 ROT RISK, tell the operator.
 
-If it reads all-OK and scraping stays wrong, tell the operator that too — and do
-not read the all-OK as a verdict. vet compares harness versions against pins; it
-never fires a marker at a pane. A marker can be dead while every version matches:
-a UI mod moved it, or one branch of it stopped being painted while the others
-carry on, or it is painted somewhere gang does not look. All three are the
-operator's to fix, and all three look the same from your seat — gang saying the
-wrong word about a screen you can see.
+If it reads all-OK and scraping stays wrong, do not read the all-OK as a verdict:
+plain `vet` compares harness versions against pins and never fires a marker at a
+pane. Run `gang vet --probe`, which does — it drives a throwaway harness on its
+own socket and checks gang actually sees the busy marker and the context readout
+appear and then go away again. That is the tool for "the version matches and gang
+still says the wrong word".
+
+What the probe does not cover, so a clean run does not clear it: gated and
+compacting markers, and any marker branch an ordinary turn never paints. Those
+stay the operator's, and so does a probe row reading `gated` or `not probed` —
+gang never answers a dialog. Tell them, with the row you saw.

@@ -558,24 +558,47 @@ verification — runs `gang vet` first. On ROT RISK, `gang vet --file-issue`
 files a deduped rot issue via `gh`, then the markers get re-verified against the
 live TUI and the new version appended to the pin.
 
-**vet watches versions, not markers.** It never fires a busy or gated regex at a
-pane, and nothing else does either — re-verification is a human watching gang say
-the right word. So a clean vet means the harness is the version somebody once
-checked, and nothing stronger. Two things pass straight through it:
+**Plain `vet` watches versions, not markers.** It never fires a busy or gated
+regex at a pane, so a clean `gang vet` means the harness is the version somebody
+once checked, and nothing stronger.
+
+**`gang vet --probe` fires them.** It launches each installed harness on a
+private tmux socket, exactly the way `hitch` launches it, sends a prompt, and
+asserts the profile's own busy marker and context readout against the live pane:
+absent at rest, present while the turn runs, absent again once the pane settles.
+Both directions are the point — a marker that matches by accident cannot pass a
+check that also requires it to go away. It asserts the *declared regex* and never
+`busy()`, because `busy()` is `busy_painted OR churn` and churn would cover for a
+stone-dead marker, making a test that cannot fail. A profile declaring no busy
+marker reports `not probed`, which is not a pass.
+
+Because the probe reads through gang's own bounded window, **reachability is part
+of what it tests**: a marker painted somewhere gang does not look reads as dead,
+which is the correct answer. Two harnesses stop on a first-run directory-trust
+dialog that no launch flag clears — point `GANG_PROBE_DIR` at a directory you
+have trusted by hand once. gang never answers a dialog, and `GANG_LAUNCH` does
+not change, so the probe keeps measuring the line an agent actually runs.
+
+That closes the gap for the markers it drives. Two things still pass straight
+through:
 
 - **A dead branch of a live marker.** These regexes are alternates covering
   *different* states, not redundant readings of one — a spinner for an ordinary
-  turn, a backoff line, a progress bar for compaction. A human check is satisfied
-  by any one living branch, so a branch can stop being painted and nothing notices
-  until the state it covered comes up, in the field, on the one path that needed
-  it. Adding an alternate adds a failure point rather than a fallback.
-- **A marker that fires where gang is not looking.** State is read from a bounded
-  window of the pane, so *reachable* is part of a marker being correct, and no
-  liveness audit tests it — the marker is not dead. A dialog anchored so its
-  header lands outside that window is live on screen and invisible to the check.
+  turn, a backoff line, a progress bar for compaction. The probe drives one
+  ordinary turn, so it exercises the branch that turn happens to paint and no
+  other; a branch can stop being painted and nothing notices until the state it
+  covered comes up, in the field, on the one path that needed it. Adding an
+  alternate adds a failure point rather than a fallback.
+- **Gated and compacting, which are deliberately out of scope.** Reaching a modal
+  needs per-harness choreography — which command opens which dialog — and that is
+  new profile surface rotting on its own schedule. `/compact` under a harness's
+  own threshold runs and moves nothing, so a probe cannot tell *marker dead* from
+  *nothing to compact*. Both remain a human watching gang say the right word.
 
-So treat a clean vet as "the version has not moved". When scraping misbehaves and
-vet reads all-OK, suspect the marker, not the harness.
+So a clean `vet` means the version has not moved; a clean `vet --probe` means the
+busy marker and context readout were seen to work, today, on this box. When
+scraping misbehaves and plain vet reads all-OK, suspect the marker, not the
+harness — and run the probe, which is the tool that can tell you.
 
 Version pins watch the harness, not its mods. A theme, a replacement statusline,
 or a TUI-drawing extension — a permission system, say — repaints chrome without
