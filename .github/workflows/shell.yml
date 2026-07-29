@@ -41,15 +41,34 @@ jobs:
           case "${{ runner.os }}" in
             Linux) sudo apt-get install -y tmux shellcheck ;;
             macOS) brew install tmux shellcheck ;;
+            *) echo "no dependency recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
           esac
 
       - name: Versions
         # The point of the macOS cell is the userland, so name it in the log —
         # a green run that silently used GNU tools would prove nothing.
         run: |
-          bash --version | head -1
+          set -euo pipefail
+
+          # The scripts run under their shebang's bash, not this step's shell, so
+          # resolve that one. A Homebrew bash ahead of /bin/bash on PATH would
+          # make the "bash 3.2 userland" claim in this file's header false.
+          interp="$(command -v bash)"
+          echo "interpreter: $interp"
+          "$interp" --version | head -1
+
           tmux -V
-          awk --version 2>/dev/null | head -1 || awk -W version 2>&1 | head -1
+
+          # awk is the reason this step exists, and the implementations differ on
+          # how to ask. gawk/BSD awk take --version, mawk takes -W version, and
+          # busybox awk takes neither. Capture and test the STRING: a pipeline
+          # ending in head always exits 0, so `awk --version | head -1 || ...`
+          # can never reach its fallback and prints a blank line instead.
+          v="$(awk --version 2>/dev/null | head -1 || true)"
+          [ -n "$v" ] || v="$(awk -W version 2>&1 | head -1 || true)"
+          [ -n "$v" ] || v="$(awk 2>&1 | head -1 || true)"   # busybox names itself in usage
+          [ -n "$v" ] || { echo "awk did not identify itself" >&2; exit 1; }
+          echo "awk: $v"
 
       - name: Syntax and lint
         run: |
