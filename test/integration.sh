@@ -22,6 +22,11 @@ gang_path() { # $1 = this script -> the bin/gang beside its tree
 }
 GANG="$(gang_path "$0")"
 export GANG_SESSION="gangtest-$$"
+# The suite drives gang against the shipped bash stand-in, which is withheld from
+# the harness list an operator picks from. It opts back in for its own run —
+# exported once, because nearly every invocation below hitches on it. Checks that
+# assert the OPERATOR's view clear it for that one command.
+export GANG_TEST_PROFILES=1
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
 SHIM="$(mktemp -d)"
@@ -112,9 +117,20 @@ SH
 chmod +x "$SHIM/readlink"
 ln -s "$GANG" "$SHIM/gang-via-symlink"
 # From /tmp, so a ROOT derived from the caller's cwd cannot accidentally be right.
-out="$(cd /tmp && PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
+# Cleared of the suite's opt-in, so this is the list an operator actually sees.
+out="$(cd /tmp && GANG_TEST_PROFILES= PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
 check "a BSD readlink still resolves the install tree" "yes" \
-  "$(case "$out" in *bash*claude-code*pi*) echo yes ;; *) echo no ;; esac)"
+  "$(case "$out" in *claude-code*codex*opencode*pi*) echo yes ;; *) echo no ;; esac)"
+
+# `gang profiles` is what install.sh prints as the harnesses gangline drives, and
+# what an operator picks from. A shell in that list reads as a fifth supported
+# harness — the operator asks which agent to run on it and the honest answer is
+# none. The stand-in still ships, because the suite needs it and an uninstalled
+# test dependency is not tested; it is just not offered.
+check "the harness list does not offer the test stand-in" "no" \
+  "$(case " $out " in *" bash "*) echo yes ;; *) echo no ;; esac)"
+check "and offers exactly the real harnesses" "claude-code codex opencode pi" \
+  "$(cd /tmp && GANG_TEST_PROFILES= "$GANG" profiles | tr '\n' ' ' | sed 's/ *$//')"
 
 # And when the tree really is absent, that is said out loud rather than reported
 # as an install with zero harnesses.
@@ -130,6 +146,24 @@ check "and names what is missing" "yes" \
 check "hitch registers an agent" "idle (slack tug)" "$("$GANG" status alpha)"
 check "roster lists it"          "alpha bash idle" \
   "$("$GANG" roster | awk '$1=="alpha"{print $1, $2, $3}')"
+
+# Withheld from the list is not withheld from use unless the entry points say so
+# too — an operator who reads the name in this repo and types it should meet the
+# same answer the list gave, not a working shell agent. adopt is asked for a
+# window that does not exist, so naming the profile proves it refused before it
+# went looking rather than by accident of a missing pane.
+out="$(GANG_TEST_PROFILES= "$GANG" hitch standin -p bash -d /tmp 2>&1)"; rc=$?
+check "hitching the stand-in is refused" "1" "$rc"
+check "and names it a stand-in, not an unknown profile" "yes" \
+  "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
+check "and nothing was hitched" "no" \
+  "$("$GANG" roster | grep -q '^standin ' && echo yes || echo no)"
+out="$(GANG_TEST_PROFILES= "$GANG" adopt nosuchwin -p bash 2>&1)"; rc=$?
+check "adopting onto the stand-in is refused too" "1" "$rc"
+check "before it even looks for the window" "yes" \
+  "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
+check "and the suite's own opt-in still reaches it" "yes" \
+  "$("$GANG" profiles | grep -qx bash && echo yes || echo no)"
 
 # `gang up` is the first command a new install runs, and the only one that both
 # hitches and briefs with no arguments at all — so it is the one whose breakage a

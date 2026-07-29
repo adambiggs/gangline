@@ -145,11 +145,33 @@ usage_die() { usage >&2; exit 1; }
 # new harness — or a fix to a shipped profile whose TUI has moved on — costs a
 # file, never a patch to the installed tree.
 
+# Profiles that exist to exercise gang's own mechanics rather than to drive a
+# harness. They ship, because the suite needs them and a test dependency that is
+# not installed is not tested — but they are not OFFERED. `gang profiles` is what
+# the installer prints and what an operator picks from, and a shell sitting in
+# that list reads as a fifth harness gangline supports: the operator asks which
+# agent to run on it, and the honest answer is none. The suite opts back in.
+TEST_ONLY_PROFILES="bash"
+
+test_only_profile() { # $1 = profile name; exit 0 if it is a stand-in, not a harness
+  [ "${GANG_TEST_PROFILES:-}" = 1 ] && return 1
+  case " $TEST_ONLY_PROFILES " in *" $1 "*) ;; *) return 1 ;; esac
+  # Only the SHIPPED stand-in is withheld. Somebody whose own GANG_PROFILES holds
+  # a bash.sh means it, and shadowing is the documented way to override anything
+  # gang ships — withholding their file too would make the override silently
+  # useless for one name and nobody would guess which.
+  [ "$(profile_file "$1" 2>/dev/null)" = "$ROOT/profiles/$1.sh" ]
+}
+
 list_profiles() {
-  local d p
+  local d p n
   for d in ${GANG_PROFILES:+"$GANG_PROFILES"} "$ROOT/profiles"; do
     [ -d "$d" ] || continue
-    for p in "$d"/*.sh; do [ -f "$p" ] && basename "$p" .sh; done
+    for p in "$d"/*.sh; do
+      [ -f "$p" ] || continue
+      n="$(basename "$p" .sh)"
+      test_only_profile "$n" || printf '%s\n' "$n"
+    done
   done | sort -u
 }
 
@@ -989,6 +1011,8 @@ cmd_hitch() {
   [ -z "$role" ] || role_file "$role" >/dev/null \
     || die "hitch: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
+  ! test_only_profile "$prof" \
+    || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
   # A model is one concept every harness spells differently; the profile owns the
   # spelling (GANG_MODEL_OPT), hitch carries the intent. A profile that declares
@@ -1543,6 +1567,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     *) die "adopt: unknown argument '$1'" ;;
   esac; done
   [ -n "$prof" ] || die "adopt: -p <profile> is required"
+  ! test_only_profile "$prof" \
+    || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
   id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
   tmux set-option -w -t "$id" automatic-rename off
