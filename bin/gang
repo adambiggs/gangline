@@ -378,10 +378,18 @@ session_live() { # exit 0 if the team's session is running
   # operator read a message about the session, reasoned about $TMUX, and filed a
   # bug against the wrong subsystem. The message cost more than the fault did.
   #
-  # Only the phrasings that genuinely mean "not there" are treated as absence.
-  # Anything else is surfaced verbatim rather than guessed at, because the set of
-  # ways a server can be unreachable is not one gang can enumerate — and an
-  # unexpected message reported as itself is the safe direction.
+  # Recognised phrasings of "not there" are treated as absence. Anything else is
+  # surfaced verbatim rather than guessed at, because the set of ways a server
+  # can be unreachable is not one gang can enumerate, and an unexpected message
+  # reported as itself is the safe direction.
+  #
+  # The empty case is the exception, and it is a GUESS named as one. A nonzero
+  # exit with nothing on stderr says nothing at all, and it is resolved toward
+  # absence deliberately: a silent failure here is far more often a session that
+  # is not running than a server that cannot be reached, and dying with "cannot
+  # reach the tmux server — " and nothing after the dash is a worse answer than
+  # "no team" for what is almost certainly a missing team. It is the one branch
+  # that resolves ambiguity toward the direction which caused the original bug.
   local err
   err="$(tmux has-session -t "=$SESSION" 2>&1)" && return 0
   case "$err" in
