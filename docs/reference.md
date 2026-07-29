@@ -1,7 +1,7 @@
 # Command and environment reference
 
-This reference follows `bin/gang`'s command parser. Run `gang` with no arguments
-for the built-in synopsis.
+This reference follows `bin/gang`'s command parser. Run `gang` with no arguments,
+`gang help`, `gang -h`, or `gang --help` for the built-in synopsis.
 
 ## Team lifecycle
 
@@ -234,12 +234,27 @@ Lists offered profile names from `GANG_PROFILES` and the shipped directory,
 deduplicated with custom files taking precedence. The shipped Bash test stand-in
 is omitted unless Gangline's own test opt-in is set.
 
-A profile is sourced shell, not a data-only record. The current contract includes
-launch/model syntax; busy, gated, compacting, and quiet-at-rest observations;
-compaction and mid-turn declarations; version pins; capture sizing; session-file
-selection; and optional `profile_input`, `profile_context`, and `profile_vet`
-functions. This is intentionally documented as current behavior rather than
-rewriting ADR-0001's historical `~10 lines` premise; [issue
+A profile is sourced shell, not a data-only record. Its declaration surface is:
+
+| Declaration | Meaning |
+|---|---|
+| `GANG_LAUNCH` | required harness launch command |
+| `GANG_MODEL_OPT` | model option used by hitch's `-m` |
+| `GANG_BUSY_REGEX` | painted working marker |
+| `GANG_GATED_REGEX` | modal marker, confirmed against composer absence |
+| `GANG_COMPACT_CMD` | native compaction command |
+| `GANG_COMPACTING_REGEX` | live compaction marker |
+| `GANG_MIDTURN_INPUT=1` | composer safely takes input during a turn |
+| `GANG_QUIET_AT_REST=1` | recent pty writes may be used as a busy signal |
+| `GANG_SESSION_KEY=1` | hitch must mint and deliver a transcript marker |
+| `GANG_VERSION_CMD` | installed-version command |
+| `GANG_VERIFIED_VERSIONS` | space-separated verified prefixes, or `any` only when there are no scraped markers |
+| `profile_input` | print the live composer, or fail when none exists |
+| `profile_context` | print one parseable context-usage line |
+| `profile_vet` | optional harness-file format gate |
+
+This current contract is intentionally documented without rewriting ADR-0001's
+historical `~10 lines` premise; [issue
 #13](https://github.com/adambiggs/gangline/issues/13) tracks the resulting
 constitutional question.
 
@@ -286,6 +301,12 @@ These are useful when the corresponding path is in use:
 | `GANG_PROBE_TURN` | probe busy-marker observation window | `90` seconds |
 | `GANG_PROBE_SETTLE` | probe settling deadline | `120` seconds |
 | `GANG_PROBE_QUIET` | unchanged duration counted as settled | `5` seconds |
+| `GANG_PROBE_RATE` | interval between probe captures | `0.25` seconds |
+| `GANG_PROBE_PROMPT` | prompt used to drive the probe's real turn | built-in comparison prompt |
+| `GANG_STATUS_ROWS` | bottom pane rows scanned by fast painted-state checks | `20` |
+| `GANG_BRIEF_GATE_WAIT` | post-brief delay before hitch's early gate check | `3` seconds |
+| `GANG_CLEAR_PRESSES` | maximum verified `Ctrl-u` attempts when reclaiming a staged paste | `40` |
+| `GANG_TEST_PROFILES=1` | expose the Bash stand-in used by Gangline's own suite | unset |
 
 Changing compaction timing requires care: when a context baseline was captured,
 a missing drop at `GANG_COMPACT_GRACE` sends the resume through the weaker
