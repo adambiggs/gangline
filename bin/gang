@@ -366,13 +366,32 @@ composer_live() { # $1 = window id; the harness's own input box is on screen NOW
   profile_input "$1" >/dev/null 2>&1
 }
 
-busy() { # $1 = window id, profile loaded; exit 0 if busy
+busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly in flight
+  # The pane question, unconditioned: is this harness painting its busy marker?
   # Captured into a variable, not piped: a capture that FAILS must not read as
   # "idle" and wave an injection into a pane nobody looked at.
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
   printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"
+}
+
+busy() { # $1 = window id, profile loaded; exit 0 if busy
+  # The transport question — "will a send land at a sane boundary?" — which is
+  # the same as the pane question everywhere except one case.
+  #
+  # An agent parked in gang's own `gang wait` is inside a harness turn, so it
+  # paints the busy marker while being the most available agent on the team: it
+  # is doing nothing but waiting, and the wait ends the moment its target moves.
+  # Reporting that as busy makes the roster lie in the direction that costs the
+  # most — a lead skips the one worker that could take the task.
+  #
+  # Gated on mid-turn input on purpose, and this is the narrow scope: where the
+  # harness refuses input during a turn, a parked agent genuinely CANNOT be
+  # handed anything until its wait returns, so busy stays true and stays honest.
+  # Parked only overrides the answer where the paste would actually land.
+  if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$1"; then return 1; fi
+  busy_painted "$1"
 }
 
 compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibly compacting
@@ -442,8 +461,11 @@ gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
   # the busy/idle reading it always had.
   if input_painted "$1"; then return 1; fi
   # No box, then. That is a modal unless a turn in flight explains it: several
-  # harnesses stop painting their composer while one runs.
-  ! busy "$1"
+  # harnesses stop painting their composer while one runs. The PANE question,
+  # not the transport one — an agent parked in `gang wait` has a turn in flight
+  # and is not behind a modal, so asking busy() here would call it gated the
+  # moment its composer went missing for any other reason.
+  ! busy_painted "$1"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
@@ -505,6 +527,47 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   return 1
 }
 
+# --- parked in gang's own wait ----------------------------------------------
+# A window option, like every other piece of gang's state, so it dies with the
+# window and `tmux show-options -w` is its whole debugger. The holder's pid goes
+# inside for the same reason lock_pane keeps one: an option outlives the process
+# that set it, so a waiter killed mid-wait would otherwise leave its agent
+# reading available forever.
+PARKED=0
+
+unpark() { # drop OUR marker, never somebody else's
+  [ "$PARKED" = 1 ] || return 0
+  PARKED=0
+  local w
+  w="$(self_window)" || return 0
+  [ "$(tmux show-options -wqv -t "$w" @gl_waiting 2>/dev/null)" = "$$" ] || return 0
+  tmux set-option -uw -t "$w" @gl_waiting 2>/dev/null || true
+}
+
+# One EXIT trap for both, because bash keeps only the last one installed and
+# lock_pane and park_self can be reached in either order (`send --wait` waits
+# first and locks second; `send` locks without ever waiting).
+on_exit() { lock_release; unpark; }
+
+park_self() { # mark this window as blocked in gang's own wait
+  # Not being in a pane is normal, not an error: gang runs from the operator's
+  # own shell and from cron, and neither has an agent to mark.
+  local w
+  w="$(self_window)" || return 0
+  tmux set-option -w -t "$w" @gl_waiting "$$" 2>/dev/null || return 0
+  PARKED=1
+  trap 'on_exit' EXIT
+}
+
+parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
+  local holder
+  holder="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" || return 1
+  [ -n "$holder" ] || return 1
+  kill -0 "$holder" 2>/dev/null && return 0
+  tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true  # waiter died; reclaim
+  return 1
+}
+
 wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   # Idle must hold for two consecutive polls: a just-submitted turn shows no
   # busy marker for a beat, and a single-shot check falls through that gap
@@ -513,12 +576,16 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   # on a human nobody has told — and worse, a gate drops the busy hint, so a
   # waiter that cannot see it would read the dialog as idle and paste into it.
   local t=0 timeout="${3:-300}" streak=0
+  # Marked for the whole wait, so a teammate reading this agent's state while it
+  # blocks here sees available rather than busy. Set before the first poll: the
+  # window this closes is exactly the one somebody else is looking in.
+  park_self
   while :; do
     if gated "$1"; then
       die "'$2' is gated (hook set) — stopped at a modal only the operator can clear (gang attach)"
     fi
     if busy "$1"; then streak=0; else
-      streak=$((streak + 1)); [ "$streak" -ge 2 ] && return 0
+      streak=$((streak + 1)); [ "$streak" -ge 2 ] && { unpark; return 0; }
     fi
     [ "$t" -ge "$timeout" ] && die "'$2' still busy after ${timeout}s"
     sleep 2; t=$((t + 2))
@@ -564,7 +631,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   done
   printf '%s' "$$" > "$path/pid"
   LOCK_PATH="$path"
-  trap 'lock_release' EXIT
+  trap 'on_exit' EXIT
 }
 
 composer_settled() { # $1 = window id; nobody is typing into the box right now
@@ -807,7 +874,10 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
     sleep 2; t=$((t + 2))
     compacting "$1" && break
     [ "$t" -ge 10 ] || continue
-    if busy "$1"; then streak=0; continue; fi
+    # The pane question: this loop is waiting for a turn to STOP, and it pairs
+    # with pane_stable below. Availability is a different thing and not what a
+    # resume is allowed to overtake.
+    if busy_painted "$1"; then streak=0; continue; fi
     streak=$((streak + 1))
     [ "$streak" -ge 3 ] && pane_stable "$1" && break
   done
@@ -1045,6 +1115,13 @@ cmd_send() {
     else
       die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
     fi
+  elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$AGENT_ID"; then
+    # Parked in gang's own wait. busy() just called it available, and for the
+    # refusal above that is the right answer — but the harness is still inside a
+    # turn, so the paste queues in its box exactly as it would for an agent doing
+    # work. Report what the pane did, not what availability implies; these two
+    # answers diverge here and nowhere else.
+    midturn=1
   fi
   inject "$AGENT_ID" "$(envelope "$from" "$*")"
   if [ "$midturn" -eq 1 ]; then
@@ -1269,7 +1346,10 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     say "$2" "$ctx" "re-armed (usage dropped)"
   elif [ "$band" -eq "$prev" ]; then
     say "$2" "$ctx" "steady (band $band)"
-  elif busy "$1"; then
+  elif busy_painted "$1"; then
+    # Also the pane question, for the same reason as the guards around it: this
+    # chain decides whether an injection is SAFE, and a parked agent is inside a
+    # live turn however available it is. Holding costs one sweep.
     say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol" "$C_WORK"
   elif ! pane_stable "$1"; then
     say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"

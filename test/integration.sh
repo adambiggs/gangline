@@ -507,6 +507,60 @@ check "and it really landed" "yes" "$(has busybee "MARK_QUEUED")"
 "$GANG" send busybee --from tester "MARK_UNQUEUED" >/dev/null 2>&1
 check "one that does not is still refused" "1" "$?"
 
+# --- parked in gang's own wait ------------------------------------------------
+
+# An agent blocked in `gang wait` is inside a harness turn, so it paints the same
+# busy marker as one doing work — while being the most available agent on the
+# team: it is doing nothing but waiting, and the wait ends the moment its target
+# moves. Reporting that as busy makes the roster lie in the direction that costs
+# most, a lead skipping the one worker that could take the task.
+"$GANG" hitch parkee -p working -d /tmp >/dev/null 2>&1
+sleep 0.5
+paint parkee 'WORKING...'
+check "a parked agent's pane paints busy like any other" "busy (tight tug)" \
+  "$("$GANG" status parkee)"
+
+# The real thing, not a simulation of it: a `gang wait` process running inside
+# parkee's pane, blocked on a target painted busy so it cannot return early.
+parkpane="$(tmux list-panes -t "$(target_of parkee)" -F '#{pane_id}')"
+TMUX_PANE="$parkpane" "$GANG" wait busybee 30 >/dev/null 2>&1 &
+parkpid=$!
+sleep 1.5
+
+check "but it reads available where the harness queues input" "idle (slack tug)" \
+  "$(FAKE_QUEUES=1 "$GANG" status parkee)"
+check "and the roster a lead scans agrees" "idle" \
+  "$(FAKE_QUEUES=1 "$GANG" roster | awk '$1=="parkee"{print $3}')"
+# The narrow scope, and the whole reason this is gated on mid-turn input: where
+# the harness refuses input during a turn, a parked agent genuinely cannot be
+# handed anything until its wait returns, so busy stays true and stays honest.
+check "while a harness that refuses mid-turn input still reads busy" "busy (tight tug)" \
+  "$("$GANG" status parkee)"
+
+out="$(FAKE_QUEUES=1 "$GANG" send parkee --from tester "MARK_PARKED" 2>&1)"; rc=$?
+check "a send to a parked agent is not refused" "0" "$rc"
+# Available and mid-turn are different questions with different answers here, and
+# the report has to follow the pane rather than the availability verdict.
+check "and is reported as landing mid-turn, because that is what the pane did" "yes" \
+  "$(case "$out" in *"accepted mid-turn"*) echo yes ;; *) echo no ;; esac)"
+
+# A window option outlives the process that set it, so the crash path is the one
+# that matters: SIGKILL leaves no chance to run the EXIT trap.
+kill -9 "$parkpid" 2>/dev/null; wait "$parkpid" 2>/dev/null
+check "a waiter killed outright does not leave its agent available forever" "busy (tight tug)" \
+  "$(FAKE_QUEUES=1 "$GANG" status parkee)"
+check "and the dead marker is reclaimed, not merely ignored" "" \
+  "$(tmux show-options -wqv -t "$(target_of parkee)" @gl_waiting)"
+
+# The ordinary path: a wait that ends — here by timing out — cleans up after
+# itself, and shares one EXIT trap with the pane lock rather than replacing it.
+TMUX_PANE="$parkpane" "$GANG" wait busybee 1 >/dev/null 2>&1
+check "a wait that ends clears its own marker" "" \
+  "$(tmux show-options -wqv -t "$(target_of parkee)" @gl_waiting)"
+check "and the agent reads busy again once nobody is parked" "busy (tight tug)" \
+  "$(FAKE_QUEUES=1 "$GANG" status parkee)"
+"$GANG" drop parkee >/dev/null 2>&1
+
 # Compacting yourself is the extreme case of a busy target: the turn in the way
 # is the caller's own and it ends the moment the command returns. Self is told
 # from peer by the pane id tmux exports into every pane it starts — checked
