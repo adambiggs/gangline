@@ -63,6 +63,11 @@ one release PR from the Conventional Commits since the last tag. Merging
 that PR creates the tag and GitHub Release and writes `CHANGELOG.md`.
 **Do not edit `CHANGELOG.md` by hand or add changelog entries to ordinary PRs.**
 
+The repository setting **Settings → Actions → General → Workflow permissions →
+Allow GitHub Actions to create and approve pull requests** must be enabled. It is
+not enabled automatically. Without it, release-please creates its branch and
+release commit, then fails at PR creation, so no release PR is maintained.
+
 `.release-please-manifest.json` is the version source. A release commit updates
 that manifest, `version.txt`, `packaging/npm/package.json`, and
 `packaging/pypi/pyproject.toml`; do not introduce another version location or
