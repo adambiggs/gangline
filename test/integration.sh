@@ -898,6 +898,73 @@ done
 # the interrupts says so on the line above the failure it causes.
 check "and gets back to idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
+
+# --- the activity arm, asserted on its own ------------------------------------
+
+# busy() is busy_painted OR recently_active OR churn, and a disjunction is how a
+# test stops being able to fail. So this arm gets a pane where the other two
+# CANNOT answer: no busy marker is declared, and the writer changes no cell, so
+# churn sees a byte-identical screen and calls it still. Only the pty signal is
+# left to produce busy, which is the point — the redundancy stays in production
+# and the suite still holds each arm to its own account.
+#
+# A live full-screen TUI looks exactly like this from the outside. claude-code's
+# render loop parks the cursor into the composer rows on every frame, 748 of 748,
+# and a cursor move changes no cell: bytes flow while cksum stays flat. That is
+# the whole of #6 — a message long enough to fill the pane displaces the working
+# indicator, the marker goes with it, and churn was the only arm left looking.
+cat > "$SHIM/custom-profiles/quietchurn.sh" <<'SH'
+GANG_LAUNCH="bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+GANG_QUIET_AT_REST=1
+profile_input() {
+  local line
+  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "${line#❯}"
+}
+SH
+# Identical but for the declaration, because the gate is per harness and its
+# failure has no safe direction: a TUI that repaints at rest ticks forever, and
+# on that harness this arm could never read idle — every send refused, every wait
+# hung, on an agent that finished. Undeclared has to mean UNUSED, not defaulted.
+sed 's/^GANG_QUIET_AT_REST=1$//' "$SHIM/custom-profiles/quietchurn.sh" \
+  > "$SHIM/custom-profiles/noisychurn.sh"
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch quietly -p quietchurn -d /tmp >/dev/null
+"$GANG" hitch loudly  -p noisychurn -d /tmp >/dev/null
+sleep 0.5
+tmux send-keys -t "$(target_of quietly)" "PS1='❯ '" Enter
+tmux send-keys -t "$(target_of loudly)"  "PS1='❯ '" Enter
+sleep 0.5
+# Save-cursor then restore-cursor: real bytes down the pty, not one cell touched.
+writer="while :; do printf '\033[s\033[u'; sleep 0.2; done"
+tmux send-keys -t "$(target_of quietly)" "$writer" Enter
+tmux send-keys -t "$(target_of loudly)"  "$writer" Enter
+sleep 1
+a="$(tmux capture-pane -pJ -t "$(id_of quietly)" | cksum)"
+sleep "${GANG_CHURN_WAIT:-0.5}"
+b="$(tmux capture-pane -pJ -t "$(id_of quietly)" | cksum)"
+# Asserted rather than assumed: if the screen DID change, churn answers and the
+# check below proves nothing about the arm it was written for.
+check "the writer moves no cell, so churn has nothing to see" "same" \
+  "$(if [ "$a" = "$b" ]; then echo same; else echo different; fi)"
+check "a pane writing bytes that change no cell still reads busy" "busy (tight tug)" \
+  "$("$GANG" status quietly | head -1)"
+check "and the batched roster column agrees, so the two paths share the arm" "busy" \
+  "$("$GANG" roster | awk '$1=="quietly"{print $3}')"
+# The per-harness gate. Same pane, same bytes, one line of declaration apart.
+check "a profile that does not declare quiet-at-rest does not get the signal" "idle (slack tug)" \
+  "$("$GANG" status loudly | head -1)"
+tmux send-keys -t "$(target_of quietly)" C-c
+tmux send-keys -t "$(target_of loudly)" C-c
+# Bounded, and gang's own: the arm has to GO QUIET or it is the sign-flipped bug
+# — busy forever on an agent that finished, which is worse than the false idle it
+# was built to close.
+"$GANG" wait quietly 40 >/dev/null 2>&1
+check "and the arm goes quiet once the writing stops" "idle (slack tug)" \
+  "$("$GANG" status quietly | head -1)"
+"$GANG" drop quietly >/dev/null 2>&1; "$GANG" drop loudly >/dev/null 2>&1
 unset GANG_PROFILES
 
 # --- diagnostics that do not assert a cause gang never checked -----------------

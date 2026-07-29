@@ -60,6 +60,16 @@ GANG_MODEL_OPT="-m"
 # neither direction: this string occurs ZERO times in the installed codex
 # binary while painting on codex's own screen. Only a pane answers it.
 GANG_BUSY_REGEX="esc to interrupt"
+# The working half is NOT measured here — only on claude-code. It costs nothing
+# either way: if this harness writes nothing while it works, the arm never fires
+# and churn answers as it always did. It is declared because the rest half, which
+# is the one with a dangerous direction, IS measured.
+# Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
+# finished, #{window_activity} frozen on one value, 0 ticks. That is what this
+# declares and the ONLY thing gang needs from it — a harness that repaints
+# anything at rest ticks forever and could then never read idle, so this stays
+# unset until somebody has watched a finished agent sit still.
+GANG_QUIET_AT_REST=1
 # Modal chrome, not dialog sentences. Codex frames every modal the same way: it
 # draws the selected row with a "›" at column zero — the composer's own column —
 # and numbers it. That "› N. " shape is the framing device, and it is already

@@ -95,6 +95,18 @@ GANG_MODEL_OPT="--model"
 # Literal alternation, not [▰▱]: in cron's C locale a multibyte bracket class
 # matches single BYTES, and the welcome-logo glyphs share the UTF-8 prefix.
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
+# The other half is measured here too, and it is why the signal exists: during a
+# live turn this runs a render loop that parks the cursor into the composer rows
+# on every frame, 748 of 748, and a cursor move changes no cell. So it keeps
+# writing while the screen holds still — 44 of 47 byte-identical pairs ticked in
+# the blind state, and a turn blocked 60s inside a tool call with zero output
+# ticked every second it had. The spinner is timer-driven, not output-driven.
+# Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
+# finished, #{window_activity} frozen on one value, 0 ticks. That is what this
+# declares and the ONLY thing gang needs from it — a harness that repaints
+# anything at rest ticks forever and could then never read idle, so this stays
+# unset until somebody has watched a finished agent sit still.
+GANG_QUIET_AT_REST=1
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
 # re-verify + append (gang vet watches the pin).

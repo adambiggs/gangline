@@ -60,6 +60,16 @@ GANG_MODEL_OPT="-m"
 # busy turn), so a compacting agent reads busy, which is what patrol needs.
 # Absent while idle and while the command palette is up.
 GANG_BUSY_REGEX="esc interrupt"
+# The working half is NOT measured here — only on claude-code. It costs nothing
+# either way: if this harness writes nothing while it works, the arm never fires
+# and churn answers as it always did. It is declared because the rest half, which
+# is the one with a dangerous direction, IS measured.
+# Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
+# finished, #{window_activity} frozen on one value, 0 ticks. That is what this
+# declares and the ONLY thing gang needs from it — a harness that repaints
+# anything at rest ticks forever and could then never read idle, so this stays
+# unset until somebody has watched a finished agent sit still.
+GANG_QUIET_AT_REST=1
 # From the live slash menu: "/compact  Compact session".
 GANG_COMPACT_CMD="/compact"
 # Watched end to end: text typed during a turn lands in the composer, Enter

@@ -84,6 +84,26 @@ BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
 # file has had to chase in several other costumes.
 GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 
+# How long after tmux last stamped output on a window that window still counts as
+# working. Five, and the two failure directions are not symmetric — which is what
+# makes a slightly wrong number safe here and an arbitrary one not.
+#
+# TOO SMALL reproduces the bug this exists to close: a live turn read as idle,
+# and the worst kind, because gang's own traffic is what causes it. A message
+# long enough to fill the pane pushes the working indicator off a full-screen TUI,
+# capture-pane returns a byte-identical frame, and the natural next move — send
+# again — makes the pane longer and the blindness more certain. TOO LARGE reports
+# busy for a few seconds after an agent finishes: a wait returns late, a send
+# queues instead of landing instantly. Nothing is delivered wrongly. In doubt,
+# too large.
+#
+# Five and not three, and the three is the measured number: the longest unbroken
+# silence in the blind state was 3s, across a turn that was producing output. A
+# turn blocked 60s inside a tool call producing NOTHING ticked every second it
+# had, longest gap 1.35s — so the tail this has to clear is the one measured with
+# output, not without. Three is the floor of what is known and this is not it.
+GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
+
 # One number with two users, and they ask the same physical question: how long
 # after `/compact` is typed can that compaction still credibly be in flight.
 # compaction_pending asks it to decide when patrol may go back to nudging a pane;
@@ -254,7 +274,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
-  GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY=""
+  GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
   # no stale functions across profiles
   unset -f profile_context profile_input profile_vet 2>/dev/null || true
@@ -525,6 +545,36 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"
 }
 
+recently_active() { # $1 = window id, profile loaded; tmux stamped output here lately
+  # The pty question, which is neither of the other two. busy_painted asks what
+  # the pane SAYS and churn asks whether the pane CHANGED; this asks whether the
+  # harness WROTE, and that is the only one of the three a full-screen TUI cannot
+  # hide from. A live claude-code turn runs a render loop that parks the cursor
+  # into the composer rows on every frame — `\e[34;1H` and `\e[31;3H`, 748 of 748
+  # frames — and a cursor move changes no cell. So bytes flow while cksum stays
+  # flat, and 44 of 47 byte-identical pairs in the blind state had ticked.
+  #
+  # Declared per harness and OFF by default, which is not caution about the
+  # signal but about its one catastrophic direction. window_activity ticks on any
+  # output at all, so a TUI that repaints anything at rest — a clock, a cursor
+  # blink, a late-settling counter — ticks forever, and on that harness this can
+  # never read idle: every send refused, every wait hung, the whole team stalled
+  # on an agent that finished. Undeclared degrades to exactly today's behaviour,
+  # which is a bug we understand. Measured frozen at rest on all four shipped
+  # harnesses, 30 samples each; each profile says so where it declares it.
+  #
+  # No second capture and no sleep: tmux maintains this timestamp already, so
+  # unlike churn it is read once and compared against now.
+  [ "${GANG_QUIET_AT_REST:-}" = 1 ] || return 1
+  local stamped now
+  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" || return 1
+  # A window tmux will not answer for is not evidence of quiet. Same rule as
+  # busy_painted's refusal to read a failed capture as idle.
+  case "$stamped" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  [ $(( now - stamped )) -lt "$GANG_ACTIVITY_WINDOW" ]
+}
+
 busy() { # $1 = window id, profile loaded; exit 0 if busy
   # The transport question — "will a send land at a sane boundary?" — which is
   # the same as the pane question everywhere except one case.
@@ -541,6 +591,18 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   # Parked only overrides the answer where the paste would actually land.
   if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$1"; then return 1; fi
   busy_painted "$1" && return 0
+  # ORed with churn below rather than replacing it, and the redundancy is
+  # deliberate. Every pair churn calls moving is one this also calls moving — a
+  # cksum cannot change without bytes — so as sets of detected-busy states this
+  # SUBSUMES churn and the disjunct looks like it can never contribute a case.
+  # That is true only while this signal behaves as measured. Keeping churn costs
+  # nothing when it does and degrades to exactly today's behaviour if it ever
+  # stops: a tmux that does not stamp it, a harness that starves it, a mechanism
+  # that goes away in a release. That is a fallback for the signal being
+  # UNAVAILABLE, which is a different thing from the disjunction that once made a
+  # probe unable to fail — and the difference is that the suite asserts this arm
+  # on its own, so it can still be caught being wrong.
+  recently_active "$1" && return 0
   # A missing marker is not a missing turn, and there is nothing to widen a
   # branch onto. claude-code marks THINKING and leaves the rest bare: of 220
   # samples with the pane demonstrably changing, 19 carried any branch of the
@@ -624,6 +686,7 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     sum="$( ( load_profile "$prof"
               if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$id"; then exit 1; fi
               busy_painted "$id" && exit 1
+              recently_active "$id" && exit 1
               capture "$id" | cksum | tr ' ' '-' ) 2>/dev/null )" || continue
     [ -n "$sum" ] || continue
     pending="$pending $id"
