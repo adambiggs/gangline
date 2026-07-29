@@ -145,7 +145,7 @@ chmod +x "$SHIM/readlink"
 ln -s "$GANG" "$SHIM/gang-via-symlink"
 # From /tmp, so a ROOT derived from the caller's cwd cannot accidentally be right.
 # Cleared of the suite's opt-in, so this is the list an operator actually sees.
-out="$(cd /tmp && GANG_TEST_PROFILES= PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
+out="$(cd /tmp && GANG_TEST_PROFILES='' PATH="$SHIM:$PATH" "$SHIM/gang-via-symlink" profiles 2>&1 | tr '\n' ' ')"
 check "a BSD readlink still resolves the install tree" "yes" \
   "$(case "$out" in *claude-code*codex*opencode*pi*) echo yes ;; *) echo no ;; esac)"
 
@@ -157,7 +157,7 @@ check "a BSD readlink still resolves the install tree" "yes" \
 check "the harness list does not offer the test stand-in" "no" \
   "$(case " $out " in *" bash "*) echo yes ;; *) echo no ;; esac)"
 check "and offers exactly the real harnesses" "claude-code codex opencode pi" \
-  "$(cd /tmp && GANG_TEST_PROFILES= "$GANG" profiles | tr '\n' ' ' | sed 's/ *$//')"
+  "$(cd /tmp && GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ' | sed 's/ *$//')"
 
 # And when the tree really is absent, that is said out loud rather than reported
 # as an install with zero harnesses.
@@ -179,13 +179,13 @@ check "roster lists it"          "alpha bash idle" \
 # same answer the list gave, not a working shell agent. adopt is asked for a
 # window that does not exist, so naming the profile proves it refused before it
 # went looking rather than by accident of a missing pane.
-out="$(GANG_TEST_PROFILES= "$GANG" hitch standin -p bash -d /tmp 2>&1)"; rc=$?
+out="$(GANG_TEST_PROFILES='' "$GANG" hitch standin -p bash -d /tmp 2>&1)"; rc=$?
 check "hitching the stand-in is refused" "1" "$rc"
 check "and names it a stand-in, not an unknown profile" "yes" \
   "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
 check "and nothing was hitched" "no" \
   "$(holds "$("$GANG" roster)" '^standin ')"
-out="$(GANG_TEST_PROFILES= "$GANG" adopt nosuchwin -p bash 2>&1)"; rc=$?
+out="$(GANG_TEST_PROFILES='' "$GANG" adopt nosuchwin -p bash 2>&1)"; rc=$?
 check "adopting onto the stand-in is refused too" "1" "$rc"
 check "before it even looks for the window" "yes" \
   "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
@@ -1126,8 +1126,8 @@ check "and says which file answered, since only that proves the shadow took" "ye
 # GANG_TEST_PROFILES=1 is exported at the top of this file, and under it the two
 # lists AGREE about bash — so a vet routed through the offered list would pass this
 # just as happily. Only with the opt-in off do they differ.
-vout="$(GANG_TEST_PROFILES= GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
-plist="$(GANG_TEST_PROFILES= GANG_PROFILES="$SHIM/vetdir" "$GANG" profiles)"
+vout="$(GANG_TEST_PROFILES='' GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
+plist="$(GANG_TEST_PROFILES='' GANG_PROFILES="$SHIM/vetdir" "$GANG" profiles)"
 check "vet still covers the test-only stand-in" "yes" \
   "$(holds "$vout" '^bash ')"
 check "while profiles still withholds it" "no" \
@@ -1273,7 +1273,8 @@ check "and its run does not claim to have confirmed anything" "yes" \
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would
 # drive the server gang is RUNNING IN.
 check "the probe leaves no server behind on its own socket" "0" \
-  "$(ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null | grep -c gangvet)"
+  "$(n=0; for s in "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"/*gangvet*; do
+       [ -e "$s" ] && n=$((n + 1)); done; echo "$n")"
 check "and the session under test is untouched by all of it" "yes" \
   "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
 

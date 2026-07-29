@@ -1773,7 +1773,9 @@ cmd_roster() {
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   local id name wins
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
-  # One wait for the whole team rather than one per agent.
+  # One wait for the whole team rather than one per agent. The splitting is the
+  # point — a window id is one word, and churn_batch takes them as arguments.
+  # shellcheck disable=SC2046
   churn_batch $(printf '%s\n' "$wins" | awk '{print $1}')
   while read -r id name; do
     [ -n "$id" ] || continue
