@@ -95,6 +95,13 @@ GANG_GATED_REGEX='^› [0-9]+\. '
 # prevent hitting the context limit". A finished compaction leaves "Context
 # compacted" in the transcript, where it stays — a marker for humans reading
 # scrollback, never a state to scrape.
+# The command is idle-only. Watched live on 0.145.0 across three self-issued
+# attempts: Codex accepted the Enter, cleared the composer, and answered each one
+# with "'/compact' is disabled while a task is in progress." A peer may compact
+# an idle Codex, but a Codex agent can never compact itself through gang because
+# the tool call that types into its own TUI is itself a task in progress. Its only
+# other escape is Codex's automatic compaction — which is what eventually saved
+# the observed session, ten minutes after the last rejected gang command.
 GANG_COMPACT_CMD="/compact"
 # Codex takes input during a turn, and says so itself twice over: the hint row
 # switches to "tab to queue message" while it is working, and the startup tip
