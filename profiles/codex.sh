@@ -16,10 +16,25 @@
 # cannot open a UNIX socket either, and the tmux socket IS gangline's transport.
 # Watched live, same socket and command: under workspace-write `tmux -S <sock>
 # ls` gets EPERM; with sandbox_workspace_write.network_access = true it lists
-# the session, and a worker hitched that way answered gang roster and reported
-# home through gang send. So the sandbox stays on and network access comes on —
-# the operator sets both. Denied, the agent is reachable but mute: briefs arrive
+# the session, and a worker hitched that way answers gang roster and gang status
+# from its own pane. So the sandbox stays on and network access comes on — the
+# operator sets both. Denied, the agent is reachable but mute: briefs arrive
 # (gang writes from outside the sandbox) and nothing it runs itself gets back.
+#
+# Network access is necessary and not sufficient for gang send. Delivery also
+# takes a per-pane lock under ${XDG_RUNTIME_DIR:-/tmp}/gangline-<uid>, and the
+# sandbox leaves $XDG_RUNTIME_DIR outside its writable roots — mkdir there fails
+# "Read-only file system" — so an agent holding the socket open can read the team
+# and still not answer it. Point the lock at a directory the sandbox does leave
+# writable and the same send succeeds; that is the whole of what stands between
+# the two. Nothing in this file can do it: the lock is one every delivering
+# process has to agree on, so where it lives is gang's to decide, not a
+# profile's to relocate.
+#
+# Watch for this when re-verifying, because the same command gives opposite
+# answers on two machines: where nothing sets XDG_RUNTIME_DIR the lock lands in
+# /tmp, which the sandbox does leave writable, and send works with network access
+# alone. Verify under systemd, which sets it, or the failure will not reproduce.
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
