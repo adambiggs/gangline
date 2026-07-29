@@ -69,12 +69,29 @@ for _d in profiles roles; do
     || die "no $_d/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 done
 unset _d
-# Every rung absolute, because context rot tracks absolute length, not how full
-# the window happens to be: a 300k context is degraded whether the window is 200k
-# or 1M. A proportional rung scales the wrong way — 90% of 1M asserts that 900k is
-# a fine place to sit. The ladder stops at 350000 because past four ignored
-# warnings another one is noise, not advice.
-BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
+# Every rung proportional, because the failure this has to catch on a small window
+# is running out of ROOM to act: an agent near the top of its window cannot write
+# a handoff, and one absolute ladder cannot serve windows that differ by 4x.
+# Measured on a five-agent team, one per shipped harness: a 350000 rung against
+# codex's 258k window is NEVER crossed, so the loudest warning in the ladder could
+# not fire at all on the harnesses gangline exists to mix, and the rung below it
+# landed at 97% of the window — past the point there is room to act on it.
+#
+# The cost, named rather than left for a reader to discover: context rot tracks
+# absolute length too — a 300k context is degraded whether the window is 200k or
+# 1M — so a proportional top rung sits further out on a big window (850k of 1M)
+# than an absolute one did. What makes the trade right is where the ADVICE lands
+# rather than where the escalation ends: the first rung on 1M is 300k, and the
+# rungs above it exist for an agent that ignored the first. An operator running a
+# single window size can pin absolute rungs here; a mixed team has no absolute
+# ladder that fits either member, which is the whole finding.
+#
+# 30 rather than lower because a first rung has to mean something — 12% of 1M was
+# three rungs of noise before any of it was advice. 85 rather than 90 because the
+# rung must leave room to act on it (39k on codex's window), and because
+# patrol_one only reaches the mark's context-drop branch when the post-drop
+# context still crosses a rung, which takes a first rung below half the window.
+BANDS="${GANG_CONTEXT_BANDS:-30%,50%,70%,85%}"
 
 # One wait with two users: pane_stable asks it of a single pane and churn_batch
 # asks it of a whole team, and the suite asserts the two agree about the same
@@ -178,7 +195,8 @@ gang — drive a team of CLI agents as tmux windows
 Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      the lead with: lead), GANG_FROM (sender identity for send),
      GANG_SESSION (default: gangline),
-     GANG_CONTEXT_BANDS (warning ladder; tokens or %, default 120000,180000,250000,350000),
+     GANG_CONTEXT_BANDS (warning ladder; % of the window or absolute tokens,
+       default 30%,50%,70%,85% — proportional so one ladder fits a mixed team),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
      GANG_BOOT_TIMEOUT (seconds to wait for a hitched harness to take input: 30)
 EOF
@@ -1541,13 +1559,23 @@ ladder() { # $1 = tokens in context, $2 = window size -> "<bands crossed> <highe
     case "$part" in
       *%) n="${part%\%}"
           [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+          # The window is the other half of a proportional rung, so a rung that
+          # cannot be PLACED is not a rung set wrong. Checked before the
+          # arithmetic, because an unknown window floors t to zero and would then
+          # be reported by the guard below as a broken ladder — sending an
+          # operator to edit a setting that is correct, about a figure the profile
+          # failed to report. Same fault as reading grep's error as a miss: the
+          # refusal has to name what actually could not be determined.
+          [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -gt 0 ] \
+            || die "cannot place the '$part' band: no context-window size for this agent (got '$2') — a proportional ladder needs the window figure the profile reports, so fix the readout, not GANG_CONTEXT_BANDS"
           # Floored to 1k, the resolution every context readout reports in: a
           # finer threshold would sit between what the two legs can measure.
           t=$(( n * $2 / 100000 * 1000 )) ;;
       *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
           t="$part" ;;
     esac
-    [ "$t" -gt 0 ] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+    [ "$t" -gt 0 ] \
+      || die "invalid GANG_CONTEXT_BANDS '$BANDS': the '$part' rung lands at 0 tokens, which every context is already past — fix the ladder"
     if [ "$1" -ge "$t" ]; then
       band=$((band + 1))
       [ "$t" -gt "$crossed" ] && crossed="$t"
@@ -2001,7 +2029,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
-  local prof ctx tw tokens window band crossed prev failed
+  local prof ctx tw tokens window band crossed prev failed rung
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
   [ -z "$failed" ] \
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
@@ -2038,7 +2066,12 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   tw="$(ctx_tokens "$ctx")" \
     || { say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
-  read -r band crossed <<<"$(ladder "$tokens" "$window")"
+  # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
+  # THAT subshell, not this one, so its message reaches stderr while the caller
+  # reads an empty band and walks on into an integer comparison — a refusal that
+  # does not refuse, reported as a shell error rather than as the thing it found.
+  rung="$(ladder "$tokens" "$window")" || return
+  read -r band crossed <<<"$rung"
   prev="$(tmux show-options -wqv -t "$1" @gl_band)" || prev=0
   [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
 
@@ -2082,7 +2115,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   # patrol uses and shares patrol's @gl_band memory, so the two legs cannot both
   # warn about one crossing. Emits one additionalContext note per band. Never
   # blocks a turn: anything it cannot determine is a silent exit 0.
-  local event prof ctx tw tokens window band crossed prev
+  local event prof ctx tw tokens window band crossed prev rung
   # The payload is on stdin; the event name is the only field this needs, and it
   # goes straight back out in the reply.
   event="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
@@ -2099,7 +2132,12 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   ctx="${ctx%%$'\n'*}"
   tw="$(ctx_tokens "$ctx")" || exit 0
   read -r tokens window <<<"$tw"
-  read -r band crossed <<<"$(ladder "$tokens" "$window")"
+  # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
+  # THAT subshell, not this one, so its message reaches stderr while the caller
+  # reads an empty band and walks on into an integer comparison — a refusal that
+  # does not refuse, reported as a shell error rather than as the thing it found.
+  rung="$(ladder "$tokens" "$window")" || return
+  read -r band crossed <<<"$rung"
   prev="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_band)" || prev=0
   [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
   [ "$band" -ne "$prev" ] && tmux set-option -w -t "$TMUX_PANE" @gl_band "$band"
