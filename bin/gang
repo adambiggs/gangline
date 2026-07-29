@@ -370,6 +370,26 @@ resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profi
   load_profile "$AGENT_PROFILE"
 }
 
+session_live() { # exit 0 if the team's session is running
+  # has-session fails identically for "there is no such session" and "the tmux
+  # server cannot be reached at all", and discarding its stderr made the second
+  # wear the first's clothes: inside a sandbox that denies connect() on the tmux
+  # socket, `gang roster` printed "no team (session gangline not running)". The
+  # operator read a message about the session, reasoned about $TMUX, and filed a
+  # bug against the wrong subsystem. The message cost more than the fault did.
+  #
+  # Only the phrasings that genuinely mean "not there" are treated as absence.
+  # Anything else is surfaced verbatim rather than guessed at, because the set of
+  # ways a server can be unreachable is not one gang can enumerate — and an
+  # unexpected message reported as itself is the safe direction.
+  local err
+  err="$(tmux has-session -t "=$SESSION" 2>&1)" && return 0
+  case "$err" in
+    ""|*"can't find session"*|*"session not found"*|*"no such session"*) return 1 ;;
+    *) die "cannot reach the tmux server — $err" ;;
+  esac
+}
+
 # No -e, deliberately, and this is the first thing anyone proposes on being told
 # a marker might be a colour rather than a character. Nearly every marker
 # gangline scrapes is anchored to the START of a line, which is exactly where an
@@ -843,11 +863,23 @@ LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -rf "$LOCK_PATH"; LOCK_PATH=""; }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder t=0 path
+  local base holder t=0 path err
   base="${GANG_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}/gangline-$(id -u)}"
-  mkdir -p "$base" 2>/dev/null || die "cannot create a lock directory at $base"
+  err="$(mkdir -p "$base" 2>&1)" \
+    || die "cannot create a lock directory at $base — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR (or XDG_RUNTIME_DIR) at somewhere writable by ALL of them."
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
-  while ! mkdir "$path" 2>/dev/null; do
+  while :; do
+    err="$(mkdir "$path" 2>&1)" && break
+    # An existing directory is the ONLY failure that means contention. Anything
+    # else — a read-only mount, a denied path — is permanent, and retrying it
+    # turns a hard failure into a thirty-second wait that then blames a process
+    # which does not exist. Measured: a sandbox mounting /run/user/<uid> read
+    # only made every send report contention against an empty lock directory,
+    # and a permanent failure wearing a transient message makes the caller retry
+    # forever. Asked of the filesystem rather than by matching errno text, which
+    # is localised and varies between platforms.
+    [ -d "$path" ] \
+      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created at all, so retrying will not help. Point GANG_LOCK_DIR (or XDG_RUNTIME_DIR) at somewhere writable by every gang process that delivers to this pane."
     holder="$(cat "$path/pid" 2>/dev/null)" || holder=""
     if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
       rm -rf "$path"; continue          # the writer died mid-delivery
@@ -1214,7 +1246,7 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
 
-  if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+  if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not start session '$SESSION' for '$name'"
   else
@@ -1496,7 +1528,7 @@ cmd_context() { # context-window usage via the profile's own introspection
 }
 
 cmd_roster() {
-  tmux has-session -t "=$SESSION" 2>/dev/null \
+  session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   local id name wins
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
@@ -1554,7 +1586,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # re-hitched name starts clean and tmux is the one that deletes it (Law 1,
   # Law 6 — no cleanup code, no state outliving its subject). Warn, don't act —
   # compaction timing is the agent's judgment (gang compact exists to force it).
-  tmux has-session -t "=$SESSION" 2>/dev/null \
+  session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   ladder 0 200000 >/dev/null   # one loud complaint about a bad ladder, not one per agent
   local id name
@@ -1819,7 +1851,7 @@ cmd_drop() {
 cmd_down() { # inverse of up: end the whole team's session
   # No state to sweep: band memory is a window option, so tmux deletes it along
   # with the windows it belongs to.
-  tmux has-session -t "=$SESSION" 2>/dev/null || die "no session '$SESSION' running"
+  session_live || die "no session '$SESSION' running"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
   tmux kill-session -t "=$SESSION"
 }

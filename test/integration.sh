@@ -826,6 +826,56 @@ check "and idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 unset GANG_PROFILES
 
+# --- diagnostics that do not assert a cause gang never checked -----------------
+
+# has-session fails identically for "there is no such session" and "the tmux
+# server cannot be reached at all", and its stderr was discarded. Inside a
+# sandbox denying connect() on the tmux socket that made `gang roster` announce
+# the session was not running: the operator read a message about the session,
+# reasoned about $TMUX, and filed a bug against the wrong subsystem. The message
+# cost more than the fault did.
+mkdir -p "$SHIM/deaf"
+cat > "$SHIM/deaf/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = has-session ]; then
+  echo "error connecting to /tmp/tmux-1000/default (Operation not permitted)" >&2
+  exit 1
+fi
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/deaf/tmux"
+out="$(PATH="$SHIM/deaf:$PATH" "$GANG" roster 2>&1)"; rc=$?
+check "an unreachable tmux server is named" "yes" \
+  "$(case "$out" in *"Operation not permitted"*) echo yes ;; *) echo no ;; esac)"
+check "and is not reported as a team that simply is not running" "no" \
+  "$(case "$out" in *"no team"*) echo yes ;; *) echo no ;; esac)"
+check "and fails rather than printing an empty roster successfully" "1" "$rc"
+
+# The other half, and the one that keeps this honest: absence must still read as
+# absence, or every missing session becomes a scary error.
+check "a session that genuinely is not running still reads as no team" "yes" \
+  "$(case "$(GANG_SESSION="${GANG_SESSION}-nope" "$GANG" roster 2>&1)" in
+     *"no team"*) echo yes ;; *) echo no ;; esac)"
+
+# lock_pane treated ANY mkdir failure as contention, so a read-only runtime
+# directory spun the loop for thirty seconds and then blamed a process that does
+# not exist. A permanent failure wearing a transient message makes the caller
+# retry forever. The fix asks the filesystem whether the lock is THERE rather
+# than parsing errno text, which is localised and varies by platform.
+"$GANG" hitch locky -p bash -d /tmp >/dev/null
+ro="$SHIM/ro-lockdir"; mkdir -p "$ro"; chmod 500 "$ro"
+t0="$(date +%s)"
+out="$(GANG_LOCK_DIR="$ro" "$GANG" send locky --from tester "MARK_LOCK" 2>&1)"; rc=$?
+t1="$(date +%s)"
+chmod 700 "$ro"
+check "a lock that cannot be created fails instead of reporting contention" "1" "$rc"
+check "and says nothing holds it, rather than blaming another process" "yes" \
+  "$(case "$out" in *"Nothing holds this lock"*) echo yes ;; *) echo no ;; esac)"
+check "and fails fast instead of spinning out the contention timeout" "yes" \
+  "$([ "$((t1 - t0))" -lt 10 ] && echo yes || echo no)"
+check "and nothing was pasted into the agent it could not lock" "no" \
+  "$(has locky MARK_LOCK)"
+
 # --- addressing --------------------------------------------------------------
 
 # An unanchored tmux target is a PREFIX match, so GANG_SESSION=team resolved to a
@@ -1083,6 +1133,15 @@ check "the compaction command is typed in one place only (a second needs compact
 # churn_batch — and the checks above assert the two agree about the same pane.
 # Tuning one and not the other makes them disagree silently, so the source says
 # there is one number and both paths read it.
+#
+# Coverage, stated exactly, because a guard described wrongly is worse than one
+# described narrowly: this fires when a reader is REPLACED by a literal (the
+# count falls) or when another site starts reading the constant (the count
+# rises). It cannot see a new churn path that hardcodes its own number and never
+# mentions the constant at all — the same edge as the compaction invariant
+# above. Grepping for stray literals would not close it either: cmd_hitch's
+# launch settle is a bare sleep that has nothing to do with churn, so such a
+# guard would fire on correct code.
 check "the churn wait is defined once" "1" \
   "$(grep -c 'GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-' "$GANG")"
 check "and both churn paths read it instead of carrying their own" "2" \
