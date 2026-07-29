@@ -390,18 +390,38 @@ line (see Profiles). Nothing else in gang changes with it — the scraping surfa
 is the same file. What gang will never do is answer a dialog for you, or pre-trust
 a directory it did not itself send the agent into.
 
-### A sandboxed Codex agent needs network access to answer
+### A sandboxed Codex agent cannot reach the team
 
 gang's control path is the tmux socket, and Codex's sandbox gates `connect()` on
 its network toggle without discriminating by address family — so a Codex agent
 with network access denied cannot open a *unix* socket either. The block is on
 the syscall, not the path to it: adding writable roots does not reach it, and
-neither does `TMUX_TMPDIR`.
+neither does `TMUX_TMPDIR`. Nothing is stripped from the environment on the way
+in — `$TMUX` and `$TMUX_PANE` arrive intact, and would not matter if they did
+not, since tmux falls back to the same default socket without them.
 
 Watched live, same socket and command, one variable. Under `workspace-write`,
 `tmux -S <socket> ls` returns `Operation not permitted`; with `network_access`
-turned on it lists the session, and a Codex worker hitched that way answered
-`gang roster` and reported home through `gang send`.
+turned on it lists the session, and a Codex worker hitched that way answers
+`gang roster` and `gang status` from inside its own pane.
+
+**Network access is necessary and not always sufficient.** gang takes its per-pane
+delivery lock under `${XDG_RUNTIME_DIR:-/tmp}/gangline-$uid`, and under systemd
+that resolves to `/run/user/$uid`, which the sandbox mounts read-only — so
+`gang send` from inside a Codex pane fails on the lock even once the socket is
+reachable. Where `XDG_RUNTIME_DIR` is unset the base falls back to `/tmp`, which
+the sandbox leaves writable, and send works. Same flag, opposite outcome, on a
+variable neither gang nor Codex sets. The lock base is deliberately not
+configurable per profile: every gang process delivering to a pane has to agree on
+it, and one that picked a different base would hold a lock nobody else respects.
+
+**gang does not turn `network_access` on for you.** There is no narrow version of
+this grant — `[sandbox_workspace_write]` carries no unix-socket allowlist, and
+`writable_roots` is measured not to reach the block — so the only available lever
+is full outbound network for every Codex agent gang launches. That is a change to
+your sandbox, not to a directory gang itself sent the agent into, so it stays
+yours: `-c sandbox_workspace_write.network_access=true` on the launch line, via a
+shadowed profile.
 
 Denied, the traffic is one-way rather than dead: gang writes into the pane from
 *outside* the sandbox, so briefs and messages arrive, while everything the agent
