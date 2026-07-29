@@ -149,7 +149,7 @@ sequenceDiagram
     autonumber
     participant G as gang send
     participant P as agent's pane
-    G->>P: busy marker on screen?
+    G->>P: busy? — screen churning, or a marker painted
     Note over G,P: mid-turn: send anyway, or refuse if the harness takes no input
     G->>P: read the input box
     G->>P: load-buffer → paste-buffer -p (bracketed paste)
@@ -192,9 +192,12 @@ back empty, whoever emptied it, so an Enter that landed after all stops being
 reported as a problem.
 
 Per-agent state lives in tmux window options — the profile binding (`@gl_profile`),
-the context band already warned about (`@gl_band`), and any stranded paste
-(`@gl_staged`) — so tmux deletes an agent's state along with its window, and a
-re-hitched name starts clean.
+the context band already warned about (`@gl_band`), any stranded paste
+(`@gl_staged`), a compaction gang itself issued (`@gl_compacting`), and the pid of
+a process waiting on the agent (`@gl_waiting`) — so tmux deletes an agent's state
+along with its window, and a re-hitched name starts clean. Each of those is a fact
+gang owns rather than one it reads back off a screen, which is why none of them
+can rot when a harness redraws.
 
 ## Self-compaction
 
@@ -304,18 +307,38 @@ and the turn now in flight reads no input, so the message can only wait — whic
 all it ever had to do. It goes into the queue the compaction drains on its way out,
 and the agent picks it up the instant it has a context to pick it up into.
 
-Profiles declare what their compaction looks like on screen
-(`GANG_COMPACTING_REGEX`). One whose compaction nobody has watched live declares
-nothing and waits for the pane to go quiet instead — three consecutive polls and a
-screen that has stopped repainting, floored so it cannot fire in the gap between
-the turn ending and compaction starting to draw. Slower, correct, and no marker to
-rot. Durable-state and handoff conventions ride in agent prompts, not in code.
+Where gang issued the compaction itself there is a second moment, later than
+visibly-running and stronger: the context readout dropping below where it stood
+when the command was typed. That is proof the compaction happened rather than
+proof the screen looks calm, and unlike a still pane it cannot be true of a turn
+that is merely quiet. It is bounded by `GANG_COMPACT_GRACE`, because `/compact`
+under a harness's own threshold runs and moves nothing, so a drop that never comes
+must not wait forever.
+
+Profiles also declare what their compaction looks like on screen
+(`GANG_COMPACTING_REGEX`), and one whose compaction nobody has watched live
+declares nothing and falls back to waiting for the pane to settle. That fallback is
+weaker than it reads: its streak resets only on a *painted* busy marker, and
+claude-code paints one for 8.6% of a live turn, so it is a one-time floor rather
+than sustained quiet and fires at the first still frame. Streaming is not the
+exposure — streaming moves the screen. Silence is, and a test run, a fetch or a
+large read is exactly that. Declaring no marker is therefore a real cost, not a
+free choice; what covers for it is the drop above, on the path gang controls.
+
+Durable-state and handoff conventions ride in agent prompts, not in code.
 
 ### What patrol refuses to do
 
 Injecting into a pane that is not quietly idle corrupts it, so patrol skips rather
 than risks it — and a skip never burns state, so the next sweep retries.
 
+- **A compaction gang issued** is held, and this guard is asked *before* the scraped
+  ones because it is the only signal here that cannot rot. The pane it protects
+  reads perfectly idle: a compacting Claude Code pane paints no marker and holds a
+  still screen — 633 byte-identical captures across 158 seconds, measured — so both
+  guards below would wave a nudge straight through it. gang knows only because gang
+  typed the command, and the flag clears on the context drop that proves the
+  compaction landed, or at `GANG_COMPACT_GRACE` if it never comes.
 - **Busy agents** are skipped outright.
 - **Churning panes** are held: patrol injects only into a pane that is byte-identical
   across two captures. Busy regexes are snapshots, and at a turn boundary every guard
