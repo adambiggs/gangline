@@ -287,6 +287,12 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
   GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
+  # Kept, not discarded with the rest of the local, so that a failure reading
+  # anything this file declares can name the file to go and open. GANG_PROFILES
+  # points wherever the operator said — which can be a directory nobody
+  # remembers setting — and a complaint about a variable with no path attached
+  # starts a hunt through every profile that might be the one loaded.
+  GANG_PROFILE_FILE="$f"
   # no stale functions across profiles
   unset -f profile_context profile_input profile_vet 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -533,13 +539,13 @@ capture_status() { # $1 = window id; the bottom rows, where a TUI paints its sta
   # paints state into. Trailing blank rows are dropped first: a half-empty pane
   # would otherwise spend its whole allowance on blank lines.
   #
-  # That caller is currently unreached. compacting() returns at its first line
-  # unless GANG_COMPACTING_REGEX is set, and all four shipped profiles leave it
-  # unset deliberately, each saying why. So on every harness gang ships nothing
-  # reads this, and the number below is exercised only by the suite's fixture.
-  # Unreached is not settled, and from inside this file the two look the same.
+  # One shipped profile reaches it. compacting() returns at its first line unless
+  # GANG_COMPACTING_REGEX is set; pi declares one, and claude-code, codex and
+  # opencode deliberately do not, each saying why. So this bound is live on pi,
+  # where it is what stands between a resume queueing behind the compaction and
+  # falling back to the settle path.
   #
-  # What wakes it, and what the next declarer owns: the offset this bounds is
+  # What every declarer owns: the offset this bounds is
   # NOT fixed. claude-code renders unconsumed queued messages BETWEEN the state
   # line and the composer, so the distance up from the bottom grows by whatever
   # is queued — measured, a spinner at row 40 of 55 with a six-row envelope
@@ -549,6 +555,36 @@ capture_status() { # $1 = window id; the bottom rows, where a TUI paints its sta
   capture_joined "$1" \
     | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' \
     | tail -n "${GANG_STATUS_ROWS:-20}"
+}
+
+re_match() { # $1 = the profile variable NAME holding an ERE, $2 = text; 0 hit, 1 miss
+  # grep answers three things, not two: 0 it matched, 1 it did not, and >=2 it
+  # could not tell. Consumed as a boolean the third collapses into the second,
+  # and that collapse only ever runs one way — a marker that cannot be EVALUATED
+  # reads as a marker that is ABSENT. So a working agent reads idle, a modal
+  # reads clear, and resume_after_compaction counts a not-busy sample against a
+  # turn it never established had ended. Every fabricated-status defect found in
+  # this file is that same distinction being dropped: DETERMINED FALSE and COULD
+  # NOT DETERMINE are different answers, and only the first may be spent as false.
+  #
+  # Reachable rather than theoretical. These regexes come from profiles, profiles
+  # are edited by hand, and GANG_PROFILES points at whatever directory an operator
+  # names. Measured against the grep gang actually runs (GNU 3.7, from a script,
+  # not an interactive shell): '[', '(', '[z-a]' and a trailing backslash each
+  # exit 2. Which patterns error is grep's business and varies between builds —
+  # that the class exists is what this handles.
+  #
+  # Taking the NAME rather than the value is what keeps the report honest: the
+  # message names the variable an operator has to go and fix, and that name
+  # cannot drift from the pattern it describes, because it is where the pattern
+  # was read from. Paired with the file load_profile kept, that is both halves of
+  # the answer — which setting, in which file — so the report ends the search
+  # instead of starting one.
+  local re="${!1:-}" rc=0
+  grep -qE -- "$re" <<<"$2" || rc=$?
+  [ "$rc" -le 1 ] \
+    || die "$1 in ${GANG_PROFILE_FILE:-<no profile loaded>} is not an ERE this grep can evaluate (grep exit $rc): '$re' — refusing to read an unevaluable marker as an absent one"
+  return "$rc"
 }
 
 composer_live() { # $1 = window id; the harness's own input box is on screen NOW
@@ -609,7 +645,7 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
-  grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"
+  re_match GANG_BUSY_REGEX "$pane"
 }
 
 recently_active() { # $1 = window id, profile loaded; tmux stamped output here lately
@@ -780,7 +816,7 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
   [ -n "${GANG_COMPACTING_REGEX:-}" ] || return 1
   local pane
   pane="$(capture_status "$1")" || die "cannot read pane $1 — refusing to guess compaction state"
-  grep -qE -- "$GANG_COMPACTING_REGEX" <<<"$pane" || return 1
+  re_match GANG_COMPACTING_REGEX "$pane" || return 1
   # Claude Code's marker is a single bar glyph, and this repo's own profiles are
   # full of them: an agent reading profiles/claude-code.sh puts ▰ on its screen.
   # Believing that is worse than missing a real compaction, because the resume
@@ -887,7 +923,7 @@ gated() { # $1 = window id, profile loaded; exit 0 if a modal owns the input box
     # Nothing catches that by auditing markers for liveness — the marker is not
     # dead, only unreachable — so the scan is what has to widen.
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess gated state"
-    if grep -qE -- "$GANG_GATED_REGEX" <<<"$pane"; then
+    if re_match GANG_GATED_REGEX "$pane"; then
       # The wording alone is not the gate. Every dialog watched live OWNS the
       # screen while it is up: the composer is gone, which is why an unmarked gate
       # read idle in the first place. So a match beside a live input box is the
@@ -1785,10 +1821,26 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   # Recorded only after the command verified in the pane: a mark for a compaction
   # that was never typed would hold patrol off a working agent for the whole
   # grace window, which is the failure this is supposed to prevent, aimed the
-  # wrong way.
+  # wrong way. Typed is the whole of what it claims — the mark says WE ISSUED
+  # ONE, and both readers already carry the case where nothing follows, each
+  # giving up at GANG_COMPACT_GRACE.
   compaction_mark "$AGENT_ID"
-  local where="triggered on $name"
-  [ "$mine" -eq 1 ] && where="queued behind your own turn"
+  # What inject just proved is DELIVERY: the paste changed the input box and the
+  # Enter emptied it. It did not prove EXECUTION, and on some harnesses those
+  # come apart — codex answers a self-issued `/compact` with "'/compact' is
+  # disabled while a task is in progress" (watched live, three attempts, 0.145.0)
+  # and clears the composer anyway, so a positive refusal leaves exactly the
+  # evidence a success does. That is not a codex quirk to key off: NO profile is
+  # confirmed here, because this command returns before any harness has had time
+  # to act. compacting() is not consulted, the context has not been re-read, and
+  # the one proof gang trusts elsewhere — the readout DROPPING — cannot exist yet.
+  # So the word "verified" belongs to the submission and nothing else, and the
+  # line below says which of the two it earned (law 8). The suite holds a pair
+  # that cannot be told apart from here: one fixture's compact command is a shell
+  # comment and never compacts, the other's context drops, and this code path
+  # produces the same sentence for both.
+  local where="issued to $name"
+  [ "$mine" -eq 1 ] && where="issued to yourself, queued behind this turn"
   if [ -n "$resume" ]; then
     # The resume is delivered later by a process nobody is watching, and inject
     # can still refuse it: a gate that painted, a window that went away, a paste
@@ -1802,9 +1854,15 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
         || tmux set-option -w -t "$AGENT_ID" @gl_resume_failed "${err##*$'\n'}"
     ) </dev/null >/dev/null 2>&1 &
     disown
-    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands")"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD submitted; execution unconfirmed); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands")"
   else
-    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD, verified in pane)")"
+    # Where the check is offered it has to exist: cmd_context dies on a profile
+    # with no introspection, so naming it there would answer an unconfirmed
+    # compaction with a second failure.
+    local how=""
+    declare -F profile_context >/dev/null \
+      && how=" — gang context $name shows whether it landed"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD submitted; execution unconfirmed$how)")"
   fi
 }
 
@@ -1986,7 +2044,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # cannot rot, and because the pane it protects reads perfectly idle: a
     # compacting claude-code pane paints no marker and holds a still screen, so
     # busy_painted and pane_stable both wave a nudge straight through it.
-    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued is in flight, holding nudge" "$C_WORK"
+    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
   elif busy_painted "$1"; then
     # Also the pane question, for the same reason as the guards around it: this
     # chain decides whether an injection is SAFE, and a parked agent is inside a
@@ -2097,7 +2155,8 @@ version_word() { # $1 = a version line -> the one dotted-numeric word in it, or 
   printf '%s' "$out"
 }
 
-version_cmp() { # $1, $2 = dotted-numeric -> prints 1 if $1 is higher, -1 if lower, 0 if equal
+version_cmp() { # $1, $2 = dotted-numeric -> prints 1 if $1 is higher, -1 if lower, 0 if
+                # equal; nonzero and SILENT where a component cannot be ordered safely
   # Component-wise, with a missing component read as zero, so 1.18 and 1.18.0
   # compare equal. 10# because a component is a decimal string and `08` is not
   # octal — an arithmetic base error here would be a die inside a diagnostic.
@@ -2106,6 +2165,19 @@ version_cmp() { # $1, $2 = dotted-numeric -> prints 1 if $1 is higher, -1 if low
     x="${a%%.*}"; y="${b%%.*}"
     [ -n "$x" ] || x=0
     [ -n "$y" ] || y=0
+    # Leading zeros go before the width test, so a padded component is measured
+    # by the width of its VALUE and not of its spelling.
+    while :; do case "$x" in 0?*) x="${x#0}" ;; *) break ;; esac; done
+    while :; do case "$y" in 0?*) y="${y#0}" ;; *) break ;; esac; done
+    # Bash arithmetic is 64-bit and SIGNED, and it WRAPS rather than erroring:
+    # 10#9223372036854775808 evaluates to -9223372036854775808, so an installed
+    # 9223372036854775808.0 would be ordered confidently BELOW a pinned 1.0.
+    # Eighteen digits is the widest that cannot overflow. Refusing is the whole
+    # point rather than a shortcut — the rank above promises that every word it
+    # prints is one it is sure of, and a wrapped comparison is the one way this
+    # could hand it a certain answer that is wrong. Unorderable is not equal, so
+    # it must not fall through to the tie below.
+    [ "${#x}" -le 18 ] && [ "${#y}" -le 18 ] || return 1
     if [ "$((10#$x))" -gt "$((10#$y))" ]; then printf '1'; return 0; fi
     if [ "$((10#$x))" -lt "$((10#$y))" ]; then printf -- '-1'; return 0; fi
     case "$a" in *.*) a="${a#*.}" ;; *) a="" ;; esac
@@ -2124,11 +2196,16 @@ version_rank() { # $1 = installed line, $2 = the pins -> newer|older|between, or
   # here means the strings differ while the numbers do not (`1.18` pinned against
   # an installed `1.18.0`, or a build suffix), and which of those two the operator
   # has is exactly what this function cannot tell them.
-  local inst pin v below=0 above=0
+  local inst pin v cmp below=0 above=0
   inst="$(version_word "$1")" || return 1
   for v in $2; do
     pin="$(version_word "$v")" || return 1
-    case "$(version_cmp "$inst" "$pin")" in
+    # Named into a variable so the refusal is carried rather than inferred from
+    # the text. version_cmp is silent when it cannot order a component, and an
+    # empty word would reach the catch-all below and be read as the tie case —
+    # the right answer here by luck, from evidence that says something else.
+    cmp="$(version_cmp "$inst" "$pin")" || return 1
+    case "$cmp" in
       1)  above=$((above + 1)) ;;
       -1) below=$((below + 1)) ;;
       *)  return 1 ;;
@@ -2442,7 +2519,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   deadline=$(( $(date +%s) + GANG_PROBE_TURN ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane — refusing to call a marker dead off a failed capture"
-    if grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"; then marked=1; break; fi
+    if re_match GANG_BUSY_REGEX "$pane"; then marked=1; break; fi
     [ -z "$prev" ] || [ "$pane" = "$prev" ] || churned=1
     prev="$pane"
     sleep "$GANG_PROBE_RATE"
@@ -2516,7 +2593,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # caught here rather than above, and marker alive with the same accident is a
   # false alarm on a healthy harness. The residual runs toward false alarm and
   # never toward false pass.
-  if grep -qE -- "$GANG_BUSY_REGEX" <<<"$pane"; then
+  if re_match GANG_BUSY_REGEX "$pane"; then
     probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — painted, and still painted once the pane went quiet: $GANG_BUSY_REGEX"
     probe_evidence "$prof" "$pane"
     tmux kill-window -t "$id" 2>/dev/null || true

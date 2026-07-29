@@ -1249,6 +1249,7 @@ vetpin vetcodex   "codex-cli 0.144.6"         "0.144.5"
 vetpin vetambig   "harness 1.2.4 build 9.9.9" "1.2.3"
 vetpin vettie     "1.18"                      "1.18.0 2.0.0"
 vetpin vetword    "v1.2.4"                    "1.2.3"
+vetpin vetwide    "9223372036854775808.0"     "1.0"
 vout="$(GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
 check "a build newer than every pin is named as the rot case" "yes" \
   "$(holds "$vout" '^vetnewer +1[.]2[.]4 +ROT RISK — NEWER than every verified version')"
@@ -1274,6 +1275,14 @@ check "a version string that does not parse orders nothing" "yes" \
   "$(holds "$vout" '^vetword +v1[.]2[.]4 +ROT RISK — markers verified against: 1[.]2[.]3$')"
 check "and a numeric tie is an unknown, not a between" "yes" \
   "$(holds "$vout" '^vettie +1[.]18 +ROT RISK — markers verified against: 1[.]18[.]0 2[.]0[.]0$')"
+# The fourth way to be unsure, and the only one that used to answer CONFIDENTLY
+# and wrong. Bash arithmetic is 64-bit SIGNED and wraps rather than erroring, so
+# 10#9223372036854775808 evaluates to -9223372036854775808 and this build — which
+# is higher than the pin by any reading — was reported OLDER than it. That is the
+# one outcome the three checks above exist to make impossible: a verdict stated
+# with certainty from a comparison that did not happen.
+check "a component too wide for machine arithmetic orders nothing" "yes" \
+  "$(holds "$vout" '^vetwide +9223372036854775808[.]0 +ROT RISK — markers verified against: 1[.]0$')"
 rm -rf "$SHIM/vetdir"
 
 # A weaker WORDING is not a weaker verdict. The between case is the one a fix
@@ -1471,10 +1480,28 @@ check "and its run does not claim to have confirmed anything" "yes" \
 # somebody else is working is a check that gets called flaky and deleted, taking
 # the invariant with it — and the invariant is real, since a probe that leaks a
 # server leaks it into the directory holding the live team's.
+# Exact LINE membership, not substring. A socket name ends in a pid, so
+# gangvet-1234 sits inside gangvet-12345: asked as `in *"$s"*`, a genuinely
+# leaked socket reads as one that was already there whenever any other run holds
+# a name that extends it. Reachable exactly where this check is most load-bearing
+# — concurrent runs, whose pids are what make the names differ — and it fails by
+# asserting more than it measured, which is the same family as consuming grep's
+# error as a miss even though it is not the same rule.
+#
+# Named rather than written inline so the checks below exercise THIS code and not
+# a copy of it that agrees with whatever it was told.
+not_listed() { # $1 = a name, $2 = newline-separated names -> yes when $1 is not one of them
+  case $'\n'"$2"$'\n' in *$'\n'"$1"$'\n'*) echo no ;; *) echo yes ;; esac
+}
+check "a socket name contained in a longer one is not read as pre-existing" "yes" \
+  "$(not_listed "gangvet-1234" "gangvet-12345")"
+check "and an exact name still is" "no" \
+  "$(not_listed "gangvet-1234" "gangvet-12345
+gangvet-1234")"
 leftover=""
 while read -r s; do
   [ -n "$s" ] || continue
-  case "$socks_before" in *"$s"*) continue ;; esac
+  [ "$(not_listed "$s" "$socks_before")" = yes ] || continue
   leftover="$leftover $s"
 done <<EOF
 $(probe_socks)
@@ -1589,6 +1616,44 @@ check "the hook warns on a fresh band" "yes" \
   "$(like "$(hook)" "*additionalContext*120000-token band*")"
 check "and advances the shared band memory" "1" "$(tmux show-options -wqv -t "$p" @gl_band)"
 
+# --- a marker gang cannot evaluate is not a marker that is absent --------------
+#
+# grep answers three things and every caller here was consuming two: 0 matched,
+# 1 did not match, >=2 could not tell. A malformed ERE is the reachable third —
+# measured from a script against the grep gang actually runs, '[' and '(' and
+# '[z-a]' each exit 2 — and collapsed into "no match" it made a working agent
+# read idle and a modal read reachable. That is the fabricated-status direction,
+# reached from the one input on this surface an operator edits by hand.
+#
+# The regex is made bad AFTER the hitch, not before, so the check is aimed at the
+# state read and not at whatever the launch path happens to evaluate. load_profile
+# re-reads the file every resolve, so overwriting it is enough.
+cat > "$SHIM/custom-profiles/badregex.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="WORKING\\.\\.\\."
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "${line#❯}" | tr -d '\302\240'
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch badagent -p badregex -d /tmp >/dev/null
+check "the fixture reads a state while its marker is a regex" "yes" \
+  "$(like "$("$GANG" status badagent 2>&1)" '*tug*')"
+sed -i 's/^GANG_BUSY_REGEX=.*/GANG_BUSY_REGEX="[unclosed"/' "$SHIM/custom-profiles/badregex.sh"
+badout="$("$GANG" status badagent 2>&1)"; badrc=$?
+check "an unevaluable busy marker fails loud instead of reading idle" "1" "$badrc"
+check "and never answers with a state it could not determine" "no" \
+  "$(contains "$badout" "tug")"
+check "the refusal names the setting to go and fix" "yes" \
+  "$(contains "$badout" "GANG_BUSY_REGEX")"
+check "and the file that setting lives in" "yes" \
+  "$(contains "$badout" "badregex.sh")"
+sed -i 's/^GANG_BUSY_REGEX=.*/GANG_BUSY_REGEX="WORKING\\.\\.\\."/' "$SHIM/custom-profiles/badregex.sh"
+"$GANG" drop badagent >/dev/null 2>&1 || true
+
 # --- a compaction gang issued itself -------------------------------------------
 
 # patrol nudges at a high context band, and a compacting pane is exactly a pane
@@ -1622,11 +1687,29 @@ SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" hitch compagent -p compactable -d /tmp >/dev/null
 paint compagent 'ctx 150k/200k 75%'
-"$GANG" compact compagent --from tester >/dev/null 2>&1
+compact_out="$("$GANG" compact compagent --from tester 2>&1)"
 check "a compaction gang issued is recorded on the window" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
-check "and patrol holds its nudge while it is in flight" \
-  "past the 120000-token band — compaction gang issued is in flight, holding nudge" \
+
+# What that command can honestly claim, and the pair that bounds it. inject
+# proves DELIVERY — the paste changed the box, the Enter emptied it — and this
+# fixture is the case where delivery and execution come apart: "#compact" is a
+# shell comment, so the pane takes the command, submits it, and compacts
+# nothing. dropagent below is the same command with the opposite outcome, and
+# cmd_compact returns before EITHER outcome exists. So the two get the same
+# sentence by construction, and any sentence claiming the compaction happened is
+# wrong here every single time. Held against the words rather than the mark: the
+# mark says only that gang issued one, and both its readers give up on the clock.
+check "compaction reports what inject proved — submission, not execution" "yes" \
+  "$(contains "$compact_out" "execution unconfirmed")"
+check "and never reports the compaction itself as seen" "no" \
+  "$(contains "$compact_out" "verified in pane")"
+# The fact the wording answers to: this agent did not compact, and could not have.
+check "because on this fixture nothing compacted at all" "150k/200k (75%)" \
+  "$("$GANG" context compagent)"
+
+check "and patrol holds its nudge while it is unconfirmed" \
+  "past the 120000-token band — compaction gang issued, unconfirmed, holding nudge" \
   "$("$GANG" patrol | verdict compagent)"
 check "holding burns no band, so the nudge is not lost" "" \
   "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_band)"
@@ -2159,6 +2242,21 @@ check "and none in gang either" "0" \
 # rule and the suite reported a violation that was its own documentation.
 check "no text in gang is sized with cut -c" "0" \
   "$(grep 'cut -c' "$GANG" | grep -cv '^[[:space:]]*#')"
+# The fourth member, and the one with a rule rather than a shape: a predicate
+# must tell DETERMINED FALSE from COULD NOT DETERMINE, and only the first may be
+# spent as false. Five sites each handed a profile ERE straight to grep, where
+# exit 2 and exit 1 are the same nonzero — so an unevaluable marker read as an
+# absent one, and the agent wearing it read idle. They go through one helper now,
+# which dies on the third answer, and this is what keeps the sixth site from
+# quietly re-collapsing it.
+#
+# Scoped to $GANG_*_REGEX rather than to every grep in the file, deliberately.
+# Those patterns come from a file an operator edits by hand and GANG_PROFILES
+# points at whatever directory they name; a fixed literal in gang's own source
+# cannot error, so a rule covering both would fire on things that cannot happen,
+# and a rule like that is one people learn to route around.
+check "no profile regex is evaluated outside the helper that reports errors" "0" \
+  "$(grep -E 'grep .*\$GANG_[A-Z_]*REGEX' "$GANG" | grep -cv '^[[:space:]]*#')"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'
