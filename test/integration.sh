@@ -825,11 +825,20 @@ tmux send-keys -t "$(target_of churner)" "while :; do date +%s%N; sleep 0.05; do
 # be it here: it keys on BECOMING idle, so gang ships no tool for this direction
 # and the loop lives in the suite. Thirty is a ceiling and not an expectation —
 # reached only when the loop never starts, and then this fails as it always did.
+#
+# EACH EDGE POLLS THE PREDICATE IT THEN ASSERTS, so alone each is a tautology; the
+# PAIR is not, and neither half is safe to delete as redundant. Jam busy() at
+# always-idle and this edge never sees busy, runs out its bound and FAILS, while
+# the idle edge below passes instantly. Jam it at always-busy and this edge passes
+# instantly while the idle edge runs out ITS bound and fails. A predicate stuck in
+# either direction fails exactly one of the two, which is what the differing
+# shapes buy — and it is why what these assert is reaching a state within a bound,
+# not the correctness of a single instantaneous read.
 n=0
 while [ "$("$GANG" status churner | head -1)" != "busy (tight tug)" ] && [ "$n" -lt 30 ]; do
   sleep 1; n=$((n + 1))
 done
-check "a pane that keeps changing reads busy with no marker on it" "busy (tight tug)" \
+check "a pane that keeps changing reaches busy with no marker on it" "busy (tight tug)" \
   "$("$GANG" status churner | head -1)"
 
 # The roster resolves churn for the whole team with ONE wait; status asks per
@@ -871,7 +880,7 @@ tmux send-keys -t "$(target_of churner)" C-c
 # in the dispatch and what is under test is the one gang status DERIVES; its
 # stderr is kept, so a timeout names itself just above the failure it causes.
 "$GANG" wait churner 30 >/dev/null
-check "and idle once the screen settles" "idle (slack tug)" \
+check "and gets back to idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 unset GANG_PROFILES
 
@@ -1051,6 +1060,130 @@ check "a shadowed profile is vetted against the shadow's pins" "1" \
 check "and is named as shadowing rather than passed off as the shipped one" "yes" \
   "$(holds "$vout" 'shadowing the shipped profile')"
 rm -rf "$SHIM/vetdir"
+
+# --- vet --probe: the markers fired at a live pane -----------------------------
+
+# The probe exists because comparing version strings answers "has this harness
+# moved" while vet is READ as answering "does gang still see this harness
+# correctly" — and every dead marker this repo has lived through was painted, or
+# stopped being painted, at a version already pinned.
+#
+# So the probe is itself an instrument, and an instrument that reports a negative
+# has to be shown able to find a state that IS marked. These stand-ins are that
+# demonstration, in both directions, on one tree: a harness that paints the
+# declared marker and one that is demonstrably working and never paints it. They
+# run offline against a shell, so the check that guards the probe cannot rot on a
+# network, an API key, or a harness release.
+mkdir -p "$SHIM/probedir"
+# GANG_PROBE_PROMPT is sent as keys, so against a shell it is simply a command;
+# each stand-in defines it to do something different. Nothing here contains the
+# marker string: a prompt that carries the marker paints the thing it is meant to
+# be testing for, which is the contamination the probe's own baseline exists to
+# catch and would be a poor thing for its test to depend on.
+cat > "$SHIM/probedir/live.rc" <<'RC'
+PS1='❯ '
+probe_work() { local i=0; while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.4; i=$((i+1)); done; clear; echo 'ctx 12k/200k 6%'; }
+RC
+# Working, unmistakably — a fresh timestamp four times a second — and never
+# painting what it declares. This is the case the whole design turns on: churn is
+# the precondition that rules out "the harness never worked", so the verdict here
+# can be MARKER DEAD rather than a shrug.
+cat > "$SHIM/probedir/dead.rc" <<'RC'
+PS1='❯ '
+probe_work() { local i=0; while [ $i -lt 12 ]; do date +%s%N; sleep 0.25; i=$((i+1)); done; clear; echo 'ctx 12k/200k 6%'; }
+RC
+# Paints it and never takes it down. A presence-only probe calls this healthy,
+# and it is the failure that costs most in production: chrome matching the regex
+# permanently reads busy forever, so every send is refused and every wait times
+# out while the harness is perfectly idle.
+cat > "$SHIM/probedir/stuck.rc" <<'RC'
+PS1='❯ '
+probe_work() { local i=0; while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.4; i=$((i+1)); done; echo 'ctx 12k/200k 6%'; }
+RC
+# Already on screen before a single key is sent. Contamination runs the opposite
+# way from every other measurement in this suite: elsewhere a stray match only
+# adds a false alarm, here it makes a dead marker look alive.
+cat > "$SHIM/probedir/dirty.rc" <<'RC'
+PS1='❯ '
+printf 'PROBEBUSY\n'
+probe_work() { local i=0; while [ $i -lt 6 ]; do date +%s%N; sleep 0.25; i=$((i+1)); done; }
+RC
+# Takes the work and does nothing with it. Not a marker failure and not a pass:
+# the probe learned nothing and has to say so.
+cat > "$SHIM/probedir/inert.rc" <<'RC'
+PS1='❯ '
+probe_work() { :; }
+RC
+for _rc in live dead stuck dirty inert; do
+  _rx=PROBEBUSY; [ "$_rc" = dead ] && _rx=PROBEBUSY_NEVER
+  cat > "$SHIM/probedir/${_rc}mark.sh" <<SH
+GANG_LAUNCH="bash --rcfile $SHIM/probedir/$_rc.rc -i"
+GANG_BUSY_REGEX="$_rx"
+GANG_VERSION_CMD="echo 9.9.9"
+GANG_VERIFIED_VERSIONS="9.9.9"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}"
+}
+profile_context() {
+  local m
+  m="\$(tmux capture-pane -pJ -t "\$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
+    || die "no ctx beacon in pane"
+  m="\${m#ctx }"
+  printf '%s (%s)\n' "\${m% *}" "\${m##* }"
+}
+SH
+done
+probe_run() { # $1 = stand-in; the whole probe, bounded so a hung harness cannot hang the suite
+  GANG_PROFILES="$SHIM/probedir" GANG_PROBE_PROMPT="probe_work" \
+  GANG_PROBE_BOOT=20 GANG_PROBE_TURN="${2:-8}" GANG_PROBE_SETTLE="${3:-8}" \
+    timeout 120 "$GANG" vet --probe "$1" 2>&1
+}
+
+pout="$(probe_run livemark)"; prc=$?
+check "a probe passes a harness that paints what it declares" "yes" \
+  "$(holds "$pout" 'livemark .*fired and cleared')"
+check "and reads the context readout off the same pane" "yes" \
+  "$(holds "$pout" 'context 12k/200k \(6%\)')"
+check "and exits clean" "0" "$prc"
+
+pout="$(probe_run deadmark)"; prc=$?
+# The direction that matters. This one is not allowed to pass quietly: a probe
+# that cannot fail is decoration, and the pane here is demonstrably working.
+check "a probe fails a harness that is working and never paints its marker" "yes" \
+  "$(holds "$pout" 'deadmark .*MARKER DEAD')"
+check "and names the marker it could not find, since that is what has to be fixed" "yes" \
+  "$(holds "$pout" 'PROBEBUSY_NEVER')"
+check "and exits nonzero so a caller cannot read it as a clean bill" "1" "$prc"
+
+check "a marker that never clears fails too, rather than passing for having appeared" "yes" \
+  "$(holds "$(probe_run stuckmark)" 'stuckmark .*MARKER STUCK')"
+check "a marker on screen before any work voids the probe instead of passing it" "yes" \
+  "$(holds "$(probe_run dirtymark)" 'dirtymark .*VOID')"
+# Never a pass and never a marker verdict: with nothing moving, "the marker is
+# absent" and "the harness did nothing" are the same picture.
+pout="$(probe_run inertmark)"; prc=$?
+check "a harness that never gets busy is reported unprobed, not passed" "yes" \
+  "$(holds "$pout" 'inertmark .*not probed')"
+check "and its run does not claim to have confirmed anything" "yes" \
+  "$(holds "$pout" '0 profile\(s\) driven, 1 not probed')"
+
+# The probe drives real tmux servers, and the one rule it cannot get wrong is
+# whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would
+# drive the server gang is RUNNING IN.
+check "the probe leaves no server behind on its own socket" "0" \
+  "$(ls "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null | grep -c gangvet)"
+check "and the session under test is untouched by all of it" "yes" \
+  "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
+
+# Finding F, as a report rather than a guard: a clean bill that leaves the reader
+# to assume a marker was fired is what let three dead markers through, and the
+# only fix for a report that overstates its scope is a report that states it.
+check "plain vet says it fired nothing at a pane" "yes" \
+  "$(holds "$("$GANG" vet 2>/dev/null || true)" 'compared version strings only')"
+rm -rf "$SHIM/probedir"
+
 GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch slowpoke -p slowboot -r worker -d /tmp >/dev/null
 check "a brief waits for a harness that has not painted yet" "yes" \
   "$(has slowpoke 'in the worker role')"

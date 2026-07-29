@@ -137,10 +137,15 @@ gang — drive a team of CLI agents as tmux windows
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
                                               reports any agent gated behind a modal
-  gang vet [--file-issue]                     strategy-rot check: installed harness version
+  gang vet [--file-issue] [--probe [name]]    strategy-rot check: installed harness version
                                               vs each profile's verified pins; exits nonzero
                                               on drift; --file-issue files a deduped rot
-                                              issue on this repo (needs gh); alias: doctor
+                                              issue on this repo (needs gh); --probe also
+                                              LAUNCHES each installed harness on a private
+                                              tmux socket and watches its declared busy
+                                              marker and context readout across a real turn
+                                              — costs tokens and about a minute each;
+                                              alias: doctor
   gang attach                                 attach to the team session
   gang drop  <name>                           release the agent — its window and
                                               state go with it
@@ -1860,6 +1865,311 @@ and append the new version to GANG_VERIFIED_VERSIONS.")
   echo "  filed rot issue: '$title'"
 }
 
+# --- probe: fire the declared markers at a live harness -----------------------
+
+# vet is READ as answering "does gang still see this harness correctly?" and,
+# comparing version strings, could only ever answer "has this harness moved".
+# Those come apart exactly where it costs: every dead marker this repo has lived
+# through was painted — or stopped being painted — at a version already pinned,
+# and a pin cannot see a TUI change that ships without a version behind it. The
+# probe closes that by driving the thing. Launch the harness on a server of its
+# own, give it work, and watch for the marker the profile declares while it does
+# the work.
+#
+# Opt-in, because it spends the operator's tokens and about a minute per harness.
+# That is the same reason plain vet now states what it did NOT do: a clean bill
+# that quietly implies a marker was fired at a pane is how three dead markers got
+# through, and the fix for that is not a louder probe but an honester report.
+#
+# Scope is the busy marker and the context readout. Gates are out: reaching a
+# modal takes per-harness choreography, which is new profile surface that rots on
+# its own schedule. Compaction is out: /compact under a harness's own threshold
+# runs and moves nothing, so a probe cannot tell a dead marker from a session
+# with nothing to compact.
+GANG_PROBE_BOOT="${GANG_PROBE_BOOT:-45}"      # seconds to an input box; a cold TUI is slow
+GANG_PROBE_TURN="${GANG_PROBE_TURN:-90}"      # seconds of working pane to watch for the marker
+GANG_PROBE_SETTLE="${GANG_PROBE_SETTLE:-120}" # seconds for the pane to stop moving afterwards
+# A MARKED PHASE CAN BE A SMALL FRACTION OF A LIVE TURN, so the window is polled
+# and never sampled. Measured on claude-code: of 220 samples with the pane
+# demonstrably changing, 19 carried any branch of the declared regex — 8.6% — and
+# all 19 were the thinking spinner, which is removed once the answer starts and
+# replaced by nothing. Longest unbroken live-but-unmarked run: 64 samples, ~16s.
+# A probe that captured one frame while the pane churned would therefore call a
+# perfectly healthy claude-code dead about eleven times in twelve, confidently.
+# Four samples a second, from the instant the work is sent, and PRESENT means
+# seen at least once across the whole window.
+GANG_PROBE_RATE="${GANG_PROBE_RATE:-0.25}"
+# The prompt lengthens THINKING, not the answer: the marked phase is the thinking
+# one and comes first, so answer length buys nothing a probe can see. Plain
+# lowercase, no ellipsis, no capitalised word behind a leading glyph — a harness
+# echoes whatever it is told into its own transcript, and claude-code declares
+# ^[^ ] [A-Z][a-zé]+(…|...), so a careless prompt paints the very marker it is
+# here to test for. Overridable because a harness that will not work from this
+# needs a different nudge, not a different probe.
+GANG_PROBE_PROMPT="${GANG_PROBE_PROMPT:-think carefully before answering: is the number of seconds in a week larger than the number of words in a long novel? reply with one lowercase word and nothing else}"
+# A SPECIMEN IS CLEAN WHEN NO MARKER TEXT CAN REACH THE PANE — from the prompt,
+# from the directory's contents, or from a brief. Newness is not the property and
+# buys nothing on its own; an already-trusted empty directory is a perfectly clean
+# specimen and does not trip a first-run trust dialog, which a fresh one does.
+# What this must never be pointed at is a checkout of THIS repo, whose every
+# marker string is sitting in profiles/ waiting to be read aloud.
+GANG_PROBE_DIR="${GANG_PROBE_DIR:-}"
+
+PROBE_L=""     # the -L socket this run owns; empty until a probe starts
+PROBE_TMP=""   # shim + throwaway cwd, removed with it
+PROBE_PATH=""  # PATH as it was before the shim went on the front of it
+PROBE_CWD=""   # the specimen directory every probed harness is launched in
+
+probe_teardown() { # reached through on_exit, so it runs on die() and on ^C alike
+  # Explicit -L even though the shim would supply one, because this is the call
+  # that must be right when nothing else is: a kill-server that resolves to the
+  # default socket ends the operator's live team from inside its own diagnostic.
+  [ -n "$PROBE_L" ] || return 0
+  tmux -L "$PROBE_L" kill-server 2>/dev/null || true
+  # kill-server ends the server and leaves its socket FILE behind, so a probe that
+  # only killed would drop one dead socket per run into a directory shared with
+  # the live team's. Guarded on the name this function itself set: the same
+  # directory holds `default`, and an unguarded rm built from a variable is how a
+  # cleanup ends a team. The path is rebuilt exactly as tmux resolved it when the
+  # server was created, from the same environment.
+  case "$PROBE_L" in
+    gangvet-*) rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$PROBE_L" 2>/dev/null || true ;;
+  esac
+  # The shim must not outlive the probe. It fails safe if it ever does — a leaked
+  # shim aims gang at a socket with no server and it reports no team, which is
+  # confusing and harmless. The direction that is NOT harmless is the one it
+  # exists to prevent: probe operations landing on the live server.
+  [ -z "$PROBE_PATH" ] || { PATH="$PROBE_PATH"; hash -r 2>/dev/null || true; }
+  [ -z "$PROBE_TMP" ] || rm -rf "$PROBE_TMP"
+  PROBE_L=""; PROBE_TMP=""; PROBE_PATH=""
+}
+
+probe_start() { # stand up the private server this run owns and the shim that keeps it private
+  # TMUX_TMPDIR does not isolate anything from inside a pane. Given neither -S nor
+  # -L, tmux takes its socket from $TMUX and drives the server this process is
+  # RUNNING IN, so the isolation has to be -L and nothing else.
+  #
+  # The shim is not belt-and-braces on that. Profile code calls bare `tmux` —
+  # profile_input and profile_context both do, and they are half the surface under
+  # test — so -L on gang's own calls cannot reach them. First on PATH, execing the
+  # real binary with -L, it covers everything the probe runs. It also inverts the
+  # footgun rather than dodging it: with the shim in place a bare `tmux
+  # kill-server` from anywhere in here hits the probe server.
+  local real
+  real="$(command -v tmux)" || die "vet --probe: no tmux on PATH"
+  PROBE_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gangvet-$$-XXXXXX")" \
+    || die "vet --probe: cannot create a working directory"
+  PROBE_L="gangvet-$$"
+  mkdir -p "$PROBE_TMP/bin" "$PROBE_TMP/cwd"
+  PROBE_CWD="$PROBE_TMP/cwd"
+  if [ -n "$GANG_PROBE_DIR" ]; then
+    [ -d "$GANG_PROBE_DIR" ] || die "vet --probe: GANG_PROBE_DIR is not a directory: $GANG_PROBE_DIR"
+    PROBE_CWD="$GANG_PROBE_DIR"
+  fi
+  printf '#!/bin/sh\nexec "%s" -L "%s" "$@"\n' "$real" "$PROBE_L" > "$PROBE_TMP/bin/tmux"
+  chmod +x "$PROBE_TMP/bin/tmux"
+  PROBE_PATH="$PATH"
+  PATH="$PROBE_TMP/bin:$PATH"
+  hash -r 2>/dev/null || true
+  # One EXIT trap in this file and on_exit is it; a second `trap ... EXIT` here
+  # would silently replace the pane lock's. Measured, not assumed: an EXIT trap
+  # does not fire in a command-substitution subshell, so profile_context's own
+  # die() cannot tear this down mid-probe.
+  trap 'on_exit' EXIT
+  tmux new-session -d -s gangvet -n holder "sleep 3600" 2>/dev/null \
+    || die "vet --probe: cannot start a tmux server on socket $PROBE_L"
+}
+
+probe_row() { # $1 = name, $2 = version, $3 = colour, $4 = text
+  printf '%-12s %-26s %s\n' "$1" "$2" "$(colour "$3" "$4")"
+}
+
+probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
+  local prof="$1" id ready out ctx key msg installed="-"
+  local marked=0 churned=0 settled=0 deadline rc=0
+
+  load_profile "$prof"
+
+  # Nothing declared is nothing to fire, and it is not a pass. bash declares no
+  # busy marker on purpose — it is gangline's own stand-in and is never busy — so
+  # a green row here would be a clean bill for a harness nobody touched.
+  if [ -z "$GANG_BUSY_REGEX" ]; then
+    probe_row "$prof" "-" "$C_DIM" "not probed — no busy marker declared"
+    return 2
+  fi
+  if [ -n "$GANG_VERSION_CMD" ]; then
+    if ! installed="$($GANG_VERSION_CMD 2>/dev/null | head -1)" || [ -z "$installed" ]; then
+      probe_row "$prof" "-" "$C_DIM" "not probed — not installed here ($GANG_VERSION_CMD)"
+      return 2
+    fi
+  fi
+
+  id="$(tmux new-window -d -P -F '#{window_id}' -t '=gangvet' -n "$prof" \
+        -c "$PROBE_CWD" "$GANG_LAUNCH" 2>/dev/null)" || {
+    probe_row "$prof" "$installed" "$C_BAD" "not probed — launch failed: $GANG_LAUNCH"
+    return 2
+  }
+
+  ready=0
+  wait_ready "$id" "$GANG_PROBE_BOOT" || ready=$?
+  case "$ready" in
+    2) # A first-run trust dialog is what a throwaway directory buys, and it is
+       # the price of the directory being clean. Not a failure of the marker and
+       # not a pass: gang never answers a dialog, and neither does its probe.
+       probe_row "$prof" "$installed" "$C_BAD" "not probed — a dialog owns the screen; answer it once, or point GANG_PROBE_DIR at an EMPTY directory this harness already trusts"
+       tmux kill-window -t "$id" 2>/dev/null || true
+       return 2 ;;
+    1) probe_row "$prof" "$installed" "$C_BAD" "not probed — no input box after ${GANG_PROBE_BOOT}s"
+       tmux kill-window -t "$id" 2>/dev/null || true
+       return 2 ;;
+  esac
+
+  # THE BASELINE, and it is the point of the whole design. Every measurement this
+  # repo has taken looked for an ABSENCE, where a stray match only ever adds a
+  # false alarm and the absence still counts. This one looks for a PRESENCE, so
+  # the same contamination lands the other way up: a pane that has merely SEEN the
+  # string makes a stone-dead marker look alive. Requiring the marker to be gone
+  # before any work is sent is what turns a presence into a transition, and only
+  # the transition is evidence. It also catches a rot mode a presence check calls
+  # healthy — chrome that matches the regex permanently, which reads busy forever.
+  if busy_painted "$id"; then
+    probe_row "$prof" "$installed" "$C_BAD" "VOID — the marker was already on screen before any work was sent: contamination, or it is permanent chrome"
+    tmux kill-window -t "$id" 2>/dev/null || true
+    return 1
+  fi
+
+  # Launched the way hitch launches it, marker and all. A probe that starts the
+  # harness differently is probing a path no agent ever runs — and codex's context
+  # readout is keyed off exactly this marker, so without it that half is dead on
+  # arrival for reasons that have nothing to do with the harness.
+  msg="$GANG_PROBE_PROMPT"
+  if [ "${GANG_SESSION_KEY:-}" = 1 ]; then
+    key="$(mint_key)"
+    tmux set-option -w -t "$id" @gl_key "$key"
+    msg="$msg $(marker_line "$key")"
+  fi
+  tmux send-keys -t "$id" "$msg" 2>/dev/null || true
+  tmux send-keys -t "$id" Enter 2>/dev/null || true
+
+  # The declared regex, never busy(). busy() is busy_painted OR churn, so asking it
+  # here would pass with a stone-dead marker because churn covers for it — a test
+  # that cannot fail. Churn is in this loop, but only ever as the PRECONDITION: it
+  # decides whether the marker question is meaningful, never whether the marker is
+  # alive. Churning with no marker anywhere in the window is a real finding.
+  # Nothing churning at all means the harness never got busy, the probe learned
+  # nothing, and that is a third outcome said out loud rather than folded into
+  # either of the first two.
+  #
+  # One capture answers both questions, which is why this does not call
+  # busy_painted: the same frame is grepped for the marker and compared with the
+  # previous frame for motion, so the sample rate is not halved to buy the
+  # precondition. Polling starts the instant the keys are sent — the marked phase
+  # is thinking, and thinking is FIRST.
+  local prev="" pane=""
+  deadline=$(( $(date +%s) + GANG_PROBE_TURN ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane — refusing to call a marker dead off a failed capture"
+    if printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"; then marked=1; break; fi
+    [ -z "$prev" ] || [ "$pane" = "$prev" ] || churned=1
+    prev="$pane"
+    sleep "$GANG_PROBE_RATE"
+  done
+
+  if [ "$marked" -eq 0 ]; then
+    if [ "$churned" -eq 0 ]; then
+      probe_row "$prof" "$installed" "$C_BAD" "not probed — the harness never got busy: nothing moved on screen in ${GANG_PROBE_TURN}s"
+      rc=2
+    else
+      probe_row "$prof" "$installed" "$C_BAD" "MARKER DEAD — the pane was working and never painted it: $GANG_BUSY_REGEX"
+      rc=1
+    fi
+    tmux kill-window -t "$id" 2>/dev/null || true
+    return "$rc"
+  fi
+
+  # The other half of the transition, and the gate is CHURN STOPPING rather than
+  # the marker going away. On claude-code the marker goes away the moment thinking
+  # ends and streaming starts — measured, 91.4% of a live turn carries no marker
+  # at all — so marker-gone fires mid-answer, and this would be asserting the rest
+  # state of a pane that is still working. A still screen is the only signal here
+  # that the turn is actually over.
+  local streak=0
+  prev=""
+  deadline=$(( $(date +%s) + GANG_PROBE_SETTLE ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane while waiting for its turn to end"
+    if [ -n "$prev" ] && [ "$pane" = "$prev" ]; then
+      streak=$((streak + 1)); [ "$streak" -ge 2 ] && { settled=1; break; }
+    else
+      streak=0
+    fi
+    prev="$pane"
+    sleep 1
+  done
+  if [ "$settled" -eq 0 ]; then
+    probe_row "$prof" "$installed" "$C_BAD" "not probed — the pane never stopped moving in ${GANG_PROBE_SETTLE}s, so there is no rest state to hold the marker against"
+    tmux kill-window -t "$id" 2>/dev/null || true
+    return 2
+  fi
+  # A marker that never clears fails as hard as one that never arrives, and it
+  # fails quietly: chrome matching the regex permanently reads busy forever, so
+  # every send is refused, every wait times out, and every agent looks stuck.
+  #
+  # This is also what carries the one contamination the baseline cannot. Text the
+  # MODEL emits mid-turn arrives after the baseline has passed and while the probe
+  # is looking, so the baseline is no protection at all there — but that text stays
+  # in the transcript once the turn ends, so it lands here instead. Both cases run
+  # the same way: marker dead and the model happens to emit a matching string is
+  # caught here rather than above, and marker alive with the same accident is a
+  # false alarm on a healthy harness. The residual runs toward false alarm and
+  # never toward false pass.
+  if printf '%s\n' "$pane" | grep -qE -- "$GANG_BUSY_REGEX"; then
+    probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — painted, and still painted once the pane went quiet: $GANG_BUSY_REGEX"
+    tmux kill-window -t "$id" 2>/dev/null || true
+    return 1
+  fi
+
+  if declare -F profile_context >/dev/null; then
+    if out="$(profile_context "$id" 2>&1)" && [ -n "$out" ]; then
+      ctx="$out"
+    else
+      probe_row "$prof" "$installed" "$C_BAD" "busy marker fired and cleared, but the context readout did not: ${out:-no output}"
+      tmux kill-window -t "$id" 2>/dev/null || true
+      return 1
+    fi
+    probe_row "$prof" "$installed" "$C_OK" "busy marker fired and cleared; context $ctx"
+  else
+    probe_row "$prof" "$installed" "$C_OK" "busy marker fired and cleared; no context readout declared"
+  fi
+  tmux kill-window -t "$id" 2>/dev/null || true
+  return 0
+}
+
+cmd_probe() { # $1 = optional profile name; drives every installed harness
+  local prof probed=0 skipped=0 drift=0 rc
+  probe_start
+  printf '%s\n' "$(colour "$C_WORK" "probing — each installed harness is launched on socket $PROBE_L and given a turn's work")"
+  while read -r prof <&3; do
+    [ -n "$prof" ] || continue
+    [ -z "${1:-}" ] || [ "$prof" = "$1" ] || continue
+    rc=0; probe_one "$prof" || rc=$?
+    case "$rc" in
+      0) probed=$((probed + 1)) ;;
+      1) probed=$((probed + 1)); drift=1 ;;
+      *) skipped=$((skipped + 1)) ;;
+    esac
+  done 3<<EOF
+$(all_profiles)
+EOF
+  probe_teardown
+  # Said even when nothing failed, because "not probed" must never be read off an
+  # exit code as "confirmed". A harness that is not installed, or that stopped at
+  # a dialog, produced no evidence either way — and an exit status has no room to
+  # say so.
+  printf '%s\n' "$(colour "$C_DIM" "$probed profile(s) driven, $skipped not probed (reasons above). A zero exit means every marker that WAS fired arrived and cleared; it says nothing about the ones that were not.")"
+  return "$drift"
+}
+
 cmd_vet() { # strategy-rot check: installed harness version vs each profile's pins
   # Scraped TUI markers rot silently when a harness updates (lived it: a
   # Claude Code build stopped painting 'esc to interrupt' and busy() false-
@@ -1867,8 +2177,18 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
   # against; vet compares and exits nonzero on drift. This is a reactive
   # diagnostic, not a cron job: agents run it when scraping misbehaves
   # (false busy/idle, missing beacon, failed injection verify).
-  local file_issue=0
-  [ "${1:-}" = "--file-issue" ] && file_issue=1
+  local file_issue=0 probe=0 only=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --file-issue) file_issue=1; shift ;;
+      # The name is optional and positional after --probe, because probing one
+      # harness is what an operator does when one harness is misbehaving — which
+      # is when vet gets run at all.
+      --probe) probe=1; shift
+               case "${1:-}" in ''|-*) ;; *) only="$1"; shift ;; esac ;;
+      *) die "vet: unknown argument '$1'" ;;
+    esac
+  done
   local f prof installed v match out drift=0
   # Every profile installed, not just the shipped ones. A profile in GANG_PROFILES
   # is the one whose pins are LEAST likely to be maintained — nobody ships it, so
@@ -1884,8 +2204,19 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
   # silently stopped vetting bash — a guard lost with nothing printed to say so.
   # Read on fd 3 so a version command or a profile_vet that touches stdin cannot
   # eat the rest of the list.
+  # A named profile narrows the WHOLE report, not just the probe half. Two
+  # reasons, and the second is the one that matters: `gang vet --probe codex` is
+  # asked when codex is misbehaving, so a page of other harnesses is noise — and
+  # an exit code covering profiles nobody named cannot be read as a verdict on the
+  # one they did. A typo dies rather than printing an empty clean bill, which is
+  # the same failure as a clean bill that overstates its scope, just emptier.
+  if [ -n "$only" ]; then
+    printf '%s\n' "$(all_profiles)" | grep -qxF -- "$only" \
+      || die "vet: no profile '$only' is installed (see: gang profiles)"
+  fi
   while read -r prof <&3; do
     [ -n "$prof" ] || continue
+    [ -z "$only" ] || [ "$prof" = "$only" ] || continue
     load_profile "$prof"
     if [ "$GANG_VERIFIED_VERSIONS" = "any" ]; then
       printf '%-12s %-26s %s\n' "$prof" "-" \
@@ -1964,8 +2295,18 @@ EOF
   # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a
   # TUI-drawing extension relocates a marker with every row above reading OK.
-  [ "$drift" -ne 0 ] \
-    || printf '%s\n' "$(colour "$C_DIM" "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker: shadow the profile via GANG_PROFILES and re-verify against the TUI as you actually run it (README: Strategy rot).")"
+  if [ "$probe" -eq 1 ]; then
+    printf '\n'
+    cmd_probe "$only" || drift=1
+  else
+    # Printed on every plain run, drift or not, and it is the whole of finding F:
+    # a clean bill that leaves the reader to assume a marker was fired at a pane
+    # is what let three dead markers through, and the fix for that is a report
+    # that states its own scope, not a louder guard.
+    printf '%s\n' "$(colour "$C_DIM" "compared version strings only — no marker was fired at any pane. gang vet --probe launches each installed harness and watches its declared markers across a real turn.")"
+    [ "$drift" -ne 0 ] \
+      || printf '%s\n' "$(colour "$C_DIM" "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker with every row above reading OK: gang vet --probe fires the markers at a live harness, and shadowing the profile via GANG_PROFILES is how you re-verify one against the TUI as you actually run it (README: Strategy rot).")"
+  fi
   return "$drift"
 }
 
