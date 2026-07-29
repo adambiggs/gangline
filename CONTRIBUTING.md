@@ -161,6 +161,12 @@ cause. This is why such a predicate needs a third answer, distinct from both
 verdicts, that NAMES what it could not determine — a bare non-zero would have left
 the negative assertion passing.
 
+A changed default leaves stale claims that a grep for the old value will not find,
+because docs also state defaults in words. Sweeping the numbers found five wrong
+facts here and missed a sixth — a sentence asserting the ladder was "entirely
+absolute" — caught only by reading the section around a number already being
+fixed. Change a default, then read every section that describes it.
+
 The test drives `bin/gang` against a real tmux server with the `bash` profile — no
 mocks, because a mocked tmux would agree with whatever the code already does. A fix
 to delivery or addressing belongs there as a case that fails without the fix.
