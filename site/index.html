@@ -3,11 +3,11 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gangline — many harnesses, one line</title>
-<meta name="description" content="A harness harness. Unify any CLI coding agent — Claude Code, Codex, opencode, Pi — into a tmux-powered team. One bash script, no daemon.">
+<title>Gangline — CLI coding agents, one coordinated team</title>
+<meta name="description" content="Run Claude Code, Codex, opencode, and Pi as one coordinated tmux team. Attributed, verified messaging; visible state; one Bash CLI, no daemon.">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Gangline — many harnesses, one line">
-<meta property="og:description" content="A harness harness. Unify any CLI coding agent into a tmux-powered team. One bash script, no daemon.">
+<meta property="og:title" content="Gangline — CLI coding agents, one coordinated team">
+<meta property="og:description" content="Run different CLI coding agents together as named tmux windows, with attributed and verified messaging. One Bash CLI, no daemon.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2316171a'/%3E%3Cpath%20d='M4%2016h24'%20stroke='%235c6169'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cg%20fill='%236ea8fe'%3E%3Ccircle%20cx='9'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='23'%20cy='16'%20r='3.4'/%3E%3C/g%3E%3C/svg%3E">
 <style>
@@ -108,7 +108,7 @@
 <body>
 <main>
   <h1>gangline</h1>
-  <p class="tag">Many harnesses. One line.</p>
+  <p class="tag">Many CLI agents. One coordinated team.</p>
 
   <nav>
     <a href="#install">install</a><span>·</span>
@@ -120,21 +120,23 @@
   </nav>
 
   <p class="lede">
-    A harness harness. Gangline unifies any CLI coding agent it can get its hands
-    on &mdash; Claude Code, Codex, opencode, Pi, whatever ships next &mdash; into a
-    tmux-powered team, using each for its strengths, with minimal harness-specific
-    integration.
+    Run Claude Code, Codex, opencode, and Pi together, using each where it is
+    strongest. Every agent is a named tmux window you can watch or steer; every
+    peer message is attributed and checked in the target's real composer before
+    Gangline calls it delivered.
   </p>
 
   <p class="lede">
-    A gangline is the single rope that hitches many dogs, each in its own harness,
-    to one sled and one musher. The integration point is the attachment clip &mdash;
-    never surgery inside the dog.
+    One Bash CLI starts teammates, reports busy, idle, gated, and context state,
+    resumes work after compaction, and releases finished windows. There is no
+    server, bus, database, or harness plugin &mdash; tmux is the substrate, and
+    <code>gang</code> exits after each command.
   </p>
 
   <p class="lede">
-    There is no server, no bus, and no database. tmux already holds the state, so
-    <code>gang</code> is a CLI you run and it exits.
+    The name is literal: a gangline hitches many dogs, each in its own harness,
+    to one operator. The attachment point is the terminal, not code inside the
+    agent.
   </p>
 
   <div class="term">
@@ -156,6 +158,7 @@
   <div class="term">
   <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
   <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
+<span class="c"># attached to the lead; detach with Ctrl-b d, then use another shell</span>
 <span class="p">$</span> gang hitch worker -p codex -r worker
 <span class="ok">hitched worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
 <span class="ok">briefed worker as worker</span>
@@ -179,9 +182,9 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     or clone and symlink <code>bin/gang</code> yourself; the installer does nothing more.
   </p>
   <p class="note">
-    <strong>One thing your harness will not tell you.</strong> gangline launches
-    each harness exactly as you configured it and sets no permission flags of its
-    own, save one: it pre-authorizes the role-brief directory it is itself
+    <strong>One thing your harness will not tell you.</strong> gangline keeps
+    your configured harness permission posture and sets no general permission
+    bypass, save one narrow grant: it pre-authorizes the role-brief directory it is itself
     pointing the agent at, merged into your config rather than replacing it. An
     unattended agent cannot answer a dialog and gang will not answer one
     for it, so the setting that stops your harness asking belongs in that
@@ -189,8 +192,8 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     that: agents on one machine already pass text to one another through files, a
     shared checkout, or each other's panes; gangline does not create that path,
     it makes it routine and gives it structure the ad-hoc versions lack &mdash;
-    envelopes no line can escape, delivery verified in the pane, refusals at
-    gates, one writer per pane. Treat every agent's output as untrusted input to
+    envelopes no line can escape, delivery verified in the pane, and refusals at
+    gates. Treat every agent's output as untrusted input to
     the next, and bound the machine if you need a boundary: a container, a VM, a
     separate account. A separate
     <code>$HOME</code> is not one.
@@ -215,15 +218,14 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     <dt>Agents manage their own context.</dt>
     <dd>A model cannot feel its own token count, so the substrate measures it and
         warns at configurable bands. The agent compacts <em>itself</em> at the next
-        clean seam, queuing a resume directive behind the compaction so work
-        continues unattended.</dd>
+        clean seam, using a detached resume handoff so work continues unattended.</dd>
 
-    <dt>A new harness costs a profile, not an integration.</dt>
-    <dd>Launch command, busy marker, compact command &mdash; about ten lines.
-        Everything else is universal. Profiles scrape the stock TUI: a theme or
-        UI extension that repaints it takes a shadow profile of your own
-        (<code>GANG_PROFILES</code>), re-verified against what you actually
-        run.</dd>
+    <dt>A new harness costs a profile, not a core integration.</dt>
+    <dd>The profile owns launch and model syntax, observable busy and gated
+        states, compaction, mid-turn input, and optional composer and context
+        readers. Profiles observe the stock TUI: a theme or UI extension that
+        repaints it takes a shadow profile of your own
+        (<code>GANG_PROFILES</code>), re-verified against what you actually run.</dd>
 
     <dt>Batteries included, every one replaceable.</dt>
     <dd>Agents are hitched with a role brief &mdash; lead, worker, reviewer. Point
@@ -235,20 +237,21 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <section id="delivery">
   <h2>Delivery is measured, not assumed</h2>
   <p>
-    A send is three reads of the target's input box, not a spray of keystrokes.
-    gang reads the box, pastes, and reads again &mdash; the box must have
-    <em>changed</em>. Enter goes in as its own keystroke, and a third read confirms
-    the submit.
+    A send measures the target's input box instead of spraying keystrokes. gang
+    reads the box, pastes, and reads again &mdash; the box must have
+    <em>changed</em>. Enter goes in as its own keystroke, then gang polls until the
+    box differs from the pasted state. An empty composer and a harness's queued
+    message hint are both valid submitted states.
   </p>
   <p class="lede">
     Matching the text <em>somewhere</em> on screen would verify against an identical
-    earlier send still sitting in the transcript; a box that changed is the
-    harness-independent fact underneath every TUI's rendering, whether it echoes a
-    paste literally or collapses it into <code>[Pasted text #2]</code>. And the
-    separate Enter matters: batch text and newline into one burst and a TUI reads
-    the newline as part of the paste, parking your message in the box as an unsent
-    draft that scrollback renders exactly like a sent one. If any read disagrees,
-    the send dies loudly &mdash; and nothing was submitted.
+    earlier send still sitting in the transcript; a changed composer is the
+    harness-independent fact underneath every TUI's rendering. The separate Enter
+    matters too: batch text and newline into one burst and a TUI can read the
+    newline as part of the paste, parking the message unsent. If Gangline cannot
+    verify a submit, it fails loudly; it clears a stranded paste only when it can
+    prove the live composer still contains exactly that paste, and otherwise
+    reports an undelivered paste in status, roster, and patrol.
   </p>
   </section>
 
@@ -271,17 +274,18 @@ compaction settles.</code></pre>
   <p class="lede">
     The agent then compacts itself at the next clean seam &mdash; tests green, a
     commit made &mdash; without being idle first and without anyone watching. The
-    <code>--resume</code> never rides the input queue behind its own compaction,
-    where the turn about to be compacted could swallow it; a detached waiter
-    delivers it at the first moment it cannot be overtaken, and the agent picks it
-    up the instant it has a context to pick it up into.
+    <code>--resume</code> never rides the input queue directly behind its own
+    compaction, where the turn about to be compacted could swallow it. A detached
+    waiter uses a declared live compaction marker, a large context drop, or a
+    bounded stable-screen fallback before attempting the ordinary verified
+    delivery path. A failure is reported by status and patrol.
   </p>
   </section>
 
   <section id="refusals">
   <h2>Loud refusals, never guesses</h2>
   <p>
-    gangline's failure mode is a refusal you can read, not a guess you can't.
+    gangline's delivery failure mode is a refusal you can read, not a guess you can't.
   </p>
   <pre><code><span class="p">$</span> gang send reviewer --from lead "ship it"
 gang: refusing to deliver 'ship it': reviewer is <span class="gate">gated (hook set)</span> — a
@@ -291,12 +295,13 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
         with a modal owning its input box &mdash; a permission prompt, a picker,
         anything that takes the screen &mdash; is waiting on the operator, and a
         send would answer the dialog, so every delivery path refuses and patrol
-        names the gate loudly as what the team is waiting on. A pane whose state
-        gangline cannot positively determine reads gated, never idle.</li>
-    <li><strong>Nudges hold for churning panes and half-typed drafts.</strong>
-        Patrol injects only into a pane that is byte-identical across two captures
-        with an empty input box. Holding costs one sweep; interleaving costs the
-        turn.</li>
+        names the gate loudly as what the team is waiting on. Where a profile
+        declares a composer reader, a missing safe composer with no painted busy
+        state reads gated, never idle.</li>
+    <li><strong>Nudges hold for unsafe panes.</strong> Patrol checks Gangline-owned
+        compaction state, a painted busy marker, byte-identical pane captures, and
+        an empty input box before injecting. Holding costs one sweep; interleaving
+        costs the turn.</li>
     <li><strong>An unread context window is admitted, not hidden.</strong> A
         readout gang cannot reach shows as <code>-</code> in the roster and is
         reported as not patrolled, never quietly skipped.</li>
@@ -323,18 +328,24 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
             takes input during one</td></tr>
     <tr><td><code>gang roster</code></td>
         <td>everyone, with harness, state, and context usage</td></tr>
-    <tr><td><code>gang status</code> / <code>context</code> / <code>capture</code></td>
+    <tr><td><code>gang status &lt;name&gt;</code> / <code>context &lt;name&gt;</code> / <code>capture &lt;name&gt;</code></td>
         <td>one agent's state, window usage, or screen</td></tr>
-    <tr><td><code>gang compact &lt;name&gt; --resume "…"</code></td>
-        <td>trigger the harness's own compaction; the resume lands once it settles.
-            Naming yourself is the ordinary case</td></tr>
+    <tr><td><code>gang wait &lt;name&gt; [seconds]</code></td>
+        <td>block for two consecutive idle readings; fail immediately on a gate</td></tr>
+    <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume "…"</code></td>
+        <td>trigger the harness's own compaction; a detached waiter attempts the
+            resume and reports failure in status. Naming yourself is the ordinary case</td></tr>
     <tr><td><code>gang patrol</code></td>
         <td>ambient roster sweep from cron: band warnings in, gate reports out</td></tr>
-    <tr><td><code>gang vet</code></td>
-        <td>strategy-rot check: installed harness versions against each profile's
-            verified pins</td></tr>
+    <tr><td><code>gang vet [--probe [profile]]</code></td>
+        <td>check installed versions and file schemas; optionally launch a real
+            turn on a private tmux socket and fire declared markers</td></tr>
+    <tr><td><code>gang adopt &lt;name&gt; -p &lt;profile&gt;</code></td>
+        <td>register an existing team window without launching or briefing it</td></tr>
     <tr><td><code>gang attach</code> / <code>drop</code> / <code>down</code></td>
-        <td>watch the team live; end an agent; end the session</td></tr>
+        <td>watch the team live; end one named window; end the whole session</td></tr>
+    <tr><td><code>gang profiles</code> / <code>roles</code></td>
+        <td>list available harness and brief names</td></tr>
   </table>
   </div>
   </section>
@@ -346,11 +357,11 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
     They are the same kind of extension point, and neither is an integration.
   </p>
   <ul>
-    <li><strong>A profile is a few lines of shell</strong> declaring what gang
-        cannot know generically: launch command, busy marker, compact command, how
-        the permission prompt reads, optional hooks for the context readout and the
-        input box. Markers nobody has watched live stay unset, and gang takes the
-        slower, safer branch rather than guessing.</li>
+    <li><strong>A profile is shell configuration</strong> declaring what gang
+        cannot know generically: launch and model syntax, busy and gated states,
+        compaction, mid-turn input, and optional readers for context and the input
+        box. Markers nobody has watched live stay unset, and gang takes the slower,
+        safer branch rather than guessing.</li>
     <li><strong>A role is a markdown brief</strong> &mdash; lead splits work and
         guards its own context hardest, worker reports what changed and what proves
         it, reviewer verifies claims rather than reading diffs. The brief is
@@ -381,10 +392,10 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
         <td>the clean seam an arc ends on &mdash; tests green, a commit made &mdash;
             where compaction and releases happen</td></tr>
     <tr><td>dropped</td>
-        <td>a released agent &mdash; deliberate, routine, the musher's call;
-            health, not failure</td></tr>
+        <td>a released window &mdash; deliberate and routine; finishing an arc and
+            being released is health, not failure</td></tr>
     <tr><td>dog in the basket</td>
-        <td>an idle-parked agent still burning a context window &mdash; the
+        <td>a finished agent left running instead of released &mdash; the
             anti-pattern <em>dropped</em> exists to prevent</td></tr>
     <tr><td>intelligent disobedience</td>
         <td>a good lead refuses the command onto thin ice &mdash; once, short,
