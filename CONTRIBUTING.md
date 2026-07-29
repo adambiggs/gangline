@@ -55,6 +55,19 @@ Write the body for someone deciding whether to trust the change: what failed, wh
 the fix is, and what proved it. Scraped-marker changes say which harness version
 they were verified against — that pin is what `gang vet` reads.
 
+### Committing beside another agent
+
+An exact pathspec protects you from a peer's files, not from a peer inside your
+file. `git commit -- bin/gang` commits that file's *content*, so a teammate's
+uncommitted work in it lands under your message and your authorship.
+
+So split concurrent work by **file**, not by concern: a boundary git cannot
+enforce is not a boundary. One writer per file at a time, and the way to hand it
+over is to land a green checkpoint and push, not to hold a large batch. A batch
+held in the tree blocks the next writer twice — they cannot commit, and they
+cannot use the suite as evidence either, because a green run exercises the
+uncommitted work and a red one is attributed to whoever runs it.
+
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please) owns releases; no
