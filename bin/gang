@@ -422,7 +422,27 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   # handed anything until its wait returns, so busy stays true and stays honest.
   # Parked only overrides the answer where the paste would actually land.
   if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$1"; then return 1; fi
-  busy_painted "$1"
+  busy_painted "$1" && return 0
+  # A missing marker is not a missing turn, and there is nothing to widen a
+  # branch onto. claude-code marks THINKING and leaves the rest bare: of 220
+  # samples with the pane demonstrably changing, 19 carried any branch of the
+  # busy regex, and the longest unbroken run of live-but-unmarked samples was 64
+  # — about 16 seconds. Compared over the whole pane, a mid-stream screen is
+  # transcript text, rule, empty composer, rule, context beacon, permissions
+  # line: the idle screen exactly, with no line present in one and absent from
+  # the other. So this is not a scan-depth problem and not a pattern problem.
+  #
+  # The only difference is that it keeps changing, which is not a question a
+  # single frame can be asked. Markers demote to a fast path — a marked pane
+  # never pays for the second capture — and churn answers for everything they
+  # miss. The check scrapes nothing, so unlike a marker it cannot rot, and gang
+  # already trusts it to mean "quietly idle" where a resume and a nudge are held.
+  #
+  # Churn is content-blind, so on its own it would call a pane parked in `gang
+  # wait` busy — the false busy the parked branch above exists to kill. That
+  # collision does not arise, because the exclusion is by state gang OWNS
+  # (@gl_waiting, holding the waiter's pid) rather than by matching the screen.
+  ! pane_stable "$1"
 }
 
 compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibly compacting
@@ -493,6 +513,14 @@ compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
   # The context drop is the positive one: a compaction that HAPPENED shows it,
   # and unlike the momentary zero the readout flashes on its way through, the
   # drop is monotone — it stays low — so no poll interval can step over it.
+  #
+  # Half is a CHOICE, not a threshold anybody measured a harness against. Every
+  # compaction watched here reclaimed far more (246k to 48k, 161k to 44k), and a
+  # harness that reclaims less simply rides the clock out instead: late, never
+  # wrong, and late is the safe direction because the cost is a held nudge rather
+  # than one delivered into a live compaction. An unexamined constant is the same
+  # disease as an unexamined marker, so it is named here rather than left to look
+  # like a measurement.
   if [ -n "${2:-}" ] && [[ "$2" =~ ^[0-9]+$ ]] \
      && [[ "$at_issue" =~ ^[0-9]+$ ]] && [ "$at_issue" -gt 0 ] \
      && [ "$2" -lt $(( at_issue / 2 )) ]; then

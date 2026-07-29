@@ -761,6 +761,59 @@ SH
 tmux send-keys -t "$(target_of boxless)" "clear; PS1=''" Enter; sleep 0.6
 check "a profile with no input hook is not gated by the fallback" "idle (slack tug)" \
   "$("$GANG" status boxless | head -1)"
+
+# --- a turn with no marker on it ------------------------------------------------
+
+# claude-code marks THINKING and nothing else. Of 220 samples with the pane
+# demonstrably changing, 19 carried any branch of its busy regex, and the longest
+# unbroken run of live-but-unmarked samples was 64 — about 16 seconds. Compared
+# over the whole pane, a mid-stream screen is transcript text, rule, empty
+# composer, rule, context beacon, permissions line: the idle screen exactly, with
+# no line in one and absent from the other. There is no pattern to match and no
+# scan depth that reaches it, so busy asks whether the screen is MOVING.
+#
+# The fixture keeps its box drawn throughout, which is what the harness this
+# models actually does, and it keeps the gate fallback out of the way so these
+# checks answer about churn and nothing else.
+cat > "$SHIM/custom-profiles/churny.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_COMPACT_CMD="#compact"
+GANG_MIDTURN_INPUT="${FAKE_QUEUES:-}"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() { printf ''; }
+SH
+"$GANG" hitch churner -p churny -d /tmp >/dev/null
+sleep 0.5
+check "a still pane with no marker to find reads idle" "idle (slack tug)" \
+  "$("$GANG" status churner | head -1)"
+tmux send-keys -t "$(target_of churner)" "while :; do date +%s%N; sleep 0.05; done" Enter
+sleep 1
+check "a pane that keeps changing reads busy with no marker on it" "busy (tight tug)" \
+  "$("$GANG" status churner | head -1)"
+
+# The refusal below was unreachable while busy answered from a marker alone: it
+# is false for most of a live turn, so the guard protected nothing. It is
+# reachable now, and what it says is still the true thing to say.
+out="$("$GANG" compact churner --from tester 2>&1)"; rc=$?
+check "compacting a mid-turn agent is refused now that busy can see one" "1" "$rc"
+check "and still says what it would have cut" "yes" \
+  "$(case "$out" in *"cut a live turn"*) echo yes ;; *) echo no ;; esac)"
+
+# Churn is content-blind, so on its own it would call a pane parked in `gang
+# wait` busy — the exact false busy item 3 killed, rebuilt underneath it. It does
+# not, because the exclusion is by state gang OWNS: @gl_waiting carrying a live
+# waiter's pid, not a pattern matched off the screen.
+tmux set-option -w -t "$(id_of churner)" @gl_waiting "$$"
+check "a pane parked in gang's own wait is not made busy by churning" "idle (slack tug)" \
+  "$(FAKE_QUEUES=1 "$GANG" status churner | head -1)"
+tmux set-option -uw -t "$(id_of churner)" @gl_waiting
+check "and reads busy again the moment that wait is gone" "busy (tight tug)" \
+  "$("$GANG" status churner | head -1)"
+tmux send-keys -t "$(target_of churner)" C-c
+sleep 1
+check "and idle once the screen settles" "idle (slack tug)" \
+  "$("$GANG" status churner | head -1)"
 unset GANG_PROFILES
 
 # --- addressing --------------------------------------------------------------
@@ -962,6 +1015,16 @@ check "a context drop clears the mark rather than waiting out the clock" \
 check "and the mark is gone once it has served its purpose" "" \
   "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
 unset GANG_PROFILES
+
+# An owned flag beats a scraped marker only while something checks it is SET on
+# every path that compacts, and "correct because one human meant it" is the gap
+# install.sh's banner had. This reads the SOURCE, not a pane, so unlike a marker
+# it cannot rot: the day a second place types the compaction command, this names
+# what that commit forgot. Its edge, so nobody reads more into it — it cannot see
+# a path that compacts without GANG_COMPACT_CMD, and an agent typing /compact by
+# hand is stopped by roles/_common.md, which is documentation, not enforcement.
+check "the compaction command is typed in one place only (a second needs compaction_mark too)" "1" \
+  "$(grep -c 'inject "$AGENT_ID" "$GANG_COMPACT_CMD"' "$GANG")"
 
 # --- the band ladder ---------------------------------------------------------
 
