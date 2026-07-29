@@ -1079,6 +1079,15 @@ unset GANG_PROFILES
 check "the compaction command is typed in one place only (a second needs compaction_mark too)" "1" \
   "$(grep -c 'inject "$AGENT_ID" "$GANG_COMPACT_CMD"' "$GANG")"
 
+# The churn wait has two users — one pane in pane_stable, a whole team in
+# churn_batch — and the checks above assert the two agree about the same pane.
+# Tuning one and not the other makes them disagree silently, so the source says
+# there is one number and both paths read it.
+check "the churn wait is defined once" "1" \
+  "$(grep -c 'GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-' "$GANG")"
+check "and both churn paths read it instead of carrying their own" "2" \
+  "$(grep -c 'sleep "$GANG_CHURN_WAIT"' "$GANG")"
+
 # --- the band ladder ---------------------------------------------------------
 
 # Every default rung is absolute, so each must add exactly one band at any window

@@ -76,6 +76,14 @@ unset _d
 # warnings another one is noise, not advice.
 BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
 
+# One wait with two users: pane_stable asks it of a single pane and churn_batch
+# asks it of a whole team, and the suite asserts the two agree about the same
+# pane. Tuned in one place only, because tuning one and not the other would make
+# the batched roster column and the per-agent read quietly start disagreeing —
+# and a silent disagreement between two answers to one question is the drift this
+# file has had to chase in several other costumes.
+GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
+
 usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
@@ -487,11 +495,22 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     prof="$(tmux show-options -wqv -t "$id" @gl_profile)" || continue
     [ -n "$prof" ] || continue
     profile_file "$prof" >/dev/null 2>&1 || continue
-    # Subshelled so a pane gang cannot read costs this agent its batching rather
-    # than the whole roster its state column — and cksum rather than the screen
-    # itself, because holding a team's worth of captures means arrays this file
-    # does not use. Its byte count is the second field, so a false match needs a
-    # collision at identical length.
+    # Subshelled for two reasons. A pane gang cannot read costs this agent its
+    # batching rather than costing the whole roster its state column; and
+    # load_profile is per agent, so without the subshell the profile read last
+    # would leak into every state read after it.
+    #
+    # cksum rather than the screen itself, because holding a team's worth of
+    # captures means arrays this file does not use. Its byte count is the second
+    # field, so a false match needs a collision at identical length — but the
+    # cost of being wrong matters more than the odds of it: a false match reads
+    # as unchanged, which reads as not churning, which reads as IDLE. That is the
+    # false-idle direction, the one this whole state path exists to close.
+    #
+    # It is also the single place gang trades exactness for cost. pane_stable
+    # compares full screen text; this compares 32 bits. They are not the same
+    # test, and what holds them to the same answer is the suite asserting the
+    # batched column against the per-agent read on one pane.
     sum="$( ( load_profile "$prof"
               if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$id"; then exit 1; fi
               busy_painted "$id" && exit 1
@@ -501,7 +520,7 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     first="$first $id=$sum"
   done
   [ -n "$pending" ] || return 0
-  sleep 0.5
+  sleep "$GANG_CHURN_WAIT"
   for id in $pending; do
     sum="$( capture "$id" 2>/dev/null | cksum | tr ' ' '-' )" || continue
     was="$(map_get "$first" "$id")" || continue
@@ -687,7 +706,7 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   # is not the same claim as the agent having stopped working.
   local a b
   a="$(capture "$1")" || die "cannot read pane $1"
-  sleep 0.5
+  sleep "$GANG_CHURN_WAIT"
   b="$(capture "$1")" || die "cannot read pane $1"
   [ "$a" = "$b" ]
 }
