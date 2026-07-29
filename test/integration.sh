@@ -1907,6 +1907,13 @@ cc_box() {
 }
 
 cc_paint '\033[2mcommit the docs\033[0m'
+# The composer is found by an anchored glyph, not by counting bytes, and this
+# section is where that broke: a character-oriented awk made substr(s,1,3) read
+# three CHARACTERS, so no line ever equalled the prompt glyph and every box was
+# rejected. Asserted here rather than trusted, because which awk is installed is
+# not something the suite otherwise varies and every developer box hid it.
+check "the composer glyph test does not assume a byte width" "YES" \
+  "$(printf '❯ commit\n' | awk '{print ($0 ~ /^❯/) ? "YES" : "NO"}')"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'

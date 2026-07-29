@@ -260,7 +260,14 @@ profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
         s = line[i]
         if (!seen) {
           if (s ~ /^[[:space:]]*$/) continue
-          if (substr(s, 1, 3) != "❯") exit 1   # framed, but not the composer
+          # Anchored regex, not substr(s, 1, 3). Counting to 3 assumes the prompt
+          # glyph is three BYTES, which holds in a byte-oriented awk and fails in
+          # a character-oriented one: there substr takes three CHARACTERS, so a
+          # composer line comes back as "❯ c" and never equals "❯". The box is
+          # then rejected on every pane, and gang reports no input box at all —
+          # hold on every send, on a machine whose only difference is which awk
+          # is installed. A literal in a regex matches the same way under both.
+          if (s !~ /^❯/) exit 1                # framed, but not the composer
           sub(/^❯/, "", s); seen = 1
         }
         print s
