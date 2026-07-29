@@ -1387,9 +1387,35 @@ probe_verdict() { # $1 = probe output, $2 = stand-in; the verdict phrase on its 
 }
 
 probe_run() { # $1 = stand-in; the whole probe, bounded so a hung harness cannot hang the suite
-  GANG_PROFILES="$SHIM/probedir" GANG_PROBE_PROMPT="probe_work" \
-  GANG_PROBE_BOOT=25 GANG_PROBE_TURN="${2:-15}" GANG_PROBE_SETTLE="${3:-18}" GANG_PROBE_QUIET=2 \
-    timeout 120 "$GANG" vet --probe "$1" 2>&1
+  # Bounded in shell rather than with `timeout(1)`, which is GNU coreutils and is
+  # NOT on macOS: the cell that most needs a bound is the one where the command
+  # does not exist, and it failed as `command not found` — five checks reporting
+  # a missing binary as a probe verdict, and two more reading 127 as an exit
+  # status the probe chose.
+  #
+  # Run it in the background, arm a killer, take whichever finishes first.
+  #
+  # Output goes to a FILE and is printed afterwards, which is the part that makes
+  # the bound real. A command substitution waits for the write end of its pipe to
+  # close, not for the child to exit, so anything the probe spawned that outlives
+  # a TERM to the probe itself holds `$( )` open for as long as it lives —
+  # measured: killing the job at 2s still took the full 30 the child had asked
+  # for. `timeout(1)` would not have bounded it either, for the same reason; a
+  # file has no writer to wait on.
+  local out="$SHIM/probe-$1.out" rc=0
+  (
+    GANG_PROFILES="$SHIM/probedir" GANG_PROBE_PROMPT="probe_work" \
+    GANG_PROBE_BOOT=25 GANG_PROBE_TURN="${2:-15}" GANG_PROBE_SETTLE="${3:-18}" GANG_PROBE_QUIET=2 \
+      "$GANG" vet --probe "$1" >"$out" 2>&1 &
+    job=$!
+    ( sleep 120; kill -TERM "$job" 2>/dev/null ) >/dev/null 2>&1 &
+    killer=$!
+    wait "$job"; jrc=$?
+    kill -TERM "$killer" 2>/dev/null
+    exit "$jrc"
+  ) || rc=$?
+  cat "$out"
+  return "$rc"
 }
 
 pout="$(probe_run livemark)"; prc=$?
