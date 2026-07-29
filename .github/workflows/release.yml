@@ -24,6 +24,20 @@ name: release
 # either jsonpath therefore ships a stub left behind at the old version while
 # CHANGELOG.md, version.txt and the manifest all move — and release-please will
 # not say a word about it. If you edit those paths, re-run the dry run.
+#
+# THE RELEASE BRANCH AND HOW IT DIES (Law 6). Each run pushes
+# release-please--branches--main--components--gangline. It is reused, not
+# accumulated — one branch, never one per run — and it is DELETED BY MERGE: this
+# repo has delete_branch_on_merge enabled, so merging the release PR removes it.
+# Nothing in this workflow deletes it, and nothing needs to.
+#
+# It is also never stale, which matters because failed runs leave it sitting on
+# an old main. Read out of release-please 17.10.4 rather than assumed: the branch
+# helper takes baseSha from the CURRENT head of the target branch and, when the
+# branch already exists, skips creation and returns that sha anyway; the commit
+# is then built with main's head as its parent and the ref is moved with
+# force: true. So a branch left behind by a failed run is force-replaced on the
+# next successful one, not added to.
 
 on:
   push:
