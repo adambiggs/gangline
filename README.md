@@ -86,7 +86,7 @@ gang hitch heavy -m claude-fable-5              # -m launches on a specific mode
                                                 # which flag carries it
 gang send worker --from lead "read the failing test in ci and fix it"
 gang status worker                              # busy (tight tug) | idle (slack tug)
-                                                # | gated (hook set — see Permissions)
+                                                # | gated (hook set — a modal owns the box)
 gang capture worker                             # what's on worker's screen
 gang roster                                     # everyone, with state
 gang attach                                     # watch the whole team live
@@ -311,12 +311,16 @@ than risks it — and a skip never burns state, so the next sweep retries.
 - **Non-empty input boxes** are guarded: a human draft, ghost-text suggestion, or
   queued-message hint would interleave with an injection, so the nudge is held
   until the box is clear. Holding costs one sweep; interleaving costs the turn.
-- **Gated agents** are reported, never nudged: a harness stopped at a permission
-  prompt (`GANG_GATED_REGEX`) is waiting on the operator, and keystrokes sent to
-  it would *answer the dialog* — so every delivery path refuses, `status` and
-  `roster` say `gated (hook set)`, and patrol names it loudly instead of skipping
-  it. Every gate watched live also drops its busy hint and input box, so without
-  the marker a gated agent reads idle and the team stalls with nothing saying why.
+- **Gated agents** are reported, never nudged: a harness with a modal owning its
+  input box — a permission prompt, a model picker, anything that takes the screen
+  — is waiting on the operator, and keystrokes sent to it would *answer the
+  dialog*, so every delivery path refuses, `status` and `roster` say `gated (hook
+  set)`, and patrol names it loudly instead of skipping it. A modal is recognised
+  two ways: the profile's `GANG_GATED_REGEX`, or the absence of a readable input
+  box on a pane that is not busy. That second way is the one that matters, because
+  enumerating each TUI's modal chrome always misses one — so a pane whose state
+  cannot be positively determined resolves to `gated`, never `idle`. A missed
+  modal reading idle costs a message, silently; reading gated costs a delay.
 
 ## Permissions
 

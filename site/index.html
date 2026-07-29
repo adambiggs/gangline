@@ -283,12 +283,14 @@ compaction settles.</code></pre>
   </p>
   <pre><code><span class="p">$</span> gang send reviewer --from lead "ship it"
 gang: refusing to deliver 'ship it': reviewer is <span class="gate">gated (hook set)</span> — a
-permission prompt only the operator can answer owns the screen (gang attach)</code></pre>
+modal owns its input box, so the paste would land in the dialog instead (gang attach)</code></pre>
   <ul>
     <li><strong>Gated agents take no keystrokes from anyone.</strong> A harness
-        stopped at a permission prompt is waiting on the operator, and a send would
-        answer the dialog &mdash; so every delivery path refuses, and patrol names
-        the gate loudly as what the team is waiting on.</li>
+        with a modal owning its input box &mdash; a permission prompt, a picker,
+        anything that takes the screen &mdash; is waiting on the operator, and a
+        send would answer the dialog, so every delivery path refuses and patrol
+        names the gate loudly as what the team is waiting on. A pane whose state
+        gangline cannot positively determine reads gated, never idle.</li>
     <li><strong>Nudges hold for churning panes and half-typed drafts.</strong>
         Patrol injects only into a pane that is byte-identical across two captures
         with an empty input box. Holding costs one sweep; interleaving costs the

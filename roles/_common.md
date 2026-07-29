@@ -41,10 +41,10 @@ gang send <name> --from <you> "..."  task or answer a teammate
 
 Always sign with your own name. An unattributed send is refused, by design.
 State words carry the metaphor in brackets; when you script against them, match
-the `busy`/`idle`/`gated` prefix, not the whole string. `gated` means a
-permission prompt only the operator can answer owns that agent's screen: sends
-to it are refused so no keystroke can answer the dialog. Tell the operator —
-nothing you can send will unstick it.
+the `busy`/`idle`/`gated` prefix, not the whole string. `gated` means a modal
+owns that agent's input box — a permission prompt, a picker, anything that takes
+the screen — so sends to it are refused and no keystroke of yours can answer the
+dialog. Tell the operator — nothing you can send will unstick it.
 
 A send to a busy agent is accepted, on any harness whose profile says it takes
 input mid-turn; where it does not, the send is refused rather than pasted into
