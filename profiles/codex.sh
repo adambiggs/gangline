@@ -50,6 +50,15 @@ GANG_MODEL_OPT="-m"
 # What this deliberately does NOT match is a Codex waiting on an approval
 # dialog: the interrupt hint is gone while the prompt is up, so busy honestly
 # answers "no turn in flight". That state belongs to GANG_GATED_REGEX below.
+#
+# DO NOT SWEEP THIS STRING ACROSS PROFILES. Claude Code's TUI paints no
+# interrupt hint at all, so the two profiles disagreeing about the same literal
+# is the correct state and not drift to reconcile — delete it here to match and
+# Codex loses busy detection entirely, in every state, because this is its only
+# busy marker. Measured on clean panes that had never been told the string: 863
+# frames of 12536 here, 0 of 9467 there. Grepping a harness binary settles
+# neither direction: this string occurs ZERO times in the installed codex
+# binary while painting on codex's own screen. Only a pane answers it.
 GANG_BUSY_REGEX="esc to interrupt"
 # Modal chrome, not dialog sentences. Codex frames every modal the same way: it
 # draws the selected row with a "›" at column zero — the composer's own column —
