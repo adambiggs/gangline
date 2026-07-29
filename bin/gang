@@ -1261,7 +1261,30 @@ cmd_hitch() {
   esac
   [ -n "$msg" ] || return 0
   inject "$id" "$(envelope hitch "$msg")"
-  if [ -n "$role" ]; then printf '%s\n' "$(colour "$C_OK" "briefed $name as $role")"
+  # Delivered is not actionable. A brief tells the agent to DO something — read
+  # its role file, look at a directory — and doing it can trip a permission gate
+  # the harness raises as a modal. The pane then holds a dialog only the operator
+  # can answer, the work never starts, and the caller was told it was briefed.
+  # That cost a review team its whole scope once: three agents briefed, three
+  # successes reported, no reviews.
+  #
+  # It is a RACE and not a proof — the agent has to reach the tool call before
+  # this looks — so the two directions are not symmetric. Gated shortly after
+  # briefing is evidence the brief cannot be acted on. NOT gated is no evidence
+  # that it can, which is why the success line claims delivery and the quiet
+  # window, and nothing beyond them.
+  local settle="${GANG_BRIEF_GATE_WAIT:-3}"
+  if [ -n "${GANG_GATED_REGEX:-}" ] || declare -F profile_input >/dev/null; then
+    sleep "$settle"
+    if gated "$id"; then
+      # The exit code is the point. A caller scripting a fan-out reads $?, not
+      # prose, so however this is worded it must not exit 0.
+      printf '%s\n' "$(colour "$C_BAD" "briefed $name, but a dialog owns its screen within ${settle}s — the brief was delivered and cannot be acted on. Answer it with 'gang attach'")" >&2
+      return 1
+    fi
+  fi
+  if [ -n "$role" ]; then
+    printf '%s\n' "$(colour "$C_OK" "briefed $name as $role") $(colour "$C_DIM" "(delivered; no gate within ${settle}s — not proof it can act on it)")"
   else printf '%s\n' "$(colour "$C_OK" "delivered session marker to $name")"; fi
 }
 

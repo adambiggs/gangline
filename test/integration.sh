@@ -932,6 +932,49 @@ check "a role-less hitch still spots the dialog" "yes" \
 check "and reports it as a warning, not a failure" "0" "$rc"
 check "with nothing typed into the dialog" "no" "$(has quietmodal 'gang:')"
 
+# hitch verified the brief reached the pane and exited 0. It never asked whether
+# the agent could then DO anything with it. When the briefing itself trips a
+# permission gate — the role file lives somewhere the harness wants to ask about
+# — the operator is told "briefed <name> as reviewer", the agent sits on a modal,
+# and the work silently never starts. That cost a review team its whole scope:
+# three briefed, three successes reported, no reviews.
+#
+# The gate has to arrive AFTER the brief lands, so the fixture takes its cue from
+# a sentinel the suite creates on a timer. That makes the race deterministic
+# rather than hoping a real harness gates on schedule.
+export GANG_TEST_GATE="$SHIM/gate-sentinel"
+cat > "$SHIM/custom-profiles/lategate.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  [ -e "${GANG_TEST_GATE:-/nonexistent}" ] && return 1
+  local line
+  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "${line#❯}" | tr -d '\302\240'
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+rm -f "$SHIM/gate-sentinel"
+( sleep 5; touch "$SHIM/gate-sentinel" ) &
+out="$(GANG_BRIEF_GATE_WAIT=9 "$GANG" hitch gatee -p lategate -r worker -d /tmp 2>&1)"; rc=$?
+# The exit code is the point: a caller scripting a fan-out reads $?, not prose.
+check "a brief that lands on a gate does not report success" "1" "$rc"
+check "and says the brief was delivered but cannot be acted on" "yes" \
+  "$(case "$out" in *"cannot be acted on"*) echo yes ;; *) echo no ;; esac)"
+check "and the agent is still registered, because it is real and waiting" "yes" \
+  "$("$GANG" roster | grep -q '^gatee ' && echo yes || echo no)"
+
+# Gated-after-briefing is evidence the brief cannot be acted on; NOT gated is no
+# evidence that it can, because the agent may not have reached the tool call yet.
+# So the success line claims delivery and the quiet window, and nothing past them.
+rm -f "$SHIM/gate-sentinel"
+out="$(GANG_BRIEF_GATE_WAIT=1 "$GANG" hitch ungated -p lategate -r worker -d /tmp 2>&1)"; rc=$?
+check "an ungated brief still reports success" "0" "$rc"
+check "and claims only the window it actually watched" "yes" \
+  "$(case "$out" in *"no gate within"*) echo yes ;; *) echo no ;; esac)"
+unset GANG_PROFILES GANG_TEST_GATE
+
 
 # --- context bands -------------------------------------------------------------
 
