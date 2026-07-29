@@ -1144,19 +1144,102 @@ check "a session that genuinely is not running still reads as no team" "yes" \
 # not exist. A permanent failure wearing a transient message makes the caller
 # retry forever. The fix asks the filesystem whether the lock is THERE rather
 # than parsing errno text, which is localised and varies by platform.
+#
+# The fixture is a FILE sitting at the lock path, not a mode-500 root: a root gang
+# OWNS is repaired to 0700, so a mode its own user can fix does not model a
+# permanent failure. A file cannot be turned into a directory and reaches the same
+# branch — mkdir fails, and the filesystem answers that nothing is holding it.
 "$GANG" hitch locky -p bash -d /tmp >/dev/null
-ro="$SHIM/ro-lockdir"; mkdir -p "$ro"; chmod 500 "$ro"
+lockb="$SHIM/lockbase"; mkdir -p "$lockb"
+# Mirrors lock_pane's own mangling. If that ever changes, the check below that the
+# refusal names THIS path goes red — so the fixture reports its own staleness
+# instead of reading as a defect in the thing under test.
+lockfile="$lockb/$(printf '%s' "$(target_of locky)" | tr -c 'A-Za-z0-9' '_').lock"
+: > "$lockfile"
 t0="$(date +%s)"
-out="$(GANG_LOCK_DIR="$ro" "$GANG" send locky --from tester "MARK_LOCK" 2>&1)"; rc=$?
+out="$(GANG_LOCK_DIR="$lockb" "$GANG" send locky --from tester "MARK_LOCK" 2>&1)"; rc=$?
 t1="$(date +%s)"
-chmod 700 "$ro"
 check "a lock that cannot be created fails instead of reporting contention" "1" "$rc"
 check "and says nothing holds it, rather than blaming another process" "yes" \
   "$(contains "$out" "Nothing holds this lock")"
+check "and names the very path it could not create" "yes" \
+  "$(contains "$out" "$lockfile")"
 check "and fails fast instead of spinning out the contention timeout" "yes" \
   "$([ "$((t1 - t0))" -lt 10 ] && echo yes || echo no)"
 check "and nothing was pasted into the agent it could not lock" "no" \
   "$(has locky MARK_LOCK)"
+rm -f "$lockfile"
+
+# --- the lock root -------------------------------------------------------------
+#
+# #19. The default was ${XDG_RUNTIME_DIR:-/tmp}/gangline-<uid>, and XDG_RUNTIME_DIR
+# is set by the login session — so a pane, which inherits it, resolved
+# /run/user/<uid> while any delivering process without that environment resolved
+# /tmp. Two writable roots, both creations succeeding, neither excluding the other:
+# not a lock that fails, a lock that stops being one. A workspace-write sandbox
+# cannot write the first at all, which is the documented Codex setup, and it cost a
+# demo take.
+
+xr="$SHIM/xdg-ro"; mkdir -p "$xr"; chmod 500 "$xr"
+out="$(XDG_RUNTIME_DIR="$xr" "$GANG" send locky --from tester "MARK_XDG" 2>&1)"; rc=$?
+chmod 700 "$xr"
+check "a send survives an XDG_RUNTIME_DIR it cannot write" "0" "$rc"
+check "and it reached the agent" "yes" "$(has locky MARK_XDG)"
+
+# Not consulted, rather than merely survived: a send succeeding proves the default
+# works, not that this variable stopped deciding it.
+xw="$SHIM/xdg-rw"; mkdir -p "$xw"
+XDG_RUNTIME_DIR="$xw" "$GANG" send locky --from tester "MARK_XDG2" >/dev/null 2>&1
+check "and a WRITABLE XDG_RUNTIME_DIR is not taken as the root either" "no" \
+  "$([ -e "$xw/gangline-$(id -u)" ] && echo yes || echo no)"
+
+# The upgrade path, and the check that carries the change: every root that exists
+# was made by mkdir -p under the caller's umask, so refusing anything looser than
+# 0700 would break the first send after upgrade for everybody. A root gang owns is
+# repaired instead — tightening only removes access, so there is no window in it.
+loose="$SHIM/loose-root"; mkdir -p "$loose"; chmod 775 "$loose"
+out="$(GANG_LOCK_DIR="$loose" "$GANG" send locky --from tester "MARK_LOOSE" 2>&1)"; rc=$?
+check "a lock root of ours left open to others still delivers" "0" "$rc"
+check "and is tightened to 0700 rather than refused" "drwx------" \
+  "$(ls -ld "$loose" | cut -c1-10)"
+
+# mkdir -p FOLLOWS a symlink: measured, -p on a link to a directory returns 0 and
+# writes THROUGH it. So a link planted on a world-writable /tmp sent every lock
+# somewhere else while every process reported success — the failure no exit code
+# reveals.
+ltarget="$SHIM/link-target"; mkdir -p "$ltarget"
+lroot="$SHIM/link-root"; ln -s "$ltarget" "$lroot"
+out="$(GANG_LOCK_DIR="$lroot" "$GANG" send locky --from tester "MARK_LINK" 2>&1)"; rc=$?
+check "a symlinked lock root is refused rather than followed" "1" "$rc"
+check "and the refusal names it a symlink" "yes" "$(contains "$out" "is a symlink")"
+check "and nothing was pasted through it" "no" "$(has locky MARK_LINK)"
+
+# The one cause that yields EEXIST while -e reports the path ABSENT, so an entry
+# test of -e alone would send the operator to look at their disk while somebody
+# holds their lock root.
+dang="$SHIM/dangling-root"; ln -s "$SHIM/nowhere-at-all" "$dang"
+out="$(GANG_LOCK_DIR="$dang" "$GANG" send locky --from tester "MARK_DANG" 2>&1)"; rc=$?
+check "a DANGLING symlink at the lock root is refused" "1" "$rc"
+check "and is named a symlink, not an unwritable path" "yes" \
+  "$(contains "$out" "is a symlink")"
+
+filer="$SHIM/file-root"; : > "$filer"
+out="$(GANG_LOCK_DIR="$filer" "$GANG" send locky --from tester "MARK_FILE" 2>&1)"; rc=$?
+check "a lock root that is a plain file is refused" "1" "$rc"
+check "and says it is not a directory" "yes" "$(contains "$out" "not a directory")"
+
+# A failed mkdir is rc=1 for EEXIST, EACCES, EROFS, ENOSPC and ENAMETOOLONG alike,
+# so a root that cannot be created must not be diagnosed as one that is already
+# there. Not discriminating against the old code, which also refused here — it
+# guards the new branch that establishes WHY before interrogating the path.
+pro="$SHIM/parent-ro"; mkdir -p "$pro"; chmod 500 "$pro"
+out="$(GANG_LOCK_DIR="$pro/child" "$GANG" send locky --from tester "MARK_NOENT" 2>&1)"; rc=$?
+chmod 700 "$pro"
+check "a lock root that cannot be created at all is refused" "1" "$rc"
+check "and surfaces mkdir's own cause instead of guessing one" "yes" \
+  "$(contains "$out" "Permission denied")"
+check "and does not report it as a symlink or somebody else's directory" "no" \
+  "$(contains "$out" "is a symlink")"
 
 # --- addressing --------------------------------------------------------------
 

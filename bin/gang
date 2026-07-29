@@ -209,6 +209,8 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
        default 30%,50%,70%,85% — proportional so one ladder fits a mixed team),
      GANG_CONTEXT_LOG (persistent compliance-event log),
      GANG_CONTEXT_LOG_MAX_BYTES (active-log bound; default 8388608, plus one rotation),
+     GANG_LOCK_DIR (delivery locks; default /tmp/gangline-<uid>, created 0700 and
+       reachable from a sandbox — they die at reboot, not at logout),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
      GANG_BOOT_TIMEOUT (seconds to wait for a hitched harness to take input: 30)
 EOF
@@ -1188,11 +1190,84 @@ landing_zone() { # $1 = window id; the input box, or the whole pane if none is d
 LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -rf "$LOCK_PATH"; LOCK_PATH=""; }
 
+# The lock root is /tmp, not XDG_RUNTIME_DIR, and deliberately not a choice
+# between them. Every process delivering to a pane must AGREE on this path, and
+# XDG_RUNTIME_DIR is set by the login session — so one default resolved two ways:
+# /run/user/<uid> from a pane, which inherits it, and /tmp from anything not
+# carrying that environment. Measured: it is in the tmux server's GLOBAL
+# environment, and `env -i bash -lc` has it unset. Two writable roots, both
+# creations succeeding, neither excluding the other, and no error anywhere — the
+# lock does not fail there, it stops being a lock. /tmp is also reachable from a
+# workspace-write sandbox, which XDG_RUNTIME_DIR is not, and that sandbox is the
+# Codex setup this project's own README recommends.
+#
+# Law 6, where these die: at reboot or on the distro's tmpfiles sweep, not at
+# logout. They are empty between deliveries, so what outlives a session is an
+# empty directory; a lock left behind by a killed writer is reclaimed by the pid
+# check in the wait below.
+#
+# What /tmp costs is that it is world-writable, which is what lock_base is for.
+lock_base() { # $1 = the lock root; returns with it established as ours, or refuses
+  local err
+  # Intermediate components get mkdir -p: a nested GANG_LOCK_DIR needs them, and
+  # everything guaranteed below is about the FINAL component, whose contents are
+  # the locks. A hostile ANCESTOR is outside what a shell can
+  # check at all — that needs openat/O_NOFOLLOW — so the checked scope is stated
+  # rather than implied.
+  mkdir -p "$(dirname "$1")" 2>/dev/null || :
+  # NOT mkdir -p on the root itself. -p maps "I created it", "it existed and is
+  # mine", "it existed and is someone ELSE's", and "it is a symlink pointing
+  # anywhere at all" onto a single exit 0 — measured: -p on a symlink to a
+  # directory succeeds and writes THROUGH the link, so on a shared /tmp another
+  # user's directory, or their symlink, is adopted in silence. That is this
+  # release's own collapse sitting inside a POSIX utility. Plain mkdir returns
+  # EEXIST instead, which makes SUCCESS here proof by construction: mkdir(2) never
+  # follows a final symlink and never adopts an existing directory, and -m sets the
+  # mode in that same call rather than leaving a window open before a chmod.
+  err="$(mkdir -m 700 "$1" 2>&1)" && return 0
+  # A failed create is rc=1 for EEXIST, EACCES, EROFS, ENOSPC and ENAMETOOLONG
+  # alike and the shell cannot see which, so reading it AS "the name is taken" is
+  # the same collapse one level down: a full disk reported as an ownership
+  # problem. Ask the filesystem instead — the way the contention
+  # check below does, and for the same reason, that errno text is localised — and
+  # let mkdir's own message speak for every other cause. Surfaced, never matched on.
+  #
+  # -e is FALSE for a dangling symlink, which does yield EEXIST, so the entry test
+  # has to include -L. Without it, a link planted at the lock root is reported as a
+  # full disk, and that is the one branch where the wrong cause points AWAY from an
+  # attack.
+  [ -e "$1" ] || [ -L "$1" ] \
+    || die "cannot create the lock directory $1 — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable by ALL of them."
+  # -d, -O and the mode all FOLLOW a symlink, so -L has to answer first or a
+  # planted link reads as the healthy case. Every question here is asked about the
+  # LINK, not through it.
+  [ ! -L "$1" ] \
+    || die "the lock directory $1 is a symlink to $(readlink "$1" 2>/dev/null) — refusing to lock through it. A lock taken somewhere other than where the other delivering processes look is not a lock. Remove it, or point GANG_LOCK_DIR at a real directory."
+  [ -d "$1" ] \
+    || die "the lock path $1 exists and is not a directory — remove it, or point GANG_LOCK_DIR at a directory gang can own."
+  [ -O "$1" ] \
+    || die "the lock directory $1 is not owned by uid $(id -u) — refusing to take delivery locks in a directory somebody else controls, because they could delete or forge them. Point GANG_LOCK_DIR somewhere you own."
+  # Tightened, not refused. Every root that exists today was made by mkdir -p under
+  # the caller's umask — 0775, measured, on both of the ones this box had — so
+  # refusing anything looser than 0700 would refuse the root every existing user
+  # already has and break their first send after upgrade. Repairing a directory we
+  # have just established we OWN is not a fallback to somewhere else, and
+  # tightening only ever removes access, so there is no window in doing it. Set
+  # rather than read: what matters is that it IS 0700, chmod is idempotent, and
+  # this keeps stat's incompatible flags out of the delivery path entirely.
+  err="$(chmod 700 "$1" 2>&1)" \
+    || die "cannot restrict the lock directory $1 to this user — ${err:-unknown error}. Left open to others on a shared /tmp, another user can delete or forge the delivery locks gang relies on."
+  # What tightening cannot undo: entries another user planted while it stood open.
+  # Those remain, and remain LOUD — a planted lock naming a live pid times out in
+  # the wait below and says so, and one naming a dead pid is reclaimed there. gang
+  # does not sweep them: a cleanup that guesses which lock is stale is how a tool
+  # ends somebody's team.
+}
+
 lock_pane() { # $1 = window id; held until lock_release or this process exits
   local base holder t=0 path err
-  base="${GANG_LOCK_DIR:-${XDG_RUNTIME_DIR:-/tmp}/gangline-$(id -u)}"
-  err="$(mkdir -p "$base" 2>&1)" \
-    || die "cannot create a lock directory at $base — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR (or XDG_RUNTIME_DIR) at somewhere writable by ALL of them."
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$base"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
   while :; do
     err="$(mkdir "$path" 2>&1)" && break
@@ -1205,7 +1280,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
     # forever. Asked of the filesystem rather than by matching errno text, which
     # is localised and varies between platforms.
     [ -d "$path" ] \
-      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created at all, so retrying will not help. Point GANG_LOCK_DIR (or XDG_RUNTIME_DIR) at somewhere writable by every gang process that delivers to this pane."
+      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created at all, so retrying will not help. Point GANG_LOCK_DIR at somewhere writable by every gang process that delivers to this pane."
     holder="$(cat "$path/pid" 2>/dev/null)" || holder=""
     if [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; then
       rm -rf "$path"; continue          # the writer died mid-delivery
