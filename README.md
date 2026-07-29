@@ -27,9 +27,9 @@ flowchart LR
   observe each CLI; the team workflow stays the same.
 - **Keep the glass.** Attach to the session and watch, steer, or take over any
   agent through its real TUI.
-- **Know whether a message landed.** Gangline reads the target's composer before
-  and after pasting, submits with a separate Enter, and checks again. A delivery
-  it cannot verify fails loudly.
+- **Know whether a message landed.** With the shipped profiles, Gangline reads
+  the target's composer before and after pasting, submits with a separate Enter,
+  and checks again. A delivery it cannot verify fails loudly.
 - **Keep long-running agents moving.** Context readouts, warning bands, and
   `gang compact --resume` let an agent hand work to its post-compaction self.
 - **Replace policy with files.** Profiles describe harnesses; Markdown role briefs
@@ -43,7 +43,8 @@ curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh 
 
 The installer clones Gangline to `~/.local/share/gangline`, links `gang` into
 `~/.local/bin`, and fast-forwards the clone when run again. Set `GANGLINE_HOME`
-or `GANGLINE_BIN` to choose other locations.
+or `GANGLINE_BIN` to choose other locations. The npm and PyPI packaging stubs
+are not published packages; `install.sh` is the supported install path today.
 
 Prefer not to pipe into a shell? Read [`install.sh`](install.sh), then clone and
 link it yourself:
@@ -100,7 +101,7 @@ you choose the label.
 gang hitch worker -p codex -r worker -d "$PWD"
 
 # Send a task. Delivery is accepted mid-turn only when the profile declares that safe.
-gang send worker --from operator "inspect the failing tests and propose a fix"
+gang send worker --from operator 'inspect the failing tests and propose a fix'
 
 # Observe it without taking over its pane.
 gang status worker
@@ -143,6 +144,11 @@ Tag-shaped text in the body is neutralised, so the body cannot end its own
 envelope. This is attribution, not authentication: Gangline is single-operator
 software, and anyone able to type into a pane is already trusted.
 
+The sending shell processes the body before `gang` receives it. Single-quote
+literal prose that contains backticks, `$()`, `$variables`, globs, or other shell
+syntax; double-quoted backticks execute a command before delivery verification
+can see the mistake. See [Shell-safe messages](docs/operations.md#shell-safe-messages).
+
 For profiles with a composer reader, delivery is a measured sequence: read the
 composer, paste, require it to change, send Enter separately, then require a
 later read to differ from the pasted state. Gangline serialises its own writers
@@ -157,8 +163,8 @@ composer still contains exactly that paste. Otherwise `status`, `roster`, and
 
 `gang status <name>` reports:
 
-- `busy (tight tug)` when a declared busy marker is painted, the harness wrote to
-  the pty recently, or the pane changes between samples;
+- `busy (tight tug)` when a declared busy marker is painted, a profile verified
+  quiet at rest wrote to the pty recently, or the pane changes between samples;
 - `idle (slack tug)` when none of those working signals applies;
 - `gated (hook set)` when a modal owns the input area or a profile with a composer
   reader cannot otherwise identify a safe input box.
@@ -169,11 +175,11 @@ still verifies the composer directly.
 
 ### Busy agents can still receive messages
 
-Claude Code, Codex, and opencode profiles declare that their composers accept
-input during a turn. A send to one is verified and reported as **accepted
-mid-turn**; whether the harness uses it immediately or at a boundary is the
-harness's decision. Pi currently makes no such declaration, so Gangline refuses
-a mid-turn Pi send unless you use `--wait`.
+The shipped Claude Code, Codex, opencode, and Pi profiles declare that their
+composers accept input during a turn. A send to one is verified and reported as
+**accepted mid-turn**; whether the harness uses it immediately or at a boundary
+is the harness's decision. A custom profile without that declaration is refused
+while busy unless you use `--wait`.
 
 ### Context is explicit
 

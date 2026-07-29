@@ -70,6 +70,44 @@ Do not give different writers different lock directories: they would stop
 serialising against one another. Gangline fails loudly rather than silently
 falling back when the configured lock path cannot be created.
 
+## Shell-safe messages
+
+`gang send` receives its body as ordinary command-line arguments. The sender's
+shell expands those arguments **before Gangline sees them**: backticks and `$()`
+run commands, variables expand, and unquoted globs become filenames. Delivery
+verification can prove only that the resulting argv text landed, not that it is
+the prose the sender intended.
+
+Single-quote literal prose, especially prose about code:
+
+```sh
+gang send worker --from lead 'review `bin/gang`; do not run it'
+```
+
+For generated or multiline text, build it without evaluating its contents, then
+pass one quoted argument:
+
+```sh
+body=$(cat <<'EOF'
+Review `bin/gang`.
+Treat $HOME as an example, not a variable to expand.
+EOF
+)
+gang send worker --from lead "$body"
+```
+
+Gangline currently has no stdin-body option; [issue
+#14](https://github.com/adambiggs/gangline/issues/14) tracks that gap.
+
+`gang send --wait` is also deliberately bounded. Its timeout defaults to 300
+seconds; if the target never reads idle, the command fails **without delivering
+anything**. Use `--wait` only when blocking and possible non-delivery are the
+intended behavior, and set `--timeout` explicitly when 300 seconds is wrong:
+
+```sh
+gang send worker --from lead --wait --timeout 3000 'report when the long run reaches a checkpoint'
+```
+
 ## Context readouts and warnings
 
 Every context consumer goes through the active profile's `profile_context`:
@@ -148,8 +186,8 @@ Gangline instead starts a detached waiter.
 
 The waiter uses the first available safe signal:
 
-1. a declared live compaction marker (none of the shipped profiles currently
-   declares one);
+1. a declared live compaction marker (the shipped Pi profile currently declares
+   one; the other shipped profiles do not);
 2. for a gang-issued compaction with a readable baseline, context falling below
    half that baseline;
 3. after the compaction grace or without context introspection, a bounded series

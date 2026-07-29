@@ -74,7 +74,8 @@ Options must appear before the message body:
 - `--from <sender>`: required sender identity.
 - `-w`, `--wait`: if the target is busy, wait for idle instead of using or
   refusing mid-turn delivery.
-- `--timeout <seconds>`: whole-number timeout for `--wait`; default 300.
+- `--timeout <seconds>`: whole-number timeout for `--wait`; default 300. When the
+  timeout expires, the command fails before injection and delivers nothing.
 
 Inside the team, the sender must equal the calling tmux window's name. Outside
 the team, the trusted operator supplies it. Sender names follow the same grammar

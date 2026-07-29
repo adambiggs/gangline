@@ -34,10 +34,18 @@ refactor!: rename executable and protocol from gl to gang
 ```
 
 The `commit-msg` hook rejects anything else, and the `commits` workflow re-runs
-that same hook over every pushed commit — one regex, so the two cannot drift. A
-ruleset makes the `conventional` check required on the default branch (adding
-`shell` to it is a ruleset change); repository admins bypass it, so for the
-maintainer the hook is still the gate that matters.
+that same hook over every pushed commit — one regex, so the two cannot drift. The
+workflow also checks the pull request title. **Your PR title must be a
+Conventional Commit too:** this repository squashes with `COMMIT_OR_PR_TITLE`, so
+when a PR has multiple commits, its title is the subject that lands on `main`.
+
+An active ruleset makes the `conventional` check required on `main` for outside
+contributors. Repository admins bypass that ruleset in `always` mode by design;
+the local hook remains their commit gate. The bypass is also what makes the
+automated release PR mergeable: a PR opened by the workflow's `GITHUB_TOKEN`
+does not trigger workflow runs, so its required `conventional` check can never
+post.
+
 Subjects git generates itself — merge commits, `fixup!`, `squash!`, `amend!` —
 pass through, since rejecting them breaks merge and interactive rebase.
 `git revert` is not exempt: `revert` is a type, so edit its generated subject like
@@ -46,6 +54,26 @@ any other.
 Write the body for someone deciding whether to trust the change: what failed, what
 the fix is, and what proved it. Scraped-marker changes say which harness version
 they were verified against — that pin is what `gang vet` reads.
+
+## Releases
+
+[release-please](https://github.com/googleapis/release-please) owns releases; no
+repository script or hand-written changelog step does. Pushes to `main` maintain
+one release PR from the Conventional Commits since the last tag. Merging
+that PR creates the tag and GitHub Release and writes `CHANGELOG.md`.
+**Do not edit `CHANGELOG.md` by hand or add changelog entries to ordinary PRs.**
+
+`.release-please-manifest.json` is the version source. A release commit updates
+that manifest, `version.txt`, `packaging/npm/package.json`, and
+`packaging/pypi/pyproject.toml`; do not introduce another version location or
+bump one of those files through a second mechanism. The initial manifest is
+anchored at the unpublished `0.0.1`, and the verified release-please dry run
+plans the first release as `0.1.0`.
+
+The npm and PyPI stubs are not published packages yet; install through
+`install.sh`, not a registry. After every release, verify both packaging stubs
+moved with the manifest: the extra-file updaters can leave a missing or malformed
+JSONPath unchanged while the release workflow remains green.
 
 ## Before adding code
 

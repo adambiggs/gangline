@@ -121,9 +121,9 @@
 
   <p class="lede">
     Run Claude Code, Codex, opencode, and Pi together, using each where it is
-    strongest. Every agent is a named tmux window you can watch or steer; every
-    peer message is attributed and checked in the target's real composer before
-    Gangline calls it delivered.
+    strongest. Every agent is a named tmux window you can watch or steer; with
+    the shipped profiles, peer messages are attributed and checked in the target's
+    real composer before Gangline calls them delivered.
   </p>
 
   <p class="lede">
@@ -162,7 +162,7 @@
 <span class="p">$</span> gang hitch worker -p codex -r worker
 <span class="ok">hitched worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
 <span class="ok">briefed worker as worker</span>
-<span class="p">$</span> gang send worker --from lead "read the failing test in ci and fix it"
+<span class="p">$</span> gang send worker --from lead 'read the failing test in ci and fix it'
 <span class="ok">delivered to worker as [gang:lead]</span> <span class="det">(verified in pane, submitted)</span>
 <span class="p">$</span> gang roster
 lead             claude-code  <span class="ok">idle (slack tug)</span>   142k/1000k (14%)
@@ -179,20 +179,22 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     links <code>gang</code> into <code>~/.local/bin</code>, re-run to update.
     Piping a stranger's script into a shell is your call to make &mdash;
     <a href="https://github.com/adambiggs/gangline/blob/main/install.sh">read it first</a>,
-    or clone and symlink <code>bin/gang</code> yourself; the installer does nothing more.
+    or clone and symlink <code>bin/gang</code> yourself.
   </p>
   <p class="note">
     <strong>One thing your harness will not tell you.</strong> gangline keeps
     your configured harness permission posture and sets no general permission
-    bypass, save one narrow grant: it pre-authorizes the role-brief directory it is itself
-    pointing the agent at, merged into your config rather than replacing it. An
+    bypass. One narrow exception belongs to the shipped opencode profile: it
+    pre-authorizes the role-brief directory it is itself pointing the agent at,
+    merged into your config rather than replacing it. An
     unattended agent cannot answer a dialog and gang will not answer one
     for it, so the setting that stops your harness asking belongs in that
     harness's own config &mdash; the README names the one each wants. Beyond
     that: agents on one machine already pass text to one another through files, a
     shared checkout, or each other's panes; gangline does not create that path,
     it makes it routine and gives it structure the ad-hoc versions lack &mdash;
-    envelopes no line can escape, delivery verified in the pane, and refusals at
+    envelopes whose bodies cannot escape their attribution, delivery verified in
+    the pane, and refusals at
     gates. Treat every agent's output as untrusted input to
     the next, and bound the machine if you need a boundary: a container, a VM, a
     separate account. A separate
@@ -243,6 +245,11 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     box differs from the pasted state. An empty composer and a harness's queued
     message hint are both valid submitted states.
   </p>
+  <p class="note">
+    The sender's shell runs before Gangline does. Single-quote literal message
+    prose: backticks or <code>$()</code> inside double quotes execute locally, and
+    Gangline can only verify the already-expanded text it receives.
+  </p>
   <p class="lede">
     Matching the text <em>somewhere</em> on screen would verify against an identical
     earlier send still sitting in the transcript; a changed composer is the
@@ -287,11 +294,11 @@ compaction settles.</code></pre>
   <p>
     gangline's delivery failure mode is a refusal you can read, not a guess you can't.
   </p>
-  <pre><code><span class="p">$</span> gang send reviewer --from lead "ship it"
+  <pre><code><span class="p">$</span> gang send reviewer --from lead 'ship it'
 gang: refusing to deliver 'ship it': reviewer is <span class="gate">gated (hook set)</span> — a
 modal owns its input box, so the paste would land in the dialog instead (gang attach)</code></pre>
   <ul>
-    <li><strong>Gated agents take no keystrokes from anyone.</strong> A harness
+    <li><strong>Gangline sends no keystrokes to gated agents.</strong> A harness
         with a modal owning its input box &mdash; a permission prompt, a picker,
         anything that takes the screen &mdash; is waiting on the operator, and a
         send would answer the dialog, so every delivery path refuses and patrol
@@ -306,7 +313,8 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
         readout gang cannot reach shows as <code>-</code> in the roster and is
         reported as not patrolled, never quietly skipped.</li>
     <li><strong>Scrape drift is diagnosed, not endured.</strong> Every scraped
-        marker is pinned to live-verified harness versions; <code>gang vet</code>
+        marker in a shipped harness profile is pinned to live-verified versions;
+        <code>gang vet</code>
         exits nonzero on drift &mdash; and says so when a clean bill can't explain
         misbehavior, because version pins don't watch your UI mods.</li>
   </ul>
@@ -357,11 +365,11 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
     They are the same kind of extension point, and neither is an integration.
   </p>
   <ul>
-    <li><strong>A profile is shell configuration</strong> declaring what gang
-        cannot know generically: launch and model syntax, busy and gated states,
-        compaction, mid-turn input, and optional readers for context and the input
-        box. Markers nobody has watched live stay unset, and gang takes the slower,
-        safer branch rather than guessing.</li>
+    <li><strong>A profile is sourced shell</strong> declaring what gang cannot
+        know generically: launch and model syntax, busy and gated states,
+        compaction, mid-turn input, and optional functions that read context and
+        the input box. Shipped markers nobody has watched live stay unset, and
+        gang takes the slower, safer branch rather than guessing.</li>
     <li><strong>A role is a markdown brief</strong> &mdash; lead splits work and
         guards its own context hardest, worker reports what changed and what proves
         it, reviewer verifies claims rather than reading diffs. The brief is
