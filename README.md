@@ -236,6 +236,8 @@ option, environment variable, output detail, and alias.
 
 ## Profiles, roles, and diagnostics
 
+### Profiles and roles
+
 The shipped harness profiles are `claude-code`, `codex`, `opencode`, and `pi`.
 A profile owns the harness-specific launch command, model flag, observable busy
 and gated states, compaction command, mid-turn input declaration, and optional
@@ -246,6 +248,8 @@ The shipped role briefs are `lead`, `worker`, and `reviewer`; all include
 `roles/_common.md`. `GANG_ROLES=/path/to/roles` shadows them by name. Gangline
 points a new agent at the brief files rather than pasting their contents, so the
 agent can reread them after compaction.
+
+### Strategy rot
 
 Profiles observe terminal chrome and harness-owned files, both of which can
 change. `gang vet` compares installed harness versions with each profile's pins
