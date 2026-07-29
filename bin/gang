@@ -188,16 +188,43 @@ test_only_profile() { # $1 = profile name; exit 0 if it is a stand-in, not a har
   [ "$(profile_file "$1" 2>/dev/null)" = "$ROOT/profiles/$1.sh" ]
 }
 
-list_profiles() {
-  local d p n
+# Every profile INSTALLED, whether or not it is offered: both dirs, deduped by
+# name, because a name present in each is one profile with the shipped copy
+# shadowed. The two callers want different sets and the difference is the whole
+# point of splitting this out — `gang profiles` offers, `gang vet` diagnoses, and
+# a rot check that only walked what is offered would quietly stop walking the
+# stand-in it is shipped beside.
+all_profiles() {
+  local d p
   for d in ${GANG_PROFILES:+"$GANG_PROFILES"} "$ROOT/profiles"; do
     [ -d "$d" ] || continue
     for p in "$d"/*.sh; do
       [ -f "$p" ] || continue
-      n="$(basename "$p" .sh)"
-      test_only_profile "$n" || printf '%s\n' "$n"
+      basename "$p" .sh
     done
   done | sort -u
+}
+
+list_profiles() { # what an operator may pick from
+  # Built whole and written ONCE, which is load-bearing and not tidiness. Callers
+  # pipe this into `grep -q`, and a reader that exits at its match closes the pipe
+  # while a line-at-a-time writer still has lines to write: the writer takes
+  # SIGPIPE, and under the caller's pipefail the whole pipeline reads as a MISS —
+  # a name that is in the list reported as absent. Measured at exactly that, one
+  # run in five, and a one-in-five miss is the failure that gets called flaky and
+  # closed rather than fixed. A single write lands in the pipe buffer before any
+  # reader can have matched anything, which is the property the pipe through
+  # `sort` used to provide by accident; here it is on purpose.
+  local n out=""
+  while read -r n; do
+    [ -n "$n" ] || continue
+    test_only_profile "$n" && continue
+    out="$out$n
+"
+  done <<EOF
+$(all_profiles)
+EOF
+  printf '%s' "$out"
 }
 
 profile_file() { # $1 = profile name -> path on stdout; yours wins over the shipped one
@@ -1826,9 +1853,23 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
   # (false busy/idle, missing beacon, failed injection verify).
   local file_issue=0
   [ "${1:-}" = "--file-issue" ] && file_issue=1
-  local p prof installed v match out drift=0
-  for p in "$ROOT"/profiles/*.sh; do
-    prof="$(basename "$p" .sh)"
+  local f prof installed v match out drift=0
+  # Every profile installed, not just the shipped ones. A profile in GANG_PROFILES
+  # is the one whose pins are LEAST likely to be maintained — nobody ships it, so
+  # nobody bumps it when a harness updates — and walking $ROOT/profiles alone meant
+  # a user's own harness was the single file never checked. Where a name exists in
+  # both dirs it appears once and the loaded file is theirs, which is what has been
+  # vetted all along: this loop only ever took the NAME from the path, and
+  # load_profile has always re-resolved.
+  #
+  # Deliberately all_profiles and not list_profiles, which hides the test-only
+  # stand-ins: that list answers "what may an operator pick", and vet asks "what is
+  # installed here that can rot". Routing it through the offered list would have
+  # silently stopped vetting bash — a guard lost with nothing printed to say so.
+  # Read on fd 3 so a version command or a profile_vet that touches stdin cannot
+  # eat the rest of the list.
+  while read -r prof <&3; do
+    [ -n "$prof" ] || continue
     load_profile "$prof"
     if [ "$GANG_VERIFIED_VERSIONS" = "any" ]; then
       printf '%-12s %-26s %s\n' "$prof" "-" \
@@ -1863,6 +1904,19 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
         [ "$file_issue" -eq 1 ] && file_rot_issue "$prof" "$installed"
       fi
     fi
+    # Which file answered, but only when it is not the obvious one, so the common
+    # report does not grow a column of paths that are all the same. vet is what you
+    # run when scraping misbehaves, and its own clean-bill hint tells you to shadow
+    # the profile via GANG_PROFILES and re-verify — advice you cannot act on if the
+    # report will not say whether your shadow was the file it read.
+    f="$(profile_file "$prof")"
+    if [ "$f" != "$ROOT/profiles/$prof.sh" ]; then
+      if [ -f "$ROOT/profiles/$prof.sh" ]; then
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "from $f (shadowing the shipped profile)")"
+      else
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "from $f")"
+      fi
+    fi
     # A profile that reads harness files instead of the screen rots on a schema
     # change, not a TUI change — same disease, different tissue. The profile owns
     # the check (law 4); vet just runs it and counts a failure as drift.
@@ -1878,7 +1932,9 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
         drift=1
       fi
     fi
-  done
+  done 3<<EOF
+$(all_profiles)
+EOF
   # Markers are glyphs, and glyphs only match in a UTF-8 locale. gang selects one
   # at startup; a host that offers none scrapes in byte semantics, where a
   # spinner or a progress bar silently stops matching. That is strategy rot with

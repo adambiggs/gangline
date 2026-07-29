@@ -71,6 +71,20 @@ id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
 
 pane_of() { tmux capture-pane -pJ -t "$(id_of "$1")"; }
 has() { if pane_of "$1" | grep -qF -- "$2"; then echo yes; else echo no; fi; }
+# Ask an already-captured gang output whether it holds something. Captured first
+# and matched off a here-string rather than piped, because this suite runs
+# pipefail and `grep -q` EXITS AT ITS MATCH: the producer takes SIGPIPE on the
+# lines it had not written yet, the pipeline reports 141, and a thing that IS in
+# the output is reported absent. Measured against `gang profiles` inside this
+# suite — twice in eight runs, on a line that was the FIRST one printed, so a
+# long list is not even required. A check that misses one run in five is the one
+# that gets called flaky and deleted, taking its invariant with it. The same
+# reasoning is written out at the vet format gate, which hit this first and
+# captures into a variable by hand; these two put it behind a name so the next
+# check does not have to rediscover it. Both take output that has ALREADY been
+# captured — the capture is the fix, the helper is only how it reads.
+lists() { grep -qxF -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = a whole line
+holds() { grep -qE  -- "$2" <<<"$1" && echo yes || echo no; }  # $2 = an ERE
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
 verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
 target_of() { # $1 = window name; a NON-EMPTY @id or the suite stops
@@ -157,13 +171,13 @@ check "hitching the stand-in is refused" "1" "$rc"
 check "and names it a stand-in, not an unknown profile" "yes" \
   "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
 check "and nothing was hitched" "no" \
-  "$("$GANG" roster | grep -q '^standin ' && echo yes || echo no)"
+  "$(holds "$("$GANG" roster)" '^standin ')"
 out="$(GANG_TEST_PROFILES= "$GANG" adopt nosuchwin -p bash 2>&1)"; rc=$?
 check "adopting onto the stand-in is refused too" "1" "$rc"
 check "before it even looks for the window" "yes" \
   "$(case "$out" in *stand-in*) echo yes ;; *) echo no ;; esac)"
 check "and the suite's own opt-in still reaches it" "yes" \
-  "$("$GANG" profiles | grep -qx bash && echo yes || echo no)"
+  "$(lists "$("$GANG" profiles)" bash)"
 
 # `gang up` is the first command a new install runs, and the only one that both
 # hitches and briefs with no arguments at all — so it is the one whose breakage a
@@ -383,7 +397,7 @@ check "and the sender is told the text may be sitting there" "yes" \
 check "status reads out the undelivered paste" "yes" \
   "$(case "$("$GANG" status vanisher)" in *"undelivered paste"*) echo yes ;; *) echo no ;; esac)"
 check "and the roster carries it where a lead scans" "yes" \
-  "$("$GANG" roster | awk '$1=="vanisher"' | grep -q 'undelivered paste' && echo yes || echo no)"
+  "$(holds "$("$GANG" roster | awk '$1=="vanisher"')" 'undelivered paste')"
 
 # The box comes back: whatever owned it is gone. Gang still will not type into
 # it, because this path never read the box and has no rendering to match — and by
@@ -391,7 +405,7 @@ check "and the roster carries it where a lead scans" "yes" \
 # up gang's mess must not take with it.
 echo 0 > "$SHIM/vanish-from"
 check "a sweep keeps reporting what it cannot prove is gang's own text" "yes" \
-  "$("$GANG" patrol | verdict vanisher | grep -q 'UNDELIVERED PASTE' && echo yes || echo no)"
+  "$(holds "$("$GANG" patrol | verdict vanisher)" 'UNDELIVERED PASTE')"
 check "and the message really is still in that box" "yes" "$(has vanisher MARK_VANISH)"
 
 # Cleared by hand, the record goes with it: a box that reads back empty proves
@@ -412,7 +426,7 @@ check "an Enter withheld from a modal is still a failed send" "1" "$rc"
 check "and the sender is told the paste is staged, not that it is clean" "yes" \
   "$(case "$out" in *"staged unsent"*) echo yes ;; *) echo no ;; esac)"
 check "which is also what the roster starts saying" "yes" \
-  "$("$GANG" roster | awk '$1=="vanisher"' | grep -q 'undelivered paste' && echo yes || echo no)"
+  "$(holds "$("$GANG" roster | awk '$1=="vanisher"')" 'undelivered paste')"
 
 # ...and the first sweep after the modal lifts takes it back out, on that
 # evidence and no less: box reachable, contents identical to what gang pasted.
@@ -883,7 +897,7 @@ check "and nothing was pasted into the agent it could not lock" "no" \
 # else's team, and — through gang down — killing it.
 tmux new-session -d -s "${GANG_SESSION}-longer" bash
 check "a session name is not a prefix of somebody else's team" "yes" \
-  "$(GANG_SESSION="${GANG_SESSION}x" "$GANG" roster 2>&1 | grep -q 'no team' && echo yes || echo no)"
+  "$(holds "$(GANG_SESSION="${GANG_SESSION}x" "$GANG" roster 2>&1)" 'no team')"
 check "and down refuses a team that does not exist by that exact name" "1" \
   "$(GANG_SESSION="${GANG_SESSION}x" "$GANG" down >/dev/null 2>&1; echo $?)"
 tmux kill-session -t "=${GANG_SESSION}-longer" 2>/dev/null
@@ -896,8 +910,18 @@ for bad in 'bad"name' ' leading' 'has space' 'semi;colon'; do
   "$GANG" hitch "$bad" -p bash -d /tmp >/dev/null 2>&1
   check "a name that cannot round-trip is refused: [$bad]" "1" "$?"
 done
+# -E with plain pipes, because BRE alternation is a GNU extension and POSIX BRE
+# has none: a strict grep reads \| as a literal backslash-pipe, matches nothing,
+# and returns 0 — which is what this check EXPECTS. So the portability failure
+# here does not cry wolf, it goes quiet: four orphan windows would still count 0
+# and the check would pass while the thing it guards is broken. Same class as the
+# -F invariants further down, opposite and worse direction, because a guard that
+# false-alarms gets deleted while one that false-passes gets believed. Not
+# demonstrable here, which is why nothing below asserts it: GNU keeps \| even
+# under POSIXLY_CORRECT, and ugrep -G is GNU-compatible, so both greps on this
+# box give the same answer either way. The claim is POSIX, not a measurement.
 check "and no orphan window is left running for one" "0" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W' | grep -c 'bad"name\|leading\|has space\|semi;colon')"
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W' | grep -cE 'bad"name|leading|has space|semi;colon')"
 
 # tmux reads an all-digit target as a window INDEX. alpha is at index 1, so a
 # name-built target sent "1" to alpha and called it delivered.
@@ -950,7 +974,48 @@ check "GANG_ROLES overrides the shipped brief" "yes" \
 fake_harness slowboot "sleep 3; PS1='❯ ' bash --norc"
 
 check "GANG_PROFILES adds a harness" "yes" \
-  "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles | grep -qx slowboot && echo yes || echo no)"
+  "$(lists "$(GANG_PROFILES="$SHIM/custom-profiles" "$GANG" profiles)" slowboot)"
+
+# ...and vet has to walk the same dir, on its own kept-apart list. A profile in
+# GANG_PROFILES is the one whose pins nobody maintains — no release bumps it — so
+# it was the single file a strategy-rot check never read. Its own dir, not
+# custom-profiles, because everything in there is pinned "any" on purpose and an
+# UNPINNED row is the thing under test.
+mkdir -p "$SHIM/vetdir"
+printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\n' > "$SHIM/vetdir/myharness.sh"
+vout="$(GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
+check "vet reads a profile that exists only in GANG_PROFILES" "yes" \
+  "$(holds "$vout" 'myharness .*UNPINNED')"
+check "and says which file answered, since only that proves the shadow took" "yes" \
+  "$(holds "$vout" "from $SHIM/vetdir/myharness[.]sh")"
+
+# The deliberate split, and the one that would regress in silence: vet walks what
+# is INSTALLED, `profiles` offers what an operator may PICK. Routing vet through
+# the offered list would stop it vetting the bash stand-in with nothing printed to
+# say a profile had dropped out of the report. Asserted as a pair on one tree, so
+# neither half can be satisfied by making the two lists the same.
+#
+# Both run with the suite's own opt-in OFF, and that is the whole discrimination:
+# GANG_TEST_PROFILES=1 is exported at the top of this file, and under it the two
+# lists AGREE about bash — so a vet routed through the offered list would pass this
+# just as happily. Only with the opt-in off do they differ.
+vout="$(GANG_TEST_PROFILES= GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
+plist="$(GANG_TEST_PROFILES= GANG_PROFILES="$SHIM/vetdir" "$GANG" profiles)"
+check "vet still covers the test-only stand-in" "yes" \
+  "$(holds "$vout" '^bash ')"
+check "while profiles still withholds it" "no" \
+  "$(lists "$plist" bash)"
+
+# A shadow of a shipped profile is loaded, not merely listed: same name in both
+# dirs is ONE profile, and the pins that count are the ones in the file that wins.
+printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERSION_CMD="echo 9.9.9"\nGANG_VERIFIED_VERSIONS="9.9.9"\n' \
+  > "$SHIM/vetdir/claude-code.sh"
+vout="$(GANG_PROFILES="$SHIM/vetdir" "$GANG" vet 2>/dev/null)"
+check "a shadowed profile is vetted against the shadow's pins" "1" \
+  "$(printf '%s' "$vout" | grep -c '^claude-code .*9\.9\.9.*OK')"
+check "and is named as shadowing rather than passed off as the shipped one" "yes" \
+  "$(holds "$vout" 'shadowing the shipped profile')"
+rm -rf "$SHIM/vetdir"
 GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch slowpoke -p slowboot -r worker -d /tmp >/dev/null
 check "a brief waits for a harness that has not painted yet" "yes" \
   "$(has slowpoke 'in the worker role')"
@@ -1013,7 +1078,7 @@ check "a brief that lands on a gate does not report success" "1" "$rc"
 check "and says the brief was delivered but cannot be acted on" "yes" \
   "$(case "$out" in *"cannot be acted on"*) echo yes ;; *) echo no ;; esac)"
 check "and the agent is still registered, because it is real and waiting" "yes" \
-  "$("$GANG" roster | grep -q '^gatee ' && echo yes || echo no)"
+  "$(holds "$("$GANG" roster)" '^gatee ')"
 
 # Gated-after-briefing is evidence the brief cannot be acted on; NOT gated is no
 # evidence that it can, because the agent may not have reached the tool call yet.
