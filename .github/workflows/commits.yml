@@ -1,6 +1,16 @@
 name: commits
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+    # `edited` is load-bearing and is NOT in the default set, which is opened,
+    # synchronize and reopened. The title job below reads the PR title, and a
+    # title can change without a single commit changing. Without `edited`,
+    # retitling a PR never re-runs the check: a green run for the old title
+    # stands over a new one nobody looked at, and a contributor who FIXES a bad
+    # title stays red with nothing they can push to clear it. Measured on PR #18
+    # — edited the title and no run was queued until this was added.
+    types: [opened, edited, reopened, synchronize]
 
 jobs:
   conventional:
