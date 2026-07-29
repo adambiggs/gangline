@@ -480,6 +480,19 @@ session_live() { # exit 0 if the team's session is running
   err="$(tmux has-session -t "=$SESSION" 2>&1)" && return 0
   case "$err" in
     ""|*"can't find session"*|*"session not found"*|*"no such session"*) return 1 ;;
+    # A server that was never started is not a server that cannot be reached.
+    # tmux says so two ways depending on how it was asked, and both mean nothing
+    # is running here yet — which is the ordinary cold start on a machine with no
+    # tmux, the state every `gang up` and the whole test suite begin from. These
+    # resolve toward absence so the caller goes on to create the session.
+    #
+    # This does not give back what the branch below is for. A connect() that is
+    # actually refused — the sandbox case, where the socket exists and the kernel
+    # says no — reports "Permission denied", matches neither of these, and still
+    # dies with its own message. The distinction is the socket's existence, which
+    # is the thing the two situations genuinely differ on.
+    *"no server running"*) return 1 ;;
+    *"error connecting to"*"No such file or directory"*) return 1 ;;
     *) die "cannot reach the tmux server — $err" ;;
   esac
 }

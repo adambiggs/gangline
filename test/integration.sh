@@ -167,6 +167,27 @@ check "a gang with no tree beside it fails loudly" "1" "$rc"
 check "and names what is missing" "yes" \
   "$(case "$out" in *"not a gangline tree"*) echo yes ;; *) echo no ;; esac)"
 
+# --- cold start ---------------------------------------------------------------
+
+# Every check below this point inherits a tmux server, so none of them can see a
+# cold start. On a machine with no tmux running — a fresh box, and CI —
+# `has-session` reports the SOCKET missing rather than the session missing, and
+# resolving that toward "cannot reach the server" makes gang unusable before it
+# has started anything. Forced here rather than assumed, because the ambient
+# server on a developer's box hides it completely.
+#
+# Its own socket directory, and a short one: a unix socket path has a hard length
+# limit, and a TMUX_TMPDIR under a long workspace path fails to bind for a reason
+# that has nothing to do with what is being tested.
+COLD="$(mktemp -d /tmp/gangcold.XXXXXX)"; COLDS="gangcold-$$"
+env -u TMUX TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" \
+  hitch coldstart -p bash -d /tmp >/dev/null 2>&1; crc=$?
+check "gang starts a team with no tmux server running at all" "0" "$crc"
+check "and the agent it hitched is really there" "idle (slack tug)" \
+  "$(env -u TMUX TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" status coldstart 2>&1)"
+env -u TMUX TMUX_TMPDIR="$COLD" tmux kill-server 2>/dev/null || true
+rm -rf "$COLD"
+
 # --- lifecycle ---------------------------------------------------------------
 
 "$GANG" hitch alpha -p bash -d /tmp >/dev/null
