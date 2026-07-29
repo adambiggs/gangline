@@ -9,28 +9,44 @@ GANG_LAUNCH="pi"
 # suffix ("openai-codex/gpt-5.6-sol:high").
 GANG_MODEL_OPT="--model"
 GANG_BUSY_REGEX="Working\\.\\.\\."
-# The working half is NOT measured here — only on claude-code. It costs nothing
-# either way: if this harness writes nothing while it works, the arm never fires
-# and churn answers as it always did. It is declared because the rest half, which
-# is the one with a dangerous direction, IS measured.
-# Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
-# finished, #{window_activity} frozen on one value, 0 ticks. That is what this
-# declares and the ONLY thing gang needs from it — a harness that repaints
-# anything at rest ticks forever and could then never read idle, so this stays
-# unset until somebody has watched a finished agent sit still.
-GANG_QUIET_AT_REST=1
+# GANG_QUIET_AT_REST is deliberately unset. Two controlled rests really were
+# quiet: the original finished-turn probe, and a fresh probe immediately after a
+# successful manual compaction, each sampled 30 times at 1s with an empty
+# composer. Both held #{window_activity} and the capture hash constant; the
+# post-compaction probe captured zero raw pty bytes too. But a live 0.82.0 Pi
+# falsified the general claim: with no Working marker, an empty composer, and a
+# byte-identical capture over 8s, its activity timestamp kept advancing for about
+# forty minutes and gang kept the finished agent busy. The pane resumed work
+# before the repeated idle writes could be captured, so their exact source and
+# the state that starts them remain unknown; compaction alone is ruled out.
+#
+# Removing the pty-activity arm does not leave one sampled frame standing alone.
+# Three complete tool turns were read every ~0.17s through clear/redraw output and
+# timed sleeps: Working was present in 153/155 pre-completion frames, absent only
+# in the first frame of two turns before the marker first painted, never absent
+# again after that, and present in all 106 samples where the sleep process proved
+# the tool was live. Pane churn covers those initial paint transitions. A stable,
+# markerless live state outside those turns is still unknown, so this stays unset
+# rather than turning a disproved rest assertion into fabricated busy status.
 GANG_COMPACT_CMD="/compact"
-# GANG_MIDTURN_INPUT is deliberately unset: whether Pi takes input typed during a
-# turn, or hands the keystrokes to whatever that turn is running, has not been
-# watched live — and that is the difference between a delivered message and a
-# paste landing somewhere unintended. Unset, a mid-turn send is refused. Set it to
-# 1 once somebody types into a working Pi and reads the result out of its input
-# area.
-# GANG_COMPACTING_REGEX is unset for the same reason: what Pi paints while it is
-# compacting, and whether it keeps an input box up while it does, has not been
-# watched. Unset costs a resume nothing but time — it waits for the pane to go
-# quiet instead of queueing behind the compaction. Set it once somebody samples a
-# live Pi /compact and finds a marker that is gone the moment compaction ends.
+# Watched end to end on 0.82.0 while Pi's bash tool was running `sleep 15` and
+# the pane painted Working: typed text appeared inside the two-rule composer,
+# never in the tool. Enter cleared the composer and painted `Steering: <text>`;
+# once the running turn ended, the text became the next user message and Pi
+# answered it. The actual gang path was exercised too: send verified the paste
+# and the post-Enter transition, reported it accepted mid-turn, and the complete
+# gang envelope became the next user message rather than input to the tool.
+GANG_MIDTURN_INPUT=1
+# Watched on 0.82.0 across a complete manual /compact. Within 135ms the status
+# row painted a cycling spinner plus "Compacting context... (escape to cancel)";
+# it stayed present through the 4.1s summarization call and disappeared when the
+# input box returned. The transcript then retained "[compaction]", which is why
+# the regex names only the live status text. The composer remained drawn and
+# empty throughout, so compacting()'s input_clear check accepts the same frames.
+# The actual gang path then saw this marker in 113/123 samples, injected its
+# resume as Steering while compaction was live, and Pi accepted that envelope as
+# the next user message; @gl_resume_failed stayed empty.
+GANG_COMPACTING_REGEX='Compacting context\.\.\.'
 # Modal chrome: Pi draws the selected row of a modal with a "→ " at column zero.
 # Watched live, in the state described: /settings ("→ Auto-compact  true", with
 # a "Type to search · Enter/Space to change · Esc to cancel" footer) and the
