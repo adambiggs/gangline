@@ -217,9 +217,9 @@ known exception: it rejects `/compact` while a task is active, and running
 have another caller compact it after it becomes idle. Do not use a self-issued
 Codex `--resume`: Gangline verifies command delivery, not whether Codex accepted
 the native command. Compacting any busy peer is refused because it would cut off
-live work. The resume is delivered by a
-detached waiter rather than pasted behind the slash command, where the current
-turn could consume it first. A failed resume is reported by `gang status` and
+live work. Resume delivery is attempted by a detached waiter rather than pasted
+behind the slash command, where the current turn could consume it first. A
+failed resume is reported by `gang status` and
 `gang patrol`.
 
 ## Commands

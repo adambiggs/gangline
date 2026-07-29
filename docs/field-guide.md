@@ -13,7 +13,7 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 | **harness** | what a dog wears; the line clips to it, never surgery inside the dog | the CLI agent (Claude Code, Codex, opencode, Pi); gang clips on at the tty |
 | **dog** | pulls | an agent — a named tmux window |
 | **hitch** | clip a dog into the gangline, harness by harness | `gang hitch` — start an agent as a named window (alias: `spawn`) |
-| **vet check** | at every checkpoint a veterinarian examines each dog before it runs on | `gang vet` — the strategy-rot check: each profile's pinned versions against the installed harness, and with `--probe`, its markers against a live pane (alias: `doctor`) |
+| **vet check** | at every checkpoint a veterinarian examines each dog before it runs on | `gang vet` — the strategy-rot check: each profile's version declarations against the installed harness (an unpinned profile fails), and with `--probe`, its markers against a live pane (alias: `doctor`) |
 | **lead** | runs front, picks the line between the musher's commands | the lead role: holds the plan, splits the work, steers |
 | **swing** | runs just behind lead, swings the team true through the turns | the reviewer role: catches the drift before it becomes the direction |
 | **team dog** | the engine — the pulling power in the middle of the line | the worker role: does the work, reports back |
