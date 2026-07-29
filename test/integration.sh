@@ -792,6 +792,16 @@ sleep 1
 check "a pane that keeps changing reads busy with no marker on it" "busy (tight tug)" \
   "$("$GANG" status churner | head -1)"
 
+# The roster resolves churn for the whole team with ONE wait; status asks per
+# agent. Batching is allowed to change what the column COSTS and never what it
+# says, so both must answer the same — and a sweep carrying a moving pane and a
+# still one has to tell them apart within itself, which is the part a single
+# agent could never prove.
+check "the batched roster column agrees with the per-agent read" "busy" \
+  "$("$GANG" roster | awk '$1=="churner"{print $3}')"
+check "and a still agent in the same sweep is not swept up with it" "idle" \
+  "$("$GANG" roster | awk '$1=="boxless"{print $3}')"
+
 # The refusal below was unreachable while busy answered from a marker alone: it
 # is false for most of a live turn, so the guard protected nothing. It is
 # reachable now, and what it says is still the true thing to say.

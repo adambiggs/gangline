@@ -442,7 +442,72 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   # wait` busy — the false busy the parked branch above exists to kill. That
   # collision does not arise, because the exclusion is by state gang OWNS
   # (@gl_waiting, holding the waiter's pid) rather than by matching the screen.
+  #
+  # $2 is that same answer resolved ahead of time for a whole team at once, so a
+  # roster pays one sleep rather than one per agent. Absent, this asks for itself.
+  case "${2:-}" in
+    churning) return 0 ;;
+    still)    return 1 ;;
+  esac
   ! pane_stable "$1"
+}
+
+# Churn costs two captures separated by a wait, and asking each agent in turn
+# makes a roster O(agents) in wall clock — the most-used command, growing with
+# the size of the team it exists to show. So the question is asked for everyone
+# at once: probe each pane, keep only the ones no marker and no owned state has
+# already answered, wait ONCE, and re-read that set. A marked pane never reaches
+# the second capture, so it is cheaper here than it was before churn existed.
+#
+# This makes the per-pane interval VARIABLE — the wait plus however long the
+# batch itself takes — where a lone busy() uses a fixed one. It can never be
+# SHORTER than the wait, and a longer interval only makes movement easier to
+# catch, so the error moves toward calling a live pane busy. Safe direction.
+#
+# Skipping an agent here is always safe: whatever is not resolved falls through
+# to the per-agent path in busy(), which is what every caller did before.
+CHURN_MAP=""
+
+map_get() { # $1 = "k=v k=v ...", $2 = key -> value on stdout
+  local pair
+  for pair in $1; do
+    case "$pair" in "$2="*) printf '%s' "${pair#*=}"; return 0 ;; esac
+  done
+  return 1
+}
+
+churn_verdict() { # $1 = window id -> "churning" | "still" | "" if it was not sampled
+  map_get "$CHURN_MAP" "$1" || true
+}
+
+churn_batch() { # $@ = window ids; resolve the churn question for all of them at once
+  local id prof pending="" first="" sum was
+  CHURN_MAP=""
+  for id in "$@"; do
+    prof="$(tmux show-options -wqv -t "$id" @gl_profile)" || continue
+    [ -n "$prof" ] || continue
+    profile_file "$prof" >/dev/null 2>&1 || continue
+    # Subshelled so a pane gang cannot read costs this agent its batching rather
+    # than the whole roster its state column — and cksum rather than the screen
+    # itself, because holding a team's worth of captures means arrays this file
+    # does not use. Its byte count is the second field, so a false match needs a
+    # collision at identical length.
+    sum="$( ( load_profile "$prof"
+              if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$id"; then exit 1; fi
+              busy_painted "$id" && exit 1
+              capture "$id" | cksum | tr ' ' '-' ) 2>/dev/null )" || continue
+    [ -n "$sum" ] || continue
+    pending="$pending $id"
+    first="$first $id=$sum"
+  done
+  [ -n "$pending" ] || return 0
+  sleep 0.5
+  for id in $pending; do
+    sum="$( capture "$id" 2>/dev/null | cksum | tr ' ' '-' )" || continue
+    was="$(map_get "$first" "$id")" || continue
+    if [ "$sum" = "$was" ]; then CHURN_MAP="$CHURN_MAP $id=still"
+    else CHURN_MAP="$CHURN_MAP $id=churning"; fi
+  done
 }
 
 compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibly compacting
@@ -1337,9 +1402,11 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
 
 state_now() { # $1 = window id, profile loaded -> the state, in words
   # One namer for `status` and the roster column, so the two cannot answer the
-  # same question differently — and renaming a state is one edit, not two.
+  # same question differently — and renaming a state is one edit, not two. $2 is
+  # a churn verdict a batch already resolved; the vocabulary stays here either
+  # way, so batching changes what it costs to answer and never what it says.
   if gated "$1"; then echo "gated (hook set)"
-  elif busy "$1"; then echo "busy (tight tug)"
+  elif busy "$1" "${2:-}"; then echo "busy (tight tug)"
   else echo "idle (slack tug)"; fi
 }
 
@@ -1389,13 +1456,20 @@ cmd_context() { # context-window usage via the profile's own introspection
 cmd_roster() {
   tmux has-session -t "=$SESSION" 2>/dev/null \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
-  local id name
+  local id name wins
+  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
+  # One wait for the whole team rather than one per agent.
+  churn_batch $(printf '%s\n' "$wins" | awk '{print $1}')
   while read -r id name; do
-    ( roster_row "$id" "$name" ) || true   # one sick agent must not blank the roster
-  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')
+    [ -n "$id" ] || continue
+    ( roster_row "$id" "$name" "$(churn_verdict "$id")" ) || true   # one sick agent must not blank the roster
+  done <<EOF
+$wins
+EOF
 }
 
-roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one row
+roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolved it;
+               # subshell — a death here costs one row
   local prof state ctx="-"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" \
@@ -1407,7 +1481,7 @@ roster_row() { # $1 = window id, $2 = name; subshell — a death here costs one 
     || { printf '%-16s %-12s %-18s %s\n' "$2" "$prof" "-" \
            "$(colour "$C_BAD" "profile not found (GANG_PROFILES?)")"; return; }
   load_profile "$prof"
-  state="$(state_now "$1")"
+  state="$(state_now "$1" "${3:-}")"
   # context column is best-effort observation; the dedicated command dies loud
   if declare -F profile_context >/dev/null; then
     ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
