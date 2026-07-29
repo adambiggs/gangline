@@ -149,6 +149,18 @@ already knew.
 A fixture must answer for itself, or its failure will be read as a defect in the
 thing under test.
 
+Polarity decides how a broken predicate fails, and one of the three does not fail
+at all. A positive assertion goes red — loudly, but naming the behaviour under
+test while the real cause sits elsewhere in the output: misattributed, not silent.
+A negative assertion goes GREEN, because the value it expects is the same value a
+predicate returns when it could not evaluate anything at all — and guards are
+negative assertions, so the checks written to catch regressions are exactly the
+ones that can stop looking without saying so. A poll answers "not yet" forever and
+spends its whole timeout: a miss's clothes on a failure a minute away from its
+cause. This is why such a predicate needs a third answer, distinct from both
+verdicts, that NAMES what it could not determine — a bare non-zero would have left
+the negative assertion passing.
+
 The test drives `bin/gang` against a real tmux server with the `bash` profile — no
 mocks, because a mocked tmux would agree with whatever the code already does. A fix
 to delivery or addressing belongs there as a case that fails without the fix.
