@@ -894,7 +894,13 @@ input_painted() { # $1 = window id; the harness has drawn an input box
   profile_input "$1" >/dev/null
 }
 
-input_clear() { # $1 = window id; that box holds no draft, ghost text, or queued hint
+input_clear() { # $1 = window id; nothing a person typed is sitting in that box
+  # What counts as content is the PROFILE's answer, not this function's. A
+  # profile that can tell suggestion text from typed text hands back only what
+  # was typed, and an empty-looking box reads clear here even while the harness
+  # is painting a placeholder into it; a profile that cannot tell hands back
+  # everything, and its ghost text reads as a draft and holds. Both are correct
+  # for the harness they describe (Law 4), and the difference is invisible here.
   declare -F profile_input >/dev/null || return 0
   local box
   box="$(profile_input "$1")" || return 1
@@ -911,11 +917,13 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   # then failed to verify a brief that had gone nowhere). A painted input box
   # is the direct evidence that the TUI is up and taking input.
   #
-  # The box's CONTENT is deliberately not tested. A fresh TUI paints ghost text
-  # into its empty box (Claude Code: 'Try "fix typecheck errors"'), which
-  # input_clear reads as content — right for patrol, which must never type over
-  # a human's draft; wrong for an agent two seconds old, where waiting on it
-  # never returns at all.
+  # The box's CONTENT is deliberately not tested, and paintedness is not a weaker
+  # version of the same question. A fresh TUI paints a placeholder into its empty
+  # box, and whether that reads as content depends on whether the profile can
+  # tell suggestion text from typed text — so a content test would gate booting
+  # on a per-harness capability that has nothing to do with whether the TUI is
+  # up. On a profile that cannot tell, waiting for an empty box never returns at
+  # all. Paintedness answers the question actually being asked here.
   # Exit 2 is the settled-but-not-an-input-box case, worth telling apart because
   # it is nearly always a first-run modal a human has to answer — Claude Code's
   # "Do you trust the files in this folder?". Its menu cursor is a "❯" too, but
@@ -1111,9 +1119,32 @@ clear_box() { # $1 = window id; erase the input box, and prove it is erased
   # is an answer — and the box is read back afterwards, because a harness that
   # ignores it must not be reported as cleared. The day one turns up, the key
   # becomes a profile declaration (Law 4); the read-back is what will say so.
+  # ONE PRESS IS NOT ONE BOX. Measured on Claude Code 2.1.220: C-u kills the last
+  # VISUAL ROW of the composer and leaves the rows above it — 8 of 8 on a draft
+  # wrapped to two rows, 5 of 5 cleared first press on a draft that fit one. Every
+  # gang envelope wraps, so the single press this used to send erased the tail of
+  # a stranded paste and left its head in the agent's box, which is the failure
+  # described above and the one this function exists to prevent.
+  #
+  # So: press, read back, press again while it is still shrinking. The stop
+  # condition is a press that changes NOTHING, which is the honest signal that
+  # this composer does not honour the key — the day that harness turns up, this
+  # returns failure on the first iteration and the record stands (Law 4 applies
+  # then, not before). Bounded because a loop driven by a pane must be.
+  #
+  # 0.4s per press: the composer repaints in 0.14–0.16s, five samples, so this is
+  # better than twice the measured latency and unchanged from what it was.
   declare -F profile_input >/dev/null || return 1
-  tmux send-keys -t "$1" C-u
-  sleep 0.4
+  local before after n=0
+  while [ "$n" -lt "${GANG_CLEAR_PRESSES:-40}" ]; do
+    input_clear "$1" && return 0
+    before="$(profile_input "$1")" || return 1
+    tmux send-keys -t "$1" C-u
+    sleep 0.4
+    after="$(profile_input "$1")" || return 1
+    [ "$after" != "$before" ] || return 1
+    n=$((n + 1))
+  done
   input_clear "$1"
 }
 
@@ -1869,8 +1900,10 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   elif ! pane_stable "$1"; then
     say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"
   elif ! input_clear "$1"; then
-    # A human draft, ghost-text suggestion, or queued-message hint is in the
-    # input box; an injection would interleave with it. Holding costs one sweep.
+    # Somebody's unsent text is in the input box and an injection would
+    # interleave with it. On a profile that cannot tell typed text from the
+    # harness's own suggestions this also holds for ghost text, which costs a
+    # sweep and never costs a draft. Holding is the cheap direction either way.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
     inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2")")"
@@ -2151,8 +2184,9 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # "never got busy" — true, and useless.
   #
   # What is waited on is a CHANGE from the box as it was a moment ago, not a box
-  # with something in it. Those come apart on every harness that paints ghost text
-  # into an empty composer — claude-code's `Try "fix typecheck errors"` — where a
+  # with something in it. Those come apart whenever the box was ALREADY occupied
+  # — a draft the agent left there, or, on a profile that cannot tell typed text
+  # from the harness's own suggestions, its ghost text — and then a
   # box-has-content test is satisfied before a key is sent and the wait it looks
   # like never happens. Same trap as busy_painted OR churn: a condition already
   # true cannot witness anything. before/after is what cmd_send compares, for this

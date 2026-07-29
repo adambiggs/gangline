@@ -1754,6 +1754,12 @@ check "NO_COLOR turns it off on a terminal too" "no" \
 # hides. Locally these panes inherit an attached client's height and everything
 # fits; CI has no client, and the first agent was off screen.
 row="$("$GANG" roster | tail -1)"
+# The comparison below is the only one in this file whose EXPECTED side is
+# computed, and both sides come off the same roster — so a roster that printed
+# no agent rows at all would satisfy it against itself. Pin the row down as an
+# agent row first, and the check underneath can fail again.
+check "the row the colour comparison uses is an agent row" "yes" \
+  "$(case "$row" in ''|'no team'*) echo no ;; *) holds "$row" '^[^ ]+ +[^ ]+ +[^ ]+' ;; esac)"
 check "and it does not move a column" "$row" \
   "$(printf '%s' "$out" | sed "s/$ESC\[[0-9;]*m//g" \
      | awk -v n="${row%% *}" '$1==n{sub(/ +$/, ""); print}')"
@@ -1786,6 +1792,97 @@ check "and says so by name" "yes" \
 check "and the dog it aimed at is untouched" "aliased" \
   "$("$GANG" roster | awk '$1=="aliased"{print $1}')"
 "$GANG" drop aliased >/dev/null
+
+# --- a box's contents versus who put them there ------------------------------
+#
+# Claude Code renders suggestion text dim and typed text plain, and `capture-pane
+# -p` drops the attribute — so ghost text and a human's draft arrive as the same
+# bytes. The first check below asserts that collision rather than assuming it: it
+# is the reason the other two can disagree, and if a release ever stopped the two
+# renderings colliding on the grid this would say so instead of quietly passing.
+#
+# profile_input and profile_context here are the shipped claude-code code; only
+# launch, the busy regex and the version pin are swapped for the fixture. The
+# quiet-at-rest declaration is dropped with them: this block is about who typed
+# into the box, and leaving it set would have every paint read busy for the
+# activity window afterwards, which is a different arm's test.
+cat > "$SHIM/custom-profiles/ccbox.sh" <<SH
+. "${GANG%/bin/gang}/profiles/claude-code.sh"
+GANG_LAUNCH="PS1='sh: ' bash --norc"
+GANG_BUSY_REGEX=""
+GANG_QUIET_AT_REST=""
+GANG_VERSION_CMD="echo 9.9.9"
+GANG_VERIFIED_VERSIONS="9.9.9"
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch ccbox -p ccbox -d /tmp >/dev/null
+
+# One printf per paint, for the reason the opencode block gives: painted as
+# separate commands the shell's own echo lands between the rules and inside the
+# frame, and the box walk would read the echo instead of the box.
+cc_paint() { # $1 = what goes after the prompt char, escapes interpreted
+  # The rules are built to the pane's own width, in the pane. A stubby rule
+  # leaves trailing spaces in the capture, and the frame test is "rule glyphs and
+  # NOTHING ELSE" — so a short one is not a narrower version of a composer, it is
+  # a frame Claude Code never draws and the box is not found at all. Cost an
+  # hour: all three checks below came back GATED, which is what gang correctly
+  # says about a pane with no box in it.
+  tmux send-keys -t "$(target_of ccbox)" \
+    "clear; r=\$(printf '─%.0s' \$(seq \$(tput cols))); printf '%b\\n' \"\$r\" \"❯ $1\" \"\$r\" '  ctx 150k/1000k 15%'" Enter
+  sleep 0.6
+}
+cc_boxline() { tmux capture-pane -p -t "$(target_of ccbox)" | grep '^❯' | tail -1; }
+
+# Both compared against the literal, not against each other: two paints that
+# both failed are also equal to each other, and a check that passes when
+# nothing rendered is the exact shape this section is here to close.
+cc_paint '\033[2mcommit the docs\033[0m'
+check "ghost text loses its attribute to a plain capture" "❯ commit the docs" "$(cc_boxline)"
+cc_paint 'commit the docs'
+check "and a typed draft is the same bytes by then" "❯ commit the docs" "$(cc_boxline)"
+
+# Typed wins wherever it appears. A line carrying both keeps its typed half, so
+# a completion offered against a real draft must not read as an empty box.
+cc_paint 'commit the docs'
+check "a typed draft holds the nudge" \
+  "past the 120000-token band — input box has content, holding nudge" \
+  "$("$GANG" patrol | verdict ccbox)"
+cc_paint 'commit \033[2mthe docs\033[0m'
+check "and a draft with a completion offered against it still holds" \
+  "past the 120000-token band — input box has content, holding nudge" \
+  "$("$GANG" patrol | verdict ccbox)"
+
+# The clear direction is asserted on the box itself rather than through patrol,
+# and the reason is worth stating exactly, because it is a gap. Driving it end to
+# end needs the nudge to actually land, and a fixture that can TAKE a paste needs
+# the live shell prompt to sit between the two rules — readline then redraws over
+# the closing rule on the first keystroke and the box stops being found, so the
+# check would be measuring the fixture's PS1 and not gang. What is covered
+# end-to-end is the occupied direction, twice, above: patrol reads the box
+# through input_clear and holds. What is covered here is profile_input's own
+# verdict on all three renderings. What is NOT covered anywhere is inject pasting
+# into a box that ghost text had made unreadable — that path is claude-code's
+# alone and has no fixture.
+# Says NO BOX rather than staying silent when the frame is not found. The check
+# below expects an EMPTY box, and a profile_input that failed outright prints
+# nothing either — so without this the one check here that asserts an absence
+# would pass hardest exactly when the box could not be read at all.
+cc_box() {
+  bash -c '. "'"${GANG%/bin/gang}"'/profiles/claude-code.sh"
+           b="$(profile_input "$1")" || { printf "NO BOX"; exit 0; }
+           printf "%s" "$b"' _ "$(target_of ccbox)"
+}
+
+cc_paint '\033[2mcommit the docs\033[0m'
+check "a box holding only what the harness suggested reads empty" "" \
+  "$(cc_box | tr -d '[:space:]')"
+cc_paint 'commit the docs'
+check "a box holding what somebody typed reads as its contents" "commit the docs" \
+  "$(cc_box | sed 's/^ *//; s/ *$//')"
+cc_paint 'commit \033[2mthe docs\033[0m'
+check "and a line carrying both keeps the typed half and drops the offer" "commit" \
+  "$(cc_box | sed 's/^ *//; s/ *$//')"
+"$GANG" drop ccbox >/dev/null
 
 # --- teardown ----------------------------------------------------------------
 

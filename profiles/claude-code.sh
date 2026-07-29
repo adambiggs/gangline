@@ -181,7 +181,29 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
-profile_input() { # $1 = tmux target; prints the input box's contents, fails if no box
+profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
+  # Suggestion text is not draft text, and the difference is recoverable. Claude
+  # Code renders its empty-box placeholder ('Try "how do I log an error?"') and
+  # its autosuggest ghost text dim — SGR 2 — and renders typed characters with no
+  # such attribute. `capture-pane -p` THROWS THAT AWAY, so ghost and draft arrive
+  # as the same bytes on the grid and no reader downstream can tell them apart.
+  # Measured live, both directions, one variable apart in one box: placeholder
+  # "^[[2mTry ...^[[0m", typed "❯ log an error" with no SGR 2, including a draft
+  # long enough to wrap. Lead read "❯ commit the docs" off its own idle pane and
+  # took it for an unsent operator draft; it was ghost text, and it was dim.
+  #
+  # So this captures WITH attributes and drops every dim run before looking. What
+  # survives is what somebody typed. A line carrying both — typed prefix plus a
+  # dim completion — keeps the prefix and loses the completion, which is the case
+  # the whole distinction exists for. Whether Claude Code emits that mixed line at
+  # all is NOT established here; the reader handles it because getting it right
+  # costs nothing, not because it was seen.
+  #
+  # The residual runs toward false alarm. A dim run broken across a wrapped row
+  # could leave its continuation undimmed, which reads as a draft and makes gang
+  # HOLD — a sweep costs nothing. The opposite error, typing over a human's real
+  # draft, needs typed text to arrive dim, and typed text was measured undimmed.
+  #
   # The input box is the "❯" line inside the composer's own frame: two rules of
   # "─" drawn at column zero, one directly above the box and one directly below
   # it. The frame is what identifies the box, because the prompt character alone
@@ -213,8 +235,12 @@ profile_input() { # $1 = tmux target; prints the input box's contents, fails if 
   # (no-break space), whose [:space:] membership is locale-dependent, so its
   # bytes are stripped rather than trusted to a class.
   local box
-  box="$(tmux capture-pane -pJ -t "$1" | awk '
-    { line[NR] = $0; if (NF) last = NR
+  box="$(tmux capture-pane -pJ -e -t "$1" | awk '
+    { # A dim run ends at the next escape, whatever closes it — 0m here, but the
+      # rule holds for 22m or a colour change and does not depend on which.
+      gsub(/\033\[2m[^\033]*/, "")
+      gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width
+      line[NR] = $0; if (NF) last = NR
       t = $0; n = gsub(/─/, "", t)
       # All rule glyphs and nothing else. Leading spaces survive the gsub, so
       # this pins the rule to column zero too, and an indented dialog edge is
