@@ -1975,7 +1975,20 @@ file_rot_issue() { # $1 = profile, $2 = installed version line; dedup by exact t
   # Dedup via the plain list endpoint, not --search: the search index is
   # eventually-consistent and misses issues filed seconds ago (observed live —
   # a rerun filed a duplicate).
-  if (cd "$ROOT" && gh issue list --state open -L 200 --json title --jq '.[].title') | grep -qxF "$title"; then
+  #
+  # Captured, then matched off a here-string. Two failures both end in the
+  # duplicate this function exists to prevent. `gh` is a forked INCREMENTAL
+  # writer and `grep -q` exits at its first match, so under this file's pipefail
+  # a title that IS open can leave gh on a SIGPIPE and report the pipeline
+  # failed — a hit read as a miss. -L 200 bounds that only while the titles are
+  # ASCII, and nothing here makes them ASCII. Separately, a gh that fails
+  # outright — unauthenticated, offline, rate-limited — writes nothing, which at
+  # the `if` is indistinguishable from "nothing open". Capturing tells the two
+  # apart: an error dies, and only a real listing is ever matched against.
+  local open_titles
+  open_titles="$(cd "$ROOT" && gh issue list --state open -L 200 --json title --jq '.[].title')" \
+    || die "vet --file-issue: cannot list open issues — refusing to guess and file a duplicate"
+  if grep -qxF -- "$title" <<<"$open_titles"; then
     echo "  issue already open: '$title' — not duplicating"
     return 0
   fi

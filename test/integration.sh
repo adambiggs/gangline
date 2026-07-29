@@ -1920,6 +1920,16 @@ cc_paint '\033[2mcommit the docs\033[0m'
 check "no shipped profile sizes a multibyte glyph with substr" "0" \
   "$(grep -h 'substr(' "${GANG%/bin/gang}"/profiles/*.sh 2>/dev/null |
        grep -v '^[[:space:]]*#' | LC_ALL=C grep -c '[^ -~]')"
+# The same rule this file states about itself, asserted against the tree. A
+# subshell piped into `grep -q` is the SIGPIPE shape: the reader exits at its
+# first match, the forked writer still has lines, and under gang's pipefail the
+# pipeline reports failure — a hit read as a miss, silently. It survived in vet's
+# issue dedup, where a miss files a duplicate issue. Source-level for the same
+# reason as the check above: the shape only misfires on a payload big enough to
+# fill the pipe buffer, so a behavioural test passes on any tree small enough to
+# test with.
+check "no forked producer is piped into grep -q" "0" \
+  "$(grep -c ') | grep -q' "$GANG")"
 check "a box holding only what the harness suggested reads empty" "" \
   "$(cc_box | tr -d '[:space:]')"
 cc_paint 'commit the docs'
