@@ -815,7 +815,20 @@ sleep 0.5
 check "a still pane with no marker to find reads idle" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 tmux send-keys -t "$(target_of churner)" "while :; do date +%s%N; sleep 0.05; done" Enter
-sleep 1
+# send-keys returns once tmux has written the keys, not once the shell has begun
+# running them, and how long that second part takes is a property of the box. Both
+# edges of this fixture asserted a state exactly one second after a keystroke; the
+# idle edge below was measured failing at load 23.7. Neither fails toward a false
+# pass — an unstarted loop reads idle where busy is expected — but a check that
+# cries wolf is one that gets ignored, and an ignored check guards nothing, so the
+# guess is replaced by a bound at both. `gang wait` is that bound below and cannot
+# be it here: it keys on BECOMING idle, so gang ships no tool for this direction
+# and the loop lives in the suite. Thirty is a ceiling and not an expectation —
+# reached only when the loop never starts, and then this fails as it always did.
+n=0
+while [ "$("$GANG" status churner | head -1)" != "busy (tight tug)" ] && [ "$n" -lt 30 ]; do
+  sleep 1; n=$((n + 1))
+done
 check "a pane that keeps changing reads busy with no marker on it" "busy (tight tug)" \
   "$("$GANG" status churner | head -1)"
 
@@ -848,7 +861,16 @@ tmux set-option -uw -t "$(id_of churner)" @gl_waiting
 check "and reads busy again the moment that wait is gone" "busy (tight tug)" \
   "$("$GANG" status churner | head -1)"
 tmux send-keys -t "$(target_of churner)" C-c
-sleep 1
+# The bound here is gang's own, because for this direction one exists. `gang wait`
+# blocks on the same busy() this check reads through, so it cannot call a pane
+# settled where status would disagree, and on its own timeout it dies loudly
+# instead of failing quietly at a guess. This is the edge that was measured: one
+# fixed second at load 23.7, expected idle, got busy — C-c has to kill the loop
+# AND let the shell draw ^C and a fresh prompt, and no constant bounds that. Its
+# stdout is dropped rather than asserted, because the line it prints is a literal
+# in the dispatch and what is under test is the one gang status DERIVES; its
+# stderr is kept, so a timeout names itself just above the failure it causes.
+"$GANG" wait churner 30 >/dev/null
 check "and idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 unset GANG_PROFILES
