@@ -21,15 +21,28 @@ GANG_COMPACT_CMD="/compact"
 # watched. Unset costs a resume nothing but time — it waits for the pane to go
 # quiet instead of queueing behind the compaction. Set it once somebody samples a
 # live Pi /compact and finds a marker that is gone the moment compaction ends.
-# GANG_GATED_REGEX is unset because there is nothing of Pi's to scrape: core Pi
-# ships no tool-approval system (verified in the installed dist source), so a
-# vanilla Pi never paints a permission dialog. Gates appear only when a project
-# loads a permission extension, and that dialog is the EXTENSION's TUI — it
-# rots on the extension's version, which `pi --version` cannot see. A project
-# that wires one should shadow this file via GANG_PROFILES, declare the
-# dialog's shape there after watching a full ask→answer→erase cycle live, and
-# point GANG_VERSION_CMD at something that includes the extension version so
-# gang vet watches the pin that can actually rot.
+# Modal chrome: Pi draws the selected row of a modal with a "→ " at column zero.
+# Watched live, in the state described: /settings ("→ Auto-compact  true", with
+# a "Type to search · Enter/Space to change · Esc to cancel" footer) and the
+# /model selector ("→ gpt-5.6-sol [openai-codex] ✓"). Both take the input area
+# over completely — see profile_input below, which is where the other half of
+# this lives.
+#
+# The autocomplete popup carries the same cursor and is deliberately NOT a gate:
+# typing "/" lists commands BELOW the input area while the input area keeps the
+# keyboard, so a send lands in the composer and must not be refused. The marker
+# alone cannot tell the two apart; position does, and profile_input reads the
+# position — a live input area is what stops this match from being called a gate.
+#
+# Core Pi ships no tool-approval system (verified in the installed dist source),
+# so a vanilla Pi paints no permission dialog and none is declared here. Gates
+# appear only when a project loads a permission extension, and that dialog is the
+# EXTENSION's TUI — it rots on the extension's version, which `pi --version`
+# cannot see. A project that wires one should shadow this file via GANG_PROFILES,
+# declare the dialog's shape there after watching a full ask→answer→erase cycle
+# live, and point GANG_VERSION_CMD at something that includes the extension
+# version so gang vet watches the pin that can actually rot.
+GANG_GATED_REGEX='^→ '
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="pi --version"
@@ -48,11 +61,23 @@ profile_input() { # $1 = tmux target; prints Pi's input area, fails if it has no
   # anything non-blank there is a draft an injection would interleave with.
   # No rule pair found means Pi has not drawn its input area yet (still booting)
   # or something else owns the screen — either way, not ready and not clear.
+  #
+  # A modal opens INSIDE that rule pair rather than replacing it: /settings and
+  # the /model selector both push the closing rule down the screen and fill the
+  # space with their own search field and list. The frame alone therefore still
+  # "finds an input area" while a picker owns the keyboard — so hitch would paste
+  # a brief into the picker's search field, and the gated check, which needs the
+  # box to be missing, would never fire. The selection cursor at column zero is
+  # what tells them apart, and it is the same marker GANG_GATED_REGEX declares
+  # above. A literal multibyte string compared by bytes: in cron's C locale
+  # substr counts bytes and "→ " is four of them, which is exactly what is wanted.
   tmux capture-pane -pJ -t "$1" | awk '
     /^──────────/ { r1 = r2; r2 = NR }
     { line[NR] = $0 }
     END {
       if (!r1) exit 1
+      for (i = r1 + 1; i < r2; i++)
+        if (substr(line[i], 1, 4) == "→ ") exit 1
       for (i = r1 + 1; i < r2; i++) print line[i]
     }'
 }

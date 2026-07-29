@@ -31,15 +31,33 @@ GANG_COMPACT_CMD="/compact"
 # moves it into the transcript flagged "QUEUED", and it is submitted and
 # answered the moment the running turn finishes.
 GANG_MIDTURN_INPUT=1
-# The permission dialog — config-enabled: vanilla opencode allows every tool
-# until a permission block in opencode.json says "ask". Watched live through a
-# full ask→answer→erase cycle: the header glyph and words hold still while the
-# tool detail varies, and the busy hint row is replaced by the dialog's own key
-# hints, so an unmarked gate read idle. Erased the moment it is answered — a
-# match means the dialog owns the screen right now. A literal multibyte STRING
-# is safe in cron's C locale (it matches as a byte sequence); only bracket
-# classes break there.
-GANG_GATED_REGEX='△ Permission required'
+# Two markers, because opencode frames its two kinds of modal differently.
+#
+# First alternate — the dialog header. Every overlay opencode floats over the
+# composer titles itself on one row and right-aligns a lone "esc" on that same
+# row, and nothing else on screen ends that way. Watched live, composer keyboard
+# gone in every one (the cursor moves into the dialog's own search field, which
+# is what profile_input below keys on): the command palette ("Commands … esc"),
+# the model picker ("Select model … esc"), the session switcher ("Sessions …
+# esc") and the theme picker ("Themes … esc"). The busy hint row ends in
+# "interrupt", never "esc", so a turn in flight cannot match it.
+#
+# Second alternate — the permission dialog, which carries no such header. It is
+# config-enabled: vanilla opencode allows every tool until a permission block in
+# opencode.json says "ask". Watched live through a full ask→answer→erase cycle:
+# the header glyph and words hold still while the tool detail varies, and the
+# busy hint row is replaced by the dialog's own key hints. Erased the moment it
+# is answered — a match means the dialog owns the screen right now. A literal
+# multibyte STRING is safe in cron's C locale (it matches as a byte sequence);
+# only bracket classes break there.
+#
+# Reachability caveat, and it is gang's to fix rather than this file's: opencode
+# anchors a dialog around the composer and grows it UPWARDS, so on a full-screen
+# picker the header row sits further from the bottom of the pane than the region
+# gang scans for state (GANG_STATUS_ROWS, 20 rows). Measured at 70x34: header on
+# row 11, scan starts at row 14. The header is still the right marker — the scan
+# has to be able to see it.
+GANG_GATED_REGEX='△ Permission required| {2,}esc *$'
 # GANG_COMPACTING_REGEX is deliberately unset — the observation found nothing
 # to scrape: compaction is drawn as an ordinary working turn with no marker of
 # its own, so a --resume waits for the pane to go quiet instead of queueing.

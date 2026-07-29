@@ -36,18 +36,27 @@ GANG_MODEL_OPT="-m"
 # dialog: the interrupt hint is gone while the prompt is up, so busy honestly
 # answers "no turn in flight". That state belongs to GANG_GATED_REGEX below.
 GANG_BUSY_REGEX="esc to interrupt"
-# Two dialogs, each watched live. The command approval (first alternate),
-# through a full ask→deny→erase cycle: the question line holds still while the
-# command, the reason, and the numbered menu vary around it. The first-run
-# trust prompt (second alternate), through both answers in a scratch dir:
-# declining exits the process, accepting repaints the composer with the wording
-# gone — so a match means a dialog owns the screen right now, never scrollback.
-# Its "›" menu cursor sits at column zero, the composer's own column, in the
-# "› N. " row shape profile_input refuses below. The busy hint and the composer
-# are gone while either dialog is up, so an unmarked gate read idle and a paste
-# died on the missing composer with nothing saying why. A dialog worded
-# differently falls back to that old behavior.
-GANG_GATED_REGEX='Would you like to run the following command\?|Do you trust the contents of this directory\?'
+# Modal chrome, not dialog sentences. Codex frames every modal the same way: it
+# draws the selected row with a "›" at column zero — the composer's own column —
+# and numbers it. That "› N. " shape is the framing device, and it is already
+# the shape profile_input refuses below, so the two halves of the gated check
+# agree by construction instead of by coincidence.
+#
+# Watched live, in the state described, composer gone in every one: the command
+# approval through a full ask→answer→erase cycle ("› 1. Yes, proceed (y)"), the
+# /permissions modal ("› 1. Ask for approval (current)"), the /model picker
+# ("› 1. gpt-5.6-sol (current)"), and the first-run trust prompt in a scratch dir
+# ("› 1. Yes, continue") — declining exits the process, accepting repaints the
+# composer with the wording gone, so a match means a dialog owns the screen right
+# now, never scrollback.
+#
+# What deliberately does NOT match: the completion popups. Typing "/" or "@"
+# opens a list UNDER a composer that still has the keyboard, and its rows carry
+# no "› " cursor — the composer keeps it. Watched live; a send there lands in the
+# composer, which is why those must read idle and do. /status is the same story
+# from the other side: it renders into the transcript with the composer live
+# below it, so it is not a gate and is not matched.
+GANG_GATED_REGEX='^› [0-9]+\. '
 # Verified from the live slash menu: "/compact  summarize conversation to
 # prevent hitting the context limit". A finished compaction leaves "Context
 # compacted" in the transcript, where it stays — a marker for humans reading

@@ -12,8 +12,11 @@ GANG_VERIFIED_VERSIONS="any"
 # No GANG_MODEL_OPT: a shell has no model, so `hitch -m` on this profile refuses.
 
 profile_input() { # $1 = tmux target; same shape as a real TUI's input box
-  # Mirrors the claude-code hook so gang's input-box handling is exercised
-  # without a harness installed.
+  # The simplest thing that answers the question, so gang's input-box handling
+  # is exercised without a harness installed. A prompt string is all a shell
+  # paints — there is no transcript echoing the prompt character back and no
+  # modal to hide it, so the frame-finding a real TUI needs would have nothing
+  # here to find.
   local line
   line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
   printf '%s' "${line#❯}" | tr -d '\302\240'

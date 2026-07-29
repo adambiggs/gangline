@@ -56,19 +56,26 @@ GANG_COMPACTING_REGEX='▰|▱'
 # slash command waits for that turn to end — so text submitted after a command
 # can still arrive before it (see resume_after_compaction).
 GANG_MIDTURN_INPUT=1
-# Two dialogs, each watched live. The shell-command approval (first alternate),
-# through a full ask→deny→erase cycle in a gating permission mode: the question
-# line holds still while the command, the menu, and the footer vary around it.
-# The first-run trust modal (second alternate), through both answers in a
-# scratch dir: declining exits the process, accepting repaints the normal UI
-# with the wording gone — so either way a match means a dialog owns the screen
-# right now, never scrollback. While either is up no busy form matches and the
-# column-zero "❯" input box is gone (the trust modal's own "❯" menu cursor is
-# indented one space — which is why hitch's no-input-box refusal catches it
-# before a brief can answer it): unmarked, a gated pane read IDLE and a send
-# died "not taking input" with nothing saying why. A dialog worded differently
-# falls back to that old behavior.
-GANG_GATED_REGEX='Do you want to proceed\?|Is this a project you created or one you trust\?'
+# Modal chrome, not dialog sentences. Claude Code frames every modal the same
+# two ways, and both were watched live: a selection cursor "❯" that is INDENTED,
+# and an "Esc to <verb>" footer. Indentation is the whole tell — the composer's
+# own "❯" sits at column zero (profile_input below keys on exactly that), so a
+# "❯" with space in front of it is a menu row, which means a menu owns the
+# screen. The footer covers the modals that carry no menu at all.
+#
+# Watched live, in the state described, with the composer gone in every one:
+# the shell approval (" ❯ 1. Yes" · "Esc to cancel · Tab to amend"), the plan
+# approval ("   ❯ 1. Yes, and use auto mode", NO Esc footer), the first-run
+# trust modal (" ❯ 1. Yes, I trust this folder" · "Esc to cancel"), /model,
+# /theme and /config (indented "❯" plus a footer), and /status (footer only —
+# an info screen with no menu). Neither alternate covers all seven; the union
+# does, which is why both are here.
+#
+# Enumerating the sentences is what this replaces, and the plan approval is the
+# receipt: it asks "Would you like to proceed?", so the old
+# "Do you want to proceed\?" never matched it and a pane stopped dead on a
+# permission dialog reported idle.
+GANG_GATED_REGEX='^ +❯|Esc to'
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline
@@ -82,16 +89,64 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
 }
 
 profile_input() { # $1 = tmux target; prints the input box's contents, fails if no box
-  # The input box is the last "❯"-prefixed line in the pane. Failing when no
-  # such line exists carries real information both ways: before the TUI has
-  # painted it the harness is not yet taking input, and once it is gone the
-  # screen belongs to something else (a dialog, a pager) — either way, hold.
-  # A human draft, a dimmed ghost-text suggestion, and the "Press up to edit
-  # queued messages" hint all render as text after the prompt char.
-  # The idle cursor cell captures as U+00A0 (no-break space), whose [:space:]
-  # membership is locale-dependent — strip its bytes so a cron locale cannot
-  # read every empty box as occupied.
-  local line
-  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
-  printf '%s' "${line#❯}" | tr -d '\302\240'
+  # The input box is the "❯" line inside the composer's own frame: two rules of
+  # "─" drawn at column zero, one directly above the box and one directly below
+  # it. The frame is what identifies the box, because the prompt character alone
+  # does not — Claude Code echoes every SUBMITTED message into the transcript
+  # behind the same column-zero "❯". Taking the last "❯" line therefore found a
+  # message sent minutes ago and reported a box that was no longer on screen.
+  # Lived it: a pane stopped at a Bash approval dialog read idle, because the
+  # user message above the dialog still matched — so the gate never fired, and a
+  # send would have landed in the dialog and answered it with its own Enter.
+  #
+  # A modal takes the frame with it. The approval dialogs draw a single rule as
+  # their top edge and none below; the plan approval and /theme indent theirs and
+  # draw them narrower; /model, /config and /status use a different glyph
+  # entirely. None of them leaves a pair, so none of them is mistaken for a box —
+  # which is what lets hitch's no-input-box refusal catch a dialog before a brief
+  # can answer it.
+  #
+  # Failing when there is no frame carries real information both ways: before the
+  # TUI has painted it the harness is not yet taking input, and once it is gone
+  # the screen belongs to something else — either way, hold. A human draft, a
+  # dimmed ghost-text suggestion, and the "Press up to edit queued messages" hint
+  # all render as text after the prompt char, and a draft can run to several rows
+  # inside the frame, so every row of it is printed.
+  #
+  # Multibyte care, twice over. The rule test is a gsub of a literal "─" with the
+  # remainder checked for emptiness — a literal matches as a byte sequence in
+  # cron's C locale, where "─+" would quantify only the last byte and a bracket
+  # class would match single bytes. And the idle cursor cell captures as U+00A0
+  # (no-break space), whose [:space:] membership is locale-dependent, so its
+  # bytes are stripped rather than trusted to a class.
+  local box
+  box="$(tmux capture-pane -pJ -t "$1" | awk '
+    { line[NR] = $0; if (NF) last = NR
+      t = $0; n = gsub(/─/, "", t)
+      # All rule glyphs and nothing else. Leading spaces survive the gsub, so
+      # this pins the rule to column zero too, and an indented dialog edge is
+      # rejected by the same test. Width is carried along: the two rules of one
+      # frame always match each other.
+      if (n && t == "") { prev = rule; prevw = rulew; rule = NR; rulew = n }
+    }
+    END {
+      if (!prev || !rule || rulew != prevw) exit 1
+      # A stale rule higher up the transcript must not pair with the top edge of
+      # a dialog and bracket the transcript between the two. The real frame
+      # closes at the bottom of the screen, with only the ctx beacon and the
+      # permission-mode hint under it.
+      if (last - rule > 5) exit 1
+      seen = 0
+      for (i = prev + 1; i < rule; i++) {
+        s = line[i]
+        if (!seen) {
+          if (s ~ /^[[:space:]]*$/) continue
+          if (substr(s, 1, 3) != "❯") exit 1   # framed, but not the composer
+          sub(/^❯/, "", s); seen = 1
+        }
+        print s
+      }
+      if (!seen) print ""
+    }')" || return 1
+  printf '%s' "$box" | tr -d '\302\240'
 }
