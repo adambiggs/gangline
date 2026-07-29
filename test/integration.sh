@@ -1532,7 +1532,18 @@ check "and the session under test is untouched by all of it" "yes" \
 # TMUX_TMPDIR and TMPDIR are isolated so the assertion can be ABSOLUTE. "None at
 # all" cannot be perturbed by a teammate probing at the same moment, which a
 # before/after diff in a shared directory demonstrably can.
-LEAKD="$SHIM/leak"; mkdir -p "$LEAKD/tmux" "$LEAKD/tmp" "$LEAKD/prof"
+# Its own socket directory and a SHORT one, for the reason the cold-start block
+# gives: a unix socket path has a hard length limit and a TMUX_TMPDIR under a long
+# workspace path fails to BIND. Measured rather than reasoned — with these
+# directories under $SHIM the classifier below read `no-server` on macOS, whose
+# temp root is /var/folders/<...> and long enough to cross it, while the same
+# paths are short enough on Linux to work. That is also why the classifier is
+# load-bearing and not decoration: a probe that never got its server up cannot
+# leak one, so the socket assertion was passing VACUOUSLY on that cell while the
+# temp-tree assertion beside it was real. Asserting WHICH refusal was reached is
+# what stops a leak check from being satisfied by never having leaked.
+LEAKD="$(mktemp -d /tmp/gangleak.XXXXXX)"
+mkdir -p "$LEAKD/tmux" "$LEAKD/tmp" "$LEAKD/prof"
 cat > "$LEAKD/prof/leakmark.sh" <<SH
 GANG_LAUNCH="bash --rcfile $SHIM/probedir/live.rc -i"
 GANG_BUSY_REGEX="[unclosed"
