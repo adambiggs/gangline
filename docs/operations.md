@@ -295,6 +295,12 @@ returned. Only a harness witnessed *acting* on ordinary mid-turn text —
 inside its own wait. Treat parked on any other profile as delivery availability and
 account for the wait timeout before assigning work.
 
+Observed live on 2026-07-30, a Codex contributor with `GANG_MIDTURN_ACTS` unset
+waited the full 60 seconds on `lead` while lead's roster correctly reported
+`parked (waiting on lead)`; the waiting state cleared when the call returned. That
+is evidence for honest reporting without a claim of response availability, not
+evidence that Codex acts on mid-turn input.
+
 ## Undelivered pastes
 
 Delivery reads the composer before paste, after paste, and repeatedly after its
