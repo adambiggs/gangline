@@ -1525,6 +1525,31 @@ stage_forget() { # $1 = window id
   tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true
 }
 
+blocked_record() { # $1 = window id, $2 = the sender whose send was refused
+  # REFUSED, never queued. Gang did not take the body, so this records that an
+  # attempt happened and who made it and claims nothing about delivery — calling
+  # it queued would invent an ownership no part of this system has. Repeats
+  # coalesce to a count and the most recent sender, because the fact worth an
+  # operator's eye is that this routing point is stalling traffic, not a
+  # transcript of who tried.
+  local prev n
+  prev="$(tmux show-options -wqv -t "$1" @gl_blocked 2>/dev/null)" || prev=""
+  n="${prev%% *}"
+  case "$n" in ''|*[!0-9]*) n=0 ;; esac
+  tmux set-option -w -t "$1" @gl_blocked "$(( n + 1 )) $2" 2>/dev/null || true
+}
+
+blocked_forget() { tmux set-option -uw -t "$1" @gl_blocked 2>/dev/null || true; }
+
+blocked_line() { # $1 = window id -> one sentence for an operator, or nothing
+  local raw n who
+  raw="$(tmux show-options -wqv -t "$1" @gl_blocked 2>/dev/null)" || return 0
+  [ -n "$raw" ] || return 0
+  read -r n who <<<"$raw"
+  printf 'INBOUND REFUSED while occupied — %s attempt(s), last from %s; gang kept no copy, the sender still holds it' \
+    "$n" "$who"
+}
+
 clear_box() { # $1 = window id; erase the input box, and prove it is erased
   # C-u is the line kill every readline-shaped composer honours, and a hardcoded
   # default whose outcome is verified beats an extension point no profile sets.
@@ -2390,8 +2415,14 @@ cmd_send() {
 
   # Gated beats busy: a gate paints mid-turn, and the mid-turn refusal below
   # would point at --wait, which cannot end a state only the operator can end.
-  ! gated "$AGENT_ID" \
-    || die "'$name' is gated (hook set) — a modal owns its input box and only the operator can clear it; a send would answer the dialog instead of landing (gang attach)"
+  if gated "$AGENT_ID"; then
+    # The refusal is right and is unchanged. What was missing sat on the TARGET's
+    # side: an occupied routing point stalls the agents trying to reach it, and
+    # nothing on its own surfaces said so, so the cost of leaving the modal up was
+    # invisible to whoever could clear it.
+    blocked_record "$AGENT_ID" "$from"
+    die "'$name' is gated (hook set) — a modal owns its input box and only the operator can clear it; a send would answer the dialog instead of landing (gang attach)"
+  fi
 
   # Busy is not, by itself, a reason to refuse. The question a send has to answer
   # is "will this message be delivered?", and gang measures that directly, in the
@@ -2436,6 +2467,11 @@ cmd_send() {
     midturn=1
   fi
   inject "$AGENT_ID" "$(envelope "$from" "$body")"
+  # The deletion path law 6 asks for, and the only one here that is evidence
+  # rather than a timer: traffic moved through this agent again, so whatever its
+  # occupancy was blocking is over. inject verifies or dies, so reaching this line
+  # is a delivery and not an attempt.
+  blocked_forget "$AGENT_ID"
   if [ "$activity_expired" -eq 1 ]; then
     echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; pty activity bound expired, accepted as potentially mid-turn)")"
   elif [ "$midturn" -eq 1 ]; then
@@ -2589,7 +2625,7 @@ cmd_status() {
   # in an argument list is thrown away — printf would succeed, print a blank line,
   # and report exit 0 for a state nobody ever established. An assignment carries the
   # failure, so errexit still ends the command (law 8).
-  local state failed staged
+  local state failed staged blocked
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   # A resume that never landed is the one thing about an agent that its screen
@@ -2604,6 +2640,11 @@ cmd_status() {
   staged="$(staged_note "$AGENT_ID")"
   [ -z "$staged" ] \
     || printf '%s\n' "$(colour "$C_BAD" "undelivered paste in the input box: $staged")"
+  # The other thing this agent's screen cannot show: what its own occupancy is
+  # costing somebody else. The modal is visible; the peer stalled behind it is not.
+  blocked="$(blocked_line "$AGENT_ID")"
+  [ -z "$blocked" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "$blocked")"
 }
 
 cmd_context() { # context-window usage via the profile's own introspection
