@@ -218,11 +218,24 @@ same warning everywhere. It ends at `min(90% of the window, GANG_CONTEXT_CAP)`, 
 no agent goes unwarned past 350000 however large its window, and the last rung
 always sits below the window with enough room left to issue a compaction and have it
 land. Five rungs are placed across that span at fixed fractions, closer together
-toward the top, so the warnings get more insistent as the situation gets worse
+toward the top, so the warnings arrive faster as the situation gets worse
 ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
+
+The note escalates with the rung, and what escalates is the ask rather than the
+volume. Below the top it asks for a compaction at the next arc boundary and states
+how many bands remain before that stops being optional, which puts the deadline in
+front of the agent as arithmetic from its first warning instead of springing it at
+the last. At the top rung it asks the agent to stop where it is, close what it is
+holding into handoff assets, and compact immediately. That is not a request to
+compact mid-thought: an arc boundary is only ever wanted because it is a moment with
+something coherent to write down, so writing it down is what makes this moment that
+boundary, and waiting for a better one spends the last of the window on the work
+whose handoff was the thing at risk.
 
 A window too small to reach the floor keeps a single rung at its ceiling: it cannot
 be warned about rot it has no room to suffer, so the one hazard left is exhaustion.
+That rung is both the first crossing and the top of the ladder, so it carries the
+top rung's instruction — there is nothing above it to escalate to.
 
 Setting `GANG_CONTEXT_BANDS` to a comma-separated ladder replaces the derivation
 entirely. Bare entries are absolute tokens; `%` entries are a percentage of that

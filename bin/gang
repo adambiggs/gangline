@@ -2208,12 +2208,44 @@ context_log_drop() { # target agent profile leg event post tokens/window/band/th
   tmux set-option -uw -t "$target" @gl_context_request 2>/dev/null || true
 }
 
-band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text, both legs
+band_note() { # $1 readout, $2 crossed threshold, $3 agent, $4 band, $5 resolved ladder; one text, both legs
   # The exact command, not "compact soon", because the part an agent gets wrong
   # is the resume — typed in behind the compaction it overtakes it and is eaten
   # by the turn about to be compacted, and the agent wakes with nothing to do.
-  printf "[context-usage] %s in context — crossed the %s-token band. At the next checkpoint (arc boundary), write the handoff to a file, then run: gang compact %s --from %s --resume-stdin < resume-file — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
-    "$1" "$2" "$3" "$3"
+  #
+  # What escalates up the ladder is the ASK, not the volume. A louder note
+  # carrying the same deferrable instruction defers exactly as well, and "at the
+  # next checkpoint" is deferrable forever because there is always a next
+  # checkpoint: four bands can pass on four locally-reasonable deferrals, each
+  # one correct under the wording, while the context nearly doubles. So every
+  # rung names a nearer boundary than the rung below it and states how many are
+  # left, which puts the deadline arithmetic in front of the agent from the first
+  # note rather than springing it at the last.
+  #
+  # The top rung stops asking for a boundary and says to make one. That is not
+  # "compact mid-thought": an arc boundary is only ever wanted because it is a
+  # moment with something coherent to write down, so writing it down IS the
+  # boundary, and it can be reached at any moment for the cost of doing it.
+  # Waiting instead spends the last of the window on the work whose handoff was
+  # the thing at risk.
+  local total remaining tail
+  local -a rungs
+  IFS=',' read -r -a rungs <<<"$5"
+  total="${#rungs[@]}"
+  remaining=$(( total - $4 ))
+  tail="write the handoff to a file, then run: gang compact $3 --from $3 --resume-stdin < resume-file — it queues behind the turn you are in, and the resume is delivered once compaction settles."
+  if [ "$remaining" -le 0 ]; then
+    # At or past the top rung — one condition, because a band above the ladder's
+    # last is the same situation as its last and wants the same instruction.
+    printf '[context-usage] %s in context — crossed the %s-token band, the TOP of the ladder. Stop what you are doing now: there is no better moment coming, and waiting for one is how a context dies mid-thought with nothing written down. Close what you are holding into handoff assets, then compact immediately — %s' \
+      "$1" "$2" "$tail"
+  elif [ "$remaining" -eq 1 ]; then
+    printf '[context-usage] %s in context — crossed the %s-token band. ONE band left before compaction is mandatory, so this is the last arc boundary you get to choose. Take it, and start nothing you cannot close before it: %s' \
+      "$1" "$2" "$tail"
+  else
+    printf '[context-usage] %s in context — crossed the %s-token band; %s bands left before compaction is mandatory. Finish what is open and compact at the next arc boundary: %s' \
+      "$1" "$2" "$remaining" "$tail"
+  fi
 }
 
 # --- colour -----------------------------------------------------------------
@@ -2914,7 +2946,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
       context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
         "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
     fi
-    inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2")")"
+    inject "$1" "$(envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds")")"
     next_count="$(count_next "$note_count")"
     note_ts="$now"
     context_log_note "$1" "$2" "$prof" patrol - "$tokens" "$window" \
@@ -3011,7 +3043,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
     # band was advanced above and nothing retries a warning the harness could
     # not parse. python3 is a hard dependency of this command already.
     python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
-      "$event" "$(band_note "$ctx" "$crossed" "$agent")"
+      "$event" "$(band_note "$ctx" "$crossed" "$agent" "$band" "$thresholds")"
     context_log_note "$TMUX_PANE" "$agent" "$prof" hook "$event" "$tokens" "$window" \
       "$band" "$crossed" "$thresholds" "$next_count" "$note_ts" >/dev/null
   fi

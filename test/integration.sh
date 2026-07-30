@@ -2144,10 +2144,41 @@ hook() { # optional event name; ctxagent's pane is the subject
 }
 check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
 tmux set-option -w -t "$p" @gl_band 0
+note_low="$(hook)"
 check "the hook warns on a fresh band" "yes" \
-  "$(like "$(hook)" "*additionalContext*120000-token band*")"
+  "$(like "$note_low" "*additionalContext*120000-token band*")"
+# What escalates is the ASK, not the volume, so the lowest rung has to be the
+# gentlest one AND has to already carry the deadline arithmetic — an agent that
+# only learns how far it can defer at the last rung has been told too late.
+check "the lowest rung asks for the next arc boundary" "yes" \
+  "$(like "$note_low" "*compact at the next arc boundary*")"
+check "and states the countdown to mandatory from the very first note" "yes" \
+  "$(like "$note_low" "*4 bands left before compaction is mandatory*")"
 check "and advances rich shared band memory" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1 1 [0-9]+$')"
+
+# Band 4 of this window's five (ladder pinned at 120000,138000,153000,166000,180000
+# by the log row asserted below). It is the last rung at which an agent still picks
+# its own moment, so it has to say so — "one more band" is a fact the agent cannot
+# derive from a note that only repeats the instruction it already deferred.
+paint ctxagent 'ctx 170k/200k 85%'
+note_last="$(hook)"
+check "the penultimate rung says the choice is about to run out" "yes" \
+  "$(like "$note_last" "*ONE band left before compaction is mandatory*")"
+check "and is still a boundary the agent chooses, not an interruption" "yes" \
+  "$(like "$note_last" "*last arc boundary you get to choose*")"
+
+# A window too small for a five-rung ladder collapses to one rung, and that rung is
+# simultaneously the first crossing and the top. It must land on the terminal
+# instruction rather than the gentlest: there is nothing above it to escalate to,
+# so a "next arc boundary" note there is a deferral with no deadline behind it.
+tmux set-option -w -t "$p" @gl_band 0
+note_only="$(printf '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_CONTEXT_BANDS=100000 TMUX_PANE="$p" "$GANG" context-hook)"
+check "a one-rung ladder treats its only rung as the top" "yes" \
+  "$(like "$note_only" "*TOP of the ladder*")"
+check "and does not offer a later boundary that does not exist" "no" \
+  "$(like "$note_only" "*arc boundary*")"
 
 # --- context-compliance evidence ---------------------------------------------
 #
@@ -2183,8 +2214,19 @@ check "and the report says the logger worked despite having no measured event" "
 # be mistaken for a second delivery: the report has to say both that the last
 # delivery was PostToolUse and that no seam note ever followed it.
 paint ctxagent 'ctx 190k/200k 95%'
+note_top="$(hook PostToolUse)"
 check "a PostToolUse crossing emits the warning JSON" "yes" \
-  "$(like "$(hook PostToolUse)" '*additionalContext*180000-token band*')"
+  "$(like "$note_top" '*additionalContext*180000-token band*')"
+# The top rung stops asking for a boundary and says to MAKE one. The negative is
+# the load-bearing half: an agent told to wait for an arc boundary here waits with
+# a window that cannot afford it, and "compact mid-thought" is not the alternative
+# — writing the handoff is what turns this moment into the boundary.
+check "the top rung says to stop now rather than wait" "yes" \
+  "$(like "$note_top" '*Stop what you are doing now*')"
+check "and to close the open work into handoff assets first" "yes" \
+  "$(like "$note_top" '*handoff assets, then compact immediately*')"
+check "and never offers a later boundary the window cannot afford" "no" \
+  "$(like "$note_top" '*arc boundary*')"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the delivered row names the non-seam event" "yes" \
   "$(contains "$raw_context_log" $'kind=note\tsession=')"

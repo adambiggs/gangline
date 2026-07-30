@@ -256,7 +256,14 @@ while busy unless you use `--wait`.
 `gang context <name>` asks the profile for `<used>k/<window>k (<percent>%)`.
 `gang patrol` runs a five-rung ladder over that reading and sends one attributed
 warning naming the highest rung crossed — a single read can clear several rungs at
-once, and that is one warning, not a queue of them. Both ends of the ladder
+once, and that is one warning, not a queue of them. What the warning *asks* changes
+with the rung: below the top it asks for a compaction at the next arc boundary and
+says how many bands are left before that stops being optional, and at the top it
+asks the agent to stop where it is, write its handoff assets, and compact
+immediately. Escalating the ask rather than the volume is the point — a louder note
+carrying the same deferrable instruction defers exactly as well, and "at the next
+checkpoint" is satisfiable forever because there is always a next checkpoint. Both
+ends of the ladder
 are absolute token counts, because context rot tracks how long a context is and not
 how full its window is: every agent's first warning lands at `GANG_CONTEXT_FLOOR`
 (120000), and none goes unwarned past `GANG_CONTEXT_CAP` (350000) however large its
