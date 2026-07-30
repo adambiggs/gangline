@@ -43,6 +43,36 @@ A role hitch checks for a gate shortly after delivering the brief and exits
 nonzero if one appears. This is a race that catches an early gate, not proof that
 no later prompt can occur.
 
+## Question modals
+
+A permission prompt and a question modal look alike on a terminal and are not the
+same decision. A permission prompt asks for authority, which is the operator's to
+grant. A question modal is the agent escalating a decision to whoever drives it —
+in a Gangline team, usually the lead, sometimes by name in the question text.
+Gangline refuses both, because no shipped profile's `GANG_GATED_REGEX` can tell
+them apart on a screen, and a classifier that guessed wrong in the permissive
+direction would let a peer grant authority nobody granted.
+
+Configure the harness so the second kind does not arise. This is better than any
+answer Gangline could give: the modal is not intercepted, it is never raised.
+
+- **Claude Code:** deny the tool by bare name in `~/.claude/settings.json` —
+  `"permissions": {"deny": ["AskUserQuestion"]}`. A bare tool name removes the
+  tool from the model's context entirely rather than blocking calls to it, so the
+  agent cannot raise the picker. `"permissions": {"defaultMode": "dontAsk"}` is
+  the blunter form: it denies `AskUserQuestion` even where an allow rule names it.
+  An agent that cannot ask its own UI escalates through Gangline instead, which is
+  the routing you wanted.
+- **Codex, opencode, Pi:** their modals are approval-shaped rather than a distinct
+  question tool, so the permission posture above is the whole setting. Verify
+  before assuming a harness has a separate question surface.
+
+This narrows how often `gated` fires; it does not retire the state. Tool
+permissions do not reach harness chrome — a model picker, a plan-mode approval, or
+whatever the next release paints are not tool calls and cannot be denied. So
+`gated` stays fail-closed and operator-only, and a gated agent is still cleared by
+`gang attach` and nothing else.
+
 ## Codex must be able to reach tmux
 
 Gangline's control path is the tmux Unix socket. Under Codex's
