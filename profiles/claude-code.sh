@@ -103,9 +103,10 @@ GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰
 # ticked every second it had. The spinner is timer-driven, not output-driven.
 # Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
 # finished, #{window_activity} frozen on one value, 0 ticks. That is what this
-# declares and the ONLY thing gang needs from it — a harness that repaints
-# anything at rest ticks forever and could then never read idle, so this stays
-# unset until somebody has watched a finished agent sit still.
+# declares. A harness that repaints at rest can fabricate this signal for as long
+# as it keeps writing, so gang bounds activity-only busy globally; the declaration
+# still stays unset until somebody has watched a finished agent sit still, because
+# a wrong declaration costs that entire bound on every false episode.
 GANG_QUIET_AT_REST=1
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =
@@ -149,6 +150,15 @@ GANG_COMPACT_CMD="/compact"
 # slash command waits for that turn to end — so text submitted after a command
 # can still arrive before it (see resume_after_compaction).
 GANG_MIDTURN_INPUT=1
+# Ordinary text was observed being consumed by the RUNNING turn on 2.1.220,
+# before that turn reached its boundary. That is the witness behind the parked
+# availability override; codex, opencode and Pi were observed queueing instead
+# and deliberately leave this unset.
+#
+# gang vet --probe cannot verify this declaration. The tty exposes no turn
+# identity, so "this turn consumed it" and "this turn ended and the queued next
+# turn began between polls" paint indistinguishable sequences.
+GANG_MIDTURN_ACTS=1
 # Modal chrome, not dialog sentences. Claude Code frames every modal the same
 # two ways, and both were watched live: a selection cursor "❯" that is INDENTED,
 # and an "Esc to <verb>" footer. Indentation is the whole tell — the composer's

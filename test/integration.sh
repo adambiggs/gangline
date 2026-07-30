@@ -161,6 +161,22 @@ like() { case "$1" in $2) echo yes ;; *) echo no ;; esac; }  # $2 = a glob
 # Comment lines are dropped before counting: a comment cannot break a parser, and
 # the rule has to be able to NAME the shape it forbids without tripping itself.
 bash32_traps() { grep '[$](.*case ' "$1" | grep -cv '^[[:space:]]*#'; }
+# busy() has three answers, so shell's ordinary predicate syntax is a trap: every
+# nonzero answer takes the false branch and silently collapses COULD-NOT-DETERMINE
+# into determined idle. Count only the syntactic sites where shell consumes that
+# status directly. A caller that captures it before a case is the required shape.
+busy_boolean_calls() { # $1 = shell source -> count, or refuses if grep cannot read it
+  local matches rc=0
+  matches="$(grep -E '(^|[;[:space:]])(if|elif|while|until|!|&&|\|\|)[[:space:]]+busy([[:space:]]|$)' "$1" 2>&1)" || rc=$?
+  case "$rc" in
+    0) awk '!/^[[:space:]]*#/ { n++ } END { print n + 0 }' <<<"$matches" ;;
+    1) echo 0 ;;
+    *) printf 'BUG: the suite could not inspect busy() callers (grep exit %s): %s\n' \
+         "$rc" "${matches:-no message from grep}" >&2
+       printf 'unevaluable-busy-call-source(%s)' "$1"
+       return "$rc" ;;
+  esac
+}
 
 # patrol prints "%-16s %-18s %s", so the verdict starts at column 37
 verdict() { awk -v n="$1" '$1==n { print substr($0, 37) }'; }
@@ -657,6 +673,7 @@ GANG_COMPACT_CMD="/compact"
 GANG_COMPACTING_REGEX="COMPACTING\\.\\.\\."
 GANG_GATED_REGEX="Do you want to proceed\\?"
 GANG_MIDTURN_INPUT="\${FAKE_QUEUES:-}"
+GANG_MIDTURN_ACTS="\${FAKE_ACTS:-}"
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
   local line
@@ -669,6 +686,13 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 sleep 0.5
 paint busybee 'WORKING...'
 check "the stand-in reads as busy" "busy (tight tug)" "$("$GANG" status busybee)"
+
+# ACTS is a refinement of INPUT, never an independent capability. Refuse the
+# impossible profile instead of treating an incomplete declaration as evidence.
+out="$(FAKE_ACTS=1 "$GANG" status busybee 2>&1)"; rc=$?
+check "a profile cannot declare acting without accepting mid-turn input" "1" "$rc"
+check "and the refused contract names both profile properties" "yes" \
+  "$(holds "$out" 'GANG_MIDTURN_ACTS.*GANG_MIDTURN_INPUT')"
 
 # That check is also this repo's contamination bug standing in the open, so name
 # it: nothing ran a turn. A shell echoed the marker and gang read the word rather
@@ -730,18 +754,29 @@ TMUX_PANE="$parkpane" "$GANG" wait busybee 30 >/dev/null 2>&1 &
 parkpid=$!
 sleep 1.5
 
-check "but it reads available where the harness queues input" "idle (slack tug)" \
-  "$(FAKE_QUEUES=1 "$GANG" status parkee)"
-check "and the roster a lead scans agrees" "idle" \
+check "a gang wait is reported as parked, not collapsed into availability" \
+  "parked (waiting on busybee)" "$(FAKE_QUEUES=1 "$GANG" status parkee)"
+check "and the roster a lead scans carries that distinct state" "parked" \
   "$(FAKE_QUEUES=1 "$GANG" roster | awk '$1=="parkee"{print $3}')"
-# The narrow scope, and the whole reason this is gated on mid-turn input: where
-# the harness refuses input during a turn, a parked agent genuinely cannot be
-# handed anything until its wait returns, so busy stays true and stays honest.
-check "while a harness that refuses mid-turn input still reads busy" "busy (tight tug)" \
-  "$("$GANG" status parkee)"
+# Parked is gang-owned state, independent of transport capability. A profile
+# that does not accept mid-turn input reports the same fact rather than busy.
+check "and refusing mid-turn input does not erase gang's owned parked state" \
+  "parked (waiting on busybee)" "$("$GANG" status parkee)"
+
+# ACCEPTS and ACTS split at the wait boundary. A queueing harness can take the
+# paste, but cannot make this running wait consume it, so waiting for parkee to
+# become actionable must time out. A witnessed ACTS profile returns PARKED — not
+# IDLE — because the state and the availability decision are different facts.
+out="$(FAKE_QUEUES=1 "$GANG" wait parkee 1 2>&1)"; rc=$?
+check "accepts-and-queues cannot release a wait on a parked agent" "1" "$rc"
+check "and the timeout positively says the parked turn stayed busy" "yes" \
+  "$(contains "$out" "still busy")"
+out="$(FAKE_QUEUES=1 FAKE_ACTS=1 "$GANG" wait parkee 5 2>&1)"; rc=$?
+check "accepts-and-acts makes a parked agent actionable" "0" "$rc"
+check "without calling that distinct state idle" "parked (waiting on busybee)" "$out"
 
 out="$(FAKE_QUEUES=1 "$GANG" send parkee --from tester "MARK_PARKED" 2>&1)"; rc=$?
-check "a send to a parked agent is not refused" "0" "$rc"
+check "a queueing harness still accepts a send to a parked agent" "0" "$rc"
 # Available and mid-turn are different questions with different answers here, and
 # the report has to follow the pane rather than the availability verdict.
 check "and is reported as landing mid-turn, because that is what the pane did" "yes" \
@@ -1005,8 +1040,9 @@ check "and still says what it would have cut" "yes" \
 # wait` busy — the exact false busy item 3 killed, rebuilt underneath it. It does
 # not, because the exclusion is by state gang OWNS: @gl_waiting carrying a live
 # waiter's pid, not a pattern matched off the screen.
-tmux set-option -w -t "$(id_of churner)" @gl_waiting "$$"
-check "a pane parked in gang's own wait is not made busy by churning" "idle (slack tug)" \
+tmux set-option -w -t "$(id_of churner)" @gl_waiting "$$ boxless"
+check "a pane parked in gang's own wait is not made busy by churning" \
+  "parked (waiting on boxless)" \
   "$(FAKE_QUEUES=1 "$GANG" status churner | head -1)"
 tmux set-option -uw -t "$(id_of churner)" @gl_waiting
 check "and reads busy again the moment that wait is gone" "busy (tight tug)" \
@@ -1044,11 +1080,11 @@ check "and gets back to idle once the screen settles" "idle (slack tug)" \
 # --- the activity arm, asserted on its own ------------------------------------
 
 # busy() is busy_painted OR recently_active OR churn, and a disjunction is how a
-# test stops being able to fail. So this arm gets a pane where the other two
-# CANNOT answer: no busy marker is declared, and the writer changes no cell, so
-# churn sees a byte-identical screen and calls it still. Only the pty signal is
-# left to produce busy, which is the point — the redundancy stays in production
-# and the suite still holds each arm to its own account.
+# test stops being able to fail. So this arm gets a pane where the other two do
+# not answer: its declared busy marker is absent, and the writer changes no cell,
+# so churn sees a byte-identical screen and calls it still. Only the pty signal is
+# left to produce busy. The marker is declared so this same fixture can later
+# prove that independent evidence still wins after the activity arm expires.
 #
 # A live full-screen TUI looks exactly like this from the outside. claude-code's
 # render loop parks the cursor into the composer rows on every frame, 748 of 748,
@@ -1057,7 +1093,8 @@ check "and gets back to idle once the screen settles" "idle (slack tug)" \
 # indicator, the marker goes with it, and churn was the only arm left looking.
 cat > "$SHIM/custom-profiles/quietchurn.sh" <<'SH'
 GANG_LAUNCH="bash --norc"
-GANG_BUSY_REGEX=""
+GANG_BUSY_REGEX="FORCE_BUSY"
+GANG_COMPACT_CMD="#compact"
 GANG_VERIFIED_VERSIONS="any"
 GANG_QUIET_AT_REST=1
 profile_input() {
@@ -1098,6 +1135,49 @@ check "and the batched roster column agrees, so the two paths share the arm" "bu
 # The per-harness gate. Same pane, same bytes, one line of declaration apart.
 check "a profile that does not declare quiet-at-rest does not get the signal" "idle (slack tug)" \
   "$("$GANG" status loudly | head -1)"
+
+# Zero is a deterministic way to cross a production policy bound without making
+# the suite sleep five minutes. EXPIRED is a third answer, reported through both
+# state surfaces and carried by wait as exit 2 rather than consumed as idle.
+check "activity alone reports its bounded third state after expiry" \
+  "expired (pty activity bound reached)" \
+  "$(GANG_ACTIVITY_LIMIT=0 "$GANG" status quietly | head -1)"
+check "and the roster preserves that state instead of calling it idle" "expired" \
+  "$(GANG_ACTIVITY_LIMIT=0 "$GANG" roster | awk '$1=="quietly"{print $3}')"
+out="$(GANG_ACTIVITY_LIMIT=0 "$GANG" wait quietly 10 2>&1)"; rc=$?
+check "a wait carries activity expiry as its distinct exit" "2" "$rc"
+check "and positively names the state it carried" "expired (pty activity bound reached)" "$out"
+
+# Consumers must decide what the third answer permits. With no safe mid-turn
+# composer, neither delivery nor peer compaction may spend unknown as idle.
+out="$(GANG_ACTIVITY_LIMIT=0 "$GANG" send quietly --from tester MARK_EXPIRED 2>&1)"; rc=$?
+check "a send refuses when activity expiry leaves its landing boundary unknown" "1" "$rc"
+check "and names the exhausted evidence rather than claiming busy" "yes" \
+  "$(contains "$out" "activity-only bound")"
+out="$(GANG_ACTIVITY_LIMIT=0 "$GANG" compact quietly --from tester 2>&1)"; rc=$?
+check "peer compaction also refuses the unknown live-turn boundary" "1" "$rc"
+check "and says which fact it could not determine" "yes" \
+  "$(contains "$out" "cannot determine whether a live turn")"
+
+# An unreadable tmux timestamp is COULD-NOT-DETERMINE, not inactive. This shim
+# plants that third answer at the source and the positive diagnostic proves the
+# state evaluator actually reached it.
+mkdir -p "$SHIM/badactivity"
+cat > "$SHIM/badactivity/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = display-message ]; then
+  case "\$*" in
+    *'#{window_activity}'*) echo not-a-stamp; exit 0 ;;
+  esac
+fi
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/badactivity/tmux"
+out="$(PATH="$SHIM/badactivity:$PATH" "$GANG" status quietly 2>&1)"; rc=$?
+check "an unreadable activity stamp refuses to manufacture a state" "1" "$rc"
+check "and the refusal positively identifies the unreadable stamp" "yes" \
+  "$(contains "$out" "unreadable activity stamp")"
+
 tmux send-keys -t "$(target_of quietly)" C-c
 tmux send-keys -t "$(target_of loudly)" C-c
 # Bounded, and gang's own: the arm has to GO QUIET or it is the sign-flipped bug
@@ -1106,6 +1186,11 @@ tmux send-keys -t "$(target_of loudly)" C-c
 "$GANG" wait quietly 40 >/dev/null 2>&1
 check "and the arm goes quiet once the writing stops" "idle (slack tug)" \
   "$("$GANG" status quietly | head -1)"
+paint quietly FORCE_BUSY
+check "the independent-marker fixture really painted its proof" "yes" \
+  "$(has quietly FORCE_BUSY)"
+check "and a painted marker still proves busy after activity has expired" \
+  "busy (tight tug)" "$(GANG_ACTIVITY_LIMIT=0 "$GANG" status quietly | head -1)"
 "$GANG" drop quietly >/dev/null 2>&1; "$GANG" drop loudly >/dev/null 2>&1
 unset GANG_PROFILES
 
@@ -2262,9 +2347,10 @@ check "the production drop proof records its complete observation row" "yes" \
 check "and establishes peer provenance only because proof was observed" "yes" \
   "$(contains "$raw_context_log" $'provenance=peer-issued\tprovenance_candidates=peer-issued\tevidence_availability=available\tevidence_result=drop-proved')"
 
-# Issue #22's unavailable half: at A=100k and F=60k, A <= 2F. The context can
-# fall below half of A only after it also falls below F, so patrol's drop-proof
-# branch is unreachable. The row must expose that structure without filling it.
+# Issue #22's formerly unreachable half: at A=100k and F=60k, A <= 2F. A drop
+# below half of A also falls below F, so the old band-first chain consumed the
+# sweep before asking the mark question. F is retained in the row for old-regime
+# analysis, but the unconditional mark poll now observes and records the proof.
 "$GANG" hitch lowdrop -p compactable -d /tmp >/dev/null
 paint lowdrop 'ctx 100k/200k 50%'
 "$GANG" compact lowdrop --from tester >/dev/null 2>&1
@@ -2272,11 +2358,11 @@ low_request="$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_context_request)
 check "the #22 fixture records A=100k and F=60k before its drop" "yes" \
   "$(like "$low_request" '* peer-issued 100000 60000 request-only')"
 paint lowdrop 'ctx 40k/200k 20%'
-check "the structurally unavailable drop is still observed" "steady (band 0)" \
+check "the low-band drop is still observed after the ladder branch" "steady (band 0)" \
   "$("$GANG" patrol | verdict lowdrop)"
 issue22_report="$("$GANG" context-report)"
-check "the #22 row says proof was unavailable, not negative" "yes" \
-  "$(holds "$issue22_report" 'lowdrop: .*provenance=COULD-NOT-DETERMINE; evidence=structurally-unavailable/request-only')"
+check "the #22 row positively records proof despite A being at most 2F" "yes" \
+  "$(holds "$issue22_report" 'lowdrop: .*provenance=peer-issued; evidence=available/drop-proved')"
 check "and the full row retains A and F for the arithmetic" "yes" \
   "$(contains "$(cat "$GANG_CONTEXT_LOG")" $'request_quality=determined\tissue_tokens=100000\tfirst_threshold=60000')"
 
@@ -2844,6 +2930,26 @@ check "no profile regex is evaluated outside the helper that reports errors" "0"
 # the defect cannot exist is the mistake the profile-regex rule above names.
 check "no refusal is masked by a local declaration" "0" \
   "$(grep -cE '^[[:space:]]*local[[:space:]]+[A-Za-z_][A-Za-z0-9_]*="?\$\(' "$GANG")"
+# busy() deliberately returns 2 for an expired activity-only hold. Shell spends
+# every nonzero as false in the natural predicate forms, so a future caller that
+# writes one would recreate the state collapse even though today's callers are
+# audited. Prove the guard against a copy planted with every shape it claims to
+# see before trusting its zero on production source.
+cp "$GANG" "$SHIM/gang-busy-call-trap"
+cat >> "$SHIM/gang-busy-call-trap" <<'SH'
+if busy planted; then :
+elif busy planted; then :
+fi
+while busy planted; do break; done
+until busy planted; do break; done
+if ! busy planted; then :; fi
+true && busy planted
+false || busy planted
+SH
+check "the tri-state caller guard sees every planted boolean form" "7" \
+  "$(busy_boolean_calls "$SHIM/gang-busy-call-trap")"
+check "no busy verdict is consumed directly as a shell boolean" "0" \
+  "$(busy_boolean_calls "$GANG")"
 # Same family as the `cut -c` rule and caught the same way — by asking what the
 # macOS cell would make of it rather than by running it here. In-place sed takes
 # a mandatory suffix argument on BSD and refuses one on GNU, so the edit that

@@ -88,9 +88,7 @@ unset _d
 #
 # 30 rather than lower because a first rung has to mean something — 12% of 1M was
 # three rungs of noise before any of it was advice. 85 rather than 90 because the
-# rung must leave room to act on it (39k on codex's window), and because
-# patrol_one only reaches the mark's context-drop branch when the post-drop
-# context still crosses a rung, which takes a first rung below half the window.
+# rung must leave room to act on it (39k on codex's window).
 BANDS="${GANG_CONTEXT_BANDS:-30%,50%,70%,85%}"
 
 # Context-compliance measurements outlive the window they describe. The active
@@ -128,6 +126,15 @@ GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 # had, longest gap 1.35s — so the tail this has to clear is the one measured with
 # output, not without. Three is the floor of what is known and this is not it.
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
+
+# How long recent pty activity may be the ONLY evidence keeping an agent busy.
+# Five minutes is policy, not a measurement: the field failure ran for about
+# forty minutes, and any bound in this range would have stopped it. Five is long
+# enough to bridge generous gaps between the busy markers every declaring
+# profile also paints, while short enough that a finished agent cannot stall a
+# team indefinitely. An operator with different harness evidence can move it
+# without patching gang.
+GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 
 # One number with two users, and they ask the same physical question: how long
 # after `/compact` is typed can that compaction still credibly be in flight.
@@ -170,6 +177,8 @@ gang — drive a team of CLI agents as tmux windows
                                               Naming yourself is allowed and is the
                                               self-compaction path (--from/GANG_FROM required)
   gang status <name>                          busy (tight tug) | idle (slack tug) |
+                                              parked (waiting on <agent>) |
+                                              expired (pty activity bound reached) |
                                               gated (hook set: a modal owns the input
                                               box — a permission prompt, a picker, or
                                               anything else only the operator can clear;
@@ -317,6 +326,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
+  GANG_MIDTURN_ACTS=""
   GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
   # Kept, not discarded with the rest of the local, so that a failure reading
@@ -330,6 +340,8 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
+  [ "${GANG_MIDTURN_ACTS:-}" != 1 ] || [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+    || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
 
 # --- roles ------------------------------------------------------------------
@@ -661,12 +673,12 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   # contamination. This predicate's own pipeline was one: `printf | grep -q` with
   # the marker on an early line lost the race 3 times in 500 and returned
   # not-busy on a working pane, which is why the match is now taken off a
-  # here-string with no pipe in it to raise a signal. The other is busy() itself,
-  # which overrides to not-busy for an agent parked in `gang wait` wherever the
-  # harness takes mid-turn input — measured live on opencode 1.18.8 at twenty
-  # consecutive idles on a pane painting this marker, for the length of the wait.
-  # That one is deliberate and filed on its own. It is named here so this
-  # function is never read as the whole answer to "is this agent working".
+  # here-string with no pipe in it to raise a signal. The other was busy()'s old
+  # override for every parked harness that accepted mid-turn input — measured
+  # live on opencode 1.18.8 at twenty consecutive false idles while the marker
+  # stayed painted. state_now now names that owned state PARKED, and busy() only
+  # overrides it for the narrower, witnessed ACTS declaration. This function is
+  # therefore still not the whole answer to "what can this agent do now?".
   #
   # The two signals that CAN tell a live turn from static text — recently_active
   # and churn — are ORed into busy() and have to stay that way. Conjoined into a
@@ -680,7 +692,12 @@ busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly i
   re_match GANG_BUSY_REGEX "$pane"
 }
 
-recently_active() { # $1 = window id, profile loaded; tmux stamped output here lately
+activity_hold_clear() { # $1 = window id; end any activity-only busy episode
+  tmux set-option -uw -t "$1" @gl_activity_only_since 2>/dev/null \
+    || die "cannot clear the activity-only bound on pane $1 — refusing to fabricate its state"
+}
+
+recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   # The pty question, which is neither of the other two. busy_painted asks what
   # the pane SAYS and churn asks whether the pane CHANGED; this asks whether the
   # harness WROTE, and that is the only one of the three a full-screen TUI cannot
@@ -689,43 +706,82 @@ recently_active() { # $1 = window id, profile loaded; tmux stamped output here l
   # frames — and a cursor move changes no cell. So bytes flow while cksum stays
   # flat, and 44 of 47 byte-identical pairs in the blind state had ticked.
   #
-  # Declared per harness and OFF by default, which is not caution about the
-  # signal but about its one catastrophic direction. window_activity ticks on any
-  # output at all, so a TUI that repaints anything at rest — a clock, a cursor
-  # blink, a late-settling counter — ticks forever, and on that harness this can
-  # never read idle: every send refused, every wait hung, the whole team stalled
-  # on an agent that finished. Undeclared degrades to exactly today's behaviour,
-  # which is a bug we understand. Measured frozen at rest on all four shipped
-  # harnesses, 30 samples each; each profile says so where it declares it.
+  # Declared per harness and OFF by default. window_activity ticks on any output
+  # at all, so a TUI that repaints anything at rest — a clock, a cursor blink, a
+  # late-settling counter — can otherwise hold busy forever. That happened in the
+  # field for about forty minutes after a Pi agent had finished, despite an empty
+  # composer and a byte-identical capture. Pi no longer declares the signal, but
+  # finite quiet-at-rest observations cannot prove the other declarations forever
+  # either. @gl_activity_only_since bounds the time gang will trust this signal
+  # ALONE; it dies with the window, and genuine quiet or independent busy evidence
+  # clears it sooner. tmux exposes the LAST write, not when a repeating episode
+  # began, so the bound starts when gang first has to rely on the signal. It
+  # bounds how long a query/send/wait is held, not unobserved time before anyone
+  # asked.
   #
   # No second capture and no sleep: tmux maintains this timestamp already, so
   # unlike churn it is read once and compared against now.
-  [ "${GANG_QUIET_AT_REST:-}" = 1 ] || return 1
-  local stamped now
-  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" || return 1
-  # A window tmux will not answer for is not evidence of quiet. Same rule as
-  # busy_painted's refusal to read a failed capture as idle.
-  case "$stamped" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "${GANG_QUIET_AT_REST:-}" != 1 ]; then
+    activity_hold_clear "$1"
+    return 1
+  fi
+  case "$GANG_ACTIVITY_WINDOW" in
+    ''|*[!0-9]*) die "GANG_ACTIVITY_WINDOW must be whole seconds, got '$GANG_ACTIVITY_WINDOW'" ;;
+  esac
+  case "$GANG_ACTIVITY_LIMIT" in
+    ''|*[!0-9]*) die "GANG_ACTIVITY_LIMIT must be whole seconds, got '$GANG_ACTIVITY_LIMIT'" ;;
+  esac
+  local stamped now since
+  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
+    || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
+  # A malformed stamp is not quiet. Naming the third answer here keeps busy()
+  # from feeding it to the churn fallback as though tmux had determined false.
+  case "$stamped" in
+    ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
+  esac
   now="$(date +%s)"
-  [ $(( now - stamped )) -lt "$GANG_ACTIVITY_WINDOW" ]
+  [ "$stamped" -le "$now" ] \
+    || die "tmux returned a future activity stamp for pane $1: $stamped > $now"
+  if [ $(( now - stamped )) -ge "$GANG_ACTIVITY_WINDOW" ]; then
+    activity_hold_clear "$1"
+    return 1
+  fi
+
+  since="$(tmux show-options -wqv -t "$1" @gl_activity_only_since 2>/dev/null)" \
+    || die "cannot read the activity-only bound for pane $1 — refusing to guess"
+  if [ -z "$since" ]; then
+    tmux set-option -w -t "$1" @gl_activity_only_since "$now" 2>/dev/null \
+      || die "cannot record the activity-only bound for pane $1 — refusing an unbounded busy state"
+    since="$now"
+  fi
+  case "$since" in
+    *[!0-9]*) die "malformed @gl_activity_only_since on pane $1: '$since'" ;;
+  esac
+  [ "$since" -le "$now" ] \
+    || die "future @gl_activity_only_since on pane $1: $since > $now"
+  [ $(( now - since )) -lt "$GANG_ACTIVITY_LIMIT" ] && return 0
+  return 2
 }
 
-busy() { # $1 = window id, profile loaded; exit 0 if busy
+busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = activity-only hold expired
   # The transport question — "will a send land at a sane boundary?" — which is
   # the same as the pane question everywhere except one case.
   #
-  # An agent parked in gang's own `gang wait` is inside a harness turn, so it
-  # paints the busy marker while being the most available agent on the team: it
-  # is doing nothing but waiting, and the wait ends the moment its target moves.
-  # Reporting that as busy makes the roster lie in the direction that costs the
-  # most — a lead skips the one worker that could take the task.
+  # An agent parked in gang's own `gang wait` is inside a harness turn. Accepting
+  # a mid-turn paste is not enough to make it available: opencode and the other
+  # queueing harnesses submit that paste only after the running turn — the wait —
+  # ends. Only a profile witnessed ACTING on ordinary text inside the current
+  # turn may override busy here. state_now still reports every waiter as PARKED,
+  # because available and idle are different claims.
   #
-  # Gated on mid-turn input on purpose, and this is the narrow scope: where the
-  # harness refuses input during a turn, a parked agent genuinely CANNOT be
-  # handed anything until its wait returns, so busy stays true and stays honest.
-  # Parked only overrides the answer where the paste would actually land.
-  if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$1"; then return 1; fi
-  busy_painted "$1" && return 0
+  if [ "${GANG_MIDTURN_ACTS:-}" = 1 ] && parked "$1"; then
+    activity_hold_clear "$1"
+    return 1
+  fi
+  if busy_painted "$1"; then
+    activity_hold_clear "$1"
+    return 0
+  fi
   # ORed with churn below rather than replacing it, and the redundancy is
   # deliberate. Every pair churn calls moving is one this also calls moving — a
   # cksum cannot change without bytes — so as sets of detected-busy states this
@@ -737,7 +793,13 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   # UNAVAILABLE, which is a different thing from the disjunction that once made a
   # probe unable to fail — and the difference is that the suite asserts this arm
   # on its own, so it can still be caught being wrong.
-  recently_active "$1" && return 0
+  local activity_rc=0
+  recently_active "$1" || activity_rc=$?
+  case "$activity_rc" in
+    0) return 0 ;;
+    1|2) ;;
+    *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
+  esac
   # A missing marker is not a missing turn, and there is nothing to widen a
   # branch onto. claude-code marks THINKING and leaves the rest bare: of 220
   # samples with the pane demonstrably changing, 19 carried any branch of the
@@ -761,10 +823,15 @@ busy() { # $1 = window id, profile loaded; exit 0 if busy
   # $2 is that same answer resolved ahead of time for a whole team at once, so a
   # roster pays one sleep rather than one per agent. Absent, this asks for itself.
   case "${2:-}" in
-    churning) return 0 ;;
-    still)    return 1 ;;
+    churning) activity_hold_clear "$1"; return 0 ;;
+    still)    [ "$activity_rc" -eq 2 ] && return 2; return 1 ;;
   esac
-  ! pane_stable "$1"
+  if pane_stable "$1"; then
+    [ "$activity_rc" -eq 2 ] && return 2
+    return 1
+  fi
+  activity_hold_clear "$1"
+  return 0
 }
 
 # Churn costs two captures separated by a wait, and asking each agent in turn
@@ -819,9 +886,16 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     # test, and what holds them to the same answer is the suite asserting the
     # batched column against the per-agent read on one pane.
     sum="$( ( load_profile "$prof"
-              if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$id"; then exit 1; fi
-              busy_painted "$id" && exit 1
-              recently_active "$id" && exit 1
+              # state_now names every live waiter before asking busy(), so no
+              # parked pane needs a churn verdict regardless of ACTS/QUEUES.
+              if parked "$id"; then activity_hold_clear "$id"; exit 1; fi
+              if busy_painted "$id"; then activity_hold_clear "$id"; exit 1; fi
+              activity_rc=0
+              recently_active "$id" || activity_rc=$?
+              # Fresh activity is the fast path. Expired activity MUST reach the
+              # churn sample: movement can still prove busy independently, while
+              # a still pane preserves busy()'s third verdict for state_now.
+              [ "$activity_rc" -eq 0 ] && exit 1
               capture "$id" | cksum | tr ' ' '-' ) 2>/dev/null )" || continue
     [ -n "$sum" ] || continue
     pending="$pending $id"
@@ -1098,15 +1172,19 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
 # window and `tmux show-options -w` is its whole debugger. The holder's pid goes
 # inside for the same reason lock_pane keeps one: an option outlives the process
 # that set it, so a waiter killed mid-wait would otherwise leave its agent
-# reading available forever.
+# reading available forever. The target name rides beside it so the state says
+# what the wait is waiting ON instead of making the operator inspect the pane.
 PARKED=0
+PARKED_WAIT_TARGET=""
+WAIT_STATE=""
 
 unpark() { # drop OUR marker, never somebody else's
   [ "$PARKED" = 1 ] || return 0
   PARKED=0
-  local w
+  local w held
   w="$(self_window)" || return 0
-  [ "$(tmux show-options -wqv -t "$w" @gl_waiting 2>/dev/null)" = "$$" ] || return 0
+  held="$(tmux show-options -wqv -t "$w" @gl_waiting 2>/dev/null)" || return 0
+  [ "${held%% *}" = "$$" ] || return 0
   tmux set-option -uw -t "$w" @gl_waiting 2>/dev/null || true
 }
 
@@ -1125,22 +1203,32 @@ unpark() { # drop OUR marker, never somebody else's
 # same as once. That matters because cmd_vet also calls it on the success path.
 on_exit() { probe_teardown; lock_release; unpark; }
 
-park_self() { # mark this window as blocked in gang's own wait
+park_self() { # $1 = target name; mark this window as blocked in gang's own wait
   # Not being in a pane is normal, not an error: gang runs from the operator's
   # own shell and from cron, and neither has an agent to mark.
   local w
   w="$(self_window)" || return 0
-  tmux set-option -w -t "$w" @gl_waiting "$$" 2>/dev/null || return 0
+  tmux set-option -w -t "$w" @gl_waiting "$$ $1" 2>/dev/null || return 0
   PARKED=1
   trap 'on_exit' EXIT
 }
 
 parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
-  local holder
-  holder="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" || return 1
-  [ -n "$holder" ] || return 1
+  local held holder
+  PARKED_WAIT_TARGET=""
+  held="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" \
+    || die "cannot read gang-wait state for pane $1 — refusing to guess parked/idle"
+  [ -n "$held" ] || return 1
+  holder="${held%% *}"
+  case "$holder" in
+    ''|*[!0-9]*) die "malformed @gl_waiting on pane $1: '$held'" ;;
+  esac
+  case "$held" in
+    *' '*) PARKED_WAIT_TARGET="${held#* }" ;;
+  esac
   kill -0 "$holder" 2>/dev/null && return 0
   tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true  # waiter died; reclaim
+  PARKED_WAIT_TARGET=""
   return 1
 }
 
@@ -1151,18 +1239,42 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   # end, not a wait: only the operator clears it, so blocking on it is blocking
   # on a human nobody has told — and worse, a gate drops the busy hint, so a
   # waiter that cannot see it would read the dialog as idle and paste into it.
-  local t=0 timeout="${3:-300}" streak=0
+  local t=0 timeout="${3:-300}" streak=0 busy_rc=0
+  WAIT_STATE=""
   # Marked for the whole wait, so a teammate reading this agent's state while it
   # blocks here sees available rather than busy. Set before the first poll: the
   # window this closes is exactly the one somebody else is looking in.
-  park_self
+  park_self "$2"
   while :; do
     if gated "$1"; then
       die "'$2' is gated (hook set) — stopped at a modal only the operator can clear (gang attach)"
     fi
-    if busy "$1"; then streak=0; else
-      streak=$((streak + 1)); [ "$streak" -ge 2 ] && { unpark; return 0; }
+    if [ "${GANG_MIDTURN_ACTS:-}" = 1 ] && parked "$1"; then
+      if [ -n "$PARKED_WAIT_TARGET" ]; then
+        WAIT_STATE="parked (waiting on $PARKED_WAIT_TARGET)"
+      else
+        WAIT_STATE="parked (gang wait in progress)"
+      fi
+      unpark
+      return 0
     fi
+    busy_rc=0
+    busy "$1" || busy_rc=$?
+    case "$busy_rc" in
+      0) streak=0 ;;
+      1) streak=$((streak + 1))
+         if [ "$streak" -ge 2 ]; then
+           WAIT_STATE="idle (slack tug)"
+           unpark
+           return 0
+         fi ;;
+      2) # The pty arm has spent its whole allowance. Waiting longer would turn
+         # a five-minute policy into the permanent fabricated busy it bounds.
+         WAIT_STATE="expired (pty activity bound reached)"
+         unpark
+         return 0 ;;
+      *) die "internal: busy returned unknown verdict $busy_rc" ;;
+    esac
     [ "$t" -ge "$timeout" ] && die "'$2' still busy after ${timeout}s"
     sleep 2; t=$((t + 2))
   done
@@ -1761,8 +1873,9 @@ context_sample_write() { # $1 target, then epoch/tokens/window/band/thresholds
 # A compact request is evidence only that gang submitted a command. Issue #15
 # proves that Codex can reject that command while clearing its composer, so this
 # state never establishes cause by itself. It retains A (tokens at issue), F
-# (first resolved rung), and the independently observed evidence, allowing #22's
-# A > 2F availability boundary to be recorded rather than inferred later.
+# (first resolved rung), and the independently observed evidence. F no longer
+# controls patrol reachability, but keeping both locates and explains rows from
+# before #22 removed the old A > 2F availability boundary.
 REQUEST_TS="" REQUESTER="" REQUEST_TOKENS="" REQUEST_FIRST="" REQUEST_EVIDENCE=""
 context_request_read() { # $1 target; 1 absent, 2 malformed
   local raw extra
@@ -1910,18 +2023,22 @@ context_log_drop() { # target agent profile leg event post tokens/window/band/th
   if context_request_read "$target"; then
     request_quality=determined; issue_tokens="$REQUEST_TOKENS"; first_threshold="$REQUEST_FIRST"
     candidates="$REQUESTER,harness-auto,unknown"
-    if [ "$REQUEST_TOKENS" -gt 0 ] && [ "$REQUEST_FIRST" -gt 0 ]; then
-      if [ "$REQUEST_TOKENS" -gt $(( 2 * REQUEST_FIRST )) ]; then
-        evidence_availability=available
-      else
-        evidence_availability=structurally-unavailable
-      fi
+    # The first rung used to decide whether patrol's drop-proof branch was
+    # reachable: A <= 2F meant the post-drop band comparison consumed the sweep
+    # first. patrol_one now asks compaction_pending unconditionally, so F is no
+    # longer load-bearing and remains here only to interpret rows from before the
+    # regime change. A known issue context makes the drop predicate available at
+    # every band; a visible marker establishes itself even when issue context was
+    # unavailable.
+    if [ "$REQUEST_TOKENS" -gt 0 ]; then
+      evidence_availability=available
     else
       evidence_availability="COULD-NOT-DETERMINE"
     fi
     evidence_result="$REQUEST_EVIDENCE"
     case "$REQUEST_EVIDENCE" in
-      marker-seen|drop-proved) provenance="$REQUESTER"; candidates="$REQUESTER" ;;
+      marker-seen|drop-proved) evidence_availability=available
+        provenance="$REQUESTER"; candidates="$REQUESTER" ;;
     esac
   else
     case "$?" in 2) request_quality=malformed
@@ -2160,25 +2277,43 @@ cmd_send() {
   # and only the second case is refused. Refusing the first is what made a busy
   # lead a black hole and made --wait burn a worker's whole turn waiting on one
   # that never went idle.
-  local midturn=0
-  if busy "$AGENT_ID"; then
-    if [ "$wait" -eq 1 ]; then
-      wait_idle "$AGENT_ID" "$name" "$timeout"
-    elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ]; then
-      midturn=1
-    else
-      die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
-    fi
-  elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$AGENT_ID"; then
-    # Parked in gang's own wait. busy() just called it available, and for the
-    # refusal above that is the right answer — but the harness is still inside a
-    # turn, so the paste queues in its box exactly as it would for an agent doing
-    # work. Report what the pane did, not what availability implies; these two
-    # answers diverge here and nowhere else.
+  local midturn=0 busy_rc=0 activity_expired=0
+  busy "$AGENT_ID" || busy_rc=$?
+  case "$busy_rc" in
+    0) if [ "$wait" -eq 1 ]; then
+         wait_idle "$AGENT_ID" "$name" "$timeout"
+         [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || activity_expired=1
+       elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ]; then
+         midturn=1
+       else
+         die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
+       fi ;;
+    1) if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$AGENT_ID"; then
+         # Only an ACTS profile can make a parked pane reach this verdict. The
+         # pane is still inside a turn even though it can act on the delivery.
+         midturn=1
+       fi ;;
+    2) if [ "$wait" -eq 1 ]; then
+         wait_idle "$AGENT_ID" "$name" "$timeout"
+         [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || activity_expired=1
+       else
+         activity_expired=1
+       fi ;;
+    *) die "internal: busy returned unknown verdict $busy_rc" ;;
+  esac
+  if [ "$activity_expired" -eq 1 ]; then
+    # Expired is neither busy nor idle. A declared composer makes delivery safe
+    # and inject still verifies it; without one gang cannot know whether the
+    # paste would land in the harness or in a live tool, so the third verdict is
+    # a refusal rather than a false idle.
+    [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+      || die "'$name' has exceeded the pty activity-only bound, so gang cannot determine busy/idle; profile '$AGENT_PROFILE' declares no safe mid-turn input"
     midturn=1
   fi
   inject "$AGENT_ID" "$(envelope "$from" "$*")"
-  if [ "$midturn" -eq 1 ]; then
+  if [ "$activity_expired" -eq 1 ]; then
+    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; pty activity bound expired, accepted as potentially mid-turn)")"
+  elif [ "$midturn" -eq 1 ]; then
     # "accepted", not "queued": the box shows a queued-message hint either way,
     # but what the harness does next is its own call — Claude Code hands queued
     # text to the turn already running as often as it holds it for the boundary.
@@ -2213,8 +2348,16 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   local self=""
   self="$(self_window)" || self=""
   local mine=0; [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
-  [ "$mine" -eq 1 ] || ! busy "$AGENT_ID" \
-    || die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)"
+  if [ "$mine" -ne 1 ]; then
+    local busy_rc=0
+    busy "$AGENT_ID" || busy_rc=$?
+    case "$busy_rc" in
+      0) die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)" ;;
+      1) ;;
+      2) die "'$name' has exceeded the pty activity-only bound, so gang cannot determine whether a live turn would be cut; refusing compaction" ;;
+      *) die "internal: busy returned unknown verdict $busy_rc" ;;
+    esac
+  fi
 
   inject "$AGENT_ID" "$GANG_COMPACT_CMD"
   # Recorded only after the command verified in the pane: a mark for a compaction
@@ -2272,9 +2415,28 @@ state_now() { # $1 = window id, profile loaded -> the state, in words
   # same question differently — and renaming a state is one edit, not two. $2 is
   # a churn verdict a batch already resolved; the vocabulary stays here either
   # way, so batching changes what it costs to answer and never what it says.
-  if gated "$1"; then echo "gated (hook set)"
-  elif busy "$1" "${2:-}"; then echo "busy (tight tug)"
-  else echo "idle (slack tug)"; fi
+  if gated "$1"; then
+    activity_hold_clear "$1"
+    echo "gated (hook set)"
+    return
+  fi
+  if parked "$1"; then
+    activity_hold_clear "$1"
+    if [ -n "$PARKED_WAIT_TARGET" ]; then
+      echo "parked (waiting on $PARKED_WAIT_TARGET)"
+    else
+      echo "parked (gang wait in progress)"
+    fi
+    return
+  fi
+  local busy_rc=0
+  busy "$1" "${2:-}" || busy_rc=$?
+  case "$busy_rc" in
+    0) echo "busy (tight tug)" ;;
+    1) echo "idle (slack tug)" ;;
+    2) echo "expired (pty activity bound reached)" ;;
+    *) die "internal: busy returned unknown verdict $busy_rc" ;;
+  esac
 }
 
 paint_state() { # $1 = a state phrase, padding and all
@@ -2283,6 +2445,8 @@ paint_state() { # $1 = a state phrase, padding and all
   # a missed rename a wrong colour rather than a wrong state.
   case "$1" in
     gated*) colour "$C_BAD"  "$1" ;;
+    expired*) colour "$C_BAD" "$1" ;;
+    parked*) colour "$C_WORK" "$1" ;;
     busy*)  colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
   esac
@@ -2420,7 +2584,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
   local prof ctx tw tokens window band crossed thresholds prev failed rung now log_failed
-  local note_count note_last next_count note_ts state_rc sample_drop=0
+  local note_count note_last next_count note_ts state_rc sample_drop=0 compaction_rc=0
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
   [ -z "$failed" ] \
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
@@ -2495,6 +2659,17 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   if context_sample_read "$1" && [ $(( tokens * 2 )) -lt "$SAMPLE_TOKENS" ]; then
     sample_drop=1
   fi
+  # The mark question is independent of the ladder question. Keeping it inside
+  # the rising-band elif made its positive drop proof unreachable whenever the
+  # post-drop context fell below the first rung: those marks cleared on the clock
+  # despite the evidence sitting in this very readout. Ask on every patrol and
+  # cache the answer; only a genuinely pending mark participates in the later
+  # injection decision.
+  compaction_pending "$1" "$tokens" || compaction_rc=$?
+  case "$compaction_rc" in
+    0|1) ;;
+    *) die "internal: compaction_pending returned unknown verdict $compaction_rc" ;;
+  esac
 
   # Injecting into a pane that is not quietly idle corrupts it, so every guard
   # below skips rather than risks it — and a skip never burns state.
@@ -2511,7 +2686,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     fi
     context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
     say "$2" "$ctx" "steady (band $band)"
-  elif compaction_pending "$1" "$tokens"; then
+  elif [ "$compaction_rc" -eq 0 ]; then
     if [ "$sample_drop" -eq 1 ]; then
       context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
         "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
@@ -3435,7 +3610,9 @@ case "$cmd" in
   context-hook) cmd_context_hook ;;
   wait)     [ $# -ge 1 ] || usage_die
             case "${2:-300}" in ''|*[!0-9]*) die "wait: timeout takes whole seconds, got '${2:-}'" ;; esac
-            resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"; echo "idle (slack tug)" ;;
+            resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"
+            echo "$WAIT_STATE"
+            [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || exit 2 ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;

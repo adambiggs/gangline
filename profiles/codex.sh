@@ -76,9 +76,10 @@ GANG_BUSY_REGEX="esc to interrupt"
 # is the one with a dangerous direction, IS measured.
 # Measured quiet at rest: 30 samples at 1s with the composer empty and the agent
 # finished, #{window_activity} frozen on one value, 0 ticks. That is what this
-# declares and the ONLY thing gang needs from it — a harness that repaints
-# anything at rest ticks forever and could then never read idle, so this stays
-# unset until somebody has watched a finished agent sit still.
+# declares. A harness that repaints at rest can fabricate this signal for as long
+# as it keeps writing, so gang bounds activity-only busy globally; the declaration
+# still stays unset until somebody has watched a finished agent sit still, because
+# a wrong declaration costs that entire bound on every false episode.
 GANG_QUIET_AT_REST=1
 # Modal chrome, not dialog sentences. Codex frames every modal the same way: it
 # draws the selected row with a "›" at column zero — the composer's own column —
