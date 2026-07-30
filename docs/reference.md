@@ -317,7 +317,7 @@ fragments and are not listed as roles.
 | `GANG_PROFILE` | default profile for `up` and `hitch` | `claude-code` |
 | `GANG_ROLE` | role used by `up` when `-r` is absent | `lead` |
 | `GANG_FROM` | sender identity for `send` and compact resumes | none |
-| `GANG_CONTEXT_BANDS` | comma-separated percentages of each agent's own window, or absolute token counts | `30%,50%,70%,85%` |
+| `GANG_CONTEXT_BANDS` | comma-separated absolute token counts; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `120000,180000,250000,350000` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |

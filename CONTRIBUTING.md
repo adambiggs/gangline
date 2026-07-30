@@ -257,6 +257,29 @@ cause. This is why such a predicate needs a third answer, distinct from both
 verdicts, that NAMES what it could not determine — a bare non-zero would have left
 the negative assertion passing.
 
+### A guard you edited is a guard you removed
+
+Tests that exist to hold a decision are the executable form of that decision, and a
+change that makes them agree with itself has not passed them. The default context
+band ladder was made absolute, with rung-boundary checks added so the old behaviour
+"cannot come back"; three days later a change flipped the default to percentages and
+rewrote those same checks to assert proportionality. Nothing went red. The
+protection was not overridden — it was edited into agreeing, and 28 checks across
+the surface ended up encoding the reverted decision.
+
+So when a change requires editing an existing assertion, stop and find out what that
+assertion was protecting. Adding cases is ordinary; **changing what an existing one
+expects is a claim that the old expectation was wrong, and it needs the same
+argument as changing the behaviour would.** Deleting one is that claim in its
+strongest form.
+
+The other half of that failure is where the decision lived: only in a commit
+message. Git holds history, but a register is what a proposal searches, so a
+decision reachable only by knowing which commit to read will be silently reopened by
+someone who did not know. Anything that will be re-proposed — a default, a rejected
+design, a floor — belongs in `docs/adr/`, and the code that implements it should
+point there so the reasoning is reachable without a search.
+
 ### A changed default leaves claims no grep will find
 
 Because docs also state defaults in words. Sweeping the numbers found five wrong

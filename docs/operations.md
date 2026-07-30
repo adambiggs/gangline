@@ -158,11 +158,13 @@ directory stops serialising with the other writers, and one that disagrees about
 the log writes its measurements into a second dataset.
 
 Bare `GANG_CONTEXT_BANDS` entries are absolute tokens; `%` entries are a
-percentage of that agent's context window. The default ladder is entirely
-proportional, because the shipped harnesses differ in window size by nearly 4x and
-one absolute ladder places its rungs differently on each — a rung above the
-smallest window can never be crossed at all. Pin absolute rungs if every agent on
-the team runs the same window size. The last warned band is a tmux window option,
+percentage of that agent's context window. The default ladder is entirely absolute
+(`120000,180000,250000,350000`), because context rot tracks how long a context is
+rather than how full its window is — the same token count earns the same warning on
+every harness. A rung above the smallest window is never crossed there, and that is
+the intended behaviour rather than a gap: an agent that cannot hold those tokens
+cannot suffer that degradation. Use `%` only for an unusual window; it is an escape
+hatch, not a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)). The last warned band is a tmux window option,
 shared with `context-hook`, and re-arms when usage falls after compaction.
 
 ### In-turn hook

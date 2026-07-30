@@ -1962,13 +1962,15 @@ unset GANG_PROFILES GANG_TEST_GATE
 # The bash profile reads the same beacon shape the claude-code statusline paints,
 # so one printed line exercises the whole warn path with no harness installed.
 "$GANG" hitch ctxagent -p bash -d /tmp >/dev/null
-paint ctxagent 'ctx 150k/200k 75%'      # 75% of the window: crosses 30/50/70, not 85
+paint ctxagent 'ctx 150k/200k 75%'      # 150k of tokens: over the 120000 rung, under
+                                        # 180000. The window figure is deliberately
+                                        # not what decides that (ADR-0005).
 check "context reads the beacon" "150k/200k (75%)" "$("$GANG" context ctxagent)"
 
-check "patrol nudges past a band" "NUDGED (crossed the 140000-token band)" \
+check "patrol nudges past a band" "NUDGED (crossed the 120000-token band)" \
   "$("$GANG" patrol | verdict ctxagent)"
 check "the nudge reaches the pane" "yes" "$(has ctxagent '[context-usage]')"
-check "a second sweep holds its peace" "steady (band 3)" \
+check "a second sweep holds its peace" "steady (band 1)" \
   "$("$GANG" patrol | verdict ctxagent)"
 
 # The in-turn leg shares that band memory, so it must not re-warn what patrol
@@ -1981,9 +1983,9 @@ hook() { # optional event name; ctxagent's pane is the subject
 check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
 tmux set-option -w -t "$p" @gl_band 0
 check "the hook warns on a fresh band" "yes" \
-  "$(like "$(hook)" "*additionalContext*140000-token band*")"
+  "$(like "$(hook)" "*additionalContext*120000-token band*")"
 check "and advances rich shared band memory" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^3 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1 1 [0-9]+$')"
 
 # --- context-compliance evidence ---------------------------------------------
 #
@@ -2020,12 +2022,12 @@ check "and the report says the logger worked despite having no measured event" "
 # delivery was PostToolUse and that no seam note ever followed it.
 paint ctxagent 'ctx 190k/200k 95%'
 check "a PostToolUse crossing emits the warning JSON" "yes" \
-  "$(like "$(hook PostToolUse)" '*additionalContext*170000-token band*')"
+  "$(like "$(hook PostToolUse)" '*additionalContext*180000-token band*')"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the delivered row names the non-seam event" "yes" \
   "$(contains "$raw_context_log" $'kind=note\tsession=')"
 check "and carries the self-describing window and resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'window=200000\tband=4\tthreshold=170000\tthresholds=60000,100000,140000,170000')"
+  "$(contains "$raw_context_log" $'window=200000\tband=2\tthreshold=180000\tthresholds=120000,180000,250000,350000')"
 check "and records PostToolUse as a non-seam" "yes" \
   "$(contains "$raw_context_log" $'hook_event=PostToolUse\tseam=no')"
 
@@ -2041,8 +2043,15 @@ check "the low-context seam has no new warning to emit" "" "$(hook UserPromptSub
 context_report="$("$GANG" context-report)"
 check "the drop reports the last sampled tokens with their staleness" "yes" \
   "$(holds "$context_report" 'ctxagent: pre=190000 at .*staleness=[0-9]+s.*post=40000 band=0')"
+# final-band exposure is COULD-NOT-DETERMINE here, and that is the honest answer
+# rather than a gap: the absolute ladder's top rung (350000) sits above this
+# agent's 200k window, so there is no final band for it to have been exposed to.
+# final_exposure refuses to call that "no" — an unreachable rung is not an
+# unexposed agent. The consequence for compliance analysis is real and recorded on
+# issue #24: every harness whose window is under the top rung reports
+# COULD-NOT-DETERMINE for final-band exposure, permanently.
 check "and identifies the last delivery and its ordinal honestly" "yes" \
-  "$(contains "$context_report" "nudges=1; last=hook/PostToolUse; NON-SEAM #1; final-band=yes")"
+  "$(contains "$context_report" "nudges=1; last=hook/PostToolUse; NON-SEAM #1; final-band=COULD-NOT-DETERMINE")"
 check "an unproven drop enters only the third outcome" "yes" \
   "$(contains "$context_report" "proven-compliant: 0")"
 check "with its opposite proven count co-reported" "yes" \
@@ -2057,7 +2066,7 @@ check "and the band it spent without any seam delivery" "yes" \
 # The control interval: the first and only note really does land at a seam.
 paint ctxagent 'ctx 190k/200k 95%'
 check "a fresh final-band UserPromptSubmit emits at the seam" "yes" \
-  "$(like "$(hook UserPromptSubmit)" '*additionalContext*170000-token band*')"
+  "$(like "$(hook UserPromptSubmit)" '*additionalContext*180000-token band*')"
 paint ctxagent 'ctx 40k/200k 20%'
 hook PostToolUse >/dev/null
 context_report="$("$GANG" context-report)"
@@ -2067,14 +2076,14 @@ check "the report distinguishes a first seam from an Nth nudge" "yes" \
 # A legacy integer is a known band with an unknown count, never band zero. Count
 # rows on both sides so the empty hook output has a positive complement.
 paint ctxagent 'ctx 190k/200k 95%'
-tmux set-option -w -t "$p" @gl_band 4
+tmux set-option -w -t "$p" @gl_band 2
 notes_before="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
 check "the legacy-state fixture begins with retained note rows" "yes" \
   "$([ "$notes_before" -gt 0 ] && echo yes || echo no)"
 check "a legacy integer at the current band does not re-notify" "" "$(hook PostToolUse)"
 notes_after="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
 check "and the positive note-row count stays unchanged" "$notes_before" "$notes_after"
-check "the legacy value is preserved rather than reparsed as zero" "4" \
+check "the legacy value is preserved rather than reparsed as zero" "2" \
   "$(tmux show-options -wqv -t "$p" @gl_band)"
 
 # Malformed rich state is a third answer. The positive CTD row proves the hook
@@ -2106,7 +2115,7 @@ check "the logger-failure fixture really is an unwritable directory" "dr-x------
 paint logfail 'ctx 190k/200k 95%'
 bad_log_out="$(GANG_CONTEXT_LOG="$bad_log" "$GANG" patrol 2>&1)"
 check "a failed logger does not suppress the warning behaviour" "yes" \
-  "$(contains "$bad_log_out" "NUDGED (crossed the 170000-token band)")"
+  "$(contains "$bad_log_out" "NUDGED (crossed the 180000-token band)")"
 check "and is surfaced during that same patrol sweep" "yes" \
   "$(contains "$bad_log_out" "CONTEXT LOG INCOMPLETE")"
 logfail_id="$(id_of logfail)"
@@ -2133,8 +2142,8 @@ while [ "$i" -lt 80 ]; do
   python3 "$event_helper" append "$atomic_log" 8192 \
     "ts=$((1700000000 + i))" kind=note session=atomic window_id=%1 \
     "agent=writer-$i" profile=bash leg=hook hook_event=PostToolUse seam=no \
-    tokens=190000 window=200000 band=4 threshold=170000 \
-    thresholds=60000,100000,140000,170000 note_count=1 &
+    tokens=190000 window=200000 band=2 threshold=180000 \
+    thresholds=120000,180000,250000,350000 note_count=1 &
   i=$((i + 1))
 done
 wait
@@ -2180,40 +2189,42 @@ python3 "$event_helper" clear "$malformed_log" >/dev/null
 
 # --- one ladder, windows 4x apart ---------------------------------------------
 #
-# The whole point of a proportional default: it means the same thing on every
-# harness. Two agents at the same FRACTION with windows four times apart must land
-# on the same rung — and the top rung has to be reachable on the small one, which
-# is the defect. An absolute 350000 rung against codex's 258k window is never
-# crossed at all, so the loudest warning could not fire on that harness, and the
-# rung below it landed at 97% of the window: after the room to act on it was gone.
+# The whole point of an ABSOLUTE default (ADR-0005): the same number of TOKENS
+# means the same thing on every harness, because that is what context rot tracks.
+# Two agents whose windows are four times apart, carrying the same tokens, must
+# land on the same rung — and the fuller one must not be warned harder for being
+# fuller. This is the guard that goes red if the default is ever made proportional
+# again: at 250k, the small agent is at 97% of its window and the big one at 25%,
+# so a proportional ladder puts them on different bands and these checks fail.
 #
 # Both read from ONE sweep. patrol advances @gl_band as it nudges, so a second
 # call would report the first agent steady and prove nothing about the ladder.
 "$GANG" hitch bigwin -p bash -d /tmp >/dev/null
 "$GANG" hitch smallwin -p bash -d /tmp >/dev/null
-paint bigwin   'ctx 900k/1000k 90%'
-paint smallwin 'ctx 232k/258k 90%'
+paint bigwin   'ctx 250k/1000k 25%'
+paint smallwin 'ctx 250k/258k 97%'
 bandout="$("$GANG" patrol)"
-check "a 1M agent at 90% is nudged at its own top rung" \
-  "NUDGED (crossed the 850000-token band)" "$(printf '%s\n' "$bandout" | verdict bigwin)"
-check "and a 258k agent at 90% at ITS top rung, off the same ladder" \
-  "NUDGED (crossed the 219000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
+check "a 1M agent at 250k tokens is nudged at the 250000 rung" \
+  "NUDGED (crossed the 250000-token band)" "$(printf '%s\n' "$bandout" | verdict bigwin)"
+check "and a 258k agent at the same TOKENS gets the same rung" \
+  "NUDGED (crossed the 250000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
 check "so both sit on the same band number" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^4 1 [0-9]+$')"
-check "and the small window reaches the top one at all" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^4 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^3 1 [0-9]+$')"
+check "and the fuller window is not warned harder for being fuller" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^3 1 [0-9]+$')"
 "$GANG" drop bigwin >/dev/null 2>&1 || true
 "$GANG" drop smallwin >/dev/null 2>&1 || true
 
-# A proportional rung takes two figures, and where the readout supplies no window
-# the refusal must name the WINDOW. Sent to GANG_CONTEXT_BANDS instead, an operator
-# is sent to edit a setting that is correct — the same misattribution as reading
-# grep's error as a miss, one layer up. The second check is the one that fails on
-# the old wording, which is the only way to prove the attribution and not just the
-# behaviour.
+# The % suffix survives as an escape hatch for an unusual window (ADR-0005), and
+# such a rung takes two figures — so it is set explicitly here rather than relied
+# on as a default. Where the readout supplies no window the refusal must name the
+# WINDOW. Sent to GANG_CONTEXT_BANDS instead, an operator is sent to edit a setting
+# that is correct — the same misattribution as reading grep's error as a miss, one
+# layer up. The second check is the one that fails on the old wording, which is the
+# only way to prove the attribution and not just the behaviour.
 "$GANG" hitch nowin -p bash -d /tmp >/dev/null
 paint nowin 'ctx 150k/0k 0%'
-nowout="$("$GANG" patrol 2>&1 >/dev/null)"
+nowout="$(GANG_CONTEXT_BANDS='50%' "$GANG" patrol 2>&1 >/dev/null)"
 check "a rung that cannot be placed is refused as a window problem" "yes" \
   "$(contains "$nowout" "no context-window size")"
 check "and never as a broken ladder" "no" \
@@ -2331,7 +2342,7 @@ prove_request() { # $1 agent, $2 expected requester; seed independent proof
 "$GANG" hitch selfprov -p compactable -d /tmp >/dev/null
 paint selfprov 'ctx 900k/1000k 90%'
 check "the self-provenance interval begins with a delivered final-band note" \
-  "NUDGED (crossed the 850000-token band)" "$("$GANG" patrol | verdict selfprov)"
+  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict selfprov)"
 selfprov_pane="$(tmux list-panes -t "$(id_of selfprov)" -F '#{pane_id}')"
 TMUX_PANE="$selfprov_pane" "$GANG" compact selfprov --from selfprov >/dev/null 2>&1
 prove_request selfprov self-issued
@@ -2341,7 +2352,7 @@ paint selfprov 'ctx 250k/1000k 25%'
 "$GANG" hitch peerprov -p compactable -d /tmp >/dev/null
 paint peerprov 'ctx 900k/1000k 90%'
 check "the peer-provenance interval begins with a delivered final-band note" \
-  "NUDGED (crossed the 850000-token band)" "$("$GANG" patrol | verdict peerprov)"
+  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict peerprov)"
 "$GANG" compact peerprov --from tester >/dev/null 2>&1
 prove_request peerprov peer-issued
 paint peerprov 'ctx 250k/1000k 25%'
@@ -2366,7 +2377,7 @@ check "a compaction gang issued is recorded on the window" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the request row carries its issue context and full resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'agent=compagent\tprofile=compactable\tleg=compact\thook_event=-\tseam=COULD-NOT-DETERMINE\ttokens=150000\twindow=200000\tband=3\tthreshold=140000\tthresholds=60000,100000,140000,170000')"
+  "$(contains "$raw_context_log" $'agent=compagent\tprofile=compactable\tleg=compact\thook_event=-\tseam=COULD-NOT-DETERMINE\ttokens=150000\twindow=200000\tband=1\tthreshold=120000\tthresholds=120000,180000,250000,350000')"
 
 # What that command can honestly claim, and the pair that bounds it. inject
 # proves DELIVERY — the paste changed the box, the Enter emptied it — and this
@@ -2386,7 +2397,7 @@ check "because on this fixture nothing compacted at all" "150k/200k (75%)" \
   "$("$GANG" context compagent)"
 
 check "and patrol holds its nudge while it is unconfirmed" \
-  "past the 140000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "past the 120000-token band — compaction gang issued, unconfirmed, holding nudge" \
   "$("$GANG" patrol | verdict compagent)"
 check "holding burns no band, so the nudge is not lost" "" \
   "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_band)"
@@ -2400,10 +2411,10 @@ check "and it does not make the agent read as compacting" "idle (slack tug)" \
 
 # `/compact` under a harness's own threshold runs and changes nothing, so a mark
 # trusted until the context moves would hold patrol off that pane for good.
-check "an expired mark stops holding" "NUDGED (crossed the 140000-token band)" \
+check "an expired mark stops holding" "NUDGED (crossed the 120000-token band)" \
   "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
 check "and records clock expiry as non-proving request evidence" "yes" \
-  "$(like "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_context_request)" '* peer-issued 150000 60000 clock-cleared')"
+  "$(like "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_context_request)" '* peer-issued 150000 120000 clock-cleared')"
 
 # The other way out, and the one that does not wait: a compaction that HAPPENED
 # says so in the readout. The drop is monotone — the context stays low — unlike
@@ -2412,18 +2423,19 @@ check "and records clock expiry as non-proving request evidence" "yes" \
 "$GANG" hitch dropagent -p compactable -d /tmp >/dev/null
 paint dropagent 'ctx 900k/1000k 90%'
 "$GANG" compact dropagent --from tester >/dev/null 2>&1
-paint dropagent 'ctx 350k/1000k 35%'   # under half of 900k, still over the 30% rung
+paint dropagent 'ctx 350k/1000k 35%'   # 350k of tokens: the top rung, on a window
+                                       # only a third full
 check "a context drop clears the mark rather than waiting out the clock" \
-  "NUDGED (crossed the 300000-token band)" "$("$GANG" patrol | verdict dropagent)"
+  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict dropagent)"
 check "and the mark is gone once it has served its purpose" "" \
   "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the production drop proof records its complete observation row" "yes" \
-  "$(contains "$raw_context_log" $'agent=dropagent\tprofile=compactable\tleg=patrol\thook_event=-\tseam=yes\ttokens=350000\twindow=1000000\tband=1\tthreshold=300000\tthresholds=300000,500000,700000,850000')"
+  "$(contains "$raw_context_log" $'agent=dropagent\tprofile=compactable\tleg=patrol\thook_event=-\tseam=yes\ttokens=350000\twindow=1000000\tband=4\tthreshold=350000\tthresholds=120000,180000,250000,350000')"
 check "and establishes peer provenance only because proof was observed" "yes" \
   "$(contains "$raw_context_log" $'provenance=peer-issued\tprovenance_candidates=peer-issued\tevidence_availability=available\tevidence_result=drop-proved')"
 
-# Issue #22's formerly unreachable half: at A=100k and F=60k, A <= 2F. A drop
+# Issue #22's formerly unreachable half: at A=100k and F=120k, A <= 2F. A drop
 # below half of A also falls below F, so the old band-first chain consumed the
 # sweep before asking the mark question. F is retained in the row for old-regime
 # analysis, but the unconditional mark poll now observes and records the proof.
@@ -2431,8 +2443,8 @@ check "and establishes peer provenance only because proof was observed" "yes" \
 paint lowdrop 'ctx 100k/200k 50%'
 "$GANG" compact lowdrop --from tester >/dev/null 2>&1
 low_request="$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_context_request)"
-check "the #22 fixture records A=100k and F=60k before its drop" "yes" \
-  "$(like "$low_request" '* peer-issued 100000 60000 request-only')"
+check "the #22 fixture records A=100k and F=120k before its drop" "yes" \
+  "$(like "$low_request" '* peer-issued 100000 120000 request-only')"
 paint lowdrop 'ctx 40k/200k 20%'
 check "the low-band drop is still observed after the ladder branch" "steady (band 0)" \
   "$("$GANG" patrol | verdict lowdrop)"
@@ -2440,7 +2452,7 @@ issue22_report="$("$GANG" context-report)"
 check "the #22 row positively records proof despite A being at most 2F" "yes" \
   "$(holds "$issue22_report" 'lowdrop: .*provenance=peer-issued; evidence=available/drop-proved')"
 check "and the full row retains A and F for the arithmetic" "yes" \
-  "$(contains "$(cat "$GANG_CONTEXT_LOG")" $'request_quality=determined\tissue_tokens=100000\tfirst_threshold=60000')"
+  "$(contains "$(cat "$GANG_CONTEXT_LOG")" $'request_quality=determined\tissue_tokens=100000\tfirst_threshold=120000')"
 
 # The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
 # busy_painted, which is false for most of a turn, so after about sixteen seconds
@@ -2521,21 +2533,25 @@ check "and both the patrol hold and the resume proof read it" "2" \
 
 # --- the band ladder ---------------------------------------------------------
 
-# Every default rung is a percentage, so two properties have to hold together:
-# each rung adds exactly ONE band at any window size, and the same FRACTION lands
-# on the same band on windows that differ. Two percentages can only floor to one
-# rung on a window small enough that 15% of it is under 1k, and a rung that floors
-# to zero dies loudly rather than doubling up — so collision is not the hazard
-# here that it was for a ladder mixing absolute rungs with a proportional one.
+# The default rungs are absolute tokens (ADR-0005), and these checks are the
+# executable form of that decision. The property under test is that the SAME TOKEN
+# COUNT lands on the same band whatever the window, because context rot tracks
+# tokens rather than window fullness.
+#
+# That is also what makes this a guard rather than a description: under a
+# proportional default, 120k of a 200k window is 60% and 120k of a 1M window is
+# 12%, so the pair below lands on different bands and these checks go red. A
+# change that edits them to agree with a proportional default has removed the
+# guard, not passed it — see ADR-0005's history for the time that happened.
 probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
-probe rung200a '59k/200k 30%'     # a hair under the 30% rung, which is 60000 here
-probe rung200b '60k/200k 30%'     # exactly on it
-probe rung200c '100k/200k 50%'
-probe rung200d '170k/200k 85%'    # the top rung — the one an absolute ladder could
-                                  # not reach on a window this size at all
-probe rung1ma  '299k/1000k 30%'
-probe rung1mb  '300k/1000k 30%'   # the same FRACTION as rung200b, five times the tokens
-probe rung1mc  '700k/1000k 70%'
+probe rung200a '119k/200k 60%'    # a hair under the first rung, 120000
+probe rung200b '120k/200k 60%'    # exactly on it
+probe rung200c '180k/200k 90%'    # the second rung
+probe rung200d '199k/200k 99%'    # full to the brim: the 250000 and 350000 rungs
+                                  # are ABOVE this window and correctly never fire
+probe rung1ma  '119k/1000k 12%'   # the same TOKENS as rung200a on a 5x window
+probe rung1mb  '120k/1000k 12%'   # the same TOKENS as rung200b — must match it
+probe rung1mc  '350k/1000k 35%'   # the top rung, reachable only on a big window
 "$GANG" patrol >/dev/null         # first sweep nudges and records the band
 settled="$("$GANG" patrol)"       # second reports it
 band_of() { printf '%s\n' "$settled" | awk -v n="$1" '$1==n { print $NF }' | tr -d ')'; }
@@ -2543,10 +2559,10 @@ band_of() { printf '%s\n' "$settled" | awk -v n="$1" '$1==n { print $NF }' | tr 
 check "under the first rung is band 0"   "0" "$(band_of rung200a)"
 check "one rung is one band"             "1" "$(band_of rung200b)"
 check "and the next rung is the next band" "2" "$(band_of rung200c)"
-check "the top rung is reachable on a 200k window" "4" "$(band_of rung200d)"
-check "a hair under the same fraction on a 5x window is band 0" "0" "$(band_of rung1ma)"
-check "and the same fraction is the same band whatever the window" "1" "$(band_of rung1mb)"
-check "with the rungs above it still stepping one at a time" "3" "$(band_of rung1mc)"
+check "a rung above the window never fires" "2" "$(band_of rung200d)"
+check "the same tokens on a 5x window are still under the rung" "0" "$(band_of rung1ma)"
+check "and the same tokens are the same band whatever the window" "1" "$(band_of rung1mb)"
+check "with the top rung reached only where the tokens exist" "4" "$(band_of rung1mc)"
 
 # --- file-based context (codex) ----------------------------------------------
 
@@ -2612,7 +2628,7 @@ CODEX_HOME="$CODEX_FIX" "$GANG" context filectx >/dev/null 2>&1
 check "a repeated marker is refused, not guessed" "1" "$?"
 rm "$DAYDIR/rollout-2026-07-27T00-00-03-gangtest-dup.jsonl"
 
-check "a codex agent joins the band ladder" "NUDGED (crossed the 129000-token band)" \
+check "a codex agent joins the band ladder" "NUDGED (crossed the 120000-token band)" \
   "$(CODEX_HOME="$CODEX_FIX" "$GANG" patrol | verdict filectx)"
 
 # Doctor runs the same parser as a format gate against the newest rollout that
@@ -2678,14 +2694,14 @@ tmux send-keys -t "$(target_of ocp)" \
 sleep 0.4
 check "context scrapes the hint row and joins the window from the catalog" \
   "150k/1050k (14%)" "$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" context ocp)"
-# 14% of the window is not a warning, and a proportional ladder saying so is the
-# fix rather than a regression: that same 150k crossed an absolute 120000 rung
-# while leaving 86% of the window free. Repainted to a figure that IS one — 400k
-# of 1050k is 38%, over the 30% rung and under the 50%.
+# The scrape above is a context read, not a warning. Repainted to 400k, which is
+# over the top 350000 rung — on a 1050k window that is only 38% full, and the
+# ladder warns anyway, because 400k of context is 400k of rot whatever the window
+# around it (ADR-0005).
 tmux send-keys -t "$(target_of ocp)" \
   "printf '%s\n' '┃  Build · GPT-5.5 GitHub Copilot' '╹▀▀▀▀▀▀▀▀' '  400K (38%) · \$0.42  ctrl+p commands'" Enter
 sleep 0.4
-check "an opencode agent joins the band ladder" "NUDGED (crossed the 315000-token band)" \
+check "an opencode agent joins the band ladder" "NUDGED (crossed the 350000-token band)" \
   "$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" patrol | verdict ocp)"
 
 # Two catalog rows concatenating to the same "<model name> <provider name>"
@@ -2877,11 +2893,11 @@ check "and a typed draft is the same bytes by then" "❯ commit the docs" "$(cc_
 # a completion offered against a real draft must not read as an empty box.
 cc_paint 'commit the docs'
 check "a typed draft holds the nudge" \
-  "past the 300000-token band — input box has content, holding nudge" \
+  "past the 350000-token band — input box has content, holding nudge" \
   "$("$GANG" patrol | verdict ccbox)"
 cc_paint 'commit \033[2mthe docs\033[0m'
 check "and a draft with a completion offered against it still holds" \
-  "past the 300000-token band — input box has content, holding nudge" \
+  "past the 350000-token band — input box has content, holding nudge" \
   "$("$GANG" patrol | verdict ccbox)"
 
 # The clear direction is asserted on the box itself rather than through patrol,

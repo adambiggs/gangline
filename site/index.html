@@ -300,10 +300,12 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     Two warning legs run the same band ladder over that one readout &mdash; an
     in-turn hook where the harness has hooks, an ambient cron patrol where it
     doesn't &mdash; and share one band memory, so an agent is warned once per band,
-    not once per leg. The rungs default to percentages of each agent's own window
-    (<code>30%,50%,70%,85%</code>), because the shipped harnesses differ by nearly
-    4x and one absolute ladder would mean four different things across a mixed
-    team.
+    not once per leg. The rungs are absolute token counts
+    (<code>120000,180000,250000,350000</code>), because context rot tracks how long
+    a context is rather than how full its window is &mdash; a 300k context is
+    degraded whether the window is 200k or 1M, so it earns the same warning on
+    both. A bigger window is a reason to warn on the same schedule, not a licence
+    to fill it.
   </p>
   <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k/272k (69%) in context — crossed the
 136000-token band. At the next checkpoint (arc boundary), write the handoff to a

@@ -251,12 +251,14 @@ while busy unless you use `--wait`.
 ### Context is explicit
 
 `gang context <name>` asks the profile for `<used>k/<window>k (<percent>%)`.
-`gang patrol` applies `GANG_CONTEXT_BANDS` (default `30%,50%,70%,85%`) and sends
-one attributed warning per crossed band. The rungs are proportional because
-context windows differ by nearly 4x across the shipped harnesses, and one absolute
-ladder means four different things on a mixed team: a 350k rung is never reached on
-a 258k window, while on a 1M window it fires after the room to act on it is gone.
-Absolute token counts still work if you run one window size. Patrol skips a
+`gang patrol` applies `GANG_CONTEXT_BANDS` (default `120000,180000,250000,350000`)
+and sends one attributed warning per crossed band. The rungs are absolute token
+counts because context rot tracks how long a context is, not how full its window
+is — a 300k context is degraded whether the window is 200k or 1M, so it earns the
+same warning on both. A rung above an agent's own window simply never fires, which
+is correct rather than a gap: an agent that cannot hold 350k tokens cannot suffer
+350k-token rot. A percentage of the window works as an escape hatch for an unusual
+one ([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips a
 painted-busy, churning, gated, gang-compacting, or non-empty input area without
 advancing the band, so a later sweep retries.
 
