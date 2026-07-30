@@ -236,6 +236,37 @@ Recent pty activity covers full-screen redraws that move the cursor without
 changing pane cells. Pane churn remains as a fallback and also catches working
 screens with no marker. A marker is the fast path, not the only busy signal.
 
+### An agent showing a busy marker reads as busy
+
+The busy regex is matched against pane text without asking who put it there, and
+`capture-pane` hands over cells rather than provenance, so it cannot be asked. An
+agent that displays a profile, quotes a capture, or reviews this repository puts a
+busy marker on its own screen and reads busy off its own source. The people that
+lands on are almost exclusively the people working on gangline, since the markers
+live in this repo's files — a dogfooding tax rather than a bug most operators can
+hit.
+
+It is accepted because it fails in the safe direction, and that direction is a
+property rather than a hope: pane text can only **add** matches, never subtract the
+one a real turn paints. So a contaminated pane makes an idle agent read busy — sends
+queue or are refused, and `gang wait` runs to its timeout — and it can never make a
+working agent read idle. Nothing is delivered wrongly; something is delayed.
+
+There is no guard because the two available shapes both fail worse. `gated` has a
+structural companion — a dialog watched live owns the screen, so a composer still
+being there proves the words are talk *about* a prompt — and busy has no equivalent:
+the composer is painted through a turn on some harnesses and dropped on others, so
+neither its presence nor its absence settles anything. Position does not work either;
+prose-quoted markers were measured inside the bottom twenty rows in 49 samples and
+outside it in the rest. And conjoining the two signals that *can* tell a live turn
+from static text — recent pty activity and churn — would inverse the failure
+direction, because both are unavailable unless a profile declares itself quiet at
+rest, and an `AND` against an unavailable signal reads every busy agent as idle. That
+trades this bounded cost for an unbounded one.
+
+If you are working on gangline and an agent reads busy while plainly idle, check
+whether its pane is showing a marker before suspecting the scraper.
+
 `pane_stable` proves only that captured cells did not change during the sample.
 A silent tool call or compaction can hold still while work continues. Patrol
 therefore also checks Gangline-owned compaction state and the input box before
