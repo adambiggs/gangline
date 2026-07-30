@@ -151,69 +151,77 @@ local Bash 5.1 is newer than macOS CI's 3.2, which rejected 37 locally valid tes
 constructs; and local ShellCheck 0.8.0 is more permissive than CI's newer parser,
 which treated a comment beginning `shellcheck` as a directive and failed lint.
 
-Measure with the thing under test, not a stand-in for it. Some agent harnesses
-wrap `grep` in a shell function for their own interactive use; a measurement taken
-at such a prompt reported that wrapper's exit codes as the tool's, when every
-script here runs `/usr/bin/grep` and gets different ones. Run a measurement the way
-the code runs it — in a script, through the same binary — or the number belongs to
-the stand-in.
+## Measuring things
 
-Every stand-in is cheaper to reach than the thing beneath it, and that is what
-makes it attractive. A wrapper is already on `PATH`; a synopsis sits at the top of
-the man page; a flag's first appearance is one grep of a changelog; a summary of
-that changelog is one call. Four times here the cheap layer was measured and
-reported as the expensive one: an agent's `grep` wrapper for the binary, a
-man-page synopsis for the getopt string it describes, the release that added
-`paste-buffer -p` for the release where pasting behaved, and a summarising fetch
-for the changelog itself — which returned the right entries under three wrong
-version headings, every one of them lower than the truth. That last part is the
-warning worth keeping: a stand-in's errors are not scattered. They lean toward the
-permissive answer, so the cheap measurement is likeliest to be wrong exactly where
-being wrong lets you proceed.
+Nearly every defect this repository has produced has one shape: **a result that
+could not be determined, spent as though it had been.** What follows is that shape
+meeting a different surface each time.
 
-The opposite error is quieter and has no such tell. Measuring whether old tmux
-delivers a paste correctly meant running old tmux, which came with old Bash — and
-readline only defaults `enable-bracketed-paste` on from Bash 5.1, so the old image
-never requested mode 2004, tmux was right to send no brackets, and the payload
-executed. The measurement said the floor was real. It was measuring Bash. Two
-variables had moved together and the confound pointed the safe way, which is
-exactly why it nearly stood: **a confound that produces the conservative answer is
-invisible, because nothing downstream audits a result that agrees with the status
-quo.** A permissive error gets caught when something turns out easier than
-expected; a conservative one is simply believed. So when a measurement confirms the
-thing you already enforce, that is the moment to ask what else moved — and an
-instrument must control the receiver, or it measures the receiver.
+### Measure the thing, not a stand-in
 
-Controlling it is not enough on its own: **the control's own state has to be a
-required observable, or you cannot tell "controlled" from "control silently did
-nothing."** The same confound reappeared one version lower, on tmux 2.1, whose image
-ships a Bash predating `enable-bracketed-paste` entirely — so the control could not
-be applied and the readline instrument read a clean, wrong, conservative "does not
-deliver the paste property." What refused it was a second instrument observing the
-bracket bytes on the wire, and a rule that the control must report `on` or the run
-is could-not-determine. Two instruments that must agree, with disagreement counting
-as no verdict rather than as a tiebreak, is what makes that catchable at all.
+Some agent harnesses wrap `grep` in a shell function for their own interactive use,
+and a measurement taken at such a prompt reported that wrapper's exit codes as the
+tool's — when every script here runs `/usr/bin/grep` and gets different ones. Run a
+measurement the way the code runs it, in a script and through the same binary, or
+the number belongs to the stand-in.
 
-Some floors cannot be established by reading at all. Whether text arrives at a TUI
-as a paste rather than as keystrokes is a property of tmux, the terminal and the
-harness together, and no changelog entry quantifies over that triple. Feature
-existence is a fact about one file; behaviour is a fact about a system, and only
-running the system reports it. Where the two disagree, the requirement to state is
-the one the installer enforces, and its stated reason should say so rather than
-cite a version that cannot carry it.
+Every stand-in is cheaper to reach than the thing beneath it, and that is the whole
+attraction: a wrapper is already on `PATH`, a synopsis sits at the top of the man
+page, a flag's first appearance is one grep of a changelog, a summary of that
+changelog is one call. All four have been measured here and reported as the thing
+beneath them. Nor are a stand-in's errors scattered — that summarising fetch
+returned the right changelog entries under three wrong version headings, every one
+of them lower than the truth. **They lean permissive, so the cheap measurement is
+likeliest to be wrong exactly where being wrong lets you proceed.**
 
-**An instrument that has only ever reported one verdict is not yet an instrument.**
+### A conservative result is the one nobody audits
+
+The opposite error has no such tell. Measuring whether old tmux delivers a paste
+meant running old tmux, which came with old Bash — and readline only defaults
+`enable-bracketed-paste` on from Bash 5.1, so the old image never requested mode
+2004, tmux was right to send no brackets, and the payload executed. The measurement
+said the enforced floor was real. It was measuring Bash. **A confound that produces
+the conservative answer is invisible, because nothing downstream audits a result
+that agrees with the status quo.** A permissive error gets caught when something
+turns out easier than expected; a conservative one is simply believed. When a
+measurement confirms what you already enforce, that is the moment to ask what else
+moved.
+
+So an instrument must control the receiver or it measures the receiver — and
+**the control's own state has to be a required observable**, or you cannot tell
+"controlled" from "control silently did nothing." The same confound reappeared one
+version lower, on a tmux 2.1 image whose Bash predates `enable-bracketed-paste`
+entirely: the control could not be applied, and the instrument returned another
+clean, wrong, conservative verdict. What refused it was a second instrument reading
+the bracket bytes on the wire, plus the rule that the control must report `on` or
+the run is could-not-determine. Two instruments that must agree, with disagreement
+counting as no verdict rather than as a tiebreak, is what makes this catchable at
+all — a tiebreak picks the wrong one here.
+
+### Some floors cannot be read at all
+
+Whether text arrives at a TUI as a paste rather than as keystrokes is a property of
+tmux, the terminal and the harness together, and no changelog entry quantifies over
+that triple. Feature existence is a fact about one file; behaviour is a fact about a
+system, and only running the system reports it. Where the two disagree, state the
+requirement the installer enforces, and give it a reason that names its own evidence
+rather than a version that cannot carry it.
+
+### An instrument that has only ever reported one verdict is not yet one
+
 A check that has always passed has never shown that it can fail, and its failure
 path — the branch that matters — is an assumption wearing a test's clothes. Plant
-controls that force each verdict out of it before trusting any of them. The tmux
-floor cell ships with five runs behind it, four of them planted: a lowered floor
-that must move both cells down with no edit to the workflow, proving the number is
-read from `install.sh` and not restated; a raised floor and a broken gate that must
-each come back could-not-determine; and a deliberately crippled probe, which is the
-only run that ever exercises the failing exit. Relatedly, when a race did appear it
-surfaced as could-not-determine rather than as a wrong verdict — a check that
-degrades toward "I do not know" under conditions it did not anticipate is working,
-and that is worth designing for rather than discovering.
+controls that force each verdict out of it before trusting any. The tmux floor cell
+ships with five runs behind it, four of them planted: a lowered floor that must move
+both cells with no edit to the workflow, proving the number is read from
+`install.sh` and not restated; a raised floor and a broken gate that must each come
+back could-not-determine; and a deliberately crippled probe, the only run that ever
+exercises the failing exit. Relatedly, when a race did appear it surfaced as
+could-not-determine rather than as a wrong verdict — a check that degrades toward
+"I do not know" under conditions it did not anticipate is working, and that is worth
+designing for rather than discovering.
+
+### Write a trap where its class lives
 
 A trap documented only where you met it is a trap the next site will hit. Twice
 already this repository held the answer and a new site walked in anyway: the unix
@@ -225,17 +233,20 @@ was learned rather than to the class it belongs to. Write it where the class liv
 through. Local knowledge that does not generalise is a note to the person who
 already knew.
 
-A fixture must answer for itself, or its failure will be read as a defect in the
-thing under test. The tell is worth memorising, because it is visible at the moment
-of confusion rather than in hindsight: **an identical failure set across two
+### A fixture must answer for itself
+
+Or its failure will be read as a defect in the thing under test. The tell is worth
+memorising, because it is visible at the moment of confusion rather than in
+hindsight: **an identical failure set across two
 different subjects is a statement about the instrument, not the subjects.** A probe
 run against several tmux versions reported the same four failures on each; all four
 were the probe's own assertions, demanding output from panes running `sleep` and
 expecting a print from a command that reports through its exit status. Genuine
 version differences do not line up that neatly.
 
-Polarity decides how a broken predicate fails, and one of the three does not fail
-at all. A positive assertion goes red — loudly, but naming the behaviour under
+### Polarity decides how a broken predicate fails
+
+And one of the three does not fail at all. A positive assertion goes red — loudly, but naming the behaviour under
 test while the real cause sits elsewhere in the output: misattributed, not silent.
 A negative assertion goes GREEN, because the value it expects is the same value a
 predicate returns when it could not evaluate anything at all — and guards are
@@ -246,8 +257,9 @@ cause. This is why such a predicate needs a third answer, distinct from both
 verdicts, that NAMES what it could not determine — a bare non-zero would have left
 the negative assertion passing.
 
-A changed default leaves stale claims that a grep for the old value will not find,
-because docs also state defaults in words. Sweeping the numbers found five wrong
+### A changed default leaves claims no grep will find
+
+Because docs also state defaults in words. Sweeping the numbers found five wrong
 facts here and missed a sixth — a sentence asserting the ladder was "entirely
 absolute" — caught only by reading the section around a number already being
 fixed. Change a default, then read every section that describes it.
