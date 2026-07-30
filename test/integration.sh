@@ -755,8 +755,10 @@ check "a harness that queues input takes mail mid-turn" "0" "$?"
 sleep 0.5
 check "and it really landed" "yes" "$(has busybee "MARK_QUEUED")"
 
-send_text busybee tester "MARK_UNQUEUED" >/dev/null 2>&1
-check "one that does not is still refused" "1" "$?"
+out="$(send_text busybee tester "MARK_UNQUEUED" 2>&1)"; rc=$?
+check "one that does not is still refused" "1" "$rc"
+check "and its wait advice names the stdin body path" "yes" \
+  "$(contains "$out" 'gang send busybee --from tester --wait --stdin < file')"
 
 printf '%s' MARK_STDIN_WAIT | \
   "$GANG" send busybee --from tester --wait --timeout 10 --stdin >/dev/null 2>&1 &

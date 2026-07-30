@@ -2340,7 +2340,7 @@ cmd_send() {
        elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ]; then
          midturn=1
        else
-         die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (gang send $name --wait ... to block until idle)"
+         die "'$name' is mid-turn and profile '$AGENT_PROFILE' does not declare mid-turn input — the paste would land in whatever it is running (write the body to a file, then run: gang send $name --from $from --wait --stdin < file)"
        fi ;;
     1) if [ "${GANG_MIDTURN_INPUT:-}" = 1 ] && parked "$AGENT_ID"; then
          # Only an ACTS profile can make a parked pane reach this verdict. The
