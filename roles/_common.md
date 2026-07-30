@@ -39,7 +39,9 @@ gang capture <name> [lines]          look at someone's screen
 gang send <name> --from <you> "..."  task or answer a teammate
 ```
 
-Always sign with your own name. An unattributed send is refused, by design.
+Always pass `--from` with your own name — gang builds the envelope from it, so
+your name never goes in the message body. An unattributed send is refused, by
+design.
 State words carry the metaphor in brackets; when you script against them, match
 the `busy`/`idle`/`gated` prefix, not the whole string. `gated` means a modal
 owns that agent's input box — a permission prompt, a picker, anything that takes
