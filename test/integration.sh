@@ -2821,6 +2821,29 @@ check "no text in gang is sized with cut -c" "0" \
 # and a rule like that is one people learn to route around.
 check "no profile regex is evaluated outside the helper that reports errors" "0" \
   "$(grep -E 'grep .*\$GANG_[A-Z_]*REGEX' "$GANG" | grep -cv '^[[:space:]]*#')"
+# The fifth member, and the one that guards the mechanism the four above are
+# reported by. gang runs `set -euo pipefail`, so an assignment carries a refusing
+# substitution: `x="$(f)"` where f dies ends the script, and that — not a chain of
+# `|| die` — is what makes every refusal reaching a caller through `$( )` in that
+# file land. `local` is a BUILTIN, so its own success becomes the line's status,
+# and the identical line with `local` in front of it continues with the variable
+# empty and nothing said. It is the one shape that removes the carrying silently.
+#
+# Nothing legitimate is banned: splitting the declaration from the assignment is
+# always available and is already gang's universal style — `local now; now="$(date
+# +%s)"`. Coverage, stated exactly: this sees the substitution only where it opens
+# the value, so a value with a prefix before it, or one reached through a
+# parameter default, masks just as well and is not caught. The broader pattern
+# that would catch those fires on a live correct line where the substitution is a
+# separate command after the assignment, and a rule that reports a correct line is
+# one people learn to route around.
+#
+# Scoped to gang and not to this file, for the reason set at the top of this one:
+# the suite takes `-uo pipefail` deliberately WITHOUT `-e`. There is no errexit
+# here for the shape to mask, so it is harmless here, and a rule that fires where
+# the defect cannot exist is the mistake the profile-regex rule above names.
+check "no refusal is masked by a local declaration" "0" \
+  "$(grep -cE '^[[:space:]]*local[[:space:]]+[A-Za-z_][A-Za-z0-9_]*="?\$\(' "$GANG")"
 # Same family as the `cut -c` rule and caught the same way — by asking what the
 # macOS cell would make of it rather than by running it here. In-place sed takes
 # a mandatory suffix argument on BSD and refuses one on GNU, so the edit that
