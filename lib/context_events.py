@@ -9,6 +9,7 @@ import os
 import re
 import sys
 from datetime import datetime
+
 try:
     from urllib.parse import quote, unquote
 except ImportError:  # pragma: no cover - Python 3 is required by install.sh
@@ -286,16 +287,23 @@ def final_exposure(notes, expected, drop):
     window = as_int(drop.get("window"))
     if thresholds is None or window is None or not thresholds:
         return UNKNOWN
-    if thresholds[-1] > window:
-        return UNKNOWN
     if expected is None or expected != len(notes):
         return UNKNOWN
+    # A derived ladder (ADR-0006) always fits inside the window, so its last rung is
+    # reachable and "did not top out" means exactly that. A row carrying a ladder
+    # whose last rung sits ABOVE the window cannot say so: the agent had no way to
+    # reach that rung, and an unreachable rung is not an unexposed agent. That is
+    # judged per note rather than once from the drop row, so a dataset spanning a
+    # ladder change reports each note against the ladder it was actually measured on.
+    unreachable = False
     for note in notes:
         vector = threshold_list(note.get("thresholds"))
         band = as_int(note.get("band"))
         if vector and band == len(vector):
             return "yes"
-    return "no"
+        if vector and vector[-1] > window:
+            unreachable = True
+    return UNKNOWN if unreachable else "no"
 
 
 def report(path, live_gaps):
