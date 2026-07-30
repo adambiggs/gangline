@@ -216,7 +216,13 @@ through. Local knowledge that does not generalise is a note to the person who
 already knew.
 
 A fixture must answer for itself, or its failure will be read as a defect in the
-thing under test.
+thing under test. The tell is worth memorising, because it is visible at the moment
+of confusion rather than in hindsight: **an identical failure set across two
+different subjects is a statement about the instrument, not the subjects.** A probe
+run against several tmux versions reported the same four failures on each; all four
+were the probe's own assertions, demanding output from panes running `sleep` and
+expecting a print from a command that reports through its exit status. Genuine
+version differences do not line up that neatly.
 
 Polarity decides how a broken predicate fails, and one of the three does not fail
 at all. A positive assertion goes red — loudly, but naming the behaviour under
