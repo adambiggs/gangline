@@ -3804,9 +3804,34 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  # No state to sweep: band memory is a window option, so tmux deletes it along
-  # with the windows it belongs to.
+  # Band memory is a window option, so tmux deletes it with the windows it belongs
+  # to and there is nothing to sweep. ONE window option is not disposable that
+  # way. A failed log write banks @gl_context_log_error on the window, and it
+  # reaches the persistent log only when a later successful row carries it across
+  # (context_log_record). Kill the session with one still banked and the evidence
+  # goes with it, leaving a hole in a measurement log with nothing anywhere saying
+  # it is a hole — and a silent hole does not read as "we failed to record this",
+  # it reads as "nothing happened", which is the one reading a compliance dataset
+  # must never invent.
+  #
+  # Said out loud before anything is killed, while the windows still hold it.
+  # Deliberately NOT written to the log here: every row that reaches it is an
+  # observation of something, and a teardown has observed nothing — inventing a
+  # row to carry the gap would put a fact in the dataset that no measurement
+  # supports. gang context-report reads these markers directly from the live
+  # session, which is the path that already exists for the operator to keep them.
+  #
+  # A tmux hook cannot close this. session-closed and window-unlinked do fire on
+  # teardown, but both run after the window is gone and read the option as empty
+  # — verified on tmux 3.2a, for a killed session and for a pane exiting on its
+  # own. Too late is the same as absent.
   session_live || die "no session '$SESSION' running"
+  local id name gap
+  while read -r id name; do
+    gap="$(tmux show-options -wqv -t "$id" @gl_context_log_error 2>/dev/null)" || gap=""
+    [ -z "$gap" ] || printf '%s\n' "$(colour "$C_BAD" \
+      "$name: CONTEXT LOG INCOMPLETE — $gap; this marker dies with the window, and gang context-report is what reads it while the session is up")"
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
   tmux kill-session -t "=$SESSION"
 }

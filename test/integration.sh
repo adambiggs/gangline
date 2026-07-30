@@ -2290,7 +2290,31 @@ check "and the report names the still-active write failure" "yes" \
   "$(contains "$bad_report" "logger liveness never established; write failure is active")"
 check "the failed first-write path has no hidden artifact" "0" "$(log_artifacts "$bad_log")"
 chmod 700 "$bad_log_dir"
-"$GANG" down >/dev/null
+# That gap is banked on the WINDOW, and down is what destroys windows. Lose it
+# silently and the compliance log has a hole with nothing anywhere saying it is
+# one — which reads as "nothing happened" rather than "this was not recorded",
+# and inverts the finding it feeds. So down says it while the window still holds
+# it, and this teardown was already here throwing its output away.
+#
+# Driven off the marker the fixture above really produced, never a hand-written
+# stand-in: nothing between the chmod and this line writes a row — context-report
+# only runs the reader, log_artifacts only counts files — so logfail's genuine
+# "Permission denied" is still banked when down runs.
+downout="$("$GANG" down 2>&1)"
+check "down surfaces the gap that is about to die with the window" "yes" \
+  "$(contains "$downout" "logfail: CONTEXT LOG INCOMPLETE")"
+check "and carries the error the logger actually reported" "yes" \
+  "$(contains "$downout" "Permission denied")"
+check "and names the command that keeps it" "yes" \
+  "$(contains "$downout" "gang context-report")"
+check "and still ends the team it was asked to end" "no" \
+  "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
+# The control. A warning that fires on every teardown is one nobody reads, and it
+# would pass all four checks above. A bare session is honest here precisely
+# because this asserts an ABSENCE — there is no output to invent.
+tmux new-session -d -s "${main_session}-clean" -n w 'sleep 60'
+check "and a team with nothing banked says nothing about the log" "no" \
+  "$(contains "$(GANG_SESSION="${main_session}-clean" "$GANG" down 2>&1)" "CONTEXT LOG INCOMPLETE")"
 export GANG_SESSION="$main_session"
 
 # The writer is shared by every agent, so concurrent appends and rotation are one

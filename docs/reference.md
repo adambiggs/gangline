@@ -62,6 +62,12 @@ unadopted one.
 Lists the team's windows, then kills the entire `GANG_SESSION`. It fails when the
 session is not running.
 
+Before killing anything it reports any window still holding an unflushed logging
+gap, because that marker lives on the window and dies with it. It does not write
+one to the log — a teardown observed nothing, and a row that carried the gap would
+put an unmeasured fact in the dataset. `gang context-report` reads those markers
+from the live session and is how they are kept.
+
 ## Messaging and compaction
 
 ### `gang send <name> --from <sender> [--wait] [--timeout seconds] --stdin`
