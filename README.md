@@ -66,15 +66,25 @@ git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
 ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
 ```
 
-Requirements: Bash, git, tmux 2.1 or newer, Python 3, and at least one supported
+Requirements: Bash, git, tmux 3.2 or newer, Python 3, and at least one supported
 CLI harness. `gang profiles` lists the harnesses currently offered.
 
-The tmux floor is the oldest release providing everything `gang` calls: exact-match
-`=` targets, [added in tmux 2.1](https://github.com/tmux/tmux/blob/master/CHANGES)
-(October 2015), which every team command relies on so that a session name cannot
-prefix-match somebody else's session. Requirement is not the same as coverage — CI
-exercises tmux 3.4 and 3.7b, so anything older than 3.4 meets the feature floor
-without being tested.
+The tmux floor is 3.2 because that is what `install.sh` enforces, and it enforces it
+for delivery: every send is a `paste-buffer -p`, and what gang needs is that the text
+arrives at the harness as a *paste* rather than being interpreted keystroke by
+keystroke. That is a behavioural property, and it is not one a changelog settles —
+tmux was still correcting how pasted input is interpreted
+[in 3.6](https://github.com/tmux/tmux/blob/master/CHANGES), long after 3.2.
+
+The floor gang's *commands* need is lower: every tmux subcommand, flag and format it
+calls exists by 2.1, whose exact-match `=` targets are the newest of them. But a
+feature existing is not the same claim as a behaviour working, so the enforced floor
+stays where the installer puts it, and [issue
+#25](https://github.com/adambiggs/gangline/issues/25) is the only thing that can
+lower it — by running the suite against an old tmux rather than by reading about one.
+
+Requirement is not the same as coverage either: CI exercises tmux 3.4 and 3.7b, so
+3.2 and 3.3 meet the enforced floor without being tested.
 
 ### Before the first team
 
