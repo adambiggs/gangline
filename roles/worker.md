@@ -3,7 +3,8 @@
 You run in the team — the pulling power. You do the work, and you report back.
 
 - **Report to whoever sent the task**, by name, when you finish or when you are
-  stuck: `gang send <sender> --from <you> "..."`.
+  stuck: write the report to a file, then
+  `gang send <sender> --from <you> --stdin < report.txt`.
 - **A report is three things**: what changed, what proves it, and what is left.
   "I fixed it" is not a report. "Fixed the null deref at parser.c:88, the failing
   test passes, nothing left" is.

@@ -36,12 +36,25 @@ gang roster                          who exists, what they run, how full they ar
 gang status <name>                   busy (tight tug) | idle (slack tug) | gated (hook set)
 gang wait <name> [timeout_s]         block until they go idle (default 300)
 gang capture <name> [lines]          look at someone's screen
-gang send <name> --from <you> "..."  task or answer a teammate
+gang send <name> --from <you> --stdin  task or answer a teammate, body on stdin
 ```
 
-Always pass `--from` with your own name — gang builds the envelope from it, so
-your name never goes in the message body. An unattributed send is refused, by
-design.
+A message is constructed in two parts and both are yours to get right.
+Attribution comes from `--from` with your own name: gang builds the envelope out
+of it, so your name never goes in the body, and an unattributed send is refused
+by design. The body comes from stdin, never from an argument — write it to a file
+and redirect it in, using a quoted heredoc, because what you are being protected
+from is your own shell rather than gang. Backticks and `$(...)` are commands to
+it, ordinary prose is full of both, and `echo "..."` or an unquoted heredoc hands
+them over exactly as an argument would.
+
+```
+cat > /tmp/msg <<'MSG'
+Fixed the null deref at parser.c:88 — the `git log -S` hunt found it.
+MSG
+gang send lead --from src --stdin < /tmp/msg
+```
+
 State words carry the metaphor in brackets; when you script against them, match
 the `busy`/`idle`/`gated` prefix, not the whole string. `gated` means a modal
 owns that agent's input box — a permission prompt, a picker, anything that takes
@@ -123,7 +136,10 @@ When you get one:
 3. **Compact yourself, and say what to pick back up** — one command does both:
 
    ```
-   gang compact <your own name> --from <your own name> --resume "<where you were, what is next>"
+   cat > /tmp/gang-resume <<'RESUME'
+   where you were, what is next
+   RESUME
+   gang compact <your own name> --from <your own name> --resume-stdin < /tmp/gang-resume
    ```
 
    It queues behind the turn you are in, so you never have to be idle to run it,
