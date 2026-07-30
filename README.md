@@ -66,25 +66,28 @@ git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
 ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
 ```
 
-Requirements: Bash, git, tmux 3.2 or newer, Python 3, and at least one supported
+Requirements: Bash, git, tmux 2.6 or newer, Python 3, and at least one supported
 CLI harness. `gang profiles` lists the harnesses currently offered.
 
-The tmux floor is 3.2 because that is what `install.sh` enforces, and it enforces it
-for delivery: every send is a `paste-buffer -p`, and what gang needs is that the text
-arrives at the harness as a *paste* rather than being interpreted keystroke by
-keystroke. That is a behavioural property, and it is not one a changelog settles —
-tmux was still correcting how pasted input is interpreted
-[in 3.6](https://github.com/tmux/tmux/blob/master/CHANGES), long after 3.2.
+The tmux floor is 2.6, and it is bounded by evidence rather than by a feature. Every
+tmux subcommand, flag and format gang calls can be dated in tmux's own source, and
+the newest of them is 2.1 — the exact-match `=` target and `#{window_activity}`.
+But one thing gang depends on cannot be dated from source at all: that a
+`paste-buffer -p` arrives at the harness as a *paste* rather than being interpreted
+keystroke by keystroke. 2.6 is the oldest version the whole call set has been
+executed on, that property included, so 2.6 is what the installer promises.
 
-The floor gang's *commands* need is lower: every tmux subcommand, flag and format it
-calls exists by 2.1, whose exact-match `=` targets are the newest of them. But a
-feature existing is not the same claim as a behaviour working, so the enforced floor
-stays where the installer puts it, and [issue
-#25](https://github.com/adambiggs/gangline/issues/25) is the only thing that can
-lower it — by running the suite against an old tmux rather than by reading about one.
+That makes the floor lowerable on purpose. Run the call set and the paste property
+against something older and the number can follow the evidence down; [issue
+#31](https://github.com/adambiggs/gangline/issues/31) has the inventory and both
+probes. What will not lower it is reading a changelog — tmux was still correcting how
+pasted input is interpreted
+[in 3.6](https://github.com/tmux/tmux/blob/master/CHANGES).
 
-Requirement is not the same as coverage either: CI exercises tmux 3.4 and 3.7b, so
-3.2 and 3.3 meet the enforced floor without being tested.
+Requirement is not the same as coverage. CI exercises the floor itself and one
+version below it on every change to the installer, and runs the full suite on tmux
+3.4 and 3.7b — so versions between 2.7 and 3.3 meet the enforced floor without the
+suite ever running on them.
 
 ### Before the first team
 

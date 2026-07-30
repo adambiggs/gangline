@@ -20,12 +20,18 @@ need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installe
 need git
 need tmux
 
-# paste-buffer -p (bracketed paste) is how every send reaches an agent.
+# This floor is bounded by evidence rather than by a feature, which is why it does
+# not name one. 2.1 is the newest version any tmux call gang makes can be dated to
+# in tmux's own source; 2.6 is the oldest version the whole call set has actually
+# been executed on, including that paste-buffer -p delivers text as a paste, which
+# cannot be dated from source at all. The gap between those two is the floor, and
+# the way to lower it is to execute the set lower — see issue #31. A version that
+# nobody has run is not a version anybody can promise.
 ver="$(tmux -V | tr -cd '0-9.')"
 major="${ver%%.*}"
 minor="${ver#*.}"; minor="${minor%%.*}"
-[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
-  || die "tmux >= 3.2 required for bracketed paste, found $(tmux -V)"
+[ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 6 ]; } \
+  || die "tmux >= 2.6 required: the oldest version gang's whole call set has been run on, found $(tmux -V)"
 
 # python3 is a requirement, not a nicety. Three of the four shipped profiles run
 # it: claude-code through the statusline beacon and the hook payload, codex to

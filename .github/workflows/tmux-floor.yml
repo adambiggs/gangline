@@ -1,47 +1,54 @@
 name: tmux floor
 
-# Does the tmux version install.sh refuses to go below actually deliver the
-# property it names? install.sh:28 refuses anything under 3.2 "for bracketed
-# paste", and until this cell existed that was reasoning from source, never a
-# thing anyone ran (issue #25).
+# Does the tmux version install.sh refuses to go below actually work? The floor is
+# the one requirement gang states to users, and before this cell existed it was
+# reasoning from source that nobody had ever run — which is how it came to refuse
+# 2.6 and 3.0a, two versions that work (issues #25 and #31).
 #
 # The number is READ FROM install.sh, never written here. A constant in this file
 # would be a fourth place to state the floor, and the reason this cell exists is
 # that a floor stated in prose had never been executed.
 #
+# TWO INSTRUMENTS, AND THE FLOOR NEEDS BOTH. probe-paste-property.sh asks whether
+# a paste arrives as a paste, which is the property install.sh used to name;
+# probe-vocabulary.sh runs every tmux call bin/gang and the profiles actually make.
+# A version that delivers pastes while failing a call gang makes is not a floor,
+# and neither is the reverse.
+#
 # It asserts in BOTH directions, because a cell that only proves the floor works
 # can never report that the floor is too high:
 #
-#   at the floor      the property must hold        — otherwise we ship a lie
-#   below the floor   the property must NOT hold    — otherwise the floor is
-#                                                     stricter than the evidence
+#   at the floor      both must hold          — otherwise we ship a promise we fail
+#   below the floor   both must NOT hold      — otherwise the floor is stricter
+#                                               than the evidence
 #
-# The second assertion is expected to FAIL today, and that failure is the
-# deliverable rather than a bug in this cell. Measurement on #25 found the
-# property intact at 3.0a and 2.6, so this reports a disagreement with our own
-# installer. That is the whole point of building it before changing the floor:
-# a number moved by the same hand that measured it is not evidence.
+# Either assertion may fail, and a failure below the floor is a finding rather
+# than a fault: it is the cell inviting the number down. That invitation is the
+# point of keeping the measurement separate from the decision — a floor moved by
+# the same hand that measured it is not evidence, so this reports and a person
+# decides.
 #
 # REPORT, NOT BLOCK. Exit codes, deliberately:
 #
-#   1  the enforced floor did not deliver the property. Nothing else here can
-#      make that acceptable, so this one stops a merge.
+#   1  the enforced floor did not hold. Nothing else here can make that
+#      acceptable, so this one stops a merge.
 #   0  everything else, including "the floor is too high" and every
-#      could-not-determine. A blocking cell whose first run is red teaches
-#      people to bypass it, and the first run of this one is meant to be red.
-#      Could-not-determine is annotated as an error and still exits 0: it must
-#      never read as a pass, and it must never be the thing that blocks.
+#      could-not-determine. A blocking cell that goes red for a finding teaches
+#      people to bypass it. Could-not-determine is annotated as an error and still
+#      exits 0: it must never read as a pass, and it must never be what blocks.
 #
 # WHY docker run AND NOT container:. Running the job inside an old image would
 # be simpler to read and would not work: actions/checkout needs a node the
-# glibc in ubuntu 18.04 and 20.04 cannot run. The job runs on the host and
+# glibc in ubuntu 16.04, 18.04 and 20.04 cannot run. The job runs on the host and
 # reaches into containers by hand.
 #
-# LIMITS, so a green run is not over-read. This tests ONE tmux primitive, not
-# gang end to end — gang's `=` exact-match target independently needs 2.1, so
-# the whole-program floor is at least that. The receiver is a purpose-built
-# stand-in, faithful for this property but still a stand-in. And the image table
-# below is measured, not assumed: rows were run before they were added.
+# LIMITS, so a green run is not over-read. The receivers are purpose-built
+# stand-ins, faithful for what they measure but still stand-ins, and no real
+# harness TUI runs here. The call set is gang's, not the test suite's — a
+# contributor's checkout is a separate question. The image table below is
+# measured rather than assumed: every row was run before it was added, and the
+# probes re-read the version at run time so a base image that changes its tmux
+# becomes a could-not-determine instead of a silent lie.
 
 on:
   workflow_dispatch:
@@ -50,11 +57,13 @@ on:
       - install.sh
       - .github/workflows/tmux-floor.yml
       - .github/workflows/probe-paste-property.sh
+      - .github/workflows/probe-vocabulary.sh
   pull_request:
     paths:
       - install.sh
       - .github/workflows/tmux-floor.yml
       - .github/workflows/probe-paste-property.sh
+      - .github/workflows/probe-vocabulary.sh
 
 jobs:
   floor:
@@ -118,7 +127,16 @@ jobs:
           # the version at run time, so a base image that changes its tmux
           # becomes a loud could-not-determine instead of a silent lie. Adding a
           # row means running it first.
-          IMAGES="3.2=ubuntu:22.04 3.0=ubuntu:20.04 2.6=ubuntu:18.04"
+          #
+          # 2.1 is the interesting row: it is the newest version anything gang
+          # calls can be dated to in tmux source (#31), so it is what the floor
+          # would be if source dating were sufficient. It is also where the
+          # readline half of the paste measurement runs out — ubuntu:16.04 ships
+          # bash 4.3, and enable-bracketed-paste arrived in bash 4.4, so that
+          # receiver cannot be made to request mode 2004 at all. Expect
+          # could-not-determine there, not a verdict, and read that as the reason
+          # the floor is 2.6 rather than as a broken cell.
+          IMAGES="3.2=ubuntu:22.04 3.0=ubuntu:20.04 2.6=ubuntu:18.04 2.1=ubuntu:16.04"
 
           at_image=""; below_image=""; below_ver=""
           for row in $IMAGES; do
@@ -138,10 +156,14 @@ jobs:
           say "- at the floor: \`$at_image\` (tmux $FLOOR)"
           say "- below the floor: \`$below_image\` (tmux $below_ver)"
 
-          # --- run the instrument ---------------------------------------------
-          probe() { # $1 = image, $2 = output file
+          # --- run the instruments --------------------------------------------
+          # Two probes per version, and the floor needs BOTH. The paste property
+          # is the one install.sh used to name; the call set is everything gang
+          # actually invokes, and a floor that delivers pastes while failing a
+          # call gang makes is not a floor.
+          probe() { # $1 = image, $2 = probe script, $3 = output file
             docker run --rm -v "$PWD/.github/workflows:/probe:ro" "$1" \
-              bash /probe/probe-paste-property.sh > "$2" 2>&1
+              bash "/probe/$2" > "$3" 2>&1
           }
 
           verdict() { # $1 = output file, $2 = version the table claims -> protected | unprotected | CTD:<why>
@@ -173,47 +195,80 @@ jobs:
             echo "CTD:the two instruments disagree — brackets_with_p=$bwp but executed_with_p=$ewp"
           }
 
-          probe "$at_image" /tmp/at.txt
-          probe "$below_image" /tmp/below.txt
-          at="$(verdict /tmp/at.txt "$FLOOR")"
-          below="$(verdict /tmp/below.txt "$below_ver")"
+          vocab_verdict() { # $1 = output file, $2 = version the table claims -> ok | failed:N | CTD:<why>
+            local obs p f
+            obs="$(val "$1" tmux)"
+            [ -n "$obs" ] || { echo "CTD:the call-set probe printed no version at all"; return; }
+            [ "$obs" != ABSENT ] || { echo "CTD:$2's image no longer provides tmux"; return; }
+            [ "$(mm "$obs")" = "$2" ] || { echo "CTD:the image ships tmux $obs where this table claims $2"; return; }
+            p="$(val "$1" vocab_pass)"; f="$(val "$1" vocab_fail)"
+            case "$p" in ''|*[!0-9]*) echo "CTD:the call-set probe printed no pass count"; return ;; esac
+            case "$f" in ''|*[!0-9]*) echo "CTD:the call-set probe printed no fail count"; return ;; esac
+            # Zero checks run is not zero checks failed.
+            [ "$p" -gt 0 ] || { echo "CTD:the call-set probe ran no checks"; return; }
+            [ "$f" -eq 0 ] || { echo "failed:$f"; return; }
+            echo ok
+          }
+
+          probe "$at_image"    probe-paste-property.sh /tmp/at-paste.txt
+          probe "$at_image"    probe-vocabulary.sh     /tmp/at-vocab.txt
+          probe "$below_image" probe-paste-property.sh /tmp/below-paste.txt
+          probe "$below_image" probe-vocabulary.sh     /tmp/below-vocab.txt
+          at="$(verdict /tmp/at-paste.txt "$FLOOR")"
+          at_vocab="$(vocab_verdict /tmp/at-vocab.txt "$FLOOR")"
+          below="$(verdict /tmp/below-paste.txt "$below_ver")"
+          below_vocab="$(vocab_verdict /tmp/below-vocab.txt "$below_ver")"
 
           say ""
-          say "| cell | tmux | bracket bytes with \`-p\` | payload executed with \`-p\` | verdict |"
-          say "|---|---|---|---|---|"
-          row() { # $1 = label, $2 = version the table claims, $3 = output file, $4 = verdict
-            say "| $1 | $(val "$3" tmux) (table: $2) | $(val "$3" brackets_with_p) | $(val "$3" executed_with_p) | ${4%%:*} |"
+          say "| cell | tmux | bracket bytes with \`-p\` | executed with \`-p\` | paste verdict | call set |"
+          say "|---|---|---|---|---|---|"
+          row() { # $1 = label, $2 = table version, $3 = paste file, $4 = paste verdict, $5 = call-set verdict
+            say "| $1 | $(val "$3" tmux) (table: $2) | $(val "$3" brackets_with_p) | $(val "$3" executed_with_p) | ${4%%:*} | $5 |"
           }
-          row "at the floor" "$FLOOR" /tmp/at.txt "$at"
-          row "below the floor" "$below_ver" /tmp/below.txt "$below"
+          row "at the floor" "$FLOOR" /tmp/at-paste.txt "$at" "$at_vocab"
+          row "below the floor" "$below_ver" /tmp/below-paste.txt "$below" "$below_vocab"
           say ""
-          echo "--- raw observations, at the floor ---"; cat /tmp/at.txt
-          echo "--- raw observations, below the floor ---"; cat /tmp/below.txt
+          for f in /tmp/at-paste.txt /tmp/at-vocab.txt /tmp/below-paste.txt /tmp/below-vocab.txt; do
+            echo "--- raw observations, ${f##*/} ---"; cat "$f"
+          done
 
           # --- verdict ---------------------------------------------------------
+          # At the floor, could-not-determine is still not a pass, so it does not
+          # fall through to the exit-1 branch below and get reported as a failure
+          # it did not establish.
           case "$at" in CTD:*) ctd "at the enforced floor, ${at#CTD:}." ;; esac
-          case "$below" in CTD:*) ctd "below the enforced floor, ${below#CTD:}." ;; esac
+          case "$at_vocab" in CTD:*) ctd "at the enforced floor, ${at_vocab#CTD:}." ;; esac
 
-          if [ "$at" != protected ]; then
-            printf '::error::tmux %s is the floor install.sh enforces and it did not deliver the paste property\n' "$FLOOR"
-            say "### The enforced floor does not deliver the property"
+          if [ "$at" != protected ] || [ "$at_vocab" != ok ]; then
+            printf '::error::tmux %s is the floor install.sh enforces and it did not hold: paste=%s call-set=%s\n' \
+              "$FLOOR" "$at" "$at_vocab"
+            say "### The enforced floor does not hold"
             say ""
-            say "install.sh refuses everything below tmux $FLOOR for bracketed paste, and tmux $FLOOR did not"
-            say "provide it. Either the installer's reason is wrong or the delivery path has changed."
+            say "install.sh refuses everything below tmux $FLOOR, and at tmux $FLOOR the paste property came back"
+            say "\`$at\` and the call set came back \`$at_vocab\`. A floor is a promise about the version we"
+            say "refuse to go below, so this is the one outcome here that stops a merge."
             exit 1
           fi
 
-          if [ "$below" = protected ]; then
-            printf '::warning::the enforced tmux floor is higher than the evidence: %s delivers the paste property too\n' "$below_ver"
+          # Below the floor, could-not-determine is the expected result rather
+          # than a surprise: it is what "we have not executed the set lower" looks
+          # like, and it is precisely why the floor sits where it does.
+          case "$below" in CTD:*) ctd "below the enforced floor, ${below#CTD:}. The floor stays at $FLOOR until something decides this." ;; esac
+          case "$below_vocab" in CTD:*) ctd "below the enforced floor, ${below_vocab#CTD:}." ;; esac
+
+          if [ "$below" = protected ] && [ "$below_vocab" = ok ]; then
+            printf '::warning::the enforced tmux floor is higher than the evidence: %s delivers the paste property and the whole call set\n' "$below_ver"
             say "### The floor is higher than the evidence supports"
             say ""
-            say "tmux $FLOOR delivers the paste property, and so does tmux $below_ver, which install.sh refuses."
-            say "This is the expected result today and it is reported rather than acted on: the floor is"
-            say "install.sh's to move, and moving it is a separate decision from measuring it. See issue #25."
+            say "tmux $below_ver, which install.sh refuses, delivered the paste property AND ran every call gang"
+            say "makes. That is the full standard the floor claims for itself, met one version lower, so the"
+            say "number can follow the evidence down. Moving it stays a separate decision from measuring it —"
+            say "see issue #31 for the inventory and #25 for the paste property."
             exit 0
           fi
 
           say "### The floor is corroborated"
           say ""
-          say "tmux $FLOOR delivers the paste property and tmux $below_ver does not, which is what install.sh claims."
+          say "tmux $FLOOR delivers the paste property and runs every call gang makes. tmux $below_ver does not:"
+          say "paste=\`$below\`, call set=\`$below_vocab\`. That is what install.sh claims, tested from both sides."
           exit 0
