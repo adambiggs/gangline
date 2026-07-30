@@ -1917,6 +1917,57 @@ check "the probe leaves no server behind on its own socket" "" "${leftover# }"
 check "and the session under test is untouched by all of it" "yes" \
   "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
 
+# A probe sits in three poll loops that print nothing, so it says which one it is
+# in. That output lands in the pane of whoever ran it, and busy_painted() and
+# gated() read the WHOLE pane — so the phase notes have to be unreadable as a
+# harness busy marker, and that is held against the regexes the shipped profiles
+# actually declare rather than judged by eye. A future prettier version that
+# reaches for a spinner glyph and an ellipsis fails here.
+#
+# A tmux window is how stderr gets a terminal. probe_note is silent without one,
+# which keeps captured output and cron logs clean, and is why every probe_run
+# above — stderr into a file — cannot see this line at all.
+PROGSESS="progtest-$$"
+tmux new-session -d -s "$PROGSESS" -n w \
+  "GANG_PROFILES='$SHIM/probedir' GANG_PROBE_PROMPT=probe_work \
+   GANG_PROBE_BOOT=25 GANG_PROBE_TURN=15 GANG_PROBE_SETTLE=18 GANG_PROBE_QUIET=2 \
+   '$GANG' vet --probe livemark; sleep 300" 2>/dev/null
+# Waited on CONTENT, not a duration: the probe's own summary is the only thing
+# that establishes it finished, and a fixed sleep here would be the timing-
+# sensitive check this suite just spent an issue on.
+progpane=""
+prog_deadline=$(( $(date +%s) + 120 ))
+while [ "$(date +%s)" -lt "$prog_deadline" ]; do
+  progpane="$(tmux capture-pane -pJ -t "=$PROGSESS":w 2>/dev/null)" || break
+  case "$progpane" in *"profile(s) driven"*) break ;; esac
+  sleep 1
+done
+tmux kill-session -t "=$PROGSESS" 2>/dev/null
+# The control. Without it a probe that never finished leaves a short pane, and the
+# marker check below passes for having nothing in it to match.
+check "the windowed probe ran to its own summary" "yes" \
+  "$(holds "$progpane" 'profile\(s\) driven')"
+check "and says which phase it is in while a terminal is watching" "yes" \
+  "$(holds "$progpane" 'probing livemark: waiting for the pane to go quiet, up to 18s')"
+busy_rx_of() { bash -c 'GANG_BUSY_REGEX=; . "$1" >/dev/null 2>&1; printf "%s" "$GANG_BUSY_REGEX"' _ "$1"; }
+PROFDIR="$(cd -P "$(dirname "$GANG")/.." && pwd)/profiles"
+marker_hits=""
+for p in "$PROFDIR"/*.sh; do
+  prog_rx="$(busy_rx_of "$p")"
+  [ -n "$prog_rx" ] || continue
+  grep -qE -- "$prog_rx" <<<"$progpane" && marker_hits="$marker_hits ${p##*/}"
+done
+check "and nothing gang paints while probing reads as a harness busy marker" "" \
+  "${marker_hits# }"
+# The counter-control, because "no regex matched" is also what a broken extraction
+# looks like, and a check that cannot fail is not a check. This is the frame a
+# prettier version reaches for, and it is claude-code's declared busy shape
+# exactly: a glyph, a capitalised word, an ellipsis. It matches, which is the
+# whole reason the notes above are a sentence.
+check "and that check can see one — the spinner shape it forbids does match" "yes" \
+  "$(holds '⠋ Probing…' "$(busy_rx_of "$PROFDIR/claude-code.sh")")"
+unset -f busy_rx_of
+
 # --- a die inside a probe must not leak the server it stood up -----------------
 #
 # The exit code cannot see this bug. A leaked tmux server and a leaked temp tree

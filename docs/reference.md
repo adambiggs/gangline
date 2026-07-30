@@ -277,6 +277,13 @@ installed.
 - `--probe <profile>`: narrow both the ordinary vet report and probe to one
   installed profile. An unknown name is an error.
 
+While probing, each phase it is about to wait in — input box, busy marker, pane
+settling — is named on stderr with the bound it will give up at, so a long wait is
+distinguishable from a hang. Those notes appear only when stderr is a terminal;
+captured output and cron logs carry the rows alone. They are deliberately plain
+sentences, because Gangline's output lands in the panes Gangline scrapes and a
+spinner-shaped frame matches a shipped busy marker.
+
 A probe spends harness tokens. Not installed, no declared busy marker, first-run
 dialog, launch failure, or a turn that never starts or settles is reported as
 **not probed**, not as success. Zero means every marker that was actually fired

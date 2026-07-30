@@ -3307,6 +3307,33 @@ probe_row() { # $1 = name, $2 = version, $3 = colour, $4 = text
   printf '%-12s %-26s %s\n' "$1" "$2" "$(colour "$3" "$4")"
 }
 
+probe_note() { # $1 = profile, $2 = what it is waiting on, $3 = the bound in seconds
+  # A probe spends minutes inside three poll loops that print nothing, and a
+  # bounded wait and a hang are indistinguishable from outside. This says which
+  # loop is running and when it gives up, so the question "is it stuck" has an
+  # answer without a second terminal.
+  #
+  # Ephemeral, so stderr and only to a terminal — the same line `colour` already
+  # draws at [ -t 2 ]. The durable record is the row each profile prints to
+  # stdout; a per-phase trace in a captured artifact or a cron log is noise, and
+  # every caller that reads probe output reads stdout.
+  #
+  # THE WORDING IS A CONSTRAINT, NOT A STYLE, and it is why this is a sentence and
+  # not a spinner. gang's own output lands in the panes gang scrapes, and
+  # busy_painted() and gated() read the WHOLE pane — the narrow read at
+  # capture_status exists because this repo has already had compacting() report
+  # true for three minutes off a reviewer's own grep output. A frame shaped like a
+  # harness spinner would be read as one: claude-code's busy regex is a glyph, a
+  # capitalised word and an ellipsis, so `⠋ Probing…` on the pane of whoever ran
+  # the probe leaves that agent reading BUSY while idle — every send refused,
+  # every wait timed out, for as long as the line stays on screen. So: no leading
+  # glyph, no ellipsis, no bar glyphs, no "Working...", no interrupt hint. The
+  # suite holds every shipped GANG_BUSY_REGEX against a real pane that has run
+  # this, which is the check that keeps a future prettier version honest.
+  [ -t 2 ] || return 0
+  printf '  probing %s: %s, up to %ss\n' "$1" "$2" "$3" >&2
+}
+
 probe_evidence() { # $1 = profile, $2 = the pane the verdict was reached on
   # A verdict about a screen that then throws the screen away asks to be taken on
   # trust, and this one is about to tell somebody their profile is broken. Kept
@@ -3345,6 +3372,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   }
 
   ready=0
+  probe_note "$prof" "waiting for an input box" "$GANG_PROBE_BOOT"
   wait_ready "$id" "$GANG_PROBE_BOOT" || ready=$?
   case "$ready" in
     2) # A first-run trust dialog is what a throwaway directory buys, and it is
@@ -3436,6 +3464,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # precondition. Polling starts the instant the keys are sent — the marked phase
   # is thinking, and thinking is FIRST.
   local prev="" pane=""
+  probe_note "$prof" "watching for the busy marker" "$GANG_PROBE_TURN"
   deadline=$(( $(date +%s) + GANG_PROBE_TURN ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     pane="$(capture_joined "$id")" || die "vet --probe: cannot read $prof's pane — refusing to call a marker dead off a failed capture"
@@ -3481,6 +3510,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # than this mid-flight is called finished, and that too fails toward alarm.
   local quiet_since=0 now=0
   prev=""
+  probe_note "$prof" "waiting for the pane to go quiet" "$GANG_PROBE_SETTLE"
   deadline=$(( $(date +%s) + GANG_PROBE_SETTLE ))
   while :; do
     now="$(date +%s)"
