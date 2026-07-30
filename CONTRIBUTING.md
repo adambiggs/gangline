@@ -68,6 +68,20 @@ held in the tree blocks the next writer twice — they cannot commit, and they
 cannot use the suite as evidence either, because a green run exercises the
 uncommitted work and a red one is attributed to whoever runs it.
 
+It also runs. `gang` on your `PATH` is a symlink into a tree — `install.sh` points
+it at its own clone, and `GANGLINE_HOME` points it at yours — so on a contributor
+checkout an edit to `bin/gang` is deployed the moment it is saved: to every
+attached agent, to the patrol cron, and to whatever measurement is running, with
+no commit, no install step and no restart. That is the right behaviour for
+dogfooding, and it is the reason to keep checkpoints small. An uncommitted batch
+is not a draft; it is the substrate the team is presently running on.
+
+A corollary for anything that records what the tool did: the epoch that matters is
+when the executed code changed, which is the save, not the merge. Date a regime
+change in collected data from the first invocation that could have loaded the new
+code — and per leg, since a cron leg picks it up on its next tick while a hook leg
+picks it up immediately.
+
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please) owns releases; no
