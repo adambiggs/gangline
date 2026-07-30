@@ -16,9 +16,13 @@ on: [push, pull_request]
 #             and only once the macOS cell is demonstrably stable, so a flake has
 #             one candidate cause rather than two.
 #
-#   tmux ver  REJECTED. Every cell is a source build, and the version theory was
-#             disproved — 3.4's -J was one of four wrong hypotheses burned on a
-#             CI-only failure whose real cause was awk.
+#   tmux ver  ELSEWHERE, and narrower than an axis here. tmux-floor.yml tests one
+#             property — bracketed paste — against the version install.sh
+#             enforces, using distro images that ship old tmux without a source
+#             build. Running the whole suite per tmux version is still rejected:
+#             3.4's -J was one of four wrong hypotheses burned on a CI-only
+#             failure whose real cause was awk, so version breadth here buys
+#             candidate causes rather than coverage.
 #
 #   python    REJECTED. gangline is shell; python3 appears in one place.
 
@@ -90,7 +94,7 @@ jobs:
           set -euo pipefail
           # site/demo/record.sh ships in the repo and was unchecked until a bug in
           # it cost two demo takes. Every shell file here is checked or none is.
-          files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh .githooks/commit-msg site/demo/record.sh"
+          files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh .githooks/commit-msg site/demo/record.sh .github/workflows/*.sh"
           # bash -n reads one script per call; shellcheck takes the set.
           for f in $files; do bash -n "$f"; done
           shellcheck -S warning $files
