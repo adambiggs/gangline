@@ -154,6 +154,22 @@ discard. Same here: dropping an agent whose arc is finished is the healthy
 outcome, not a punishment — an agent kept running past its work is a dog riding in
 the basket instead of pulling.
 
+## A team of one
+
+A team can have one dog in it. `gang up` with nobody else hitched gives you the
+context loop by itself: gang measures the window, notes each band as you cross it,
+and near the end compacts you and hands back the thread you asked it to keep —
+measure, warn, act, instead of you watching a meter and remembering to act on it.
+
+```bash
+gang up
+```
+
+Solo needs no permissions decision, because you are attached and watching the pane:
+your harness's interactive defaults are the right ones. The team verbs are all still
+there and none of them are required — adding a teammate later is `gang hitch`, and
+nothing you already set up changes.
+
 ## The operating model
 
 ### Agents are windows
