@@ -146,6 +146,13 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 # abandons the proof and drops back to the settle path, which can hand the message
 # to a turn still running: corrupting. Lower is the dangerous direction at both.
 #
+# The field record does not justify 300 as a safe ceiling. As of 2026-07-30 it
+# holds only three gang-requested drops with independent proof, observed 61, 166
+# and 269 seconds after issue. Those are polling latencies rather than native
+# durations, N=3, and the longest leaves 31 seconds — so expiry establishes only
+# that the clock ran out, not that compaction ended. Issue #30 owns the resulting
+# unknown state; this constant remains policy, not an observed safety boundary.
+#
 # It also has a ceiling it does not state locally: raised past GANG_RESUME_TIMEOUT
 # it deletes the resume's checked fallback outright, leaving only the timeout's
 # unconditional inject. Both defaults are here rather than written out at each use,
