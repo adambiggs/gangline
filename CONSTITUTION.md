@@ -12,17 +12,19 @@ own right. Violating a law is a defect.
    code path requires an ADR proving no universal surface can carry the value.
    No bespoke message buses, no databases, no daemons.
 
-2. **Identity is a prefix; trust is assumed.** Every injected line carries
-   `[gang:<sender>]`, and a sender identity is required — there is no default.
-   Single-tenant by design: anyone at the keyboard is the operator. Never build
-   authentication, generation fencing, or anti-tamper into this repo.
+2. **Every message carries a verified sender; trust is assumed.** A sender identity
+   is required — there is no default — and no agent can speak as another: a sender
+   running inside the session is read off its own window rather than taken from what
+   it claims. Single-tenant by design: anyone at the keyboard is the operator. Never
+   build authentication, generation fencing, or anti-tamper into this repo.
 
 3. **Delivered means verified.** A send is confirmed by pane capture or it fails
    loudly. No fire-and-forget, no success receipts for messages nobody saw.
 
-4. **Harness integration is a profile, not a plugin.** Per-harness knowledge is a
-   few lines of config: launch command, busy marker, compact command. Code inside a
-   harness requires an ADR proving the value is real and unachievable any other way.
+4. **Harness integration is a profile, not a plugin.** Per-harness knowledge lives in
+   a profile, never as a branch in `bin/gang`; the profile contract itself is
+   documented in `docs/reference.md`. Code inside a harness requires an ADR proving
+   the value is real and unachievable any other way.
 
 5. **Nothing lands without a live consumer.** If nothing invokes it the day it
    merges, it does not merge. Speculative generality is the seed of the pile.

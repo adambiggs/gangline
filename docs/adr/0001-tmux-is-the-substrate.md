@@ -9,6 +9,9 @@
   does: messages are enveloped rather than prefixed, delivery is verified against
   the input box rather than by finding the text, and mid-turn delivery is a
   per-profile declaration rather than a blanket refusal.
+- **Amended:** 2026-07-29 — the profile size estimate dropped from the decision and
+  its consequence. What was load-bearing is the boundary — harness knowledge lives in
+  a profile, never a branch in `bin/gang` — and law 9 owns size.
 
 ## Context
 
@@ -43,9 +46,9 @@ tmux is the communication substrate, not a fallback and not a hack.
   than pasted into whatever that turn is running.
 - Observation = `capture-pane`. Termination = `kill-window`. Per-agent state
   (profile binding) = tmux window options.
-- Per-harness knowledge lives in a profile of a few lines (launch command, busy
-  regex, compact command). Harness-native extensions require their own ADR proving
-  the value is unachievable from outside.
+- Per-harness knowledge lives in a profile (launch command, busy regex, compact
+  command), never as a branch in `bin/gang`. Harness-native extensions require their
+  own ADR proving the value is unachievable from outside.
 
 The envelope answers impersonation as a convention, not a security property:
 attributed traffic is distinguishable, but nothing stops any writer to the pane
@@ -60,7 +63,7 @@ unattributed sends are an error, and no untrusted principal can reach a pane.
 
 ## Consequences
 
-- A new harness costs a profile (~10 lines), not an integration.
+- A new harness costs a profile, not an integration.
 - The operator can attach to any window and watch, steer, or kill — the transcript
   is the pane.
 - Text conventions are version-fragile: a TUI update can change a busy marker.

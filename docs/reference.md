@@ -274,11 +274,6 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `profile_context` | print one parseable context-usage line |
 | `profile_vet` | optional harness-file format gate |
 
-This current contract is intentionally documented without rewriting ADR-0001's
-historical `~10 lines` premise; [issue
-#13](https://github.com/adambiggs/gangline/issues/13) tracks the resulting
-constitutional question.
-
 ### `gang roles`
 
 Lists role names from `GANG_ROLES` and the shipped directory, deduplicated with
