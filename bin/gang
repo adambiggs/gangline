@@ -862,6 +862,25 @@ churn_verdict() { # $1 = window id -> "churning" | "still" | "" if it was not sa
   map_get "$CHURN_MAP" "$1" || true
 }
 
+churn_first_sample() { # $1 = window id, $2 = profile -> first pane checksum
+  # Kept outside the command substitution that consumes it. Bash 3.2 scans that
+  # substitution with a parser that can treat an apostrophe in a comment as an
+  # opening quote; putting the logic in a function leaves only one plain call in
+  # that fragile lexical context.
+  load_profile "$2"
+  # state_now names every live waiter before asking busy(), so no parked pane
+  # needs a churn verdict regardless of ACTS/QUEUES.
+  if parked "$1"; then activity_hold_clear "$1"; return 1; fi
+  if busy_painted "$1"; then activity_hold_clear "$1"; return 1; fi
+  local activity_rc=0
+  recently_active "$1" || activity_rc=$?
+  # Fresh activity is the fast path. Expired activity MUST reach the churn
+  # sample: movement can still prove busy independently, while a still pane
+  # preserves the third verdict from busy() for state_now.
+  [ "$activity_rc" -eq 0 ] && return 1
+  capture "$1" | cksum | tr ' ' '-'
+}
+
 churn_batch() { # $@ = window ids; resolve the churn question for all of them at once
   local id prof pending="" first="" sum was
   CHURN_MAP=""
@@ -885,18 +904,7 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     # compares full screen text; this compares 32 bits. They are not the same
     # test, and what holds them to the same answer is the suite asserting the
     # batched column against the per-agent read on one pane.
-    sum="$( ( load_profile "$prof"
-              # state_now names every live waiter before asking busy(), so no
-              # parked pane needs a churn verdict regardless of ACTS/QUEUES.
-              if parked "$id"; then activity_hold_clear "$id"; exit 1; fi
-              if busy_painted "$id"; then activity_hold_clear "$id"; exit 1; fi
-              activity_rc=0
-              recently_active "$id" || activity_rc=$?
-              # Fresh activity is the fast path. Expired activity MUST reach the
-              # churn sample: movement can still prove busy independently, while
-              # a still pane preserves busy()'s third verdict for state_now.
-              [ "$activity_rc" -eq 0 ] && exit 1
-              capture "$id" | cksum | tr ' ' '-' ) 2>/dev/null )" || continue
+    sum="$(churn_first_sample "$id" "$prof" 2>/dev/null)" || continue
     [ -n "$sum" ] || continue
     pending="$pending $id"
     first="$first $id=$sum"
