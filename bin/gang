@@ -136,20 +136,21 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 
 # One number with two users, and they ask the same physical question: how long
 # after `/compact` is typed can that compaction still credibly be in flight.
-# compaction_pending asks it to decide when patrol may go back to nudging a pane;
-# resume_after_compaction asks it to decide when to stop waiting for proof of the
-# context drop. One question, so one number — but the two do not FAIL alike, and
-# whoever moves it is moving both. Overrunning it in patrol resumes nudging, so a
-# message arrives late into a compaction: noisy. Overrunning it in the resume
-# abandons the proof and drops back to the settle path, which can hand the message
-# to a turn still running: corrupting. Lower is the dangerous direction at both.
+# compaction_pending asks it to decide when a pending mark becomes an UNPROVED
+# one; resume_after_compaction asks it to decide when to stop waiting for proof of
+# the context drop. One question, so one number — but the two do not FAIL alike,
+# and whoever moves it is moving both. Overrunning it in patrol turns a held nudge
+# into a held-and-flagged one: noisy. Overrunning it in the resume abandons the
+# proof and drops back to the settle path, which can hand the message to a turn
+# still running: corrupting. Lower is the dangerous direction at both.
 #
 # The field record does not justify 300 as a safe ceiling. As of 2026-07-30 it
 # holds only three gang-requested drops with independent proof, observed 61, 166
 # and 269 seconds after issue. Those are polling latencies rather than native
-# durations, N=3, and the longest leaves 31 seconds — so expiry establishes only
-# that the clock ran out, not that compaction ended. Issue #30 owns the resulting
-# unknown state; this constant remains policy, not an observed safety boundary.
+# durations, N=3, and the longest leaves 31 seconds. Expiry therefore establishes
+# only that the clock ran out, which is why patrol spends it as an unknown worth
+# reporting rather than as clearance to inject; this constant remains policy, not
+# an observed safety boundary.
 #
 # It also has a ceiling it does not state locally: raised past GANG_RESUME_TIMEOUT
 # it deletes the resume's checked fallback outright, leaving only the timeout's
@@ -1039,8 +1040,9 @@ compaction_mark() { # target, name, self-issued|peer-issued; record WE issued on
 
 compaction_clear() { tmux set-option -uw -t "$1" @gl_compacting 2>/dev/null || true; }
 
-compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
-  # Two ways out, because each covers a case the other cannot see.
+compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
+  # 0 pending, 1 nothing pending, 2 issued but unproved past the grace. Two ways
+  # out and a third answer, because each covers a case the others cannot see.
   local v issued at_issue now
   v="$(tmux show-options -wqv -t "$1" @gl_compacting 2>/dev/null)" || return 1
   [ -n "$v" ] || return 1
@@ -1070,8 +1072,17 @@ compaction_pending() { # $1 = window id, $2 = tokens in context NOW (optional)
   now="$(date +%s)"
   # Shared with resume_after_compaction, which uses the same number to decide when
   # to give up waiting for the drop; overrunning it there is corrupting, not noisy.
+  #
+  # Running the clock out is the THIRD answer and never the first. It establishes
+  # that gang waited, never that compaction ended, so returning "nothing pending"
+  # here would spend an unproved timeout as permission to inject — into the one
+  # pane shape every scraped guard downstream reads as safe, since a markerless
+  # compaction paints no busy hint and holds a still screen. The mark is KEPT so
+  # the uncertainty outlives the sweep that found it. It dies by the drop check
+  # above, which runs first on every call, by a fresh request overwriting it, or
+  # with the window.
   [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] \
-    || { context_request_evidence "$1" clock-cleared; compaction_clear "$1"; return 1; }
+    || { context_request_evidence "$1" clock-cleared; return 2; }
   return 0
 }
 
@@ -2786,7 +2797,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   # injection decision.
   compaction_pending "$1" "$tokens" || compaction_rc=$?
   case "$compaction_rc" in
-    0|1) ;;
+    0|1|2) ;;
     *) die "internal: compaction_pending returned unknown verdict $compaction_rc" ;;
   esac
 
@@ -2816,6 +2827,19 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # compacting claude-code pane paints no marker and holds a still screen, so
     # busy_painted and pane_stable both wave a nudge straight through it.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
+  elif [ "$compaction_rc" -eq 2 ]; then
+    if [ "$sample_drop" -eq 1 ]; then
+      context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \
+        "$crossed" "$thresholds" "$prev" "$note_count" "$note_last"
+    fi
+    context_sample_write "$1" "$now" "$tokens" "$window" "$band" "$thresholds" || true
+    # Beside the branch above rather than below the scraped guards, because it is
+    # the same pane and the same blindness: those guards cannot see a compaction
+    # that paints nothing, so reaching them at all is the failure. Louder than a
+    # routine hold on purpose — this one is not waiting for anything on a clock,
+    # and it stays until evidence ends it, so a sweep that says it every time is
+    # the record of an open question rather than noise.
+    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, UNPROVED past the grace, holding nudge" "$C_BAD"
   elif busy_painted "$1"; then
     if [ "$sample_drop" -eq 1 ]; then
       context_log_drop "$1" "$2" "$prof" patrol - "$tokens" "$window" "$band" \

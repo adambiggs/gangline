@@ -2554,12 +2554,44 @@ check "holding burns no band, so the nudge is not lost" "" \
 check "and it does not make the agent read as compacting" "idle (slack tug)" \
   "$("$GANG" status compagent | head -1)"
 
-# `/compact` under a harness's own threshold runs and changes nothing, so a mark
-# trusted until the context moves would hold patrol off that pane for good.
-check "an expired mark stops holding" "NUDGED (crossed the 138000-token band)" \
+# `/compact` under a harness's own threshold runs and changes nothing, so the mark
+# can outlive any compaction it names and the clock is what bounds it. What the
+# clock measures is how long gang waited, which is not evidence about the pane, so
+# it cannot promote itself into clearance to inject — and the pane it would inject
+# into is the one every scraped guard downstream reads as perfectly idle.
+check "an expired mark reports the unknown instead of nudging" \
+  "past the 138000-token band — compaction gang issued, UNPROVED past the grace, holding nudge" \
   "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
 check "and records clock expiry as non-proving request evidence" "yes" \
   "$(like "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_context_request)" '* peer-issued 150000 120000 clock-cleared')"
+# Deleting the mark on expiry would be the same defect worn differently: the next
+# sweep finds nothing pending and injects, one poll later than before.
+check "the mark survives its own expiry rather than being dropped" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
+check "so a later sweep repeats the unknown instead of going quiet" \
+  "past the 138000-token band — compaction gang issued, UNPROVED past the grace, holding nudge" \
+  "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
+check "and an expired hold still burns no band" "" \
+  "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_band)"
+
+# The deletion path law 6 requires, on a pane big enough to prove the other half:
+# that the hold above is a decision about evidence and not a pane nothing could
+# nudge anyway. The drop check runs first on every call, so what ends an expired
+# mark is exactly what ends a live one. compagent cannot show this — half of its
+# 150k issue context is below the ladder's floor, so any drop that proves
+# compaction also drops it under every rung.
+"$GANG" hitch graceagent -p compactable -d /tmp >/dev/null
+paint graceagent 'ctx 900k/1000k 90%'
+"$GANG" compact graceagent --from tester >/dev/null 2>&1
+check "an expired mark holds even where the nudge would otherwise land" \
+  "past the 350000-token band — compaction gang issued, UNPROVED past the grace, holding nudge" \
+  "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict graceagent)"
+paint graceagent 'ctx 350k/1000k 35%'
+check "and the drop that ends it restores ordinary patrol on that same pane" \
+  "NUDGED (crossed the 350000-token band)" \
+  "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict graceagent)"
+check "leaving no mark behind" "" \
+  "$(tmux show-options -wqv -t "$(id_of graceagent)" @gl_compacting)"
 
 # The other way out, and the one that does not wait: a compaction that HAPPENED
 # says so in the readout. The drop is monotone — the context stays low — unlike
