@@ -1,6 +1,11 @@
 # ADR-0005: Context bands are absolute token counts
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0006](0006-the-band-ladder-spans-absolute-bounds.md).
+  The argument below is not reversed — it is why ADR-0006's floor and cap are both
+  absolute token counts. What changed is that the default ladder is derived from
+  those two bounds rather than written as a literal CSV. Proposals to make the
+  default a fraction of the window are still refused, and this is still the page
+  that says why.
 - **Date:** 2026-07-30
 
 ## Context
