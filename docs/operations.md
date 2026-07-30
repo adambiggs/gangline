@@ -10,6 +10,15 @@ a general permission bypass and never answers a modal. A prompt removes or takes
 over the composer, so Gangline reports the agent as `gated (hook set)` and refuses
 all delivery until the operator clears it with `gang attach`.
 
+A refusal is invisible to everyone but the sender, so an occupied agent also
+carries what its occupancy is costing. `gang status` on it reports `INBOUND
+REFUSED while occupied` with an attempt count and the most recent sender.
+Refused, never queued: Gangline did not take the body and holds no copy, and the
+sender remains responsible for its message. The record retires on the next
+verified delivery to that agent, or with the window — clearing the modal alone
+does not retire it, because the question it answers is whether traffic is getting
+through.
+
 Choose the unattended permission posture in the harness's persistent
 configuration, where it remains visible and applies consistently:
 

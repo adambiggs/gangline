@@ -929,6 +929,19 @@ check "a send to a gated agent is refused, even where mid-turn input queues" "1"
 check "and says the prompt owns the screen" "yes" \
   "$(contains "$out" "hook set")"
 check "and nothing was typed into the dialog" "no" "$(has busybee MARK_GATED)"
+# The refusal is right and the sender copes; what nobody could see is the cost of
+# leaving the modal up. The occupied agent is the one surface that never mentioned
+# it, so the fact lands there — as REFUSED, never queued, because gang did not take
+# the body and saying otherwise would invent a delivery.
+check "the occupied agent surfaces the sender it is stalling" "yes" \
+  "$(contains "$("$GANG" status busybee)" "INBOUND REFUSED while occupied — 1 attempt(s), last from tester")"
+check "and does not claim to be holding the message" "no" \
+  "$(contains "$("$GANG" status busybee)" "queued")"
+FAKE_QUEUES=1 send_text busybee otherbot "MARK_GATED_2" >/dev/null 2>&1 || true
+check "repeats coalesce into a count and the most recent sender" "yes" \
+  "$(contains "$("$GANG" status busybee)" "INBOUND REFUSED while occupied — 2 attempt(s), last from otherbot")"
+check "and the state line stays first for scripts matching on it" "gated (hook set)" \
+  "$("$GANG" status busybee | head -1)"
 out="$("$GANG" wait busybee 30 2>&1)"; rc=$?
 check "wait on a gated agent fails loud, not slow" "1" "$rc"
 check "naming the gate rather than timing out" "yes" \
@@ -941,6 +954,16 @@ check "patrol reports it for the operator instead of skipping it" \
   "$("$GANG" patrol | verdict busybee)"
 gate_down busybee
 check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee | head -1)"
+# Clearing the modal is not the deletion path, and asserting it here would pass for
+# the wrong reason: the record answers "is traffic getting through", so only traffic
+# getting through retires it. Until then it is still true.
+check "an answered modal alone does not retire the record" "yes" \
+  "$(contains "$("$GANG" status busybee)" "INBOUND REFUSED while occupied")"
+send_text busybee tester "MARK_UNBLOCKED" >/dev/null 2>&1
+check "a verified delivery retires it" "no" \
+  "$(contains "$("$GANG" status busybee)" "INBOUND REFUSED while occupied")"
+check "and that delivery actually landed, so the clear was not a no-op" "yes" \
+  "$(has busybee MARK_UNBLOCKED)"
 
 # Enumerating modal chrome always misses one. Claude Code's /model picker is a
 # dialog no gated regex names: it paints no busy hint either, so the pane read
