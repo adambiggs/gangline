@@ -18,8 +18,6 @@
 ### Bug Fixes
 
 * **context:** judge final-band exposure per note, not per drop row ([be8854f](https://github.com/adambiggs/gangline/commit/be8854f8f3116da7fd04edf2c9b4d39624c3dac9))
-* **context:** make the warning ladder proportional so one default fits a mixed team ([c3ca002](https://github.com/adambiggs/gangline/commit/c3ca002431358ba41c7fb026cfd7a102a6c0f8b8))
-* **context:** restore the absolute band ladder, and record the decision ([f033a53](https://github.com/adambiggs/gangline/commit/f033a534ecd43199ed42c3c2c910c6da2d3a7da4))
 * distinguish uncertain agent states ([b151496](https://github.com/adambiggs/gangline/commit/b15149603b3a091f75d2bb64b846d02955250568)), closes [#16](https://github.com/adambiggs/gangline/issues/16) [#17](https://github.com/adambiggs/gangline/issues/17) [#22](https://github.com/adambiggs/gangline/issues/22)
 * **install:** lower the tmux floor to 2.6, bounded by evidence ([8f292ad](https://github.com/adambiggs/gangline/commit/8f292adbe27d1987b2168c274f9deac8cccbf4e6))
 * **messaging:** keep wait advice on stdin ([f3e8786](https://github.com/adambiggs/gangline/commit/f3e878688139a7cb0b29840982c8265c865978d8))
