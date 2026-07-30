@@ -176,11 +176,11 @@ gang — drive a team of CLI agents as tmux windows
                                               gpt-5.6-sol, opencode/pi: provider/model);
                                               alias: spawn
   gang adopt <name> -p <profile>              register an existing window as an agent
-  gang send  <name> --from <sender> <msg...>  verified send; delivered mid-turn if the
-                                              harness takes input during one (--wait to
-                                              block for idle instead)
-  gang compact <name> [--resume <msg>]        trigger the harness's own context compaction;
-                                              --resume fires once compaction settles.
+  gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
+                                              delivers mid-turn if the harness takes input
+                                              during one (--wait to block for idle instead)
+  gang compact <name> [--resume-stdin]        trigger the harness's own context compaction;
+                                              a resume read from stdin fires once it settles.
                                               Naming yourself is allowed and is the
                                               self-compaction path (--from/GANG_FROM required)
   gang status <name>                          busy (tight tug) | idle (slack tug) |
@@ -443,6 +443,33 @@ envelope() { # $1 = sender, $2 = body -> the message as it goes on the wire
   nonce="$(mint_nonce)"
   body="$(printf '%s' "$2" | sed 's/\[\(\/\{0,1\}\)gang:/(\1gang:/g')"
   printf '[gang:%s#%s] %s [/gang:%s#%s]' "$1" "$nonce" "$body" "$1" "$nonce"
+}
+
+STDIN_BODY=""
+stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_BODY
+  # Message prose does not belong in argv. The caller's shell expands argv before
+  # gang exists: backticks and $() run commands, variables expand, and globs turn
+  # into filenames. Delivery verification then correctly vouches for text the
+  # sender never wrote. Reading stdin makes the body data rather than shell syntax.
+  #
+  # A plain `body="$(cat)"` strips every trailing newline. Append a non-newline
+  # sentinel inside the same substitution, then remove exactly that final byte,
+  # so stdin keeps the shape the caller supplied. Guard cat explicitly: otherwise
+  # the trailing printf would replace a read error with its own success.
+  local marked sentinel=$'\034'
+  if marked="$(
+    cat || { rc=$?; exit "$rc"; }
+    printf '\034'
+  )"; then
+    :
+  else
+    die "$1: cannot read the body from stdin"
+  fi
+  case "$marked" in
+    *"$sentinel") STDIN_BODY="${marked%"$sentinel"}" ;;
+    *) die "internal: $1 stdin sentinel was lost while reading the body" ;;
+  esac
+  [ -n "$STDIN_BODY" ] || die "$1: empty body on stdin"
 }
 
 check_sender() { # $1 = claimed sender; inside the session, it must be your own window
@@ -2089,7 +2116,7 @@ band_note() { # $1 = readout, $2 = crossed threshold, $3 = agent name; one text,
   # The exact command, not "compact soon", because the part an agent gets wrong
   # is the resume — typed in behind the compaction it overtakes it and is eaten
   # by the turn about to be compacted, and the agent wakes with nothing to do.
-  printf "[context-usage] %s in context — crossed the %s-token band. At the next checkpoint (arc boundary), run: gang compact %s --from %s --resume '<where you are, what is next>' — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
+  printf "[context-usage] %s in context — crossed the %s-token band. At the next checkpoint (arc boundary), write the handoff to a file, then run: gang compact %s --from %s --resume-stdin < resume-file — it queues behind the turn you are in, and the resume is delivered once compaction settles." \
     "$1" "$2" "$3" "$3"
 }
 
@@ -2267,7 +2294,7 @@ cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
 }
 
 cmd_send() {
-  local name="" from="${GANG_FROM:-}" wait=0 timeout=300
+  local name="" from="${GANG_FROM:-}" wait=0 timeout=300 use_stdin=0 body=""
   name="${1:-}"; [ -n "$name" ] || usage_die; shift
   while [ $# -gt 0 ]; do case "$1" in
     --from)    [ $# -ge 2 ] || die "send: $1 needs a value"; from="$2"; shift 2 ;;
@@ -2279,9 +2306,13 @@ cmd_send() {
                case "$2" in ''|*[!0-9]*) die "send: --timeout takes whole seconds, got '$2'" ;; esac
                timeout="$2"; shift 2 ;;
     -w|--wait) wait=1; shift ;;
-    *) break ;;
+    --stdin)   [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
+               use_stdin=1; shift ;;
+    *) die "send: inline message argv is not accepted; write the body to a file, then run: gang send $name --from $from --stdin < file" ;;
   esac; done
-  [ $# -gt 0 ] || die "send: empty message"
+  [ "$use_stdin" -eq 1 ] \
+    || die "send: message body required on stdin; write the body to a file, then run: gang send $name --from $from --stdin < file"
+  stdin_body "send"; body="$STDIN_BODY"
   [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM) — unattributed injection is how the last harness died"
   check_sender "$from"
   resolve "$name"
@@ -2333,7 +2364,7 @@ cmd_send() {
       || die "'$name' has exceeded the pty activity-only bound, so gang cannot determine busy/idle; profile '$AGENT_PROFILE' declares no safe mid-turn input"
     midturn=1
   fi
-  inject "$AGENT_ID" "$(envelope "$from" "$*")"
+  inject "$AGENT_ID" "$(envelope "$from" "$body")"
   if [ "$activity_expired" -eq 1 ]; then
     echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; pty activity bound expired, accepted as potentially mid-turn)")"
   elif [ "$midturn" -eq 1 ]; then
@@ -2347,19 +2378,24 @@ cmd_send() {
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
-  local name="" from="${GANG_FROM:-}" resume=""
+  local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0
   name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   while [ $# -gt 0 ]; do case "$1" in
-    --resume) [ $# -ge 2 ] || die "compact: $1 needs a value"; resume="$2"; shift 2 ;;
+    --resume-stdin) [ "$resume_stdin" -eq 0 ] || die "compact: --resume-stdin may be passed only once"
+                    resume_stdin=1; shift ;;
+    --resume) die "compact: inline resume argv is not accepted; write the resume to a file, then run: gang compact $name --from $from --resume-stdin < file" ;;
     --from)   [ $# -ge 2 ] || die "compact: $1 needs a value"; from="$2";   shift 2 ;;
     *) die "compact: unknown argument '$1'" ;;
   esac; done
   resolve "$name"
   [ -n "${GANG_COMPACT_CMD:-}" ] || die "profile '$AGENT_PROFILE' declares no compact command"
-  if [ -n "$resume" ] && [ -z "$from" ]; then
-    die "compact: --resume needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
+  if [ "$resume_stdin" -eq 1 ] && [ -z "$from" ]; then
+    die "compact: --resume-stdin needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
   fi
-  [ -z "$resume" ] || check_sender "$from"
+  [ "$resume_stdin" -eq 0 ] || check_sender "$from"
+  if [ "$resume_stdin" -eq 1 ]; then
+    stdin_body "compact: --resume-stdin"; resume="$STDIN_BODY"
+  fi
   ! gated "$AGENT_ID" \
     || die "'$name' is gated (hook set) — stopped at a modal only the operator can clear (gang attach)"
   # Busy is refused for a peer and expected for yourself. Cutting somebody else's
