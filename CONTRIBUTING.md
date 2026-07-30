@@ -136,6 +136,27 @@ script here runs `/usr/bin/grep` and gets different ones. Run a measurement the 
 the code runs it — in a script, through the same binary — or the number belongs to
 the stand-in.
 
+Every stand-in is cheaper to reach than the thing beneath it, and that is what
+makes it attractive. A wrapper is already on `PATH`; a synopsis sits at the top of
+the man page; a flag's first appearance is one grep of a changelog; a summary of
+that changelog is one call. Four times here the cheap layer was measured and
+reported as the expensive one: an agent's `grep` wrapper for the binary, a
+man-page synopsis for the getopt string it describes, the release that added
+`paste-buffer -p` for the release where pasting behaved, and a summarising fetch
+for the changelog itself — which returned the right entries under three wrong
+version headings, every one of them lower than the truth. That last part is the
+warning worth keeping: a stand-in's errors are not scattered. They lean toward the
+permissive answer, so the cheap measurement is likeliest to be wrong exactly where
+being wrong lets you proceed.
+
+Some floors cannot be established by reading at all. Whether text arrives at a TUI
+as a paste rather than as keystrokes is a property of tmux, the terminal and the
+harness together, and no changelog entry quantifies over that triple. Feature
+existence is a fact about one file; behaviour is a fact about a system, and only
+running the system reports it. Where the two disagree, the requirement to state is
+the one the installer enforces, and its stated reason should say so rather than
+cite a version that cannot carry it.
+
 A trap documented only where you met it is a trap the next site will hit. Twice
 already this repository held the answer and a new site walked in anyway: the unix
 socket path-length limit, documented twenty lines into the test suite, and
