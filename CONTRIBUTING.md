@@ -163,6 +163,19 @@ warning worth keeping: a stand-in's errors are not scattered. They lean toward t
 permissive answer, so the cheap measurement is likeliest to be wrong exactly where
 being wrong lets you proceed.
 
+The opposite error is quieter and has no such tell. Measuring whether old tmux
+delivers a paste correctly meant running old tmux, which came with old Bash — and
+readline only defaults `enable-bracketed-paste` on from Bash 5.1, so the old image
+never requested mode 2004, tmux was right to send no brackets, and the payload
+executed. The measurement said the floor was real. It was measuring Bash. Two
+variables had moved together and the confound pointed the safe way, which is
+exactly why it nearly stood: **a confound that produces the conservative answer is
+invisible, because nothing downstream audits a result that agrees with the status
+quo.** A permissive error gets caught when something turns out easier than
+expected; a conservative one is simply believed. So when a measurement confirms the
+thing you already enforce, that is the moment to ask what else moved — and an
+instrument must control the receiver, or it measures the receiver.
+
 Some floors cannot be established by reading at all. Whether text arrives at a TUI
 as a paste rather than as keystrokes is a property of tmux, the terminal and the
 harness together, and no changelog entry quantifies over that triple. Feature
