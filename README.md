@@ -217,7 +217,17 @@ composer still contains exactly that paste. Otherwise `status`, `roster`, and
   quiet at rest wrote to the pty recently, or the pane changes between samples;
 - `idle (slack tug)` when none of those working signals applies;
 - `gated (hook set)` when a modal owns the input area or a profile with a composer
-  reader cannot otherwise identify a safe input box.
+  reader cannot otherwise identify a safe input box;
+- `parked (waiting on <agent>)` when the agent is blocked inside its own `gang wait`;
+- `expired (pty activity bound reached)` when pty activity alone had been carrying
+  the busy verdict and has spent its bound.
+
+The last two exist because neither one is answerable with a word that already
+existed. A parked agent is not idle — *available* and *idle* are different claims,
+and calling it idle offers a teammate a promise the harness may not keep. An expired
+agent is neither busy nor idle: gang cannot determine which, so it says so instead of
+picking, and a send to it is refused unless the profile declares a safe composer.
+Resolving either one quietly to `idle` is how a wrong reading would become permanent.
 
 A gate is never answered by Gangline. Attach and clear it yourself. Status is an
 observation of a TUI, not a scheduler guarantee; where safety matters, delivery

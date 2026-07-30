@@ -236,6 +236,15 @@ Recent pty activity covers full-screen redraws that move the cursor without
 changing pane cells. Pane churn remains as a fallback and also catches working
 screens with no marker. A marker is the fast path, not the only busy signal.
 
+Activity alone is bounded. When the pty timestamp is the only thing supporting busy,
+it may carry that verdict for `GANG_ACTIVITY_LIMIT` — 300 seconds by default — and no
+longer. Past that the state is `expired (pty activity bound reached)`, which Gangline
+reports rather than resolves: an activity arm that has run out is a different answer
+from an agent that was never busy, and quietly calling it idle is exactly how a
+fabricated busy would become permanent. A send to an expired agent is refused unless
+its profile declares a safe composer, because gang cannot otherwise know whether the
+paste would land in the harness or in a live tool.
+
 ### An agent showing a busy marker reads as busy
 
 The busy regex is matched against pane text without asking who put it there, and
@@ -273,14 +282,18 @@ therefore also checks Gangline-owned compaction state and the input box before
 injecting. The system prefers a delayed nudge or send over keystrokes aimed at an
 unknown widget.
 
-An agent blocked in its own `gang wait` is special. Gangline stores the waiter's
-PID in `@gl_waiting`; if that agent's profile accepts mid-turn input, status can
-show it idle and a teammate can send to it. That does **not** prove it can answer:
-opencode 1.18.8 was observed holding an accepted message until the wait call—and
-therefore the harness turn—ended, while status reported idle. Do not assign work
-from that state without accounting for the wait timeout; [issue
-#16](https://github.com/adambiggs/gangline/issues/16) tracks a distinct parked
-state. A dead waiter PID is reclaimed when observed.
+An agent blocked in its own `gang wait` reads `parked`, not `idle`. Gangline stores
+the waiter's PID in `@gl_waiting` and reports every waiter as parked, because
+*available* and *idle* are different claims and only the first can be true there. A
+dead waiter PID is reclaimed when observed.
+
+Parked is not the same as reachable. A profile that merely accepts mid-turn input
+still queues the text until the running turn ends, and the running turn is the wait
+itself: opencode 1.18.8 was observed holding an accepted message until the wait call
+returned. Only a harness witnessed *acting* on ordinary mid-turn text —
+`GANG_MIDTURN_ACTS`, declared by `claude-code` alone — makes a parked agent answer
+inside its own wait. Treat parked on any other profile as delivery availability and
+account for the wait timeout before assigning work.
 
 ## Undelivered pastes
 

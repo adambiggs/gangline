@@ -119,15 +119,27 @@ Prints exactly one primary state line:
 - `busy (tight tug)`
 - `idle (slack tug)`
 - `gated (hook set)`
+- `parked (waiting on <agent>)`, or `parked (gang wait in progress)` when the
+  target of that wait cannot be read
+- `expired (pty activity bound reached)`
 
 It may then print diagnostic lines for a resume that failed after compaction or
 an undelivered paste recorded in the input box. Scripts should match the first
 line's state prefix rather than requiring single-line output.
 
 Busy can be established by a declared busy marker, recent pty activity on a
-profile known to be quiet at rest, or pane movement between captures. An agent
-blocked inside Gangline's own wait is treated as available only when its profile
-accepts mid-turn input. Gated takes precedence over busy.
+profile known to be quiet at rest, or pane movement between captures. Gated takes
+precedence over busy.
+
+`parked` is an agent blocked inside Gangline's own `wait`. It is reported for every
+waiter, because *available* and *idle* are different claims and only the first is
+true here.
+
+`expired` is neither busy nor idle: pty activity alone had been carrying the busy
+verdict and has now spent `GANG_ACTIVITY_LIMIT` without any other signal agreeing.
+Gangline reports that rather than resolving it, because an activity arm that has
+run out is a different answer from an agent that was never busy — and resolving it
+to idle is what would make a fabricated busy permanent.
 
 ### `gang context <name>`
 
@@ -137,16 +149,24 @@ reader or the reader cannot establish a value.
 
 ### `gang wait <name> [timeout_seconds]`
 
-Polls until idle holds twice consecutively, then prints `idle (slack tug)`.
-Default timeout: 300 seconds. A gate fails immediately because only the operator
-can clear it. The timeout must be whole seconds.
+Polls until idle holds twice consecutively, then prints `idle (slack tug)` and
+exits 0. Default timeout: 300 seconds, which must be whole seconds. Two outcomes
+end the call without idle ever holding:
+
+| printed | exit | meaning |
+| --- | --- | --- |
+| `expired (pty activity bound reached)` | `2` | the activity-only arm spent `GANG_ACTIVITY_LIMIT`; waiting longer would turn a bounded policy into a permanent fabricated busy |
+| `parked (…)` | `0` | the target is itself inside `gang wait`, on a profile that acts on mid-turn text |
+
+A gate fails immediately, because only the operator can clear it, and so does the
+timeout — neither is a state this command reports.
 
 When an agent calls `wait` from its own pane, Gangline records that fact for the
-call's lifetime. Profiles that accept mid-turn input can then report that waiting
-agent as available to teammates. This is delivery availability, not response
-availability: a harness that queues accepted text until the current turn ends may
-show idle while the message waits for `gang wait` itself to return ([issue
-#16](https://github.com/adambiggs/gangline/issues/16)).
+call's lifetime, so teammates reading its state see `parked` rather than `busy`.
+Treat that as delivery availability, not response availability: a harness that
+queues accepted text until the current turn ends holds the message until `gang
+wait` itself returns. Only a profile witnessed acting on ordinary mid-turn text
+(`GANG_MIDTURN_ACTS`) makes a parked agent reachable within the wait.
 
 ### `gang capture <name> [lines]`
 
@@ -266,6 +286,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_COMPACTING_REGEX` | live compaction marker |
 | `GANG_MIDTURN_INPUT=1` | composer safely takes input during a turn |
+| `GANG_MIDTURN_ACTS=1` | harness *acts* on ordinary text inside the running turn, rather than queueing it until the turn ends. Strictly stronger than `GANG_MIDTURN_INPUT` and the only thing that makes a parked agent reachable mid-wait. Declared by `claude-code` alone, and not exercised by `vet --probe` |
 | `GANG_QUIET_AT_REST=1` | recent pty writes may be used as a busy signal |
 | `GANG_SESSION_KEY=1` | hitch must mint and deliver a transcript marker |
 | `GANG_VERSION_CMD` | installed-version command |
@@ -313,6 +334,7 @@ These are useful when the corresponding path is in use:
 | `GANG_CONTEXT_LOG_MAX_BYTES` | active log bound; one rotation is retained beside it | `8388608` |
 | `GANG_LOCK_WAIT` | lock acquisition polls at 0.2 seconds | `150` (30 seconds) |
 | `GANG_CHURN_WAIT` | interval between pane-change samples | `0.5` seconds |
+| `GANG_ACTIVITY_LIMIT` | how long pty activity **alone** may hold the busy verdict before the state becomes `expired`; whole seconds, and a non-numeric value is refused | `300` |
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
 | `GANG_COMPACT_GRACE` | maximum wait for gang-issued compaction proof | `300` seconds |
 | `GANG_RESUME_TIMEOUT` | detached resume wait ceiling | `900` seconds |
@@ -327,6 +349,13 @@ These are useful when the corresponding path is in use:
 | `GANG_BRIEF_GATE_WAIT` | post-brief delay before hitch's early gate check | `3` seconds |
 | `GANG_CLEAR_PRESSES` | maximum verified `Ctrl-u` attempts when reclaiming a staged paste | `40` |
 | `GANG_TEST_PROFILES=1` | expose the Bash stand-in used by Gangline's own suite | unset |
+
+`GANG_ACTIVITY_LIMIT`, `GANG_COMPACT_GRACE` and `gang wait`'s timeout all default to
+300 seconds, and that is a coincidence rather than a shared constant. They bound three
+unrelated things — how long pty activity alone may support a busy verdict, how long
+gang waits for proof that a compaction it issued ran, and how long one caller is
+willing to poll all busy evidence. Changing any one of them must not move the others,
+so do not fold them into a single value.
 
 Changing compaction timing requires care: when a context baseline was captured,
 a missing drop at `GANG_COMPACT_GRACE` sends the resume through the weaker

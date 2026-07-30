@@ -338,6 +338,14 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
         names the gate loudly as what the team is waiting on. Where a profile
         declares a composer reader, a missing safe composer with no painted busy
         state reads gated, never idle.</li>
+    <li><strong>&ldquo;I cannot tell&rdquo; is a state, not a default.</strong> When pty
+        activity alone has been carrying a busy verdict, it may do so for
+        <code>GANG_ACTIVITY_LIMIT</code> and no longer; past that the agent reads
+        <span class="gate">expired (pty activity bound reached)</span>. That is
+        neither busy nor idle, and gang reports it rather than choosing &mdash; a send
+        is refused unless the profile declares a safe composer, because an arm that
+        ran out is a different answer from an agent that was never working, and
+        quietly calling it idle is how one wrong reading becomes permanent.</li>
     <li><strong>Nudges hold for unsafe panes.</strong> Patrol checks Gangline-owned
         compaction state, a painted busy marker, byte-identical pane captures, and
         an empty input box before injecting. Holding costs one sweep; interleaving
