@@ -64,14 +64,18 @@ session is not running.
 
 ## Messaging and compaction
 
-### `gang send <name> --from <sender> [--wait] [--timeout seconds] <message...>`
+### `gang send <name> --from <sender> [--wait] [--timeout seconds] --stdin`
 
-Sends a nonce-bearing attributed envelope through the verified delivery path.
-`--from` may be replaced by `GANG_FROM`. There is no default identity.
+Reads a message body from stdin and sends it in a nonce-bearing attributed
+envelope through the verified delivery path. Positional message arguments are
+refused because the sender's shell expands them before Gangline can inspect
+them. `--from` may be replaced by `GANG_FROM`. There is no default identity.
 
-Options must appear before the message body:
+Options:
 
 - `--from <sender>`: required sender identity.
+- `--stdin`: required; reads the complete body through EOF. An empty body is
+  refused.
 - `-w`, `--wait`: if the target is busy, wait for idle instead of using or
   refusing mid-turn delivery.
 - `--timeout <seconds>`: whole-number timeout for `--wait`; default 300. When the
@@ -90,7 +94,7 @@ A busy target is handled by profile declaration:
 Gated targets are always refused. Delivery also serialises Gangline writers for
 the pane and refuses a composer that is changing while a person types.
 
-### `gang compact <name> [--from sender] [--resume message]`
+### `gang compact <name> [--from sender] [--resume-stdin]`
 
 Submits the profile's compaction command through the same verified injection
 path. A profile with no compaction command is refused. Verification proves the
@@ -104,11 +108,13 @@ promise that every harness accepts its slash command there: Codex 0.145.0 reject
 active. Compact an idle Codex from another caller or let Codex auto-compact; do
 not attach a self-issued Codex resume to a native command Codex will reject.
 
-`--resume` requires `--from` or `GANG_FROM`, checked under the same identity rule
-as `send`. Gangline starts a detached waiter that delivers the attributed resume
-at a boundary where it cannot overtake its own compaction command. Failure is
-stored on the window and printed by `status` and `patrol`. Without `--resume`, no
-sender is required.
+`--resume-stdin` reads the complete handoff through EOF and requires `--from` or
+`GANG_FROM`, checked under the same identity rule as `send`. The old inline
+`--resume <message>` form is refused because the sender's shell can alter its
+prose before Gangline starts. Gangline starts a detached waiter that delivers
+the attributed resume at a boundary where it cannot overtake its own compaction
+command. Failure is stored on the window and printed by `status` and `patrol`.
+Without `--resume-stdin`, no sender is required.
 
 ## Observation and waiting
 

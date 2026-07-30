@@ -43,7 +43,7 @@ flowchart LR
   the target's composer before and after pasting, submits with a separate Enter,
   and checks again. A delivery it cannot verify fails loudly.
 - **Keep long-running agents moving.** Context readouts, warning bands, and
-  `gang compact --resume` let an agent hand work to its post-compaction self.
+  `gang compact --resume-stdin` let an agent hand work to its post-compaction self.
 - **Replace policy with files.** Profiles describe harnesses; Markdown role briefs
   describe teammates. `GANG_PROFILES` and `GANG_ROLES` let you shadow either.
 
@@ -132,8 +132,10 @@ you choose the label.
 # Add a Codex teammate in the current project and give it the worker brief.
 gang hitch worker -p codex -r worker -d "$PWD"
 
-# Send a task. Delivery is accepted mid-turn only when the profile declares that safe.
-gang send worker --from operator 'inspect the failing tests and propose a fix'
+# Send a task. A quoted heredoc keeps shell syntax in prose literal.
+gang send worker --from operator --stdin <<'MESSAGE'
+inspect the failing tests and propose a fix
+MESSAGE
 
 # Observe it without taking over its pane.
 gang status worker
@@ -142,8 +144,9 @@ gang roster
 
 # Wait for two consecutive idle readings, then compact and resume unattended.
 gang wait worker
-gang compact worker --from operator \
-  --resume "continue from your compacted summary and report the result"
+gang compact worker --from operator --resume-stdin <<'RESUME'
+continue from your compacted summary and report the result
+RESUME
 
 # Release one teammate and its tmux-owned state.
 gang drop worker
@@ -197,10 +200,11 @@ Tag-shaped text in the body is neutralised, so the body cannot end its own
 envelope. This is attribution, not authentication: Gangline is single-operator
 software, and anyone able to type into a pane is already trusted.
 
-The sending shell processes the body before `gang` receives it. Single-quote
-literal prose that contains backticks, `$()`, `$variables`, globs, or other shell
-syntax; double-quoted backticks execute a command before delivery verification
-can see the mistake. See [Shell-safe messages](docs/operations.md#shell-safe-messages).
+`gang send` reads the body from stdin and refuses message prose in argv. Use a
+single-quoted heredoc for literal prose: an unquoted heredoc still expands
+backticks, `$()`, `$variables`, globs, and other shell syntax before delivery
+verification can see the mistake. See
+[Shell-safe messages](docs/operations.md#shell-safe-messages).
 
 For profiles with a composer reader, delivery is a measured sequence: read the
 composer, paste, require it to change, send Enter separately, then require a
@@ -275,15 +279,16 @@ At a clean checkpoint, an agent whose harness accepts compaction during an
 active task can compact itself in one command:
 
 ```sh
-gang compact lead --from lead \
-  --resume "tests pass; next verify the packaging path"
+gang compact lead --from lead --resume-stdin <<'RESUME'
+tests pass; next verify the packaging path
+RESUME
 ```
 
 Self-compaction may queue behind the caller's current turn. Codex 0.145.0 is a
 known exception: it rejects `/compact` while a task is active, and running
 `gang compact` from its own pane is itself such a task. Let Codex auto-compact or
 have another caller compact it after it becomes idle. Do not use a self-issued
-Codex `--resume`: Gangline verifies command delivery, not whether Codex accepted
+Codex `--resume-stdin`: Gangline verifies command delivery, not whether Codex accepted
 the native command. Compacting any busy peer is refused because it would cut off
 live work. Resume delivery is attempted by a detached waiter rather than pasted
 behind the slash command, where the current turn could consume it first. A
@@ -298,11 +303,11 @@ failed resume is reported by `gang status` and
 |---|---|
 | `gang up [name] [hitch options]` | Hitch a briefed lead and attach or switch to it. |
 | `gang hitch <name> [-p profile] [-r role] [-d dir] [-m model]` | Start and optionally brief an agent (`spawn` is an alias). |
-| `gang send <name> --from <sender> [--wait] <message>` | Send an attributed, verified message. |
+| `gang send <name> --from <sender> [--wait] --stdin` | Send an attributed, verified message read from stdin. |
 | `gang status <name>` / `gang roster` | Read one agent or the whole team. |
 | `gang wait <name> [seconds]` | Block until idle; default 300 seconds. |
 | `gang capture <name> [lines]` | Print pane tail; default 40 lines. |
-| `gang compact <name> [--from sender] [--resume message]` | Run the profile's compaction command. |
+| `gang compact <name> [--from sender] [--resume-stdin]` | Run the profile's compaction command, optionally reading a handoff from stdin. |
 | `gang drop <name>` / `gang down` | End one window / the whole session. |
 
 See the [command and environment reference](docs/reference.md) for every verb,

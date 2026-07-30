@@ -106,7 +106,7 @@ GANG_MIDTURN_INPUT=1
 GANG_GATED_REGEX='△ Permission required| {2,}esc *$'
 # GANG_COMPACTING_REGEX is deliberately unset — the observation found nothing
 # to scrape: compaction is drawn as an ordinary working turn with no marker of
-# its own, so a --resume waits for the pane to go quiet instead of queueing.
+# its own, so a resume waits for the pane to go quiet instead of queueing.
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="opencode --version"

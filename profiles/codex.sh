@@ -125,7 +125,7 @@ GANG_MIDTURN_INPUT=1
 # GANG_COMPACTING_REGEX is deliberately unset, and this one is not a gap in the
 # observation — it is what the observation found. Codex draws compaction as an
 # ordinary "Working (… esc to interrupt)" turn, with nothing on screen to tell
-# it apart from any other turn. There is no marker to declare, so a --resume
+# it apart from any other turn. There is no marker to declare, so a resume
 # waits for the pane to go quiet instead of queueing behind the compaction:
 # slower by a few seconds, and correct without scraping anything.
 # Every scraped marker in this file was live-verified against these harness

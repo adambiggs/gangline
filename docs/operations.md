@@ -76,32 +76,33 @@ quietly picks a different one.
 
 ## Shell-safe messages
 
-`gang send` receives its body as ordinary command-line arguments. The sender's
-shell expands those arguments **before Gangline sees them**: backticks and `$()`
-run commands, variables expand, and unquoted globs become filenames. Delivery
-verification can prove only that the resulting argv text landed, not that it is
-the prose the sender intended.
+`gang send` accepts message bodies only on stdin. Inline prose in argv is
+refused: the sender's shell expands it **before Gangline starts**, so no
+validator inside Gangline could detect that backticks or `$()` ran commands,
+variables expanded, or globs became filenames. Delivery verification could
+only prove that the already-altered text landed.
 
-Single-quote literal prose, especially prose about code:
-
-```sh
-gang send worker --from lead 'review `bin/gang`; do not run it'
-```
-
-For generated or multiline text, build it without evaluating its contents, then
-pass one quoted argument:
+The shell still constructs the file or pipe that becomes stdin. Use a
+single-quoted heredoc for literal prose, especially prose about code; an
+unquoted heredoc performs the same expansions the stdin interface is designed
+to avoid:
 
 ```sh
-body=$(cat <<'EOF'
-Review `bin/gang`.
-Treat $HOME as an example, not a variable to expand.
-EOF
-)
-gang send worker --from lead "$body"
+gang send worker --from lead --stdin <<'MESSAGE'
+Review `bin/gang`; do not run it.
+Treat $HOME and $(hostname) as examples, not expressions.
+MESSAGE
 ```
 
-Gangline currently has no stdin-body option; [issue
-#14](https://github.com/adambiggs/gangline/issues/14) tracks that gap.
+For a body already held in a variable, quoted expansion into a pipe does not
+re-evaluate the variable's contents:
+
+```sh
+printf '%s' "$body" | gang send worker --from lead --stdin
+```
+
+Empty stdin is refused. The legacy positional body form fails with a runnable
+replacement naming the real target and sender.
 
 `gang send --wait` is also deliberately bounded. Its timeout defaults to 300
 seconds; if the target never reads idle, the command fails **without delivering
@@ -109,7 +110,9 @@ anything**. Use `--wait` only when blocking and possible non-delivery are the
 intended behavior, and set `--timeout` explicitly when 300 seconds is wrong:
 
 ```sh
-gang send worker --from lead --wait --timeout 3000 'report when the long run reaches a checkpoint'
+gang send worker --from lead --wait --timeout 3000 --stdin <<'MESSAGE'
+report when the long run reaches a checkpoint
+MESSAGE
 ```
 
 ## Context readouts and warnings
@@ -181,7 +184,9 @@ telemetry cannot block work. Patrol remains the harness-independent warning leg.
 The robust self-compaction form is:
 
 ```sh
-gang compact <self> --from <self> --resume "checkpoint and next action"
+gang compact <self> --from <self> --resume-stdin <<'RESUME'
+checkpoint and next action
+RESUME
 ```
 
 Gangline allows the calling agent to be busy: its compaction command can queue
@@ -194,7 +199,7 @@ a Codex agent invoking Gangline from its own pane is still in that task, so it
 cannot self-compact by this route. Let Codex compact automatically, or have
 another caller wait for it to become idle and then run `gang compact codex-name`
 (with an attributed resume if needed). Do not pair the rejected self-issued Codex
-command with `--resume`: Gangline proves the slash command was submitted, not
+command with `--resume-stdin`: Gangline proves the slash command was submitted, not
 that Codex executed it, and a fallback can eventually deliver the resume without
 a context drop. For every profile, the native compaction command remains the
 authority on whether the request actually runs.

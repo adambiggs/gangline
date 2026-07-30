@@ -171,7 +171,9 @@
 <span class="p">$</span> gang hitch worker -p codex -r worker
 <span class="ok">hitched worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
 <span class="ok">briefed worker as worker</span>
-<span class="p">$</span> gang send worker --from lead 'read the failing test in ci and fix it'
+<span class="p">$</span> gang send worker --from lead --stdin &lt;&lt;'MESSAGE'
+read the failing test in ci and fix it
+MESSAGE
 <span class="ok">delivered to worker as [gang:lead]</span> <span class="det">(verified in pane, submitted)</span>
 <span class="p">$</span> gang roster
 lead             claude-code  <span class="ok">idle (slack tug)</span>   142k/1000k (14%)
@@ -304,8 +306,9 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     team.
   </p>
   <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k/272k (69%) in context — crossed the
-136000-token band. At the next checkpoint (arc boundary), run:
-gang compact worker --from worker --resume '&lt;where you are, what is next&gt;'
+136000-token band. At the next checkpoint (arc boundary), write the handoff to a
+file, then run:
+gang compact worker --from worker --resume-stdin &lt; resume-file
 — it queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
   <p class="lede">
@@ -314,7 +317,7 @@ compaction settles.</code></pre>
     without being idle first and without anyone watching. Codex 0.145.0 rejects
     <code>/compact</code> during an active task, so another caller must compact it
     once it is idle, or Codex must reach its own automatic compaction. The
-    <code>--resume</code> never rides the input queue directly behind its own
+    <code>--resume-stdin</code> never rides the input queue directly behind its own
     compaction, where the turn about to be compacted could swallow it. A detached
     waiter uses a declared live compaction marker, a large context drop, or a
     bounded stable-screen fallback before attempting the ordinary verified
@@ -327,7 +330,9 @@ compaction settles.</code></pre>
   <p>
     gangline's delivery failure mode is a refusal you can read, not a guess you can't.
   </p>
-  <pre><code><span class="p">$</span> gang send reviewer --from lead 'ship it'
+  <pre><code><span class="p">$</span> gang send reviewer --from lead --stdin &lt;&lt;'MESSAGE'
+ship it
+MESSAGE
 gang: refusing to deliver 'ship it': reviewer is <span class="gate">gated (hook set)</span> — a
 modal owns its input box, so the paste would land in the dialog instead (gang attach)</code></pre>
   <ul>
@@ -372,8 +377,8 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
     <tr><td><code>gang hitch &lt;name&gt; -p &lt;profile&gt; -r &lt;role&gt;</code></td>
         <td>start an agent &mdash; the name becomes its tmux window, its identity,
             and its handle</td></tr>
-    <tr><td><code>gang send &lt;name&gt; --from &lt;you&gt; "…"</code></td>
-        <td>attributed, pane-verified message; delivered mid-turn where the harness
+    <tr><td><code>gang send &lt;name&gt; --from &lt;you&gt; --stdin</code></td>
+        <td>attributed, pane-verified message read from stdin; delivered mid-turn where the harness
             takes input during one</td></tr>
     <tr><td><code>gang roster</code></td>
         <td>everyone, with harness, state, and context usage</td></tr>
@@ -381,7 +386,7 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
         <td>one agent's state, window usage, or screen</td></tr>
     <tr><td><code>gang wait &lt;name&gt; [seconds]</code></td>
         <td>block for two consecutive idle readings; fail immediately on a gate</td></tr>
-    <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume "…"</code></td>
+    <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume-stdin</code></td>
         <td>submit the harness's own compaction command; a detached waiter attempts
             the resume and reports delivery failure in status. Native command rejection
             remains the harness's verdict</td></tr>
