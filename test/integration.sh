@@ -2859,6 +2859,57 @@ check "no refusal is masked by a local declaration" "0" \
 # announcing it — and each one had to stop spelling it out separately.
 check "no file is edited in place by sed" "0" \
   "$(grep -h 'sed -[i]' "$0" "$GANG" | grep -cv '^[[:space:]]*#')"
+# The rules above guard SHAPES in one file. This one guards a FACT stated in three,
+# which is the other way a source-level check earns its place. install.sh refuses to
+# install below a tmux version; README and the site promise a reader what the
+# installer will do. When those disagree the reader is invited in by the docs and
+# turned away by the tool, which is worse than either number being wrong alone — and
+# it happened: the README said 2.1 while install.sh enforced 3.2.
+#
+# install.sh is authoritative because it is the one that can actually refuse — but the
+# number is taken from THE COMPARISON THAT REFUSES, not from the sentence beside it.
+# Reading it out of the die message would compare three prose sites against a fourth
+# piece of prose, and a gate raised to 3.5 above an unchanged message would then be
+# four-way agreement over a live contradiction. So the message is checked too, as a
+# claim like the others, against the gate.
+#
+# The sentinel is the rest of the design, and it is this file's own rule applied to a
+# check that reads text: a version this cannot FIND is not a version that DISAGREES.
+# Tight patterns are used rather than "a number near the word tmux", because the README
+# legitimately names 2.1 and 3.6 in the paragraph explaining the floor and a loose
+# pattern would match those. Tight patterns can stop matching when someone rewords, so
+# not-found returns a sentinel NAMING ITS FILE, never an empty string — empty compares
+# equal to the next empty, and a reworded README beside a reworded site would agree on
+# nothing and report agreement. Verified in a scratch tree in all four directions: the
+# live tree green; the gate moved with every message left stale, caught; the gate
+# rewritten into a form this cannot parse, caught rather than passed; and a genuine
+# bump applied to all four sites, still green.
+floor_enforced() { # $1 = install.sh -> the version its own comparison admits, or a sentinel
+  local line maj min
+  line="$(grep -E '"\$major" -eq [0-9]+ \] && \[ "\$minor" -ge [0-9]+' "$1" 2>/dev/null | head -1)"
+  [ -n "$line" ] || { printf 'NO-VERSION-GATE-IN-%s' "${1##*/}"; return 0; }
+  maj="$(printf '%s' "$line" | grep -oE '"\$major" -eq [0-9]+' | grep -oE '[0-9]+')"
+  min="$(printf '%s' "$line" | grep -oE '"\$minor" -ge [0-9]+' | grep -oE '[0-9]+')"
+  printf '%s.%s' "$maj" "$min"
+}
+floor_claim() { # $1 = file, $2 = anchored ERE -> the version stated, or a naming sentinel
+  local hit ver
+  hit="$(grep -oE "$2" "$1" 2>/dev/null | head -1)"
+  [ -n "$hit" ] || { printf 'NO-FLOOR-STATED-IN-%s' "${1##*/}"; return 0; }
+  ver="$(printf '%s' "$hit" | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+  [ -n "$ver" ] || { printf 'NO-VERSION-IN-CLAIM-%s' "${1##*/}"; return 0; }
+  printf '%s' "$ver"
+}
+ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
+TMUX_FLOOR="$(floor_enforced "$ROOT/install.sh")"
+check "the installer's gate admits a readable floor" "yes" \
+  "$(holds "$TMUX_FLOOR" '^[0-9]+\.[0-9]+$')"
+check "the installer's refusal names the version it enforces" "$TMUX_FLOOR" \
+  "$(floor_claim "$ROOT/install.sh" 'tmux >= [0-9]+\.[0-9]+ required')"
+check "the README promises the floor the installer enforces" "$TMUX_FLOOR" \
+  "$(floor_claim "$ROOT/README.md" 'tmux [0-9]+\.[0-9]+ or newer')"
+check "and so does the site" "$TMUX_FLOOR" \
+  "$(floor_claim "$ROOT/site/index.html" 'tmux&nbsp;&ge;&nbsp;[0-9]+\.[0-9]+')"
 # And the rule the sed one is an instance of, because the instance is cheap to
 # guard and the class is not:
 #
