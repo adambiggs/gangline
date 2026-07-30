@@ -184,6 +184,19 @@ running the system reports it. Where the two disagree, the requirement to state 
 the one the installer enforces, and its stated reason should say so rather than
 cite a version that cannot carry it.
 
+**An instrument that has only ever reported one verdict is not yet an instrument.**
+A check that has always passed has never shown that it can fail, and its failure
+path — the branch that matters — is an assumption wearing a test's clothes. Plant
+controls that force each verdict out of it before trusting any of them. The tmux
+floor cell ships with five runs behind it, four of them planted: a lowered floor
+that must move both cells down with no edit to the workflow, proving the number is
+read from `install.sh` and not restated; a raised floor and a broken gate that must
+each come back could-not-determine; and a deliberately crippled probe, which is the
+only run that ever exercises the failing exit. Relatedly, when a race did appear it
+surfaced as could-not-determine rather than as a wrong verdict — a check that
+degrades toward "I do not know" under conditions it did not anticipate is working,
+and that is worth designing for rather than discovering.
+
 A trap documented only where you met it is a trap the next site will hit. Twice
 already this repository held the answer and a new site walked in anyway: the unix
 socket path-length limit, documented twenty lines into the test suite, and
