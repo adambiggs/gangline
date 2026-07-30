@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.2.0](https://github.com/adambiggs/gangline/compare/gangline-v0.1.0...gangline-v0.2.0) (2026-07-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* **messaging:** gang send now requires --stdin for message bodies, and gang compact resumes now use --resume-stdin; positional message and --resume arguments are refused.
+
+### Features
+
+* **context:** derive the band ladder between absolute bounds ([09ff167](https://github.com/adambiggs/gangline/commit/09ff167f5089ba47080686e16b78d5fd75691bbd))
+* **context:** make compliance evidence decidable ([afac6c2](https://github.com/adambiggs/gangline/commit/afac6c2c401f1d59fafb5cf01b039a448c6cf48c))
+* **context:** record compliance evidence without inference ([02a898d](https://github.com/adambiggs/gangline/commit/02a898daef612d926f473a6a78bfb467750463da))
+* **messaging:** read delivered prose from stdin ([73193db](https://github.com/adambiggs/gangline/commit/73193db8502d4637b8612c435578fde1fb541d35))
+
+
+### Bug Fixes
+
+* **context:** judge final-band exposure per note, not per drop row ([be8854f](https://github.com/adambiggs/gangline/commit/be8854f8f3116da7fd04edf2c9b4d39624c3dac9))
+* **context:** make the warning ladder proportional so one default fits a mixed team ([c3ca002](https://github.com/adambiggs/gangline/commit/c3ca002431358ba41c7fb026cfd7a102a6c0f8b8))
+* **context:** restore the absolute band ladder, and record the decision ([f033a53](https://github.com/adambiggs/gangline/commit/f033a534ecd43199ed42c3c2c910c6da2d3a7da4))
+* distinguish uncertain agent states ([b151496](https://github.com/adambiggs/gangline/commit/b15149603b3a091f75d2bb64b846d02955250568)), closes [#16](https://github.com/adambiggs/gangline/issues/16) [#17](https://github.com/adambiggs/gangline/issues/17) [#22](https://github.com/adambiggs/gangline/issues/22)
+* **install:** lower the tmux floor to 2.6, bounded by evidence ([8f292ad](https://github.com/adambiggs/gangline/commit/8f292adbe27d1987b2168c274f9deac8cccbf4e6))
+* **messaging:** keep wait advice on stdin ([f3e8786](https://github.com/adambiggs/gangline/commit/f3e878688139a7cb0b29840982c8265c865978d8))
+* parse churn sampling on bash 3.2 ([daa179c](https://github.com/adambiggs/gangline/commit/daa179c68a9f8a093263b3fa5d77a2b791bd8022))
+* reserve substrate sender names ([43b5cb7](https://github.com/adambiggs/gangline/commit/43b5cb7f3bc1fbd194c050eac8860b23b893eec7))
+* **send:** put the delivery lock somewhere every process can agree on ([bf511f7](https://github.com/adambiggs/gangline/commit/bf511f7d6a5044ad41c32b4be8e77c463c8855a7))
+* **vet:** tear the probe down on every exit path, not only the clean one ([ab4bc3b](https://github.com/adambiggs/gangline/commit/ab4bc3b5c1ce92e2f3fde2aea11cfc19f48161f6))
+
 ## [0.1.0](https://github.com/adambiggs/gangline/compare/gangline-v0.0.1...gangline-v0.1.0) (2026-07-29)
 
 
