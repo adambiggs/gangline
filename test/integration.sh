@@ -1359,6 +1359,39 @@ done
 check "and no orphan window is left running for one" "0" \
   "$(tmux list-windows -t "=$GANG_SESSION" -F '#W' | grep -cE 'bad"name|leading|has space|semi;colon')"
 
+# patrol and hitch already identify the substrate on the wire. Letting an agent
+# mint either name makes its authenticated peer envelopes indistinguishable from
+# gang's own messages, so both are reserved at the shared name boundary. The
+# cleanup keeps this RED fixture from poisoning the existing-name case below
+# when it is run against code that still accepts the names.
+for reserved in patrol hitch; do
+  out="$("$GANG" hitch "$reserved" -p bash -d /tmp 2>&1)"; rc=$?
+  check "the substrate name '$reserved' cannot be hitched as an agent" "1" "$rc"
+  check "and the refusal positively identifies the namespace collision" "yes" \
+    "$(contains "$out" "reserved for gang's substrate")"
+  [ "$rc" -ne 0 ] || "$GANG" drop "$reserved" >/dev/null 2>&1
+done
+
+# Reservation is not target validation: resolve addresses an existing window by
+# immutable id and never calls valid_name. Preserve that recovery path while
+# refusing adoption and, most importantly, authentication as the substrate.
+"$GANG" hitch collision -p bash -d /tmp >/dev/null
+collision_id="$(target_of collision)" || exit 1
+collision_pane="$(tmux list-panes -t "$collision_id" -F '#{pane_id}')"
+tmux rename-window -t "$collision_id" patrol
+check "an existing colliding window remains addressable for recovery" \
+  "idle (slack tug)" "$("$GANG" status patrol)"
+out="$("$GANG" adopt patrol -p bash 2>&1)"; rc=$?
+check "but the reserved name cannot be adopted into the agent namespace" "1" "$rc"
+check "and adoption names the reservation rather than a grammar error" "yes" \
+  "$(contains "$out" "reserved for gang's substrate")"
+out="$(TMUX_PANE="$collision_pane" "$GANG" send alpha --from patrol MARK_RESERVED 2>&1)"; rc=$?
+check "an existing collision cannot authenticate a substrate signature" "1" "$rc"
+check "and sender authentication positively names the reservation" "yes" \
+  "$(contains "$out" "reserved for gang's substrate")"
+tmux rename-window -t "$collision_id" collision
+"$GANG" drop collision >/dev/null
+
 # tmux reads an all-digit target as a window INDEX. alpha is at index 1, so a
 # name-built target sent "1" to alpha and called it delivered.
 "$GANG" hitch beta -p bash -d /tmp >/dev/null
@@ -2866,9 +2899,15 @@ check "no builtin producer is piped into an early-exiting reader" "0" \
 # write `case` — which is the shape all thirty-seven took, the multi-line ones
 # included, since every one of them opened with the two characters together. It
 # cannot see a `case` written on a line BELOW its own substitution, and there is
-# no shellcheck level that sees any of it. Asserted against both files rather
-# than this one: bin/gang has to parse on 3.2 too, and it is clean today only
-# because nobody has happened to write the shape there.
+# no shellcheck level that sees any of it. It also missed the distinct shape that
+# shipped in b151496: an apostrophe in a COMMENT inside a multi-line command
+# substitution made bash 3.2 consume hundreds of lines as one quote, while this
+# rule returned zero. The real parser caught it and daa179c moved that logic out
+# of the substitution. So this is a cheap guard for the one shape it names, not
+# a parser guarantee; CI's actual bash 3.2 parse is that guarantee. Putting a
+# docker probe here would only turn "docker unavailable" into a silently skipped
+# pass on contributor machines. Asserted against both files because the named
+# shape can occur in either.
 #
 # That wording is load-bearing, not style. A comment line BEGINNING with the
 # word after `#` spelled s-h-e-l-l-c-h-e-c-k is parsed as a directive, so an
