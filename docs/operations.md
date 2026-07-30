@@ -63,9 +63,24 @@ answer Gangline could give: the modal is not intercepted, it is never raised.
   the blunter form: it denies `AskUserQuestion` even where an allow rule names it.
   An agent that cannot ask its own UI escalates through Gangline instead, which is
   the routing you wanted.
-- **Codex, opencode, Pi:** their modals are approval-shaped rather than a distinct
+- **Codex:** the equivalent tool is `request_user_input`, carried in the installed
+  binary as `ToolRequestUserInputQuestion` — "one request_user_input question and
+  its required options", the same header/options/other shape. It is behind
+  `experimental_request_user_input` in the `[tools]` table of
+  `~/.codex/config.toml`; set it `false` to be sure of it, since whether the
+  build defaults it on is not established here. MCP servers can raise their own
+  elicitation modals on Codex, and no tool setting reaches those.
+- **opencode, Pi:** their modals are approval-shaped rather than a distinct
   question tool, so the permission posture above is the whole setting. Verify
-  before assuming a harness has a separate question surface.
+  before assuming a harness has a separate question surface — Codex was assumed
+  not to have one until somebody looked.
+
+`gang vet` deliberately does not check for this the way it checks the Claude Code
+context beacon. The beacon has one right answer on a host; this does not. User
+scope is read by the operator's own adopted window as well as by every unattended
+agent, so denying the tool there strips the picker from the sessions somebody is
+sitting in front of. Which way that should go is the operator's call, and a vet
+row that stated one would be advice that is wrong half the time.
 
 This narrows how often `gated` fires; it does not retire the state. Tool
 permissions do not reach harness chrome — a model picker, a plan-mode approval, or
