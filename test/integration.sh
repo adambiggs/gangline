@@ -1623,6 +1623,81 @@ GANG_PROFILES="$SHIM/vetonly" "$GANG" vet >/dev/null 2>&1
 check "and that 1 was the between row, not the tree around it" "0" "$?"
 rm -rf "$SHIM/vetonly"
 
+# --- vet: the claude-code beacon has to be wired for any reader to work --------
+
+# The shipped claude-code profile reads context from a statusline the OPERATOR
+# wires, so an unwired host has no context readout at all — no roster column, no
+# bands, no compaction decision — while every version row reads OK. That is the
+# shape of failure vet exists to catch, and it is a static fact about a file, so
+# it is answerable before a team exists.
+#
+# Driven against the real profiles/claude-code.sh, not a stand-in: the parsing,
+# the precedence order and the wording are the thing under test. `claude` is
+# stubbed onto PATH because the gate is `command -v claude` and CI has no claude —
+# the stub answers `--version` too, so the row above stays OK and these checks
+# read the gate alone.
+CCFX="$SHIM/ccsettings"
+CCBEACON="$(cd -P "$(dirname "$GANG")/.." && pwd)/statusline/claude-code-context.sh"
+mkdir -p "$CCFX" "$SHIM/haveclaude"
+printf '#!/bin/sh\necho "2.1.220 (Claude Code)"\n' > "$SHIM/haveclaude/claude"
+chmod +x "$SHIM/haveclaude/claude"
+ccvet() { CLAUDE_CONFIG_DIR="$CCFX" PATH="$SHIM/haveclaude:$PATH" "$GANG" vet 2>/dev/null; }
+ccwire() { printf '{"statusLine":{"type":"command","command":"%s"}}\n' "$1" > "$CCFX/settings.json"; }
+
+printf '{}\n' > "$CCFX/settings.json"
+vout="$(ccvet)"
+check "an unwired statusline is a finding, not a clean bill" "yes" \
+  "$(holds "$vout" 'harness files: DRIFT — no statusLine command in .*/settings[.]json')"
+# The operator asked for the edit, not just the complaint: an agent reading this
+# row has to be able to offer the change without going and looking it up.
+check "and the row carries the edit that fixes it" "yes" \
+  "$(holds "$vout" '"statusLine": [{]"type": "command", "command": ".*/statusline/claude-code-context[.]sh"[}]')"
+# What a script reads. A finding printed in dim text with a zero exit is a finding
+# nothing acts on.
+CLAUDE_CONFIG_DIR="$CCFX" PATH="$SHIM/haveclaude:$PATH" "$GANG" vet >/dev/null 2>&1
+check "an unwired statusline fails the command" "1" "$?"
+
+# The control. Without it a gate hard-wired to DRIFT passes every check above.
+ccwire "$CCBEACON"
+check "a wired one passes" "yes" \
+  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon wired in ')"
+# The false-alarm direction, and the reason the command is split like a shell
+# rather than compared as a path: an interpreter, arguments, or an install
+# somewhere else are all still wired, and nagging a working host teaches an
+# operator to stop reading the row.
+ccwire "bash $CCBEACON --quiet"
+check "so does one behind an interpreter with arguments" "yes" \
+  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon wired in ')"
+
+# Three ways to be unwired that need three different actions, and the failure
+# worth guarding is them collapsing into one another.
+ccwire "/gone/statusline/claude-code-context.sh"
+check "a beacon path that no longer exists is its own finding" "yes" \
+  "$(holds "$(ccvet)" 'harness files: DRIFT — .* wires the beacon as /gone/.* not readable')"
+ccwire "/opt/theme/my-statusline.sh"
+check "and a statusline that is simply somebody else's is another" "yes" \
+  "$(holds "$(ccvet)" "harness files: DRIFT — .* points statusLine at .*my-statusline")"
+# The one that must never resolve toward "not configured": the file may well hold
+# the wiring, and vet cannot see it. Reporting that as absent would send an
+# operator to add a setting they already have, and would print a confident
+# verdict from a read that did not happen.
+printf 'this is not json\n' > "$CCFX/settings.json"
+check "an unreadable settings file is undetermined, never 'not configured'" "yes" \
+  "$(holds "$(ccvet)" 'harness files: DRIFT — .* does not parse .*undetermined')"
+
+# A host that runs codex alone must not be told to configure a harness it does not
+# have. Controlled, because a PATH that still finds claude would make the check
+# vacuous and it would pass for the wrong reason.
+BAREPATH="$(dirname "$(command -v tmux)"):$(dirname "$(command -v python3)"):/usr/bin:/bin"
+check "the no-claude control really has no claude on PATH" "" \
+  "$(PATH="$BAREPATH" command -v claude || true)"
+printf '{}\n' > "$CCFX/settings.json"
+check "an uninstalled harness is not nagged about its configuration" "yes" \
+  "$(holds "$(CLAUDE_CONFIG_DIR="$CCFX" PATH="$BAREPATH" "$GANG" vet 2>/dev/null)" \
+      'harness files: claude is not installed')"
+rm -rf "$CCFX" "$SHIM/haveclaude"
+unset -f ccvet ccwire
+
 # --- vet --probe: the markers fired at a live pane -----------------------------
 
 # The probe exists because comparing version strings answers "has this harness
@@ -2850,12 +2925,12 @@ check "a codex agent joins the band ladder" "NUDGED (crossed the 120000-token ba
 # to print after the matching one.
 dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" vet 2>/dev/null)"
 check "vet gates the rollout format" "yes" \
-  "$(holds "$dout" 'file format: OK')"
+  "$(holds "$dout" 'harness files: OK')"
 printf '%s\n' '{"timestamp":"2026-07-27T00:00:08.000Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2},"last_token_usage":{"input_tokens":1,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":1,"reasoning_output_tokens":0,"total_tokens":2}},"rate_limits":{"limit_id":"codex","primary":{"used_percent":5.3,"window_minutes":10080,"resets_at":1785617494},"plan_type":"pro"}}}' \
   > "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 dout="$(CODEX_HOME="$CODEX_FIX" "$GANG" doctor 2>/dev/null)"   # through the alias, deliberately
 check "and fails loud when the schema drifts" "yes" \
-  "$(holds "$dout" 'file format: DRIFT')"
+  "$(holds "$dout" 'harness files: DRIFT')"
 rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 unset GANG_PROFILES
 
@@ -2936,14 +3011,14 @@ check "a percent the joined window cannot reproduce is refused" "1" "$?"
 
 dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "vet gates the catalog format" "yes" \
-  "$(holds "$dout" 'file format: OK [(]catalog join candidates')"
+  "$(holds "$dout" 'harness files: OK [(]catalog join candidates')"
 printf '%s\n' '{"github-copilot":{"name":"GitHub Copilot","models":{"gpt-5.5":{"name":"GPT-5.5"}}}}' \
   > "$OC_CACHE/opencode/models.json"
 check "the catalog fixture now holds no limit at all" "no" \
   "$(declares "$OC_CACHE/opencode/models.json" '"limit"')"
 dout="$(XDG_CACHE_HOME="$OC_CACHE" "$GANG" vet 2>/dev/null)"
 check "and fails loud when the catalog drifts" "yes" \
-  "$(holds "$dout" 'file format: DRIFT — models catalog holds no named model')"
+  "$(holds "$dout" 'harness files: DRIFT — models catalog holds no named model')"
 oc_catalog
 unset GANG_PROFILES
 

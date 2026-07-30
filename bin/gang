@@ -3688,18 +3688,24 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
         printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "from $f")"
       fi
     fi
-    # A profile that reads harness files instead of the screen rots on a schema
-    # change, not a TUI change — same disease, different tissue. The profile owns
-    # the check (law 4); vet just runs it and counts a failure as drift.
-    # Unconditionally: the version probe and the format gate are independent
+    # A profile that depends on harness FILES instead of the screen rots on a
+    # schema change, not a TUI change — same disease, different tissue. Two
+    # tissues, in fact, which is why the label is the general one: files the
+    # harness WRITES and a profile parses (codex rollouts, opencode's model
+    # catalog), and files the operator OWNS that a reader needs to say the right
+    # thing (claude-code's context beacon is painted by a statusline wired in
+    # settings.json, and an unwired one leaves gang blind to that harness with
+    # every version row above reading OK). The profile owns the check (law 4);
+    # vet just runs it and counts a failure as drift.
+    # Unconditionally: the version probe and the file gate are independent
     # diagnostics, and a host without the harness binary can still hold session
     # files worth gating (lived it: CI has no codex, and the gate silently never
     # ran there).
     if declare -F profile_vet >/dev/null; then
       if out="$(profile_vet 2>&1)"; then
-        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "file format: $out")"
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "harness files: $out")"
       else
-        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_BAD" "file format: DRIFT — $out")"
+        printf '%-12s %-26s %s\n' '' '' "$(colour "$C_BAD" "harness files: DRIFT — $out")"
         drift=1
       fi
     fi

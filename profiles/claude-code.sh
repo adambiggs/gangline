@@ -191,6 +191,106 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
+profile_vet() { # setup gate: is anything actually painting the beacon read above?
+  # profile_context dies when the beacon is absent, and that die lands on whoever
+  # runs `gang context` — one agent at a time, long after `gang up`, for what is a
+  # single host-level fault. Whether it is wired is a static configuration fact,
+  # so vet can answer it before a team exists: on the run where every version row
+  # reads OK and the operator is asking why the roster context column is all
+  # dashes, this is the row that says why.
+  #
+  # Scope is stated in the finding rather than assumed away. Settings merge across
+  # four scopes with managed highest and user LOWEST, and the two in between are
+  # per-project (docs.claude.com, "Settings precedence"). vet cannot reach those:
+  # `gang hitch -d` takes any directory, so the project an agent will run in is
+  # not known here. Reading both host-level scopes is what keeps an OK honest;
+  # naming what was not read is what keeps a DRIFT honest.
+  #
+  # Gated on the binary, not on the settings file, and the difference is the whole
+  # target: a fresh install with claude present and nothing configured is exactly
+  # the case worth catching, while a host that runs codex alone must never be
+  # nagged about a harness it does not have.
+  command -v claude >/dev/null \
+    || { echo "claude is not installed — nothing to gate"; return 0; }
+  local beacon out status detail cmd src tok
+  beacon="$ROOT/statusline/claude-code-context.sh"
+  # Lowest precedence first, so a later file wins the same way the harness
+  # resolves them. CLAUDE_CONFIG_DIR relocates the user scope: in the installed
+  # 2.1.220 binary the user settings path is `Kx.join(y3r("userSettings"),
+  # bIh(t))` where `bIh` returns "settings.json" and `y3r` resolves that scope to
+  # the config dir, which `function ERl(){return process.env.CLAUDE_CONFIG_DIR}`
+  # selects. Reading $HOME/.claude on a host that sets it would report a false
+  # finding against a file the harness never opens.
+  #
+  # Protocol out of python, tab separated: <status> <detail> <cmd> <src> <tok>.
+  # On `bad`, detail is the whole finding and the rest are empty.
+  out="$(python3 - "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json" \
+                   /etc/claude-code/managed-settings.json \
+                   "/Library/Application Support/ClaudeCode/managed-settings.json" <<'PY'
+import json, os, shlex, sys
+
+read, cmd, src = [], "", ""
+for p in sys.argv[1:]:
+    try:
+        with open(p) as fh:
+            d = json.load(fh)
+    except FileNotFoundError:
+        continue
+    except (OSError, ValueError) as e:
+        # Existing-but-unreadable is a third answer, never "not configured": the
+        # file may hold the wiring, so the honest report is that vet could not
+        # tell, and the caller fails loud rather than guessing either way.
+        print("bad\t%s does not parse (%s), so whether the beacon is wired here "
+              "is undetermined\t\t\t" % (p, e))
+        sys.exit(0)
+    if not isinstance(d, dict):
+        print("bad\t%s holds a JSON %s at its top level, not an object, so "
+              "whether the beacon is wired here is undetermined\t\t\t"
+              % (p, type(d).__name__))
+        sys.exit(0)
+    read.append(p)
+    sl = d.get("statusLine")
+    if isinstance(sl, dict) and sl.get("command"):
+        cmd, src = sl["command"], p
+
+# The setting is a shell command string, so the beacon can sit behind an
+# interpreter or carry arguments. Split it the way a shell would and match the
+# script by NAME: an operator who installed gangline elsewhere, or who copied the
+# script, is still wired — and a path that no longer exists is a different
+# finding from no path at all, which is why the token comes back rather than a
+# yes/no. "?" is the name matching with no token the caller can test: either the
+# string would not split, or the path is relative, and a relative one resolves
+# against the harness's working directory rather than vet's. Both are "wired,
+# and this is the wrong place to check the file" — never a finding.
+tok = ""
+try:
+    for w in shlex.split(cmd):
+        if os.path.basename(w) == "claude-code-context.sh":
+            tok = w if os.path.isabs(w) else "?"
+except ValueError:
+    tok = "?" if "claude-code-context.sh" in cmd else ""
+
+print("ok\t%s\t%s\t%s\t%s"
+      % (", ".join(read) or "any settings file gang can read here", cmd, src, tok))
+PY
+)" || { echo "python3 could not read the settings files"; return 1; }
+  IFS=$'\t' read -r status detail cmd src tok <<<"$out"
+  [ "$status" = ok ] || { echo "$detail"; return 1; }
+  if [ -z "$cmd" ]; then
+    echo "no statusLine command in $detail, so nothing paints the \"ctx <used>k/<win>k <pct>%\" beacon and gang context, the roster context column and every patrol band are blind on this harness. Wire it: \"statusLine\": {\"type\": \"command\", \"command\": \"$beacon\"}. Project-scope .claude/settings.json is not read here — the directory an agent will be hitched in is not known at vet time"
+    return 1
+  fi
+  if [ -z "$tok" ]; then
+    echo "$src points statusLine at \"$cmd\", which is not gangline's beacon script. Unless that command paints a \"ctx <used>k/<win>k <pct>%\" line itself, gang has no context readout on this harness. This install's beacon is $beacon, and gang vet --probe settles it against a live pane"
+    return 1
+  fi
+  if [ "$tok" != "?" ] && [ ! -r "$tok" ]; then
+    echo "$src wires the beacon as $tok and that path is not readable, so the statusline runs nothing and the pane carries no beacon. This install's copy is $beacon"
+    return 1
+  fi
+  echo "OK (context beacon wired in $src)"
+}
+
 profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
   # Suggestion text is not draft text, and the difference is recoverable. Claude
   # Code renders its empty-box placeholder ('Try "how do I log an error?"') and

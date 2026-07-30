@@ -249,12 +249,23 @@ report declares.
 
 Plain vet visits every installed profile, including custom and test-only files.
 It compares the harness's installed version with the profile's verified version
-words, runs an optional profile-owned file-format gate, checks that a UTF-8
-locale is available, and exits nonzero on drift. For an unpinned dotted-numeric
+words, runs an optional profile-owned gate over the harness's files, checks that
+a UTF-8 locale is available, and exits nonzero on drift. For an unpinned dotted-numeric
 version it reports whether the installed build is newer than all pins, older than
 all pins, or between pins when that ordering is unambiguous; otherwise the
 `ROT RISK` remains deliberately unranked. Plain vet does **not** fire marker
 regexes at a pane.
+
+The profile-owned gate is also where harness-specific setup is checked, and a
+finding names the edit that fixes it. `codex` and `opencode` gate the file
+formats they parse. `claude-code` reports whether the context beacon
+`profile_context` reads is wired as a `statusLine` command, distinguishing an
+absent one, another statusline, and a beacon path that no longer exists; it reads
+the user and managed settings scopes and names which it read. Project-scope
+settings are not read — the directory an agent will be hitched in is not known at
+vet time — and a settings file that exists but does not parse is reported as
+undetermined, never as unconfigured. The gate is skipped where the harness is not
+installed.
 
 - `--file-issue`: for each version-pin `ROT RISK`, use `gh` to create a deduplicated
   GitHub issue in this repository. Failure to list open issues is fatal rather
@@ -299,7 +310,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `GANG_VERIFIED_VERSIONS` | space-separated verified prefixes, or `any` only when there are no scraped markers |
 | `profile_input` | print the live composer, or fail when none exists |
 | `profile_context` | print one parseable context-usage line |
-| `profile_vet` | optional harness-file format gate |
+| `profile_vet` | optional gate on harness files — formats the profile parses, and configuration its readers require |
 
 ### `gang roles`
 

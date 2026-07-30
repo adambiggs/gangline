@@ -110,6 +110,9 @@ context column, or context patrol can read its usage. Merge this into
 }
 ```
 
+`gang vet` confirms it, and prints this edit with the right path for your install
+if it is missing.
+
 ## Your first team
 
 Start in the repository the team will work on:
