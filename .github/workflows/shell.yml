@@ -76,6 +76,21 @@ jobs:
           echo "interpreter: $interp"
           "$interp" --version | head -1
 
+          # And that claim is load-bearing enough to assert rather than print.
+          # This cell is the only place these files meet a real bash 3.2 parser,
+          # which is the guarantee the suite's source-level 3.2 rule defers to
+          # instead of duplicating. A newer bash here would keep every later step
+          # green while parsing nothing old, and a 3.2-only error surfaces
+          # hundreds of lines from its cause (#28) — so nothing downstream would
+          # notice the loss.
+          if [ "${{ runner.os }}" = macOS ]; then
+            bv="$("$interp" -c 'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"')"
+            [ "$bv" = 3.2 ] || {
+              echo "this cell resolves bash $bv, so the 3.2 parse it exists to run is not happening" >&2
+              exit 1
+            }
+          fi
+
           tmux -V
 
           # awk is the reason this step exists, and the implementations differ on
