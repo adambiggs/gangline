@@ -184,6 +184,16 @@ expected; a conservative one is simply believed. So when a measurement confirms 
 thing you already enforce, that is the moment to ask what else moved — and an
 instrument must control the receiver, or it measures the receiver.
 
+Controlling it is not enough on its own: **the control's own state has to be a
+required observable, or you cannot tell "controlled" from "control silently did
+nothing."** The same confound reappeared one version lower, on tmux 2.1, whose image
+ships a Bash predating `enable-bracketed-paste` entirely — so the control could not
+be applied and the readline instrument read a clean, wrong, conservative "does not
+deliver the paste property." What refused it was a second instrument observing the
+bracket bytes on the wire, and a rule that the control must report `on` or the run
+is could-not-determine. Two instruments that must agree, with disagreement counting
+as no verdict rather than as a tiebreak, is what makes that catchable at all.
+
 Some floors cannot be established by reading at all. Whether text arrives at a TUI
 as a paste rather than as keystrokes is a property of tmux, the terminal and the
 harness together, and no changelog entry quantifies over that triple. Feature
