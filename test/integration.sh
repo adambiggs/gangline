@@ -1962,10 +1962,10 @@ unset GANG_PROFILES GANG_TEST_GATE
 # The bash profile reads the same beacon shape the claude-code statusline paints,
 # so one printed line exercises the whole warn path with no harness installed.
 "$GANG" hitch ctxagent -p bash -d /tmp >/dev/null
-paint ctxagent 'ctx 150k/200k 75%'      # 150k of tokens: over the 120000 rung, under
-                                        # 180000. The window figure is deliberately
-                                        # not what decides that (ADR-0005).
-check "context reads the beacon" "150k/200k (75%)" "$("$GANG" context ctxagent)"
+paint ctxagent 'ctx 130k/200k 65%'      # 130k of tokens: over the 120000 floor and
+                                        # under the rung above it. The floor is the
+                                        # same number on every window (ADR-0006).
+check "context reads the beacon" "130k/200k (65%)" "$("$GANG" context ctxagent)"
 
 check "patrol nudges past a band" "NUDGED (crossed the 120000-token band)" \
   "$("$GANG" patrol | verdict ctxagent)"
@@ -2027,7 +2027,7 @@ raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the delivered row names the non-seam event" "yes" \
   "$(contains "$raw_context_log" $'kind=note\tsession=')"
 check "and carries the self-describing window and resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'window=200000\tband=2\tthreshold=180000\tthresholds=120000,180000,250000,350000')"
+  "$(contains "$raw_context_log" $'window=200000\tband=5\tthreshold=180000\tthresholds=120000,138000,153000,166000,180000')"
 check "and records PostToolUse as a non-seam" "yes" \
   "$(contains "$raw_context_log" $'hook_event=PostToolUse\tseam=no')"
 
@@ -2043,15 +2043,14 @@ check "the low-context seam has no new warning to emit" "" "$(hook UserPromptSub
 context_report="$("$GANG" context-report)"
 check "the drop reports the last sampled tokens with their staleness" "yes" \
   "$(holds "$context_report" 'ctxagent: pre=190000 at .*staleness=[0-9]+s.*post=40000 band=0')"
-# final-band exposure is COULD-NOT-DETERMINE here, and that is the honest answer
-# rather than a gap: the absolute ladder's top rung (350000) sits above this
-# agent's 200k window, so there is no final band for it to have been exposed to.
-# final_exposure refuses to call that "no" — an unreachable rung is not an
-# unexposed agent. The consequence for compliance analysis is real and recorded on
-# issue #24: every harness whose window is under the top rung reports
-# COULD-NOT-DETERMINE for final-band exposure, permanently.
+# final-band exposure is answerable here, which is what closed #32. The ladder is
+# derived to fit inside the window (ADR-0006), so its last rung is reachable on any
+# harness and this agent — nudged at 190k against a top rung of 180000 — genuinely
+# topped out. Under a ladder whose top rung sat above the window the honest answer
+# was COULD-NOT-DETERMINE, permanently, for every harness under it; final_exposure
+# still gives that answer for a row measured on such a ladder, and only for that row.
 check "and identifies the last delivery and its ordinal honestly" "yes" \
-  "$(contains "$context_report" "nudges=1; last=hook/PostToolUse; NON-SEAM #1; final-band=COULD-NOT-DETERMINE")"
+  "$(contains "$context_report" "nudges=1; last=hook/PostToolUse; NON-SEAM #1; final-band=yes")"
 check "an unproven drop enters only the third outcome" "yes" \
   "$(contains "$context_report" "proven-compliant: 0")"
 check "with its opposite proven count co-reported" "yes" \
@@ -2076,14 +2075,14 @@ check "the report distinguishes a first seam from an Nth nudge" "yes" \
 # A legacy integer is a known band with an unknown count, never band zero. Count
 # rows on both sides so the empty hook output has a positive complement.
 paint ctxagent 'ctx 190k/200k 95%'
-tmux set-option -w -t "$p" @gl_band 2
+tmux set-option -w -t "$p" @gl_band 5
 notes_before="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
 check "the legacy-state fixture begins with retained note rows" "yes" \
   "$([ "$notes_before" -gt 0 ] && echo yes || echo no)"
 check "a legacy integer at the current band does not re-notify" "" "$(hook PostToolUse)"
 notes_after="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
 check "and the positive note-row count stays unchanged" "$notes_before" "$notes_after"
-check "the legacy value is preserved rather than reparsed as zero" "2" \
+check "the legacy value is preserved rather than reparsed as zero" "5" \
   "$(tmux show-options -wqv -t "$p" @gl_band)"
 
 # Malformed rich state is a third answer. The positive CTD row proves the hook
@@ -2187,48 +2186,194 @@ check "with the dataset refusal printed as the positive complement" "yes" \
   "$(contains "$malformed_report" "THIS DATASET CANNOT ANSWER THE QUESTION")"
 python3 "$event_helper" clear "$malformed_log" >/dev/null
 
-# --- one ladder, windows 4x apart ---------------------------------------------
+# --- final-band exposure: a reachable top rung vs an unreachable one (#32) -----
 #
-# The whole point of an ABSOLUTE default (ADR-0005): the same number of TOKENS
-# means the same thing on every harness, because that is what context rot tracks.
-# Two agents whose windows are four times apart, carrying the same tokens, must
-# land on the same rung — and the fuller one must not be warned harder for being
-# fuller. This is the guard that goes red if the default is ever made proportional
-# again: at 250k, the small agent is at 97% of its window and the big one at 25%,
-# so a proportional ladder puts them on different bands and these checks fail.
+# The distinction the whole evidence layer exists to preserve, at the one place it
+# was being lost. Two intervals fall short of their top rung and must get DIFFERENT
+# answers, because only one of them could ever have reached it. A derived ladder
+# fits inside the window (ADR-0006), so its last rung is reachable and "did not top
+# out" means exactly that; a ladder whose last rung sits above the window cannot say
+# that about the agent that ran under it, and reporting "no" there would be reading
+# could-not-determine as determined-false. Judged per note rather than once from the
+# drop row, so a dataset spanning the ladder change reports each interval against
+# the ladder it was actually measured on — which #24's collection now is.
+exposure_log="$SHIM/exposure-events.tsv"
+: > "$exposure_log"
+exposure_row() { # $1 = agent, $2 = kind, $3 = band, $4 = thresholds, $5.. = extra pairs
+  local agent="$1" kind="$2" band="$3" vec="$4" pair; shift 4
+  printf 'v1\tts=1700000000\tkind=%s\tsession=s\twindow_id=@%s\tagent=%s\tprofile=bash' \
+    "$kind" "$agent" "$agent"
+  printf '\tleg=patrol\thook_event=-\tseam=no\ttokens=190000\twindow=200000'
+  printf '\tband=%s\tthreshold=180000\tthresholds=%s' "$band" "$vec"
+  for pair in "$@"; do printf '\t%s' "$pair"; done
+  printf '\n'
+}
+exposure_interval() { # $1 = agent, $2 = band, $3 = note ladder, $4 = drop-row ladder
+  exposure_row "$1" note "$2" "$3" note_count=1
+  exposure_row "$1" context_drop 0 "$4" \
+    previous_band="$2" notes_since_drop=1 last_note_ts=1700000000 \
+    pre_ts=1700000000 pre_tokens=190000 pre_window=200000 pre_band="$2" \
+    "pre_thresholds=$4" sample_staleness=0 sample_quality=fresh \
+    provenance=self-issued provenance_candidates=1 \
+    evidence_availability=available evidence_result=drop-proved \
+    request_quality=determined issue_tokens=190000 first_threshold=120000
+}
+oversized='120000,180000,250000,350000'   # last rung above the 200000 window
+fitted='120000,138000,153000,166000,180000'
+{
+  exposure_interval unreachable 2 "$oversized" "$oversized"
+  exposure_interval shortfall   3 "$fitted"    "$fitted"
+  exposure_interval toppedout   5 "$fitted"    "$fitted"
+  # The ladder changed between the note and the drop that closed its interval —
+  # which is what a regime boundary mid-collection looks like, and #24's dataset
+  # has three of them. Judging from the drop row alone reads this interval's
+  # shortfall as a determined "no", because the drop row's ladder fits. The note
+  # is the row that was measured, and its ladder never could.
+  exposure_interval straddle    2 "$oversized" "$fitted"
+} >> "$exposure_log"
+exposure_report="$(python3 "$event_helper" report "$exposure_log")"
+check "the exposure fixture is read as three whole intervals, not skipped" "0" \
+  "$(printf '%s' "$exposure_report" | grep -c 'malformed=[1-9]')"
+check "a top rung above the window cannot report non-exposure" "yes" \
+  "$(holds "$exposure_report" 'unreachable: .*final-band=COULD-NOT-DETERMINE')"
+check "but the same shortfall on a ladder that FITS is a determined no" "yes" \
+  "$(holds "$exposure_report" 'shortfall: .*final-band=no')"
+check "and reaching the last rung of a fitted ladder is a determined yes" "yes" \
+  "$(holds "$exposure_report" 'toppedout: .*final-band=yes')"
+check "an interval whose NOTE outran its ladder is judged on that note, not the drop" "yes" \
+  "$(holds "$exposure_report" 'straddle: .*final-band=COULD-NOT-DETERMINE')"
+python3 "$event_helper" clear "$exposure_log" >/dev/null
+
+# --- one ladder, absolute at both ends (ADR-0006) ------------------------------
+#
+# The FLOOR is the guard that goes red if the ladder is ever made proportional
+# again. Rot onset is a property of context LENGTH, so the first rung is the same
+# absolute number on every harness: two agents whose windows are four times apart,
+# carrying the same tokens, must both be warned at 120000 — and the fuller one must
+# not be warned harder for being fuller. At 125k the small agent is at 48% of its
+# window and the big one at 12%, so any fraction-of-the-window first rung parts them
+# and these checks fail.
 #
 # Both read from ONE sweep. patrol advances @gl_band as it nudges, so a second
 # call would report the first agent steady and prove nothing about the ladder.
 "$GANG" hitch bigwin -p bash -d /tmp >/dev/null
 "$GANG" hitch smallwin -p bash -d /tmp >/dev/null
-paint bigwin   'ctx 250k/1000k 25%'
-paint smallwin 'ctx 250k/258k 97%'
+paint bigwin   'ctx 125k/1000k 12%'
+paint smallwin 'ctx 125k/258k 48%'
 bandout="$("$GANG" patrol)"
-check "a 1M agent at 250k tokens is nudged at the 250000 rung" \
-  "NUDGED (crossed the 250000-token band)" "$(printf '%s\n' "$bandout" | verdict bigwin)"
-check "and a 258k agent at the same TOKENS gets the same rung" \
-  "NUDGED (crossed the 250000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
+check "a 1M agent at 125k tokens is nudged at the 120000 rung" \
+  "NUDGED (crossed the 120000-token band)" "$(printf '%s\n' "$bandout" | verdict bigwin)"
+check "and a 258k agent at the same TOKENS gets the same first rung" \
+  "NUDGED (crossed the 120000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
 check "so both sit on the same band number" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^3 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^1 1 [0-9]+$')"
 check "and the fuller window is not warned harder for being fuller" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^3 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^1 1 [0-9]+$')"
 "$GANG" drop bigwin >/dev/null 2>&1 || true
 "$GANG" drop smallwin >/dev/null 2>&1 || true
 
-# The % suffix survives as an escape hatch for an unusual window (ADR-0005), and
-# such a rung takes two figures — so it is set explicitly here rather than relied
-# on as a default. Where the readout supplies no window the refusal must name the
-# WINDOW. Sent to GANG_CONTEXT_BANDS instead, an operator is sent to edit a setting
-# that is correct — the same misattribution as reading grep's error as a miss, one
-# layer up. The second check is the one that fails on the old wording, which is the
-# only way to prove the attribution and not just the behaviour.
+# The CAP is the other absolute end, and it is the sentence ADR-0005 protects: a
+# bigger window is a reason to warn on the same schedule, not a licence to fill it.
+# Every window large enough to reach the cap gets the IDENTICAL ladder — 90% of 1M
+# and 90% of 400k both clamp to 350000 — so two agents 2.5x apart in window, at the
+# same tokens, land on the same rung. A ladder that scaled all the way up would put
+# the 1M agent hundreds of thousands of tokens later.
+"$GANG" hitch capbig -p bash -d /tmp >/dev/null
+"$GANG" hitch capmid -p bash -d /tmp >/dev/null
+paint capbig 'ctx 250k/1000k 25%'
+paint capmid 'ctx 250k/400k 62%'
+capout="$("$GANG" patrol)"
+check "a 1M agent at 250k tokens is nudged at the 247000 rung" \
+  "NUDGED (crossed the 247000-token band)" "$(printf '%s\n' "$capout" | verdict capbig)"
+check "and a 400k agent gets the identical rung, both ladders clamped to the cap" \
+  "NUDGED (crossed the 247000-token band)" "$(printf '%s\n' "$capout" | verdict capmid)"
+"$GANG" drop capbig >/dev/null 2>&1 || true
+"$GANG" drop capmid >/dev/null 2>&1 || true
+
+# Nothing above the cap, and every agent can reach the top of its own ladder. The
+# second half is what closes #32: the last rung was unreachable on any window under
+# it, so final-band exposure was permanently COULD-NOT-DETERMINE for a whole
+# harness. Both agents here top out — the big one at the cap, the small one at 90%
+# of its own window — and neither is warned past its ceiling.
+"$GANG" hitch topbig -p bash -d /tmp >/dev/null
+"$GANG" hitch topsmall -p bash -d /tmp >/dev/null
+paint topbig   'ctx 900k/1000k 90%'
+paint topsmall 'ctx 240k/258k 93%'
+topout="$("$GANG" patrol)"
+check "a 1M agent far past the cap is warned AT the cap, not above it" \
+  "NUDGED (crossed the 350000-token band)" "$(printf '%s\n' "$topout" | verdict topbig)"
+check "and a 258k agent reaches the last rung of the ladder that applies to it" \
+  "NUDGED (crossed the 232000-token band)" "$(printf '%s\n' "$topout" | verdict topsmall)"
+check "the big agent is on the final band" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of topbig)" @gl_band)" '^5 1 [0-9]+$')"
+check "and so is the small one, at the same ordinal" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of topsmall)" @gl_band)" '^5 1 [0-9]+$')"
+"$GANG" drop topbig >/dev/null 2>&1 || true
+"$GANG" drop topsmall >/dev/null 2>&1 || true
+
+# A window too small to reach rot onset at all. It cannot be warned about rot, so
+# the one hazard left is exhaustion and one rung is the whole ladder that applies —
+# ADR-0005's rule, arrived at from the other side. The rung must still sit below the
+# window: a warning at the window arrives after the agent is already dead.
+"$GANG" hitch tinywin -p bash -d /tmp >/dev/null
+paint tinywin 'ctx 120k/128k 93%'
+check "a window below the floor keeps a single exhaustion rung under its ceiling" \
+  "NUDGED (crossed the 115000-token band)" "$("$GANG" patrol | verdict tinywin)"
+"$GANG" drop tinywin >/dev/null 2>&1 || true
+
+# Both bounds are settings, and a setting nobody can observe is not one. They are
+# read at ladder time rather than fixed when the script loads, which is also what
+# lets a profile export them for its own harness: load_profile runs before the
+# ladder in both nudge legs, so a value resolved at load time would be read before
+# the profile meaning to change it had been sourced at all.
+"$GANG" hitch floorset -p bash -d /tmp >/dev/null
+paint floorset 'ctx 90k/1000k 9%'
+check "a lowered floor moves the first rung, and the agent is warned there" \
+  "NUDGED (crossed the 80000-token band)" \
+  "$(GANG_CONTEXT_FLOOR=80000 "$GANG" patrol | verdict floorset)"
+"$GANG" drop floorset >/dev/null 2>&1 || true
+
+"$GANG" hitch capset -p bash -d /tmp >/dev/null
+paint capset 'ctx 260k/1000k 26%'
+check "and a lowered cap brings the whole ladder down with it" \
+  "NUDGED (crossed the 250000-token band)" \
+  "$(GANG_CONTEXT_CAP=250000 "$GANG" patrol | verdict capset)"
+"$GANG" drop capset >/dev/null 2>&1 || true
+
+# A cap under the floor is not a small ladder, it is a contradiction, and the
+# refusal has to say which pair disagrees rather than report a broken rung.
+"$GANG" hitch swapped -p bash -d /tmp >/dev/null
+paint swapped 'ctx 150k/1000k 15%'
+swapout="$(GANG_CONTEXT_FLOOR=200000 GANG_CONTEXT_CAP=100000 "$GANG" patrol 2>&1 >/dev/null)"
+check "a cap below the floor is refused as the pair it is" "yes" \
+  "$(contains "$swapout" "is below GANG_CONTEXT_FLOOR")"
+"$GANG" drop swapped >/dev/null 2>&1 || true
+
+# Both the derived ladder and a % rung need the window figure, and where the readout
+# supplies none the refusal must name the WINDOW. Sent to GANG_CONTEXT_BANDS instead,
+# an operator is sent to edit a setting that is correct — the same misattribution as
+# reading grep's error as a miss, one layer up. The "never as a broken ladder" checks
+# are the ones that fail on the old wording, which is the only way to prove the
+# attribution and not just the behaviour.
+#
+# A ladder that cannot be placed refuses rather than falling back to the rungs it
+# could still have named. The floor is knowable without the window, so a fallback
+# was available here and is deliberately not taken: a silently shortened ladder
+# reports a band that means something different from the band it appears to be.
 "$GANG" hitch nowin -p bash -d /tmp >/dev/null
 paint nowin 'ctx 150k/0k 0%'
-nowout="$(GANG_CONTEXT_BANDS='50%' "$GANG" patrol 2>&1 >/dev/null)"
-check "a rung that cannot be placed is refused as a window problem" "yes" \
+nowout="$("$GANG" patrol 2>&1 >/dev/null)"
+check "the derived ladder is refused as a window problem when no window is read" "yes" \
   "$(contains "$nowout" "no context-window size")"
 check "and never as a broken ladder" "no" \
   "$(contains "$nowout" "fix the ladder")"
+check "and the refusal names the setting that would bypass the derivation" "yes" \
+  "$(contains "$nowout" "GANG_CONTEXT_BANDS")"
+pctout="$(GANG_CONTEXT_BANDS='50%' "$GANG" patrol 2>&1 >/dev/null)"
+check "an explicit % rung is refused the same way, and named as itself" "yes" \
+  "$(contains "$pctout" "cannot place the '50%' band")"
+check "and never as a broken ladder either" "no" \
+  "$(contains "$pctout" "fix the ladder")"
 "$GANG" drop nowin >/dev/null 2>&1 || true
 
 # --- a marker gang cannot evaluate is not a marker that is absent --------------
@@ -2377,7 +2522,7 @@ check "a compaction gang issued is recorded on the window" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the request row carries its issue context and full resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'agent=compagent\tprofile=compactable\tleg=compact\thook_event=-\tseam=COULD-NOT-DETERMINE\ttokens=150000\twindow=200000\tband=1\tthreshold=120000\tthresholds=120000,180000,250000,350000')"
+  "$(contains "$raw_context_log" $'agent=compagent\tprofile=compactable\tleg=compact\thook_event=-\tseam=COULD-NOT-DETERMINE\ttokens=150000\twindow=200000\tband=2\tthreshold=138000\tthresholds=120000,138000,153000,166000,180000')"
 
 # What that command can honestly claim, and the pair that bounds it. inject
 # proves DELIVERY — the paste changed the box, the Enter emptied it — and this
@@ -2397,7 +2542,7 @@ check "because on this fixture nothing compacted at all" "150k/200k (75%)" \
   "$("$GANG" context compagent)"
 
 check "and patrol holds its nudge while it is unconfirmed" \
-  "past the 120000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "past the 138000-token band — compaction gang issued, unconfirmed, holding nudge" \
   "$("$GANG" patrol | verdict compagent)"
 check "holding burns no band, so the nudge is not lost" "" \
   "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_band)"
@@ -2411,7 +2556,7 @@ check "and it does not make the agent read as compacting" "idle (slack tug)" \
 
 # `/compact` under a harness's own threshold runs and changes nothing, so a mark
 # trusted until the context moves would hold patrol off that pane for good.
-check "an expired mark stops holding" "NUDGED (crossed the 120000-token band)" \
+check "an expired mark stops holding" "NUDGED (crossed the 138000-token band)" \
   "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
 check "and records clock expiry as non-proving request evidence" "yes" \
   "$(like "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_context_request)" '* peer-issued 150000 120000 clock-cleared')"
@@ -2431,7 +2576,7 @@ check "and the mark is gone once it has served its purpose" "" \
   "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
 raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
 check "the production drop proof records its complete observation row" "yes" \
-  "$(contains "$raw_context_log" $'agent=dropagent\tprofile=compactable\tleg=patrol\thook_event=-\tseam=yes\ttokens=350000\twindow=1000000\tband=4\tthreshold=350000\tthresholds=120000,180000,250000,350000')"
+  "$(contains "$raw_context_log" $'agent=dropagent\tprofile=compactable\tleg=patrol\thook_event=-\tseam=yes\ttokens=350000\twindow=1000000\tband=5\tthreshold=350000\tthresholds=120000,190000,247000,300000,350000')"
 check "and establishes peer provenance only because proof was observed" "yes" \
   "$(contains "$raw_context_log" $'provenance=peer-issued\tprovenance_candidates=peer-issued\tevidence_availability=available\tevidence_result=drop-proved')"
 
@@ -2533,36 +2678,46 @@ check "and both the patrol hold and the resume proof read it" "2" \
 
 # --- the band ladder ---------------------------------------------------------
 
-# The default rungs are absolute tokens (ADR-0005), and these checks are the
-# executable form of that decision. The property under test is that the SAME TOKEN
-# COUNT lands on the same band whatever the window, because context rot tracks
-# tokens rather than window fullness.
+# The FLOOR is an absolute token count (ADR-0006), and these checks are the
+# executable form of that decision. The property under test is that the first rung
+# lands at the same TOKEN COUNT whatever the window, because rot onset tracks how
+# long a context is rather than how full its window is.
 #
-# That is also what makes this a guard rather than a description: under a
-# proportional default, 120k of a 200k window is 60% and 120k of a 1M window is
-# 12%, so the pair below lands on different bands and these checks go red. A
-# change that edits them to agree with a proportional default has removed the
-# guard, not passed it — see ADR-0005's history for the time that happened.
+# That is what makes this a guard rather than a description: under a ladder scaled
+# all the way down, 120k of a 200k window is 60% and 120k of a 1M window is 12%, so
+# the pair below parts and these checks go red. A change that edits them to agree
+# with a proportional floor has removed the guard, not passed it — see ADR-0005's
+# history for the time that happened.
+#
+# Above the floor the two ladders legitimately differ, and the last pair states it
+# outright rather than leaving it to be inferred: at the SAME tokens the small
+# window is near the end of its ladder and the big one is barely started, because
+# up there the hazard is running out of room and not rot.
 probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
 probe rung200a '119k/200k 60%'    # a hair under the first rung, 120000
 probe rung200b '120k/200k 60%'    # exactly on it
-probe rung200c '180k/200k 90%'    # the second rung
-probe rung200d '199k/200k 99%'    # full to the brim: the 250000 and 350000 rungs
-                                  # are ABOVE this window and correctly never fire
+probe rung200c '160k/200k 80%'    # a middle rung of the 200k ladder
+probe rung200d '199k/200k 99%'    # full to the brim: the last rung of its ladder,
+                                  # which sits at 180000 and not at the window
 probe rung1ma  '119k/1000k 12%'   # the same TOKENS as rung200a on a 5x window
 probe rung1mb  '120k/1000k 12%'   # the same TOKENS as rung200b — must match it
-probe rung1mc  '350k/1000k 35%'   # the top rung, reachable only on a big window
+probe rung1mc  '350k/1000k 35%'   # the cap, and the last rung of the 1M ladder
+probe rung1md  '199k/1000k 20%'   # the same TOKENS as rung200d, far from its own end
 "$GANG" patrol >/dev/null         # first sweep nudges and records the band
 settled="$("$GANG" patrol)"       # second reports it
 band_of() { printf '%s\n' "$settled" | awk -v n="$1" '$1==n { print $NF }' | tr -d ')'; }
 
 check "under the first rung is band 0"   "0" "$(band_of rung200a)"
 check "one rung is one band"             "1" "$(band_of rung200b)"
-check "and the next rung is the next band" "2" "$(band_of rung200c)"
-check "a rung above the window never fires" "2" "$(band_of rung200d)"
+check "and a middle rung is a middle band" "3" "$(band_of rung200c)"
 check "the same tokens on a 5x window are still under the rung" "0" "$(band_of rung1ma)"
 check "and the same tokens are the same band whatever the window" "1" "$(band_of rung1mb)"
-check "with the top rung reached only where the tokens exist" "4" "$(band_of rung1mc)"
+# Every agent can reach the end of its own ladder — the half of this that closes
+# #32 — and the ends are at wildly different token counts because the ceilings are.
+check "a small window tops out at the last rung of its own ladder" "5" "$(band_of rung200d)"
+check "and a large one tops out at the cap, on the same final band" "5" "$(band_of rung1mc)"
+check "while the same tokens on the large window are nowhere near its end" "2" \
+  "$(band_of rung1md)"
 
 # --- file-based context (codex) ----------------------------------------------
 

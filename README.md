@@ -251,14 +251,19 @@ while busy unless you use `--wait`.
 ### Context is explicit
 
 `gang context <name>` asks the profile for `<used>k/<window>k (<percent>%)`.
-`gang patrol` applies `GANG_CONTEXT_BANDS` (default `120000,180000,250000,350000`)
-and sends one attributed warning per crossed band. The rungs are absolute token
-counts because context rot tracks how long a context is, not how full its window
-is — a 300k context is degraded whether the window is 200k or 1M, so it earns the
-same warning on both. A rung above an agent's own window simply never fires, which
-is correct rather than a gap: an agent that cannot hold 350k tokens cannot suffer
-350k-token rot. A percentage of the window works as an escape hatch for an unusual
-one ([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips a
+`gang patrol` runs a five-rung ladder over that reading and sends one attributed
+warning naming the highest rung crossed — a single read can clear several rungs at
+once, and that is one warning, not a queue of them. Both ends of the ladder
+are absolute token counts, because context rot tracks how long a context is and not
+how full its window is: every agent's first warning lands at `GANG_CONTEXT_FLOOR`
+(120000), and none goes unwarned past `GANG_CONTEXT_CAP` (350000) however large its
+window — a bigger window is a reason to warn on the same schedule, not a licence to
+fill it. Between those two the rungs are spread across `min(90% of the window, cap)`,
+closer together toward the top, because there the hazard is running out of room
+rather than rot ([ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md)).
+Setting `GANG_CONTEXT_BANDS` replaces the ladder outright, and a percentage of the
+window works there as an escape hatch for an unusual one
+([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips a
 painted-busy, churning, gated, gang-compacting, or non-empty input area without
 advancing the band, so a later sweep retries.
 

@@ -152,20 +152,30 @@ mkdir -p "$HOME/.local/state/gangline"
 
 The negative filter keeps unknown future errors while removing routine steady
 rows. A patrol only sweeps `GANG_SESSION`; use one cron entry per session. Carry
-`GANG_PROFILES`, `GANG_CONTEXT_BANDS`, `GANG_LOCK_DIR`, and `GANG_CONTEXT_LOG`
-into cron too when the team overrides them: a patrol that disagrees about the lock
-directory stops serialising with the other writers, and one that disagrees about
-the log writes its measurements into a second dataset.
+`GANG_PROFILES`, any of the three ladder settings, `GANG_LOCK_DIR`, and
+`GANG_CONTEXT_LOG` into cron too when the team overrides them: a patrol that
+disagrees about the lock directory stops serialising with the other writers, and
+one that disagrees about the log writes its measurements into a second dataset.
 
-Bare `GANG_CONTEXT_BANDS` entries are absolute tokens; `%` entries are a
-percentage of that agent's context window. The default ladder is entirely absolute
-(`120000,180000,250000,350000`), because context rot tracks how long a context is
-rather than how full its window is — the same token count earns the same warning on
-every harness. A rung above the smallest window is never crossed there, and that is
-the intended behaviour rather than a gap: an agent that cannot hold those tokens
-cannot suffer that degradation. Use `%` only for an unusual window; it is an escape
-hatch, not a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)). The last warned band is a tmux window option,
-shared with `context-hook`, and re-arms when usage falls after compaction.
+The ladder is derived, and both of its ends are absolute token counts. It starts at
+`GANG_CONTEXT_FLOOR` (120000) on every harness, because context rot tracks how long
+a context is rather than how full its window is — the same token count earns the
+same warning everywhere. It ends at `min(90% of the window, GANG_CONTEXT_CAP)`, so
+no agent goes unwarned past 350000 however large its window, and the last rung
+always sits below the window with enough room left to issue a compaction and have it
+land. Five rungs are placed across that span at fixed fractions, closer together
+toward the top, so the warnings get more insistent as the situation gets worse
+([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
+
+A window too small to reach the floor keeps a single rung at its ceiling: it cannot
+be warned about rot it has no room to suffer, so the one hazard left is exhaustion.
+
+Setting `GANG_CONTEXT_BANDS` to a comma-separated ladder replaces the derivation
+entirely. Bare entries are absolute tokens; `%` entries are a percentage of that
+agent's window — an escape hatch for an unusual one, never a default
+([ADR-0005](adr/0005-context-bands-are-absolute.md)). A profile may export the floor
+or the cap to set it for its own harness. The last warned band is a tmux window
+option, shared with `context-hook`, and re-arms when usage falls after compaction.
 
 ### In-turn hook
 

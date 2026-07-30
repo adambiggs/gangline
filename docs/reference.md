@@ -199,7 +199,7 @@ Performs one roster sweep. For each adopted agent it:
 1. reports a failed resume or recorded undelivered paste;
 2. reports and stops on a gate;
 3. reads and parses context usage;
-4. evaluates `GANG_CONTEXT_BANDS` against the window's last warned band;
+4. evaluates the band ladder against the window's last warned band;
 5. re-arms warning state when usage falls;
 6. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
    safe.
@@ -317,14 +317,16 @@ fragments and are not listed as roles.
 | `GANG_PROFILE` | default profile for `up` and `hitch` | `claude-code` |
 | `GANG_ROLE` | role used by `up` when `-r` is absent | `lead` |
 | `GANG_FROM` | sender identity for `send` and compact resumes | none |
-| `GANG_CONTEXT_BANDS` | comma-separated absolute token counts; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `120000,180000,250000,350000` |
+| `GANG_CONTEXT_FLOOR` | first rung, in absolute tokens — the same number on every harness | `120000` |
+| `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)) | `350000` |
+| `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `auto` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |
 | `NO_COLOR` | any non-empty value disables colour | unset |
 
 Every process that addresses one team must agree on `GANG_SESSION`. Cron must
-also receive `GANG_PROFILES`, `GANG_CONTEXT_BANDS`, `GANG_LOCK_DIR`, and
+also receive `GANG_PROFILES`, any of the three ladder settings, `GANG_LOCK_DIR`, and
 `GANG_CONTEXT_LOG` when the team overrides them — a patrol that disagrees about
 the lock directory stops serialising with the other writers, and one that
 disagrees about the log writes its measurements into a second dataset.

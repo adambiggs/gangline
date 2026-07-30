@@ -69,23 +69,25 @@ for _d in profiles roles; do
     || die "no $_d/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 done
 unset _d
-# Every rung is an absolute token count, and that is the feature. This ladder warns
-# an agent before context rot degrades it, and rot is a function of how many tokens
-# are in the context — not of how full the window is. A 300k context is degraded
-# whether the window is 200k or 1M, so the rung that matters is 300k on both.
+# The ladder runs from an absolute floor to an absolute cap, and only the spacing
+# between them fits the window. Both bounds are token counts because both answer the
+# same question rot asks: how long is this context. Rot does not care how full the
+# window is — a 300k context is degraded whether the window is 258k or 1M — so every
+# agent's first warning lands at the same absolute count, and no agent goes unwarned
+# past the cap. A bigger window is a reason to warn on the same schedule, not a
+# licence to fill it. A ladder made entirely of window fractions inverts that exactly
+# where it costs most: 85% of 1M is 850k tokens, warning the biggest contexts last.
+# It has been proposed and refused three times; docs/adr/0005-context-bands-are-
+# absolute.md exists so a fourth proposal reads it instead of re-deriving it.
 #
-# A proportional ladder inverts exactly where it costs most: 85% of 1M is 850k
-# tokens, so the biggest windows would be warned last, long past the point the
-# warning could help. See docs/adr/0005-context-bands-are-absolute.md — this has
-# been proposed and refused three times, and the ADR exists so a fourth proposal
-# reads it instead of re-deriving it.
+# Between the two bounds the hazard is a different one — running out of room to
+# finish the turn — and that is relative to the window by nature, so the rungs there
+# scale. docs/adr/0006-the-band-ladder-spans-absolute-bounds.md carries both halves.
 #
-# A rung above an agent's own window simply never fires, and that is correct rather
-# than a gap: an agent that cannot hold 350k tokens cannot suffer 350k-token rot.
-# A codex agent on a 258k window is warned at 120k, 180k and 250k, which is the
-# whole ladder that applies to it. Deployments wanting different absolute rungs set
-# GANG_CONTEXT_BANDS; the units do not change.
-BANDS="${GANG_CONTEXT_BANDS:-120000,180000,250000,350000}"
+# A profile may export either bound to set it for its own harness: load_profile runs
+# before the ladder in both nudge legs. An explicit GANG_CONTEXT_BANDS CSV bypasses
+# the derivation entirely and is read exactly as written.
+BANDS="${GANG_CONTEXT_BANDS:-auto}"
 
 # Context-compliance measurements outlive the window they describe. The active
 # file and one rotation are capped; lib/context_events.py owns the atomic append
@@ -217,9 +219,12 @@ gang — drive a team of CLI agents as tmux windows
 Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      the lead with: lead), GANG_FROM (sender identity for send),
      GANG_SESSION (default: gangline),
-     GANG_CONTEXT_BANDS (warning ladder; absolute tokens, default
-       120000,180000,250000,350000 — rot tracks tokens, not window fullness;
-       % of the window is an escape hatch, never a default: ADR-0005),
+     GANG_CONTEXT_FLOOR (first rung, absolute tokens; default 120000),
+     GANG_CONTEXT_CAP (last rung's ceiling, absolute tokens; default 350000 — five
+       rungs are derived across [floor, min(90% of window, cap)], so both ends are
+       token counts and only the spacing fits the window: ADR-0006),
+     GANG_CONTEXT_BANDS (explicit ladder, bypassing that derivation; % of the
+       window is an escape hatch, never a default: ADR-0005),
      GANG_CONTEXT_LOG (persistent compliance-event log),
      GANG_CONTEXT_LOG_MAX_BYTES (active-log bound; default 8388608, plus one rotation),
      GANG_LOCK_DIR (delivery locks; default /tmp/gangline-<uid>, created 0700 and
@@ -1825,15 +1830,71 @@ ctx_tokens() { # $1 = "<used>k/<win>k (<pct>%)" -> "<used> <window>" in tokens
   printf '%s %s' "$(( BASH_REMATCH[1] * 1000 ))" "$(( BASH_REMATCH[2] * 1000 ))"
 }
 
-ladder() { # $1 = tokens -> "<bands crossed> <highest> <resolved CSV>"
+# Permille of the span between floor and ceiling. Fixed, so the ladder has the same
+# shape on every harness, and compressing upward so the warnings get closer together
+# as the situation gets worse. The widest gap belongs at the bottom, where there is
+# still time to act on it.
+LADDER_FRACTIONS="0 308 555 783 1000"
+
+LADDER_AUTO=""
+auto_rungs() { # $1 = window; sets LADDER_AUTO to the derived CSV. Dies on a bad bound.
+  # Sets a global rather than printing: `die` inside a command substitution ends only
+  # that subshell, so a caller reading this through `$(...)` would take an empty
+  # ladder for a valid one.
+  # Both bounds are read HERE rather than resolved once at startup, because that is
+  # what lets a profile set them for its own harness: load_profile runs before the
+  # ladder in both nudge legs, and a value fixed at load time would be read before
+  # the profile that meant to change it had been sourced at all.
+  local window="$1" ceiling span f t rungs=""
+  local floor="${GANG_CONTEXT_FLOOR:-120000}" cap="${GANG_CONTEXT_CAP:-350000}"
+  [[ "$floor" =~ ^[0-9]+$ ]] && [ "$floor" -gt 0 ] \
+    || die "invalid GANG_CONTEXT_FLOOR '$floor' — the ladder's first rung is an absolute token count"
+  [[ "$cap" =~ ^[0-9]+$ ]] && [ "$cap" -gt 0 ] \
+    || die "invalid GANG_CONTEXT_CAP '$cap' — the ladder's last rung is an absolute token count"
+  [ "$cap" -ge "$floor" ] \
+    || die "GANG_CONTEXT_CAP ($cap) is below GANG_CONTEXT_FLOOR ($floor) — the ladder would run backwards"
+  # Same refusal as a % rung, for the same reason: a ladder that cannot be PLACED is
+  # not a ladder set wrong, and the message has to name what could not be determined
+  # rather than send an operator to edit a setting that is correct.
+  [[ "$window" =~ ^[0-9]+$ ]] && [ "$window" -gt 0 ] \
+    || die "cannot derive the band ladder: no context-window size for this agent (got '$window') — the derived ladder needs the window figure the profile reports, so fix the readout, or set GANG_CONTEXT_BANDS to an explicit ladder"
+  # A tenth of the window is exhaustion headroom. A rung sitting at the window is a
+  # warning that arrives after the agent is already dead; what is left after the last
+  # rung has to be enough to issue a compaction and have it land.
+  ceiling=$(( window * 9 / 10 ))
+  [ "$ceiling" -le "$cap" ] || ceiling="$cap"
+  if [ "$ceiling" -le "$floor" ]; then
+    # This window cannot reach rot onset, so the only hazard it can be warned about
+    # is exhaustion, and one rung is the whole ladder that applies to it.
+    LADDER_AUTO=$(( ceiling / 1000 * 1000 ))
+    [ "$LADDER_AUTO" -gt 0 ] \
+      || die "cannot derive the band ladder: a ${window}-token window leaves no rung above zero once headroom is taken — set GANG_CONTEXT_BANDS to an explicit ladder if that window is real"
+    return
+  fi
+  span=$(( ceiling - floor ))
+  for f in $LADDER_FRACTIONS; do
+    # Floored to 1k, the resolution every context readout reports in.
+    t=$(( (floor + span * f / 1000) / 1000 * 1000 ))
+    rungs="${rungs:+$rungs,}$t"
+  done
+  LADDER_AUTO="$rungs"
+}
+
+ladder() { # $1 = tokens, $2 = window -> "<bands crossed> <highest> <resolved CSV>"
   # One evaluator for both warning legs. Two copies of a ladder is two ladders.
   #
-  # The DEFAULT rungs are absolute and that is load-bearing (ADR-0005). The %
-  # suffix remains in the syntax as an escape hatch for an unusual window, which
-  # is the one place a fraction is the operator's intent rather than a mistake.
-  # It is not a default and must not become one.
-  local band=0 crossed=0 part n t resolved=""
-  for part in ${BANDS//,/ }; do
+  # Both ends of the DEFAULT ladder are absolute and that is load-bearing (ADR-0006).
+  # An explicit CSV is read as written, and the % suffix remains in that syntax as an
+  # escape hatch for an unusual window — the one place a fraction is the operator's
+  # intent rather than a mistake. It is not a default and must not become one.
+  local band=0 crossed=0 part n t resolved="" list
+  if [ "$BANDS" = auto ]; then
+    auto_rungs "$2"
+    list="$LADDER_AUTO"
+  else
+    list="$BANDS"
+  fi
+  for part in ${list//,/ }; do
     case "$part" in
       *%) n="${part%\%}"
           [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
