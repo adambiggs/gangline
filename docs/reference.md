@@ -365,7 +365,11 @@ gang waits for proof that a compaction it issued ran, and how long one caller is
 willing to poll all busy evidence. Changing any one of them must not move the others,
 so do not fold them into a single value.
 
-Changing compaction timing requires care: when a context baseline was captured,
-a missing drop at `GANG_COMPACT_GRACE` sends the resume through the weaker
-screen-settling fallback; after `GANG_RESUME_TIMEOUT`, delivery is attempted
-regardless, still through the verified injection path.
+Changing compaction timing requires care, and the two readers part company at
+expiry. On the resume leg, when a context baseline was captured, a missing drop
+at `GANG_COMPACT_GRACE` sends the resume through the weaker screen-settling
+fallback; after `GANG_RESUME_TIMEOUT`, delivery is attempted regardless, still
+through the verified injection path. Patrol never turns expiry into clearance: a
+gang-issued compaction with no drop to show for it keeps holding its nudge and
+reports `UNPROVED past the grace` every sweep, until the context drops, a fresh
+request replaces the mark, or the window dies.
