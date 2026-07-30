@@ -1249,7 +1249,20 @@ tmux send-keys -t "$(target_of loudly)" C-c
 # Bounded, and gang's own: the arm has to GO QUIET or it is the sign-flipped bug
 # — busy forever on an agent that finished, which is worse than the false idle it
 # was built to close.
-"$GANG" wait quietly 40 >/dev/null 2>&1
+#
+# The wait is asserted rather than discarded, and on the state it PRINTS rather
+# than its exit code, because the code cannot tell the outcomes apart: parked and
+# idle both exit 0, while a timeout and a gate both die. Discarding it made "the
+# arm is stuck busy" and "the wait never reached idle, for a reason nobody
+# captured" fail identically on the line below, which is what a macOS occurrence
+# then had to be reconstructed from a log to tell apart (#35).
+#
+# Both checks stay, and the pair is the diagnostic. The first says the arm went
+# quiet while gang watched it; the second says an independent sample taken after
+# the wait returned still finds it quiet. One failing without the other separates
+# a pane that never settled from one that woke back up in between.
+wout="$("$GANG" wait quietly 40 2>&1)"
+check "the wait behind it actually reached idle" "idle (slack tug)" "$wout"
 check "and the arm goes quiet once the writing stops" "idle (slack tug)" \
   "$("$GANG" status quietly | head -1)"
 paint quietly FORCE_BUSY
