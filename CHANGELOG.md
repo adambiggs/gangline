@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.4.0](https://github.com/adambiggs/gangline/compare/gangline-v0.3.0...gangline-v0.4.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* profiles declare GANG_OCCUPIED_REGEX. A profile still setting GANG_GATED_REGEX fails to load, naming the file and the replacement.
+* `gang context-report` is gone, along with GANG_CONTEXT_LOG and GANG_CONTEXT_LOG_MAX_BYTES. Nothing writes a persistent dataset any more.
+
+### Features
+
+* **hitch:** --resume, so a dead tmux server costs work rather than memory ([b101b3f](https://github.com/adambiggs/gangline/commit/b101b3f58f0fa3855b7dd9fd96a600f26d85044d)), closes [#44](https://github.com/adambiggs/gangline/issues/44)
+* remove context-report and the measurement apparatus behind it ([1782882](https://github.com/adambiggs/gangline/commit/178288236c46a97a258bca33a7cc241328f71934))
+* rename the occupancy declaration and refuse the retired name ([a53952d](https://github.com/adambiggs/gangline/commit/a53952d15877820f2096756d586cface88724759)), closes [#47](https://github.com/adambiggs/gangline/issues/47)
+* **vet:** probe declared mid-turn actions ([b1f2203](https://github.com/adambiggs/gangline/commit/b1f2203f6b62643549049cb76fc6510b3c93b5c9))
+
+
+### Bug Fixes
+
+* **deliver:** stop typing where nothing proved it was safe to type ([473fe89](https://github.com/adambiggs/gangline/commit/473fe89360ec67898a307cead75883944dc525dd)), closes [#37](https://github.com/adambiggs/gangline/issues/37) [#40](https://github.com/adambiggs/gangline/issues/40) [#46](https://github.com/adambiggs/gangline/issues/46)
+* **demo:** ask for the team to stay, so the closing frame has one ([2d6c431](https://github.com/adambiggs/gangline/commit/2d6c43189b8554b0c798fc1dbcec5393da4832cd))
+* **demo:** gate the closing shot on idle, not on nothing being busy ([d40b00b](https://github.com/adambiggs/gangline/commit/d40b00bde1d0df8a16a4ab869854b4ec7ffe0e0a)), closes [#49](https://github.com/adambiggs/gangline/issues/49)
+* **env:** refuse a numeric bound that is not a number, at every read site ([cc3c8a5](https://github.com/adambiggs/gangline/commit/cc3c8a56948612f26ff11772f21fd28a13fb37c3)), closes [#41](https://github.com/adambiggs/gangline/issues/41)
+* **patrol:** repeat final-band nudges ([3b534c4](https://github.com/adambiggs/gangline/commit/3b534c42206de160b9b4413d78bce6070eb84962))
+* **send:** keep the trailing newlines stdin_body pays a sentinel to preserve ([d524107](https://github.com/adambiggs/gangline/commit/d52410722fc80eb5cabd5eb0b945b22ef4572f82)), closes [#42](https://github.com/adambiggs/gangline/issues/42)
+* **test:** void a run whose own code moved under it ([a09b833](https://github.com/adambiggs/gangline/commit/a09b8333e5fd2ebf6dc1d97d76a9cdbdabd99a7e)), closes [#48](https://github.com/adambiggs/gangline/issues/48)
+
 ## [0.3.0](https://github.com/adambiggs/gangline/compare/gangline-v0.2.0...gangline-v0.3.0) (2026-07-31)
 
 
