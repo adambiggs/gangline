@@ -138,9 +138,10 @@ state is meant to die with the windows and is cheap to rebuild — names, roles,
 context marks. What does not come back on its own is every agent's
 *conversation*. There is no roster on disk to restore from, by design, so the
 team is rebuilt by re-hitching each agent yourself. Where the harness can pick up
-its own last thread in that directory, `gang hitch <name> -p <profile> -d <dir>
+the last thread in that directory, `gang hitch <name> -p <profile> -d <dir>
 --resume` is how you ask for it; `claude-code` and `codex` can, `opencode` and
-`pi` refuse rather than guess, and either way it is one agent per directory.
+`pi` refuse rather than guess, and either way it is one agent per directory —
+the harness picks by directory and recency, never by agent name.
 Killing the server is recoverable work, not a recoverable session.
 
 `unset TMUX` works too, but only where you actually unset it. If you build a

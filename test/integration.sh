@@ -3312,10 +3312,13 @@ check "and without the flag the ordinary launch line still runs" "no" \
   "$(has fresh MARK_RESUMED_LAUNCH)"
 "$GANG" drop fresh >/dev/null
 unset GANG_PROFILES
-# The shipped profiles are where the scoping judgement lives, so it is asserted
-# against them rather than against a fixture. claude-code and codex both select
-# by working directory; opencode's sessions are global to the machine and pi's
-# scoping was never established, and neither may guess.
+# The shipped profiles are where the scoping judgement lives, so the declarations
+# are read from them rather than from a fixture. This asserts the SPELLING only:
+# which profiles declare a form and which declare none. Whether a declared form
+# really filters by directory, picks the intended conversation, or fails when
+# there is none is harness behaviour and is not reachable from here — claude-code
+# and codex both select by working directory, opencode's sessions are global to
+# the machine, and pi's scoping was never established.
 check "claude-code declares a resume form" "yes" \
   "$(contains "$(GANG_TEST_PROFILES='' bash -c '. profiles/claude-code.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')" "continue")"
 check "and codex declares its subcommand form" "yes" \

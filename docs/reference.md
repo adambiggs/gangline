@@ -26,7 +26,7 @@ Starts a harness in a new tmux window. `spawn` is an alias.
 - `-d`, `--dir`: working directory; default the caller's current directory.
 - `-m`, `--model`: append the profile's declared model option and this model ID
   to its launch command. A profile without a model option refuses this flag.
-- `--resume`: launch the harness so it picks up its own last conversation in the
+- `--resume`: launch the harness so it picks up the last conversation in the
   working directory, instead of starting a fresh one. This is how a team is
   rebuilt after the tmux server dies and takes every window's state with it.
   A profile without a declared resume form refuses the flag rather than launching
@@ -35,10 +35,13 @@ Starts a harness in a new tmux window. `spawn` is an alias.
 
 Gangline does not remember the team. `--resume` recovers the harness
 *conversation*, which nothing else can rebuild; names, roles, and context marks
-are re-established by the hitch itself. Because the harness selects the
-conversation by working directory, `--resume` is only meaningful for one agent
-per directory: two agents resuming in the same directory get the same
-conversation, and Gangline cannot see that to refuse it.
+are re-established by the hitch itself. The harness selects that conversation by
+working directory and recency — no agent name or session id is involved, because
+neither harness takes one — so `--resume` is only meaningful for one agent per
+directory: two agents resuming in the same directory get the same conversation,
+and Gangline cannot see that to refuse it. Where the directory holds no
+conversation at all, the harness starts a fresh one and exits 0, and Gangline
+reports a successful hitch rather than a blank agent (issue #52).
 
 Model spelling belongs to the harness: Claude Code accepts aliases or model IDs,
 Codex accepts a model ID, and opencode and Pi use provider/model forms (Pi also
@@ -304,7 +307,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | Declaration | Meaning |
 |---|---|
 | `GANG_LAUNCH` | required harness launch command |
-| `GANG_RESUME_LAUNCH` | full launch command that resumes the harness's own last conversation in the working directory, used by hitch's `--resume`. A complete command rather than a flag, because a harness may spell resume as a subcommand. Declared only where the harness scopes sessions to a directory; a profile that declares none refuses `--resume` rather than launching bare (ADR-0007) |
+| `GANG_RESUME_LAUNCH` | full launch command that resumes the most recent harness conversation in the working directory, used by hitch's `--resume`. A complete command rather than a flag, because a harness may spell resume as a subcommand. Declared only where the harness scopes sessions to a directory; a profile that declares none refuses `--resume` rather than launching bare (ADR-0007) |
 | `GANG_MODEL_OPT` | model option used by hitch's `-m` |
 | `GANG_BUSY_REGEX` | painted working marker |
 | `GANG_OCCUPIED_REGEX` | modal marker, confirmed against composer absence |

@@ -35,7 +35,7 @@ exists to prevent. A roster file goes stale, resurrects teams the operator
 abandoned on purpose, and needs a deletion path of its own to answer for it.
 
 So the operator supplies the memory and Gangline supplies the flag. Recovery is an
-ordinary hitch that asks the harness to pick up its own last conversation:
+ordinary hitch that asks the harness for the last conversation in a directory:
 
 ```
 gang hitch reviewer -p claude-code -d ~/work/api --resume
@@ -78,13 +78,24 @@ is a safety property rather than a spelling:
   harness refuses, which is the safe direction; a declaration nobody verified is
   the unsafe one.
 
-### Directory scoping is the safety property, and Gangline cannot check it
+### The harness selects by directory and recency, never by agent
 
-Even on a declaring harness, two agents hitched in the *same* directory resume the
-same conversation. Gangline cannot refuse that: after a server death there is no
-team left for it to compare against, and each `hitch` arrives alone. So the
-constraint is documented rather than enforced — **`--resume` is only meaningful
-for one agent per directory** — and law 7 is the reason that is the right split.
+Neither resume form carries an agent name or a session id, because neither harness
+offers a way to ask for one. `--continue` and `resume --last` mean *the most recent
+conversation in this directory*, which is the agent's own only when exactly one
+agent ever worked there. Two agents hitched in the same directory resume the same
+conversation. Gangline cannot refuse that: after a server death there is no team
+left for it to compare against, and each `hitch` arrives alone. So the constraint
+is documented rather than enforced — **`--resume` is only meaningful for one agent
+per directory** — and law 7 is the reason that is the right split.
+
+A second gap sits in the same seam and is still open. Where the directory holds no
+conversation at all, both declaring harnesses start a fresh one and exit 0 rather
+than failing: `claude -c` in an empty directory answers normally, and codex maps a
+`--last` lookup that finds nothing to a fresh session. Gangline sees a live agent
+and reports a successful hitch. So the flag's promise is *ask for the thread*, not
+*prove you got it* — the blank-agent outcome this ADR refuses from an undeclared
+profile can still arrive through a declared one. That is issue #52.
 
 ## Alternatives considered
 
