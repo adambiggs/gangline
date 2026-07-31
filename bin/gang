@@ -30,7 +30,28 @@ utf8_locale() {
 # rather than every command refusing to run.
 utf8_locale || true
 
-die() {
+die() { fail 1 "$@"; }
+
+# A refusal that typed NOTHING into the pane, exiting 3 so a caller can tell it
+# from a failure that may have left keystrokes behind. That distinction is the
+# only safe basis for retrying a delivery: "the wording sounds transient" is a
+# guess about prose, while "nothing was typed" is a property of the code path,
+# and re-running a delivery that got as far as the paste can submit the same
+# message twice. So this is for the checks BEFORE the first keystroke only —
+# everything downstream of `paste-buffer` dies on 1 however recoverable it reads.
+#
+# The implication runs ONE WAY and the asymmetry is deliberate. 3 always means
+# nothing was typed; 1 does not mean something was. Plenty of refusals that never
+# reach a pane still exit 1 — cmd_send tests occupancy itself and never calls
+# inject, so an ordinary send to an occupied agent is a 1 for a keystroke that was
+# never sent. Converting those would make the converse true and buys nothing: the
+# only consumer is resume_after_compaction, which calls inject directly, and a
+# retry rule needs "safe to repeat" to be provable, not exhaustive. Reading 1 as
+# proof that something was typed is the mistake this paragraph exists to prevent.
+refuse() { fail 3 "$@"; }
+
+fail() { # $1 = exit status, rest = message
+  local code="$1"; shift
   # stderr gets its own terminal test. `gang roster 2>/dev/null | grep ...` is the
   # ordinary shape in a script, and there stdout is a pipe while stderr is still a
   # terminal — one test for both fds would drop the colour from the one line that
@@ -40,7 +61,7 @@ die() {
   else
     printf 'gang: %s\n' "$*" >&2
   fi
-  exit 1
+  exit "$code"
 }
 
 gang_root() { # $1 = path to this script; the install tree it lives in
@@ -1499,7 +1520,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
     fi
     t=$((t + 1))
     [ "$t" -lt "${GANG_LOCK_WAIT:-150}" ] \
-      || die "another gang process has been delivering to $1 for 30s and has not finished — look at it with gang capture before retrying"
+      || refuse "another gang process has been delivering to $1 for 30s and has not finished — look at it with gang capture before retrying"
     sleep 0.2
   done
   printf '%s' "$$" > "$path/pid"
@@ -1654,7 +1675,8 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   stage_forget "$1"
 }
 
-inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit. Law 3.
+inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningful
+           # at the head of an empty box; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
   # frag is a LABEL, not a probe. It names which message a failure is about, in
   # the eleven human-facing strings below, and nothing here compares it against
@@ -1693,15 +1715,42 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # those steps invalidates the rest.
   lock_pane "$1"
   ! occupied "$1" \
-    || die "refusing to deliver '$frag': $1 is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
+    || refuse "refusing to deliver '$frag': $1 is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
   composer_settled "$1" \
-    || die "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
+    || refuse "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
   # Before anything is read or pasted: an earlier delivery that could not be
   # verified may have left its text in this box, and appending to that would
   # submit both as one message. This is the moment the modal that stranded it has
   # demonstrably lifted — the gate check above just passed — so it is also the
   # first moment gang may type into the pane at all.
   stage_clear "$1"
+  # Position-sensitive text needs a stricter bar than prose does, and the gap
+  # between the two is what shipped a false compaction record. composer_settled
+  # asserts STILLNESS, deliberately — a box holding a draft, ghost text or nothing
+  # is safe to append to, because inject verifies the change it makes. But a draft
+  # the operator has PAUSED on is perfectly still, so the guard passes, the paste
+  # appends, and the Enter submits their half-written line with gang's text glued
+  # to the end of it.
+  #
+  # For prose that is recoverable: the message arrives mangled but present, and
+  # the sender still has it. For a slash command it is silent and it lies. A
+  # slash command is only a command at the head of an EMPTY box; appended to a
+  # draft it is literal text, so no compaction runs — and inject still verifies,
+  # because the box did change across the paste and Enter did empty it, so
+  # compaction_mark records a compaction that will never happen and patrol then
+  # holds its nudge on an agent at full context. Observed live.
+  #
+  # So a head-position payload asks the question patrol already asks before it
+  # nudges (input_clear), which is the profile's own answer about what counts as
+  # content rather than this function's. Note which way the asymmetry ran: the
+  # strict bar was on the nag, and the weak one on the thing that actually types.
+  #
+  # Whether ordinary `send` should also require an empty box is a separate call
+  # with a real cost — it would refuse every agent with a draft parked in its box,
+  # which on some claude-code profiles includes ghost text — and it wants deciding
+  # on its own evidence rather than being folded in here.
+  [ "${3:-}" != head ] || input_clear "$1" \
+    || refuse "refusing to deliver '$frag' to $1: its input box is not provably empty, and this text is only a command at the head of an empty one — appended to a draft it would be literal text and would submit that draft with it (try again in a moment; gang capture $1)"
   # Verified = the paste changed the input box, which is where a paste lands.
   # Reading the box asks the profile (Law 4) instead of teaching gang how each
   # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
@@ -1715,8 +1764,11 @@ inject() { # $1 = window id, $2 = text; bracketed-paste, verify in pane, submit.
   # already, and appending to a draft still changes it. Comparing against the
   # box captured BEFORE this paste is also what keeps an identical earlier send
   # sitting in the transcript from vouching for a paste that never landed.
+  # The last refusal before the first keystroke, so it exits 3 like the others
+  # above it. Everything from the paste down dies on 1 however transient it reads,
+  # because by then a retry can submit the same message twice.
   before="$(landing_zone "$1")" \
-    || die "cannot read the input box of $1 — the harness is not taking input"
+    || refuse "cannot read the input box of $1 — the harness is not taking input"
   # Buffer name is per-process: patrol runs on cron, and a concurrent send would
   # otherwise overwrite the buffer between load-buffer and paste-buffer.
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
@@ -1905,7 +1957,48 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   # Out of time still means try, not give up: inject verifies its own delivery, so
   # the attempt either lands or fails, and a failure leaves the agent sitting idle
   # where anyone can see it rather than passing for resumed.
-  inject "$1" "$2"
+  #
+  # But one attempt was never enough, and the reason is that the loop above spends
+  # the whole budget choosing an instant and none of it delivering into one. The
+  # refusals it runs into are exactly the ones that come back: a composer with text
+  # in it, a gate that painted. Both are transient by their own wording — one names
+  # retry as the remedy, the other names an operator action after which delivery
+  # succeeds — and both were spent as terminal. The probability is backwards, too.
+  # The composer is MOST likely to hold text immediately after a compaction, because
+  # that is when the operator is back at the keyboard; the likeliest failure on this
+  # path was the one it treated as fatal. Lived it: a resume died on "somebody is
+  # typing into @0 right now" and the agent woke with nothing to pick up.
+  #
+  # What makes retrying safe is not the wording but the exit status. `refuse` (3)
+  # means inject typed NOTHING, so the pane is exactly as it was and the same text
+  # can go again; `die` (1) can mean the paste landed and the submit could not be
+  # verified, and re-sending that would deliver twice. So 3 retries and 1 stops.
+  #
+  # The budget is what is LEFT of GANG_RESUME_TIMEOUT, which is the honest reading
+  # of a timeout that was always meant to bound "get this resume delivered" rather
+  # than "pick a moment". No new knob, and the existing one now covers the whole
+  # job. A wait that used the full budget still gets its one attempt, unchanged.
+  # Spent against the CLOCK rather than counted in retries: an attempt is not a
+  # fixed cost — a contended pane lock alone can hold one for thirty seconds — so
+  # a per-retry counter would run far past the budget it claims to keep.
+  local rc=0 err="" started="$SECONDS" left=$(( timeout - t ))
+  [ "$left" -ge 0 ] || left=0
+  while :; do
+    rc=0
+    # In a subshell so inject's exit does not end this process — and so the pane
+    # lock it takes is released with that subshell, leaving the next attempt to
+    # take it cleanly rather than holding one across a sleep.
+    err="$(inject "$1" "$2" 2>&1)" || rc=$?
+    [ "$rc" -ne 0 ] || return 0
+    [ "$rc" -eq 3 ] || break                        # typed something: not ours to repeat
+    [ $(( SECONDS - started )) -lt "$left" ] || break
+    sleep 2
+  done
+  # The last refusal is the one worth reporting: it is the state the pane was
+  # actually left in, and cmd_compact records it where status, roster and patrol
+  # read it out.
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  return "$rc"
 }
 
 # --- context bands ----------------------------------------------------------
@@ -2606,7 +2699,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     esac
   fi
 
-  inject "$AGENT_ID" "$GANG_COMPACT_CMD"
+  inject "$AGENT_ID" "$GANG_COMPACT_CMD" head
   # Recorded only after the command verified in the pane: a mark for a compaction
   # that was never typed would hold patrol off a working agent for the whole
   # grace window, which is the failure this is supposed to prevent, aimed the
@@ -2814,6 +2907,14 @@ roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolv
   # to go and clear.
   brief="$(blocked_brief "$1")"
   [ -z "$brief" ] || ctx="$ctx $(colour "$C_BAD" "$brief")"
+  # The third thing an agent's own screen cannot show, and the only one that is an
+  # ABSENCE: a resume that never arrived looks exactly like an agent with nothing
+  # to do. Without this the roster read `lead  claude-code  busy (tight tug)  41k…`
+  # with no hint, and the sole surface that reported it was `gang status <name>` —
+  # which an operator runs about an agent they already suspect. Same shape as the
+  # cost above it: a failure visible only to somebody who has already guessed it.
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_resume_failed)" ] \
+    || ctx="$ctx $(colour "$C_BAD" "resume lost")"
   printf '%-16s %-12s %s %s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$ctx"
 }
@@ -2872,7 +2973,21 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   # it refuses on its own account if the modal is still up — so the report below
   # is about what actually survived, not what was true a second ago.
   if [ -n "$(staged_note "$1")" ]; then
+    # Under the delivery lock, because stage_clear reaches clear_box and clear_box
+    # TYPES — up to GANG_CLEAR_PRESSES line-kills into a live pane. inject holds the
+    # lock across its own stage_clear; this path is the same function on the other
+    # caller, and it ran unlocked. That is the exact collision the lock exists for
+    # (a patrol nudge merging with a lead's send, lived twice in one afternoon),
+    # except it fails in the corrupting direction rather than the noisy one: an
+    # unlucky interleave eats text another writer just pasted and both writers are
+    # told they succeeded. Patrol runs on cron every two minutes.
+    #
+    # Released here rather than held to the end of the sweep, because the nudge
+    # below goes through inject, which takes this same lock and would otherwise
+    # wait thirty seconds on a lock this process is already holding.
+    lock_pane "$1"
     stage_clear "$1"
+    lock_release
     if [ -n "$(staged_note "$1")" ]; then
       say "$2" "-" "UNDELIVERED PASTE — $(staged_note "$1") (gang attach)" "$C_BAD"
     else

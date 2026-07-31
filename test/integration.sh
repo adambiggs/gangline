@@ -615,6 +615,36 @@ check "the sweep after the modal lifts clears it" \
   "$("$GANG" patrol | verdict vanisher | head -1)"
 check "the box no longer holds the undelivered envelope" "no" "$(has vanisher MARK_WITHHELD)"
 check "and nothing is left to report" "" "$("$GANG" status vanisher | sed -n 2p)"
+
+# That sweep TYPED. stage_clear reaches clear_box, which sends up to
+# GANG_CLEAR_PRESSES line-kills into a live pane — and it ran with no pane lock
+# held, while inject holds one across the very same call. The same function,
+# locked on one caller and unlocked on the other, on a path that runs from cron
+# every two minutes. It fails in the corrupting direction: an unlucky interleave
+# eats text another writer just pasted and both writers are told they succeeded.
+#
+# Held by a live pid, so patrol meets contention rather than a stale directory it
+# would rightly clean up. GANG_LOCK_WAIT=1 because the assertion is that patrol
+# WAITS on the lock, and 30s of proving it is 30s this suite does not need.
+echo 0 > "$SHIM/vanish-count"; echo 2 > "$SHIM/vanish-from"
+send_text vanisher tester "MARK_LOCKED" >/dev/null 2>&1 || true
+echo 0 > "$SHIM/vanish-from"
+lockheld="$SHIM/heldlock"; mkdir -p "$lockheld"; chmod 700 "$lockheld"
+vid="$(target_of vanisher)"
+heldpath="$lockheld/$(printf '%s' "$vid" | tr -c 'A-Za-z0-9' '_').lock"
+mkdir -p "$heldpath"; printf '%s' "$$" > "$heldpath/pid"
+GANG_LOCK_DIR="$lockheld" GANG_LOCK_WAIT=1 "$GANG" patrol >/dev/null 2>&1 || true
+check "a sweep will not type into a pane another writer holds the lock on" "yes" \
+  "$(has vanisher MARK_LOCKED)"
+check "and the record it could not clear still stands" "yes" \
+  "$(holds "$("$GANG" roster | awk '$1=="vanisher"')" 'undelivered paste')"
+# The lock is the whole difference: nothing about the box changed between these
+# two sweeps, so a pass here with a fail above cannot be anything else.
+rm -rf "$heldpath"
+check "and the sweep after the lock frees clears it" \
+  "cleared an undelivered paste out of the input box" \
+  "$(GANG_LOCK_DIR="$lockheld" "$GANG" patrol | verdict vanisher | head -1)"
+check "with the box emptied for real" "no" "$(has vanisher MARK_LOCKED)"
 unset GANG_PROFILES
 
 # --- attribution --------------------------------------------------------------
@@ -717,10 +747,17 @@ SH
 GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch typist -p jitter -d /tmp >/dev/null 2>&1
 out="$(GANG_PROFILES="$SHIM/custom-profiles" \
   send_text typist tester "MARK_INTERLEAVED" 2>&1)"; rc=$?
-check "a send into a box being typed in is refused" "1" "$rc"
+check "a send into a box being typed in is refused" "3" "$rc"
 check "and says whose keyboard it would have landed in" "yes" \
   "$(contains "$out" "typing into")"
 check "with nothing typed over the draft" "no" "$(has typist MARK_INTERLEAVED)"
+# 3 rather than 1, and the status is load-bearing rather than decorative: it is
+# the only thing separating a refusal that typed NOTHING from a failure that may
+# have left a paste in the box. resume_after_compaction retries on 3 and stops on
+# 1, so collapsing the two either abandons a resume that would have landed a
+# second later or re-sends a message already in the transcript. The failures that
+# get 1 are asserted where they happen — the vanisher cases above, which fail
+# after the paste has gone in.
 
 # --- reaching an agent that is working ---------------------------------------
 
@@ -974,6 +1011,10 @@ check "roster shows the occupancy" "occupied" \
 check "and qualifies it as unestablished rather than operator-only" "yes" \
   "$(contains "$("$GANG" roster)" "occupied (authority unknown)")"
 out="$(FAKE_QUEUES=1 send_text busybee tester "MARK_GATED" 2>&1)"; rc=$?
+# 1 rather than 3, and which refusal fired is the reason: cmd_send checks
+# occupancy itself and never reaches inject, so this is the pre-check answering.
+# inject's own occupancy refusal is the backstop for a modal that paints between
+# that check and the paste, and it is not on this path.
 check "a send to an occupied agent is refused, even where mid-turn input queues" "1" "$rc"
 check "and says a UI owns the screen" "yes" \
   "$(contains "$out" "occupied (authority unknown)")"
@@ -2942,6 +2983,92 @@ paint resumer 'ctx 250k/1000k 25%'
 n=0
 while [ "$(has resumer MARK_RESUME)" = no ] && [ "$n" -lt 30 ]; do sleep 1; n=$((n + 1)); done
 check "and lands once the drop shows one has" "yes" "$(has resumer MARK_RESUME)"
+
+# A slash command is only a command at the HEAD of an empty box. composer_settled
+# asks whether the box is MOVING, which is the right question for prose — a paste
+# appended to a static draft arrives mangled but present, and the sender still has
+# it — and the wrong one for a command whose meaning is its position. A draft the
+# operator paused on is perfectly still, so the guard passed, the compaction text
+# appended to their half-written line, and the Enter submitted both as one message.
+# No compaction ran. The delivery still VERIFIED, because the box did change and
+# Enter did empty it, so the mark was written for a compaction that will never
+# happen and patrol then held its nudge on an agent at full context. Observed live.
+"$GANG" hitch drafter -p compactable -d /tmp >/dev/null
+paint drafter 'ctx 900k/1000k 90%'
+tmux send-keys -t "$(target_of drafter)" "MARK_DRAFT_KEPT"; sleep 0.6
+check "a paused draft is still, so the motion guard passes it" "yes" \
+  "$(has drafter MARK_DRAFT_KEPT)"
+out="$("$GANG" compact drafter --from tester 2>&1)"; rc=$?
+check "compacting into a box holding a draft is refused" "3" "$rc"
+check "and says the command needs the head of an empty box" "yes" \
+  "$(contains "$out" "head of an empty one")"
+check "with the operator's draft left exactly where it was" "yes" \
+  "$(has drafter MARK_DRAFT_KEPT)"
+# The half that made this silent rather than merely wrong. A refusal that still
+# marked the window would leave patrol holding its nudge on an agent that is not
+# compacting and never will — the false record outliving the failed delivery.
+check "and no compaction recorded for one that never ran" "" \
+  "$(tmux show-options -wqv -t "$(target_of drafter)" @gl_compacting)"
+tmux send-keys -t "$(target_of drafter)" C-u; sleep 0.5
+out="$("$GANG" compact drafter --from tester 2>&1)"; rc=$?
+check "and the same compaction lands once the box is clear" "0" "$rc"
+
+# A resume that meets one of those refusals is not a resume that cannot be
+# delivered. The waiter spends up to GANG_RESUME_TIMEOUT choosing an instant and
+# then made exactly ONE attempt, so a composer with text in it at that moment lost
+# the message outright — and the composer is MOST likely to hold text right after a
+# compaction, because that is when the operator is back at the keyboard. The
+# likeliest failure on the path was the one it treated as fatal. Lived it.
+cat > "$SHIM/custom-profiles/retryable.sh" <<SH
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="WORKING\\\\.\\\\.\\\\."
+GANG_COMPACT_CMD="#compact"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  # The operator's hands, switched on from outside: while this file exists the box
+  # reads differently on every look, which is exactly what composer_settled refuses.
+  if [ -e "$SHIM/hands-on-keyboard" ]; then printf 'being-typed-%s' "\$RANDOM"; return 0; fi
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}" | tr -d '\302\240'
+}
+profile_context() {
+  local m
+  m="\$(tmux capture-pane -pJ -t "\$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" || return 1
+  m="\${m#ctx }"
+  printf '%s (%s)\\n' "\${m% *}" "\${m##* }"
+}
+SH
+rm -f "$SHIM/hands-on-keyboard"
+"$GANG" hitch retrier -p retryable -d /tmp >/dev/null
+paint retrier 'ctx 900k/1000k 90%'
+sleep 2
+printf '%s' MARK_RETRIED | GANG_RESUME_TIMEOUT=120 \
+  "$GANG" compact retrier --from tester --resume-stdin >/dev/null 2>&1
+touch "$SHIM/hands-on-keyboard"        # they start typing while the waiter waits
+paint retrier 'ctx 250k/1000k 25%'     # the drop the waiter is holding out for
+sleep 12                               # well past the single attempt it used to get
+check "a resume refused by a moving composer is not spent" "no" \
+  "$(has retrier MARK_RETRIED)"
+check "and the agent is not yet reported as having lost it" "" \
+  "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_resume_failed)"
+rm -f "$SHIM/hands-on-keyboard"        # hands off the keyboard
+n=0
+while [ "$(has retrier MARK_RETRIED)" = no ] && [ "$n" -lt 40 ]; do sleep 1; n=$((n + 1)); done
+check "and it lands on a later attempt once the box settles" "yes" \
+  "$(has retrier MARK_RETRIED)"
+
+# The other half of #46: when a resume really is lost, the roster said nothing.
+# It read `lead  claude-code  busy (tight tug)  41k/1000k (4%)` with no hint, and
+# the only surface that reported it was `gang status <name>` — which an operator
+# runs about an agent they already suspect. A resume that never arrived looks
+# exactly like an agent with nothing to do, so the absence has to be shown.
+tmux set-option -w -t "$(target_of retrier)" @gl_resume_failed "gang: refusing to deliver 'x'"
+check "a lost resume reaches the roster a lead is scanning" "yes" \
+  "$(holds "$("$GANG" roster | awk '$1=="retrier"')" 'resume lost')"
+check "and status still carries the whole sentence" "yes" \
+  "$(contains "$("$GANG" status retrier)" "resume NOT delivered after compaction")"
+tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on
