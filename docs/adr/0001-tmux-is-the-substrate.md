@@ -12,6 +12,14 @@
 - **Amended:** 2026-07-29 — the profile size estimate dropped from the decision and
   its consequence. What was load-bearing is the boundary — harness knowledge lives in
   a profile, never a branch in `bin/gang` — and law 9 owns size.
+- **Amended:** 2026-07-30 — the attribution and neutralisation claims restated as
+  what they are. The sender is read off the sending window where gang can see one
+  and stands as claimed where it cannot: a send from a shell with no readable pane
+  delivered under a borrowed name. Tag neutralisation is defence in depth over the
+  nonce rather than proof that a body cannot emit an unattributed line: a fullwidth
+  bracket, a capital, and whitespace inside a tag each survived it. Both measured;
+  the neutraliser now matches the shape of a tag, which narrows the gap and does
+  not close it.
 
 ## Context
 
@@ -36,8 +44,8 @@ tmux is the communication substrate, not a fallback and not a hack.
 - One tmux session per team; one window per agent; window name = agent identity.
 - Sending = paste into the pane inside a `[gang:<sender>#<nonce>] … [/gang:…]`
   envelope, then submit. No default sender exists; an unattributed send is an
-  error, and a sender running inside the session is taken from its own window
-  rather than from what it claims.
+  error, and where gang can see the sending window the sender is read off that
+  window rather than from what it claims.
 - Delivery is verified by reading the harness's input box before and after the
   paste and requiring it to change, then requiring submission to empty it.
   Unverified sends fail loudly.
@@ -53,13 +61,15 @@ tmux is the communication substrate, not a fallback and not a hack.
 The envelope answers impersonation as a convention, not a security property:
 attributed traffic is distinguishable, but nothing stops any writer to the pane
 from typing an envelope itself. What the envelope does buy mechanically is that
-message *content* cannot escape its own attribution — the nonce is minted per
-message and the body is neutralised of anything shaped like a tag, so a body
-cannot close its envelope and open another, and cannot emit the unattributed
-line that the role briefs read as the operator speaking. The convention holds
-because every writer is already trusted — single-tenant, one operator, one host
-(law 2). Keystroke relay is safe here because attribution is mandatory,
-unattributed sends are an error, and no untrusted principal can reach a pane.
+a body cannot close its own envelope: the nonce is minted per message, from a
+body that already exists, so whoever wrote that body cannot know the value.
+Neutralising tag-shaped text is defence in depth over that nonce, aimed at a
+reader that is a model rather than a parser — it matches the shape of a tag
+rather than one spelling of it, and homoglyphs are unbounded, so it narrows the
+gap without closing it. The convention holds because every writer is already
+trusted — single-tenant, one operator, one host (law 2). Keystroke relay is safe
+here because attribution is mandatory, unattributed sends are an error, and no
+untrusted principal can reach a pane.
 
 ## Consequences
 

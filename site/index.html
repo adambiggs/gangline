@@ -204,7 +204,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     that: agents on one machine already pass text to one another through files, a
     shared checkout, or each other's panes; gangline does not create that path,
     it makes it routine and gives it structure the ad-hoc versions lack &mdash;
-    envelopes whose bodies cannot escape their attribution, delivery verified in
+    envelopes a body cannot close from the inside, delivery verified in
     the pane, and refusals at
     gates. Treat every agent's output as untrusted input to
     the next, and bound the machine if you need a boundary: a container, a VM, a
@@ -240,11 +240,14 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
         agent's identity. Attach and you are looking at your team &mdash; the pane is
         the transcript, and you can type into it yourself at any time.</dd>
 
-    <dt>Every message is attributed and verified.</dt>
+    <dt>Every message is attributed, and delivery is verified.</dt>
     <dd>A send is wrapped in a <code>[gang:&lt;sender&gt;#&lt;nonce&gt;]</code>
-        envelope so no line of it can pass for the operator, is confirmed by
+        envelope whose nonce is minted from a body that already exists, so the
+        body cannot close its own envelope and open another. It is confirmed by
         capturing the pane, and only then submitted. No sender means no send.
-        Unverified means a loud failure, never a shrug.</dd>
+        Unverified means a loud failure, never a shrug. This is attribution and
+        not authentication &mdash; gangline is single-operator software, and
+        anyone who can type into a pane is already trusted.</dd>
 
     <dt>Agents manage their own context.</dt>
     <dd>A model cannot feel its own token count, so the substrate measures it and

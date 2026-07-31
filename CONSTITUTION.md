@@ -12,11 +12,13 @@ own right. Violating a law is a defect.
    code path requires an ADR proving no universal surface can carry the value.
    No bespoke message buses, no databases, no daemons.
 
-2. **Every message carries a verified sender; trust is assumed.** A sender identity
-   is required — there is no default — and no agent can speak as another: a sender
-   running inside the session is read off its own window rather than taken from what
-   it claims. Single-tenant by design: anyone at the keyboard is the operator. Never
-   build authentication, generation fencing, or anti-tamper into this repo.
+2. **Every message is attributed; trust is assumed.** A sender identity is required —
+   there is no default. Where gang can see the sending window it reads the name off
+   that window and refuses a mismatch, so an agent cannot casually sign as a peer.
+   Where it cannot see one — the operator's own shell, cron — the name stands as
+   claimed. This is attribution, not authentication, and it holds because the system
+   is single-tenant by design: anyone at the keyboard is the operator. Never build
+   authentication, generation fencing, or anti-tamper into this repo.
 
 3. **Delivered means verified.** A send is confirmed by pane capture or it fails
    loudly. No fire-and-forget, no success receipts for messages nobody saw.

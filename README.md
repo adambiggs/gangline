@@ -199,9 +199,14 @@ paste live in window options and disappear with the window.
 [gang:lead#d8095dd5] inspect the failing test [/gang:lead#d8095dd5]
 ```
 
-Tag-shaped text in the body is neutralised, so the body cannot end its own
-envelope. This is attribution, not authentication: Gangline is single-operator
-software, and anyone able to type into a pane is already trusted.
+The nonce is minted from a body that already exists, so the body cannot close its
+own envelope; tag-shaped text is neutralised on top of that, matching the shape of
+a tag rather than one spelling of it.
+
+Where `gang` can see the sending window it reads the sender's name off that window
+and refuses a mismatch. Where it cannot — your own shell, cron — the `--from` name
+stands as given. This is attribution, not authentication: Gangline is
+single-operator software, and anyone able to type into a pane is already trusted.
 
 `gang send` reads the body from stdin and refuses message prose in argv. Use a
 single-quoted heredoc for literal prose: an unquoted heredoc still expands
