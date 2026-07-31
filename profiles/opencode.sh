@@ -103,7 +103,7 @@ GANG_MIDTURN_INPUT=1
 # gang scans for state (GANG_STATUS_ROWS, 20 rows). Measured at 70x34: header on
 # row 11, scan starts at row 14. The header is still the right marker — the scan
 # has to be able to see it.
-GANG_GATED_REGEX='△ Permission required| {2,}esc *$'
+GANG_OCCUPIED_REGEX='△ Permission required| {2,}esc *$'
 # GANG_COMPACTING_REGEX is deliberately unset — the observation found nothing
 # to scrape: compaction is drawn as an ordinary working turn with no marker of
 # its own, so a resume waits for the pane to go quiet instead of queueing.

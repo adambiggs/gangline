@@ -68,7 +68,7 @@ GANG_COMPACTING_REGEX='Compacting context\.\.\.'
 # declare the dialog's shape there after watching a full ask→answer→erase cycle
 # live, and point GANG_VERSION_CMD at something that includes the extension
 # version so gang vet watches the pin that can actually rot.
-GANG_GATED_REGEX='^→ '
+GANG_OCCUPIED_REGEX='^→ '
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="pi --version"
@@ -94,7 +94,7 @@ profile_input() { # $1 = tmux target; prints Pi's input area, fails if it has no
   # "finds an input area" while a picker owns the keyboard — so hitch would paste
   # a brief into the picker's search field, and the gated check, which needs the
   # box to be missing, would never fire. The selection cursor at column zero is
-  # what tells them apart, and it is the same marker GANG_GATED_REGEX declares
+  # what tells them apart, and it is the same marker GANG_OCCUPIED_REGEX declares
   # above. Matched as an anchored regex rather than substr(line, 1, 4): counting
   # to 4 assumes "→ " is four BYTES, which is true only where awk counts bytes.
   # A character-oriented awk takes four CHARACTERS, so the test never matches,

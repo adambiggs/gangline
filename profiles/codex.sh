@@ -59,7 +59,7 @@ GANG_MODEL_OPT="-m"
 #
 # What this deliberately does NOT match is a Codex waiting on an approval
 # dialog: the interrupt hint is gone while the prompt is up, so busy honestly
-# answers "no turn in flight". That state belongs to GANG_GATED_REGEX below.
+# answers "no turn in flight". That state belongs to GANG_OCCUPIED_REGEX below.
 #
 # DO NOT SWEEP THIS STRING ACROSS PROFILES. Claude Code's TUI paints no
 # interrupt hint at all, so the two profiles disagreeing about the same literal
@@ -101,7 +101,7 @@ GANG_QUIET_AT_REST=1
 # composer, which is why those must read idle and do. /status is the same story
 # from the other side: it renders into the transcript with the composer live
 # below it, so it is not a gate and is not matched.
-GANG_GATED_REGEX='^› [0-9]+\. '
+GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # Verified from the live slash menu: "/compact  summarize conversation to
 # prevent hitting the context limit". A finished compaction leaves "Context
 # compacted" in the transcript, where it stays — a marker for humans reading

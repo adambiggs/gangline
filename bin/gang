@@ -377,7 +377,10 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
   GANG_MIDTURN_ACTS=""
-  GANG_COMPACTING_REGEX="" GANG_GATED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
+  GANG_COMPACTING_REGEX="" GANG_OCCUPIED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
+  # Cleared alongside it so a value left by a PREVIOUS profile cannot make the
+  # next one look like it declared the retired name.
+  GANG_GATED_REGEX=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
   # Kept, not discarded with the rest of the local, so that a failure reading
   # anything this file declares can name the file to go and open. GANG_PROFILES
@@ -390,6 +393,21 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
+  # The retired name is recognised ONLY in order to refuse it, which is what makes
+  # this a deletion path (law 6) rather than a compatibility shim. Accepting both
+  # is the alias ADR-0004 forbids, and it would keep the retired word alive in the
+  # contract for good.
+  #
+  # It has to be loud because the quiet version is a silent downgrade of a safety
+  # boundary. A profile still setting the old name declares NOTHING to the new
+  # reader, so occupied() falls through to the composer-absence fallback — which
+  # catches a UI that hides the composer and misses every declared marker that
+  # does not. Nothing errors. The operator sees an agent reading idle where it
+  # used to read correctly, and the only symptom is a message landing in a dialog.
+  # A profile that cannot declare its occupancy marker cannot be trusted to route
+  # messages, so it does not get to load at all.
+  [ -z "${GANG_GATED_REGEX:-}" ] \
+    || die "profile '$1' ($GANG_PROFILE_FILE) sets GANG_GATED_REGEX, which gang no longer reads — rename it to GANG_OCCUPIED_REGEX. The state it declares is 'occupied' (ADR-0004); leaving the old name would silently demote this profile to composer-absence detection and read a gated agent as idle"
   [ "${GANG_MIDTURN_ACTS:-}" != 1 ] || [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
     || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
@@ -1172,11 +1190,7 @@ occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
   #
   # There are two ways in, because enumerating modal chrome will always miss one.
   local pane
-  # The profile contract keeps the older name while third-party profiles depend
-  # on it: reading a new one would leave those profiles declaring nothing and
-  # silently demote them to the fallback below. Renaming it needs a load-time
-  # refusal, not a fallback — #47.
-  if [ -n "${GANG_GATED_REGEX:-}" ]; then
+  if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
     # The declared marker: the dialogs somebody has watched live, named in the
     # profile. Unset is a real answer — a profile whose gate nobody has watched
     # declares nothing and reaches this state only through the fallback below.
@@ -1189,7 +1203,7 @@ occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
     # Nothing catches that by auditing markers for liveness — the marker is not
     # dead, only unreachable — so the scan is what has to widen.
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
-    if re_match GANG_GATED_REGEX "$pane"; then
+    if re_match GANG_OCCUPIED_REGEX "$pane"; then
       # The wording alone is not the gate. Every dialog watched live OWNS the
       # screen while it is up: the composer is gone, which is why an unmarked gate
       # read idle in the first place. So a match beside a live input box is the
@@ -2329,7 +2343,7 @@ cmd_hitch() {
   # quiet window, and nothing beyond them.
   local settle="${GANG_BRIEF_GATE_WAIT:-3}"
   require_interval GANG_BRIEF_GATE_WAIT "$settle"
-  if [ -n "${GANG_GATED_REGEX:-}" ] || declare -F profile_input >/dev/null; then
+  if [ -n "${GANG_OCCUPIED_REGEX:-}" ] || declare -F profile_input >/dev/null; then
     sleep "$settle"
     if occupied "$id"; then
       # The exit code is the point. A caller scripting a fan-out reads $?, not

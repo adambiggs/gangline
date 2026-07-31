@@ -178,7 +178,7 @@ GANG_MIDTURN_ACTS=1
 # receipt: it asks "Would you like to proceed?", so the old
 # "Do you want to proceed\?" never matched it and a pane stopped dead on a
 # permission dialog reported idle.
-GANG_GATED_REGEX='^ +❯|Esc to'
+GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline
