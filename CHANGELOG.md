@@ -1,5 +1,29 @@
 # Changelog
 
+## [0.3.0](https://github.com/adambiggs/gangline/compare/gangline-v0.2.0...gangline-v0.3.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* **state:** the `gang status` primary state prefix changes from `gated` to `occupied`. Scripts matching the state prefix as documented in docs/reference.md must move with it. `gated` is not accepted as an alias.
+
+### Features
+
+* **context:** escalate what each band asks for, not how loudly ([ade63ff](https://github.com/adambiggs/gangline/commit/ade63ff2d88435b3d24598e1676baed371072582))
+* **down:** say what a teardown is about to destroy ([e6c5854](https://github.com/adambiggs/gangline/commit/e6c58541bcfb9bf4ef010ce9cfc5af1bef672f1e))
+* **send:** surface the traffic an occupied agent is refusing ([4ff88cf](https://github.com/adambiggs/gangline/commit/4ff88cf8318855efebc9f425dfbae1054639c0e2))
+* **state:** publish occupancy, not authority ([c16228e](https://github.com/adambiggs/gangline/commit/c16228e15bef1ff8a9da535f12cc57f37176f44a))
+* **vet:** gate the claude-code context beacon on its configuration ([fddc688](https://github.com/adambiggs/gangline/commit/fddc68800d035efcd0e556e0e88c5b8b66df3e39))
+* **vet:** say which phase a probe is waiting in ([e2fb4d6](https://github.com/adambiggs/gangline/commit/e2fb4d63c03cf261853ef86aec094f6a82672b3c))
+
+
+### Bug Fixes
+
+* **ci:** assert the macOS cell really parses with bash 3.2 ([da7f526](https://github.com/adambiggs/gangline/commit/da7f5262fbc96bc2c12d7a8a1ddbca60d9e0b015))
+* **docs:** say what wait promises, and point install at a command not a heading ([fb89a59](https://github.com/adambiggs/gangline/commit/fb89a59640190d4a2ff4d4f986303b50a26d6fbd)), closes [#45](https://github.com/adambiggs/gangline/issues/45)
+* **patrol:** stop spending an expired compaction grace as permission to inject ([ff26a34](https://github.com/adambiggs/gangline/commit/ff26a34e3b97a6ca5ea4257898377b7d0bb862f0))
+* **send:** neutralise the shape of a tag, not one spelling of it ([dda33d5](https://github.com/adambiggs/gangline/commit/dda33d52439b0a60caa43460c5d5c2d0af2d92f8)), closes [#38](https://github.com/adambiggs/gangline/issues/38)
+
 ## [0.2.0](https://github.com/adambiggs/gangline/compare/gangline-v0.1.0...gangline-v0.2.0) (2026-07-30)
 
 
