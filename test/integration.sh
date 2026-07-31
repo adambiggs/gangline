@@ -3267,10 +3267,11 @@ check "and the dog it aimed at is untouched" "aliased" \
 # --- rebuilding a team the tmux server took with it ---------------------------
 
 # All gang state is window options and dies with the window by design (law 6).
-# The harness CONVERSATIONS died with it too and nothing recovered them, which
-# roles/_common.md spends twenty-seven lines warning agents about while offering
-# no answer. --resume is that answer, and it stores nothing: the operator supplies
-# which agents existed, gang supplies the harness's own resume form (ADR-0007).
+# The harness CONVERSATIONS outlast it — they are on disk and a dead server does
+# not touch them — but nothing in gang could reach them, which roles/_common.md
+# spends twenty-seven lines warning agents about while offering no answer.
+# --resume is that answer, and it stores nothing: the operator supplies which
+# agents existed, gang supplies the harness's resume form (ADR-0007).
 #
 # The refusal is the load-bearing half. Two of the four shipped harnesses cannot
 # scope a resume to a directory, so launching them bare under --resume would hand

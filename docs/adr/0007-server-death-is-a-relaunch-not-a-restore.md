@@ -9,10 +9,13 @@ All Gangline state is tmux window options and dies with the window. That is
 deliberate and correct: law 6 asks every artifact for a deletion path, and window
 options have the best one there is — they are gone when the window is.
 
-The harness *conversations* died with it too, and nothing recovered them. Every
-shipped profile launched bare: no `--continue`, no `--resume`, on any of the four.
-A tmux server crash, an OOM kill, or an accidental `kill-server` destroyed the
-whole team's memory irrecoverably.
+The harness *conversations* outlast it. Each harness writes its own to disk and a
+dead server does not touch them — which is the only reason any of this is
+possible. What died was Gangline's route back to them. Every shipped profile
+launched bare: no `--continue`, no `--resume`, on any of the four. So a crash, an
+OOM kill, or an accidental `kill-server` left every agent's thread sitting on
+disk with nothing in the tool able to ask for it, and the operator's only path
+was to leave Gangline and drive each harness by hand.
 
 This is not a hypothetical failure by the repo's own account. `roles/_common.md`
 spends twenty-seven lines warning agents about the accidental-`kill-server` path
@@ -100,8 +103,8 @@ one you lost."
 
 A server death still loses Gangline's own state — names, roles, context marks,
 staged notes. Those are rebuilt by re-hitching, which the operator was going to do
-anyway. What is recovered is the expensive part nobody could rebuild: the harness
-conversation.
+anyway. What is recovered is the expensive part, which re-hitching does not
+rebuild: the harness conversation.
 
 Two of four shipped harnesses cannot offer it, and that is now visible at the
 point of asking rather than discovered afterwards.
