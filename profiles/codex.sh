@@ -46,6 +46,11 @@
 # ~/.codex/config.toml; shipping it as a default hands it to every future
 # installer without asking. See CONTRIBUTING, "Before adding code".
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
+# Resuming after a tmux server death (ADR-0007). A full launch line rather than a
+# flag, because codex spells resume as a SUBCOMMAND and no appended option could
+# express it. Directory-scoped by default: `codex resume --all` is documented as
+# "disables cwd filtering", which is what establishes that the default filters.
+GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false"
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
 # One busy form that covers more than it looks like it does. A running turn

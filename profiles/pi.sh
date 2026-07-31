@@ -7,6 +7,13 @@
 GANG_LAUNCH="pi"
 # From `pi --help`: --model, spelled provider/id with an optional :<thinking>
 # suffix ("openai-codex/gpt-5.6-sol:high").
+# NO GANG_RESUME_LAUNCH, deliberately (ADR-0007). pi has --continue, documented
+# only as "Continue previous session", with no statement that the selection is
+# scoped to a working directory and no such scoping established here. Every other
+# marker in this file was watched live before it was written down, and a resume
+# declaration is held to the same bar: an unscoped one would hand a rebuilt agent
+# somebody else's conversation. `gang hitch --resume` refuses this profile until
+# somebody measures it.
 GANG_MODEL_OPT="--model"
 GANG_BUSY_REGEX="Working\\.\\.\\."
 # GANG_QUIET_AT_REST is deliberately unset. Two controlled rests really were

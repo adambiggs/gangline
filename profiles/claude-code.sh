@@ -18,6 +18,11 @@
 # gang's to make. Want it in the launch line anyway? Shadow this profile via
 # GANG_PROFILES and patch this one line.
 GANG_LAUNCH="claude"
+# Resuming after a tmux server death (ADR-0007). Declared because claude scopes
+# the selection to the working directory — its own help says "Continue the most
+# recent conversation in the current directory" — so an agent re-hitched in its
+# old directory picks up its own thread rather than whichever was last anywhere.
+GANG_RESUME_LAUNCH="claude --continue"
 # From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
 # model id ("claude-fable-5").
 GANG_MODEL_OPT="--model"

@@ -587,6 +587,7 @@ shaped this way.
 - [ADR-0004](docs/adr/0004-occupancy-is-not-authority.md) — input occupancy is not clearance authority
 - [ADR-0005](docs/adr/0005-context-bands-are-absolute.md) — context bands are absolute
 - [ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md) — the band ladder spans absolute bounds
+- [ADR-0007](docs/adr/0007-server-death-is-a-relaunch-not-a-restore.md) — recovery from tmux server death is a relaunch, not a restore
 
 ## Project guide
 

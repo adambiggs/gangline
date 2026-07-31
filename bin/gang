@@ -209,13 +209,16 @@ gang — drive a team of CLI agents as tmux windows
                                               the whole setup, no arguments needed:
                                               hitches "lead" here on GANG_PROFILE
                                               with the lead role, and puts you in it
-  gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>] [-m <model>]
+  gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>] [-m <model>] [--resume]
                                               hitch an agent into the team (window name =
                                               identity); -r briefs it with a role from
                                               roles/; -m launches it on a specific model,
                                               spelled the harness's own way (codex:
                                               gpt-5.6-sol, opencode/pi: provider/model);
-                                              alias: spawn
+                                              --resume picks up the harness's own last
+                                              conversation in <dir> instead of starting a
+                                              fresh one, for rebuilding a team after the
+                                              tmux server died; alias: spawn
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
@@ -375,7 +378,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
-  GANG_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
+  GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
   GANG_MIDTURN_ACTS=""
   GANG_COMPACTING_REGEX="" GANG_OCCUPIED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   # Cleared alongside it so a value left by a PREVIOUS profile cannot make the
@@ -2231,7 +2234,7 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
 
 cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
-  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id
+  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not a usable agent name — patrol and hitch are reserved for gang's substrate; other names use letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in the context hook's reply, and a word in the compaction command gang suggests"
@@ -2240,6 +2243,7 @@ cmd_hitch() {
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
+    --resume)     resume=1; shift ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
   # Resolved before anything is hitched: a typo in the role should not leave a
@@ -2250,6 +2254,20 @@ cmd_hitch() {
   ! test_only_profile "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
+  # Before the model option below, because this REPLACES the launch line rather
+  # than appending to it, and a resume that ran second would drop the -m the
+  # caller asked for.
+  #
+  # Same rule as -m, for a sharper reason. A profile with no declared resume form
+  # refuses instead of launching bare: a bare launch here hands back a blank agent
+  # wearing the name of the one whose thread the operator asked for, with nothing
+  # on any surface saying the conversation was gone. That is the silent downgrade
+  # law 8 forbids (ADR-0007).
+  if [ "$resume" -eq 1 ]; then
+    [ -n "$GANG_RESUME_LAUNCH" ] \
+      || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume. Either its harness has no resume form gang can drive, or its sessions are not scoped to a working directory — resuming there would pick up whichever conversation was last anywhere on this machine, including another agent's (docs/adr/0007-server-death-is-a-relaunch-not-a-restore.md)"
+    GANG_LAUNCH="$GANG_RESUME_LAUNCH"
+  fi
   # A model is one concept every harness spells differently; the profile owns the
   # spelling (GANG_MODEL_OPT), hitch carries the intent. A profile that declares
   # no spelling refuses rather than guessing a flag the harness may not have.

@@ -3264,6 +3264,105 @@ check "and the dog it aimed at is untouched" "aliased" \
   "$("$GANG" roster | awk '$1=="aliased"{print $1}')"
 "$GANG" drop aliased >/dev/null
 
+# --- rebuilding a team the tmux server took with it ---------------------------
+
+# All gang state is window options and dies with the window by design (law 6).
+# The harness CONVERSATIONS died with it too and nothing recovered them, which
+# roles/_common.md spends twenty-seven lines warning agents about while offering
+# no answer. --resume is that answer, and it stores nothing: the operator supplies
+# which agents existed, gang supplies the harness's own resume form (ADR-0007).
+#
+# The refusal is the load-bearing half. Two of the four shipped harnesses cannot
+# scope a resume to a directory, so launching them bare under --resume would hand
+# back a blank agent wearing the name of the one whose thread was asked for — or,
+# worse, another agent's conversation — with nothing saying so.
+cat > "$SHIM/custom-profiles/resumable.sh" <<'SH'
+GANG_LAUNCH="PS1='> ' bash --norc"
+GANG_RESUME_LAUNCH="PS1='> ' bash --norc -c 'echo MARK_RESUMED_LAUNCH; exec bash --norc'"
+GANG_VERIFIED_VERSIONS="any"
+SH
+cat > "$SHIM/custom-profiles/unresumable.sh" <<'SH'
+GANG_LAUNCH="PS1='> ' bash --norc"
+GANG_VERIFIED_VERSIONS="any"
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+out="$("$GANG" hitch noresume -p unresumable -d /tmp --resume 2>&1)"; rc=$?
+check "a profile with no resume form refuses --resume" "1" "$rc"
+check "and names the variable it would need" "yes" \
+  "$(contains "$out" "GANG_RESUME_LAUNCH")"
+check "rather than launching a blank agent under the lost one's name" "" \
+  "$("$GANG" roster | awk '$1=="noresume"{print $1}')"
+"$GANG" hitch plainhitch -p unresumable -d /tmp >/dev/null 2>&1
+check "and the same profile hitches normally without the flag" "plainhitch" \
+  "$("$GANG" roster | awk '$1=="plainhitch"{print $1}')"
+"$GANG" drop plainhitch >/dev/null
+# The declared form REPLACES the launch line rather than being appended to it,
+# because a harness may spell resume as a subcommand rather than as a flag —
+# codex does. Proven by the resumed launch running something the ordinary one
+# does not.
+"$GANG" hitch resumed -p resumable -d /tmp --resume >/dev/null 2>&1
+sleep 1
+check "a declared resume form is what actually launches" "yes" \
+  "$(has resumed MARK_RESUMED_LAUNCH)"
+"$GANG" drop resumed >/dev/null
+"$GANG" hitch fresh -p resumable -d /tmp >/dev/null 2>&1
+sleep 1
+check "and without the flag the ordinary launch line still runs" "no" \
+  "$(has fresh MARK_RESUMED_LAUNCH)"
+"$GANG" drop fresh >/dev/null
+unset GANG_PROFILES
+# The shipped profiles are where the scoping judgement lives, so it is asserted
+# against them rather than against a fixture. claude-code and codex both select
+# by working directory; opencode's sessions are global to the machine and pi's
+# scoping was never established, and neither may guess.
+check "claude-code declares a resume form" "yes" \
+  "$(contains "$(GANG_TEST_PROFILES='' bash -c '. profiles/claude-code.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')" "continue")"
+check "and codex declares its subcommand form" "yes" \
+  "$(contains "$(GANG_TEST_PROFILES='' bash -c '. profiles/codex.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')" "resume --last")"
+check "opencode declares none, because its sessions are not directory-scoped" "" \
+  "$(GANG_TEST_PROFILES='' bash -c '. profiles/opencode.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')"
+check "and pi declares none, because nobody has measured its scoping" "" \
+  "$(GANG_TEST_PROFILES='' bash -c '. profiles/pi.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')"
+
+# --- the retired occupancy declaration ---------------------------------------
+
+# ADR-0004 retired `gated` as a state name, and the profile contract was the last
+# place the word survived. Renaming it is only safe BECAUSE the old name is
+# refused: a third-party profile still setting GANG_GATED_REGEX declares nothing
+# to the new reader, so occupied() would fall through to composer-absence
+# detection — which catches a UI that hides the composer and misses every
+# declared marker that does not. Nothing errors, the agent reads idle where it
+# used to read correctly, and the only symptom is a message landing in a dialog.
+# That is a silent downgrade of a safety boundary, which is worse than the naming
+# inconsistency it fixes, so the refusal is the whole of what makes the rename
+# legitimate and it is asserted here rather than assumed.
+cat > "$SHIM/custom-profiles/retiredname.sh" <<'SH'
+GANG_LAUNCH="PS1='> ' bash --norc"
+GANG_GATED_REGEX="Do you want to proceed\\?"
+GANG_VERIFIED_VERSIONS="any"
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+out="$("$GANG" hitch retired -p retiredname -d /tmp 2>&1)"; rc=$?
+check "a profile setting the retired name is refused, not demoted" "1" "$rc"
+check "and the refusal names the file to go and open" "yes" \
+  "$(contains "$out" "retiredname.sh")"
+check "and the replacement to write in it" "yes" \
+  "$(contains "$out" "GANG_OCCUPIED_REGEX")"
+check "with nothing hitched under a profile gang will not read" "" \
+  "$("$GANG" roster | awk '$1=="retired"{print $1}')"
+# And the other direction, because a refusal that fires on the CURRENT name would
+# be worse than the bug: it would take every shipped profile down with it.
+cat > "$SHIM/custom-profiles/currentname.sh" <<'SH'
+GANG_LAUNCH="PS1='> ' bash --norc"
+GANG_OCCUPIED_REGEX="Do you want to proceed\\?"
+GANG_VERIFIED_VERSIONS="any"
+SH
+"$GANG" hitch renamed -p currentname -d /tmp >/dev/null 2>&1
+check "the current name loads exactly as it always did" "renamed" \
+  "$("$GANG" roster | awk '$1=="renamed"{print $1}')"
+"$GANG" drop renamed >/dev/null
+unset GANG_PROFILES
+
 # --- a box's contents versus who put them there ------------------------------
 #
 # Claude Code renders suggestion text dim and typed text plain, and `capture-pane

@@ -133,6 +133,16 @@ it. Clean up after yourself — and build that path out of a name your own code
 set, never one a caller handed you. An unguarded `rm` in that directory is
 another way to end a team.
 
+**What it costs, so the warning above has a number attached.** Gangline's own
+state is meant to die with the windows and is cheap to rebuild — names, roles,
+context marks. What does not come back on its own is every agent's
+*conversation*. There is no roster on disk to restore from, by design, so the
+team is rebuilt by re-hitching each agent yourself. Where the harness can pick up
+its own last thread in that directory, `gang hitch <name> -p <profile> -d <dir>
+--resume` is how you ask for it; `claude-code` and `codex` can, `opencode` and
+`pi` refuse rather than guess, and either way it is one agent per directory.
+Killing the server is recoverable work, not a recoverable session.
+
 `unset TMUX` works too, but only where you actually unset it. If you build a
 sandbox that sets `TMUX_TMPDIR` and unsets `TMUX`, then the teardown has to run
 *inside that sandbox* as well — a cleanup line run from your own shell is aimed
