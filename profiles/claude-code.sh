@@ -21,7 +21,9 @@ GANG_LAUNCH="claude"
 # Resuming after a tmux server death (ADR-0007). Declared because claude scopes
 # the selection to the working directory — its own help says "Continue the most
 # recent conversation in the current directory" — so an agent re-hitched in its
-# old directory picks up its own thread rather than whichever was last anywhere.
+# old directory picks up the thread from there rather than whichever was last
+# anywhere on the machine. Directory and recency are the whole of the selection;
+# no agent name reaches it, so "its own" holds only where one agent worked there.
 GANG_RESUME_LAUNCH="claude --continue"
 # From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
 # model id ("claude-fable-5").
