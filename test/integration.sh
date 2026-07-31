@@ -33,9 +33,6 @@ trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
 SHIM="$(mktemp -d)"
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null; rm -rf "$SHIM"' EXIT
-# Context instrumentation is persistent by design; the suite owns a private log
-# so fixture rows never enter the live team's week-long dataset.
-export GANG_CONTEXT_LOG="$SHIM/context-events.tsv"
 # A tmux that silently swallows paste-buffer and passes everything else through.
 # Delivery failing loudly is the one claim worth a fault injector: the failure
 # it guards against is by nature silent.
@@ -2403,7 +2400,7 @@ check "the lowest rung asks for the next arc boundary" "yes" \
 check "and states the countdown to mandatory from the very first note" "yes" \
   "$(like "$note_low" "*4 bands left before compaction is mandatory*")"
 check "and advances rich shared band memory" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1$')"
 
 # Band 4 of this window's five (ladder pinned at 120000,138000,153000,166000,180000
 # by the log row asserted below). It is the last rung at which an agent still picks
@@ -2428,298 +2425,6 @@ check "a one-rung ladder treats its only rung as the top" "yes" \
 check "and does not offer a later boundary that does not exist" "no" \
   "$(like "$note_only" "*arc boundary*")"
 
-# --- context-compliance evidence ---------------------------------------------
-#
-# The logger's first job is to prove IT was alive. Establish the precondition
-# before clearing: an absence check against a fixture that never existed is the
-# vacuous negative CONTRIBUTING warns about.
-log_artifacts() { # active path and anything derived from it, including surprises
-  python3 -c 'import glob,sys; print(len(glob.glob(sys.argv[1] + "*")))' "$1"
-}
-check "the context-log clear fixture has rows before it is deleted" "yes" \
-  "$([ -s "$GANG_CONTEXT_LOG" ] && echo yes || echo no)"
-clear_out="$("$GANG" context-report --clear)"
-check "the explicit deletion path says what it removed" "yes" \
-  "$(contains "$clear_out" "deleted context event log")"
-check "and leaves no active, rotated, lock, or surprise artifact" "0" \
-  "$(log_artifacts "$GANG_CONTEXT_LOG")"
-
-# A successful observation below the first rung has no note or drop to record.
-# The liveness row is what makes that quiet interval distinguishable from a
-# logger that never managed its first write.
-tmux set-option -uw -t "$p" @gl_band 2>/dev/null || true
-tmux set-option -uw -t "$p" @gl_context_sample 2>/dev/null || true
-tmux set-option -uw -t "$p" @gl_context_request 2>/dev/null || true
-paint ctxagent 'ctx 40k/200k 20%'
-check "a below-band hook has no warning to emit" "" "$(hook UserPromptSubmit)"
-live_report="$("$GANG" context-report)"
-check "but its successful first write makes the quiet interval decidable" "yes" \
-  "$(contains "$live_report" "successful first-write records retained for 1 agent window(s)")"
-check "and the report says the logger worked despite having no measured event" "yes" \
-  "$(contains "$live_report" "logger worked; no measured event was recorded")"
-
-# One final-band note is spent mid-turn. A later seam in the SAME band must not
-# be mistaken for a second delivery: the report has to say both that the last
-# delivery was PostToolUse and that no seam note ever followed it.
-paint ctxagent 'ctx 190k/200k 95%'
-note_top="$(hook PostToolUse)"
-check "a PostToolUse crossing emits the warning JSON" "yes" \
-  "$(like "$note_top" '*additionalContext*180000-token band*')"
-# The top rung stops asking for a boundary and says to MAKE one. The negative is
-# the load-bearing half: an agent told to wait for an arc boundary here waits with
-# a window that cannot afford it, and "compact mid-thought" is not the alternative
-# — writing the handoff is what turns this moment into the boundary.
-check "the top rung says to stop now rather than wait" "yes" \
-  "$(like "$note_top" '*Stop what you are doing now*')"
-check "and to close the open work into handoff assets first" "yes" \
-  "$(like "$note_top" '*handoff assets, then compact immediately*')"
-check "and never offers a later boundary the window cannot afford" "no" \
-  "$(like "$note_top" '*arc boundary*')"
-raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
-check "the delivered row names the non-seam event" "yes" \
-  "$(contains "$raw_context_log" $'kind=note\tsession=')"
-check "and carries the self-describing window and resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'window=200000\tband=5\tthreshold=180000\tthresholds=120000,138000,153000,166000,180000')"
-check "and records PostToolUse as a non-seam" "yes" \
-  "$(contains "$raw_context_log" $'hook_event=PostToolUse\tseam=no')"
-
-sample_before="$(tmux show-options -wqv -t "$p" @gl_context_sample)"
-sleep 1
-check "a same-band seam remains deduped" "" "$(hook UserPromptSubmit)"
-sample_after="$(tmux show-options -wqv -t "$p" @gl_context_sample)"
-check "every successful observation refreshes the sample timestamp" "yes" \
-  "$([ "${sample_after%% *}" -gt "${sample_before%% *}" ] && echo yes || echo no)"
-
-paint ctxagent 'ctx 40k/200k 20%'
-check "the low-context seam has no new warning to emit" "" "$(hook UserPromptSubmit)"
-context_report="$("$GANG" context-report)"
-check "the drop reports the last sampled tokens with their staleness" "yes" \
-  "$(holds "$context_report" 'ctxagent: pre=190000 at .*staleness=[0-9]+s.*post=40000 band=0')"
-# final-band exposure is answerable here, which is what closed #32. The ladder is
-# derived to fit inside the window (ADR-0006), so its last rung is reachable on any
-# harness and this agent — nudged at 190k against a top rung of 180000 — genuinely
-# topped out. Under a ladder whose top rung sat above the window the honest answer
-# was COULD-NOT-DETERMINE, permanently, for every harness under it; final_exposure
-# still gives that answer for a row measured on such a ladder, and only for that row.
-check "and identifies the last delivery and its ordinal honestly" "yes" \
-  "$(contains "$context_report" "nudges=1; last=hook/PostToolUse; NON-SEAM #1; final-band=yes")"
-check "an unproven drop enters only the third outcome" "yes" \
-  "$(contains "$context_report" "proven-compliant: 0")"
-check "with its opposite proven count co-reported" "yes" \
-  "$(contains "$context_report" "proven-non-compliant: 0")"
-check "and CTD preserved rather than resolved toward either side" "yes" \
-  "$(contains "$context_report" "could-not-determine: 1")"
-check "the hypothesis test counts the non-seam note" "yes" \
-  "$(contains "$context_report" "notes delivered at a non-seam (PostToolUse): 1")"
-check "and the band it spent without any seam delivery" "yes" \
-  "$(contains "$context_report" "bands spent non-seam with no seam note ever following: 1")"
-
-# The control interval: the first and only note really does land at a seam.
-paint ctxagent 'ctx 190k/200k 95%'
-check "a fresh final-band UserPromptSubmit emits at the seam" "yes" \
-  "$(like "$(hook UserPromptSubmit)" '*additionalContext*180000-token band*')"
-paint ctxagent 'ctx 40k/200k 20%'
-hook PostToolUse >/dev/null
-context_report="$("$GANG" context-report)"
-check "the report distinguishes a first seam from an Nth nudge" "yes" \
-  "$(contains "$context_report" "last=hook/UserPromptSubmit; FIRST-SEAM (#1 overall)")"
-
-# A legacy integer is a known band with an unknown count, never band zero. Count
-# rows on both sides so the empty hook output has a positive complement.
-paint ctxagent 'ctx 190k/200k 95%'
-tmux set-option -w -t "$p" @gl_band 5
-notes_before="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
-check "the legacy-state fixture begins with retained note rows" "yes" \
-  "$([ "$notes_before" -gt 0 ] && echo yes || echo no)"
-check "a legacy integer at the current band does not re-notify" "" "$(hook PostToolUse)"
-notes_after="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
-check "and the positive note-row count stays unchanged" "$notes_before" "$notes_after"
-check "the legacy value is preserved rather than reparsed as zero" "5" \
-  "$(tmux show-options -wqv -t "$p" @gl_band)"
-
-# Malformed rich state is a third answer. The positive CTD row proves the hook
-# evaluated the fixture; unchanged note count proves it did not spend the state
-# as a fresh band.
-tmux set-option -w -t "$p" @gl_band '4 bad 0'
-notes_before="$notes_after"
-check "malformed rich state is silent to the harness" "" "$(hook PostToolUse)"
-raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
-check "and writes the CTD row that explains the silence" "yes" \
-  "$(contains "$raw_context_log" "reason=malformed-band-state")"
-notes_after="$(awk 'index($0,"\tkind=note\t"){n++} END{print n+0}' "$GANG_CONTEXT_LOG")"
-check "without adding a delivery row" "$notes_before" "$notes_after"
-check "or rewriting the malformed state into a determined value" "4 bad 0" \
-  "$(tmux show-options -wqv -t "$p" @gl_band)"
-tmux set-option -w -t "$p" @gl_band '0 0 0'
-
-# A first write that cannot happen is loud in the SAME patrol sweep. Isolate it
-# in its own session so no other fixture's liveness marker can turn the intended
-# first write into a no-op.
-main_session="$GANG_SESSION"
-export GANG_SESSION="${main_session}-context-log-failure"
-bad_log_dir="$SHIM/context-log-ro"
-bad_log="$bad_log_dir/events.tsv"
-mkdir -p "$bad_log_dir"; chmod 500 "$bad_log_dir"
-check "the logger-failure fixture really is an unwritable directory" "dr-x------" \
-  "$(ls -ld "$bad_log_dir" | cut -c1-10)"
-"$GANG" hitch logfail -p bash -d /tmp >/dev/null
-paint logfail 'ctx 190k/200k 95%'
-bad_log_out="$(GANG_CONTEXT_LOG="$bad_log" "$GANG" patrol 2>&1)"
-check "a failed logger does not suppress the warning behaviour" "yes" \
-  "$(contains "$bad_log_out" "NUDGED (crossed the 180000-token band)")"
-check "and is surfaced during that same patrol sweep" "yes" \
-  "$(contains "$bad_log_out" "CONTEXT LOG INCOMPLETE")"
-logfail_id="$(id_of logfail)"
-logfail_error="$(tmux show-options -wqv -t "$logfail_id" @gl_context_log_error)"
-check "the window banks a specific write failure for later patrols" "yes" \
-  "$(contains "$logfail_error" "Permission denied")"
-bad_report="$(GANG_CONTEXT_LOG="$bad_log" "$GANG" context-report 2>&1)"; bad_report_rc=$?
-check "a path with no successful liveness row is not reported as a quiet week" "1" \
-  "$bad_report_rc"
-check "and the report names the still-active write failure" "yes" \
-  "$(contains "$bad_report" "logger liveness never established; write failure is active")"
-check "the failed first-write path has no hidden artifact" "0" "$(log_artifacts "$bad_log")"
-chmod 700 "$bad_log_dir"
-# That gap is banked on the WINDOW, and down is what destroys windows. Lose it
-# silently and the compliance log has a hole with nothing anywhere saying it is
-# one — which reads as "nothing happened" rather than "this was not recorded",
-# and inverts the finding it feeds. So down says it while the window still holds
-# it, and this teardown was already here throwing its output away.
-#
-# Driven off the marker the fixture above really produced, never a hand-written
-# stand-in: nothing between the chmod and this line writes a row — context-report
-# only runs the reader, log_artifacts only counts files — so logfail's genuine
-# "Permission denied" is still banked when down runs.
-downout="$("$GANG" down 2>&1)"
-check "down surfaces the gap that is about to die with the window" "yes" \
-  "$(contains "$downout" "logfail: CONTEXT LOG INCOMPLETE")"
-check "and carries the error the logger actually reported" "yes" \
-  "$(contains "$downout" "Permission denied")"
-check "and names the command that keeps it" "yes" \
-  "$(contains "$downout" "gang context-report")"
-check "and still ends the team it was asked to end" "no" \
-  "$(tmux has-session -t "=$GANG_SESSION" 2>/dev/null && echo yes || echo no)"
-# The control. A warning that fires on every teardown is one nobody reads, and it
-# would pass all four checks above. A bare session is honest here precisely
-# because this asserts an ABSENCE — there is no output to invent.
-tmux new-session -d -s "${main_session}-clean" -n w 'sleep 60'
-check "and a team with nothing banked says nothing about the log" "no" \
-  "$(contains "$(GANG_SESSION="${main_session}-clean" "$GANG" down 2>&1)" "CONTEXT LOG INCOMPLETE")"
-export GANG_SESSION="$main_session"
-
-# The writer is shared by every agent, so concurrent appends and rotation are one
-# test: every physical row must remain parseable, bounded below PIPE_BUF, and the
-# bounded store must have exactly active + one rotation + its live lock.
-event_helper="${GANG%/bin/gang}/lib/context_events.py"
-atomic_log="$SHIM/atomic-events.tsv"
-i=0
-while [ "$i" -lt 80 ]; do
-  python3 "$event_helper" append "$atomic_log" 8192 \
-    "ts=$((1700000000 + i))" kind=note session=atomic window_id=%1 \
-    "agent=writer-$i" profile=bash leg=hook hook_event=PostToolUse seam=no \
-    tokens=190000 window=200000 band=2 threshold=180000 \
-    thresholds=120000,180000,250000,350000 note_count=1 &
-  i=$((i + 1))
-done
-wait
-check "concurrent bounded appends leave an active log" "yes" \
-  "$([ -s "$atomic_log" ] && echo yes || echo no)"
-check "and one populated rotation" "yes" \
-  "$([ -s "$atomic_log.1" ] && echo yes || echo no)"
-check "with no third data generation or surprise artifact" "3" \
-  "$(log_artifacts "$atomic_log")"
-max_atomic_row="$(awk 'length($0)>m{m=length($0)} END{print m+1}' "$atomic_log.1" "$atomic_log")"
-check "every retained row including its newline stays within PIPE_BUF" "yes" \
-  "$([ "$max_atomic_row" -le 4096 ] && echo yes || echo no)"
-atomic_report="$(python3 "$event_helper" report "$atomic_log")"
-check "the parser sees no torn or malformed concurrent row" "yes" \
-  "$(contains "$atomic_report" "malformed=0")"
-check "and rotation records the data it had to retire as CTD" "yes" \
-  "$(holds "$atomic_report" 'retention=[1-9][0-9]*')"
-check "the rotation-clear fixture has all three artifacts before deletion" "3" \
-  "$(log_artifacts "$atomic_log")"
-atomic_clear="$(python3 "$event_helper" clear "$atomic_log")"
-check "rotation clear names the data files it removed" "yes" \
-  "$(contains "$atomic_clear" "deleted context event log")"
-check "and deletes active, rotation, and lock together" "0" \
-  "$(log_artifacts "$atomic_log")"
-
-# Syntactically valid TSV can still be uninterpretable. Establish the malformed
-# fixture as a real row first, then assert its positive CTD complement beside the
-# zero proven counts; a parser that never looked cannot satisfy the pair.
-malformed_log="$SHIM/malformed-events.tsv"
-printf 'v1\tts=1700000000\tkind=note\n' > "$malformed_log"
-check "the malformed-row fixture exists as one physical record" "1" \
-  "$(wc -l < "$malformed_log" | tr -d ' ')"
-malformed_report="$(python3 "$event_helper" report "$malformed_log")"
-check "an incomplete logical row is explicitly classified malformed" "yes" \
-  "$(contains "$malformed_report" "malformed=1")"
-check "and cannot fabricate a compliant outcome" "yes" \
-  "$(contains "$malformed_report" "proven-compliant: 0")"
-check "or fabricate the opposite proven outcome" "yes" \
-  "$(contains "$malformed_report" "proven-non-compliant: 0")"
-check "with the dataset refusal printed as the positive complement" "yes" \
-  "$(contains "$malformed_report" "THIS DATASET CANNOT ANSWER THE QUESTION")"
-python3 "$event_helper" clear "$malformed_log" >/dev/null
-
-# --- final-band exposure: a reachable top rung vs an unreachable one (#32) -----
-#
-# The distinction the whole evidence layer exists to preserve, at the one place it
-# was being lost. Two intervals fall short of their top rung and must get DIFFERENT
-# answers, because only one of them could ever have reached it. A derived ladder
-# fits inside the window (ADR-0006), so its last rung is reachable and "did not top
-# out" means exactly that; a ladder whose last rung sits above the window cannot say
-# that about the agent that ran under it, and reporting "no" there would be reading
-# could-not-determine as determined-false. Judged per note rather than once from the
-# drop row, so a dataset spanning the ladder change reports each interval against
-# the ladder it was actually measured on — which #24's collection now is.
-exposure_log="$SHIM/exposure-events.tsv"
-: > "$exposure_log"
-exposure_row() { # $1 = agent, $2 = kind, $3 = band, $4 = thresholds, $5.. = extra pairs
-  local agent="$1" kind="$2" band="$3" vec="$4" pair; shift 4
-  printf 'v1\tts=1700000000\tkind=%s\tsession=s\twindow_id=@%s\tagent=%s\tprofile=bash' \
-    "$kind" "$agent" "$agent"
-  printf '\tleg=patrol\thook_event=-\tseam=no\ttokens=190000\twindow=200000'
-  printf '\tband=%s\tthreshold=180000\tthresholds=%s' "$band" "$vec"
-  for pair in "$@"; do printf '\t%s' "$pair"; done
-  printf '\n'
-}
-exposure_interval() { # $1 = agent, $2 = band, $3 = note ladder, $4 = drop-row ladder
-  exposure_row "$1" note "$2" "$3" note_count=1
-  exposure_row "$1" context_drop 0 "$4" \
-    previous_band="$2" notes_since_drop=1 last_note_ts=1700000000 \
-    pre_ts=1700000000 pre_tokens=190000 pre_window=200000 pre_band="$2" \
-    "pre_thresholds=$4" sample_staleness=0 sample_quality=fresh \
-    provenance=self-issued provenance_candidates=1 \
-    evidence_availability=available evidence_result=drop-proved \
-    request_quality=determined issue_tokens=190000 first_threshold=120000
-}
-oversized='120000,180000,250000,350000'   # last rung above the 200000 window
-fitted='120000,138000,153000,166000,180000'
-{
-  exposure_interval unreachable 2 "$oversized" "$oversized"
-  exposure_interval shortfall   3 "$fitted"    "$fitted"
-  exposure_interval toppedout   5 "$fitted"    "$fitted"
-  # The ladder changed between the note and the drop that closed its interval —
-  # which is what a regime boundary mid-collection looks like, and #24's dataset
-  # has three of them. Judging from the drop row alone reads this interval's
-  # shortfall as a determined "no", because the drop row's ladder fits. The note
-  # is the row that was measured, and its ladder never could.
-  exposure_interval straddle    2 "$oversized" "$fitted"
-} >> "$exposure_log"
-exposure_report="$(python3 "$event_helper" report "$exposure_log")"
-check "the exposure fixture is read as three whole intervals, not skipped" "0" \
-  "$(printf '%s' "$exposure_report" | grep -c 'malformed=[1-9]')"
-check "a top rung above the window cannot report non-exposure" "yes" \
-  "$(holds "$exposure_report" 'unreachable: .*final-band=COULD-NOT-DETERMINE')"
-check "but the same shortfall on a ladder that FITS is a determined no" "yes" \
-  "$(holds "$exposure_report" 'shortfall: .*final-band=no')"
-check "and reaching the last rung of a fitted ladder is a determined yes" "yes" \
-  "$(holds "$exposure_report" 'toppedout: .*final-band=yes')"
-check "an interval whose NOTE outran its ladder is judged on that note, not the drop" "yes" \
-  "$(holds "$exposure_report" 'straddle: .*final-band=COULD-NOT-DETERMINE')"
-python3 "$event_helper" clear "$exposure_log" >/dev/null
-
 # --- one ladder, absolute at both ends (ADR-0006) ------------------------------
 #
 # The FLOOR is the guard that goes red if the ladder is ever made proportional
@@ -2742,9 +2447,9 @@ check "a 1M agent at 125k tokens is nudged at the 120000 rung" \
 check "and a 258k agent at the same TOKENS gets the same first rung" \
   "NUDGED (crossed the 120000-token band)" "$(printf '%s\n' "$bandout" | verdict smallwin)"
 check "so both sit on the same band number" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^1 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bigwin)" @gl_band)" '^1$')"
 check "and the fuller window is not warned harder for being fuller" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^1 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of smallwin)" @gl_band)" '^1$')"
 "$GANG" drop bigwin >/dev/null 2>&1 || true
 "$GANG" drop smallwin >/dev/null 2>&1 || true
 
@@ -2781,9 +2486,9 @@ check "a 1M agent far past the cap is warned AT the cap, not above it" \
 check "and a 258k agent reaches the last rung of the ladder that applies to it" \
   "NUDGED (crossed the 232000-token band)" "$(printf '%s\n' "$topout" | verdict topsmall)"
 check "the big agent is on the final band" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of topbig)" @gl_band)" '^5 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of topbig)" @gl_band)" '^5$')"
 check "and so is the small one, at the same ordinal" "yes" \
-  "$(holds "$(tmux show-options -wqv -t "$(id_of topsmall)" @gl_band)" '^5 1 [0-9]+$')"
+  "$(holds "$(tmux show-options -wqv -t "$(id_of topsmall)" @gl_band)" '^5$')"
 "$GANG" drop topbig >/dev/null 2>&1 || true
 "$GANG" drop topsmall >/dev/null 2>&1 || true
 
@@ -2939,66 +2644,11 @@ profile_context() {
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" drop ctxagent >/dev/null
-"$GANG" context-report --clear >/dev/null
-
-# Provenance is classified only from independent evidence. These two fixtures
-# seed the evidence state AFTER a real gang compact request; dropagent below
-# separately proves the production path that writes drop-proved. Keeping those
-# claims apart prevents a classifier test from passing as a producer test.
-prove_request() { # $1 agent, $2 expected requester; seed independent proof
-  local target raw
-  target="$(id_of "$1")"
-  raw="$(tmux show-options -wqv -t "$target" @gl_context_request)"
-  check "$1 has a five-field request before proof is seeded" "5" \
-    "$(awk '{print NF}' <<<"$raw")"
-  check "$1 request has the intended provenance before proof is seeded" "yes" \
-    "$(contains "$raw" " $2 ")"
-  check "$1 request is still non-proving before proof is seeded" "yes" \
-    "$(like "$raw" '* request-only')"
-  tmux set-option -w -t "$target" @gl_context_request "${raw% *} drop-proved"
-  check "$1 proof fixture answers for itself" "yes" \
-    "$(like "$(tmux show-options -wqv -t "$target" @gl_context_request)" '* drop-proved')"
-}
-
-"$GANG" hitch selfprov -p compactable -d /tmp >/dev/null
-paint selfprov 'ctx 900k/1000k 90%'
-check "the self-provenance interval begins with a delivered final-band note" \
-  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict selfprov)"
-selfprov_pane="$(tmux list-panes -t "$(id_of selfprov)" -F '#{pane_id}')"
-TMUX_PANE="$selfprov_pane" "$GANG" compact selfprov --from selfprov >/dev/null 2>&1
-prove_request selfprov self-issued
-paint selfprov 'ctx 250k/1000k 25%'
-"$GANG" patrol >/dev/null
-
-"$GANG" hitch peerprov -p compactable -d /tmp >/dev/null
-paint peerprov 'ctx 900k/1000k 90%'
-check "the peer-provenance interval begins with a delivered final-band note" \
-  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict peerprov)"
-"$GANG" compact peerprov --from tester >/dev/null 2>&1
-prove_request peerprov peer-issued
-paint peerprov 'ctx 250k/1000k 25%'
-"$GANG" patrol >/dev/null
-
-provenance_report="$("$GANG" context-report)"
-check "a self request plus independent proof is the proven-compliant outcome" "yes" \
-  "$(contains "$provenance_report" "proven-compliant: 1")"
-check "a peer request plus independent proof is proven non-compliance" "yes" \
-  "$(contains "$provenance_report" "proven-non-compliant: 1")"
-check "and the isolated interval has no outcome silently pushed into CTD" "yes" \
-  "$(contains "$provenance_report" "could-not-determine: 0")"
-check "the self-issued cause is visible on its own drop row" "yes" \
-  "$(holds "$provenance_report" 'selfprov: .*provenance=self-issued; evidence=available/drop-proved')"
-check "and peer-issued cause is not collapsed into compliance" "yes" \
-  "$(holds "$provenance_report" 'peerprov: .*provenance=peer-issued; evidence=available/drop-proved')"
-
 "$GANG" hitch compagent -p compactable -d /tmp >/dev/null
 paint compagent 'ctx 150k/200k 75%'
 compact_out="$("$GANG" compact compagent --from tester 2>&1)"
 check "a compaction gang issued is recorded on the window" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
-raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
-check "the request row carries its issue context and full resolved ladder" "yes" \
-  "$(contains "$raw_context_log" $'agent=compagent\tprofile=compactable\tleg=compact\thook_event=-\tseam=COULD-NOT-DETERMINE\ttokens=150000\twindow=200000\tband=2\tthreshold=138000\tthresholds=120000,138000,153000,166000,180000')"
 
 # What that command can honestly claim, and the pair that bounds it. inject
 # proves DELIVERY — the paste changed the box, the Enter emptied it — and this
@@ -3038,8 +2688,6 @@ check "and it does not make the agent read as compacting" "idle (slack tug)" \
 check "an expired mark reports the unknown instead of nudging" \
   "past the 138000-token band — compaction gang issued, UNPROVED past the grace, holding nudge" \
   "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict compagent)"
-check "and records clock expiry as non-proving request evidence" "yes" \
-  "$(like "$(tmux show-options -wqv -t "$(id_of compagent)" @gl_context_request)" '* peer-issued 150000 120000 clock-cleared')"
 # Deleting the mark on expiry would be the same defect worn differently: the next
 # sweep finds nothing pending and injects, one poll later than before.
 check "the mark survives its own expiry rather than being dropped" "yes" \
@@ -3082,30 +2730,22 @@ check "a context drop clears the mark rather than waiting out the clock" \
   "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict dropagent)"
 check "and the mark is gone once it has served its purpose" "" \
   "$(tmux show-options -wqv -t "$(id_of dropagent)" @gl_compacting)"
-raw_context_log="$(cat "$GANG_CONTEXT_LOG")"
-check "the production drop proof records its complete observation row" "yes" \
-  "$(contains "$raw_context_log" $'agent=dropagent\tprofile=compactable\tleg=patrol\thook_event=-\tseam=yes\ttokens=350000\twindow=1000000\tband=5\tthreshold=350000\tthresholds=120000,190000,247000,300000,350000')"
-check "and establishes peer provenance only because proof was observed" "yes" \
-  "$(contains "$raw_context_log" $'provenance=peer-issued\tprovenance_candidates=peer-issued\tevidence_availability=available\tevidence_result=drop-proved')"
 
-# Issue #22's formerly unreachable half: at A=100k and F=120k, A <= 2F. A drop
-# below half of A also falls below F, so the old band-first chain consumed the
-# sweep before asking the mark question. F is retained in the row for old-regime
-# analysis, but the unconditional mark poll now observes and records the proof.
+# Issue #22's formerly unreachable half: the drop that proves a compaction happened
+# lands BELOW the first rung, so the old band-first chain consumed the sweep before
+# it ever asked the mark question and the proof sitting in the readout was never
+# read. The mark poll is unconditional now, and the evidence that it ran is the
+# mark itself being cleared by a drop no band branch would have reached.
 "$GANG" hitch lowdrop -p compactable -d /tmp >/dev/null
 paint lowdrop 'ctx 100k/200k 50%'
 "$GANG" compact lowdrop --from tester >/dev/null 2>&1
-low_request="$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_context_request)"
-check "the #22 fixture records A=100k and F=120k before its drop" "yes" \
-  "$(like "$low_request" '* peer-issued 100000 120000 request-only')"
+check "the #22 fixture has a mark to clear before its drop" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
 paint lowdrop 'ctx 40k/200k 20%'
 check "the low-band drop is still observed after the ladder branch" "steady (band 0)" \
   "$("$GANG" patrol | verdict lowdrop)"
-issue22_report="$("$GANG" context-report)"
-check "the #22 row positively records proof despite A being at most 2F" "yes" \
-  "$(holds "$issue22_report" 'lowdrop: .*provenance=peer-issued; evidence=available/drop-proved')"
-check "and the full row retains A and F for the arithmetic" "yes" \
-  "$(contains "$(cat "$GANG_CONTEXT_LOG")" $'request_quality=determined\tissue_tokens=100000\tfirst_threshold=120000')"
+check "and the drop below the first rung still cleared the mark" "" \
+  "$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_compacting)"
 
 # The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
 # busy_painted, which is false for most of a turn, so after about sixteen seconds
@@ -3899,7 +3539,6 @@ floor_claim() { # $1 = file, $2 = anchored ERE -> the version stated, or a namin
   [ -n "$ver" ] || { printf 'NO-VERSION-IN-CLAIM-%s' "${1##*/}"; return 0; }
   printf '%s' "$ver"
 }
-ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
 TMUX_FLOOR="$(floor_enforced "$ROOT/install.sh")"
 check "the installer's gate admits a readable floor" "yes" \
   "$(holds "$TMUX_FLOOR" '^[0-9]+\.[0-9]+$')"

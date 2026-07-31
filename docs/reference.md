@@ -60,13 +60,8 @@ unadopted one.
 ### `gang down`
 
 Lists the team's windows, then kills the entire `GANG_SESSION`. It fails when the
-session is not running.
-
-Before killing anything it reports any window still holding an unflushed logging
-gap, because that marker lives on the window and dies with it. It does not write
-one to the log — a teardown observed nothing, and a row that carried the gap would
-put an unmeasured fact in the dataset. `gang context-report` reads those markers
-from the live session and is how they are kept.
+session is not running. Every piece of Gangline's state is a window option, so
+tmux deletes all of it along with the windows.
 
 ## Messaging and compaction
 
@@ -235,27 +230,6 @@ profile-loading and band-configuration errors remain loud. The command is
 intended for hook systems such as Claude Code's `UserPromptSubmit` and
 `PostToolUse` events.
 
-### `gang context-report [--clear]`
-
-Summarises the retained warning and compaction events in `GANG_CONTEXT_LOG`. When
-the session is live it also collects any per-window logging gaps — a window option
-recording that a write to the log failed — so a report cannot silently describe a
-dataset with holes in it as if it were complete.
-
-`--clear` is the deletion path, and it removes every artifact the measurement
-created: the active log, its retained rotation, the adjacent `.lock` coordination
-file, the recorded per-window gaps, and the per-window liveness markers. Clearing
-the liveness markers is what stops deletion leaving a contradiction behind — an
-emptied log beside windows that still believe they have already reported would read
-as "no events yet" when the truth is "the events were deleted and nobody has
-re-declared since". Stop collection before clearing. Nothing else deletes
-measurements, and the log outlives the windows it describes by design.
-
-Both forms need `lib/context_events.py` from the install tree and refuse loudly
-without it. See [Context-compliance measurement](context-compliance.md) for the
-record format, the questions the dataset can and cannot answer, and the bounds the
-report declares.
-
 ## Diagnostics and discovery
 
 ### `gang vet [--file-issue] [--probe [profile]]`
@@ -357,10 +331,9 @@ fragments and are not listed as roles.
 | `NO_COLOR` | any non-empty value disables colour | unset |
 
 Every process that addresses one team must agree on `GANG_SESSION`. Cron must
-also receive `GANG_PROFILES`, any of the three ladder settings, `GANG_LOCK_DIR`, and
-`GANG_CONTEXT_LOG` when the team overrides them — a patrol that disagrees about
-the lock directory stops serialising with the other writers, and one that
-disagrees about the log writes its measurements into a second dataset.
+also receive `GANG_PROFILES`, any of the three ladder settings and `GANG_LOCK_DIR`
+when the team overrides them — a patrol that disagrees about the lock directory
+stops serialising with the other writers.
 
 ### Operational settings
 
@@ -369,8 +342,6 @@ These are useful when the corresponding path is in use:
 | Variable | Meaning | Default |
 |---|---|---|
 | `GANG_LOCK_DIR` | shared directory for per-pane delivery locks; created `0700`, and refused if it is a symlink, not a directory, or not owned by you | `/tmp/gangline-<uid>` |
-| `GANG_CONTEXT_LOG` | persistent context-compliance event log | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/context-events.tsv` |
-| `GANG_CONTEXT_LOG_MAX_BYTES` | active log bound; one rotation is retained beside it | `8388608` |
 | `GANG_LOCK_WAIT` | lock acquisition polls at 0.2 seconds | `150` (30 seconds) |
 | `GANG_CHURN_WAIT` | interval between pane-change samples | `0.5` seconds |
 | `GANG_ACTIVITY_LIMIT` | how long pty activity **alone** may hold the busy verdict before the state becomes `expired`; whole seconds, and a non-numeric value is refused | `300` |

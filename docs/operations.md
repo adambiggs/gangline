@@ -49,7 +49,7 @@ A permission prompt and a question modal look alike on a terminal and are not th
 same decision. A permission prompt asks for authority, which is the operator's to
 grant. A question modal is the agent escalating a decision to whoever drives it —
 in a Gangline team, usually the lead, sometimes by name in the question text.
-Gangline refuses both, because no shipped profile's `GANG_GATED_REGEX` can tell
+Gangline refuses both, because no shipped profile's `GANG_OCCUPIED_REGEX` can tell
 them apart on a screen, and a classifier that guessed wrong in the permissive
 direction would let a peer grant authority nobody granted.
 
@@ -206,10 +206,9 @@ mkdir -p "$HOME/.local/state/gangline"
 
 The negative filter keeps unknown future errors while removing routine steady
 rows. A patrol only sweeps `GANG_SESSION`; use one cron entry per session. Carry
-`GANG_PROFILES`, any of the three ladder settings, `GANG_LOCK_DIR`, and
-`GANG_CONTEXT_LOG` into cron too when the team overrides them: a patrol that
-disagrees about the lock directory stops serialising with the other writers, and
-one that disagrees about the log writes its measurements into a second dataset.
+`GANG_PROFILES`, any of the three ladder settings and `GANG_LOCK_DIR` into cron
+too when the team overrides them: a patrol that disagrees about the lock directory
+stops serialising with the other writers.
 
 The ladder is derived, and both of its ends are absolute token counts. It starts at
 `GANG_CONTEXT_FLOOR` (120000) on every harness, because context rot tracks how long

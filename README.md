@@ -466,7 +466,7 @@ mkdir -p "$HOME/.local/state/gangline"
 ```
 
 The cron environment must carry the same `GANG_SESSION`, `GANG_PROFILES`,
-`GANG_CONTEXT_BANDS`, `GANG_LOCK_DIR`, and `GANG_CONTEXT_LOG` values as the team
+`GANG_CONTEXT_BANDS` and `GANG_LOCK_DIR` values as the team
 when you override them. A patrol that disagrees about the lock directory stops
 serialising with the other writers.
 
