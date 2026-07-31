@@ -151,6 +151,27 @@ local Bash 5.1 is newer than macOS CI's 3.2, which rejected 37 locally valid tes
 constructs; and local ShellCheck 0.8.0 is more permissive than CI's newer parser,
 which treated a comment beginning `shellcheck` as a directive and failed lint.
 
+## Writing about Gangline
+
+`gang` is the command and always appears in a code span. Everywhere else the tool
+is **Gangline**. They are not synonyms: the command is a face over the substrate,
+so naming the binary in a sentence that is about the tool makes a claim about a
+command line the sentence never meant. Reach for `gang` when the subject is an
+invocation, or where two binaries are being contrasted; reach for Gangline for
+what the tool can establish, refuses to claim, or does over time.
+
+Two lowercase uses are deliberate and must survive a sweep. "A gangline is the
+line down the middle of a dog team" is the common noun the tool is named after,
+and the demo's `aria-label` says "gang up" because an HTML attribute cannot hold
+a code span.
+
+The verb for adding an agent to a team is hitch, never hire. The vocabulary is
+mushing throughout, and a dog is hitched to the line.
+
+Sweep the stem, not the word. A grep for `hire` does not match `hiring` and one
+for `gang` does not match `Gang's`, so a sweep that reads clean has cleared only
+the exact form it searched for.
+
 ## Measuring things
 
 Nearly every defect this repository has produced has one shape: **a result that
