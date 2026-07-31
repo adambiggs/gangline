@@ -249,9 +249,10 @@ gang — drive a team of CLI agents as tmux windows
                                               issue on this repo (needs gh); --probe also
                                               LAUNCHES each installed harness on a private
                                               tmux socket and watches its declared busy
-                                              marker and context readout across a real turn
-                                              — it spends tokens and takes as long as
-                                              that turn takes;
+                                              marker and context readout across a real turn;
+                                              a declared mid-turn action gets an asymmetric
+                                              filesystem-ordering turn too — it spends tokens
+                                              and takes as long as those turns take;
                                               alias: doctor
   gang attach                                 attach to the team session
   gang drop  <name>                           release the agent — its window and
@@ -3125,7 +3126,8 @@ and append the new version to GANG_VERIFIED_VERSIONS.")
 # that quietly implies a marker was fired at a pane is how three dead markers got
 # through, and the fix for that is not a louder probe but an honester report.
 #
-# Scope is the busy marker and the context readout. Gates are out: reaching a
+# Scope is the busy marker, the context readout, and the asymmetric filesystem
+# witness for a declared mid-turn action. Gates are out: reaching a
 # modal takes per-harness choreography, which is new profile surface that rots on
 # its own schedule. Compaction is out: /compact under a harness's own threshold
 # runs and moves nothing, so a probe cannot tell a dead marker from a session
@@ -3152,6 +3154,21 @@ GANG_PROBE_RATE="${GANG_PROBE_RATE:-0.25}"
 # here to test for. Overridable because a harness that will not work from this
 # needs a different nudge, not a different probe.
 GANG_PROBE_PROMPT="${GANG_PROBE_PROMPT:-think carefully before answering: is the number of seconds in a week larger than the number of words in a long novel? reply with one lowercase word and nothing else}"
+# GANG_MIDTURN_ACTS is stronger than merely accepting a paste, and a pane cannot
+# witness that distinction: a queued next turn can begin between pane polls and
+# paint the same frames as the turn already running. The declaration therefore
+# gets a second, asymmetric probe on profiles that opt into it. Its boundary is
+# the model's own filesystem actions: create START, do one slow action, and make
+# A the last action of the turn. An injected ordinary message asks for B. Seeing
+# B while A is absent, followed eventually by A, confirms B-before-A. Nothing
+# else is evidence against the declaration.
+GANG_PROBE_ACTS_WAIT="${GANG_PROBE_ACTS_WAIT:-45}"   # whole filesystem-ordering window
+GANG_PROBE_ACTS_DELAY="${GANG_PROBE_ACTS_DELAY:-15}" # slow middle action in the fixture
+# Templates are overridable for the same reason GANG_PROBE_PROMPT is: a harness
+# that needs a different nudge should not need a different observer. @start@,
+# @boundary@, @message@ and @delay@ are expanded immediately before submission.
+GANG_PROBE_ACTS_PROMPT="${GANG_PROBE_ACTS_PROMPT:-for this mid-turn declaration probe, follow exactly: using separate shell tool calls, first create the file @start@; second run sleep @delay@; third, as the last action of this turn, create the file @boundary@. do not combine these actions, do not run sleep in the background, and do not create the boundary file until the sleep finishes}"
+GANG_PROBE_ACTS_MESSAGE="${GANG_PROBE_ACTS_MESSAGE:-act on this now before continuing: create the file @message@ immediately with a shell tool}"
 # A SPECIMEN IS CLEAN WHEN NO MARKER TEXT CAN REACH THE PANE — from the prompt,
 # from the directory's contents, or from a brief. Newness is not the property and
 # buys nothing on its own; an already-trusted empty directory is a perfectly clean
@@ -3164,6 +3181,11 @@ PROBE_L=""     # the -L socket this run owns; empty until a probe starts
 PROBE_TMP=""   # shim + throwaway cwd, removed with it
 PROBE_PATH=""  # PATH as it was before the shim went on the front of it
 PROBE_CWD=""   # the specimen directory every probed harness is launched in
+PROBE_ACTS_START=""    # exact probe-owned files, also cleaned on die() and ^C
+PROBE_ACTS_BOUNDARY=""
+PROBE_ACTS_MESSAGE=""
+PROBE_ACTS_CONFIRMED=0
+PROBE_ACTS_UNDETERMINED=0
 
 probe_teardown() { # reached through on_exit, so it runs on die() and on ^C alike
   # Both halves of that are measured, because the sentence was here for a while
@@ -3192,8 +3214,11 @@ probe_teardown() { # reached through on_exit, so it runs on die() and on ^C alik
   # confusing and harmless. The direction that is NOT harmless is the one it
   # exists to prevent: probe operations landing on the live server.
   [ -z "$PROBE_PATH" ] || { PATH="$PROBE_PATH"; hash -r 2>/dev/null || true; }
+  [ -z "$PROBE_ACTS_START" ] \
+    || rm -f -- "$PROBE_ACTS_START" "$PROBE_ACTS_BOUNDARY" "$PROBE_ACTS_MESSAGE" 2>/dev/null || true
   [ -z "$PROBE_TMP" ] || rm -rf "$PROBE_TMP"
   PROBE_L=""; PROBE_TMP=""; PROBE_PATH=""
+  PROBE_ACTS_START=""; PROBE_ACTS_BOUNDARY=""; PROBE_ACTS_MESSAGE=""
 }
 
 probe_start() { # stand up the private server this run owns and the shim that keeps it private
@@ -3274,6 +3299,164 @@ probe_evidence() { # $1 = profile, $2 = the pane the verdict was reached on
   printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "pane it judged: $f")"
 }
 
+probe_acts_expand() { # $1 = template, $2 = START, $3 = A, $4 = B
+  local text="$1"
+  text="${text//@start@/$2}"
+  text="${text//@boundary@/$3}"
+  text="${text//@message@/$4}"
+  text="${text//@delay@/$GANG_PROBE_ACTS_DELAY}"
+  printf '%s' "$text"
+}
+
+probe_submit() { # $1 = pane, $2 = ordinary text; same paste/Enter discipline as the marker turn
+  local box_before="" box_now="" deadline
+  if declare -F profile_input >/dev/null; then
+    box_before="$(profile_input "$1" 2>/dev/null)" || box_before=""
+  fi
+  tmux send-keys -t "$1" "$2" 2>/dev/null || return 1
+  if declare -F profile_input >/dev/null; then
+    deadline=$(( $(date +%s) + GANG_PROBE_BOOT ))
+    while [ "$(date +%s)" -lt "$deadline" ]; do
+      if box_now="$(profile_input "$1" 2>/dev/null)" && [ "$box_now" != "$box_before" ]; then
+        break
+      fi
+      sleep "$GANG_PROBE_RATE"
+    done
+  fi
+  tmux send-keys -t "$1" Enter 2>/dev/null
+}
+
+probe_acts_cleanup() { # remove only the unique files this probe named
+  [ -z "$PROBE_ACTS_START" ] \
+    || rm -f -- "$PROBE_ACTS_START" "$PROBE_ACTS_BOUNDARY" "$PROBE_ACTS_MESSAGE" 2>/dev/null || true
+  PROBE_ACTS_START=""; PROBE_ACTS_BOUNDARY=""; PROBE_ACTS_MESSAGE=""
+}
+
+probe_acts_not_probed() { # $1 = profile, $2 = version, $3 = precise reason
+  PROBE_ACTS_UNDETERMINED=$((PROBE_ACTS_UNDETERMINED + 1))
+  probe_row "$1" "$2" "$C_DIM" "mid-turn acts NOT PROBED — could not determine: $3. Only observed B-before-A confirms; every other outcome leaves the declaration unrefuted"
+  return 2
+}
+
+probe_acts_confirmed() { # $1 = profile, $2 = version
+  PROBE_ACTS_CONFIRMED=$((PROBE_ACTS_CONFIRMED + 1))
+  probe_row "$1" "$2" "$C_OK" "mid-turn acts CONFIRMED — observed message file B while boundary file A was absent, then observed A. This B-before-A ordering confirms only that the running turn consumed the message"
+  return 0
+}
+
+probe_acts() { # $1 = profile, $2 = pane, $3 = version; called only for a declaration of 1
+  local prof="$1" id="$2" installed="$3" tag start_name boundary_name message_name
+  local start_path boundary_path message_path prompt msg deadline ready=0
+  local started=0 injected=0 b_before_a=0 a_seen=0 b_seen=0
+
+  tag="${PROBE_TMP##*/}-$prof"
+  start_name="./.gang-$tag-start"
+  boundary_name="./.gang-$tag-a"
+  message_name="./.gang-$tag-b"
+  start_path="$PROBE_CWD/${start_name#./}"
+  boundary_path="$PROBE_CWD/${boundary_name#./}"
+  message_path="$PROBE_CWD/${message_name#./}"
+
+  # A user-supplied trusted directory is still their directory. A collision is
+  # contamination, not permission to delete it and manufacture a clean start.
+  if [ -e "$start_path" ] || [ -e "$boundary_path" ] || [ -e "$message_path" ]; then
+    probe_acts_not_probed "$prof" "$installed" "the fixture paths were not absent before the turn began"
+    return 2
+  fi
+  PROBE_ACTS_START="$start_path"
+  PROBE_ACTS_BOUNDARY="$boundary_path"
+  PROBE_ACTS_MESSAGE="$message_path"
+
+  probe_note "$prof" "waiting for an input box for the mid-turn fixture" "$GANG_PROBE_BOOT"
+  wait_ready "$id" "$GANG_PROBE_BOOT" || ready=$?
+  case "$ready" in
+    0) ;;
+    2) probe_acts_not_probed "$prof" "$installed" "a dialog owned the screen before the fixture could start"; return 2 ;;
+    *) probe_acts_not_probed "$prof" "$installed" "no input box accepted the fixture within ${GANG_PROBE_BOOT}s"; return 2 ;;
+  esac
+
+  prompt="$(probe_acts_expand "$GANG_PROBE_ACTS_PROMPT" "$start_name" "$boundary_name" "$message_name")"
+  msg="$(probe_acts_expand "$GANG_PROBE_ACTS_MESSAGE" "$start_name" "$boundary_name" "$message_name")"
+  if ! probe_submit "$id" "$prompt"; then
+    probe_acts_not_probed "$prof" "$installed" "the fixture prompt could not be submitted"
+    return 2
+  fi
+
+  # START-without-A is the independent proof that the model began the fixture
+  # and has not reached its declared last action. Pane text is deliberately not
+  # read in this phase: it cannot distinguish the running turn from a next turn
+  # that began between captures, which is the question under test.
+  probe_note "$prof" "watching the filesystem mid-turn ordering" "$GANG_PROBE_ACTS_WAIT"
+  deadline=$(( $(date +%s) + GANG_PROBE_ACTS_WAIT ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    [ ! -e "$start_path" ] || started=1
+    a_seen=0; b_seen=0
+    [ ! -e "$boundary_path" ] || a_seen=1
+    [ ! -e "$message_path" ] || b_seen=1
+
+    if [ "$injected" -eq 0 ]; then
+      if [ "$a_seen" -eq 1 ]; then
+        if [ "$started" -eq 1 ]; then
+          probe_acts_not_probed "$prof" "$installed" "boundary file A appeared before the mid-turn message could be injected"
+        else
+          probe_acts_not_probed "$prof" "$installed" "the fixture did not start before boundary file A appeared"
+        fi
+        return 2
+      fi
+      if [ "$started" -eq 1 ]; then
+        if ! probe_submit "$id" "$msg"; then
+          probe_acts_not_probed "$prof" "$installed" "the mid-turn message could not be submitted"
+          return 2
+        fi
+        injected=1
+        # Re-observe instead of assigning an order from events that may have
+        # happened while submission waited for the composer to ingest the text.
+        continue
+      fi
+    else
+      [ "$b_seen" -eq 0 ] || [ "$a_seen" -eq 1 ] || b_before_a=1
+      if [ "$a_seen" -eq 1 ]; then
+        if [ "$b_before_a" -eq 1 ]; then
+          probe_acts_confirmed "$prof" "$installed"
+          return 0
+        fi
+        if [ "$b_seen" -eq 1 ]; then
+          probe_acts_not_probed "$prof" "$installed" "A and B first appeared together between filesystem polls"
+        else
+          probe_acts_not_probed "$prof" "$installed" "boundary file A appeared before message file B"
+        fi
+        return 2
+      fi
+    fi
+    sleep "$GANG_PROBE_RATE"
+  done
+
+  # One final observation belongs to the bounded window. It can confirm only if
+  # an earlier sample already saw B alone; timestamps are intentionally ignored,
+  # because two files that arrive between polls do not identify a turn boundary.
+  [ ! -e "$start_path" ] || started=1
+  a_seen=0; b_seen=0
+  [ ! -e "$boundary_path" ] || a_seen=1
+  [ ! -e "$message_path" ] || b_seen=1
+  [ "$b_seen" -eq 0 ] || [ "$a_seen" -eq 1 ] || b_before_a=1
+  if [ "$b_before_a" -eq 1 ] && [ "$a_seen" -eq 1 ]; then
+    probe_acts_confirmed "$prof" "$installed"
+    return 0
+  fi
+  if [ "$started" -eq 0 ]; then
+    probe_acts_not_probed "$prof" "$installed" "the fixture did not start; its start file never appeared"
+  elif [ "$a_seen" -eq 1 ] && [ "$b_seen" -eq 1 ]; then
+    probe_acts_not_probed "$prof" "$installed" "A and B first appeared together between filesystem polls"
+  elif [ "$a_seen" -eq 1 ]; then
+    probe_acts_not_probed "$prof" "$installed" "boundary file A appeared before message file B"
+  elif [ "$b_seen" -eq 1 ]; then
+    probe_acts_not_probed "$prof" "$installed" "boundary file A never appeared"
+  else
+    probe_acts_not_probed "$prof" "$installed" "neither boundary file A nor message file B appeared after the fixture started"
+  fi
+  return 2
+}
+
 probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   local prof="$1" id ready out ctx key msg installed="-"
   local marked=0 churned=0 settled=0 deadline rc=0
@@ -3288,6 +3471,13 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   require_interval GANG_PROBE_RATE "$GANG_PROBE_RATE"
 
   load_profile "$prof"
+
+  # Profile code can override either setting, so validate after sourcing it and
+  # before opening a harness window. Undeclared profiles never read these knobs.
+  if [ "${GANG_MIDTURN_ACTS:-}" = 1 ]; then
+    require_whole GANG_PROBE_ACTS_WAIT "$GANG_PROBE_ACTS_WAIT" seconds
+    require_interval GANG_PROBE_ACTS_DELAY "$GANG_PROBE_ACTS_DELAY"
+  fi
 
   # Nothing declared is nothing to fire, and it is not a pass. bash declares no
   # busy marker on purpose — it is gangline's own stand-in and is never busy — so
@@ -3500,12 +3690,26 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   else
     probe_row "$prof" "$installed" "$C_OK" "busy marker fired and cleared; no context readout declared"
   fi
+  # This is a second turn, after the marker/context probe has reached exactly the
+  # same verdict it always did. It runs only for the stronger declaration and
+  # its result cannot turn a confirmed marker into drift: failure to observe the
+  # one proving order is explicitly not probed, never a refutation.
+  if [ "${GANG_MIDTURN_ACTS:-}" = 1 ]; then
+    probe_acts "$prof" "$id" "$installed" || true
+  fi
+  # End the specimen before removing its files. In an A-before-B outcome the
+  # submitted message may still be waiting to run; deleting A first would leave
+  # a race where that next turn creates B after cleanup and strands it in a
+  # caller-supplied probe directory.
   tmux kill-window -t "$id" 2>/dev/null || true
+  probe_acts_cleanup
   return 0
 }
 
 cmd_probe() { # $1 = optional profile name; drives every installed harness
   local prof probed=0 skipped=0 drift=0 rc
+  PROBE_ACTS_CONFIRMED=0
+  PROBE_ACTS_UNDETERMINED=0
   probe_start
   printf '%s\n' "$(colour "$C_WORK" "probing — each installed harness is launched on socket $PROBE_L and given a turn's work")"
   while read -r prof <&3; do
@@ -3526,6 +3730,9 @@ EOF
   # a dialog, produced no evidence either way — and an exit status has no room to
   # say so.
   printf '%s\n' "$(colour "$C_DIM" "$probed profile(s) driven, $skipped not probed (reasons above). A zero exit means every marker that WAS fired arrived and cleared; it says nothing about the ones that were not.")"
+  if [ $((PROBE_ACTS_CONFIRMED + PROBE_ACTS_UNDETERMINED)) -gt 0 ]; then
+    printf '%s\n' "$(colour "$C_DIM" "Mid-turn declarations: $PROBE_ACTS_CONFIRMED confirmed, $PROBE_ACTS_UNDETERMINED not probed. Only an observed B-before-A filesystem ordering confirms; every other outcome is could-not-determine and cannot refute the declaration.")"
+  fi
   return "$drift"
 }
 

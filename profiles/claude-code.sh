@@ -160,9 +160,11 @@ GANG_MIDTURN_INPUT=1
 # availability override; codex, opencode and Pi were observed queueing instead
 # and deliberately leave this unset.
 #
-# gang vet --probe cannot verify this declaration. The tty exposes no turn
-# identity, so "this turn consumed it" and "this turn ended and the queued next
-# turn began between polls" paint indistinguishable sequences.
+# gang vet --probe can confirm this witness, but cannot refute it. Pane text
+# exposes no turn identity, so the probe uses model-created files instead: B
+# observed while the first turn's last-action file A is absent, followed by A,
+# confirms that the running turn consumed the message. Every other ordering is
+# could-not-determine, including A and B both appearing between observer polls.
 GANG_MIDTURN_ACTS=1
 # Modal chrome, not dialog sentences. Claude Code frames every modal the same
 # two ways, and both were watched live: a selection cursor "❯" that is INDENTED,

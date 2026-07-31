@@ -102,8 +102,9 @@ structured output. Every mechanism Gangline actually invented is about surviving
   keyed to how long a context *is*, not how full its window is, so a bigger
   window buys a warning on the same schedule rather than permission to fill it.
 - **Strategy-rot detection** — `gang vet --probe` fires each profile's markers at
-  a live harness on a private socket, because the thing most likely to break a
-  long-running team is the vendor moving a pixel of chrome next Tuesday.
+  a live harness on a private socket and can confirm a declared mid-turn action
+  from an independent filesystem ordering, because the thing most likely to
+  break a long-running team is the vendor moving a pixel of chrome next Tuesday.
 
 A team that finishes inside one context window needs none of this. A team still
 working tomorrow morning needs all three, and no amount of fan-out substitutes.
@@ -545,9 +546,11 @@ Profiles observe terminal chrome and harness-owned files, both of which can
 change. `gang vet` compares installed harness versions with each profile's pins
 and runs declared file-format gates. `gang vet --probe [profile]` additionally
 launches installed harnesses on a private tmux socket, drives a real turn, and
-checks the declared busy marker and context readout. It spends tokens and takes as
-long as a real turn on each harness, and it does not exercise occupied or
-compacting states. See [Operating a
+checks the declared busy marker and context readout. A profile declaring
+`GANG_MIDTURN_ACTS=1` gets a second, asymmetric check: only B observed before
+the original turn's final-action file A confirms it; every other ordering is
+not probed and cannot refute the declaration. It spends tokens and takes as long
+as the driven turns, and it does not exercise occupied or compacting states. See [Operating a
 team](docs/operations.md#diagnosing-profile-rot).
 
 ## Security boundary

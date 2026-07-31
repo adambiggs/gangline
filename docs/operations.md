@@ -429,7 +429,9 @@ harness exactly as its profile declares, waits for the composer, sends a real
 prompt, and checks a transition: marker absent at rest, present during work,
 absent after the pane settles. It then calls the profile's context reader. The
 probe costs tokens and can take several minutes at its documented worst-case
-bounds.
+bounds. A profile declaring `GANG_MIDTURN_ACTS=1` gets a second turn whose model
+actions expose a filesystem boundary: B observed before the first turn's final
+file A confirms the declaration.
 
 A fresh temporary directory may trigger a harness trust dialog. Gangline never
 answers it. Set `GANG_PROBE_DIR` to an **empty directory already trusted by that
@@ -443,6 +445,10 @@ Interpret results narrowly:
 - not installed, no marker declaration, an occupied input box, or no observed turn
   is **not probed**, not a pass;
 - a zero exit covers only markers actually fired;
+- the mid-turn declaration prints `CONFIRMED` only when B was observed while A
+  was absent and A appeared later. A-before-B, both first seen in one poll, a
+  fixture that does not start, and missing files are **not probed**. These
+  outcomes cannot refute the declaration;
 - occupied and compacting states are not exercised;
 - one ordinary turn cannot exercise every alternate branch in a busy regex.
 

@@ -2029,6 +2029,74 @@ profile_context() {
 }
 SH
 done
+
+# The mid-turn declaration cannot be probed from pane text: a queued next turn
+# can begin between pane polls and paint the same frames. These fixtures instead
+# expose the model-action boundary as files. `acts_work` is turn 1. In the
+# `between` case Bash does not read the injected command while the function is
+# running; it creates A, returns across the turn boundary, and only then starts
+# the already-buffered `touch B` command. With a one-second observer rate, both
+# files appear between polls. That is the planted false-ACTS case: a presence or
+# timestamp test could call it acting, while the permitted observer must return
+# could-not-determine because it never saw B with A absent.
+cat > "$SHIM/probedir/acts.rc" <<'RC'
+PS1='❯ '
+probe_work() { local i=0; while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.25; i=$((i+1)); done; clear; echo 'ctx 12k/200k 6%'; }
+acts_work() {
+  local start="$1" boundary="$2" message=""
+  case "$ACTS_CASE" in
+    now)
+      touch "$start"
+      IFS= read -r message
+      eval "$message"
+      sleep 1
+      touch "$boundary"
+      ;;
+    between)
+      touch "$start"
+      sleep 0.75
+      touch "$boundary"
+      ;;
+    nostart)
+      sleep 8
+      ;;
+    noa)
+      touch "$start"
+      IFS= read -r message
+      eval "$message"
+      ;;
+    neither)
+      touch "$start"
+      sleep 8
+      ;;
+  esac
+  clear
+  echo 'ctx 12k/200k 6%'
+}
+RC
+for _case in now between nostart noa neither; do
+  cat > "$SHIM/probedir/acts${_case}.sh" <<SH
+GANG_LAUNCH="ACTS_CASE=$_case bash --rcfile $SHIM/probedir/acts.rc -i"
+GANG_BUSY_REGEX="PROBEBUSY"
+GANG_MIDTURN_INPUT=1
+GANG_MIDTURN_ACTS=1
+GANG_VERSION_CMD="echo 9.9.9"
+GANG_VERIFIED_VERSIONS="9.9.9"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | awk 'NF { line=\$0 } END { print line }')" || return 1
+  [ -n "\$line" ] || return 1
+  printf '%s' "\$line"
+}
+profile_context() {
+  local m
+  m="\$(tmux capture-pane -pJ -t "\$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
+    || die "no ctx beacon in pane"
+  m="\${m#ctx }"
+  printf '%s (%s)\n' "\${m% *}" "\${m##* }"
+}
+SH
+done
 probe_verdict() { # $1 = probe output, $2 = stand-in; the verdict phrase on its own
   # Asserted instead of a yes/no match, so a failure names the verdict it GOT
   # rather than reporting "no". Both of these went intermittent under contention
@@ -2078,6 +2146,9 @@ probe_run() { # $1 = stand-in; the whole probe, bounded so a hung harness cannot
   (
     GANG_PROFILES="$SHIM/probedir" GANG_PROBE_PROMPT="probe_work" \
     GANG_PROBE_BOOT=25 GANG_PROBE_TURN="${2:-15}" GANG_PROBE_SETTLE="${3:-18}" GANG_PROBE_QUIET=2 \
+    GANG_PROBE_ACTS_WAIT="${4:-4}" GANG_PROBE_ACTS_DELAY=1 \
+    GANG_PROBE_ACTS_PROMPT='acts_work @start@ @boundary@' \
+    GANG_PROBE_ACTS_MESSAGE='touch @message@' GANG_PROBE_RATE="${5:-0.25}" \
       "$GANG" vet --probe "$1" >"$out" 2>&1 &
     job=$!
     ( sleep 120; kill -TERM "$job" 2>/dev/null ) >/dev/null 2>&1 &
@@ -2117,6 +2188,55 @@ check "a harness that never gets busy is reported unprobed, not passed" "not pro
   "$(probe_verdict "$pout" inertmark)"
 check "and its run does not claim to have confirmed anything" "yes" \
   "$(holds "$pout" '0 profile\(s\) driven, 1 not probed')"
+
+# No declaration, no second turn. This is stronger than checking a counter: a
+# probe that silently ran the fixture and discarded its result would still be
+# spending tokens and asking an undeclared harness to do work it never promised.
+check "the mid-turn fixture is not run for an undeclared profile" "no" \
+  "$(holds "$(probe_run livemark)" 'mid-turn acts')"
+
+pout="$(probe_run actsnow)"; prc=$?
+check "B observed alone before A confirms the mid-turn declaration" "yes" \
+  "$(holds "$pout" 'mid-turn acts CONFIRMED.*observed message file B while boundary file A was absent, then observed A')"
+check "and the summary says exactly one declaration was confirmed" "yes" \
+  "$(holds "$pout" 'Mid-turn declarations: 1 confirmed, 0 not probed')"
+check "a confirmed mid-turn ordering does not turn marker success into failure" "0" "$prc"
+
+# Turn 1 creates A and returns before Bash consumes the buffered command that
+# creates B. Both land during one interval between filesystem polls. The only
+# sound verdict is undetermined: seeing both after the fact cannot say which
+# turn consumed the message, even when their metadata happens to have an order.
+pout="$(probe_run actsbetween 15 18 4 1)"; prc=$?
+check "a next turn that starts between polls is not mistaken for mid-turn acting" "yes" \
+  "$(holds "$pout" 'mid-turn acts NOT PROBED.*A and B first appeared together between filesystem polls')"
+check "and that planted boundary race never emits a confirmation" "no" \
+  "$(holds "$pout" 'mid-turn acts CONFIRMED')"
+check "an undetermined ordering cannot refute a healthy marker probe" "0" "$prc"
+
+pout="$(probe_run actsnostart)"
+check "a mid-turn fixture that never starts names that reason" "yes" \
+  "$(holds "$pout" 'mid-turn acts NOT PROBED.*fixture did not start; its start file never appeared')"
+
+pout="$(probe_run actsnoa)"
+check "B without the promised turn boundary is not spent as confirmation" "yes" \
+  "$(holds "$pout" 'mid-turn acts NOT PROBED.*boundary file A never appeared')"
+
+pout="$(probe_run actsneither)"
+check "a started fixture where neither A nor B appears names both missing witnesses" "yes" \
+  "$(holds "$pout" 'mid-turn acts NOT PROBED.*neither boundary file A nor message file B appeared')"
+check "no mid-turn probe outcome emits a refutation verdict" "no" \
+  "$(holds "$pout" 'mid-turn acts REFUTED')"
+
+badacts="$(GANG_PROFILES="$SHIM/probedir" GANG_PROBE_ACTS_WAIT=not-a-number \
+  "$GANG" vet --probe actsnow 2>&1)"; badactsrc=$?
+check "the new filesystem observation bound rejects a non-number" "1" "$badactsrc"
+check "and names the bound before it launches the fixture" "yes" \
+  "$(holds "$badacts" "GANG_PROBE_ACTS_WAIT must be a whole number of seconds, got 'not-a-number'")"
+badacts="$(GANG_PROFILES="$SHIM/probedir" GANG_PROBE_ACTS_DELAY=not-a-number \
+  "$GANG" vet --probe actsnow 2>&1)"; badactsrc=$?
+check "the controlled slow-action duration is numeric-gated too" "1" "$badactsrc"
+check "and its refusal names that setting" "yes" \
+  "$(holds "$badacts" "GANG_PROBE_ACTS_DELAY must be a non-negative number of seconds, got 'not-a-number'")"
 
 # The probe drives real tmux servers, and the one rule it cannot get wrong is
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would

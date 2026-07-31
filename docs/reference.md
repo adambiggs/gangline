@@ -276,7 +276,9 @@ installed.
 - `--probe`: after the version and format checks, launch each installed harness
   on a private `tmux -L` socket, give it a real turn, require its declared busy
   marker to be absent at rest, present while working, and absent after settling,
-  then read its declared context value.
+  then read its declared context value. Where a profile declares
+  `GANG_MIDTURN_ACTS=1`, a second turn also attempts the asymmetric filesystem
+  ordering probe described below.
 - `--probe <profile>`: narrow both the ordinary vet report and probe to one
   installed profile. An unknown name is an error.
 
@@ -293,6 +295,16 @@ dialog, launch failure, or a turn that never starts or settles is reported as
 passed; it says nothing about skipped profiles. Gates, compacting markers, and
 alternate busy-regex branches an ordinary turn did not paint remain outside the
 probe's coverage.
+
+The mid-turn probe does not derive a verdict from pane text. Turn 1 creates a
+start file, performs a slow action, and creates boundary file A as its last
+action; while the start file exists and A does not, ordinary text asks the
+running agent to create B immediately. B observed alone before A, followed by A,
+prints `CONFIRMED`. Every other outcome prints `NOT PROBED` with a
+could-not-determine reason. In particular, A-before-B and A plus B first seen in
+the same filesystem poll cannot refute the declaration: a next turn may have
+begun between observations. Profiles without the declaration never receive this
+second turn.
 
 `doctor` is an alias for `vet`.
 
@@ -314,7 +326,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_COMPACTING_REGEX` | live compaction marker |
 | `GANG_MIDTURN_INPUT=1` | composer safely takes input during a turn |
-| `GANG_MIDTURN_ACTS=1` | harness *acts* on ordinary text inside the running turn, rather than queueing it until the turn ends. Strictly stronger than `GANG_MIDTURN_INPUT` and the only thing that makes a parked agent reachable mid-wait. Declared by `claude-code` alone, and not exercised by `vet --probe` |
+| `GANG_MIDTURN_ACTS=1` | harness *acts* on ordinary text inside the running turn, rather than queueing it until the turn ends. Strictly stronger than `GANG_MIDTURN_INPUT` and the only thing that makes a parked agent reachable mid-wait. Declared by `claude-code` alone; `vet --probe` can confirm it from B-before-A filesystem ordering but cannot refute it |
 | `GANG_QUIET_AT_REST=1` | recent pty writes may be used as a busy signal |
 | `GANG_SESSION_KEY=1` | hitch must mint and deliver a transcript marker |
 | `GANG_VERSION_CMD` | installed-version command |
@@ -372,6 +384,10 @@ These are useful when the corresponding path is in use:
 | `GANG_PROBE_QUIET` | unchanged duration counted as settled | `5` seconds |
 | `GANG_PROBE_RATE` | interval between probe captures | `0.25` seconds |
 | `GANG_PROBE_PROMPT` | prompt used to drive the probe's real turn | built-in comparison prompt |
+| `GANG_PROBE_ACTS_WAIT` | filesystem-ordering window for a declared mid-turn-acts probe | `45` seconds |
+| `GANG_PROBE_ACTS_DELAY` | duration of the slow middle action in that fixture | `15` seconds |
+| `GANG_PROBE_ACTS_PROMPT` | turn-1 fixture template; expands `@start@`, `@boundary@`, `@message@`, and `@delay@` | built-in three-action prompt |
+| `GANG_PROBE_ACTS_MESSAGE` | injected ordinary-text template using the same placeholders | built-in create-B prompt |
 | `GANG_STATUS_ROWS` | bottom pane rows scanned by fast painted-state checks | `20` |
 | `GANG_BRIEF_GATE_WAIT` | post-brief delay before hitch's early gate check | `3` seconds |
 | `GANG_CLEAR_PRESSES` | maximum verified `Ctrl-u` attempts when reclaiming a staged paste | `40` |
