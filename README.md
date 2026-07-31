@@ -15,7 +15,7 @@ and `gang` exits after every command. Attach whenever you like and you are insid
 the real TUI — the agent's own, at full fidelity, with every keystroke still
 yours.
 
-[![An opencode reviewer's pane holding an attributed envelope from the lead, with lead, worker and reviewer listed as tmux windows along the bottom](site/demo-still.jpg)](https://gangline.ai)
+[![A Claude Code lead hiring a Codex worker and an opencode reviewer as tmux windows, sending each an attributed message, and reporting the roster as the work comes back](site/demo.gif)](https://gangline.ai)
 
 <p align="center"><em>One message to a Claude Code lead: it hires a Codex worker, waits for
 the work, then hires an opencode reviewer to check it. Real harnesses, real

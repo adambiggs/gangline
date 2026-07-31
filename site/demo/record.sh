@@ -176,7 +176,7 @@ chmod 600 "$DEMO/.claude.json"
 # socket from $TMUX and ignores TMUX_TMPDIR, so without this the kill-server
 # lands on the invoking user's own server.
 env -u TMUX TMUX_TMPDIR="$DEMO/.tmux" tmux kill-server 2>/dev/null || true
-rm -f "$DEMO/hello/hello.py" "$DEMO/demo.webm" "$DEMO/demo.mp4"
+rm -f "$DEMO/hello/hello.py" "$DEMO/demo.webm" "$DEMO/demo.mp4" "$DEMO/demo.gif"
 
 # Agent state is per-take state. A lead that learned something in an earlier
 # take writes it to project memory, then recites it in the next one as settled
@@ -232,7 +232,22 @@ env -u TMUX -u TMUX_PANE -u XDG_RUNTIME_DIR \
 
 mv "$DEMO/demo.webm" "$REPO/site/demo.webm"
 mv "$DEMO/demo.mp4"  "$REPO/site/demo.mp4"
-ls -l "$REPO/site/demo.webm" "$REPO/site/demo.mp4"
+
+# The README cannot play a video, so it gets a GIF — derived from the MP4 rather
+# than rendered by vhs, so it is the same take frame for frame and a re-record
+# cannot leave the two showing different runs. The palette is built once across
+# the whole file (stats_mode=diff) and applied with a bayer dither, which is what
+# keeps a minute of 720p terminal near the MP4's size instead of many times it.
+PAL=$(mktemp --suffix=.png)
+trap 'rm -f "$PAL"' EXIT
+GIF_VF="fps=10,scale=1280:-1:flags=lanczos"
+ffmpeg -v error -y -i "$REPO/site/demo.mp4" \
+    -vf "$GIF_VF,palettegen=max_colors=64:stats_mode=diff" "$PAL"
+ffmpeg -v error -y -i "$REPO/site/demo.mp4" -i "$PAL" \
+    -lavfi "${GIF_VF}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" \
+    "$REPO/site/demo.gif"
+
+ls -l "$REPO/site/demo.webm" "$REPO/site/demo.mp4" "$REPO/site/demo.gif"
 echo
 echo "before committing: frame-audit the video (ffmpeg -i site/demo.mp4 -vf fps=1 f%03d.png)"
 echo "and check every frame for anything that should not be on screen."
