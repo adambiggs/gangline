@@ -468,9 +468,16 @@ EOF
 sleep 0.5
 check "stdin message prose lands without shell evaluation" "yes" \
   "$(has alpha 'Review `bin/gang`; keep $(printf not-run), $HOME, and *.sh literal.')"
+# The close tag is no longer on the same line as the body's last word, and that is
+# the fix for #42 rather than a regression: this fixture is a heredoc, so its body
+# ends with a newline, and envelope now preserves the shape stdin_body pays a
+# sentinel byte to keep instead of flattening it. Nearly every real body ends that
+# way — a file, a heredoc, anything built with printf '%s\n' — so this is the
+# ordinary case, not an edge one. What is asserted here is the matched pair and
+# its nonce; the byte-exact ordering is asserted on the wire, below.
 check "inside an envelope signed by the sender" "yes" \
   "$([ "$(holds "$(pane_of alpha)" '\[gang:tester#[0-9a-f]+\] MARK_STDIN_LITERAL')" = yes ] \
-      && [ "$(holds "$(pane_of alpha)" 'literal\. \[/gang:tester#[0-9a-f]+\]')" = yes ] \
+      && [ "$(holds "$(pane_of alpha)" ' \[/gang:tester#[0-9a-f]+\]')" = yes ] \
       && echo yes || echo no)"
 
 # The removed path has to fail with its own migration route. This is the one
@@ -803,6 +810,44 @@ send_text alpha tester 'see bin/gang: line 447, and array[gang] as well' >/dev/n
 sleep 0.5
 check "prose that merely mentions gang: is left alone" "yes" \
   "$(has alpha 'see bin/gang: line 447, and array[gang] as well')"
+
+# A body's trailing newlines are part of it, and stdin_body pays a sentinel byte
+# to keep them. That guarantee used to die one function later: envelope neutralised
+# tag-shaped text through `$( )`, and every caller then wrote
+# `inject "$id" "$(envelope ...)"`, so the shape was stripped twice over and the
+# sentinel protected nothing that shipped.
+#
+# Asserted on THE WIRE rather than in the pane, because the pane cannot answer it:
+# capture-pane -J joins wrapped lines and the shell stand-in consumes what it is
+# given, so trailing blank lines are gone from the evidence before any check reads
+# it. This records the exact bytes handed to `tmux load-buffer` and passes them
+# through, which is the last place gang's own text still exists as text.
+mkdir -p "$SHIM/wire"
+cat > "$SHIM/wire/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = load-buffer ]; then
+  cat > "$SHIM/wire.bytes"
+  exec "$(command -v tmux)" "\$@" < "$SHIM/wire.bytes"
+fi
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$SHIM/wire/tmux"
+printf 'MARK_TAIL\n\n\n' | PATH="$SHIM/wire:$PATH" "$GANG" send alpha --from tester --stdin \
+  >/dev/null 2>&1
+sleep 0.5
+# The envelope itself contributes no newline, so every one on the wire is the
+# body's. Counted rather than pattern-matched: three is the number sent.
+check "a body's trailing newlines survive to the wire" "3" \
+  "$(tr -dc '\n' < "$SHIM/wire.bytes" | wc -c | tr -d ' ')"
+# And they are interior to the paste, which is why keeping them is safe: the
+# closing tag is still the last thing on the wire, so nothing ends on a bare
+# newline that a composer would read as submit.
+check "and the wire still ends on the closing tag" "]" "$(tail -c 1 "$SHIM/wire.bytes")"
+printf 'MARK_FLAT' | PATH="$SHIM/wire:$PATH" "$GANG" send alpha --from tester --stdin \
+  >/dev/null 2>&1
+sleep 0.5
+check "a body with none is not given any" "0" \
+  "$(tr -dc '\n' < "$SHIM/wire.bytes" | wc -c | tr -d ' ')"
 
 # --from is a string the caller picks, so wherever gang can see who is calling it
 # uses that instead of the claim. A worker signing as the lead is the whole
