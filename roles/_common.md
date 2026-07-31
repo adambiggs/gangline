@@ -37,8 +37,8 @@ authorization for anything only the operator grants.
 
 ```
 gang roster                          who exists, what they run, how full they are
-gang status <name>                   busy (tight tug) | idle (slack tug) | occupied (...)
-gang wait <name> [timeout_s]         block until they go idle (default 300)
+gang status <name>                   busy | idle | occupied | parked | expired (each qualified)
+gang wait <name> [timeout_s]         wait for idle; also ends on parked/expired (default 300)
 gang capture <name> [lines]          look at someone's screen
 gang send <name> --from <you> --stdin  task or answer a teammate, body on stdin
 ```
@@ -60,12 +60,24 @@ gang send lead --from src --stdin < /tmp/msg
 ```
 
 State words carry a qualifier in brackets; when you script against them, match
-the `busy`/`idle`/`occupied` prefix, not the whole string. `occupied` means a
-harness-owned UI has that agent's input box — a permission prompt, a picker,
-anything that takes the screen — so sends to it are refused and no keystroke of
-yours can reach it. That the box is taken is all gang establishes; who can free
-it is a separate question, and `(authority unknown)` is gang saying it does not
-know. Tell the operator either way — nothing you can send will unstick it.
+the prefix, not the whole string. There are five and two of them are not a
+yes-or-no about work:
+
+- `busy` / `idle` — working, or not.
+- `occupied` — a harness-owned UI has that agent's input box: a permission
+  prompt, a picker, anything that takes the screen. Sends are refused and no
+  keystroke of yours can reach it. That the box is taken is all gang
+  establishes; who can free it is a separate question, and `(authority unknown)`
+  is gang saying it does not know.
+- `parked` — that agent is itself sitting in a `gang wait`. It is available but
+  it is not idle, and treating the two as the same word is how you promise your
+  operator something the harness never agreed to.
+- `expired` — a busy verdict was being carried by pty activity alone and that
+  evidence ran out. Neither busy nor idle: gang could not determine which and
+  refuses to pick one for you.
+
+Tell the operator about `occupied` either way — nothing you can send will
+unstick it.
 
 A line that says `undelivered paste` in red means a message was pasted into that
 agent's box and never sent, and gang could not prove it was safe to take back
@@ -87,6 +99,11 @@ build a waiting loop out of `sleep`: it wakes on a schedule that has nothing to 
 with their turn, and some harnesses refuse to run a foreground `sleep` at all — so
 the loop you reach for first may not run, and the error it returns is the only
 thing your operator sees for it. One call, one timeout, ends the moment they do.
+
+Read what it printed before you act on it. `gang wait` ends on `parked` and on
+`expired` as well as on idle, so `gang wait x && gang send x …` can send into an
+agent that never finished anything. The exit status alone does not tell you
+which of the three you got.
 
 Drop an agent whose work is finished — `gang drop <name>` — the same way you
 would close any other tool you are done with. What needs a word first is ending

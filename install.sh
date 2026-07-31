@@ -77,6 +77,13 @@ case ":$PATH:" in
      echo "      export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 echo
+# `gang up` attaches, so the next thing this reader sees is an agent's TUI with no
+# prompt of their own. Naming the detach here costs one line and saves them
+# discovering it in the README they have not opened yet.
 echo "Start a team:  cd ~/your/repo && gang up"
+echo "  that attaches you to the lead; detach with Ctrl-b then d, return with 'gang attach'"
+# Point at the command rather than a README heading: vet prints the exact edit
+# with this install's own path in it, and a heading is a pointer that rots
+# silently the next time the README is reorganised.
 echo "Claude Code also wants the context beacon wired into settings.json;"
-echo "see $HOME_DIR/README.md (Self-compaction)."
+echo "run 'gang vet' — it prints the exact edit for this install."

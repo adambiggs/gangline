@@ -192,7 +192,8 @@ gang — drive a team of CLI agents as tmux windows
   gang context <name>                         context-window usage (profile-declared readout)
   gang context-report [--clear]               analyse retained warning/drop events;
                                               --clear deletes the active log and rotation
-  gang wait  <name> [timeout_s]               block until idle (default 300)
+  gang wait  <name> [timeout_s]               wait for idle (default 300); parked and
+                                              expired also end it, so read what it printed
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
   gang roster                                 all agents with profile, state, context
   gang patrol                                 sweep the roster; nudge any agent past a
@@ -206,7 +207,8 @@ gang — drive a team of CLI agents as tmux windows
                                               LAUNCHES each installed harness on a private
                                               tmux socket and watches its declared busy
                                               marker and context readout across a real turn
-                                              — costs tokens and about a minute each;
+                                              — it spends tokens and takes as long as
+                                              that turn takes;
                                               alias: doctor
   gang attach                                 attach to the team session
   gang drop  <name>                           release the agent — its window and
