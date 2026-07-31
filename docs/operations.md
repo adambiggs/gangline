@@ -39,9 +39,9 @@ that external directory. The opencode profile merges allow rules for the active
 `GANG_ROLES` and shipped `roles/` directories into `OPENCODE_CONFIG_CONTENT` for
 the launched process. It does not replace your other opencode configuration.
 
-A role hitch checks for a gate shortly after delivering the brief and exits
-nonzero if one appears. This is a race that catches an early gate, not proof that
-no later prompt can occur.
+A role hitch checks for an occupied input box shortly after delivering the brief
+and exits nonzero if one appears. This is a race that catches an early prompt, not
+proof that no later one can occur.
 
 ## Question modals
 
@@ -441,8 +441,8 @@ Interpret results narrowly:
 
 - `MARKER DEAD`, `MARKER STUCK`, or a missing context readout is drift and exits
   nonzero;
-- not installed, no marker declaration, a gate, or no observed turn is **not
-  probed**, not a pass;
+- not installed, no marker declaration, an occupied input box, or no observed turn
+  is **not probed**, not a pass;
 - a zero exit covers only markers actually fired;
 - occupied and compacting states are not exercised;
 - one ordinary turn cannot exercise every alternate branch in a busy regex.

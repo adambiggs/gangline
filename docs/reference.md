@@ -97,7 +97,7 @@ A busy target is handled by profile declaration:
   says `accepted mid-turn` because the harness decides when to consume it;
 - a profile without that declaration is refused unless `--wait` was given.
 
-Gated targets are always refused. Delivery also serialises Gangline writers for
+Occupied targets are always refused. Delivery also serialises Gangline writers for
 the pane and refuses a composer that is changing while a person types.
 
 ### `gang compact <name> [--from sender] [--resume-stdin]`
@@ -176,8 +176,9 @@ end the call without idle ever holding:
 | `expired (pty activity bound reached)` | `2` | the activity-only arm spent `GANG_ACTIVITY_LIMIT`; waiting longer would turn a bounded policy into a permanent fabricated busy |
 | `parked (…)` | `0` | the target is itself inside `gang wait`, on a profile that acts on mid-turn text |
 
-A gate fails immediately, because only the operator can clear it, and so does the
-timeout — neither is a state this command reports.
+An occupied target fails immediately, because nothing this command can wait for
+will free an input box a UI is holding, and so does the timeout — neither is a
+state this command reports.
 
 When an agent calls `wait` from its own pane, Gangline records that fact for the
 call's lifetime, so teammates reading its state see `parked` rather than `busy`.
@@ -209,7 +210,7 @@ churn delay per window.
 Performs one roster sweep. For each adopted agent it:
 
 1. reports a failed resume or recorded undelivered paste;
-2. reports and stops on a gate;
+2. reports and stops on an occupied input box;
 3. reads and parses context usage;
 4. evaluates the band ladder against the window's last warned band;
 5. re-arms warning state when usage falls;
