@@ -71,10 +71,17 @@ Enter
 Sleep 300ms
 # The names are pinned, not left to the lead: the gates below select windows by
 # name, and a lead free to call its worker whatever it likes will.
+#
+# The team is pinned up for the same reason. roles/_common.md tells every agent
+# to drop a teammate whose work is finished, so a lead that follows its brief
+# ends this run holding an empty roster — correct behaviour, and it takes the
+# closing frame with it. Asking for the team to stay is the operator's call to
+# make, so the operator makes it here rather than the tape asserting a roster
+# the lead was entitled to have cleared.
 Type@20ms `gang send lead --from adam --stdin <<'EOF'`
 Sleep 300ms
 Enter
-Type@20ms `hitch a codex agent named worker (role worker, dir ~/hello): build hello.py that prints Hello, world! and run it to prove it. once worker reports done, hitch an opencode agent named reviewer (role reviewer, dir ~/hello) to check the work and report to you. when the review is clean, summarize in your pane and go idle - i'm watching from outside tmux.`
+Type@20ms `hitch a codex agent named worker (role worker, dir ~/hello): build hello.py that prints Hello, world! and run it to prove it. once worker reports done, hitch an opencode agent named reviewer (role reviewer, dir ~/hello) to check the work and report to you. when the review is clean, summarize in your pane and go idle - i'm watching from outside tmux. leave worker and reviewer hitched when you are done, don't drop them - i want to see the whole roster at the end.`
 Enter
 Type `EOF`
 Sleep 300ms
