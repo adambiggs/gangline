@@ -7,8 +7,8 @@ For syntax, see the [command reference](reference.md).
 
 Gangline launches each harness with the profile's `GANG_LAUNCH`. It does not add
 a general permission bypass and never answers a modal. A prompt removes or takes
-over the composer, so Gangline reports the agent as `gated (hook set)` and refuses
-all delivery until the operator clears it with `gang attach`.
+over the composer, so Gangline reports the agent as `occupied (authority unknown)`
+and refuses all delivery until the operator clears it with `gang attach`.
 
 A refusal is invisible to everyone but the sender, so an occupied agent also
 carries what its occupancy is costing. `gang status` on it reports `INBOUND
@@ -82,11 +82,11 @@ agent, so denying the tool there strips the picker from the sessions somebody is
 sitting in front of. Which way that should go is the operator's call, and a vet
 row that stated one would be advice that is wrong half the time.
 
-This narrows how often `gated` fires; it does not retire the state. Tool
+This narrows how often occupancy fires; it does not retire the state. Tool
 permissions do not reach harness chrome — a model picker, a plan-mode approval, or
 whatever the next release paints are not tool calls and cannot be denied. So
-`gated` stays fail-closed and operator-only, and a gated agent is still cleared by
-`gang attach` and nothing else.
+`occupied` stays fail-closed, and Gangline ships no path that clears it: `gang
+attach` and the keyboard are the whole remedy.
 
 ## Codex must be able to reach tmux
 
@@ -313,7 +313,7 @@ State therefore combines several independent signals:
 - tmux's window-activity timestamp, only for profiles verified quiet at rest;
 - pane content changing across two captures;
 - a profile's modal regex, confirmed by the composer not being live;
-- the conservative fallback that a missing expected composer is gated when no
+- the conservative fallback that a missing expected composer is occupancy when no
   painted busy marker explains it.
 
 Recent pty activity covers full-screen redraws that move the cursor without
@@ -345,7 +345,7 @@ one a real turn paints. So a contaminated pane makes an idle agent read busy —
 queue or are refused, and `gang wait` runs to its timeout — and it can never make a
 working agent read idle. Nothing is delivered wrongly; something is delayed.
 
-There is no guard because the two available shapes both fail worse. `gated` has a
+There is no guard because the two available shapes both fail worse. Occupancy has a
 structural companion — a dialog watched live owns the screen, so a composer still
 being there proves the words are talk *about* a prompt — and busy has no equivalent:
 the composer is painted through a turn on some harnesses and dropped on others, so
@@ -444,7 +444,7 @@ Interpret results narrowly:
 - not installed, no marker declaration, a gate, or no observed turn is **not
   probed**, not a pass;
 - a zero exit covers only markers actually fired;
-- gated and compacting states are not exercised;
+- occupied and compacting states are not exercised;
 - one ordinary turn cannot exercise every alternate branch in a busy regex.
 
 After live re-verification, shadow the profile through `GANG_PROFILES` if you

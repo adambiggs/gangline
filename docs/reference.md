@@ -37,7 +37,7 @@ and part of context-hook output.
 
 Hitch waits up to `GANG_BOOT_TIMEOUT` for a stable input box. A role brief that
 cannot be delivered makes hitch fail. With no brief, a running window may still
-be reported as hitched with a warning when it is gated or never settles.
+be reported as hitched with a warning when it is occupied or never settles.
 Profiles that require a session marker receive it even without a role.
 
 ### `gang adopt <name> -p <profile>`
@@ -130,7 +130,7 @@ Prints exactly one primary state line:
 
 - `busy (tight tug)`
 - `idle (slack tug)`
-- `gated (hook set)`
+- `occupied (authority unknown)`
 - `parked (waiting on <agent>)`, or `parked (gang wait in progress)` when the
   target of that wait cannot be read
 - `expired (pty activity bound reached)`
@@ -140,8 +140,14 @@ an undelivered paste recorded in the input box. Scripts should match the first
 line's state prefix rather than requiring single-line output.
 
 Busy can be established by a declared busy marker, recent pty activity on a
-profile known to be quiet at rest, or pane movement between captures. Gated takes
-precedence over busy.
+profile known to be quiet at rest, or pane movement between captures. Occupancy
+takes precedence over busy.
+
+`occupied` says a harness-owned UI has the input box and nothing about who may
+clear it. No shipped profile classifies the UI it found, so the qualifier is
+always `(authority unknown)` today; a profile that earns a narrower one adds it
+without changing the primary word
+([ADR-0004](adr/0004-occupancy-is-not-authority.md)).
 
 `parked` is an agent blocked inside Gangline's own `wait`. It is reported for every
 waiter, because *available* and *idle* are different claims and only the first is

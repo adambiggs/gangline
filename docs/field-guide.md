@@ -18,7 +18,7 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 | **swing** | runs just behind lead, swings the team true through the turns | the reviewer role: catches the drift before it becomes the direction |
 | **team dog** | the engine — the pulling power in the middle of the line | the worker role: does the work, reports back |
 | **tight tug / slack tug** | a pulling dog keeps its tugline taut; a coasting one lets it sag | busy / idle |
-| **hook set** | the snow hook dug in; the team stands anchored until the musher pulls it | gated — a modal owns the input box; Gangline sends are refused rather than pasted into a dialog where a keystroke would answer it |
+| **hook set** | the snow hook dug in and the team standing anchored — whether the musher set it or it caught on its own | `occupied` — a harness-owned UI has the input box, so Gangline refuses sends rather than paste into a dialog where a keystroke would answer it. Gangline establishes that the box is taken, not who can free it, which is why the state qualifies itself `(authority unknown)` |
 | **line out** | the leader holds the gangline taut while the team hooks up | a harness whose input box is up and taking keystrokes — ready to be briefed |
 | **checkpoint** | where teams rest, resupply, and leave dogs with handlers | the clean seam an arc ends on — tests green, a commit made, a question answered; where compaction and releases happen |
 | **dropped** | left at a checkpoint with the handlers — deliberate and routine | a released window (`gang drop`); finishing an arc and being released is health, not failure |

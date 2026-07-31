@@ -252,7 +252,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
         clean seam, using a detached resume handoff so work continues unattended.</dd>
 
     <dt>A new harness costs a profile, not a core integration.</dt>
-    <dd>The profile owns launch and model syntax, observable busy and gated
+    <dd>The profile owns launch and model syntax, observable busy and occupied
         states, compaction, mid-turn input, and optional composer and context
         readers. Profiles observe the stock TUI: a theme or UI extension that
         repaints it takes a shadow profile of your own
@@ -338,16 +338,20 @@ compaction settles.</code></pre>
   <pre><code><span class="p">$</span> gang send reviewer --from lead --stdin &lt;&lt;'MESSAGE'
 ship it
 MESSAGE
-gang: refusing to deliver 'ship it': reviewer is <span class="gate">gated (hook set)</span> — a
-modal owns its input box, so the paste would land in the dialog instead (gang attach)</code></pre>
+gang: 'reviewer' is <span class="gate">occupied (authority unknown)</span> — a UI owns its
+input box and gang cannot establish who may clear it; a send would act on that
+UI instead of landing (gang attach)</code></pre>
   <ul>
-    <li><strong>Gangline sends no keystrokes to gated agents.</strong> A harness
-        with a modal owning its input box &mdash; a permission prompt, a picker,
-        anything that takes the screen &mdash; is waiting on the operator, and a
-        send would answer the dialog, so every delivery path refuses and patrol
-        names the gate loudly as what the team is waiting on. Where a profile
-        declares a composer reader, a missing safe composer with no painted busy
-        state reads gated, never idle.</li>
+    <li><strong>Gangline sends no keystrokes to occupied agents.</strong> A
+        harness whose own UI has taken its input box &mdash; a permission prompt, a
+        picker, anything that takes the screen &mdash; cannot receive a message, and
+        a send would act on that UI instead, so every delivery path refuses and
+        patrol names the occupancy loudly as what the team is waiting on. What
+        gangline establishes is that the box is taken, never who may free it, so
+        the state qualifies itself
+        <span class="gate">(authority unknown)</span> rather than asserting a human
+        is required. Where a profile declares a composer reader, a missing safe
+        composer with no painted busy state reads occupied, never idle.</li>
     <li><strong>&ldquo;I cannot tell&rdquo; is a state, not a default.</strong> When pty
         activity alone has been carrying a busy verdict, it may do so for
         <code>GANG_ACTIVITY_LIMIT</code> and no longer; past that the agent reads
@@ -418,7 +422,7 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
   </p>
   <ul>
     <li><strong>A profile is sourced shell</strong> declaring what gang cannot
-        know generically: launch and model syntax, busy and gated states,
+        know generically: launch and model syntax, busy and occupied states,
         compaction, mid-turn input, and optional functions that read context and
         the input box. Shipped markers nobody has watched live stay unset, and
         gang takes the slower, safer branch rather than guessing.</li>
@@ -447,7 +451,8 @@ modal owns its input box, so the paste would land in the dialog instead (gang at
     <tr><td><span class="busy">tight tug</span> / <span class="ok">slack tug</span></td>
         <td>busy / idle &mdash; a pulling dog keeps its tugline taut</td></tr>
     <tr><td><span class="gate">hook set</span></td>
-        <td>gated &mdash; the snow hook is dug in, and only the musher pulls it</td></tr>
+        <td>occupied &mdash; the snow hook is dug in and the team stands anchored,
+            whether the musher set it or it caught on its own</td></tr>
     <tr><td>checkpoint</td>
         <td>the clean seam an arc ends on &mdash; tests green, a commit made &mdash;
             where compaction and releases happen</td></tr>

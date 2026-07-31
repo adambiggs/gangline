@@ -129,7 +129,7 @@ may put a harness into a mode that skips approval prompts or disables its sandbo
 `sandbox_mode = "danger-full-access"`, `--yolo`, or whatever the next harness calls
 it. A profile describes how to *drive* a harness, not how much authority to hand it.
 
-The reason it is tempting is exactly why it is banned: an agent gated behind a
+The reason it is tempting is exactly why it is banned: an agent stopped behind a
 permission prompt is refused by `gang send` and no keystroke from a teammate can
 clear it, so "just turn the prompts off" reads like a fix for a coordination
 problem. It is not. It is a decision only the person at the keyboard can make, on
@@ -137,7 +137,7 @@ their own machine, in their own config — and shipping it as a default means ev
 future installer inherits a choice they never made and probably never read.
 
 Put it in `~/.codex/config.toml` (or the harness's equivalent), never in
-`profiles/`. If a gated agent is blocking a team, that is a thing to tell the
+`profiles/`. If an occupied agent is blocking a team, that is a thing to tell the
 operator, not a thing to engineer around.
 
 Every shell and Python file carries an `SPDX-License-Identifier` line; new ones

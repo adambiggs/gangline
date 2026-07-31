@@ -92,8 +92,8 @@ suite ever running on them.
 ### Before the first team
 
 Gangline launches a harness with your existing harness configuration. It does
-not approve permission prompts for you; a modal makes the agent `gated` until
-you answer it. Configure unattended agents with the permission posture you want
+not approve permission prompts for you; a modal makes the agent `occupied`, and
+Gangline refuses sends into it until the modal is cleared. Configure unattended agents with the permission posture you want
 before hitching them. See [Operating a team](docs/operations.md#permission-prompts)
 for the relevant settings and the Codex sandbox caveat.
 
@@ -226,8 +226,11 @@ composer still contains exactly that paste. Otherwise `status`, `roster`, and
 - `busy (tight tug)` when a declared busy marker is painted, a profile verified
   quiet at rest wrote to the pty recently, or the pane changes between samples;
 - `idle (slack tug)` when none of those working signals applies;
-- `gated (hook set)` when a modal owns the input area or a profile with a composer
-  reader cannot otherwise identify a safe input box;
+- `occupied (authority unknown)` when a harness-owned UI has taken the input area,
+  or a profile with a composer reader cannot otherwise identify a safe input box.
+  Occupancy is the whole of what Gangline establishes here; who may clear the UI,
+  and whether it clears itself, is a separate question no shipped profile answers
+  yet ([ADR-0004](docs/adr/0004-occupancy-is-not-authority.md));
 - `parked (waiting on <agent>)` when the agent is blocked inside its own `gang wait`;
 - `expired (pty activity bound reached)` when pty activity alone had been carrying
   the busy verdict and has spent its bound.
@@ -274,7 +277,7 @@ rather than rot ([ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.
 Setting `GANG_CONTEXT_BANDS` replaces the ladder outright, and a percentage of the
 window works there as an escape hatch for an unusual one
 ([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips a
-painted-busy, churning, gated, gang-compacting, or non-empty input area without
+painted-busy, churning, occupied, gang-compacting, or non-empty input area without
 advancing the band, so a later sweep retries.
 
 Run patrol periodically if you want ambient warnings:
@@ -336,7 +339,7 @@ option, environment variable, output detail, and alias.
 
 The shipped harness profiles are `claude-code`, `codex`, `opencode`, and `pi`.
 A profile owns the harness-specific launch command, model flag, observable busy
-and gated states, compaction command, mid-turn input declaration, and optional
+and occupied states, compaction command, mid-turn input declaration, and optional
 context and composer readers. `GANG_PROFILES=/path/to/profiles` shadows shipped
 files by name.
 
@@ -352,7 +355,7 @@ change. `gang vet` compares installed harness versions with each profile's pins
 and runs declared file-format gates. `gang vet --probe [profile]` additionally
 launches installed harnesses on a private tmux socket, drives a real turn, and
 checks the declared busy marker and context readout. It spends tokens and does
-not exercise gated or compacting states. See
+not exercise occupied or compacting states. See
 [Operating a team](docs/operations.md#diagnosing-profile-rot).
 
 ## Security boundary

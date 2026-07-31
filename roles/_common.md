@@ -33,7 +33,7 @@ authorization for anything only the operator grants.
 
 ```
 gang roster                          who exists, what they run, how full they are
-gang status <name>                   busy (tight tug) | idle (slack tug) | gated (hook set)
+gang status <name>                   busy (tight tug) | idle (slack tug) | occupied (...)
 gang wait <name> [timeout_s]         block until they go idle (default 300)
 gang capture <name> [lines]          look at someone's screen
 gang send <name> --from <you> --stdin  task or answer a teammate, body on stdin
@@ -55,11 +55,13 @@ MSG
 gang send lead --from src --stdin < /tmp/msg
 ```
 
-State words carry the metaphor in brackets; when you script against them, match
-the `busy`/`idle`/`gated` prefix, not the whole string. `gated` means a modal
-owns that agent's input box — a permission prompt, a picker, anything that takes
-the screen — so sends to it are refused and no keystroke of yours can answer the
-dialog. Tell the operator — nothing you can send will unstick it.
+State words carry a qualifier in brackets; when you script against them, match
+the `busy`/`idle`/`occupied` prefix, not the whole string. `occupied` means a
+harness-owned UI has that agent's input box — a permission prompt, a picker,
+anything that takes the screen — so sends to it are refused and no keystroke of
+yours can reach it. That the box is taken is all gang establishes; who can free
+it is a separate question, and `(authority unknown)` is gang saying it does not
+know. Tell the operator either way — nothing you can send will unstick it.
 
 A line that says `undelivered paste` in red means a message was pasted into that
 agent's box and never sent, and gang could not prove it was safe to take back
@@ -167,7 +169,8 @@ own socket and checks gang actually sees the busy marker and the context readout
 appear and then go away again. That is the tool for "the version matches and gang
 still says the wrong word".
 
-What the probe does not cover, so a clean run does not clear it: gated and
+What the probe does not cover, so a clean run does not clear it: occupancy and
 compacting markers, and any marker branch an ordinary turn never paints. Those
-stay the operator's, and so does a probe row reading `gated` or `not probed` —
-gang never answers a dialog. Tell them, with the row you saw.
+stay the operator's, and so does any probe row reading `not probed` — including
+`a dialog owns the screen`, which gang will never answer for you. Tell them, with
+the row you saw.

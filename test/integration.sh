@@ -721,7 +721,7 @@ check "and the refused contract names both profile properties" "yes" \
 # That check is also this repo's contamination bug standing in the open, so name
 # it: nothing ran a turn. A shell echoed the marker and gang read the word rather
 # than the state. Issue #5, closed as accepted rather than guarded — the argument
-# is at busy_painted() in bin/gang, and its short form is that gated() is
+# is at busy_painted() in bin/gang, and its short form is that occupied() is
 # protected by a structural fact (a modal owns the screen, so a live composer
 # proves the words are only talk) and busy has no equivalent available to it.
 #
@@ -891,14 +891,18 @@ paint busybee 'COMPACTING...'                          # ...and the compaction s
 sleep 5
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
 
-# --- gates: a modal owns the input box ------------------------------------------
+# --- occupancy: a UI owns the input box -----------------------------------------
 
-# A harness stopped at a modal is neither working nor reachable: it is waiting on
-# a human, and keystrokes sent to it land IN the dialog, where they answer it.
-# Every gate watched live also drops the busy hint and the input box, so before
-# the gated marker such an agent read idle and the team stalled with nothing on
-# any surface saying why. Gated is checked before busy because a gate paints
+# A harness whose own UI has displaced the composer is neither working nor
+# reachable: keystrokes sent to it land IN that UI, where they act on it. Every
+# occupied pane watched live also drops the busy hint and the input box, so with
+# no declared marker such an agent read idle and the team stalled with nothing on
+# any surface saying why. Occupancy is checked before busy because a UI paints
 # mid-turn — the busy marker can still be on screen.
+#
+# What gang establishes here is that the box is taken, and nothing about who may
+# untake it (ADR-0004). No shipped profile classifies the UI it found, so every
+# case below is the authority-unknown one.
 
 # The wording on its own is not a gate, and treating it as one is a denial of the
 # whole control plane out of ordinary prose: an agent reviewing this repo, or
@@ -920,14 +924,19 @@ gate_up()   { tmux send-keys -t "$(target_of "$1")" \
 gate_down() { tmux send-keys -t "$(target_of "$1")" "PS1='❯ '; clear" Enter; sleep 0.6; }
 
 gate_up busybee
-check "a permission prompt that owns the screen reads as gated" \
-  "gated (hook set)" "$("$GANG" status busybee | head -1)"
-check "roster shows the gate" "gated" \
+check "a permission prompt that owns the screen reads as occupied" \
+  "occupied (authority unknown)" "$("$GANG" status busybee | head -1)"
+check "roster shows the occupancy" "occupied" \
   "$("$GANG" roster | awk '$1=="busybee"{print $3}')"
+# The qualifier is asserted as well as the primary word: reporting a UI gang
+# cannot classify as operator-only would spend could-not-determine as a positive
+# authority claim, which is the whole thing ADR-0004 removes.
+check "and qualifies it as unestablished rather than operator-only" "yes" \
+  "$(contains "$("$GANG" roster)" "occupied (authority unknown)")"
 out="$(FAKE_QUEUES=1 send_text busybee tester "MARK_GATED" 2>&1)"; rc=$?
-check "a send to a gated agent is refused, even where mid-turn input queues" "1" "$rc"
-check "and says the prompt owns the screen" "yes" \
-  "$(contains "$out" "hook set")"
+check "a send to an occupied agent is refused, even where mid-turn input queues" "1" "$rc"
+check "and says a UI owns the screen" "yes" \
+  "$(contains "$out" "occupied (authority unknown)")"
 check "and nothing was typed into the dialog" "no" "$(has busybee MARK_GATED)"
 # The refusal is right and the sender copes; what nobody could see is the cost of
 # leaving the modal up. The occupied agent is the one surface that never mentioned
@@ -940,18 +949,29 @@ check "and does not claim to be holding the message" "no" \
 FAKE_QUEUES=1 send_text busybee otherbot "MARK_GATED_2" >/dev/null 2>&1 || true
 check "repeats coalesce into a count and the most recent sender" "yes" \
   "$(contains "$("$GANG" status busybee)" "INBOUND REFUSED while occupied — 2 attempt(s), last from otherbot")"
-check "and the state line stays first for scripts matching on it" "gated (hook set)" \
+check "and the state line stays first for scripts matching on it" "occupied (authority unknown)" \
   "$("$GANG" status busybee | head -1)"
+# Three words in the column a lead scans across a whole team. The sentence is
+# what `gang status` is for; what the roster owes is that there is one to read.
+check "and the roster carries the count beside the state" "yes" \
+  "$(contains "$("$GANG" roster)" "inbound refused ×2")"
 out="$("$GANG" wait busybee 30 2>&1)"; rc=$?
-check "wait on a gated agent fails loud, not slow" "1" "$rc"
-check "naming the gate rather than timing out" "yes" \
-  "$(contains "$out" "hook set")"
+check "wait on an occupied agent fails loud, not slow" "1" "$rc"
+check "naming the occupancy rather than timing out" "yes" \
+  "$(contains "$out" "occupied (authority unknown)")"
 out="$("$GANG" compact busybee --from tester 2>&1)"
-check "compact on a gated agent names the gate, not the turn" "yes" \
-  "$(contains "$out" "hook set")"
-check "patrol reports it for the operator instead of skipping it" \
-  "GATED (hook set) — a modal owns the input box and is waiting on the operator (gang attach)" \
-  "$("$GANG" patrol | verdict busybee)"
+check "compact on an occupied agent names the occupancy, not the turn" "yes" \
+  "$(contains "$out" "occupied (authority unknown)")"
+patrol_out="$("$GANG" patrol | verdict busybee)"
+check "patrol reports it for the operator instead of skipping it" "yes" \
+  "$(contains "$patrol_out" \
+     "OCCUPIED (authority unknown) — a UI owns the input box and gang cannot establish who may clear it (gang attach)")"
+# ADR-0004 was written from an occupied routing point with peers stacking up
+# behind it, and patrol RETURNS on occupancy — so the refused traffic has to be
+# reported above that return or the sweep reports the half the operator can
+# already see and withholds the half telling them it is urgent.
+check "and the traffic that occupancy is refusing, above the early return" "yes" \
+  "$(contains "$patrol_out" "INBOUND REFUSED while occupied — 2 attempt(s), last from otherbot")"
 gate_down busybee
 check "an answered prompt reads idle again" "idle (slack tug)" "$("$GANG" status busybee | head -1)"
 # Clearing the modal is not the deletion path, and asserting it here would pass for
@@ -966,21 +986,23 @@ check "and that delivery actually landed, so the clear was not a no-op" "yes" \
   "$(has busybee MARK_UNBLOCKED)"
 
 # Enumerating modal chrome always misses one. Claude Code's /model picker is a
-# dialog no gated regex names: it paints no busy hint either, so the pane read
+# dialog no declared regex names: it paints no busy hint either, so the pane read
 # IDLE — the dangerous polarity, because idle means "go ahead and send" and every
 # send into a picker fails while `gang wait` cannot help (it keys on BECOMING
 # idle, and the pane already reads idle). No busy hint, no marker, and no input
 # box is not evidence of an agent waiting for work; it is an unknown, and an
-# unknown resolves to gated. The stand-in is a picker with nothing quotable in it.
+# unknown resolves to occupied. The stand-in is a picker with nothing quotable in
+# it — and its authority is unknown in the strictest sense, since gang has not
+# even identified what kind of UI it is.
 picker_up() { tmux send-keys -t "$(target_of "$1")" \
                 "clear; PS1=''; printf 'Select model\\n  1. opus\\n  2. sonnet\\n'" Enter; sleep 0.6; }
 picker_up busybee
-check "a modal no regex names still reads as gated" \
-  "gated (hook set)" "$("$GANG" status busybee | head -1)"
+check "a modal no regex names still reads as occupied" \
+  "occupied (authority unknown)" "$("$GANG" status busybee | head -1)"
 out="$(FAKE_QUEUES=1 send_text busybee tester "MARK_PICKER" 2>&1)"; rc=$?
 check "and a send into it is refused" "1" "$rc"
-check "naming the modal rather than timing out" "yes" \
-  "$(contains "$out" "modal owns its input box")"
+check "naming the occupancy rather than timing out" "yes" \
+  "$(contains "$out" "a UI owns its input box")"
 check "with nothing typed into the picker" "no" "$(has busybee MARK_PICKER)"
 gate_down busybee
 check "and the pane reads idle again once the picker is gone" "idle (slack tug)" \
@@ -993,11 +1015,12 @@ check "and the pane reads idle again once the picker is gone" "idle (slack tug)"
 # declared marker that provably cannot fire, which no liveness audit catches
 # because the marker is not dead.
 #
-# The declared branch and the unknown-is-gated fallback both answer "gated", so a
-# gate on its own cannot tell them apart and a test built on one would pass
-# either way. This one separates them: wording high on the pane, no composer, AND
-# a busy marker painted. Reaching the wording means gated; missing it means the
-# fallback finds a turn in flight that explains the absent box and says busy.
+# The declared branch and the unknown-is-occupied fallback both answer
+# "occupied", so occupancy on its own cannot tell them apart and a test built on
+# one would pass either way. This one separates them: wording high on the pane,
+# no composer, AND a busy marker painted. Reaching the wording means occupied;
+# missing it means the fallback finds a turn in flight that explains the absent
+# box and says busy.
 gate_high() { tmux send-keys -t "$(target_of "$1")" \
                 "clear; PS1=''; printf 'Do you want to proceed?\\nWORKING...\\n'; seq 1 6" Enter; sleep 0.8; }
 gate_high busybee
@@ -1005,7 +1028,7 @@ check "the wording sits outside the rows a status scan would read" "no" \
   "$(contains "$(tmux capture-pane -pJ -t "$(target_of busybee)" \
        | awk 'NF{last=NR}{l[NR]=$0}END{for(i=1;i<=last;i++) print l[i]}' | tail -n 2)" \
      "Do you want to proceed?")"
-check "a gate painted above the status window is still reached" "gated (hook set)" \
+check "a marker painted above the status window is still reached" "occupied (authority unknown)" \
   "$(GANG_STATUS_ROWS=2 "$GANG" status busybee | head -1)"
 
 # Widening the scan widens the exposure to prose, and the composer requirement is
@@ -1020,7 +1043,7 @@ gate_down busybee
 
 # The fallback is bounded by what gang was taught to look for: a profile that
 # declares no input box has no missing box to notice, so it keeps the plain
-# busy/idle reading rather than being declared gated on the strength of a hook
+# busy/idle reading rather than being declared occupied on the strength of a hook
 # nobody wrote.
 cat > "$SHIM/custom-profiles/boxless.sh" <<'SH'
 GANG_LAUNCH="PS1='❯ ' bash --norc"
@@ -1029,7 +1052,7 @@ GANG_VERIFIED_VERSIONS="any"
 SH
 "$GANG" hitch boxless -p boxless -d /tmp >/dev/null 2>&1
 tmux send-keys -t "$(target_of boxless)" "clear; PS1=''" Enter; sleep 0.6
-check "a profile with no input hook is not gated by the fallback" "idle (slack tug)" \
+check "a profile with no input hook is not occupied by the fallback" "idle (slack tug)" \
   "$("$GANG" status boxless | head -1)"
 
 # --- a turn with no marker on it ------------------------------------------------
@@ -1919,7 +1942,7 @@ check "and the session under test is untouched by all of it" "yes" \
 
 # A probe sits in three poll loops that print nothing, so it says which one it is
 # in. That output lands in the pane of whoever ran it, and busy_painted() and
-# gated() read the WHOLE pane — so the phase notes have to be unreadable as a
+# occupied() read the WHOLE pane — so the phase notes have to be unreadable as a
 # harness busy marker, and that is held against the regexes the shipped profiles
 # actually declare rather than judged by eye. A future prettier version that
 # reaches for a spinner glyph and an ellipsis fails here.
@@ -2108,7 +2131,8 @@ check "and says the brief was delivered but cannot be acted on" "yes" \
 check "and the agent is still registered, because it is real and waiting" "yes" \
   "$(holds "$("$GANG" roster)" '^gatee ')"
 
-# Gated-after-briefing is evidence the brief cannot be acted on; NOT gated is no
+# An occupied box after briefing is evidence the brief cannot be acted on; an
+# unoccupied one is no
 # evidence that it can, because the agent may not have reached the tool call yet.
 # So the success line claims delivery and the quiet window, and nothing past them.
 rm -f "$SHIM/gate-sentinel"
@@ -3277,7 +3301,7 @@ cc_paint() { # $1 = what goes after the prompt char, escapes interpreted
   # leaves trailing spaces in the capture, and the frame test is "rule glyphs and
   # NOTHING ELSE" — so a short one is not a narrower version of a composer, it is
   # a frame Claude Code never draws and the box is not found at all. Cost an
-  # hour: all three checks below came back GATED, which is what gang correctly
+  # hour: all three checks below came back OCCUPIED, which is what gang correctly
   # says about a pane with no box in it.
   #
   # The width comes from tmux, not from `tput cols` inside the pane. tput needs a
@@ -3285,7 +3309,7 @@ cc_paint() { # $1 = what goes after the prompt char, escapes interpreted
   # base terminfo set does not have one — tput then prints NOTHING and exits 3,
   # `seq` gets no argument, `printf '─%.0s'` repeats zero times, and both rules
   # come out as empty lines. The ❯ line still paints, so a check grepping for it
-  # passes while every check needing the FRAME fails, which is the same GATED
+  # passes while every check needing the FRAME fails, which is the same OCCUPIED
   # symptom reached by a route no developer box reproduces. tmux is authoritative
   # about its own pane, so it is asked instead.
   local w
@@ -3365,7 +3389,7 @@ check "no forked producer is piped into grep -q" "0" \
 # And the shape that actually shipped, which the rule above does not see: a
 # BUILTIN producer piped into an early-exiting reader. It reads as the safe case
 # and is not one, because bash writes a line at a time. Eight of these were live
-# in gang — busy_painted and gated among them, where losing the race reads a
+# in gang — busy_painted and occupied among them, where losing the race reads a
 # working agent as idle and a modal as reachable.
 check "no builtin producer is piped into an early-exiting reader" "0" \
   "$(grep -E 'printf .*\| *(grep|head) ' "$GANG" | grep -cv '^[[:space:]]*#')"
