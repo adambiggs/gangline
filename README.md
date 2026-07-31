@@ -330,6 +330,16 @@ Configure unattended agents with the permission posture you want before hitching
 them. See [Operating a team](docs/operations.md#permission-prompts) for the
 relevant settings and the Codex sandbox caveat.
 
+The shipped opencode profile carries one narrow exception, and Gangline creates
+the need for it itself. `gang hitch -r <role>` points an agent at a brief by
+path, and briefs live in Gangline's own tree — outside the directory opencode
+started in, which is the only place opencode reads without asking. So every
+role-briefed opencode agent stopped on `Access external directory`, for the file
+it had just been told to read, with nobody there to answer. The profile
+pre-authorises those role directories and nothing else, for that one process,
+merged into your config rather than replacing it. It is not `--auto`, and no
+other posture changes.
+
 **Context reading.** Claude Code needs Gangline's statusline beacon before
 `gang context`, the roster context column, or context patrol can read its usage. Merge
 this into `~/.claude/settings.json` (adjust the path if `GANGLINE_HOME` differs):

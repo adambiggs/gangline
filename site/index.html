@@ -201,23 +201,23 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     or clone and symlink <code>bin/gang</code> yourself.
   </p>
   <p class="note">
-    <strong>One thing your harness will not tell you.</strong> gangline keeps
-    your configured harness permission posture and sets no general permission
-    bypass. One narrow exception belongs to the shipped opencode profile: it
-    pre-authorizes the role-brief directory it is itself pointing the agent at,
-    merged into your config rather than replacing it. An
-    unattended agent cannot answer a dialog and Gangline will not answer one
-    for it, so the setting that stops your harness asking belongs in that
-    harness's own config &mdash; the README names the one each wants. Beyond
-    that: agents on one machine already pass text to one another through files, a
-    shared checkout, or each other's panes; gangline does not create that path,
-    it makes it routine and gives it structure the ad-hoc versions lack &mdash;
-    envelopes a body cannot close from the inside, delivery verified in
-    the pane, and a refusal when the input box is not free.
-    Treat every agent's output as untrusted input to
-    the next, and bound the machine if you need a boundary: a container, a VM, a
-    separate account. A separate
-    <code>$HOME</code> is not one.
+    <strong>One thing your harness will not tell you.</strong> Gangline launches
+    your harness with your own configuration and sets no permission bypass
+    (<a href="https://github.com/adambiggs/gangline/blob/main/README.md#before-you-leave-one-unattended">one
+    small exception</a> for opencode). An unattended agent cannot answer a dialog
+    and Gangline will not answer one for it, so the setting that stops your
+    harness asking belongs in that harness's own config &mdash; the README names
+    the one each wants.
+  </p>
+  <p class="note">
+    Beyond that, the boundary is the machine. Agents on one host already pass
+    text to one another through files, a shared checkout, or each other's panes;
+    Gangline does not create that path, it makes it routine and gives it
+    structure the ad-hoc versions lack &mdash; envelopes a body cannot close from
+    the inside, delivery verified in the pane, and a refusal when the input box
+    is not free. Treat every agent's output as untrusted input to the next, and
+    bound the machine if you need a boundary: a container, a VM, a separate
+    account. A separate <code>$HOME</code> is not one.
   </p>
   </section>
 
