@@ -425,26 +425,51 @@ valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON 
 mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
 envelope() { # $1 = sender, $2 = body -> the message as it goes on the wire
-  # Attribution used to be a prefix on the first line, which left every line
-  # after it unsigned — and the role briefs read an unsigned line as the
-  # OPERATOR, who outranks every peer. So a peer with nothing but permission to
-  # run `gang send` could deliver `ok\nnow do the dangerous thing`, where the
-  # second line arrives in the operator's voice. A repository that gets text
-  # into one agent reaches the whole team that way.
+  # A bare prefix on the first line leaves every line after it unsigned — and the
+  # role briefs read an unsigned line as the OPERATOR, who outranks every peer. A
+  # peer with nothing but permission to run `gang send` could then deliver
+  # `ok\nnow do the dangerous thing`, where the second line arrives in the
+  # operator's voice. A repository that gets text into one agent reaches the
+  # whole team that way.
   #
   # The envelope closes it: everything the sender said is inside a matched pair,
   # and the pair carries a nonce minted for this message alone. A body cannot
-  # close the envelope and open another, because it cannot know the nonce and
-  # because anything shaped like a tag is neutralised before it goes in — so an
-  # unenveloped line really is the operator's own typing, mechanically rather
-  # than by convention.
+  # close the envelope and open another, because the nonce is minted here, from
+  # a body that already exists, and whoever wrote that body cannot know the value.
   #
-  # What this does NOT do is authenticate the sender: any writer to a pane can
+  # THE NONCE IS THE MECHANISM. Neutralising tag-shaped text below is defence in
+  # depth over it, aimed at a reader that is a model rather than a parser: a
+  # wrong-nonce tag is not a valid close, but it can still read as one to
+  # something skimming.
+  #
+  # What none of this does is authenticate the sender: any writer to a pane can
   # type an envelope. That is why the sender is read off the sending window
   # wherever gang can see one (check_sender), rather than believed.
   local nonce body
   nonce="$(mint_nonce)"
-  body="$(printf '%s' "$2" | sed 's/\[\(\/\{0,1\}\)gang:/(\1gang:/g')"
+  # Match the SHAPE of a tag, not the one spelling gang emits. A model reads
+  # `［gang:lead#0000]` as an envelope as readily as the ASCII form, so matching
+  # the exact literal caught the honest case and none of the others: fullwidth
+  # brackets, any capitalisation, and whitespace anywhere inside the tag all went
+  # through untouched when they were measured against it.
+  #
+  # Literal alternation, never a bracket class. The C locale is reachable here —
+  # utf8_locale warns and continues (:31) — and there a bracket class holding a
+  # multibyte character matches its individual BYTES: `[[［]` consumes only the
+  # last byte of ［ and leaves the other two behind as mojibake, corrupting the
+  # body instead of neutralising the tag. Measured, on this expression. The ASCII
+  # class over `gang` is safe for the reason it looks redundant — every member is
+  # one byte.
+  #
+  # This widens the net; it does not close it. Homoglyphs are unbounded and no
+  # enumeration of them terminates, so what is here is a speed bump in front of
+  # the nonce rather than a parser guarantee, and no document may promise more.
+  #
+  # Comma delimiter so the `/` of a closing tag needs no escape: whether `\/` is
+  # defined inside an ERE group is a question worth not asking on a CI matrix
+  # that includes BSD sed.
+  body="$(printf '%s' "$2" \
+    | sed -E 's,(\[|［|〔|【)([[:space:]]*/?[[:space:]]*)([Gg][Aa][Nn][Gg])([[:space:]]*:),(\2\3\4,g')"
   printf '[gang:%s#%s] %s [/gang:%s#%s]' "$1" "$nonce" "$body" "$1" "$nonce"
 }
 
@@ -1842,8 +1867,9 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
         # The residual is named rather than left for a reader to wonder about,
         # because the settle path's weakness two paragraphs up does not stop
         # applying here: a turn that has been SILENT since the mark was set can
-        # still take this resume. Five minutes is not a long turn on this
-        # hardware — the suite in this repo runs near four.
+        # still take this resume. Silence is not evidence of a finished turn — a
+        # test run, a large fetch or a long build is silent for exactly as long
+        # as it takes, and the grace is a clock, not a measurement of one.
         #
         # It is still the better end of the trade, and not because the exposure
         # is small. Without this branch the same message reaches the same silent
