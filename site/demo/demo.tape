@@ -160,12 +160,22 @@ Show
 Sleep 10s
 
 # ── Scene 7: arc complete — everyone idle, the proof runs ────────────────────
+# The gate asks every agent to BE idle, not merely to not be busy. Those are
+# different questions and gang has five state words, not two: parked, occupied
+# and expired all pass a not-busy test with nothing having finished. Asking the
+# weaker one ends the take on the lead still parked in `gang wait reviewer`
+# while the reviewer beside it already reads idle — a closing frame that looks
+# like a deadlock, two seconds before the wait would have returned, because idle
+# has to hold for two consecutive polls before `gang wait` believes it.
+#
+# Colour is off down a pipe (gang gates it on -t 1), so the state really is the
+# third field and does not have escapes wrapped around it.
 Hide
 Ctrl+B
 Sleep 300ms
 Type "d"
 Sleep 1s
-Type `while :; do gang roster 2>/dev/null | grep -q busy || { clear; echo S7-"OK"; break; }; sleep 2; done`
+Type `while :; do gang roster 2>/dev/null | awk 'NF { n++; if ($3 == "idle") i++ } END { exit !(n && n == i) }' && { clear; echo S7-"OK"; break; }; sleep 2; done`
 Enter
 Wait+Screen@900s /S7-OK/
 Type "clear"
