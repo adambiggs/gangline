@@ -450,7 +450,9 @@ the top it asks the agent to stop where it is, write its handoff assets, and
 compact immediately. Escalating the ask rather than the volume is the point — a
 louder note carrying the same deferrable instruction defers exactly as well, and
 "at the next checkpoint" is satisfiable forever because there is always a next
-checkpoint.
+checkpoint. Lower steady bands stay quiet. The final band is the exception: its
+open compaction question repeats on every safe patrol until usage drops, with
+wording that calls it a repeated reminder rather than a fresh crossing.
 
 Both ends of the ladder are absolute token counts, because context rot tracks how
 long a context is and not how full its window is: every agent's first warning

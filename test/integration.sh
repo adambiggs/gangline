@@ -2609,8 +2609,93 @@ check "the big agent is on the final band" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of topbig)" @gl_band)" '^5$')"
 check "and so is the small one, at the same ordinal" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of topsmall)" @gl_band)" '^5$')"
+
+# A crossing cannot re-arm once the final rung has been recorded. That is an
+# open question rather than a completed notification, so a quietly safe pane is
+# nudged again — with wording that identifies a repeat instead of impersonating
+# a fresh crossing.
+toprepeat="$("$GANG" patrol)"
+check "a steady agent past the final rung is nudged again" \
+  "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
+  "$(printf '%s\n' "$toprepeat" | verdict topbig)"
+check "the repeated note says it is not a fresh crossing" "yes" \
+  "$(has topbig 'repeated final-band reminder, not a fresh crossing')"
+check "and says how long repeats continue" "yes" \
+  "$(has topbig 'every safe patrol until context usage drops out of the last band')"
+
+# The former steady branch sat above every injection guard. These cases start
+# with band memory already at the top, so each would inject only if the repeat
+# were sent from that old branch instead of reaching the ordinary guard chain.
+# Clear the pane before each one so the repeat phrase itself is a positive wire
+# witness: if a guard is bypassed, it appears in the pane under test.
+tmux send-keys -t "$(target_of topbig)" \
+  "clear; printf 'ctx 900k/1000k 90%%\\n'" Enter; sleep 0.6
+tmux send-keys -t "$(target_of topbig)" TOP_REPEAT_DRAFT; sleep 0.6
+check "a steady top-band repeat still holds on a non-empty composer" \
+  "past the 350000-token band — input box has content, holding nudge" \
+  "$("$GANG" patrol | verdict topbig)"
+check "and no repeated note was pasted into that draft" "no" \
+  "$(has topbig 'repeated final-band reminder')"
+tmux send-keys -t "$(target_of topbig)" C-u; sleep 0.5
+
+tmux send-keys -t "$(target_of topbig)" \
+  "clear; printf 'ctx 900k/1000k 90%%\\n'" Enter; sleep 0.6
+tmux send-keys -t "$(target_of topbig)" \
+  "i=0; while [ \$i -lt 30 ]; do printf '\\rTOPCHURN%02d' \"\$i\"; i=\$((i+1)); sleep 0.1; done; printf '\\n'" Enter
+sleep 0.2
+check "a steady top-band repeat still holds while the pane churns" \
+  "past the 350000-token band — pane churning (mid-render or compacting), holding nudge" \
+  "$("$GANG" patrol | verdict topbig)"
+sleep 3
+check "and no repeated note was queued behind the moving pane" "no" \
+  "$(has topbig 'repeated final-band reminder')"
 "$GANG" drop topbig >/dev/null 2>&1 || true
 "$GANG" drop topsmall >/dev/null 2>&1 || true
+
+# Snapshot guards get their own controlled profile. The busy case keeps a live
+# composer beside its marker; the modal case removes the composer and leaves a
+# declared occupied marker. Both carry a valid top-band context, and both begin
+# with final-band memory already written.
+cat > "$SHIM/custom-profiles/topguards.sh" <<'SH'
+GANG_LAUNCH="PS1='❯ ' bash --norc"
+GANG_BUSY_REGEX="TOPBUSY"
+GANG_OCCUPIED_REGEX="TOPMODAL"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() {
+  local line
+  line="$(tmux capture-pane -pJ -t "$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "${line#❯}" | tr -d '\302\240'
+}
+profile_context() {
+  local m
+  m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" || return 1
+  m="${m#ctx }"
+  printf '%s (%s)\n' "${m% *}" "${m##* }"
+}
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch topbusy -p topguards -d /tmp >/dev/null
+paint topbusy 'ctx 900k/1000k 90%'
+tmux set-option -w -t "$(target_of topbusy)" @gl_band 5
+paint topbusy 'TOPBUSY'
+check "a steady top-band repeat still holds on a busy marker" \
+  "past the 350000-token band — busy, retrying next patrol" \
+  "$("$GANG" patrol | verdict topbusy)"
+check "and no repeat was injected into the busy pane" "no" \
+  "$(has topbusy 'repeated final-band reminder')"
+"$GANG" drop topbusy >/dev/null 2>&1 || true
+
+"$GANG" hitch topmodal -p topguards -d /tmp >/dev/null
+paint topmodal 'ctx 900k/1000k 90%'
+tmux set-option -w -t "$(target_of topmodal)" @gl_band 5
+tmux send-keys -t "$(target_of topmodal)" \
+  "clear; PS1=''; printf 'TOPMODAL\\nctx 900k/1000k 90%%\\n'" Enter; sleep 0.6
+check "a steady top-band repeat still stops at occupancy" \
+  "OCCUPIED (authority unknown) — a UI owns the input box and gang cannot establish who may clear it (gang attach)" \
+  "$("$GANG" patrol | verdict topmodal)"
+check "and no repeat was typed into the modal" "no" \
+  "$(has topmodal 'repeated final-band reminder')"
+"$GANG" drop topmodal >/dev/null 2>&1 || true
 
 # A window too small to reach rot onset at all. It cannot be warned about rot, so
 # the one hazard left is exhaustion and one rung is the whole ladder that applies —
@@ -2620,6 +2705,9 @@ check "and so is the small one, at the same ordinal" "yes" \
 paint tinywin 'ctx 120k/128k 93%'
 check "a window below the floor keeps a single exhaustion rung under its ceiling" \
   "NUDGED (crossed the 115000-token band)" "$("$GANG" patrol | verdict tinywin)"
+check "and a one-rung ladder repeats at its own top rather than assuming five" \
+  "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
+  "$("$GANG" patrol | verdict tinywin)"
 "$GANG" drop tinywin >/dev/null 2>&1 || true
 
 # Both bounds are settings, and a setting nobody can observe is not one. They are
@@ -2827,9 +2915,18 @@ check "and an expired hold still burns no band" "" \
 "$GANG" hitch graceagent -p compactable -d /tmp >/dev/null
 paint graceagent 'ctx 900k/1000k 90%'
 "$GANG" compact graceagent --from tester >/dev/null 2>&1
+tmux set-option -w -t "$(target_of graceagent)" @gl_band 5
+check "a pending compaction still holds a steady top-band repeat" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict graceagent)"
+check "and no repeat was injected while that proof is pending" "no" \
+  "$(has graceagent 'repeated final-band reminder')"
 check "an expired mark holds even where the nudge would otherwise land" \
   "past the 350000-token band — compaction gang issued, UNPROVED past the grace, holding nudge" \
   "$(GANG_COMPACT_GRACE=0 "$GANG" patrol | verdict graceagent)"
+check "and expiry still cannot release the steady top-band repeat" "no" \
+  "$(has graceagent 'repeated final-band reminder')"
+tmux set-option -w -t "$(target_of graceagent)" @gl_band 0
 paint graceagent 'ctx 350k/1000k 35%'
 check "and the drop that ends it restores ordinary patrol on that same pane" \
   "NUDGED (crossed the 350000-token band)" \
@@ -3081,8 +3178,12 @@ probe rung1mb  '120k/1000k 12%'   # the same TOKENS as rung200b — must match i
 probe rung1mc  '350k/1000k 35%'   # the cap, and the last rung of the 1M ladder
 probe rung1md  '199k/1000k 20%'   # the same TOKENS as rung200d, far from its own end
 "$GANG" patrol >/dev/null         # first sweep nudges and records the band
-settled="$("$GANG" patrol)"       # second reports it
-band_of() { printf '%s\n' "$settled" | awk -v n="$1" '$1==n { print $NF }' | tr -d ')'; }
+"$GANG" patrol >/dev/null         # steady lower bands and repeating top bands preserve it
+band_of() { # read the state this invariant is about; a top-band row now names its repeat
+  local band
+  band="$(tmux show-options -wqv -t "$(target_of "$1")" @gl_band)"
+  printf '%s\n' "${band:-0}"
+}
 
 check "under the first rung is band 0"   "0" "$(band_of rung200a)"
 check "one rung is one band"             "1" "$(band_of rung200b)"

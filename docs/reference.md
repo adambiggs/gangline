@@ -226,10 +226,15 @@ Performs one roster sweep. For each adopted agent it:
 4. evaluates the band ladder against the window's last warned band;
 5. re-arms warning state when usage falls;
 6. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
-   safe.
+   safe;
+7. while usage remains in the final band, repeats a distinct final-band reminder
+   on every safe sweep. The repeat says it is not a fresh crossing and continues
+   until usage drops out of that band.
 
 A gang-issued compaction, painted busy marker, churning pane, or non-empty input
-box holds the warning without advancing state, so a later patrol retries.
+box holds both a crossing warning and a final-band repeat without advancing
+state, so a later patrol retries. Lower steady bands remain quiet: only the last
+rung is a permanently open question.
 Unadopted windows and agents with missing profiles or readouts are reported as
 not patrolled. With no team, patrol prints a no-team line and succeeds.
 

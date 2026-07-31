@@ -2146,6 +2146,15 @@ ladder() { # $1 = tokens, $2 = window -> "<bands crossed> <highest> <resolved CS
   printf '%s %s %s' "$band" "$crossed" "$resolved"
 }
 
+ladder_at_top() { # $1 = current band, $2 = resolved CSV; true at or beyond its last rung
+  # The caller supplies the RESOLVED ladder rather than assuming the default has
+  # five rungs. A one-rung exhaustion ladder, an explicit operator ladder, and a
+  # future wall-clock ladder all reach their own top through the same question.
+  local total=0 rung
+  for rung in ${2//,/ }; do total=$((total + 1)); done
+  [ "$1" -ge "$total" ]
+}
+
 # The band an agent was last seen in, so a crossing warns once rather than on every
 # sweep. A value that is not a plain integer is a THIRD answer, not band zero:
 # neither warning leg may read an unparseable memory as "never warned" and nudge
@@ -2163,7 +2172,7 @@ band_state_write() { # $1 target, $2 band
   tmux set-option -w -t "$1" @gl_band "$2"
 }
 
-band_note() { # $1 readout, $2 crossed threshold, $3 agent, $4 band, $5 resolved ladder; one text, both legs
+band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optional repeat
   # The exact command, not "compact soon", because the part an agent gets wrong
   # is the resume — typed in behind the compaction it overtakes it and is eaten
   # by the turn about to be compacted, and the agent wakes with nothing to do.
@@ -2189,6 +2198,11 @@ band_note() { # $1 readout, $2 crossed threshold, $3 agent, $4 band, $5 resolved
   total="${#rungs[@]}"
   remaining=$(( total - $4 ))
   tail="write the handoff to a file, then run: gang compact $3 --from $3 --resume-stdin < resume-file — it queues behind the turn you are in, and the resume is delivered once compaction settles."
+  if [ "${6:-}" = repeat ]; then
+    printf '[context-usage] %s in context — still past the last context band at %s tokens. This is a repeated final-band reminder, not a fresh crossing, and it will keep arriving on every safe patrol until context usage drops out of the last band. Stop what you are doing now, close what you are holding into handoff assets, then compact immediately — %s' \
+      "$1" "$2" "$tail"
+    return
+  fi
   if [ "$remaining" -le 0 ]; then
     # At or past the top rung — one condition, because a band above the ladder's
     # last is the same situation as its last and wants the same instruction.
@@ -2755,7 +2769,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
   local prof ctx tw tokens window band crossed thresholds prev failed rung now
-  local state_rc compaction_rc=0 blocked
+  local state_rc compaction_rc=0 blocked top_repeat=0
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
   [ -z "$failed" ] \
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
@@ -2844,10 +2858,19 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
 
   # Injecting into a pane that is not quietly idle corrupts it, so every guard
   # below skips rather than risks it — and a skip never burns state.
+  # A steady agent normally stops here. The sole exception is one already at its
+  # own ladder's last rung: there is no crossing above it to re-arm the warning,
+  # so it remains an open question and reaches the SAME guard chain as a fresh
+  # nudge. Deciding that exception before the chain, rather than injecting from
+  # the steady branch, is what keeps compaction, busy, churn and composer safety
+  # in force on every repeat.
+  if [ "$band" -eq "$prev" ] && ladder_at_top "$band" "$thresholds"; then
+    top_repeat=1
+  fi
   if [ "$band" -lt "$prev" ]; then
     band_state_write "$1" "$band"
     say "$2" "$ctx" "re-armed (usage dropped)"
-  elif [ "$band" -eq "$prev" ]; then
+  elif [ "$band" -eq "$prev" ] && [ "$top_repeat" -eq 0 ]; then
     say "$2" "$ctx" "steady (band $band)"
   elif [ "$compaction_rc" -eq 0 ]; then
     # Asked before the scraped guards because it is the one signal here that
@@ -2877,10 +2900,18 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # sweep and never costs a draft. Holding is the cheap direction either way.
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
-    envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds")"
+    if [ "$top_repeat" -eq 1 ]; then
+      envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds" repeat)"
+    else
+      envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds")"
+    fi
     inject "$1" "$ENVELOPE"
-    band_state_write "$1" "$band"
-    say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
+    if [ "$top_repeat" -eq 1 ]; then
+      say "$2" "$ctx" "NUDGED (past the last band; repeats every safe patrol until usage drops)" "$C_OK"
+    else
+      band_state_write "$1" "$band"
+      say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
+    fi
   fi
 }
 
