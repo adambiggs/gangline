@@ -21,6 +21,8 @@ gang_path() { # $1 = this script -> the bin/gang beside its tree
   printf '%s/bin/gang' "$(cd -P "$(dirname "$src")/.." && pwd)"
 }
 GANG="$(gang_path "$0")"
+ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
+SUITE="$(cd -P "$(dirname "$0")" && pwd)/$(basename "$0")"
 export GANG_SESSION="gangtest-$$"
 # The suite drives gang against the shipped bash stand-in, which is withheld from
 # the harness list an operator picks from. It opts back in for its own run —
@@ -43,6 +45,75 @@ cat > "$SHIM/tmux" <<SH
 exec "$(command -v tmux)" "\$@"
 SH
 chmod +x "$SHIM/tmux"
+
+# --- the artifact this run is about -------------------------------------------
+
+# A verdict is only ever about the code it ran against, and this run cannot assume
+# that stayed one thing. The suite is long enough that editing bin/gang while it is
+# running is the natural thing to do rather than an unusual mistake, and bash reads
+# a script by byte offset, so editing THIS file mid-run can also drop the
+# interpreter into the middle of a token it already passed.
+#
+# Lived it: a run continued across an edit and printed `all checks passed`. Every
+# check after the edit had exercised a different bin/gang than the checks before
+# it, and nothing in the output said so. A pass that does not correspond to the
+# code under test is fabricated status — which is the one thing law 8 forbids gang
+# from doing, and the suite has no business holding itself to a lower standard than
+# the thing it tests.
+#
+# So the run fingerprints its own inputs first and again before it scores itself,
+# and anything that moved voids the whole run. Not a warning: a warning printed
+# above a green line still reads as green. Not a per-check annotation either — the
+# checks that already ran cannot be re-attributed after the fact, because there is
+# no record of which version each one saw.
+under_test() { # -> the files a run EXECUTES or SOURCES, absolute, one per line
+  # Scoped to those three kinds and no wider, because only they can produce the
+  # mixed verdict this guards against. bin/gang is invoked fresh dozens of times
+  # and a profile is sourced on each of them, so an edit part-way through is
+  # genuinely two different programs scored as one. This file is read by bash by
+  # BYTE OFFSET while it runs, which is worse: an edit can drop the interpreter
+  # into the middle of a token it has not reached yet.
+  #
+  # install.sh, README.md and site/index.html are deliberately NOT here. The suite
+  # only ever greps them, once each, in the tmux-floor agreement checks at the very
+  # end — never executed, never sourced — so those checks read one consistent state
+  # whenever they run and no earlier check can disagree with them. Editing docs
+  # during a run that takes minutes is the most ordinary thing there is, and voiding
+  # a run for it would fire where the defect cannot exist. This file says elsewhere
+  # what happens to a rule like that: people learn to route around it, and then the
+  # guard is not there for the case that matters. roles/*.md are out for the same
+  # reason — gang points an agent AT a brief and never reads one itself.
+  { printf '%s\n' "$ROOT/bin/gang" "$SUITE"
+    ls "$ROOT"/profiles/*.sh 2>/dev/null
+  } | sort -u
+}
+fingerprint() { # $1 = file to write "<sum> <path>" into, one line per file
+  local f sum
+  : > "$1"
+  while IFS= read -r f; do
+    # Absent and unreadable are recorded as VALUES, not skipped. A file that
+    # disappears mid-run has moved as surely as one that was edited, and skipping
+    # it would drop its line from both sides and read as agreement.
+    if [ -r "$f" ]; then sum="$(cksum < "$f" | tr ' ' '-')"; else sum=UNREADABLE; fi
+    printf '%s %s\n' "$sum" "$f" >> "$1"
+  done < <(under_test)
+}
+moved_since() { # $1 = a fingerprint taken earlier, $2 = one taken now
+                # -> the path of each file whose line differs, one per line
+  # Lines carry their own path, so a file is only ever compared against itself.
+  # An empty or truncated first reading matches nothing and reports EVERY file as
+  # moved, which is the right direction to fail in: it voids the run rather than
+  # clearing it.
+  local rc=0
+  grep -vxF -f "$1" "$2" > "$SHIM/tree.moved" 2>/dev/null || rc=$?
+  # grep says "no line differed" with 1 and "I could not tell you" with 2, and
+  # the whole point of this guard is lost if the second is spent as the first:
+  # an unreadable fingerprint would print nothing, and nothing is what a clean
+  # tree prints. Same rule the profile-regex helper enforces on gang.
+  [ "$rc" -le 1 ] || { printf 'FINGERPRINT-UNREADABLE\n'; return 0; }
+  sed 's/^[^ ]* //' "$SHIM/tree.moved"
+}
+fingerprint "$SHIM/tree.at-start"
 
 fails=0
 check() { # $1 = what, $2 = expected, $3 = actual
@@ -229,6 +300,33 @@ check "and it refuses with a status a poll can carry" "yes" \
   "$(holds 'abc' '[' >/dev/null 2>&1 && echo no || echo yes)"
 check "and names on stderr what grep could not evaluate" "yes" \
   "$(contains "$(holds 'abc' '[' 2>&1 >/dev/null)" "cannot evaluate")"
+
+# The other instrument that scores this run, and the one that decides whether the
+# run is about a single version of the tree at all. Proven against planted
+# fingerprints rather than live, because the event it reports — bin/gang moving
+# under a running suite — is the one thing a run must not do to itself.
+printf '%s\n' 'aaa /t/one' 'bbb /t/two' 'ccc /t/three' > "$SHIM/fp.before"
+printf '%s\n' 'aaa /t/one' 'ZZZ /t/two' 'ccc /t/three' > "$SHIM/fp.edited"
+printf '%s\n' 'aaa /t/one' 'UNREADABLE /t/two' 'ccc /t/three' > "$SHIM/fp.vanished"
+: > "$SHIM/fp.empty"
+check "a tree that held still reports nothing moved" "" \
+  "$(moved_since "$SHIM/fp.before" "$SHIM/fp.before")"
+check "an edited file is named, and only it" "/t/two" \
+  "$(moved_since "$SHIM/fp.before" "$SHIM/fp.edited")"
+check "a file that vanished mid-run counts as moved too" "/t/two" \
+  "$(moved_since "$SHIM/fp.before" "$SHIM/fp.vanished")"
+check "a first reading that says nothing voids every file" "/t/one /t/two /t/three" \
+  "$(moved_since "$SHIM/fp.empty" "$SHIM/fp.before" | tr '\n' ' ' | sed 's/ *$//')"
+check "and a fingerprint it cannot read is not spent as a clean tree" \
+  "FINGERPRINT-UNREADABLE" "$(moved_since "$SHIM/fp.nonexistent" "$SHIM/fp.before")"
+# The enumeration is what sets the guard's reach, and it is written by hand where
+# the globs below it are not. A list that quietly lost bin/gang would report a
+# still tree for every run after it, which is the failure this whole section is
+# about wearing the guard's own uniform.
+check "the fingerprint covers the script under test" "yes" \
+  "$(contains " $(under_test | tr '\n' ' ')" " $ROOT/bin/gang ")"
+check "and the file it is written in" "yes" \
+  "$(contains " $(under_test | tr '\n' ' ')" " $SUITE ")"
 
 # --- finding its own tree ------------------------------------------------------
 
@@ -3750,6 +3848,23 @@ check "drop removes the agent" "" "$("$GANG" roster | awk '$1=="gamma"{print $1}
 "$GANG" down >/dev/null
 check "down ends the session" "no team (session '$GANG_SESSION' not running)" \
   "$("$GANG" roster)"
+
+# --- the verdict ---------------------------------------------------------------
+
+# Scored last and read first: a run whose inputs moved has no verdict to give, so
+# this comes before either outcome line rather than beside it. `$fails` is not
+# consulted — a failure count is as meaningless as a pass when the checks that
+# produced it ran against two different trees.
+fingerprint "$SHIM/tree.at-end"
+moved="$(moved_since "$SHIM/tree.at-start" "$SHIM/tree.at-end")"
+if [ -n "$moved" ]; then
+  printf '\n'
+  while IFS= read -r moved_path; do
+    printf 'CHANGED: %s was modified while the suite was running\n' "${moved_path#"$ROOT"/}"
+  done <<< "$moved"
+  printf 'This run tested a mix of two versions and its result means nothing. Re-run.\n'
+  exit 1
+fi
 
 printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed")"
 [ "$fails" -eq 0 ]
