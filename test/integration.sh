@@ -3212,6 +3212,23 @@ check "a lost resume reaches the roster a lead is scanning" "yes" \
 check "and status still carries the whole sentence" "yes" \
   "$(contains "$("$GANG" status retrier)" "resume NOT delivered after compaction")"
 tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
+
+# GANG_RESUME_TIMEOUT is the only numeric knob in gang whose unchecked failure is
+# CORRUPTING rather than noisy, so it is asserted on behaviour rather than on the
+# message. An unusable bound makes `while [ "$t" -lt "$timeout" ]` refuse on its
+# first test — `[` exits 2, and a failing while-condition does not trip errexit —
+# so the loop is skipped and execution reaches the unconditional inject at the
+# end of the function. The resume goes out instantly, into a turn that may still
+# be running, which is the overtaking the whole wait exists to prevent. Nothing
+# in the output said so, because falling through is what a satisfied loop does.
+printf '%s' MARK_BADBOUND | GANG_RESUME_TIMEOUT=not-a-number \
+  "$GANG" compact retrier --from tester --resume-stdin >/dev/null 2>&1
+sleep 3
+check "an unusable resume bound sends nothing at all" "no" "$(has retrier MARK_BADBOUND)"
+check "and the agent carries which variable stopped it" "yes" \
+  "$(contains "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_resume_failed)" \
+     "GANG_RESUME_TIMEOUT")"
+tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on
@@ -3258,8 +3275,14 @@ check "and both churn paths read it instead of carrying their own" "2" \
 # side this is the only guard there is.
 check "the compaction grace is defined once" "1" \
   "$(grep -cF -- 'GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-' "$GANG")"
+# Validation lines are not counted, and the distinction is the point rather than
+# an exemption: require_whole asserts the value is a number, which is not an
+# answer to the question the constant exists to answer. A site that decides how
+# long a compaction may still be in flight is a policy reader; a site that
+# refuses a value shaped like a word is not, and counting it would make the guard
+# fire on the check that protects the very same constant.
 check "and both the patrol hold and the resume proof read it" "2" \
-  "$(grep -cF -- '"$GANG_COMPACT_GRACE"' "$GANG")"
+  "$(grep -F -- '"$GANG_COMPACT_GRACE"' "$GANG" | grep -cvF 'require_whole')"
 
 # All five source-level invariants match with -F, and that is load-bearing rather
 # than tidiness. Every pattern here is a literal line of shell containing a `$`,
@@ -3561,6 +3584,28 @@ check "a flag missing its value fails cleanly" "1" "$?"
 check "and hitches nothing" "" "$("$GANG" roster | awk '$1=="zed"{print $1}')"
 "$GANG" --help >/dev/null
 check "--help exits clean" "0" "$?"
+
+# The rest of the numeric knobs fail noisily rather than corruptingly, but they
+# fail in their MESSAGES: a lock refusal blamed thirty seconds of contention on a
+# bound it never reached. Asserted at sites an ordinary command actually reaches,
+# which is narrower than it sounds — GANG_STATUS_ROWS is read by capture_status,
+# and the only way in is compacting(), which returns at its first line unless the
+# profile declares GANG_COMPACTING_REGEX. The stand-in declares none, so a status
+# call here never gets near it and a check written against it would pass for the
+# wrong reason.
+out="$(GANG_LOCK_WAIT=lots send_text alpha tester MARK_LOCKBOUND 2>&1)"; rc=$?
+check "a send under an unusable lock bound is refused" "1" "$rc"
+check "naming that variable rather than a process that does not exist" "yes" \
+  "$(contains "$out" "GANG_LOCK_WAIT")"
+check "with nothing typed into the pane" "no" "$(has alpha MARK_LOCKBOUND)"
+# And the other direction, because a validator that rejects legitimate values is
+# a worse defect than the one it fixes: the churn wait is a SLEEP interval and
+# fractions are what it is normally set to.
+GANG_CHURN_WAIT=0.25 "$GANG" roster >/dev/null 2>&1
+check "a fractional sleep interval is still accepted" "0" "$?"
+out="$(GANG_CHURN_WAIT=0.1.2 "$GANG" roster 2>&1)"; rc=$?
+check "but one that is not a number is not" "1" "$rc"
+check "and it says which one" "yes" "$(contains "$out" "GANG_CHURN_WAIT")"
 
 # --- verbs -------------------------------------------------------------------
 

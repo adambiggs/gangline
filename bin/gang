@@ -64,6 +64,35 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
+# Every numeric knob in this file is read from an environment gang does not own,
+# and a value that is not a number does not fail alike everywhere it lands.
+#
+# `[ "$t" -lt "$timeout" ]` against a non-numeric bound writes "integer expression
+# expected" and exits 2 — and a FAILING condition on a `while` does not trip
+# errexit, so the loop never runs and execution continues past it as though the
+# wait were over. Most of these then merely lie: a lock refusal claims thirty
+# seconds of contention that never happened, a boot timeout reports a dialog
+# nobody saw. GANG_RESUME_TIMEOUT is the one that lands somewhere corrupting —
+# skipping that loop delivers the resume instantly, which is the overtaking the
+# whole function exists to prevent, and the agent wakes with nothing to pick up.
+#
+# Checked AT EACH READ rather than once at startup. A profile is sourced after
+# these defaults are taken and can export any of them, so a startup sweep would
+# pass and the value actually in force would be the one it never saw.
+require_whole() { # $1 = name to blame, $2 = value, $3 = the unit for the message
+  case "$2" in
+    ''|*[!0-9]*) die "$1 must be a whole number of $3, got '$2'" ;;
+  esac
+}
+require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractions are fine
+  # A bare `.`, a second dot, and anything signed are all rejected: sleep takes
+  # none of them, and a leading dash would be read as an option rather than a
+  # number besides.
+  case "$2" in
+    ''|.|*[!0-9.]*|*.*.*) die "$1 must be a non-negative number of seconds, got '$2'" ;;
+  esac
+}
+
 gang_root() { # $1 = path to this script; the install tree it lives in
   # Plain readlink in a loop, not `readlink -f`: the -f form is GNU-only and a
   # stock macOS rejects it. When it failed the substitution came back empty,
@@ -708,9 +737,11 @@ capture_status() { # $1 = window id; the bottom rows, where a TUI paints its sta
   # under it, four rows inside twenty. A longer queue puts it outside, and the
   # cost lands on resume_after_compaction, which drops to the settle path when
   # compacting() reads false. Twenty is not a number to inherit.
+  local rows="${GANG_STATUS_ROWS:-20}"
+  require_whole GANG_STATUS_ROWS "$rows" rows
   capture_joined "$1" \
     | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' \
-    | tail -n "${GANG_STATUS_ROWS:-20}"
+    | tail -n "$rows"
 }
 
 re_match() { # $1 = the profile variable NAME holding an ERE, $2 = text; 0 hit, 1 miss
@@ -837,12 +868,8 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
     activity_hold_clear "$1"
     return 1
   fi
-  case "$GANG_ACTIVITY_WINDOW" in
-    ''|*[!0-9]*) die "GANG_ACTIVITY_WINDOW must be whole seconds, got '$GANG_ACTIVITY_WINDOW'" ;;
-  esac
-  case "$GANG_ACTIVITY_LIMIT" in
-    ''|*[!0-9]*) die "GANG_ACTIVITY_LIMIT must be whole seconds, got '$GANG_ACTIVITY_LIMIT'" ;;
-  esac
+  require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
+  require_whole GANG_ACTIVITY_LIMIT "$GANG_ACTIVITY_LIMIT" seconds
   local stamped now since
   stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
     || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
@@ -1022,6 +1049,7 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     first="$first $id=$sum"
   done
   [ -n "$pending" ] || return 0
+  require_interval GANG_CHURN_WAIT "$GANG_CHURN_WAIT"
   sleep "$GANG_CHURN_WAIT"
   for id in $pending; do
     sum="$( capture "$id" 2>/dev/null | cksum | tr ' ' '-' )" || continue
@@ -1148,8 +1176,8 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   # the uncertainty outlives the sweep that found it. It dies by the drop check
   # above, which runs first on every call, by a fresh request overwriting it, or
   # with the window.
-  [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] \
-    || { context_request_evidence "$1" clock-cleared; return 2; }
+  require_whole GANG_COMPACT_GRACE "$GANG_COMPACT_GRACE" seconds
+  [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] || return 2
   return 0
 }
 
@@ -1249,6 +1277,7 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   # run, a fetch, a large read. Stable means the PANE has stopped moving, which
   # is not the same claim as the agent having stopped working.
   local a b
+  require_interval GANG_CHURN_WAIT "$GANG_CHURN_WAIT"
   a="$(capture "$1")" || die "cannot read pane $1"
   sleep "$GANG_CHURN_WAIT"
   b="$(capture "$1")" || die "cannot read pane $1"
@@ -1517,7 +1546,8 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder t=0 path err
+  local base holder t=0 path err tries="${GANG_LOCK_WAIT:-150}"
+  require_whole GANG_LOCK_WAIT "$tries" attempts
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
@@ -1538,8 +1568,11 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
       rm -rf "$path"; continue          # the writer died mid-delivery
     fi
     t=$((t + 1))
-    [ "$t" -lt "${GANG_LOCK_WAIT:-150}" ] \
-      || refuse "another gang process has been delivering to $1 for 30s and has not finished — look at it with gang capture before retrying"
+    # The wait is stated from the bound actually in force rather than from the
+    # default's arithmetic. An operator who moved GANG_LOCK_WAIT was being told
+    # about thirty seconds that had nothing to do with how long this waited.
+    [ "$t" -lt "$tries" ] \
+      || refuse "another gang process has been delivering to $1 for $(( tries / 5 ))s and has not finished — look at it with gang capture before retrying"
     sleep 0.2
   done
   printf '%s' "$$" > "$path/pid"
@@ -1661,8 +1694,9 @@ clear_box() { # $1 = window id; erase the input box, and prove it is erased
   # 0.4s per press: the composer repaints in 0.14–0.16s, five samples, so this is
   # better than twice the measured latency and unchanged from what it was.
   declare -F profile_input >/dev/null || return 1
-  local before after n=0
-  while [ "$n" -lt "${GANG_CLEAR_PRESSES:-40}" ]; do
+  local before after n=0 presses="${GANG_CLEAR_PRESSES:-40}"
+  require_whole GANG_CLEAR_PRESSES "$presses" presses
+  while [ "$n" -lt "$presses" ]; do
     input_clear "$1" && return 0
     before="$(profile_input "$1")" || return 1
     tmux send-keys -t "$1" C-u
@@ -1913,6 +1947,13 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   # input, and unlike a still screen it cannot be true of a turn that is merely
   # quiet.
   local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}"
+  # The one bound in this file whose unchecked failure is corrupting rather than
+  # noisy: an unusable value makes the `while` below refuse on its first test,
+  # and execution falls straight through to the unconditional inject at the end —
+  # the resume delivered with no wait at all, into a turn that may still be
+  # running. That is precisely what this function exists to prevent.
+  require_whole GANG_RESUME_TIMEOUT "$timeout" seconds
+  require_whole GANG_COMPACT_GRACE "$GANG_COMPACT_GRACE" seconds
   local at_issue="" mark ctx tw tokens window
   # Read ONCE, here. compaction_pending CLEARS the mark the moment it sees the
   # drop and patrol polls it too, so whichever poller gets there first takes the
@@ -2516,8 +2557,9 @@ cmd_hitch() {
   [ -z "$msg" ] || printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting before briefing it...")"
   # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
   # on the very return codes the case below exists to report.
-  local ready=0
-  wait_ready "$id" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  wait_ready "$id" "$boot" || ready=$?
   case "$ready" in
     0) ;;
     2) # Settled screen, no input box: nearly always a dialog only a human may
@@ -2551,6 +2593,7 @@ cmd_hitch() {
   # no evidence that it can, which is why the success line claims delivery and the
   # quiet window, and nothing beyond them.
   local settle="${GANG_BRIEF_GATE_WAIT:-3}"
+  require_interval GANG_BRIEF_GATE_WAIT "$settle"
   if [ -n "${GANG_GATED_REGEX:-}" ] || declare -F profile_input >/dev/null; then
     sleep "$settle"
     if occupied "$id"; then
@@ -2593,7 +2636,7 @@ cmd_send() {
                # comparison sits inside an && condition, so its "integer
                # expression expected" never trips errexit and the deadline is
                # never reached.
-               case "$2" in ''|*[!0-9]*) die "send: --timeout takes whole seconds, got '$2'" ;; esac
+               require_whole "send: --timeout" "$2" seconds
                timeout="$2"; shift 2 ;;
     -w|--wait) wait=1; shift ;;
     --stdin)   [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
@@ -3564,6 +3607,15 @@ probe_evidence() { # $1 = profile, $2 = the pane the verdict was reached on
 probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   local prof="$1" id ready out ctx key msg installed="-"
   local marked=0 churned=0 settled=0 deadline rc=0
+
+  # Checked before a window is opened rather than at each use below, because a
+  # probe that dies halfway has already launched a harness into a tmux server it
+  # then leaks. Every one of these reaches a comparison or a sleep further down.
+  require_whole GANG_PROBE_BOOT "$GANG_PROBE_BOOT" seconds
+  require_whole GANG_PROBE_TURN "$GANG_PROBE_TURN" seconds
+  require_whole GANG_PROBE_SETTLE "$GANG_PROBE_SETTLE" seconds
+  require_whole GANG_PROBE_QUIET "$GANG_PROBE_QUIET" seconds
+  require_interval GANG_PROBE_RATE "$GANG_PROBE_RATE"
 
   load_profile "$prof"
 
