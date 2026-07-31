@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gangline — CLI coding agents, one coordinated team</title>
-<meta name="description" content="Run Claude Code, Codex, opencode, and Pi as one coordinated tmux team. Attributed, verified messaging; visible state; one Bash CLI, no daemon.">
+<meta name="description" content="The substrate for long-horizon, multi-harness agent teams. Claude Code, Codex, opencode and Pi as named tmux windows, with delivery verified into the input box. One Bash script, no daemon.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Gangline — CLI coding agents, one coordinated team">
-<meta property="og:description" content="Run different CLI coding agents together as named tmux windows, with attributed and verified messaging. One Bash CLI, no daemon.">
+<meta property="og:description" content="Run different CLI coding agents as one team of named tmux windows. Delivery verified into the input box, state that admits what it could not determine, no daemon.">
 <meta name="twitter:card" content="summary">
 <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2316171a'/%3E%3Cpath%20d='M4%2016h24'%20stroke='%235c6169'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cg%20fill='%236ea8fe'%3E%3Ccircle%20cx='9'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='23'%20cy='16'%20r='3.4'/%3E%3C/g%3E%3C/svg%3E">
 <style>
@@ -114,6 +114,7 @@
     <a href="#install">install</a><span>·</span>
     <a href="#solo">a team of one</a><span>·</span>
     <a href="#ideas">how it works</a><span>·</span>
+    <a href="#compare">how it compares</a><span>·</span>
     <a href="#commands">commands</a><span>·</span>
     <a href="#extend">extend</a><span>·</span>
     <a href="#trail">the trail</a><span>·</span>
@@ -134,6 +135,13 @@
     or slack, compacts them, and drops them when the work is done. One Bash CLI
     over tmux &mdash; no daemon, message bus, database, or harness plugin, and
     <code>gang</code> exits after every command.
+  </p>
+
+  <p class="lede">
+    It is the <a href="#compare">substrate</a> under a long-running, multi-harness
+    team &mdash; not the orchestration on top of it. Who does what, and in what
+    order, is your call, and it lives in a markdown brief you can replace with a
+    directory of your own.
   </p>
 
   <p class="lede">
@@ -205,8 +213,8 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     shared checkout, or each other's panes; gangline does not create that path,
     it makes it routine and gives it structure the ad-hoc versions lack &mdash;
     envelopes a body cannot close from the inside, delivery verified in
-    the pane, and refusals at
-    gates. Treat every agent's output as untrusted input to
+    the pane, and a refusal when the input box is not free.
+    Treat every agent's output as untrusted input to
     the next, and bound the machine if you need a boundary: a container, a VM, a
     separate account. A separate
     <code>$HOME</code> is not one.
@@ -266,6 +274,158 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
         <code>GANG_ROLES</code> at a directory of your own and any brief becomes
         yours.</dd>
   </dl>
+  </section>
+
+  <section id="compare">
+  <h2>Where this sits</h2>
+  <p>
+    <strong>gangline is a substrate, not an orchestration framework.</strong> The
+    orchestration &mdash; who does what, in what order, what happens when one of
+    them stalls &mdash; lives in the agent and in a markdown role brief you replace
+    wholesale with <code>GANG_ROLES</code>. gangline owns the layer underneath: how
+    an agent is started, how a message is <em>proven</em> into its input box, what
+    may and may not be claimed about its state, and what becomes of its context
+    over the following six hours.
+  </p>
+  <p class="lede">
+    That boundary is not a positioning statement, it is written into the
+    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a>.
+    Law 9 gives the mission as <em>drive long-horizon multi-agent sessions with
+    minimal machinery</em>, and settles ties with &ldquo;the answer is prose in an
+    agent's prompt, not code in this repo&rdquo;. Law 7 forbids gangline from
+    growing any component whose job is watching, policing or coordinating another
+    gangline component &mdash; which is what a supervisor loop is. An orchestrator
+    is a thing that decides what runs next; <code>gang</code> never decides that,
+    and is not allowed to.
+  </p>
+  <p class="lede">
+    Which is why the shipped lead / worker / reviewer briefs are deliberately thin.
+    They are a worked example of one way to divide labour, not the product, and
+    swapping them costs a directory. That does not make gangline unopinionated
+    &mdash; it is opinionated to a fault, just not about your workflow. It is
+    opinionated about what a tool may <em>claim</em>: that a delivery is not
+    delivered until the box has been seen to change, that an unreadable pane is a
+    third answer rather than a convenient one, that &ldquo;a UI owns this input
+    box&rdquo; and &ldquo;a human must clear it&rdquo; are different findings and
+    only the first has been established.
+  </p>
+
+  <dl>
+    <dt>The axis is duration, not breadth.</dt>
+    <dd>Orchestration competes on breadth &mdash; fan out, join, retry, dependency
+        graphs, structured output. Every mechanism gangline actually invented is
+        about surviving <strong>time</strong>: self-compaction at a clean seam with
+        a detached resume; context bands keyed to how long a context <em>is</em>
+        rather than how full its window is; and a probe that fires each profile's
+        markers at a live harness, because the likeliest thing to break a
+        long-running team is a vendor moving a pixel of chrome next Tuesday. A team
+        that finishes inside one context window needs none of it. A team still
+        working tomorrow morning needs all three, and no amount of fan-out
+        substitutes.</dd>
+  </dl>
+
+  <p class="lede">
+    Every tool below solves a real problem, and for several of them the honest
+    answer is &ldquo;use that one instead&rdquo; &mdash; or &ldquo;use that one
+    <em>on top of this</em>&rdquo;, which is not a contradiction. Each is described
+    in the terms it uses for itself.
+  </p>
+  <div class="tbl">
+  <table>
+    <tr><th></th><th>what it owns</th><th>agents run as</th><th>what stays running</th></tr>
+    <tr><td><strong>gangline</strong></td>
+        <td>the substrate: delivery, state, context, rot</td>
+        <td>tmux windows you attach to &mdash; Claude Code, Codex, opencode, Pi</td>
+        <td>nothing; <code>gang</code> exits</td></tr>
+    <tr><td><a href="https://code.claude.com/docs/en/agent-teams">Claude Code agent teams</a></td>
+        <td>orchestration: shared task list, claiming, plan approval</td>
+        <td>rows in the lead's terminal, or split panes &mdash; Claude Code</td>
+        <td>the lead session</td></tr>
+    <tr><td><a href="https://github.com/smtg-ai/claude-squad">claude-squad</a></td>
+        <td>isolation: a git worktree and tmux session per agent</td>
+        <td>tmux sessions in a Go TUI &mdash; Claude Code, Codex, Gemini, Aider, any command</td>
+        <td>the TUI</td></tr>
+    <tr><td><a href="https://github.com/mixpeek/amux">amux</a></td>
+        <td>a control plane: dashboard, scheduler, watchdog</td>
+        <td>tmux sessions behind a web UI &mdash; Claude Code, Codex, Gemini CLI</td>
+        <td>a server on a port</td></tr>
+    <tr><td><a href="https://github.com/SeemSeam/claude_codex_bridge">CCB</a></td>
+        <td>collaboration graphs across many vendors</td>
+        <td>native terminal panes &mdash; Codex, Claude, Gemini, opencode, Pi and more</td>
+        <td>a background daemon</td></tr>
+    <tr><td>Agent SDK, LangGraph, CrewAI</td>
+        <td>orchestration in code you write</td>
+        <td>API calls in your program &mdash; model APIs, not CLIs</td>
+        <td>your program</td></tr>
+  </table>
+  </div>
+
+  <ul>
+    <li><strong>Claude Code agent teams</strong> are the orchestration layer
+        gangline deliberately does not ship: a shared task list with dependencies
+        and file-locked claiming, plan approval before a teammate may implement,
+        hooks that fire when a teammate goes idle or a task completes. If every
+        member of your team is Claude Code, start there &mdash; it is more
+        integrated than an external process can be. What it is not is cross-vendor,
+        and its coordinator is the lead's own session.</li>
+    <li><strong>claude-squad</strong> gives each agent its own git worktree.
+        gangline gives you none. If what you need is four agents on one repo that
+        cannot collide, that is the tool and this is not.</li>
+    <li><strong>amux</strong> is a control plane and does far more at that layer:
+        live status and token stats in a browser, a cron scheduler, a kanban board,
+        an iOS app, and a watchdog that compacts context and restarts sessions on
+        its own. gangline warns; your agent is the one that acts.</li>
+    <li><strong>CCB</strong> drives a far wider set of harnesses than gangline's
+        four and arranges them into explicit collaboration graphs &mdash;
+        <code>A -&gt; B -&gt; C</code>, <code>A,B -&gt; C</code>,
+        <code>A -&gt; B,C</code> &mdash; with a background daemon that keeps project
+        state alive after you close the UI, plus a mobile app with remote terminal
+        access and file transfer.</li>
+    <li><strong>SDK frameworks</strong> are right when what you want is a program
+        rather than a team: deterministic control flow, retries, structured output,
+        tests. What you give up is the harness &mdash; there is no TUI to watch or
+        type into, because there is no harness in the loop.</li>
+  </ul>
+
+  <p class="lede">
+    <strong>Where gangline is the wrong tool.</strong> No worktree isolation: every
+    agent shares one checkout, and keeping two of them off the same file is yours
+    to arrange. No dashboard, no notifications, no history to browse afterwards
+    &mdash; per-agent state lives in tmux window options and dies with the window,
+    which is the deletion path working as designed and also means nothing is kept
+    for you. No auto-restart: an agent that falls over is one you hitch again.
+    Profile version pins go stale every time a harness ships; <code>gang vet</code>
+    tells you, but re-verifying is yours. And it is Bash on tmux, so Windows means
+    WSL. Not on that list: no task list, no dependency graph, no retry policy, no
+    supervisor loop &mdash; those are absent on purpose, because they are the layer
+    above.
+  </p>
+
+  <p class="lede">
+    <strong>The client is a terminal.</strong> gangline ships no app, no web UI and
+    no mobile client, so there is nothing between you and the agent. SSH or mosh in
+    from a phone, <code>gang attach</code>, and you are in the same tmux session you
+    would be in at your desk: the harness's own interface, every pane, every
+    keystroke. A mobile client gives you a view of what is happening, chosen by
+    whoever wrote it. A terminal gives you what is happening. The cost of that
+    stance is the whole paragraph above &mdash; no push notification will ever tell
+    you an agent went idle.
+  </p>
+
+  <p class="note">
+    <strong>What would make half of this unnecessary.</strong> gangline scrapes
+    panes because the harnesses it drives expose no stable programmatic surface to
+    do it any other way, and the design accepts the consequence out loud: text
+    conventions are version-fragile, a TUI update can move a busy marker, and what
+    makes that survivable is that the break is loud and the fix is one line in a
+    profile. The probe exists because of that acceptance, not in spite of it.
+    <a href="https://agentclientprotocol.com">ACP</a> &mdash; which standardises
+    editor-to-agent communication over JSON-RPC much as LSP did for language
+    tooling &mdash; is the closest thing to the surface that would make the
+    scraping unnecessary. If the harnesses converge on it, the reading half of this
+    design should be replaced by it, and that would be a good outcome rather than
+    an embarrassing one.
+  </p>
   </section>
 
   <section id="delivery">
@@ -397,13 +557,15 @@ UI instead of landing (gang attach)</code></pre>
     <tr><td><code>gang status &lt;name&gt;</code> / <code>context &lt;name&gt;</code> / <code>capture &lt;name&gt;</code></td>
         <td>one agent's state, window usage, or screen</td></tr>
     <tr><td><code>gang wait &lt;name&gt; [seconds]</code></td>
-        <td>block for two consecutive idle readings; fail immediately on a gate</td></tr>
+        <td>block for two consecutive idle readings; <code>parked</code> and
+            <code>expired</code> end it too, so read what it printed</td></tr>
     <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume-stdin</code></td>
         <td>submit the harness's own compaction command; a detached waiter attempts
             the resume and reports delivery failure in status. Native command rejection
             remains the harness's verdict</td></tr>
     <tr><td><code>gang patrol</code></td>
-        <td>ambient roster sweep from cron: band warnings in, gate reports out</td></tr>
+        <td>ambient roster sweep from cron: band warnings in, occupancy and
+            refused inbound out</td></tr>
     <tr><td><code>gang vet [--probe [profile]]</code></td>
         <td>check installed versions and file schemas; optionally launch a real
             turn on a private tmux socket and fire declared markers</td></tr>
@@ -484,6 +646,10 @@ UI instead of landing (gang attach)</code></pre>
 
   <footer>
     <a href="https://github.com/adambiggs/gangline">github.com/adambiggs/gangline</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://github.com/adambiggs/gangline/tree/main/docs/adr">architecture decisions</a>
     &nbsp;&middot;&nbsp; Apache-2.0
     &nbsp;&middot;&nbsp; one bash script, no daemon
   </footer>
