@@ -13,7 +13,7 @@
   its consequence. What was load-bearing is the boundary — harness knowledge lives in
   a profile, never a branch in `bin/gang` — and law 9 owns size.
 - **Amended:** 2026-07-30 — the attribution and neutralisation claims restated as
-  what they are. The sender is read off the sending window where gang can see one
+  what they are. The sender is read off the sending window where Gangline can see one
   and stands as claimed where it cannot: a send from a shell with no readable pane
   delivered under a borrowed name. Tag neutralisation is defence in depth over the
   nonce rather than proof that a body cannot emit an unattributed line: a fullwidth
@@ -44,7 +44,7 @@ tmux is the communication substrate, not a fallback and not a hack.
 - One tmux session per team; one window per agent; window name = agent identity.
 - Sending = paste into the pane inside a `[gang:<sender>#<nonce>] … [/gang:…]`
   envelope, then submit. No default sender exists; an unattributed send is an
-  error, and where gang can see the sending window the sender is read off that
+  error, and where Gangline can see the sending window the sender is read off that
   window rather than from what it claims.
 - Delivery is verified by reading the harness's input box before and after the
   paste and requiring it to change, then requiring submission to empty it.
@@ -86,5 +86,5 @@ untrusted principal can reach a pane.
   under law 1. MCP qualifies pair-wide here: Claude Code speaks it natively, and
   Pi core omits it by design but supports it via installed packages (its
   docs/usage.md: "does not include built-in MCP… build or install those workflows
-  as extensions or packages"), a one-line settings install. An MCP face for gang
+  as extensions or packages"), a one-line settings install. An MCP face for Gangline
   (typed send/roster/wait/capture tools) lands when a consumer wants it.

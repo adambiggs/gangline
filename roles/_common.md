@@ -18,7 +18,7 @@ substrate itself; any other name is an agent. Text outside any envelope is the
 operator typing into your pane directly, and the operator outranks any peer.
 
 The nonce is minted from a body that already exists, so whoever wrote that body
-cannot know the value and cannot close its envelope to start another. Gang also
+cannot know the value and cannot close its envelope to start another. Gangline also
 neutralises tag-shaped text inside a body, which narrows what can be made to
 *look* like a tag without closing that gap — homoglyphs are unbounded.
 
@@ -44,11 +44,11 @@ gang send <name> --from <you> --stdin  task or answer a teammate, body on stdin
 ```
 
 A message is constructed in two parts and both are yours to get right.
-Attribution comes from `--from` with your own name: gang builds the envelope out
+Attribution comes from `--from` with your own name: Gangline builds the envelope out
 of it, so your name never goes in the body, and an unattributed send is refused
 by design. The body comes from stdin, never from an argument — write it to a file
 and redirect it in, using a quoted heredoc, because what you are being protected
-from is your own shell rather than gang. Backticks and `$(...)` are commands to
+from is your own shell rather than `gang`. Backticks and `$(...)` are commands to
 it, ordinary prose is full of both, and `echo "..."` or an unquoted heredoc hands
 them over exactly as an argument would.
 
@@ -66,21 +66,21 @@ yes-or-no about work:
 - `busy` / `idle` — working, or not.
 - `occupied` — a harness-owned UI has that agent's input box: a permission
   prompt, a picker, anything that takes the screen. Sends are refused and no
-  keystroke of yours can reach it. That the box is taken is all gang
+  keystroke of yours can reach it. That the box is taken is all Gangline
   establishes; who can free it is a separate question, and `(authority unknown)`
-  is gang saying it does not know.
+  is Gangline saying it does not know.
 - `parked` — that agent is itself sitting in a `gang wait`. It is available but
   it is not idle, and treating the two as the same word is how you promise your
   operator something the harness never agreed to.
 - `expired` — a busy verdict was being carried by pty activity alone and that
-  evidence ran out. Neither busy nor idle: gang could not determine which and
+  evidence ran out. Neither busy nor idle: Gangline could not determine which and
   refuses to pick one for you.
 
 Tell the operator about `occupied` either way — nothing you can send will
 unstick it.
 
 A line that says `undelivered paste` in red means a message was pasted into that
-agent's box and never sent, and gang could not prove it was safe to take back
+agent's box and never sent, and Gangline could not prove it was safe to take back
 out. It clears itself once that box reads empty. If it persists, tell the
 operator: the next thing that agent types goes out with somebody else's message
 glued to the front of it.
@@ -110,7 +110,7 @@ would close any other tool you are done with. What needs a word first is ending
 work that is not yours to end: an agent you did not hitch, or one mid-turn.
 `gang down` ends the whole team at once, so that one stays the operator's.
 
-## Reaching past gang to raw tmux
+## Reaching past Gangline to raw tmux
 
 `gang` aims tmux for you. When you aim it yourself, one thing will bite you:
 **`TMUX_TMPDIR` does not isolate you from inside a pane.** Given neither `-S` nor
@@ -178,7 +178,7 @@ Do not ask permission to compact. Do not wait to be told twice.
 ## When the substrate misbehaves
 
 gangline reads your harness's screen to tell whether you are busy and how full
-you are, and that reading breaks when your harness updates. If gang reports the
+you are, and that reading breaks when your harness updates. If Gangline reports the
 wrong state, misses your context readout, or fails to verify a send that clearly
 landed, run `gang vet` before assuming you made the mistake. If it reports
 ROT RISK, tell the operator.
@@ -186,12 +186,12 @@ ROT RISK, tell the operator.
 If it reads all-OK and scraping stays wrong, do not read the all-OK as a verdict:
 plain `vet` compares harness versions against pins and never fires a marker at a
 pane. Run `gang vet --probe`, which does — it drives a throwaway harness on its
-own socket and checks gang actually sees the busy marker and the context readout
-appear and then go away again. That is the tool for "the version matches and gang
+own socket and checks Gangline actually sees the busy marker and the context readout
+appear and then go away again. That is the tool for "the version matches and Gangline
 still says the wrong word".
 
 What the probe does not cover, so a clean run does not clear it: occupancy and
 compacting markers, and any marker branch an ordinary turn never paints. Those
 stay the operator's, and so does any probe row reading `not probed` — including
-`a dialog owns the screen`, which gang will never answer for you. Tell them, with
+`a dialog owns the screen`, which Gangline will never answer for you. Tell them, with
 the row you saw.

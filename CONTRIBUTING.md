@@ -118,7 +118,7 @@ JSONPath unchanged while the release workflow remains green.
 When a surface's misuse cannot be detected from inside the tool, removing the
 surface is the fix and documentation is not. A message body passed as an argument
 has already been through the sender's shell before `gang` sees it, so backticks in
-an agent's prose have run by then — there is no point at which gang could validate,
+an agent's prose have run by then — there is no point at which Gangline could validate,
 warn, or refuse. That is a different claim from "the safe path is nicer," which is
 a judgement someone can reasonably weigh the other way; this one says no validator
 is possible. Reach for it sparingly, and only with that argument in hand.

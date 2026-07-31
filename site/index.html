@@ -206,7 +206,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     bypass. One narrow exception belongs to the shipped opencode profile: it
     pre-authorizes the role-brief directory it is itself pointing the agent at,
     merged into your config rather than replacing it. An
-    unattended agent cannot answer a dialog and gang will not answer one
+    unattended agent cannot answer a dialog and Gangline will not answer one
     for it, so the setting that stops your harness asking belongs in that
     harness's own config &mdash; the README names the one each wants. Beyond
     that: agents on one machine already pass text to one another through files, a
@@ -225,7 +225,7 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <h2>A team of one</h2>
   <p>
     A team can have one dog in it. <code>gang up</code> with nobody else hitched
-    gives you the context loop by itself: gang measures the window, notes each band
+    gives you the context loop by itself: Gangline measures the window, notes each band
     as you cross it, and near the end compacts you and hands back the thread you
     asked it to keep &mdash; measure, warn, act, instead of you watching a meter and
     remembering to act on it.
@@ -431,9 +431,9 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <section id="delivery">
   <h2>Delivery is measured, not assumed</h2>
   <p>
-    A send measures the target's input box instead of spraying keystrokes. gang
+    A send measures the target's input box instead of spraying keystrokes. Gangline
     reads the box, pastes, and reads again &mdash; the box must have
-    <em>changed</em>. Enter goes in as its own keystroke, then gang polls until the
+    <em>changed</em>. Enter goes in as its own keystroke, then Gangline polls until the
     box differs from the pasted state. An empty composer and a harness's queued
     message hint are both valid submitted states.
   </p>
@@ -519,7 +519,7 @@ UI instead of landing (gang attach)</code></pre>
         activity alone has been carrying a busy verdict, it may do so for
         <code>GANG_ACTIVITY_LIMIT</code> and no longer; past that the agent reads
         <span class="gate">expired (pty activity bound reached)</span>. That is
-        neither busy nor idle, and gang reports it rather than choosing &mdash; a send
+        neither busy nor idle, and Gangline reports it rather than choosing &mdash; a send
         is refused unless the profile declares a safe composer, because an arm that
         ran out is a different answer from an agent that was never working, and
         quietly calling it idle is how one wrong reading becomes permanent.</li>
@@ -528,7 +528,7 @@ UI instead of landing (gang attach)</code></pre>
         an empty input box before injecting. Holding costs one sweep; interleaving
         costs the turn.</li>
     <li><strong>An unread context window is admitted, not hidden.</strong> A
-        readout gang cannot reach shows as <code>-</code> in the roster and is
+        readout Gangline cannot reach shows as <code>-</code> in the roster and is
         reported as not patrolled, never quietly skipped.</li>
     <li><strong>Scrape drift is diagnosed, not endured.</strong> Every scraped
         marker in a shipped harness profile is pinned to live-verified versions;
@@ -586,11 +586,11 @@ UI instead of landing (gang attach)</code></pre>
     They are the same kind of extension point, and neither is an integration.
   </p>
   <ul>
-    <li><strong>A profile is sourced shell</strong> declaring what gang cannot
+    <li><strong>A profile is sourced shell</strong> declaring what Gangline cannot
         know generically: launch and model syntax, busy and occupied states,
         compaction, mid-turn input, and optional functions that read context and
         the input box. Shipped markers nobody has watched live stay unset, and
-        gang takes the slower, safer branch rather than guessing.</li>
+        Gangline takes the slower, safer branch rather than guessing.</li>
     <li><strong>A role is a markdown brief</strong> &mdash; lead splits work and
         guards its own context hardest, worker reports what changed and what proves
         it, reviewer verifies claims rather than reading diffs. The brief is

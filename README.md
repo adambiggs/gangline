@@ -310,7 +310,7 @@ the basket instead of pulling.
 ### A team of one
 
 A team can have one dog in it. `gang up` with nobody else hitched gives you the
-context loop by itself: gang measures the window, notes each band as you cross it,
+context loop by itself: Gangline measures the window, notes each band as you cross it,
 and near the end compacts you and hands back the thread you asked it to keep —
 measure, warn, act, instead of you watching a meter and remembering to act on it.
 
@@ -410,7 +410,7 @@ composer still contains exactly that paste. Otherwise `status`, `roster`, and
 The last two exist because neither one is answerable with a word that already
 existed. A parked agent is not idle — *available* and *idle* are different claims,
 and calling it idle offers a teammate a promise the harness may not keep. An
-expired agent is neither busy nor idle: gang cannot determine which, so it says so
+expired agent is neither busy nor idle: Gangline cannot determine which, so it says so
 instead of picking, and a send to it is refused unless the profile declares a safe
 composer. Resolving either one quietly to `idle` is how a wrong reading would
 become permanent.

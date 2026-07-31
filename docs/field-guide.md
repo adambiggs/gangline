@@ -10,7 +10,7 @@ literally; if a term here ever seems to disagree with one, the rule wins.
 |------|--------------|-------------|
 | **gangline** | the one line hitching many dogs, each in its own harness, to one sled and one musher | the tmux session hitching every agent, each in its own harness, to one operator |
 | **musher** | drives the sled, picks the destination, gives the commands | the operator — the human the whole line runs back to and whose direction is final |
-| **harness** | what a dog wears; the line clips to it, never surgery inside the dog | the CLI agent (Claude Code, Codex, opencode, Pi); gang clips on at the tty |
+| **harness** | what a dog wears; the line clips to it, never surgery inside the dog | the CLI agent (Claude Code, Codex, opencode, Pi); Gangline clips on at the tty |
 | **dog** | pulls | an agent — a named tmux window |
 | **hitch** | clip a dog into the gangline, harness by harness | `gang hitch` — start an agent as a named window (alias: `spawn`) |
 | **vet check** | at every checkpoint a veterinarian examines each dog before it runs on | `gang vet` — the strategy-rot check: each profile's version declarations against the installed harness (an unpinned profile fails), and with `--probe`, its markers against a live pane (alias: `doctor`) |

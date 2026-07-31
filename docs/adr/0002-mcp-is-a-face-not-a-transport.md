@@ -6,9 +6,9 @@
 ## Context
 
 ADR-0001 already places MCP: it qualifies as a universal surface under law 1,
-and a typed MCP face for gang's verbs lands when a consumer wants it (law 5).
+and a typed MCP face for Gangline's verbs lands when a consumer wants it (law 5).
 What that bullet does not record is the rest of the fork — whether MCP could
-carry gangline's core function instead of merely fronting it. The question
+carry Gangline's core function instead of merely fronting it. The question
 recurs ("should we be leveraging MCP?"), so the answer is written down once.
 
 "Leverage MCP" is four different proposals, and they have four different
@@ -21,12 +21,12 @@ client-initiated; the agent is the client. Whatever server→client affordances
 the protocol carries, no harness turns an inbound MCP interaction into a new
 turn in the agent's own conversation loop. The only thing that starts a real
 turn with the agent's full context is user input, and the only universal way to
-synthesize user input is the tty. Waking an idle agent is gang's core function;
+synthesize user input is the tty. Waking an idle agent is Gangline's core function;
 an idle agent runs no loop and can poll nothing. This fork is closed on
 structure, not preference, and does not reopen with a better proposal — it
 reopens only if harnesses grow a native inbound channel (see watch item).
 
-**As a face over gang's verbs: as ADR-0001 left it.** Typed send/roster/wait/
+**As a face over Gangline's verbs: as ADR-0001 left it.** Typed send/roster/wait/
 capture tools land when a consumer wants them. Until then, every harness
 already shells out to `gang` — the CLI is the universal surface (law 1), and a
 second door to the same room needs a consumer that cannot use the first door.
@@ -42,18 +42,18 @@ observable teammates. Headless engines lose the glass — attach to any window,
 watch mid-flight, type over an agent, take control — which is the property the
 whole system is built to keep.
 
-**Inside agents: not gangline's business.** Gang agents use MCP servers as
-tools freely. That is the capability layer; gangline is the coordination
+**Inside agents: not Gangline's business.** Gangline agents use MCP servers as
+tools freely. That is the capability layer; Gangline is the coordination
 layer, and it does not mediate what tools a teammate loads.
 
 ## Consequences
 
-- Proposals to "switch gangline to MCP" get this ADR, not a redesign cycle.
+- Proposals to "switch Gangline to MCP" get this ADR, not a redesign cycle.
 - Watch item, not work item (law 5): vendors are separating UI from engine —
   Codex ships experimental `app-server`, `remote-control`, and a TUI `--remote
   <ADDR>` flag. If a native external-control channel stabilizes and can start
   a turn in a live session, a profile may declare it as that harness's
-  transport under law 4. Gang's verbs — spawn, send, capture, compact, roster
+  transport under law 4. Gangline's verbs — spawn, send, capture, compact, roster
   — do not move; only the delivery mechanism behind them would.
 - The MCP face, if a consumer ever wants it, is additive: a thin typed wrapper
   over the same CLI, not a parallel implementation.

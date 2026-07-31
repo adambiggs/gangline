@@ -326,7 +326,7 @@ longer. Past that the state is `expired (pty activity bound reached)`, which Gan
 reports rather than resolves: an activity arm that has run out is a different answer
 from an agent that was never busy, and quietly calling it idle is exactly how a
 fabricated busy would become permanent. A send to an expired agent is refused unless
-its profile declares a safe composer, because gang cannot otherwise know whether the
+its profile declares a safe composer, because Gangline cannot otherwise know whether the
 paste would land in the harness or in a live tool.
 
 ### An agent showing a busy marker reads as busy
@@ -335,7 +335,7 @@ The busy regex is matched against pane text without asking who put it there, and
 `capture-pane` hands over cells rather than provenance, so it cannot be asked. An
 agent that displays a profile, quotes a capture, or reviews this repository puts a
 busy marker on its own screen and reads busy off its own source. The people that
-lands on are almost exclusively the people working on gangline, since the markers
+lands on are almost exclusively the people working on Gangline, since the markers
 live in this repo's files — a dogfooding tax rather than a bug most operators can
 hit.
 
@@ -357,7 +357,7 @@ direction, because both are unavailable unless a profile declares itself quiet a
 rest, and an `AND` against an unavailable signal reads every busy agent as idle. That
 trades this bounded cost for an unbounded one.
 
-If you are working on gangline and an agent reads busy while plainly idle, check
+If you are working on Gangline and an agent reads busy while plainly idle, check
 whether its pane is showing a marker before suspecting the scraper.
 
 `pane_stable` proves only that captured cells did not change during the sample.

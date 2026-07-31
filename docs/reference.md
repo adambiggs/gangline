@@ -392,7 +392,7 @@ These are useful when the corresponding path is in use:
 `GANG_ACTIVITY_LIMIT`, `GANG_COMPACT_GRACE` and `gang wait`'s timeout all default to
 300 seconds, and that is a coincidence rather than a shared constant. They bound three
 unrelated things — how long pty activity alone may support a busy verdict, how long
-gang waits for proof that a compaction it issued ran, and how long one caller is
+Gangline waits for proof that a compaction it issued ran, and how long one caller is
 willing to poll all busy evidence. Changing any one of them must not move the others,
 so do not fold them into a single value.
 

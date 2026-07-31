@@ -187,7 +187,7 @@ gang — drive a team of CLI agents as tmux windows
                                               expired (pty activity bound reached) |
                                               occupied (authority unknown: a UI owns
                                               the input box — a permission prompt, a
-                                              picker, or anything else gang was not
+                                              picker, or anything else Gangline was not
                                               taught to classify; sends cannot land)
   gang context <name>                         context-window usage (profile-declared readout)
   gang context-report [--clear]               analyse retained warning/drop events;

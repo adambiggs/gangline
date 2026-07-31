@@ -5,7 +5,7 @@
 
 ## Context
 
-Self-compaction is the part of gangline that people who see it first ask to have
+Self-compaction is the part of Gangline that people who see it first ask to have
 on its own: measure an agent's context, warn it as it crosses a band, and let it
 compact itself and pick the thread back up. It is useful without a second agent
 in the session, which is what makes "ship it as a standalone tool" recur. ADR-0002
@@ -32,7 +32,7 @@ larger than the substrate it stands on, and every line of it reaches down.
 
 ## Decision
 
-Self-compaction stays a pillar of gangline. It is not extracted, not reduced to a
+Self-compaction stays a pillar of Gangline. It is not extracted, not reduced to a
 hook, and not given a second name.
 
 **Full extraction into a standalone tool: no.** The policy layer cannot act
@@ -42,8 +42,8 @@ compaction to settle and must not land in a pane that a modal owns. Each of thos
 is `inject`, `gated`, and a pane lock. A standalone tool therefore either
 **vendors** that substrate — two copies of the injection path, two busy-marker
 tables, two rot treadmills drifting apart on their own schedules, which is the
-defect ADR-0001 exists to prevent — or **depends** on gang, in which case it is
-an alias for a command gang already ships. Neither is a tool.
+defect ADR-0001 exists to prevent — or **depends** on Gangline, in which case it is
+an alias for a command Gangline already ships. Neither is a tool.
 
 **A no-tmux, hook-only version: structurally lesser, and not built.** Per
 ADR-0002 the only universal way to synthesize input into a live session is the
@@ -53,7 +53,7 @@ types `/compact`. That drops the third verb from measure/warn/act, and the third
 verb is what makes the loop a loop rather than a meter. It is a different thing
 from this thing. Law 5 settles whether to build it anyway: no live consumer.
 
-**A second brand for gangline-minus-teams: no.** That artifact already exists,
+**A second brand for Gangline-minus-teams: no.** That artifact already exists,
 and it is `gang up` with nobody else hitched. A second name for the same binary
 buys a landing page and costs a concept: two vocabularies, two sets of docs to
 hold current, and a reader who has to be told the two are the same program.
@@ -61,12 +61,12 @@ hold current, and a reader who has to be told the two are the same program.
 ## Consequences
 
 - Extraction proposals get this ADR rather than a redesign cycle.
-- The solo path is documented as a *mode* of gangline rather than a product —
+- The solo path is documented as a *mode* of Gangline rather than a product —
   README's "A team of one" — so nothing is renamed or aliased to serve it.
 - Watch item, not work item (law 5): if a harness ships a native programmatic
   channel that can both trigger compaction and queue what follows it without a
   tty, that becomes a profile transport under law 4, the same way ADR-0002 leaves
-  the door for an external-control channel. Gang's verbs would not move; only the
+  the door for an external-control channel. Gangline's verbs would not move; only the
   delivery mechanism behind them. Still one tree.
 - Size is watched, not capped (law 9): the loop and the evidence it produces come to
   824 of `bin/gang`'s 3305 function lines, which makes it the largest single concern
