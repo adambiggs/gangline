@@ -2757,6 +2757,25 @@ check "an unreadable memory at the top of the ladder heals to the top" \
 check "and the next sweep nudges rather than waiting for a crossing that cannot come" \
   "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$("$GANG" patrol | verdict bandrot)"
+
+# Zero is not a reading of zero. Every live agent carries a system prompt of
+# thousands, so a zero used-figure is the beacon caught between paints — and the
+# ladder spent it as evidence that usage had DROPPED, re-arming this agent from
+# the top rung it just earned back to the bottom. Its next real warning then
+# arrives as the gentlest first-rung note, at the moment that note least applies.
+# The band memory surviving is the assertion here; the message is only how you
+# find it in a log.
+paint bandrot 'ctx 0k/1000k 0%'
+check "a zero readout is refused rather than spent as a drop" \
+  "context readout came back zero — not patrolled, band memory kept" \
+  "$("$GANG" patrol | verdict bandrot)"
+check "and the memory it would have re-armed is still the one the agent earned" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^5$')"
+check "the in-turn leg refuses the same readout, silently" "" \
+  "$(printf '{"hook_event_name":"PostToolUse"}' \
+     | TMUX_PANE="$bandrot_pane" "$GANG" context-hook)"
+check "and leaves the shared memory at the band both legs read from" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^5$')"
 "$GANG" drop bandrot >/dev/null 2>&1 || true
 
 # --- what a sweep leaves behind ------------------------------------------------

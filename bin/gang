@@ -2908,6 +2908,18 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   tw="$(ctx_tokens "$ctx")" \
     || { say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
+  # Zero is not a reading of zero. Every live agent carries a system prompt of
+  # thousands of tokens, so a zero used-figure is the beacon caught between
+  # paints — and the ladder below would spend it as EVIDENCE THAT USAGE DROPPED.
+  # An agent sitting at the top rung has its band memory re-armed to the bottom,
+  # and its next real warning arrives as the gentle first-rung note, at the point
+  # where it least applies. Four rows of `0k/1000k re-armed (usage dropped)` in
+  # one day's log. The compaction leg already refuses to believe a drop without a
+  # nonzero figure behind it; this is the same rule on the same evidence.
+  if [ "$tokens" -eq 0 ]; then
+    say "$2" "$ctx" "context readout came back zero — not patrolled, band memory kept" "$C_BAD"
+    return
+  fi
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
@@ -3266,6 +3278,11 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   tw="$(ctx_tokens "$ctx")" \
     || exit 0
   read -r tokens window <<<"$tw"
+  # Zero is the beacon between paints, not a reading — see the same guard in
+  # patrol_one. This leg shares patrol's band memory, so believing it here would
+  # re-arm the agent's ladder to the bottom just as surely, and silently: this
+  # command's stdout is the hook's JSON reply, so it has nowhere to say so.
+  [ "$tokens" -gt 0 ] || exit 0
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
