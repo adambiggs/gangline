@@ -4256,20 +4256,12 @@ version_rank() { # $1 = installed line, $2 = the pins -> newer|older|between, or
   fi
 }
 
-file_rot_issue() { # $1 = profile, $2 = installed version line, $3 = ordering; dedup by title
+file_issue_once() { # $1 = title, WHICH IS THE DEDUP KEY; $2 = body
+  # Everything that varies between two sightings of one fault belongs in the
+  # body. A title that carries it files a second issue about the thing this
+  # function exists to file once, and each caller below says which of its own
+  # fields that rules out.
   command -v gh >/dev/null || die "vet --file-issue: gh CLI not installed"
-  local title="strategy rot: $1 markers unverified against $2"
-  # The ordering goes in the BODY and never in the title, because the title is
-  # the dedup key: a rerun that ranked the same build differently — a pin
-  # appended between runs is enough — would file a second issue about the one
-  # thing this function exists to file once.
-  local ordering
-  case "$3" in
-    newer)   ordering="newer than every verified version" ;;
-    older)   ordering="older than every verified version" ;;
-    between) ordering="between two verified versions" ;;
-    *)       ordering="unknown — the version strings do not order confidently" ;;
-  esac
   # Dedup via the plain list endpoint, not --search: the search index is
   # eventually-consistent and misses issues filed seconds ago (observed live —
   # a rerun filed a duplicate).
@@ -4286,11 +4278,26 @@ file_rot_issue() { # $1 = profile, $2 = installed version line, $3 = ordering; d
   local open_titles
   open_titles="$(cd "$ROOT" && gh issue list --state open -L 200 --json title --jq '.[].title')" \
     || die "vet --file-issue: cannot list open issues — refusing to guess and file a duplicate"
-  if grep -qxF -- "$title" <<<"$open_titles"; then
-    echo "  issue already open: '$title' — not duplicating"
+  if grep -qxF -- "$1" <<<"$open_titles"; then
+    echo "  issue already open: '$1' — not duplicating"
     return 0
   fi
-  (cd "$ROOT" && gh issue create --title "$title" --body "\
+  (cd "$ROOT" && gh issue create --title "$1" --body "$2")
+  echo "  filed rot issue: '$1'"
+}
+
+file_rot_issue() { # $1 = profile, $2 = installed version line, $3 = ordering
+  # The ordering is the field kept out of the title: a rerun that ranked the same
+  # build differently — a pin appended between runs is enough — would file a
+  # second issue about one unchanged fault.
+  local ordering
+  case "$3" in
+    newer)   ordering="newer than every verified version" ;;
+    older)   ordering="older than every verified version" ;;
+    between) ordering="between two verified versions" ;;
+    *)       ordering="unknown — the version strings do not order confidently" ;;
+  esac
+  file_issue_once "strategy rot: $1 markers unverified against $2" "\
 gang vet detected strategy rot.
 
 - profile: \`profiles/$1.sh\`
@@ -4301,8 +4308,42 @@ gang vet detected strategy rot.
 The profile's scraped TUI markers (busy regex, context readout, input-box
 shape) were verified against the versions listed above, not the installed
 one. Re-verify each marker live against the installed TUI, fix what rotted,
-and append the new version to GANG_VERIFIED_VERSIONS.")
-  echo "  filed rot issue: '$title'"
+and append the new version to GANG_VERIFIED_VERSIONS."
+}
+
+file_tier_issue() { # $1 = agent, $2 = profile, $3 = predicate, $4 = the two witnesses
+  # THE FIELDS KEPT OUT OF THE TITLE ARE THE AGENT AND THE FIGURES. The rot is in
+  # a writer, so two agents running one profile with the same conflict are one
+  # bug and must not become two issues; and the figures move every turn, so a
+  # title carrying them would file a fresh issue on every sweep of a single fault
+  # nobody has fixed yet. Both go in the body, which is a record of a sighting and
+  # may hold a number that has already stopped being true.
+  #
+  # Subshelled, because file_issue_once DIES when gh is missing or cannot list
+  # what is already open, and every caller has printed its finding and raised its
+  # own code before reaching here. Letting that die out would take the finding's
+  # code with it — the conflict shown to the operator and then not counted, which
+  # is exactly the fabricated status law 8 refuses. Filing is the optional half.
+  ( file_issue_once "strategy rot: $2 $3 tiers disagree" "\
+gang vet found two fresh witnesses for the same predicate disagreeing.
+
+- agent: \`$1\`
+- profile: \`profiles/$2.sh\`
+- predicate: $3
+$4
+
+ADR-0008 has every reader take the highest tier still fresh, so gang answers
+from the first witness above and never consults the second again. That is the
+tier order working, and it is also why this fault is invisible from every
+surface an operator has: the good witness answers each time it is asked, and
+the rotted one is never asked. Two witnesses this fresh and this far apart mean
+one of the two writers behind them has stopped keeping up. Open both and find
+which — the tiers were not voting, so no answer gang gave was wrong yet.
+
+One agent is named because that is where it was seen. What is filed is about
+the writer rather than about that agent." ) \
+    || vet_tier_row '' '' "$C_DIM" \
+         "the finding above stands — filing it failed, and gh's reason is on stderr"
 }
 
 # --- probe: fire the declared markers at a live harness -----------------------
@@ -5058,7 +5099,7 @@ vet_tier_row() { # $1 = agent, $2 = profile, $3 = colour, $4 = text
   printf '%-12s %-26s %s\n' "$1" "$2" "$(colour "$3" "$4")"
 }
 
-vet_tiers_agent() { # $1 = window id, $2 = name; 2 = the two witnesses disagree
+vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witnesses disagree
   # TIERS PICK WITNESSES, THEY DO NOT VOTE (ADR-0008), and this changes no
   # answer. gang still replies from the highest fresh tier for every predicate
   # below; what is reported here is that the tier UNDER it, freshly read, says
@@ -5072,7 +5113,14 @@ vet_tiers_agent() { # $1 = window id, $2 = name; 2 = the two witnesses disagree
   # never had, leaves one witness answering alone — which is the tier order doing
   # its job, not a disagreement. Only both-fresh-and-apart is reported, and every
   # arm below is written so that a missing witness falls out silently.
-  local prof rc=0 turn_rc=0 beacon used fact_k
+  #
+  # Defaulted rather than required, and the direction is the whole reason. Under
+  # this file's `set -u` a caller that stopped passing it would die inside the
+  # subshell around this function, where the rc is read as "could not read this
+  # agent" — every real finding turned into a dim row and a clean exit. Defaulted,
+  # the same mistake costs the filing and leaves the finding standing. What proves
+  # the wiring is a check that files, not this line.
+  local prof rc=0 turn_rc=0 beacon used fact_k fissue="${3:-0}"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || prof=""
   # An unadopted window is somebody's shell, not an agent, and it declares no
   # tiers at all. The roster is where an operator learns it is there.
@@ -5106,6 +5154,9 @@ vet_tiers_agent() { # $1 = window id, $2 = name; 2 = the two witnesses disagree
         vet_tier_row "$2" "$prof" "$C_BAD" \
           "ROT RISK — the context tiers disagree: the owned record on @gl_ctx says ${fact_k}k and the beacon on the pane says ${used}k. gang answers from the record; two witnesses this fresh and this far apart mean one of the two writers behind them has stopped keeping up."
         rc=2
+        [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" context "\
+- owned record (@gl_ctx): ${fact_k}k
+- beacon scraped from the pane: ${used}k"
       fi
     fi
   fi
@@ -5133,11 +5184,14 @@ vet_tiers_agent() { # $1 = window id, $2 = name; 2 = the two witnesses disagree
     vet_tier_row "$2" "$prof" "$C_BAD" \
       "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker ($GANG_BUSY_REGEX). gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
     rc=2
+    [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" busy "\
+- owned bracket (@gl_turn): the turn closed
+- scraped from the pane: still painting the busy marker \`$GANG_BUSY_REGEX\`"
   fi
   return "$rc"
 }
 
-vet_tiers() { # the live team's own witnesses, held against each other; 1 = a disagreement
+vet_tiers() { # $1 = --file-issue; the live team's witnesses held against each other, 1 = apart
   local id name wins rc=0 seen=0 frc
   if ! session_live; then
     # Named rather than skipped. This section asks a question ABOUT AGENTS, and a
@@ -5154,7 +5208,7 @@ vet_tiers() { # the live team's own witnesses, held against each other; 1 = a di
     # the section — and given its own code for a finding, because die exits 1 and
     # an agent gang could not read must never be counted as one it read and found
     # wrong (law 8).
-    frc=0; ( vet_tiers_agent "$id" "$name" ) || frc=$?
+    frc=0; ( vet_tiers_agent "$id" "$name" "${1:-0}" ) || frc=$?
     case "$frc" in
       0) ;;
       2) rc=1 ;;
@@ -5362,7 +5416,12 @@ EOF
   # nothing and costs a handful of tmux reads per agent. It is also the only rot
   # this command can see WITHOUT a version having moved — the case every pin above
   # is blind to by construction.
-  vet_tiers || drift=1
+  # --file-issue reaches here for the same reason it reaches the version rows: a
+  # ROT RISK finding that evaporates with the window it was seen in is the one
+  # class an operator cannot act on later, and this class names a writer to go
+  # open exactly like a version pin does. Leaving the newest class as the only one
+  # that does not survive the run would be the wrong asymmetry.
+  vet_tiers "$file_issue" || drift=1
   # Only on a clean bill, because that is when it is the remaining hypothesis:
   # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a

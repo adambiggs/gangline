@@ -2049,6 +2049,46 @@ check "vet holds the same two witnesses against each other" "yes" \
 # know something is wrong.
 check "and names the scrape that rotted, not only the bracket that outranked it" "yes" \
   "$(holds "$bout" '@gl_turn says the turn closed.*[(]FORCE_BUSY[)]')"
+
+# --file-issue REACHES THIS CLASS, and it is driven against a stand-in because the
+# real gh would file against this repo from a test run. The stand-in answers
+# `issue list` from a file and appends what it is asked to create BACK INTO that
+# file, which is the dedup contract itself: gang re-reads the open list on every
+# call precisely so an issue filed seconds ago is seen by the next one.
+GHDIR="$SHIM/vetgh"
+mkdir -p "$GHDIR"
+cat > "$GHDIR/gh" <<'SH'
+#!/usr/bin/env bash
+case "$1 $2" in
+  "issue list") cat "$FAKE_GH_OPEN" ;;
+  "issue create")
+    shift 2; t=""; b=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --title) t="$2"; shift 2 ;;
+        --body)  b="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    printf '%s\n' "$t" >> "$FAKE_GH_OPEN"
+    { printf 'TITLE %s\n' "$t"; printf '%s\n' "$b"; } >> "$FAKE_GH_FILED"
+    ;;
+  *) echo "gh: the suite's stand-in was given ${*:-nothing}" >&2; exit 64 ;;
+esac
+SH
+chmod +x "$GHDIR/gh"
+export FAKE_GH_OPEN="$SHIM/gh-open.txt" FAKE_GH_FILED="$SHIM/gh-filed.txt"
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
+bghout="$(PATH="$GHDIR:$PATH" GANG_PROFILES="$SHIM/vetbracket" \
+  "$GANG" vet --file-issue 2>&1)"
+check "the busy conflict files an issue keyed on the profile and the predicate" "yes" \
+  "$(holds "$bghout" "^  filed rot issue: 'strategy rot: bracketed busy tiers disagree'\$")"
+# The body carries BOTH witnesses for the same reason the row does: an operator
+# told only that the tiers disagree has been told a writer rotted without being
+# told which file to open, and an issue is read further from the sighting than a
+# row is.
+check "and the body names the scrape, not only the bracket that outranked it" "yes" \
+  "$(holds "$(cat "$FAKE_GH_FILED")" 'still painting the busy marker `FORCE_BUSY`')"
 # The other direction is not a finding and must not be logged as one. Only the
 # closed-bracket-over-painted-marker case says anything about gang; an OPEN
 # bracket with the marker up is two tiers AGREEING, and an open bracket over a
@@ -2415,6 +2455,23 @@ check "and a numeric tie is an unknown, not a between" "yes" \
 # with certainty from a comparison that did not happen.
 check "a component too wide for machine arithmetic orders nothing" "yes" \
   "$(holds "$vout" '^vetwide +9223372036854775808[.]0 +ROT RISK — markers verified against: 1[.]0$')"
+
+# THE OTHER CALLER OF THE SHARED FILER. Both ROT RISK classes file through one
+# function so the dedup contract has a single home, and this is the version half
+# proving its own title and body still survive the trip. Until the stand-in above
+# existed nothing here could reach gh at all, so the one caller that predates it
+# was also the one with no check behind it.
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
+vout="$(PATH="$GHDIR:$PATH" GANG_PROFILES="$SHIM/vetdir" \
+  "$GANG" vet --file-issue 2>&1)"
+check "a drifted pin files an issue naming the profile and the build" "yes" \
+  "$(holds "$vout" "^  filed rot issue: 'strategy rot: vetnewer markers unverified against 1[.]2[.]4'\$")"
+# The ordering is this caller's dropped field, for the same reason the tier
+# caller drops its figures: a pin appended between two runs re-ranks one
+# unchanged build, and a title carrying that files a second issue about it.
+check "and the ordering rides the body, which is the field this title drops" "yes" \
+  "$(holds "$(cat "$FAKE_GH_FILED")" '^- ordering: newer than every verified version$')"
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
 rm -rf "$SHIM/vetdir"
 
 # A weaker WORDING is not a weaker verdict. The between case is the one a fix
@@ -3786,6 +3843,66 @@ vout="$(GANG_SESSION="${GANG_SESSION}-nope" GANG_PROFILES="$SHIM/vetctx" \
 check "with no team up vet says whose witnesses it could not read" "yes" \
   "$(holds "$vout" "^live team +- +no session '${GANG_SESSION}-nope' running")"
 check "and having nobody to ask is not a finding about anybody" "0" "$rc"
+
+# --file-issue ON THIS CLASS: the dedup, the negative, and what filing costs when
+# it fails. A ROT RISK finding that dies with the window it was seen in is the one
+# an operator cannot act on later, and this class names a writer to open exactly
+# as a version pin does. The stand-in built in the bracket section answers here.
+cfset "ctx 167500 200000 $(ago 30)"
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
+ghvet() { PATH="$GHDIR:$PATH" GANG_PROFILES="$SHIM/vetctx" "$GANG" vet --file-issue 2>&1; }
+gout="$(ghvet)"; rc=$?
+check "the context conflict files an issue too" "yes" \
+  "$(holds "$gout" "^  filed rot issue: 'strategy rot: bash context tiers disagree'\$")"
+# THE FIGURES ARE THE FIELD THE TITLE HAS TO DROP. They move every turn while the
+# fault sits still, so a title carrying them files a fresh issue on every sweep of
+# one thing nobody has fixed — which is the duplicate the dedup exists to prevent,
+# arriving through the key rather than around it.
+check "and the title carries neither figure, so one unfixed fault is one issue" "no" \
+  "$(holds "$(grep '^TITLE ' "$FAKE_GH_FILED")" '167|130')"
+check "while the body carries both, which is where the rotted writer is nameable" "yes" \
+  "$(holds "$(cat "$FAKE_GH_FILED")" 'owned record [(]@gl_ctx[)]: 167k')"
+check "and the beacon beside it" "yes" \
+  "$(holds "$(cat "$FAKE_GH_FILED")" 'beacon scraped from the pane: 130k')"
+# The agent is the other dropped field — the rot is in a writer, so two agents on
+# one profile are one bug — but the body still says where it was seen.
+check "and the agent it was seen on, which the title deliberately drops" "yes" \
+  "$(holds "$(cat "$FAKE_GH_FILED")" 'agent: `ctxfact`')"
+check "and filing leaves the finding's own exit status alone" "1" "$rc"
+
+gout="$(ghvet)"
+check "a second sweep of the same conflict does not duplicate" "yes" \
+  "$(holds "$gout" "^  issue already open: 'strategy rot: bash context tiers disagree'")"
+check "and files nothing the second time" "1" \
+  "$(grep -c '^TITLE ' "$FAKE_GH_FILED")"
+
+# THE CONTROL. Without it a filer wired to run on every agent, finding or not,
+# passes every check above.
+cfset "ctx 130400 200000 $(ago 30)"
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
+ghvet >/dev/null
+check "tiers that agree file nothing at all" "0" \
+  "$(grep -c '^TITLE ' "$FAKE_GH_FILED")"
+
+# LAW 8 AT THE EDGE. gh can be missing, unauthenticated, offline or rate-limited,
+# and filing is the OPTIONAL half here: the finding was printed and its code
+# raised before anything reached gh. A filer that took the finding's exit status
+# down with it would show the operator a conflict and tell every script watching
+# that nothing was found.
+mkdir -p "$SHIM/ghdead"
+printf '#!/bin/sh\nexit 1\n' > "$SHIM/ghdead/gh"
+chmod +x "$SHIM/ghdead/gh"
+cfset "ctx 167500 200000 $(ago 30)"
+gout="$(PATH="$SHIM/ghdead:$PATH" GANG_PROFILES="$SHIM/vetctx" \
+  "$GANG" vet --file-issue 2>/dev/null)"; rc=$?
+check "a gh that cannot answer does not swallow the finding" "yes" \
+  "$(holds "$gout" 'ROT RISK — the context tiers disagree')"
+check "and the report says the finding stands and was not filed" "yes" \
+  "$(holds "$gout" 'the finding above stands — filing it failed')"
+check "and the exit status is still the finding's own" "1" "$rc"
+rm -rf "$SHIM/ghdead" "$GHDIR"
+unset -f ghvet
+unset FAKE_GH_OPEN FAKE_GH_FILED
 rm -rf "$SHIM/vetctx"
 unset -f cfvet
 
