@@ -216,6 +216,12 @@ commented out stays commented. `--refresh` is the same replacement without the
 add: it is what `install.sh` runs on an update, so refreshing an entry you chose
 never becomes adding one you did not.
 
+`gang vet` reports the entry as absent, current, or stale. Absence is not drift —
+plenty of installs want no ambient patrol — but an entry that no longer matches
+what this install would write is, and vet prints both lines rather than leaving
+you to diff from memory. This is the check that pays: a crontab is the one part
+of an install that updating never touches, so an entry can go on running flags
+the tool has outgrown with every other diagnostic reading clean.
 
 A sweep whose stdout is not a terminal records itself; one run interactively and
 it only prints. The destination is `GANG_PATROL_LOG`, defaulting to

@@ -4233,6 +4233,35 @@ EOF
       "$(colour "$C_BAD" "no UTF-8 locale available — multibyte markers cannot match")"
     drift=1
   fi
+  # A crontab entry is the one part of an install that updating never touches,
+  # which is how a patrol line went on sweeping with the wrong flags for days
+  # while every pin above read OK. Same tissue as the beacon gate: a file the
+  # OPERATOR owns that a gang behaviour needs, so it belongs in the report that
+  # already covers those.
+  #
+  # Absence is not drift. Plenty of installs want no ambient patrol, and a
+  # diagnostic that goes red for a choice can never go green again — the operator
+  # would learn to ignore the colour, which costs more than the row is worth.
+  # An entry that no longer matches what this install would write IS drift: the
+  # operator asked for patrol, and what they are getting is not it.
+  if command -v crontab >/dev/null 2>&1; then
+    local want have
+    want="$(cron_line)"
+    have="$(cron_installed)" || have=""
+    if [ -z "$have" ]; then
+      printf '%-12s %-26s %s\n' 'patrol cron' '-' \
+        "$(colour "$C_DIM" "no entry sweeps session $SESSION — gang cron --install adds one")"
+    elif [ "$have" = "$want" ]; then
+      printf '%-12s %-26s %s\n' 'patrol cron' "$SESSION" \
+        "$(colour "$C_OK" "OK (matches this install)")"
+    else
+      printf '%-12s %-26s %s\n' 'patrol cron' "$SESSION" \
+        "$(colour "$C_BAD" "STALE — the entry sweeping this session is not the one this install would write; gang cron --install replaces it")"
+      printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "in force:     $have")"
+      printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "this install: $want")"
+      drift=1
+    fi
+  fi
   # Only on a clean bill, because that is when it is the remaining hypothesis:
   # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a

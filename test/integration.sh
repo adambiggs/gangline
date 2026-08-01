@@ -2800,7 +2800,17 @@ esac
 SH
 chmod +x "$CRONDIR/crontab"
 export FAKE_CRONTAB="$SHIM/crontab.tab"
-gcron() { PATH="$CRONDIR:$PATH" "$GANG" cron "$@"; }
+# Every shipped pin shadowed to `any`, so vet's exit status further down is about
+# the crontab entry and not about whatever the ambient tree happens to be running.
+# Both helpers carry the SAME override: an entry describes the environment it was
+# written from, and two helpers disagreeing about one would be comparing a line
+# against a line nobody would write.
+mkdir -p "$SHIM/vetcron"
+for p in claude-code codex opencode pi; do
+  printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERIFIED_VERSIONS="any"\n' > "$SHIM/vetcron/$p.sh"
+done
+gcron() { PATH="$CRONDIR:$PATH" GANG_PROFILES="$SHIM/vetcron" "$GANG" cron "$@"; }
+vetcron() { PATH="$CRONDIR:$PATH" GANG_PROFILES="$SHIM/vetcron" "$GANG" vet 2>/dev/null; }
 # The command an entry calls, with the schedule and any carried overrides removed.
 cron_cmd() { sed -e 's/ patrol >.*//' -e 's/.* //'; }
 
@@ -2923,9 +2933,31 @@ gcron --refresh >/dev/null
 check "an update refreshes the stale entry it finds, which is the whole order" "yes" \
   "$(holds "$(cat "$FAKE_CRONTAB")" 'gang patrol >/dev/null 2>&1$')"
 
-rm -rf "$SHIM/onpath" "$SHIM/otherbin" "$SHIM/otherinstall"
+# vet is where an operator finds out, because nobody re-reads a crontab.
+: > "$FAKE_CRONTAB"
+check "vet names an install with no sweep at all" "yes" \
+  "$(holds "$(vetcron)" "^patrol cron +- +no entry sweeps session $GANG_SESSION")"
+# Absence is a choice, and a diagnostic that goes red for a choice can never go
+# green again — the operator learns to ignore the colour, which costs more than
+# the row is worth.
+vetcron >/dev/null
+check "and does not call that drift" "0" "$?"
+gcron --install >/dev/null
+check "a current entry reads OK" "yes" \
+  "$(holds "$(vetcron)" '^patrol cron .* OK \(matches this install\)$')"
+printf '*/2 * * * * GANG_SESSION=%s %s patrol 2>&1 | grep -v steady >> /tmp/patrol.log\n' \
+  "$GANG_SESSION" "$ROOT/bin/gang" > "$FAKE_CRONTAB"
+check "an entry that stopped matching this install reads STALE" "yes" \
+  "$(holds "$(vetcron)" '^patrol cron .* STALE — ')"
+# Both lines, because "yours differs from mine" that will not show either one
+# leaves the operator diffing from memory.
+check "and vet prints the entry in force beside the one it wanted" "yes" \
+  "$(holds "$(vetcron)" 'in force: +\*/2 .* grep -v steady')"
+vetcron >/dev/null
+check "a stale entry fails vet, which is what a script reads" "1" "$?"
+rm -rf "$SHIM/vetcron" "$SHIM/onpath" "$SHIM/otherbin" "$SHIM/otherinstall"
 rm -f "$FAKE_CRONTAB"
-unset -f gcron cron_cmd
+unset -f gcron cron_cmd vetcron
 unset FAKE_CRONTAB
 
 # Two declared markers, one controlled profile, and the pair is the whole policy:

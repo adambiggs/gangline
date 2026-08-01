@@ -480,8 +480,12 @@ what it displaced:
 gang cron --install
 ```
 
-A sweep covers one session, so a second team is a second entry, and neither
-command touches the other's.
+Ambient patrol is opt-in and stays that way: updating Gangline refreshes an entry
+you already have, and never adds one you do not. `gang vet` reports an entry that
+stopped matching your install, which is the failure a crontab is uniquely prone
+to — nothing in an update touches it, so it can go on running flags the tool has
+outgrown. A sweep covers one session, so a second team is a second entry, and
+neither command touches the other's.
 
 The entry carries every `GANG_*` override exported where you ran `gang cron`,
 which is why you run it from the same shell the team runs in — a patrol that

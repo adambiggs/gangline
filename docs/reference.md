@@ -281,7 +281,8 @@ intended for hook systems such as Claude Code's `UserPromptSubmit` and
 Plain vet visits every installed profile, including custom and test-only files.
 It compares the harness's installed version with the profile's verified version
 words, runs an optional profile-owned gate over the harness's files, checks that
-a UTF-8 locale is available, and exits nonzero on drift. For an unpinned dotted-numeric
+a UTF-8 locale is available, reports the patrol crontab entry, and exits nonzero
+on drift. For an unpinned dotted-numeric
 version it reports whether the installed build is newer than all pins, older than
 all pins, or between pins when that ordering is unambiguous; otherwise the
 `ROT RISK` remains deliberately unranked. Plain vet does **not** fire marker
@@ -297,6 +298,12 @@ settings are not read — the directory an agent will be hitched in is not known
 vet time — and a settings file that exists but does not parse is reported as
 undetermined, never as unconfigured. The gate is skipped where the harness is not
 installed.
+
+The `patrol cron` row reports the entry sweeping this session as absent, current,
+or stale, and is omitted where there is no `crontab` command. Only stale counts as
+drift, and the row prints the entry in force beside the one `gang cron` would
+write. Absence is a choice an install is entitled to make, and a diagnostic that
+goes red for a choice can never go green again.
 
 - `--file-issue`: for each version-pin `ROT RISK`, use `gh` to create a deduplicated
   GitHub issue in this repository. Failure to list open issues is fatal rather
