@@ -383,6 +383,8 @@ These are useful when the corresponding path is in use:
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
 | `GANG_COMPACT_GRACE` | maximum wait for gang-issued compaction proof | `300` seconds |
 | `GANG_RESUME_TIMEOUT` | detached resume wait ceiling | `900` seconds |
+| `GANG_PATROL_LOG` | where a non-interactive sweep records itself; empty writes no file | `$XDG_STATE_HOME/gangline/patrol.log` |
+| `GANG_PATROL_LOG_MAX` | size at which that log rolls to a single `.1`; whole bytes, and a non-numeric value is refused | `1048576` |
 | `GANG_PROBE_DIR` | clean, already-trusted working directory for probes | private temporary directory |
 | `GANG_PROBE_BOOT` | probe startup deadline | `45` seconds |
 | `GANG_PROBE_TURN` | probe busy-marker observation window | `90` seconds |

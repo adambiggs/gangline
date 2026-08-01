@@ -29,6 +29,11 @@ export GANG_SESSION="gangtest-$$"
 # exported once, because nearly every invocation below hitches on it. Checks that
 # assert the OPERATOR's view clear it for that one command.
 export GANG_TEST_PROFILES=1
+# Every patrol below runs down a pipe, which is exactly the condition that makes a
+# sweep record itself — so without this the suite would append several hundred
+# lines to the operator's own patrol log. Off by default here; the section that
+# tests logging points it at a scratch file for the length of that section.
+export GANG_PATROL_LOG=
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
 SHIM="$(mktemp -d)"
@@ -2712,6 +2717,63 @@ check "and the next sweep nudges rather than waiting for a crossing that cannot 
   "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$("$GANG" patrol | verdict bandrot)"
 "$GANG" drop bandrot >/dev/null 2>&1 || true
+
+# --- what a sweep leaves behind ------------------------------------------------
+#
+# gang writes this log itself. What it replaces was a shell pipeline pasted into a
+# crontab line, filtering by an ALLOWLIST of verdict phrases — and the verdict that
+# named a real failure was a phrase added to gang long after that line was written,
+# so it was dropped at the pipe every two minutes for five hours while the agent it
+# described went unpatrolled. The property under test is that inversion: routine is
+# excluded BY NAME and everything else is kept, so a verdict invented tomorrow is
+# recorded tomorrow without anybody editing a crontab.
+PLOG="$SHIM/patrol.log"
+"$GANG" hitch logagent -p bash -d /tmp >/dev/null
+paint logagent 'ctx 200k/1000k 20%'
+GANG_PATROL_LOG="$PLOG" "$GANG" patrol >/dev/null
+check "a sweep down a pipe records what it found" "yes" \
+  "$(holds "$(cat "$PLOG" 2>/dev/null)" 'logagent.*NUDGED \(crossed the 190000-token band\)')"
+# The question a postmortem asks first, and the one the old log could not answer:
+# the break had to be dated from a stale tmux option and a file mtime instead.
+check "and stamps it with when, which is what a postmortem asks first" "yes" \
+  "$(holds "$(head -1 "$PLOG")" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[-+][0-9]{4} ')"
+check "and writes no terminal escapes into a file nothing renders" "no" \
+  "$(contains "$(cat "$PLOG")" "$(printf '\033')")"
+
+# Counted for this agent alone. A sweep records the whole session, so the other
+# agents standing in it write their own rows between these two samples — which is
+# the feature working, and would make a whole-file count prove nothing.
+lines_before="$(grep -c logagent "$PLOG")"
+paint logagent 'ctx 200k/1000k 20%'
+check "a second sweep is routine" "steady (band 2)" \
+  "$(GANG_PATROL_LOG="$PLOG" "$GANG" patrol | verdict logagent)"
+check "and routine is the one thing not written down" "$lines_before" \
+  "$(grep -c logagent "$PLOG")"
+
+# The regression in a single check. This phrase did not exist when the operator's
+# crontab was written, and an allowlist of known phrases is exactly what dropped
+# its equivalent — so a filter that keeps it without being told about it is the
+# whole fix.
+tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
+GANG_PATROL_LOG="$PLOG" "$GANG" patrol >/dev/null
+check "a verdict nobody anticipated is recorded anyway" "yes" \
+  "$(holds "$(tail -1 "$PLOG")" 'context-band memory was unreadable')"
+
+# Law 6 in the small: a file gang appends to forever is state with no end to it.
+tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
+GANG_PATROL_LOG="$PLOG" GANG_PATROL_LOG_MAX=1 "$GANG" patrol >/dev/null
+check "an oversized log is rolled, not grown without end" "yes" \
+  "$([ -f "$PLOG.1" ] && echo yes || echo no)"
+check "and the roll keeps exactly one previous generation" "no" \
+  "$([ -f "$PLOG.1.1" ] && echo yes || echo no)"
+
+# Off is off: an operator who wants no file on disk gets none, and the sweep still
+# reports to the terminal it was run from.
+rm -f "$PLOG" "$PLOG.1"
+tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
+check "an empty destination writes nothing at all" "no" \
+  "$(GANG_PATROL_LOG= "$GANG" patrol >/dev/null; [ -f "$PLOG" ] && echo yes || echo no)"
+"$GANG" drop logagent >/dev/null 2>&1 || true
 
 # Two declared markers, one controlled profile, and the pair is the whole policy:
 # a busy agent is delivered to and an occupied one is refused. The difference is

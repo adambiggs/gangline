@@ -201,6 +201,24 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 # itself.
 GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
 
+# Where a non-interactive sweep records what it found. gang owns this rather than
+# leaving it to a shell pipeline in a crontab line, and the reason is a five-hour
+# outage: that pipeline filtered by an ALLOWLIST of verdict phrases, so the one
+# verdict that named a real failure — a phrase added long after the line was
+# pasted — was dropped at the pipe every two minutes and never reached the file.
+# A filter that only passes outcomes somebody already thought of cannot report a
+# new one, and nobody re-pastes a crontab line when the tool changes.
+#
+# So the decision about what is routine belongs next to the code that decides
+# everything else about a sweep, and the timestamps belong here too: a crontab
+# line cannot carry `date +%F` without escaping, because cron reads an unescaped
+# % as a newline. Set it empty to write no log at all.
+GANG_PATROL_LOG="${GANG_PATROL_LOG-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/patrol.log}"
+# One roll, not a rotation scheme. An append-forever file on somebody's disk is a
+# defect however slowly it grows, and keeping exactly one previous generation is
+# the smallest thing that is not one.
+GANG_PATROL_LOG_MAX="${GANG_PATROL_LOG_MAX:-1048576}"
+
 usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
@@ -2746,6 +2764,32 @@ say() { # $1 = name, $2 = context readout, $3 = verdict, $4 = colour (default: d
   # Dim by default because most of a sweep is "nothing to do here"; a caller with
   # something worth an operator's eye passes the colour that says so.
   printf '%-16s %-18s %s\n' "$1" "$2" "$(colour "${4:-$C_DIM}" "$3")"
+  patrol_log "$1" "$2" "$3"
+}
+
+patrol_log() { # $1 = name, $2 = readout, $3 = verdict; the record a sweep leaves behind
+  [ -n "$GANG_PATROL_LOG" ] || return 0
+  # An operator watching a sweep does not also need it written down, and the same
+  # test already decides colour, so an interactive `gang patrol` stays a read-only
+  # command. Under cron, stdout is not a terminal and the sweep is recorded.
+  [ ! -t 1 ] || return 0
+  # The ONLY thing dropped, and it is dropped by name rather than by failing to
+  # match a list of things worth keeping. A verdict added tomorrow is recorded
+  # tomorrow, with no edit here and none to anybody's crontab — which is the
+  # property the allowlist this replaces did not have.
+  case "$3" in steady*) return 0 ;; esac
+  local dir; dir="$(dirname "$GANG_PATROL_LOG")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  require_whole GANG_PATROL_LOG_MAX "$GANG_PATROL_LOG_MAX" bytes
+  if [ -f "$GANG_PATROL_LOG" ] \
+     && [ "$(wc -c < "$GANG_PATROL_LOG")" -gt "$GANG_PATROL_LOG_MAX" ]; then
+    mv -f "$GANG_PATROL_LOG" "$GANG_PATROL_LOG.1" 2>/dev/null || true
+  fi
+  # Never coloured: the escapes would be in the file rather than on a screen. And
+  # never allowed to take the sweep down — a log is a record of the work, not the
+  # work, so a full disk or an unwritable path costs the line and nothing else.
+  printf '%s %-16s %-18s %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$2" "$3" \
+    >> "$GANG_PATROL_LOG" 2>/dev/null || true
 }
 
 cmd_patrol() { # ambient warning leg: nudge any agent past a context band

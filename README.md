@@ -472,13 +472,16 @@ whose context is climbing.
 
 Run patrol periodically if you want ambient warnings:
 
-```sh
-mkdir -p "$HOME/.local/state/gangline"
+```cron
+*/2 * * * * $HOME/.local/bin/gang patrol >/dev/null 2>&1
 ```
 
-```cron
-*/2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
-```
+A sweep that is not attached to a terminal records itself, timestamped, to
+`$XDG_STATE_HOME/gangline/patrol.log` (`~/.local/state/...` by default), creating
+the directory if it needs to. Routine `steady` rows are the only thing left out,
+so a verdict added in a later version is recorded without anyone editing this
+line. `GANG_PATROL_LOG` moves the file, or writes none when set empty;
+`GANG_PATROL_LOG_MAX` (1 MiB) is the size at which it rolls to a single `.1`.
 
 The cron environment must carry the same `GANG_SESSION`, `GANG_PROFILES`,
 `GANG_CONTEXT_BANDS` and `GANG_LOCK_DIR` values as the team

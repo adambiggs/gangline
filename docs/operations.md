@@ -193,19 +193,25 @@ A missing readout is not hidden: the dedicated command fails, roster displays
 
 ### Ambient patrol
 
-`gang patrol` is a one-shot sweep, suitable for cron. Create the log directory
-first because the shell opens a redirect before it starts `gang`:
-
-```sh
-mkdir -p "$HOME/.local/state/gangline"
-```
+`gang patrol` is a one-shot sweep, suitable for cron:
 
 ```cron
-*/2 * * * * $HOME/.local/bin/gang patrol 2>&1 | grep -v ' steady ' >> $HOME/.local/state/gangline/patrol.log || true
+*/2 * * * * $HOME/.local/bin/gang patrol >/dev/null 2>&1
 ```
 
-The negative filter keeps unknown future errors while removing routine steady
-rows. A patrol only sweeps `GANG_SESSION`; use one cron entry per session. Carry
+A sweep whose stdout is not a terminal records itself; one run interactively and
+it only prints. The destination is `GANG_PATROL_LOG`, defaulting to
+`$XDG_STATE_HOME/gangline/patrol.log` and creating its directory. Set it empty for
+no file. Each row carries an ISO-8601 local timestamp, then the same name, readout
+and verdict the terminal shows, without colour escapes. `GANG_PATROL_LOG_MAX`
+(1048576) is the size at which the file rolls to `patrol.log.1`, keeping one
+previous generation and no more; deleting either file is the deletion path.
+
+Routine `steady` rows are excluded by name and everything else is kept. That
+direction is the point: filtering by a list of verdicts worth keeping cannot
+report one that did not exist when the list was written, and a crontab line is not
+something anybody revisits when the tool changes. A patrol only sweeps
+`GANG_SESSION`; use one cron entry per session. Carry
 `GANG_PROFILES`, any of the three ladder settings and `GANG_LOCK_DIR` into cron
 too when the team overrides them: a patrol that disagrees about the lock directory
 stops serialising with the other writers.
