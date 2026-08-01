@@ -518,7 +518,7 @@ mint_key() { # -> a fresh session marker; unique by construction, meaningless by
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
   # One grammar for agent names and senders, because a name is all four of those
-  # at once: tmux addresses it, the context hook puts it in JSON, the band note
+  # at once: tmux addresses it, `gang hook` puts it in JSON, the band note
   # puts it in a suggested command, and messages sign with it. A name that
   # cannot round-trip through all four is refused at the door rather than
   # producing a window nobody can address or a hook reply nobody can parse.
@@ -2575,7 +2575,7 @@ cmd_hitch() {
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
-    || die "hitch: '$name' is not a usable agent name — patrol and hitch are reserved for gang's substrate; other names use letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in the context hook's reply, and a word in the compaction command gang suggests"
+    || die "hitch: '$name' is not a usable agent name — patrol and hitch are reserved for gang's substrate; other names use letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in gang hook's reply, and a word in the compaction command gang suggests"
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
