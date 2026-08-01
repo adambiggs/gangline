@@ -223,6 +223,23 @@ GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 # itself.
 GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
 
+# How long an OPEN compaction bracket stays credible. A different question from
+# the grace above, which asks how long a compaction gang TYPED could still be in
+# flight; this one bounds a compaction the harness said had STARTED, and only the
+# open side of it — a closed bracket is a finished compaction, and a finished
+# compaction does not become unfinished with age.
+#
+# It is deliberately not derived from the one measurement there is. Manual
+# compaction on claude-code 2.1.220 was watched at about eleven seconds, and a
+# bound near that would be the tightest thing here; auto-compaction on a large
+# window is unobserved (gh #57), and it is the case this tier exists to cover, so
+# the bound is set for the case nobody has measured rather than the one somebody
+# did. Overrunning it costs a held nudge, which is noisy; undershooting it drops a
+# genuinely compacting pane back to a tier that reads it idle, and patrol then
+# injects into the compaction — corrupting. So the error direction is chosen and
+# the number is policy, not an observation.
+GANG_COMPACTION_LIMIT="${GANG_COMPACTION_LIMIT:-300}"
+
 # Where a non-interactive sweep records what it found. gang owns this rather than
 # leaving it to a shell pipeline in a crontab line, and the reason is a five-hour
 # outage: that pipeline filtered by an ALLOWLIST of verdict phrases, so the one
@@ -1393,14 +1410,159 @@ compaction_mark() { # $1 = target; record that WE issued one, with the tokens at
 
 compaction_clear() { tmux set-option -uw -t "$1" @gl_compacting 2>/dev/null || true; }
 
+# ===[ compaction-bracket ]===================================================
+#
+# The harness's own account of a compaction: the event tier for the compaction
+# predicate (ADR-0008), sitting above both the mark below it and the pane scrape
+# below that. PreCompact opens the bracket, PostCompact closes it, and `gang hook`
+# is the one verb that writes it — the same shape as @gl_turn, deliberately, since
+# a second convention for a stamped fact is a second thing to get wrong.
+#
+# WHAT IT ANSWERS THAT THE MARK CANNOT, which is the whole reason it exists. The
+# mark above is gang-issued-only and is written while the compaction is still
+# QUEUED behind the current turn — so it says a compaction was ASKED FOR, and it
+# says nothing at all about a harness compacting at its own threshold. This fires
+# when a compaction ACTUALLY STARTS, whoever started it. Auto-compaction was the
+# hole the mark's own comment names, and this is the thing that sees it.
+#
+# THE TRIGGER IS STORED BECAUSE THE TWO CASES ARE NOT THE SAME EVENT. Both
+# payloads carry `trigger`, values manual and auto, and an operator reading a held
+# nudge needs to know which one held it: a manual compaction has a resume in
+# flight behind it, an auto one has nothing behind it at all. Anything else the
+# payloads carry is dropped — compact_summary alone is most of a PostCompact
+# body, and gang keeps no second copy of a transcript.
+#
+# NOT WIRED INTO compacting(). That reader breaks the instant it is true and hands
+# resume_after_compaction a "the dangerous turn is over" it must not be given
+# early — and unlike the mark, this fact would be RIGHT to give it, since the
+# bracket opens when compaction is genuinely underway. It is left unwired because
+# nothing in this arc consumes it there (law 5) and the failure mode of getting
+# that timing wrong is a resume overtaking the turn it was meant to follow. The
+# opportunity is named here rather than taken.
+COMPACT_STATE=""
+COMPACT_AT=0
+COMPACT_TRIGGER=""
+compaction_trigger_of() { # $1 = whatever the payload said; the fact vocabulary, closed
+  # Three values and no others, so the stored fact can never carry a space or a
+  # newline into a space-separated record, and so an absent field reads as the
+  # unknown it is instead of defaulting to the commoner of the two — which would
+  # be gang telling an operator which kind of compaction this was on no evidence.
+  case "$1" in manual|auto) printf '%s' "$1" ;; *) printf 'unknown' ;; esac
+}
+
+compaction_bracket_read() { # $1 = window id; sets COMPACT_*; 1 = absent, 2 = malformed
+  local raw
+  raw="$(tmux show-options -wqv -t "$1" @gl_compact_bracket 2>/dev/null)" || raw=""
+  COMPACT_STATE=""; COMPACT_AT=0; COMPACT_TRIGGER=""
+  [ -n "$raw" ] || return 1
+  read -r COMPACT_STATE COMPACT_AT COMPACT_TRIGGER _ <<<"$raw"
+  # All three fields before any of them, @gl_turn's rule: a record gang cannot
+  # fully interpret is not a bracket in some looser shape, and reading the part it
+  # recognises out of one it does not is how a fact layer starts inventing.
+  case "$COMPACT_STATE" in
+    open|closed) ;;
+    *) COMPACT_STATE=""; return 2 ;;
+  esac
+  [[ "$COMPACT_AT" =~ ^[0-9]+$ ]] || { COMPACT_STATE=""; COMPACT_AT=0; return 2; }
+  case "$COMPACT_TRIGGER" in
+    manual|auto|unknown) ;;
+    *) COMPACT_STATE=""; COMPACT_AT=0; COMPACT_TRIGGER=""; return 2 ;;
+  esac
+}
+
+compaction_bracket_write() { # $1 = window id, $2 = open|closed, $3 = trigger
+  # Never fatal, for @gl_turn's reason: a hook that can fail its harness's own
+  # turn is the self-management loop law 7 forbids. A fact that cannot be written
+  # does not arrive, the reader falls to the tier below, and the loudness lives
+  # one level up where an expected fact that stops arriving surfaces as expiry.
+  tmux set-option -w -t "$1" @gl_compact_bracket \
+    "$2 $(date +%s) $(compaction_trigger_of "$3")" 2>/dev/null || true
+}
+
+compaction_bracket_clear() { tmux set-option -uw -t "$1" @gl_compact_bracket 2>/dev/null || true; }
+
+compaction_bracket_mark() { # $1 = window id, $2 = open|closed, $3 = trigger
+  local prev=""
+  compaction_bracket_read "$1" && prev="$COMPACT_STATE"
+  compaction_bracket_write "$1" "$2" "$3"
+  # Transitions row and heartbeats do not, @gl_turn's rule again. Nothing
+  # heartbeats a compaction bracket today — the two events fire once each — so
+  # this is not yet load-bearing the way turn_mark's is; it is written the same
+  # way anyway, because the day a harness fires PreCompact twice is not the day
+  # anybody wants to discover that a log family grew a heartbeat.
+  [ "$prev" != "$2" ] || return 0
+  patrol_log "$(agent_name_of "$1")" compaction-bracket \
+    "compaction $2 ($(compaction_trigger_of "$3"))"
+}
+
+# Which tier answered a pending verdict, so verdict 0 can name itself. Two
+# different facts reported under one wording is a fabricated status (law 8), and
+# these two really do differ: one says gang typed a command and has no proof it
+# ran, the other says the harness announced a compaction that is running now.
+COMPACTION_PENDING_WHAT="compaction gang issued, unconfirmed"
+
 compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   # 0 pending, 1 nothing pending, 2 issued but unproved past the grace. Two ways
   # out and a third answer, because each covers a case the others cannot see.
-  local v issued at_issue now
+  local v issued at_issue now rc=0 closed_at=0
+  now="$(date +%s)"
+  COMPACTION_PENDING_WHAT="compaction gang issued, unconfirmed"
+
+  # THE EVENT TIER, ahead of everything below it (ADR-0008): the harness saying a
+  # compaction is running outranks gang's own record of having asked for one, and
+  # it answers for the auto-compaction the mark below is blind to by construction.
+  compaction_bracket_read "$1" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) ;;  # no bracket: a harness that fires no compaction events, or none yet
+    2) # gang wrote this and gang cannot read it back. Discarded rather than
+       # interpreted, @gl_turn's precedent — there is nothing to rebuild, since
+       # whether a compaction is running is exactly what was lost — and the read
+       # falls to the tier below instead of spending an unreadable fact as an
+       # answer in either direction.
+       compaction_bracket_clear "$1" ;;
+    *) die "internal: compaction_bracket_read returned unknown verdict $rc" ;;
+  esac
+  if [ "$rc" -eq 0 ] && [ "$COMPACT_STATE" = open ]; then
+    require_whole GANG_COMPACTION_LIMIT "$GANG_COMPACTION_LIMIT" seconds
+    # A stamp from the future has no freshness left to test, so it does not answer
+    # here — and it is NOT cleared, because a backward clock step can make a
+    # genuinely open bracket read future and discarding it would throw away a true
+    # fact. It stands until PostCompact overwrites it.
+    #
+    # Expiry falls THROUGH to the mark and scrape tiers rather than returning an
+    # answer of its own. That is the ADR's shape for a spent fact: the tier stops
+    # witnessing and the next one down is asked, which is precisely the state this
+    # arc found the function in. A crash mid-compaction therefore costs the tier
+    # it earned and nothing that was already there.
+    if [ "$COMPACT_AT" -le "$now" ] && [ $(( now - COMPACT_AT )) -lt "$GANG_COMPACTION_LIMIT" ]; then
+      COMPACTION_PENDING_WHAT="harness compaction in flight ($COMPACT_TRIGGER)"
+      return 0
+    fi
+  elif [ "$rc" -eq 0 ] && [ "$COMPACT_AT" -le "$now" ]; then
+    # A CLOSED bracket does not expire, and the asymmetry is the same one @gl_turn
+    # draws. An open bracket claims something is happening, and claims like that
+    # decay; a close is a completed event, and a completed compaction does not
+    # become incomplete with age. So its epoch is carried down to the mark tier at
+    # any age — but only as an ORDERING fact, because what it proves is bounded:
+    # it settles a compaction issued before it ran, and says nothing whatever
+    # about one typed after it finished.
+    closed_at="$COMPACT_AT"
+  fi
+
   v="$(tmux show-options -wqv -t "$1" @gl_compacting 2>/dev/null)" || return 1
   [ -n "$v" ] || return 1
   read -r issued at_issue <<<"$v"
   [[ "$issued" =~ ^[0-9]+$ ]] || { compaction_clear "$1"; return 1; }
+  # The strongest proof this function can get, and it arrives before the guesses
+  # below: the harness said a compaction finished, and it finished no earlier than
+  # the moment gang typed the command. The context-drop check under this is the
+  # same conclusion inferred from a number moving, and the clock under that is not
+  # evidence at all. Ordered, not merged — a close BEFORE the issue is a different
+  # compaction and proves nothing about this one, so it is left to fall through.
+  if [ "$closed_at" -gt 0 ] && [ "$issued" -le "$closed_at" ]; then
+    compaction_clear "$1"; return 1
+  fi
   # The context drop is the positive one: a compaction that HAPPENED shows it,
   # and unlike the momentary zero the readout flashes on its way through, the
   # drop is monotone — it stays low — so no poll interval can step over it.
@@ -1421,7 +1583,10 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   # `/compact` under a harness's own threshold leaves the context exactly where it
   # was (measured on a 30k pane — the command ran, the readout never moved), so a
   # mark trusted until the drop would hold patrol off that pane for good.
-  now="$(date +%s)"
+  #
+  # `now` is the one read at the top, shared with the bracket tier above: two
+  # `date` calls inside one verdict can straddle a second boundary and make this
+  # function answer about two different instants.
   # Shared with resume_after_compaction, which uses the same number to decide when
   # to give up waiting for the drop; overrunning it there is corrupting, not noisy.
   #
@@ -3278,7 +3443,14 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # acting on that, so a second note carrying the same instruction is noise.
     # GANG_COMPACT_GRACE is the whole of its reach, which is what makes it
     # incapable of the permanent silence the expired case below used to cause.
-    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
+    #
+    # Two tiers reach this branch and they do not hold for the same reason, so the
+    # phrase comes from the reader rather than being written out here. A mark says
+    # gang typed a command and is waiting on proof; a bracket says the harness is
+    # compacting right now and names which kind. Same action, and reporting them
+    # under one sentence would be gang telling an operator it issued a compaction
+    # the agent started by itself.
+    say "$2" "$ctx" "past the ${crossed}-token band — ${COMPACTION_PENDING_WHAT}, holding nudge" "$C_WORK"
   elif [ "$compaction_rc" -eq 2 ]; then
     # The grace ran out and the context never dropped, so gang has no evidence
     # either way about whether a compaction happened. Holding on that spent
@@ -3579,6 +3751,17 @@ cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pan
     # a bracket already open and is a heartbeat, which does not.
     UserPromptSubmit|PostToolUse) turn_mark "$TMUX_PANE" open ;;
     Stop)                         turn_mark "$TMUX_PANE" closed ;;
+    # The compaction bracket, and it is NOT turn-shaped however alike the two
+    # read. No Stop fires for a compaction, so nothing else could close this; the
+    # composer is usable a second or two after PostCompact, so the close is the
+    # end of the thing rather than the start of a wait; and both events carry a
+    # `trigger` the turn events have no equivalent of, which is the only way gang
+    # can tell its own /compact from the harness compacting on its own threshold.
+    #
+    # SILENT, and that is enforced by the allowlist below rather than by this arm.
+    # Whatever else changes here, neither name may join that list.
+    PreCompact)  compaction_bracket_mark "$TMUX_PANE" open   "$(hook_trigger_of "$payload")" ;;
+    PostCompact) compaction_bracket_mark "$TMUX_PANE" closed "$(hook_trigger_of "$payload")" ;;
     # NEVER ADD SubagentStop HERE. The name reads like the obvious companion to
     # Stop and it is not: on 2.1.220 it fires after Stop on ordinary main-agent
     # turns with no subagent involved at all, watched twice. Mapping it to
@@ -3609,6 +3792,28 @@ cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pan
     UserPromptSubmit|PostToolUse) ( hook_band_note "$event" "$prof" ) || true ;;
   esac
   exit 0
+}
+
+hook_trigger_of() { # $1 = the raw payload; the compaction discriminator, never fatal
+  # The only field gang reads out of a payload beyond the event name, and it is
+  # read here rather than in the fact writer so the writer stays a store: this is
+  # the parse, compaction_trigger_of is the vocabulary, and neither of them
+  # decides anything.
+  #
+  # ABSENCE IS NOT AN ERROR AND MUST NOT BE. A harness that stops carrying the
+  # field, a hand-fired hook, a shape change — each leaves this empty, and each
+  # still leaves gang holding the fact that has a consumer, which is that a
+  # compaction is running. The vocabulary closes an empty one to `unknown`, so a
+  # reader is told the discriminator was missing rather than handed the commoner
+  # of the two values as though somebody had observed it.
+  #
+  # A non-string value is spent as absent for the same reason. `trigger: 3` is not
+  # a trigger this gang knows, and rendering it into the record would put a value
+  # nothing maps into a field two branches read.
+  printf '%s' "$1" \
+    | python3 -c 'import json,sys
+v = json.load(sys.stdin).get("trigger", "")
+print(v if isinstance(v, str) else "")' 2>/dev/null || true
 }
 
 hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in a subshell

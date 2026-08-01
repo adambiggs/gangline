@@ -2520,15 +2520,29 @@ check "the ordinary launch line carries a --settings payload" "yes" \
 check "and that payload is valid JSON" "yes" \
   "$(python3 -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' \
        "$(ccpayload GANG_LAUNCH)" 2>/dev/null || echo no)"
-# Exactly the three cmd_hook maps, as a SET. An extra name is as much a finding as
+# Exactly the five cmd_hook maps, as a SET. An extra name is as much a finding as
 # a missing one — this is the anti-SubagentStop guard, and the reason it is a
 # check rather than a comment is that adding one costs a single line and breaks
 # nothing visible: SubagentStop fires after Stop on ordinary main-agent turns, so
-# wiring it would close brackets on a false signal.
-check "and it wires exactly the three events gang maps, and no fourth" \
-  "PostToolUse Stop UserPromptSubmit" \
+# wiring it would close brackets on a false signal. Three carry the turn bracket
+# and two carry the compaction bracket; a missing PreCompact costs the only tier
+# that can see a harness auto-compacting, silently.
+check "and it wires exactly the five events gang maps, and no sixth" \
+  "PostCompact PostToolUse PreCompact Stop UserPromptSubmit" \
   "$(python3 -c 'import json,sys; print(" ".join(sorted(json.loads(sys.argv[1])["hooks"])))' \
        "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+# The compaction pair is wired BARE, and that is a correctness check rather than a
+# tidiness one. A matcher filters a different field per event — tool name on
+# PostToolUse, trigger on these two — so `"matcher":"manual"` on PreCompact would
+# parse, validate, vet clean, and fire for gang's own /compact while never firing
+# for the auto-compaction the pair exists to catch. Half the coverage, no symptom.
+check "and wires the compaction pair with no matcher, so both triggers fire it" "" \
+  "$(python3 -c '
+import json, sys
+h = json.loads(sys.argv[1])["hooks"]
+bad = [ev for ev in ("PreCompact", "PostCompact")
+       for g in h.get(ev, []) if "matcher" in g]
+print(" ".join(bad))' "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
 # Every hook points at THIS tree's bin/gang, never a bare `gang` off PATH: the hook
 # writes @gl_turn in a format one particular bin/gang reads back, so the reader and
 # the fact vocabulary stay versioned together.
@@ -4009,6 +4023,190 @@ check "the low-band drop is still observed after the ladder branch" "steady (ban
   "$("$GANG" patrol | verdict lowdrop)"
 check "and the drop below the first rung still cleared the mark" "" \
   "$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_compacting)"
+
+# --- the compaction bracket, the tier above that mark --------------------------
+#
+# ADR-0008 again, on the compaction predicate this time: owned event beats owned
+# file beats pane scrape. Everything above is the owned FILE — gang's own record
+# of having typed a command — and it is blind by construction to a harness
+# compacting at its own threshold, which is exactly when patrol is sweeping,
+# because patrol nudges at a high band and a harness auto-compacts at one. The
+# event tier is what sees that: PreCompact opens a bracket, PostCompact closes it,
+# and `trigger` says which kind it was.
+"$GANG" hitch cbracket -p compactable -d /tmp >/dev/null
+cbpane="$(tmux list-panes -t "$(id_of cbracket)" -F '#{pane_id}')"
+cbwin="$(target_of cbracket)"
+CBLOG="$SHIM/compaction.log"
+: > "$CBLOG"
+CFIRE_OUT=""
+cfire() { # $1 = event, $2 = the trigger as a JSON VALUE; '' omits the key entirely
+  # Captured rather than discarded, which does two jobs at once. Command
+  # substitution takes stdout off a tty, so patrol_log writes the rows the
+  # transition checks below read — this suite is run both ways and a tty would
+  # suppress exactly them. And what the hook said is then available to assert on,
+  # which is the safety check further down.
+  local body
+  if [ -n "$2" ]; then
+    body="{\"hook_event_name\":\"$1\",\"session_id\":\"s\",\"cwd\":\"/tmp\",\"trigger\":$2}"
+  else
+    body="{\"hook_event_name\":\"$1\",\"session_id\":\"s\",\"cwd\":\"/tmp\"}"
+  fi
+  CFIRE_OUT="$(printf '%s' "$body" | GANG_PATROL_LOG="$CBLOG" TMUX_PANE="$cbpane" "$GANG" hook)"
+}
+crows() { grep -c "$1" "$CBLOG" 2>/dev/null || true; }
+cfact() { tmux show-options -wqv -t "$cbwin" @gl_compact_bracket; }
+
+cfire PreCompact '"manual"'
+check "PreCompact opens the bracket, stamped, with the trigger beside it" "yes" \
+  "$(holds "$(cfact)" '^open [0-9]+ manual$')"
+# THE SAFETY BOUNDARY, and it is why this is a check and not a comment. Several of
+# this harness's events are decision hooks, where anything on stdout ANSWERS a
+# real permission dialog — so a compaction event that spoke would auto-allow or
+# auto-deny whatever the operator was being asked. The allowlist that keeps this
+# silent is two names long and adding a third costs one word.
+check "and says nothing at all, because this event is not a reply channel" "" "$CFIRE_OUT"
+cfire PostCompact '"manual"'
+check "PostCompact closes the same bracket" "yes" \
+  "$(holds "$(cfact)" '^closed [0-9]+ manual$')"
+check "and is silent on the same grounds" "" "$CFIRE_OUT"
+
+# The trigger is the discriminator and the only payload field gang keeps: a manual
+# compaction has a resume in flight behind it, an auto one has nothing behind it,
+# and an operator reading a held nudge needs to know which held it. compact_summary
+# is most of a PostCompact body and gang keeps no second copy of a transcript.
+cfire PreCompact '"auto"'
+check "the auto trigger is stored as itself" "yes" "$(holds "$(cfact)" '^open [0-9]+ auto$')"
+cfire PreCompact ''
+check "an absent trigger reads unknown, not the commoner of the two values" "yes" \
+  "$(holds "$(cfact)" '^open [0-9]+ unknown$')"
+cfire PreCompact '3'
+check "and a trigger that is not a string is spent as absent rather than rendered in" "yes" \
+  "$(holds "$(cfact)" '^open [0-9]+ unknown$')"
+check "so the record is always three fields, whatever the payload carried" "yes" \
+  "$(holds "$(cfact)" '^(open|closed) [0-9]+ (manual|auto|unknown)$')"
+
+# Transitions row and heartbeats do not, the turn bracket's rule. Nothing
+# heartbeats a compaction today — the two events fire once each — so this is not
+# yet load-bearing the way turn_mark's is; it is checked anyway, because the day a
+# harness fires PreCompact twice is not the day to discover a log family grew one.
+: > "$CBLOG"
+tmux set-option -uw -t "$cbwin" @gl_compact_bracket
+cfire PreCompact '"manual"'
+check "opening the compaction bracket leaves a row behind" "1" "$(crows 'compaction open')"
+check "and the row names the trigger, which is what tells the two apart later" "1" \
+  "$(crows 'compaction open (manual)')"
+cfire PreCompact '"manual"'
+check "and a second PreCompact on an open bracket leaves none" "1" "$(crows 'compaction open')"
+cfire PostCompact '"manual"'
+check "and closing it writes its own transition" "1" "$(crows 'compaction closed')"
+
+# THE CASE THE MARK CANNOT SEE, which is the whole of why this tier exists. No
+# gang-issued compaction here at all — the window carries no mark — and the agent
+# is deep enough that patrol would otherwise nudge it. The bracket is what holds
+# that nudge off a pane the harness is compacting on its own.
+"$GANG" hitch cbauto -p compactable -d /tmp >/dev/null
+paint cbauto 'ctx 900k/1000k 90%'
+fact_set cbauto @gl_compact_bracket "open $(ago 5) auto"
+check "the auto case really has no mark, so nothing below this tier could answer" "" \
+  "$(tmux show-options -wqv -t "$(id_of cbauto)" @gl_compacting)"
+check "an open bracket holds the nudge and names the trigger that held it" \
+  "past the 350000-token band — harness compaction in flight (auto), holding nudge" \
+  "$("$GANG" patrol | verdict cbauto)"
+check "holding burns no band here either, so the nudge is not lost" "" \
+  "$(tmux show-options -wqv -t "$(id_of cbauto)" @gl_band)"
+# It answers patrol's question and no other. Wiring it into compacting() would
+# hand it to resume_after_compaction, and that is a separate decision with a
+# corrupting failure mode; nothing in this arc consumes it there.
+check "and it does not move the status word" "idle (slack tug)" \
+  "$("$GANG" status cbauto | head -1)"
+
+# TIERS PICK WITNESSES, THEY DO NOT VOTE. With a mark AND a fresh bracket the two
+# tiers both say "pending" and would take the same action — but they do not say
+# the same THING, and reporting them under one sentence would have gang claiming
+# it issued a compaction the agent started by itself. Same verdict, own wording.
+"$GANG" hitch cbover -p compactable -d /tmp >/dev/null
+paint cbover 'ctx 900k/1000k 90%'
+"$GANG" compact cbover --from tester >/dev/null 2>&1
+check "the overlap fixture carries a real mark to be outranked" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of cbover)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
+fact_set cbover @gl_compact_bracket "open $(ago 5) manual"
+check "the event tier answers over the mark rather than beside it" \
+  "past the 350000-token band — harness compaction in flight (manual), holding nudge" \
+  "$("$GANG" patrol | verdict cbover)"
+# EXPIRY FALLS THROUGH, it does not answer. A crash mid-compaction leaves a
+# bracket nobody will ever close, and the tier that stops witnessing hands the
+# question to the one below — which is precisely where this predicate was before
+# the bracket existed. Back-dated rather than read under a zeroed bound: zeroing
+# makes the comparison false for every stamp that could exist, so the shipped
+# bound would never be evaluated and no change to it could fail a check here.
+fact_set cbover @gl_compact_bracket "open $(ago 400) manual"
+check "a bracket past its bound gives the question back to the mark tier" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict cbover)"
+# A stamp from the future has no freshness to test either, so it does not answer —
+# and unlike a malformed value it is NOT discarded, because a backward clock step
+# can make a genuinely open bracket read future and clearing it would throw away a
+# true fact and drop a live compaction to the tier below.
+fact_set cbover @gl_compact_bracket "open $(( $(date +%s) + 9999 )) manual"
+check "so does one stamped in the future" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict cbover)"
+check "and it is left standing, because a future stamp can still be a true fact" \
+  "open" "$(tmux show-options -wqv -t "$(id_of cbover)" @gl_compact_bracket | cut -d' ' -f1)"
+# A value gang wrote and gang cannot read back is discarded instead, the way an
+# unreadable @gl_turn is: there is nothing to rebuild, since whether a compaction
+# is running is exactly what was lost, and the next event heals it.
+fact_set cbover @gl_compact_bracket 'not-a-bracket'
+check "an unreadable bracket also falls through rather than answering" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict cbover)"
+check "and is discarded so the next event can heal it" "" \
+  "$(tmux show-options -wqv -t "$(id_of cbover)" @gl_compact_bracket)"
+# The trigger is validated with the other two fields, not after them. A record gang
+# cannot fully interpret is not a bracket in some looser shape, and reading the
+# part it recognises out of one it does not is how a fact layer starts inventing.
+fact_set cbover @gl_compact_bracket "open $(ago 5) sideways"
+check "a trigger outside the vocabulary does not answer on the two fields that parsed" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict cbover)"
+check "and that record is discarded too" "" \
+  "$(tmux show-options -wqv -t "$(id_of cbover)" @gl_compact_bracket)"
+
+# A CLOSE IS PROOF, and it is the strongest thing this function can get. The mark
+# below settles on a context drop — the same conclusion inferred from a number
+# moving — or gives up on a clock, which is not evidence at all. Here the harness
+# says the compaction finished, and it finished after gang typed the command.
+#
+# The mark is back-dated well past the grace, so without the bracket this is the
+# "never proved" report every time. The close converts it into a settled fact.
+"$GANG" hitch cbclose -p compactable -d /tmp >/dev/null
+paint cbclose 'ctx 900k/1000k 90%'
+fact_set cbclose @gl_compacting "$(ago 900) 900000"
+fact_set cbclose @gl_compact_bracket "closed $(ago 600) manual"
+check "a close after the issue proves the compaction the clock had given up on" \
+  "NUDGED (crossed the 350000-token band)" "$("$GANG" patrol | verdict cbclose)"
+check "and the mark is cleared by that proof rather than by its own expiry" "" \
+  "$(tmux show-options -wqv -t "$(id_of cbclose)" @gl_compacting)"
+# A CLOSED BRACKET DOES NOT EXPIRE, and the asymmetry with the open one above is
+# the point rather than an oversight. An open bracket claims something is
+# happening and claims like that decay; a close is a completed event, and a
+# completed compaction does not become incomplete with age. The close read above
+# is 600 seconds old — twice the open bound — and it still settled the mark.
+#
+# What bounds it instead is ORDER. A close BEFORE the issue is a different
+# compaction and proves nothing about this one, so it must not settle it: that is
+# the difference between a fact and a coincidence, and without the comparison the
+# first bracket a window ever closed would answer for every mark after it.
+"$GANG" hitch cbstale -p compactable -d /tmp >/dev/null
+paint cbstale 'ctx 900k/1000k 90%'
+"$GANG" compact cbstale --from tester >/dev/null 2>&1
+fact_set cbstale @gl_compact_bracket "closed $(ago 600) manual"
+check "a close from before the mark settles nothing and leaves it to the tiers below" \
+  "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
+  "$("$GANG" patrol | verdict cbstale)"
+check "and the mark it could not answer for is still there" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of cbstale)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
+for a in cbracket cbauto cbover cbclose cbstale; do "$GANG" drop "$a" >/dev/null 2>&1; done
 
 # The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
 # busy_painted, which is false for most of a turn, so after about sixteen seconds

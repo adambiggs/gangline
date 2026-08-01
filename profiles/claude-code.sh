@@ -35,13 +35,23 @@ GANG_RESUME_LAUNCH="claude --continue"
 # working agent and a blind one, because that statusLine is the only thing
 # painting the ctx beacon profile_context reads below.
 #
-# EXACTLY THREE EVENTS, because the wiring names only what feeds a declared
-# predicate with a live consumer (law 5): UserPromptSubmit opens the turn
-# bracket, PostToolUse refreshes it, Stop closes it. Those are the three cmd_hook
-# maps and there is no fourth. Each shape is as measured — PostToolUse takes a
-# matcher, the other two take none — and a name this harness does not recognise
-# is accepted SILENTLY and then never fires, so the list is written out literally
-# rather than built from a loop, and profile_vet reads the result back.
+# EXACTLY FIVE EVENTS, because the wiring names only what feeds a declared
+# predicate with a live consumer (law 5). Three carry the turn bracket:
+# UserPromptSubmit opens it, PostToolUse refreshes it, Stop closes it. Two carry
+# the compaction bracket: PreCompact opens it, PostCompact closes it, and that
+# pair is what lets gang see a compaction it did not type — the harness
+# auto-compacting at its own threshold, which no mark and no scrape on this
+# harness can witness. Those are the five cmd_hook maps and there is no sixth.
+#
+# Each shape is as measured, and the matchers are where a wrong one hides. A
+# matcher filters a DIFFERENT field per event — tool name on PostToolUse, trigger
+# on the compaction pair — so a matcher on either compaction event would silently
+# wire half the cases: PreCompact matched to "manual" fires for gang's own
+# /compact and never for the auto-compaction this pair exists to catch. A group
+# with no matcher matches everything, so both are wired bare. A name this harness
+# does not recognise is accepted SILENTLY and then never fires, so the list is
+# written out literally rather than built from a loop, and profile_vet reads the
+# result back.
 #
 # NEVER SubagentStop, which fires after Stop on ordinary main-agent turns, and
 # NEVER SessionStart, a second one of which fires at the end of a compaction. The
@@ -109,7 +119,9 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_cmd="{\"type\":\"command\",\"command\":\"$ROOT/bin/gang\",\"args\":[\"hook\"]}"
       _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
+      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
       unset _gl_cc_cmd _gl_cc_json
@@ -174,21 +186,28 @@ GANG_MODEL_OPT="--model"
 # it is the sole cover for a whole state, and a false idle costs more than a
 # dead branch.
 #
-# THIRD FORM, THE PROGRESS BAR: not observed in any state, and kept anyway. It
-# was this file's compaction cover and is not any more — 2.1.220 paints no bar
-# during a compaction (637 samples bracketing a real one: zero hits for these
-# glyphs, zero for the whole of this regex) and none on an ordinary turn (0 of
-# 14862 unfiltered whole-pane frames, in a capture that recorded four other
-# multibyte glyphs from the same footer). So these two alternates are NOT
-# defending against what put them here: a compacting pane reads idle.
+# THIRD FORM, THE PROGRESS BAR: the compaction cover, and it is live. A MANUAL
+# /compact on 2.1.220 paints "Compacting conversation" above a bar for about
+# eleven seconds and this regex matches every frame of it, so a manually
+# compacting pane reads BUSY — which is the answer patrol and every send want,
+# since a compaction is a turn.
 #
-# They stay because absence is not death, and because the two removals are not
-# the same act. Dropping a DECLARATION whose absence is safe needs only that it
-# cannot be shown to fire. Dropping a BUSY BRANCH needs more, because if it is
-# alive in a state nobody drove — an install, a plugin setup, a download — gang
-# reads idle while the harness works: sends take the wrong path, patrol nudges a
-# live turn, wait returns early. The frames above cover a compaction and a
-# handful of turns, and say nothing about those.
+# The bar is not an ordinary-turn marker: 0 of 14862 unfiltered whole-pane frames
+# carried one, in a capture that recorded four other multibyte glyphs from the
+# same footer. So these two alternates cover compaction and nothing else, which is
+# what put them here.
+#
+# WHAT IS STILL UNMEASURED IS AUTO-COMPACTION (gh #57). Nobody has watched a
+# harness cross its own threshold, so whether the same bar is painted there is
+# open, and no line in this file may be read as answering it. The event tier is
+# what covers that case, because PreCompact fires whoever started the compaction.
+#
+# The branch would stay even if the bar were never seen again, because absence is
+# not death and the two removals are not the same act. Dropping a DECLARATION
+# whose absence is safe needs only that it cannot be shown to fire. Dropping a
+# BUSY BRANCH needs more, because if it is alive in a state nobody drove — an
+# install, a plugin setup, a download — gang reads idle while the harness works:
+# sends take the wrong path, patrol nudges a live turn, wait returns early.
 #
 # Literal alternation, not [▰▱]: in cron's C locale a multibyte bracket class
 # matches single BYTES, and the welcome-logo glyphs share the UTF-8 prefix.
@@ -214,32 +233,38 @@ GANG_VERIFIED_VERSIONS="2.1.220"
 # Compact command verified live: /compact is the built-in context compaction
 # slash command in the installed Claude Code TUI.
 GANG_COMPACT_CMD="/compact"
-# GANG_COMPACTING_REGEX is deliberately unset, and that is a measurement rather
-# than an omission. It was the bar glyphs and nothing else, and 2.1.220 paints no
-# bar during a compaction: 637 samples across a real one on a clean pane, only 2
-# of them a change, zero hits for the glyphs and zero for the whole busy regex.
-# Removing it is BEHAVIOUR-NEUTRAL — a declaration that never matched bought
-# nothing, so deleting it neither opens the hole below nor closes it. It stops
-# hiding it. gang branches on the declaration, so an absent one is honest where a
-# false one buys a fast path that does not exist.
+# GANG_COMPACTING_REGEX is deliberately unset, and it stays unset now that a
+# compaction marker is known to be painted. The reason is not that there is
+# nothing to match — a manual compaction paints the bar the busy regex above
+# already matches — it is that this declaration would be a SCRAPE tier for a
+# predicate the event tier answers, and it would answer it off a glyph the busy
+# regex reads too. One marker carrying both busy and compacting is exactly how
+# this profile's markers went wrong before; PreCompact and PostCompact carry the
+# compaction predicate instead, and they cannot be confused with a turn.
 #
-# The hole, written down so nobody has to re-derive it. A compacting pane is
-# guarded three ways and on this harness all three are blind at once:
-# compacting() is unset, busy() is false (no bar, no spinner), and pane_stable
-# PASSES because the screen does not move — 633 consecutive byte-identical
-# captures, 151 seconds, one frame. That frame replayed into a pane reads "idle".
+# gang branches on the declaration, so an absent one sends compacting() down the
+# settle path, which scrapes no marker at all. That is a real answer rather than a
+# hole: it is the path a profile whose compaction nobody has watched gets.
 #
-# What actually held patrol off is an accident worth naming. The composer stays
-# drawn for the whole compaction and holds "Press up to edit queued messages", so
-# input_clear is false and patrol holds its nudge and reports "input box has
-# content" — the right action for the wrong reason, and only because that agent
-# happened to have queued input. One that compacts with an empty box gets nudged
-# mid-compaction, which is the overtaking the waiter exists to prevent.
+# WHAT IS ACTUALLY UNCOVERED, written down so nobody has to re-derive it, and it
+# is auto-compaction alone (gh #57). Nobody has watched this harness cross its own
+# threshold. If it paints what the manual path paints, busy() answers and the
+# scrape tier holds; if it paints nothing, all three scraped guards go blind at
+# once — compacting() unset, busy() false, and pane_stable PASSING because the
+# screen does not move, which was measured at 633 consecutive byte-identical
+# captures over 151 seconds. That frame replayed into a pane reads "idle".
 #
-# Two things a future marker hunt should not have to rediscover: the composer is
+# In that unmeasured case what held patrol off is an accident worth naming. The
+# composer stays drawn for the whole compaction and holds "Press up to edit queued
+# messages", so input_clear is false and patrol holds its nudge and reports "input
+# box has content" — the right action for the wrong reason, and only because that
+# agent happened to have queued input. One that compacts with an empty box would
+# be nudged mid-compaction, which is the overtaking the waiter exists to prevent.
+# The event bracket is what closes that, and it closes it for both triggers.
+#
+# One thing a future marker hunt should not have to rediscover: the composer is
 # NOT a compaction signal here, because it is drawn throughout — "detect
-# compaction by the box going away" is already answered — and no bar glyph of any
-# of the three sets the binary carries was painted at any point.
+# compaction by the box going away" is already answered.
 # Input pasted during a turn is taken, not dropped and not fed to whatever the
 # turn is running: the box accepts the paste and Enter replaces it with "Press up
 # to edit queued messages". Verified live, which is what lets a send reach a
@@ -351,15 +376,15 @@ if not isinstance(h, dict):
           "gang and every claude-code agent reads its turns off the pane",
           file=sys.stderr)
     sys.exit(1)
-# Exactly the three cmd_hook maps, asserted as a SET rather than as a subset. An
+# Exactly the five cmd_hook maps, asserted as a SET rather than as a subset. An
 # extra name is as much a finding as a missing one: this harness accepts an event
 # name it does not know without a word and then never fires it, so an unmapped
 # name here is wiring that looks live and is not.
+WANT = ["PostCompact", "PostToolUse", "PreCompact", "Stop", "UserPromptSubmit"]
 have = sorted(h)
-if have != ["PostToolUse", "Stop", "UserPromptSubmit"]:
-    print("the --settings payload wires %s, not the three events cmd_hook maps "
-          "(PostToolUse, Stop, UserPromptSubmit)"
-          % (", ".join(have) or "no events"), file=sys.stderr)
+if have != WANT:
+    print("the --settings payload wires %s, not the five events cmd_hook maps (%s)"
+          % (", ".join(have) or "no events", ", ".join(WANT)), file=sys.stderr)
     sys.exit(1)
 # Exec form, asserted as command-plus-args rather than as a string. A hook with no
 # args is re-parsed by a shell at fire time, so an install path holding a space
