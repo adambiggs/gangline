@@ -57,7 +57,7 @@ rungs, and there is no ladder without a declaration.**
   There is no rung at zero because time has no onset hazard: a warning at the
   starting line warns about nothing. The top rung repeats every sweep;
   `ladder_at_top` was generalized for exactly this second axis before the axis
-  existed (bin/gang:2231).
+  existed.
 
 - **The reserve is banking room.** Work that exists only in an agent's head or
   its pane dies with the deadline; work on disk survives it. The last rung
@@ -135,5 +135,5 @@ rungs, and there is no ladder without a declaration.**
   adds is the escalating ask ladder, the banking reserve, and a patrol leg that
   reaches agents idling inside a live budget.
 - ADR-0006's rot/exhaustion split is the frame this page stands on, and
-  bin/gang:2231's comment reserved the seam — "a future wall-clock ladder" —
-  before this page existed.
+  `ladder_at_top`'s comment in bin/gang reserved the seam — "a future
+  wall-clock ladder" — before this page existed.

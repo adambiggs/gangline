@@ -158,8 +158,8 @@ every shipped harness will be one.
   by bracket-plus-heartbeat, the invisible compaction by its event bracket.
   What remains of them is the scrape tier's problem only when the tiers above
   are absent or expired.
-- The zero-token beacon guards (bin/gang:2959, 3325) become fallback-path
-  guards rather than the main line.
+- The zero-token beacon guards in bin/gang's context read path become
+  fallback-path guards rather than the main line.
 - Open verification item: whether hooks supplied via `--settings` face a trust
   gate is undocumented. It is probed before this wiring is called load-bearing;
   either way the pre-hook trust dialog itself stays scrape-tier forever,
