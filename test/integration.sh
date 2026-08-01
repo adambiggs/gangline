@@ -1977,6 +1977,16 @@ check "and says which evidence left it unresolved" "yes" \
 fact_set bracket @gl_turn "open $(ago 250)"
 check "while the same bracket inside that bound is still the busy it witnessed" \
   "busy (tight tug)" "$("$GANG" status bracket | head -1)"
+# AND THE SIDE THE BOUND IS DELIBERATELY NOT APPLIED TO, which is the half that
+# makes it a rule rather than a timeout on everything. An OPEN bracket claims a
+# turn is running, and turns end, so that claim decays with nothing to renew it.
+# A CLOSED bracket claims no turn is open, and on this harness only an event can
+# open one — so age adds no doubt to it at all. Bounding this side would report
+# every genuinely idle agent as could-not-determine within minutes of its last
+# turn: not the tool being careful, the tool not working.
+fact_set bracket @gl_turn "closed $(ago 99999)"
+check "a closed bracket is idle however old, because only an event can reopen one" \
+  "idle (slack tug)" "$("$GANG" status bracket | head -1)"
 
 # A value gang wrote and gang cannot read back. @gl_band's precedent says rebuild
 # rather than refuse, and there is nothing here to rebuild — whether a turn is
@@ -2005,6 +2015,23 @@ check "and says the clock moved rather than borrowing the unreadable wording" "n
   "$(contains "$("$GANG" status bracket 2>&1)" "value unreadable")"
 check "and is left standing, because a future stamp can still be a true fact" \
   "open" "$(tmux show-options -wqv -t "$bwin" @gl_turn | cut -d' ' -f1)"
+
+# THE OTHER HALF OF THE SAME READ, and neither fixture above can reach it: a state
+# word this reader knows, carrying a stamp it cannot parse. `not-a-bracket` fails
+# at the first guard and leaves the second one untested. Both halves are checked
+# before either is believed, and with the stamp unguarded an unparseable one
+# reaches the freshness arithmetic instead — where a non-integer comparison simply
+# fails, which is indistinguishable there from a stamp in the future. That reports
+# a clock that never moved, under the one qualifier that also means DO NOT
+# DISCARD, so the unreadable value is left standing for the next read to find.
+tmux set-option -w -t "$bwin" @gl_turn 'open lately'
+out="$("$GANG" status bracket 2>&1)"
+check "a known state word over an unparseable stamp is unreadable, not fresh" "yes" \
+  "$(contains "$out" "expired (turn-bracket value unreadable)")"
+check "and is not reported as the clock having moved" "no" \
+  "$(contains "$out" "stamped in the future")"
+check "and is discarded, because a value that can never be true costs nothing to clear" "" \
+  "$(tmux show-options -wqv -t "$bwin" @gl_turn)"
 
 # TIERS PICK WITNESSES; THEY DO NOT VOTE. With the bracket closed and fresh AND
 # the busy marker on screen, the two tiers disagree — and the answer is the higher
