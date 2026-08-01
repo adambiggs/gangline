@@ -490,7 +490,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
-  GANG_MIDTURN_ACTS=""
+  GANG_MIDTURN_ACTS="" GANG_PROBE_FACTS=""
   GANG_COMPACTING_REGEX="" GANG_OCCUPIED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   # Cleared alongside it so a value left by a PREVIOUS profile cannot make the
   # next one look like it declared the retired name.
@@ -4321,12 +4321,22 @@ and append the new version to GANG_VERIFIED_VERSIONS.")
 # that quietly implies a marker was fired at a pane is how three dead markers got
 # through, and the fix for that is not a louder probe but an honester report.
 #
-# Scope is the busy marker, the context readout, and the asymmetric filesystem
-# witness for a declared mid-turn action. Gates are out: reaching a
-# modal takes per-harness choreography, which is new profile surface that rots on
-# its own schedule. Compaction is out: /compact under a harness's own threshold
-# runs and moves nothing, so a probe cannot tell a dead marker from a session
-# with nothing to compact.
+# Scope is the busy marker, the context readout, the asymmetric filesystem
+# witness for a declared mid-turn action, and the OWNED FACTS a profile declares
+# its wiring writes. The last of those asks a different question from the three
+# before it: those watch the SCREEN, and a fact leg watches whether the harness's
+# own wiring reached gang at all. A scrape and a fact rot independently — a
+# repainted TUI kills the first, a renamed hook event or an unwired settings file
+# kills the second — so neither answers for the other and both are fired.
+#
+# What no leg drives, and why each stays could-not-determine rather than becoming
+# a quieter pass: a permission gate needs a real modal, which is the one thing the
+# probe refuses to touch (wait_ready already calls a dialog NOT PROBED, and gang
+# never answers one), and reaching it would take per-harness choreography that
+# rots on its own schedule. Compaction needs a context window filled past the
+# harness's own threshold, which a single driven turn cannot reach — under that
+# threshold /compact runs and moves nothing, so the probe could not tell a dead
+# marker from a session with nothing to compact.
 GANG_PROBE_BOOT="${GANG_PROBE_BOOT:-45}"      # seconds to an input box; a cold TUI is slow
 GANG_PROBE_TURN="${GANG_PROBE_TURN:-90}"      # seconds of working pane to watch for the marker
 GANG_PROBE_SETTLE="${GANG_PROBE_SETTLE:-120}" # seconds for the pane to stop moving afterwards
@@ -4381,6 +4391,8 @@ PROBE_ACTS_BOUNDARY=""
 PROBE_ACTS_MESSAGE=""
 PROBE_ACTS_CONFIRMED=0
 PROBE_ACTS_UNDETERMINED=0
+PROBE_FACTS_CONFIRMED=0     # declared facts observed arriving across the driven turn
+PROBE_FACTS_UNDETERMINED=0  # declared facts no leg here can drive honestly
 
 probe_teardown() { # reached through on_exit, so it runs on die() and on ^C alike
   # Both halves of that are measured, because the sentence was here for a while
@@ -4652,6 +4664,91 @@ probe_acts() { # $1 = profile, $2 = pane, $3 = version; called only for a declar
   return 2
 }
 
+probe_facts_confirmed() { # $1 = profile, $2 = version, $3 = fact, $4 = what was observed
+  PROBE_FACTS_CONFIRMED=$((PROBE_FACTS_CONFIRMED + 1))
+  probe_row "$1" "$2" "$C_OK" "fact '$3' CONFIRMED — $4"
+}
+
+probe_facts_not_probed() { # $1 = profile, $2 = version, $3 = fact, $4 = precise reason
+  PROBE_FACTS_UNDETERMINED=$((PROBE_FACTS_UNDETERMINED + 1))
+  probe_row "$1" "$2" "$C_DIM" "fact '$3' NOT PROBED — $4"
+}
+
+probe_facts_absent() { # $1 = profile, $2 = version, $3 = fact, $4 = what was found instead
+  probe_row "$1" "$2" "$C_BAD" "fact '$3' DECLARED AND MISSING — $4"
+}
+
+probe_facts() { # $1 = profile, $2 = window, $3 = version; 0 = every declared fact arrived, 1 = one did not
+  # A SECOND QUESTION, NOT A BETTER ANSWER TO THE FIRST. The rows above watch the
+  # SCREEN; these watch whether the harness's own wiring reached gang at all. The
+  # two rot independently and neither can stand in for the other: a repainted TUI
+  # kills a scrape while every hook still fires, and a renamed event or a settings
+  # file nobody wired kills the facts while the pane paints exactly as it always
+  # did. So the beacon row keeps its own question and these land beside it.
+  #
+  # DRIFT HERE, WHERE mid-turn acts IS ONLY EVER could-not-determine, and the
+  # difference is in the observation rather than in how much either is trusted.
+  # The acts leg cannot separate the running turn from a queued next one, so its
+  # negative is genuinely unreadable. This one has no such ambiguity: the record is
+  # on the window or it is not, and gang put it there or nothing did. A declared
+  # fact absent after a full driven turn means every reader of that predicate is
+  # silently falling to the tier below with nothing saying so, which is the exact
+  # blindness vet exists to report.
+  local prof="$1" id="$2" installed="$3" fact raw rc=0 trc=0
+  [ -n "$GANG_PROBE_FACTS" ] || return 0
+  for fact in $GANG_PROBE_FACTS; do
+    case "$fact" in
+      turn)
+        trc=0; turn_state_read "$id" || trc=$?
+        case "$trc" in
+          0) case "$TURN_STATE" in
+               closed) probe_facts_confirmed "$prof" "$installed" turn \
+                         "the harness opened the bracket on its own events and closed it, and gang read back what it wrote" ;;
+               *) probe_facts_absent "$prof" "$installed" turn \
+                    "the bracket opened and never closed — it still reads '$TURN_STATE' with the pane long quiet, so every send to this harness would be refused as busy until the bound expires"
+                  rc=1 ;;
+             esac ;;
+          2) probe_facts_absent "$prof" "$installed" turn \
+               "a bracket gang wrote and gang cannot read back, so the fact tier is worth nothing to any reader of busy or idle"
+             rc=1 ;;
+          *) probe_facts_absent "$prof" "$installed" turn \
+               "no bracket on the window after a full driven turn — no event this harness fired reached gang, so busy and idle fall to the scrape with nothing saying so"
+             rc=1 ;;
+        esac ;;
+      ctx)
+        raw="$(tmux show-options -wqv -t "$id" @gl_ctx 2>/dev/null)" || raw=""
+        if [ -z "$raw" ]; then
+          # The one that catches a skew of gangline against ITSELF. An older
+          # checkout of the statusline still paints the beacon, so the row above
+          # passes and this is the only thing that notices the record stopped.
+          probe_facts_absent "$prof" "$installed" ctx \
+            "the beacon is on the screen and no record is on the window — whatever is wired here paints but does not write, so every band and every context column falls to the scrape"
+          rc=1
+        elif ctx_fact_read "$id"; then
+          probe_facts_confirmed "$prof" "$installed" ctx \
+            "a record arrived and gang's own reader believes it: $CTX_FACT_TOKENS of $CTX_FACT_WINDOW tokens"
+        else
+          probe_facts_absent "$prof" "$installed" ctx \
+            "a record arrived and gang's own reader refused it, which is worth exactly as much as none at all: $raw"
+          rc=1
+        fi ;;
+      # The two the ADR names, and they keep saying this until something can drive
+      # them honestly. A quieter row here would be a clean bill for a marker
+      # nobody fired — the failure the whole probe exists to have stopped.
+      occupied)
+        probe_facts_not_probed "$prof" "$installed" occupied \
+          "the raise needs a real permission dialog, and gang never answers one — a probe that provoked a modal would strand itself at the screen wait_ready already refuses to touch" ;;
+      compaction)
+        probe_facts_not_probed "$prof" "$installed" compaction \
+          "the bracket needs a compaction, which needs a context window filled past the harness's own threshold; under it /compact runs and moves nothing, so a driven turn cannot tell a dead marker from a session with nothing to compact" ;;
+      *)
+        probe_facts_not_probed "$prof" "$installed" "$fact" \
+          "this profile declares a fact no leg in here knows how to drive" ;;
+    esac
+  done
+  return "$rc"
+}
+
 probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   local prof="$1" id ready out ctx key msg installed="-"
   local marked=0 churned=0 settled=0 deadline rc=0
@@ -4693,6 +4790,15 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
     probe_row "$prof" "$installed" "$C_BAD" "not probed — launch failed: $GANG_LAUNCH"
     return 2
   }
+  # THE SPECIMEN HAS TO BE ONE, and without this it is not. cmd_hook's only binding
+  # is $TMUX_PANE to that window's @gl_profile, so on an unmarked window every hook
+  # the harness fires walks in, finds nothing, and exits 0 — the wiring would look
+  # dead to the probe while working perfectly for every hitched agent. This is the
+  # same option hitch sets and it is true of this window: it is running that
+  # profile. Set before the harness can reach an event that maps to a fact, which
+  # is any turn event, and the first of those cannot fire before a prompt is
+  # submitted far below.
+  tmux set-option -w -t "$id" @gl_profile "$prof" 2>/dev/null || true
 
   ready=0
   probe_note "$prof" "waiting for an input box" "$GANG_PROBE_BOOT"
@@ -4891,6 +4997,10 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   else
     probe_row "$prof" "$installed" "$C_OK" "busy marker fired and cleared; no context readout declared"
   fi
+  # Beside the scrape, never instead of it, and read here because the pane has
+  # only just gone quiet: the harness was repainting seconds ago, so a record
+  # missing now is missing, not merely old.
+  probe_facts "$prof" "$id" "$installed" || rc=1
   # This is a second turn, after the marker/context probe has reached exactly the
   # same verdict it always did. It runs only for the stronger declaration and
   # its result cannot turn a confirmed marker into drift: failure to observe the
@@ -4904,13 +5014,17 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # caller-supplied probe directory.
   tmux kill-window -t "$id" 2>/dev/null || true
   probe_acts_cleanup
-  return 0
+  # Carries the fact legs' verdict and nothing else: every other outcome above
+  # returned where it was decided, and the acts leg is barred from reaching this.
+  return "$rc"
 }
 
 cmd_probe() { # $1 = optional profile name; drives every installed harness
   local prof probed=0 skipped=0 drift=0 rc
   PROBE_ACTS_CONFIRMED=0
   PROBE_ACTS_UNDETERMINED=0
+  PROBE_FACTS_CONFIRMED=0
+  PROBE_FACTS_UNDETERMINED=0
   probe_start
   printf '%s\n' "$(colour "$C_WORK" "probing — each installed harness is launched on socket $PROBE_L and given a turn's work")"
   while read -r prof <&3; do
@@ -4931,6 +5045,9 @@ EOF
   # a dialog, produced no evidence either way — and an exit status has no room to
   # say so.
   printf '%s\n' "$(colour "$C_DIM" "$probed profile(s) driven, $skipped not probed (reasons above). A zero exit means every marker that WAS fired arrived and cleared; it says nothing about the ones that were not.")"
+  if [ $((PROBE_FACTS_CONFIRMED + PROBE_FACTS_UNDETERMINED)) -gt 0 ]; then
+    printf '%s\n' "$(colour "$C_DIM" "Owned facts: $PROBE_FACTS_CONFIRMED confirmed, $PROBE_FACTS_UNDETERMINED not probed. A confirmed fact means the harness's own wiring reached gang across this turn; a not-probed one is a fact no leg here can drive honestly, and it is not a pass.")"
+  fi
   if [ $((PROBE_ACTS_CONFIRMED + PROBE_ACTS_UNDETERMINED)) -gt 0 ]; then
     printf '%s\n' "$(colour "$C_DIM" "Mid-turn declarations: $PROBE_ACTS_CONFIRMED confirmed, $PROBE_ACTS_UNDETERMINED not probed. Only an observed B-before-A filesystem ordering confirms; every other outcome is could-not-determine and cannot refute the declaration.")"
   fi

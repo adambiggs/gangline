@@ -2837,6 +2837,13 @@ check "a probe passes a harness that paints what it declares" "busy marker fired
 check "and reads the context readout off the same pane" "yes" \
   "$(holds "$pout" 'context 12k/200k \(6%\)')"
 check "and exits clean" "0" "$prc"
+# Declaring nothing is asked nothing, the mid-turn rule one section down. A probe
+# that printed a row per fact for a profile that never claimed to write one would
+# be reporting on wiring the profile does not have.
+check "a profile that declares no owned facts is asked no fact questions" "no" \
+  "$(holds "$pout" "fact '")"
+check "and a run that asked none prints no fact summary to be misread" "no" \
+  "$(holds "$pout" 'Owned facts:')"
 
 pout="$(probe_run deadmark)"; prc=$?
 # The direction that matters. This one is not allowed to pass quietly: a probe
@@ -2907,6 +2914,99 @@ badacts="$(GANG_PROFILES="$SHIM/probedir" GANG_PROBE_ACTS_DELAY=not-a-number \
 check "the controlled slow-action duration is numeric-gated too" "1" "$badactsrc"
 check "and its refusal names that setting" "yes" \
   "$(holds "$badacts" "GANG_PROBE_ACTS_DELAY must be a non-negative number of seconds, got 'not-a-number'")"
+
+# --- vet --probe: the owned facts a profile declares ---------------------------
+
+# A SECOND QUESTION AT THE SAME PANE, and the pair of stand-ins below is what
+# keeps it from collapsing into the first. The rows above ask whether the beacon
+# is on the screen; these ask whether the harness's own wiring reached gang at
+# all. They rot independently in both directions — a repainted TUI kills a scrape
+# while every hook still fires, and a settings file nobody wired kills the facts
+# while the pane paints exactly as it always did — so the demonstration is two
+# profiles whose panes are INDISTINGUISHABLE, one writing what it declares and
+# one not. The skew case reuses live.rc for that reason: the screen is byte for
+# byte the passing one, and the declaration is the only thing that differs.
+#
+# THE WRITERS ARE THE SHIPPED ONES, called the way the harness calls them: `gang
+# hook` with a real payload on stdin, and the statusline script itself, both from
+# inside the specimen's pane. Setting the two window options by hand here would
+# assert gang's readers against the suite's own writes and prove nothing about
+# either wiring — and it would step around the binding that makes the whole leg
+# work, since a hook fired on a window carrying no @gl_profile finds nothing and
+# exits 0. That is what the turn row below is holding down.
+cat > "$SHIM/probedir/facts.rc" <<'RC'
+PS1='❯ '
+probe_work() {
+  local i=0
+  printf '{"hook_event_name":"UserPromptSubmit"}' | "$FACTS_GANG" hook
+  while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.4; i=$((i+1)); done
+  printf '{"hook_event_name":"Stop"}' | "$FACTS_GANG" hook
+  clear
+  printf '{"context_window":{"current_usage":{"input_tokens":12000},"context_window_size":200000}}' \
+    | "$FACTS_SL"
+}
+RC
+# 12000 of 200000 is the beacon every other stand-in in this section echoes as a
+# literal, which is not a coincidence to be tidied away: here the real statusline
+# derives it, so the pane the scrape reads and the record the fact reads come out
+# of one set of numbers, exactly as they do on a live agent.
+for _f in factsmark factsskewmark; do
+  case "$_f" in
+    factsmark)     _frc=facts.rc; _ffacts="turn ctx occupied compaction" ;;
+    factsskewmark) _frc=live.rc;  _ffacts="turn ctx gizmo" ;;
+  esac
+  cat > "$SHIM/probedir/$_f.sh" <<SH
+GANG_LAUNCH="FACTS_GANG=$GANG FACTS_SL=$CCBEACON bash --rcfile $SHIM/probedir/$_frc -i"
+GANG_BUSY_REGEX="PROBEBUSY"
+GANG_PROBE_FACTS="$_ffacts"
+GANG_VERSION_CMD="echo 9.9.9"
+GANG_VERIFIED_VERSIONS="9.9.9"
+profile_input() {
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
+  printf '%s' "\${line#❯}"
+}
+profile_context() {
+  local m
+  m="\$(tmux capture-pane -pJ -t "\$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
+    || die "no ctx beacon in pane"
+  m="\${m#ctx }"
+  printf '%s (%s)\n' "\${m% *}" "\${m##* }"
+}
+SH
+done
+
+pout="$(probe_run factsmark)"; prc=$?
+check "a bracket the harness's own hook wrote is confirmed by name" "yes" \
+  "$(holds "$pout" "fact 'turn' CONFIRMED.*opened the bracket on its own events and closed it")"
+check "and the context record is confirmed with the figures gang read back" "yes" \
+  "$(holds "$pout" "fact 'ctx' CONFIRMED.*12000 of 200000 tokens")"
+# BESIDE IT, NEVER INSTEAD OF IT. The scrape is asking whether the beacon is on
+# the screen, and a wired statusline vouching for a readout gang can no longer
+# find in the pane is the one answer that would make the probe useless.
+check "and the beacon scrape still answers its own question beside them" "yes" \
+  "$(holds "$pout" 'busy marker fired and cleared; context 12k/200k \(6%\)')"
+check "a declared fact no leg can drive honestly says so, naming the fact" "yes" \
+  "$(holds "$pout" "fact 'occupied' NOT PROBED.*needs a real permission dialog")"
+check "and the other surface the ADR names says so too" "yes" \
+  "$(holds "$pout" "fact 'compaction' NOT PROBED.*needs a context window filled past the harness's own threshold")"
+check "and the summary counts what was driven apart from what was not" "yes" \
+  "$(holds "$pout" 'Owned facts: 2 confirmed, 2 not probed')"
+check "arriving facts do not turn a healthy marker probe into drift" "0" "$prc"
+
+# The direction that pays for the leg. Same rc file as livemark, so the pane is
+# the passing one: a presence-only reading of this harness sees nothing wrong,
+# and the record simply stopped arriving.
+pout="$(probe_run factsskewmark)"; prc=$?
+check "a pane that paints and never writes still passes the scrape" "yes" \
+  "$(holds "$pout" 'busy marker fired and cleared; context 12k/200k \(6%\)')"
+check "and its missing turn bracket is a finding, not a silent fall to the tier below" "yes" \
+  "$(holds "$pout" "fact 'turn' DECLARED AND MISSING.*no event this harness fired reached gang")"
+check "and the beacon-without-a-record skew is named as what it is" "yes" \
+  "$(holds "$pout" "fact 'ctx' DECLARED AND MISSING.*paints but does not write")"
+check "a declared fact this probe has no leg for is not counted as having arrived" "yes" \
+  "$(holds "$pout" "fact 'gizmo' NOT PROBED.*no leg in here knows how to drive")"
+check "and a declared fact that never arrived exits nonzero" "1" "$prc"
 
 # The probe drives real tmux servers, and the one rule it cannot get wrong is
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would

@@ -319,6 +319,23 @@ GANG_MIDTURN_ACTS=1
 # permission dialog reported idle.
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 
+# THE FACTS THIS HARNESS'S WIRING WRITES, which is a claim about the wiring and
+# not about what a probe can reach. Every name here is written by something the
+# operator has to have wired: the first three by the --settings payload built
+# above, and ctx by the statusline in the operator's own settings.json. Naming a
+# fact no leg can drive is the point rather than an oversight — vet then says
+# which ones it could not drive, per harness, instead of leaving a clean bill to
+# imply it drove them all.
+#
+# The two halves are wired differently and rot differently, which is why both are
+# probed. --settings MERGES: it overrides the keys it names and leaves the rest of
+# settings.json standing, so a probe launched from this line inherits the
+# operator's statusLine and writes ctx exactly as a hitched agent does. That is
+# also the skew this catches — an absolute path in settings.json can point at a
+# different checkout of the statusline, and one that still paints the beacon but
+# no longer writes the record passes every scrape and fails here.
+GANG_PROBE_FACTS="turn ctx occupied compaction"
+
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # Claude Code shows no context numbers natively — the shipped statusline
   # (statusline/claude-code-context.sh) paints "ctx <used>k/<win>k <pct>%"
