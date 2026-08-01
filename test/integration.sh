@@ -275,6 +275,85 @@ paint() { # $1 = window name, $2 = beacon line the profile reads back
   tmux send-keys -t "$id" "printf '%s\\n' '$2'" Enter; sleep 0.4
 }
 
+# --- waiting on the evidence rather than on the clock ---------------------------
+
+# A fixed sleep pays its whole length whether the thing arrived in thirty
+# milliseconds or never arrived at all, and it is sized for the slowest machine
+# that will ever run this file. This suite does that about a hundred times, which
+# is where its runtime actually is (#55): not a handful of slow cases but a fixed
+# toll on nearly every check. A poll pays what the wait really cost.
+#
+# The windowed-probe check below already waits this way and says why — waited on
+# CONTENT, not on a duration — so this is that idiom made general. General is the
+# point, because the version each site hand-rolls is where the bugs are: three of
+# them existed here, each with its own deadline, its own granularity, and no
+# diagnostic whatsoever when it ran out.
+#
+# It is shaped like `check` deliberately — the value that ends the wait, then the
+# command that produces it — so a converted site goes on saying what it already
+# said, and the check that follows re-asserts it once the wait has returned.
+#
+# THREE ANSWERS, not two. A producer exiting non-zero is it saying it could not
+# answer, and this file has already paid for spending that as "not yet": a poll
+# asking `= yes` of an evaluator that had REFUSED spun its entire timeout and then
+# failed a minute and a function away from the cause. So a non-zero producer ends
+# the wait at once, carrying its status, at the cause.
+#
+# The deadline is WALL CLOCK. The polls this replaces counted `sleep 1` iterations,
+# so their real timeout was a second per poll PLUS the cost of the poll itself — a
+# "30 second" wait on a loaded runner is nearer fifty, and the number in the source
+# described no machine. Seconds are also the only unit in which a deadline can be
+# read as generous, which is what this one is: it bounds a hang, it paces nothing.
+WAIT_TIMEOUT=30
+wait_for() { # $1 = agent whose screen is the evidence ('' for none), $2 = what is
+             # awaited, $3 = the value that ends the wait, $4.. = the command
+             # producing it; -> 0 as soon as they match, else reports and fails
+  local who="$1" what="$2" want="$3" got deadline rc
+  shift 3
+  deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
+  while :; do
+    rc=0; got="$("$@")" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf 'BUG: waiting for %s, the suite polled a producer that refused (exit %s)\n' \
+        "$what" "$rc" >&2
+      return "$rc"
+    fi
+    [ "$got" = "$want" ] && return 0
+    [ "$(date +%s)" -lt "$deadline" ] || break
+    sleep 0.05
+  done
+  # The check that follows can only ever report `expected: [yes] actual: [no]`,
+  # which is true and no help at all. The screen is the evidence it was reading.
+  printf 'TIMEOUT after %ss waiting for %s\n       expected: [%s]\n       actual:   [%s]\n' \
+    "$WAIT_TIMEOUT" "$what" "$want" "$got" >&2
+  [ -z "$who" ] || printf -- '--- %s ---\n%s\n--- end ---\n' "$who" "$(pane_of "$who")" >&2
+  return 1
+}
+# The ERE twin of `has`, for a wait whose evidence is a PATTERN on a screen. It
+# carries holds' refusal out through its own exit status, which is what makes the
+# three-answer contract above reachable rather than theoretical.
+pane_holds() { holds "$(pane_of "$1")" "$2"; }  # $1 = agent, $2 = an ERE
+
+# --- facts, and the epoch every one of them carries -----------------------------
+
+# Written through target_of rather than with a raw `tmux set-option -t`, for the
+# reason id_of gives at length: an empty -t is not "no window", it is tmux's
+# CURRENT one — and this suite is normally run by an agent from inside a live
+# gangline session, so a fixture that could not find its own window would write
+# its fact onto a teammate instead.
+fact_set() { # $1 = agent, $2 = the @option gang keeps the fact in, $3 = its value
+  tmux set-option -w -t "$(target_of "$1")" "$2" "$3"
+}
+# BOUND TESTS WITH NO CLOCK TO WAIT ON. Every ADR-0008 fact is a value and the
+# epoch it was stamped at, and the reader's freshness test is arithmetic over that
+# pair — so a test moves the FACT rather than waiting for time to pass. There are
+# two ways to reach an expired fact and they do not prove the same thing: zeroing
+# the bound makes the comparison false for every stamp, including one written this
+# instant, so the shipped bound is never evaluated and a change to it cannot fail
+# a check. A back-dated stamp leaves the bound exactly where it ships and asserts
+# what an operator would actually see. Neither sleeps; only one is about the code.
+ago() { printf '%s' "$(( $(date +%s) - $1 ))"; }  # $1 = seconds -> that epoch, past
+
 mkdir -p "$SHIM/custom-profiles"
 fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
   cat > "$SHIM/custom-profiles/$1.sh" <<SH
@@ -329,6 +408,46 @@ check "the fingerprint covers the script under test" "yes" \
   "$(contains " $(under_test | tr '\n' ' ')" " $ROOT/bin/gang ")"
 check "and the file it is written in" "yes" \
   "$(contains " $(under_test | tr '\n' ' ')" " $SUITE ")"
+
+# The third instrument, and the one that sets what every wait below costs. Proven
+# against planted producers rather than a live pane, because what has to be true
+# of it — that it polls, that it stops at a deadline, and that it never spends a
+# refusal as "not yet" — is true of any producer at all.
+w_calls="$SHIM/wait.calls"
+w_count() { # answers `yes` only on its third call: a producer that CHANGES
+  local n; n=$(( $(cat "$w_calls") + 1 )); printf '%s' "$n" > "$w_calls"
+  [ "$n" -ge 3 ] && echo yes || echo no
+}
+w_never() { echo no; }
+w_refuse() { echo cannot-evaluate; return 2; }
+printf '0' > "$w_calls"
+w_t0="$(date +%s)"
+wait_for '' 'a value that is already there' no w_never; rc=$?
+w_t1="$(date +%s)"
+check "a wait whose value is already there returns at once" "0" "$rc"
+check "and pays nothing for it" "yes" \
+  "$([ $(( w_t1 - w_t0 )) -lt 3 ] && echo yes || echo no)"
+wait_for '' 'a producer that has to be asked again' yes w_count; rc=$?
+check "a wait re-runs its producer until the value arrives" "0" "$rc"
+check "and stops the moment it does rather than polling on" "3" "$(cat "$w_calls")"
+out="$(WAIT_TIMEOUT=1 wait_for '' 'something that never happens' yes w_never 2>&1)"; rc=$?
+check "a value that never arrives fails the wait instead of hanging" "1" "$rc"
+check "and the report names what was being waited for" "yes" \
+  "$(contains "$out" "something that never happens")"
+check "and shows the value it went on reading" "yes" \
+  "$(contains "$out" "actual:   [no]")"
+# The failure this leg prevents is a timeout wearing a miss's clothes. holds and
+# its kin answer with a SENTINEL and a non-zero status when they cannot evaluate
+# what they were handed, and a poll that reads that as "not yet" spends its whole
+# deadline before failing somewhere else entirely — lived here, in in_pane.
+w_t0="$(date +%s)"
+out="$(wait_for '' 'a producer that cannot answer' yes w_refuse 2>&1)"; rc=$?
+w_t1="$(date +%s)"
+check "a producer that refuses ends the wait carrying its own status" "2" "$rc"
+check "and does not spend the deadline first" "yes" \
+  "$([ $(( w_t1 - w_t0 )) -lt 3 ] && echo yes || echo no)"
+check "and says a producer refused rather than reporting a timeout" "yes" \
+  "$(contains "$out" "producer that refused")"
 
 # --- finding its own tree ------------------------------------------------------
 
@@ -430,8 +549,15 @@ chmod +x "$SHIM/attach/tmux"
 
 PATH="$SHIM/attach:$PATH" "$GANG" up -p bash -d /tmp >/dev/null
 check "up needs no agent name"  "idle (slack tug)" "$("$GANG" status lead)"
-sleep 0.5
+wait_for lead "the lead brief on lead's screen" yes has lead roles/lead.md
 check "and briefs it as lead" "yes" "$(has lead roles/lead.md)"
+# The waiter's last leg, provable only where there is a screen to dump. A wait
+# that runs out prints the pane it was reading, because the check that follows one
+# can only ever say `expected: [yes] actual: [no]` — true, and no help at all.
+out="$(WAIT_TIMEOUT=1 wait_for lead 'a mark nothing ever paints' yes \
+  has lead MARK_NEVER_PAINTED 2>&1)"
+check "a wait that runs out dumps the screen it was reading" "yes" \
+  "$(contains "$out" "roles/lead.md")"
 
 # --- model at hitch ------------------------------------------------------------
 
@@ -1638,12 +1764,20 @@ check "and the rows are stamped, which is what a postmortem asks first" "yes" \
 # the state where reading the shape would be the assumption this tier exists to
 # stop making. Neither believed nor inverted: the third answer, never idle.
 fire UserPromptSubmit
+# Back-dated rather than read under a zeroed bound. With GANG_TURN_LIMIT=0 the
+# freshness comparison is false for every stamp that could ever exist, including
+# one written this instant, so the shipped bound is never evaluated and no change
+# to it could fail a check here. Moving the FACT leaves the bound where it ships,
+# and the pair — spent here, still fresh below — is what pins it. Each side keeps
+# a wide margin because these lines and the reads under them do not all land in
+# the same second, and a boundary tested to the second is a flake on a slow runner.
+fact_set bracket @gl_turn "open $(ago 301)"
 check "an open bracket nobody closed is could-not-determine once its bound is spent" \
   "expired (turn-bracket bound reached)" \
-  "$(GANG_TURN_LIMIT=0 "$GANG" status bracket | head -1)"
+  "$("$GANG" status bracket | head -1)"
 check "and the roster preserves that answer rather than calling it idle" "expired" \
-  "$(GANG_TURN_LIMIT=0 "$GANG" roster | awk '$1=="bracket"{print $3}')"
-out="$(GANG_TURN_LIMIT=0 "$GANG" wait bracket 10 2>&1)"; rc=$?
+  "$("$GANG" roster | awk '$1=="bracket"{print $3}')"
+out="$("$GANG" wait bracket 10 2>&1)"; rc=$?
 check "a wait carries bracket expiry as its distinct exit" "2" "$rc"
 # The qualifier is load-bearing, not decoration. Two different exhausted signals
 # reported under one wording is a fabricated status, and they are not fixed the
@@ -1654,6 +1788,12 @@ out="$(GANG_TURN_LIMIT=0 "$GANG" compact bracket --from tester 2>&1)"; rc=$?
 check "peer compaction refuses a live-turn boundary it cannot resolve" "1" "$rc"
 check "and says which evidence left it unresolved" "yes" \
   "$(contains "$out" "turn-bracket bound reached")"
+# The other side of the same bound, and the half that makes the one above a proof
+# about arithmetic rather than about any old value expiring: the identical fact,
+# stamped inside the bound, is still the busy it witnessed.
+fact_set bracket @gl_turn "open $(ago 250)"
+check "while the same bracket inside that bound is still the busy it witnessed" \
+  "busy (tight tug)" "$("$GANG" status bracket | head -1)"
 
 # A value gang wrote and gang cannot read back. @gl_band's precedent says rebuild
 # rather than refuse, and there is nothing here to rebuild — whether a turn is
@@ -3678,8 +3818,8 @@ sleep 22          # past where the settle path would have fired
 check "a resume is held while the context says no compaction has happened" "no" \
   "$(has resumer MARK_RESUME)"
 paint resumer 'ctx 250k/1000k 25%'
-n=0
-while [ "$(has resumer MARK_RESUME)" = no ] && [ "$n" -lt 30 ]; do sleep 1; n=$((n + 1)); done
+WAIT_TIMEOUT=60 wait_for resumer 'the held resume to land after the drop' yes \
+  has resumer MARK_RESUME
 check "and lands once the drop shows one has" "yes" "$(has resumer MARK_RESUME)"
 
 # A slash command is only a command at the HEAD of an empty box. composer_settled
@@ -3751,8 +3891,8 @@ check "a resume refused by a moving composer is not spent" "no" \
 check "and the agent is not yet reported as having lost it" "" \
   "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_resume_failed)"
 rm -f "$SHIM/hands-on-keyboard"        # hands off the keyboard
-n=0
-while [ "$(has retrier MARK_RETRIED)" = no ] && [ "$n" -lt 40 ]; do sleep 1; n=$((n + 1)); done
+WAIT_TIMEOUT=60 wait_for retrier 'the refused resume to be retried once the box settles' \
+  yes has retrier MARK_RETRIED
 check "and it lands on a later attempt once the box settles" "yes" \
   "$(has retrier MARK_RETRIED)"
 
@@ -4079,20 +4219,18 @@ in_pane() { # $1 = agent whose pane to borrow, $2... = command; -> its raw outpu
   # Polled, not slept: a roster of this many agents reads a session file per
   # keyed profile, and a fixed sleep caught a screen that was still empty — which
   # a check for "is there colour here" reads as "no", passing for a real failure.
-  local id t=0 seen; id="$(target_of "$1")" || exit 1; shift
+  local id who="$1" rc=0; id="$(target_of "$1")" || exit 1; shift
   tmux send-keys -t "$id" "clear; $* ; echo IN_PANE_DONE" Enter
-  while [ "$t" -lt 60 ]; do
-    # Anchored, so the shell's echo of the command line is not the marker. The
-    # verdict is named and its refusal carried, because a pattern grep cannot
-    # evaluate answers "not yet" forever: a timeout wearing a miss's clothes,
-    # which then compares downstream checks against a half-drawn pane. Like
-    # target_of's above, this exit leaves only the substitution in_pane runs in —
-    # so what it buys is failing AT the cause instead of a minute later, not an
-    # abort.
-    seen="$(holds "$(tmux capture-pane -p -t "$id")" '^IN_PANE_DONE')" || exit 1
-    [ "$seen" = yes ] && break
-    sleep 1; t=$((t + 1))
-  done
+  # Anchored, so the shell's echo of the command line is not the marker. The
+  # refusal is carried rather than spent, because a pattern grep cannot evaluate
+  # answers "not yet" forever: a timeout wearing a miss's clothes, which then
+  # compares downstream checks against a half-drawn pane. Like target_of's above,
+  # this exit leaves only the substitution in_pane runs in — so what it buys is
+  # failing AT the cause instead of a minute later, not an abort. A plain timeout
+  # is not that, and still falls through to be scored by the checks below.
+  WAIT_TIMEOUT=60 wait_for "$who" 'the borrowed pane to finish its command' yes \
+    pane_holds "$who" '^IN_PANE_DONE' || rc=$?
+  [ "$rc" -le 1 ] || exit 1
   # -J rejoins rows the pane wrapped. A roster row naming a profile gang cannot
   # resolve runs past 80 columns, and a wrapped row read as two lines compares
   # against nothing.
