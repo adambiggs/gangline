@@ -3894,6 +3894,60 @@ check "and a line carrying both keeps the typed half and drops the offer" "commi
   "$(cc_box | sed 's/^ *//; s/ *$//')"
 "$GANG" drop ccbox >/dev/null
 
+# --- the same distinction on codex, whose composer is NEVER empty -------------
+#
+# Codex paints rotating ghost text into an idle composer, so "is there a draft in
+# this box" is only answerable through the attribute a plain capture discards —
+# the offer is dim, a typed draft is not.
+#
+# This one guard is load-bearing far past its own refusal. input_clear gates
+# patrol's band nudges AND `gang compact`, so a reader that cannot tell an offer
+# from a draft leaves a Codex agent with no compaction path at all — not by
+# itself, not by a peer, not by patrol — while every individual refusal still
+# looks correct. That is what makes it worth a fixture rather than a comment.
+#
+# A raw window rather than a hitched agent: this asks one question of one
+# function, and routing it through hitch would drag codex's session-marker
+# handshake into a test that is not about it.
+tmux new-window -d -t "$GANG_SESSION:" -n cxbox "PS1='sh: ' bash --norc"
+cxt="$(tmux list-windows -t "$GANG_SESSION" -F '#{window_id} #{window_name}' \
+       | awk '$2=="cxbox"{print $1}')"
+[ -n "$cxt" ] || { printf 'FIXTURE: no cxbox window\n'; exit 1; }
+
+cx_paint() { # $1 = what goes after the prompt char, escapes interpreted
+  # clear first, for the reason cc_paint gives: the echoed command carries a "›"
+  # of its own and would otherwise be the last one on screen.
+  tmux send-keys -t "$cxt" "clear; printf '%b\\n' \"› $1\"" Enter
+  sleep 0.6
+}
+cx_box() {
+  bash -c '. "'"${GANG%/bin/gang}"'/profiles/codex.sh"
+           b="$(profile_input "$1")" || { printf "NO BOX"; exit 0; }
+           printf "%s" "$b"' _ "$cxt"
+}
+cx_boxline() { tmux capture-pane -p -t "$cxt" | grep '^›' | tail -1; }
+
+# Compared against the literal, not against each other: two paints that both
+# failed are also equal to each other.
+cx_paint '\033[2mImplement {feature}\033[0m'
+check "codex ghost text loses its attribute to a plain capture" "› Implement {feature}" \
+  "$(cx_boxline)"
+check "so the box it fills reads empty only when the attribute is kept" "" \
+  "$(cx_box | tr -d '[:space:]')"
+cx_paint 'ship the parser'
+check "a codex box holding what somebody typed reads as its contents" "ship the parser" \
+  "$(cx_box | sed 's/^ *//; s/ *$//')"
+cx_paint 'ship \033[2mthe parser\033[0m'
+check "and a codex line carrying both keeps the typed half, drops the offer" "ship" \
+  "$(cx_box | sed 's/^ *//; s/ *$//')"
+# The dialog refusal has to survive the new reader. A numbered row is Codex's
+# trust prompt and every command approval, and reading one as an empty composer
+# is how a brief gets pasted into a security question and answered by its Enter.
+cx_paint '1. Yes, proceed (y)'
+check "and a numbered codex dialog row is still refused, not read as a draft" "NO BOX" \
+  "$(cx_box)"
+tmux kill-window -t "$cxt"
+
 # --- teardown ----------------------------------------------------------------
 
 "$GANG" drop gamma >/dev/null

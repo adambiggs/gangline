@@ -117,12 +117,11 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # never compact itself through gang: the tool call that types into its own TUI is
 # itself a task in progress.
 #
-# Nor can a peer, though this declaration reads as though one could. gang refuses
-# to deliver a slash command into a box that is not provably empty, and the ghost
-# text below means this box never is — measured against a live idle Codex, not
-# reasoned about. Together with patrol never nudging one, that leaves a Codex
-# agent no compaction path through gang at all, and Codex's own automatic
-# compaction as its only escape. Issue #53.
+# A peer can, and patrol can nudge one into asking. Both of those rest entirely
+# on profile_input below telling Codex's ghost text apart from a real draft:
+# gang will not deliver a slash command into a box it cannot prove is empty, so
+# a reader that cannot see that difference closes every compaction path this
+# harness has at once, silently, while each individual refusal looks correct.
 GANG_COMPACT_CMD="/compact"
 # Codex takes input during a turn, and says so itself twice over: the hint row
 # switches to "tab to queue message" while it is working, and the startup tip
@@ -281,13 +280,51 @@ profile_input() { # $1 = tmux target; prints the composer, fails if there is non
   # whatever the operator typed, so a leading "N. " is the tell. A draft that
   # genuinely begins "1. " is refused rather than delivered — the wrong answer
   # in the safe direction, and a caller that sees the refusal can look.
+  # Suggestion text is not draft text, and the difference is recoverable. Codex
+  # paints rotating ghost text into an empty composer ("Implement {feature}")
+  # dim — SGR 2 — and renders typed characters with no such attribute.
+  # `capture-pane -p` THROWS THAT AWAY, so the offer and a real draft arrive as
+  # the same bytes and no reader downstream can tell them apart. Measured live on
+  # 0.145.0, both directions one variable apart in one box: the offer captures as
+  # "\033[2mImplement {feature}\033[0m", a typed draft as "a real human draft"
+  # carrying no attribute at all.
+  #
+  # What it cost while that attribute went unread, because it is the whole of
+  # issue #53: the composer never read empty, so input_clear never succeeded.
+  # patrol held every band nudge on "input box has content", `gang compact`
+  # refused to deliver /compact into a box it could not prove was empty, and a
+  # Codex agent therefore had NO compaction path through gang at all — not by
+  # itself, not by a peer, not by patrol. An agent that is never nudged and can
+  # never be compacted runs to the end of its window and loses the thread, which
+  # is the exact failure roles/_common.md instructs every agent to prevent.
+  #
+  # So this captures WITH attributes and drops every dim run before looking.
+  # What survives is what somebody typed. A line carrying both — typed prefix
+  # plus a dim completion — keeps the prefix and loses the completion, which is
+  # the case the whole distinction exists for.
+  #
+  # The residual runs toward false alarm, deliberately. A dim run broken across a
+  # wrapped row could leave its continuation undimmed, which reads as a draft and
+  # makes gang HOLD — a sweep costs nothing. The opposite error, typing over a
+  # human's real draft, needs typed text to arrive dim, and typed text was
+  # measured undimmed.
+  #
+  # The transcript echoes submitted messages behind the same "›", and those
+  # rows carry SGR 1;2 rather than 2, so they survive the dim strip and are
+  # matched here as well. Taking the LAST such row is what picks the composer
+  # out of them: it is the bottom-most thing on screen.
   local line
-  line="$(tmux capture-pane -pJ -t "$1" | grep '^›' | tail -1)" || return 1
+  line="$(tmux capture-pane -pJ -e -t "$1" | awk '
+    { # A dim run ends at the next escape, whatever closes it — 0m here, but the
+      # rule holds for 22m or a colour change and does not depend on which.
+      gsub(/\033\[2m[^\033]*/, "")
+      gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width
+      # Anchored regex against a literal, never substr: a byte-oriented awk and a
+      # character-oriented one disagree about how many units "›" is, and this
+      # repo runs mawk locally and gawk in CI.
+      if ($0 ~ /^›/) last = $0
+    }
+    END { if (!length(last)) exit 1; print last }')" || return 1
   case "$line" in '› '[0-9]*'. '*) return 1 ;; esac
-  # An empty composer is never empty: Codex paints rotating ghost text into it
-  # ("Implement {feature}"), which reads as a draft. That is right for anything
-  # asking "would a paste land on top of something" — better to hold than to
-  # type over a human — and it is why patrol would never nudge a Codex agent
-  # even once it can read one's context.
   printf '%s' "${line#›}"
 }

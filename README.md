@@ -493,13 +493,10 @@ RESUME
 ```
 
 Self-compaction may queue behind the caller's current turn. Codex is a known
-exception that no caller can work around: it rejects `/compact` while a task is
-active and running `gang compact` from its own pane is itself such a task, while
-a peer's attempt is refused before typing, because Codex paints ghost text into
-its composer and Gangline will not send a slash command into a box it cannot
-prove is empty. So let Codex auto-compact, and watch its context yourself —
-[issue #53](https://github.com/adambiggs/gangline/issues/53) carries the fix.
-Do not use a self-issued Codex `--resume-stdin`: Gangline verifies command
+exception: it rejects `/compact` while a task is active, and running
+`gang compact` from its own pane is itself such a task. Compact an idle Codex
+from another caller, or let it auto-compact. Do not use a self-issued Codex
+`--resume-stdin`: Gangline verifies command
 delivery, not whether Codex accepted the native command. Compacting any busy peer is refused because it would cut off
 live work. Resume delivery is attempted by a detached waiter rather than pasted
 behind the slash command, where the current turn could consume it first. A failed
