@@ -2507,12 +2507,20 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # only ever wanted because it is a moment with something coherent to write
   # down, so writing the handoff IS the boundary, and it is reachable at any
   # moment for the cost of doing it.
-  local total remaining tail
+  local total remaining tail qname
   local -a rungs
   IFS=',' read -r -a rungs <<<"$5"
   total="${#rungs[@]}"
   remaining=$(( total - $4 ))
-  tail="Write the handoff to a file, then run: gang compact $3 --from $3 --resume-stdin < resume-file — this queues behind the turn you are in, and the resume is delivered once compaction settles."
+  # The name goes into a command the agent is told to RUN, so it is quoted for the
+  # shell that will read it rather than pasted raw. valid_name refuses anything
+  # exotic at hitch and at adopt, which leaves a manual `tmux rename-window` as the
+  # only way a window arrives here with a name worth quoting — this is the
+  # fail-loud column rather than the security one (law 2). %q leaves every name
+  # that passed valid_name byte-identical, so the suggestion an agent actually
+  # reads is unchanged in every case that is not already broken.
+  printf -v qname '%q' "$3"
+  tail="Write the handoff to a file, then run: gang compact $qname --from $qname --resume-stdin < resume-file — this queues behind the turn you are in, and the resume is delivered once compaction settles."
   if [ "${6:-}" = repeat ]; then
     printf '[context-usage] %s in context — still past the %s-token band. You have not compacted. Do it now, before your next action. Each turn you take instead adds to this context and degrades your recall of it. Anything you have not written down is lost when the context is cut. You will get this note on every turn until you compact. %s' \
       "$1" "$2" "$tail"
