@@ -2,13 +2,14 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-01
-- **Erratum (2026-08-01):** the Context observation that compaction paints
-  nothing (637 samples, zero hits) was refuted for manual `/compact` on
-  claude-code 2.1.220, which paints "Compacting conversation" over a bar the
-  busy regex matches; auto-compaction remains unobserved (gh #57). Current
-  account: profiles/claude-code.sh, landed with the compaction bracket
-  (3698e20). The decision is unaffected — the event tier exists for what the
-  pane cannot witness, and the unobserved auto case is exactly that.
+- **Erratum (2026-08-01):** this page was written holding that compaction paints
+  nothing on the pane. That was refuted for manual `/compact`, which paints
+  "Compacting conversation" over a bar the busy regex already matches;
+  auto-compaction remains unobserved (gh #57). Context now states the corrected
+  mechanism, and the current account lives in profiles/claude-code.sh, landed
+  with the compaction bracket (3698e20). The decision is unaffected — the event
+  tier exists for what the pane cannot witness, and the unobserved auto case is
+  exactly that.
 
 ## Context
 
@@ -16,9 +17,10 @@ Every verdict Gangline issues about a harness — busy, idle, occupied, compacti
 how full its context is — is read off the pane. The pane is the one witness every
 harness has (law 1), and it stays the reason a new harness costs a profile rather
 than an integration. It is also a weak witness in ways this repo has measured and
-named: on claude-code, only 8.6% of demonstrably-changing frames carry any busy
-marker (profiles/claude-code.sh:55-56), and compaction paints nothing at all —
-637 samples bracketing a real one, zero hits (claude-code.sh:88). ADR-0001
+named: on claude-code the busy marker is absent from most frames of a
+demonstrably live turn, so its silence is no evidence that the turn has ended;
+and what a manual compaction paints is a bar the busy regex already matches, so
+the pane cannot separate compacting from working at all. ADR-0001
 accepts the version fragility of text conventions as a cost, loud per law 8, one
 line to fix.
 

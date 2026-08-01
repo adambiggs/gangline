@@ -103,9 +103,9 @@ release commit, then fails at PR creation, so no release PR is maintained.
 `.release-please-manifest.json` is the version source. A release commit updates
 that manifest, `version.txt`, `packaging/npm/package.json`, and
 `packaging/pypi/pyproject.toml`; do not introduce another version location or
-bump one of those files through a second mechanism. The initial manifest is
-anchored at the unpublished `0.0.1`, and the verified release-please dry run
-plans the first release as `0.1.0`.
+bump one of those files through a second mechanism. release-please computes the
+next version from the manifest and the commit history; take the version it plans
+from a dry run rather than from any number written down here.
 
 The npm and PyPI stubs are not published packages yet; install through
 `install.sh`, not a registry. After every release, verify both packaging stubs
@@ -152,12 +152,14 @@ Shell changes must pass `test/lint.sh` — `bash -n` and `shellcheck -S warning`
 over every shell file in the repo — and `test/integration.sh`; the `shell`
 workflow runs both on every push. Run the lint through that script rather than
 naming files by hand: a hand-picked set is a shorter list than CI's, and it goes
-green over the file it left out. A local green run is not a CI prediction on the
-current development box: local mawk
-1.3.4 is more permissive than CI's gawk and hid a `substr` byte/character bug;
-local Bash 5.1 is newer than macOS CI's 3.2, which rejected 37 locally valid test
-constructs; and local ShellCheck 0.8.0 is more permissive than CI's newer parser,
-which treated a comment beginning `shellcheck` as a directive and failed lint.
+green over the file it left out. A local green run is not a CI prediction, because
+the tools are not the same implementations: local `awk` is mawk where CI runs
+gawk, and mawk's byte-wise `substr` hid a byte/character bug outright; the local
+Bash is far newer than the one macOS CI ships, which rejects `[[ ]]` constructs
+that are valid here; and the local ShellCheck is older and more permissive than
+CI's, which read a comment beginning `shellcheck` as a directive and failed lint.
+A class of failure that cannot reproduce on this box is the normal case, not a
+surprise.
 
 ## Writing about Gangline
 

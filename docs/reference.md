@@ -120,7 +120,7 @@ command was delivered, not that the harness executed it successfully.
 A busy peer cannot be compacted. Gangline permits an agent to compact its own
 busy window because the slash command can queue behind the turn that ends when
 its `gang compact` call returns. This is permission at the transport layer, not a
-promise that every harness accepts its slash command there: Codex 0.145.0 rejects
+promise that every harness accepts its slash command there: Codex rejects
 `/compact` while a task is active, and a self-issued Gangline call keeps that task
 active. Compact an idle Codex from another caller or let Codex auto-compact; do
 not attach a self-issued Codex resume to a native command Codex will reject.

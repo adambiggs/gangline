@@ -322,9 +322,9 @@ behind the current turn. A different busy agent is refused because forced
 compaction would discard its live work.
 
 That transport permission does not make every harness's command self-safe. Codex
-0.145.0 was observed rejecting `/compact` three times while a task was active;
-a Codex agent invoking Gangline from its own pane is still in that task, so it
-cannot self-compact by this route. Let Codex compact automatically, or have
+rejects `/compact` outright while a task is active, and a Codex agent invoking
+Gangline from its own pane is still inside that task, so it cannot self-compact
+by this route. Let Codex compact automatically, or have
 another caller wait for it to become idle and then run `gang compact codex-name`
 (with an attributed resume if needed). Do not pair the rejected self-issued Codex
 command with `--resume-stdin`: Gangline proves the slash command was submitted, not
@@ -399,8 +399,8 @@ structural companion — a dialog watched live owns the screen, so a composer st
 being there proves the words are talk *about* a prompt — and busy has no equivalent:
 the composer is painted through a turn on some harnesses and dropped on others, so
 neither its presence nor its absence settles anything. Position does not work either;
-prose-quoted markers were measured inside the bottom twenty rows in 49 samples and
-outside it in the rest. And conjoining the two signals that *can* tell a live turn
+prose-quoted markers land inside a fixed bottom window about as readily as outside
+it, so where the text sits discriminates nothing. And conjoining the two signals that *can* tell a live turn
 from static text — recent pty activity and churn — would inverse the failure
 direction, because both are unavailable unless a profile declares itself quiet at
 rest, and an `AND` against an unavailable signal reads every busy agent as idle. That
@@ -422,7 +422,7 @@ dead waiter PID is reclaimed when observed.
 
 Parked is not the same as reachable. A profile that merely accepts mid-turn input
 still queues the text until the running turn ends, and the running turn is the wait
-itself: opencode 1.18.8 was observed holding an accepted message until the wait call
+itself: opencode was observed holding an accepted message until the wait call
 returned. Only a harness witnessed *acting* on ordinary mid-turn text —
 `GANG_MIDTURN_ACTS`, declared by `claude-code` alone — makes a parked agent answer
 inside its own wait. Treat parked on any other profile as delivery availability and

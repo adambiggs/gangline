@@ -129,12 +129,11 @@ rungs, and there is no ladder without a declaration.**
   that constraint made standing.
 - **Prior art** — the LemonHarness technical report describes exposing "elapsed
   and remaining budget to the model, so it can rebalance exploration,
-  implementation, and validation effort as time pressure shifts," and sits at
-  the top of Terminal-Bench 2.0's community leaderboard with it (84.49% with
-  GPT-5.3-Codex, 86.52% with GPT-5.5). Independent validation that budget
-  exposure pays for itself; what this design adds is the escalating ask ladder,
-  the banking reserve, and a patrol leg that reaches agents idling inside a
-  live budget.
+  implementation, and validation effort as time pressure shifts," and credits
+  that exposure as a material part of its Terminal-Bench 2.0 result.
+  Independent evidence that budget exposure pays for itself; what this design
+  adds is the escalating ask ladder, the banking reserve, and a patrol leg that
+  reaches agents idling inside a live budget.
 - ADR-0006's rot/exhaustion split is the frame this page stands on, and
   bin/gang:2231's comment reserved the seam — "a future wall-clock ladder" —
   before this page existed.

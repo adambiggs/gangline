@@ -208,10 +208,11 @@ GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 # proof and drops back to the settle path, which can hand the message to a turn
 # still running: corrupting. Lower is the dangerous direction at both.
 #
-# The field record does not justify 300 as a safe ceiling. As of 2026-07-30 it
-# holds only three gang-requested drops with independent proof, observed 61, 166
-# and 269 seconds after issue. Those are polling latencies rather than native
-# durations, N=3, and the longest leaves 31 seconds. Expiry therefore establishes
+# The field record does not justify 300 as a safe ceiling. It holds a handful of
+# gang-requested drops with independent proof, and every timing in it is a polling
+# latency rather than a native duration — each one says when gang next looked, not
+# when the compaction finished. The longest ran close enough to this bound to
+# leave very little margin under it. Expiry therefore establishes
 # only that the clock ran out, which is why patrol spends it as an unknown worth
 # reporting rather than as clearance to inject; this constant remains policy, not
 # an observed safety boundary.
@@ -229,12 +230,11 @@ GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
 # open side of it — a closed bracket is a finished compaction, and a finished
 # compaction does not become unfinished with age.
 #
-# It is deliberately not derived from the one measurement there is. Manual
-# compaction on claude-code 2.1.220 was watched at about eleven seconds, and a
-# bound near that would be the tightest thing here; auto-compaction on a large
-# window is unobserved (gh #57), and it is the case this tier exists to cover, so
-# the bound is set for the case nobody has measured rather than the one somebody
-# did. Overrunning it costs a held nudge, which is noisy; undershooting it drops a
+# It is deliberately not derived from the one measurement there is. A manual
+# compaction is over in seconds, and a bound near that would be the tightest
+# thing in this file; auto-compaction on a large window is unobserved (gh #57),
+# and it is the case this tier exists to cover, so the bound is set for the case
+# nobody has measured rather than the one somebody did. Overrunning it costs a held nudge, which is noisy; undershooting it drops a
 # genuinely compacting pane back to a tier that reads it idle, and patrol then
 # injects into the compaction — corrupting. So the error direction is chosen and
 # the number is policy, not an observation.
