@@ -2817,7 +2817,7 @@ check "and routine is the one thing not written down" "$lines_before" \
 tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
 GANG_PATROL_LOG="$PLOG" "$GANG" patrol >/dev/null
 check "a verdict nobody anticipated is recorded anyway" "yes" \
-  "$(holds "$(tail -1 "$PLOG")" 'context-band memory was unreadable')"
+  "$(holds "$(grep logagent "$PLOG" | tail -1)" 'context-band memory was unreadable')"
 
 # Law 6 in the small: a file gang appends to forever is state with no end to it.
 tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
