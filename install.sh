@@ -36,7 +36,7 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 # python3 is a requirement, not a nicety. Three of the four shipped profiles run
 # it: claude-code through the statusline beacon and the hook payload, codex to
 # bind an agent to its rollout and parse token_count, opencode to join the model
-# catalogue. It also builds the context-hook reply. Without it, context reading,
+# catalogue. It also parses `gang hook` payloads and builds the band-note reply. Without it, context reading,
 # the roster's context column, patrol's band warnings and `gang vet`'s format
 # gates all fail — most of what makes a team self-managing. Naming that at
 # install time beats four different failures later, one per profile.

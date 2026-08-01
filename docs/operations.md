@@ -172,8 +172,8 @@ MESSAGE
 ## Context readouts and warnings
 
 Every context consumer goes through the active profile's `profile_context`:
-`gang context`, the roster column, patrol, compaction proof, and the optional
-in-turn context hook.
+`gang context`, the roster column, patrol, compaction proof, and the in-turn
+band note `gang hook` returns.
 
 The shipped profiles obtain the value differently:
 
@@ -293,18 +293,16 @@ entirely. Bare entries are absolute tokens; `%` entries are a percentage of that
 agent's window — an escape hatch for an unusual one, never a default
 ([ADR-0005](adr/0005-context-bands-are-absolute.md)). A profile may export the floor
 or the cap to set it for its own harness. The last warned band is a tmux window
-option, shared with `context-hook`, and re-arms when usage falls after compaction.
+option, shared with `gang hook`, and re-arms when usage falls after compaction.
 
 ### In-turn hook
 
-`gang context-hook` consumes a harness hook event on stdin and can return an
-`additionalContext` warning during the agent's own turn. It is designed for
-Claude Code's `UserPromptSubmit` and `PostToolUse` events. Configure those events
-to run:
-
-```text
-gang context-hook
-```
+`gang hook` consumes a harness hook event on stdin and, on Claude Code's
+`UserPromptSubmit` and `PostToolUse` events, can return an `additionalContext`
+warning during the agent's own turn. The claude-code profile wires those events
+into the launch line at hitch, so a hitched agent carries this leg with nothing
+to configure; the same verb ingests the turn-bracket facts the reference
+describes.
 
 The hook is deliberately silent on missing or malformed input so context
 telemetry cannot block work. Patrol remains the harness-independent warning leg.

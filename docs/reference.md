@@ -49,7 +49,7 @@ supports its harness-specific thinking suffix).
 
 Names may contain `A-Z`, `a-z`, `0-9`, `.`, `_`, and `-`, and may not start with
 `.` or `-`. A name is simultaneously a window name, identity, command handle,
-and part of context-hook output.
+and part of `gang hook` output.
 
 Hitch waits up to `GANG_BOOT_TIMEOUT` for a stable input box. A role brief that
 cannot be delivered makes hitch fail. With no brief, a running window may still
@@ -261,18 +261,24 @@ runs, so updating Gangline refreshes an entry the operator chose without ever
 adding one they did not. It is a silent success on a host with no `crontab`
 command, where `--install` fails loudly instead.
 
-### `gang context-hook`
+### `gang hook`
 
-Harness hook entry point for in-turn warnings. It reads a JSON hook payload from
-stdin, identifies the current agent through `TMUX_PANE`, applies the same band
-ladder and window option as patrol, and emits a JSON `additionalContext` reply
-only when a higher band is crossed.
+Ingestion verb for harness hook events (ADR-0008). It reads a JSON hook payload
+from stdin, identifies the current agent through `TMUX_PANE`, branches on the
+native `hook_event_name`, and writes the mapped fact to that agent's own window
+options: `UserPromptSubmit` opens the turn bracket, `PostToolUse` refreshes it,
+`Stop` closes it. On `UserPromptSubmit` and `PostToolUse` it also applies the
+same band ladder and window option as patrol and emits a JSON
+`additionalContext` reply when a higher band is crossed; on every other event
+it emits nothing, so a hook whose output the harness treats as a decision can
+never be steered by gang's reply.
 
-Malformed JSON, a missing `TMUX_PANE` or profile binding, and an unavailable
-context readout exit successfully without output. Once a profile is resolved,
-profile-loading and band-configuration errors remain loud. The command is
-intended for hook systems such as Claude Code's `UserPromptSubmit` and
-`PostToolUse` events.
+It exits 0 on every path: malformed JSON, an unknown event name, a missing
+`TMUX_PANE` or profile binding, and an unavailable context readout are silent
+successes, so fact ingestion can never block the work it observes. Once a
+profile is resolved, profile-loading and band-configuration errors remain loud.
+The claude-code profile wires the three mapped events to this verb at hitch, on
+both launch forms, so nothing is configured by the operator.
 
 ## Diagnostics and discovery
 
