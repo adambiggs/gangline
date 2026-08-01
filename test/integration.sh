@@ -2565,6 +2565,15 @@ check "the lowest rung asks for the next arc boundary" "yes" \
   "$(like "$note_low" "*compact at the next arc boundary*")"
 check "and states the countdown to mandatory from the very first note" "yes" \
   "$(like "$note_low" "*4 bands left before compaction is mandatory*")"
+# The figure an agent is handed is what it is CARRYING. A denominator is a claim
+# about headroom, and headroom at 120000 tokens is the belief the absolute bands
+# exist to correct.
+check "and states what is carried" "yes" \
+  "$(like "$note_low" "*130k in context*")"
+check "without a window beside it to read as headroom" "no" \
+  "$(like "$note_low" "*130k/200k*")"
+check "and without a percentage of a window nobody should be aiming for" "no" \
+  "$(like "$note_low" "*%*")"
 check "and advances rich shared band memory" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1$')"
 

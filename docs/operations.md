@@ -261,6 +261,11 @@ something coherent to write down, so writing it down is what makes this moment t
 boundary, and waiting for a better one spends the last of the window on the work
 whose handoff was the thing at risk.
 
+The figure an agent is handed is what it is carrying and nothing else: a window
+beside it reads as headroom, and headroom is the belief the absolute bands exist
+to correct. Operator-facing surfaces keep the window, because an operator is
+diagnosing and it says which profile spoke.
+
 Crossings remain one-shot below the top. Once the final band has been recorded,
 patrol sends a separately worded repeat on every safe sweep until usage drops out
 of that band. It explicitly identifies itself as a repeated final-band reminder,

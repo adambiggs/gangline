@@ -2109,6 +2109,31 @@ ctx_tokens() { # $1 = "<used>k/<win>k (<pct>%)" -> "<used> <window>" in tokens
   printf '%s %s' "$(( BASH_REMATCH[1] * 1000 ))" "$(( BASH_REMATCH[2] * 1000 ))"
 }
 
+# A profile reports "<used>k/<win>k (<pct>%)" because that is what its harness
+# paints. What gang REPEATS out of that is a separate decision, and it is made
+# here rather than in each profile: the readout is a data interface, and the two
+# audiences below want different parts of it.
+ctx_measured() { # $1 = profile readout -> the figure an operator reads
+  # The percent never survives. A percentage of a harness's advertised window is
+  # a claim about headroom, and the position this whole ladder takes is that the
+  # usable context is far smaller than the advertised one — rot arrives nowhere
+  # near a million tokens, which is why the bands are absolute counts and not
+  # fractions. So the percent does not merely fail to inform, it argues against
+  # the band printed next to it.
+  printf '%s' "${1% (*%)}"
+}
+
+ctx_carried() { # $1 = profile readout -> the figure an agent is told it is carrying
+  # And on this side the window goes too. An operator scanning a sweep is
+  # diagnosing, and the window tells them which profile spoke. An agent reading
+  # its own figure has no such use for it and every reason not to be handed a
+  # denominator: "124k/1000k" is an invitation to read 876k of headroom at the
+  # exact moment the band beside it says there is none.
+  local s
+  s="$(ctx_measured "$1")"
+  printf '%s' "${s%%/*}"
+}
+
 # Permille of the span between floor and ceiling. Fixed, so the ladder has the same
 # shape on every harness, and compressing upward so the warnings get closer together
 # as the situation gets worse. The widest gap belongs at the bottom, where there is
@@ -2919,6 +2944,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   if [ "$tokens" -eq 0 ]; then
     say "$2" "$ctx" "context readout came back zero — not patrolled, band memory kept" "$C_BAD"
     return
+  ctx="$(ctx_measured "$ctx")"
   fi
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
@@ -3053,9 +3079,9 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     say "$2" "$ctx" "past the ${crossed}-token band — input box has content, holding nudge" "$C_WORK"
   else
     if [ "$top_repeat" -eq 1 ]; then
-      envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds" repeat)"
+      envelope patrol "$(band_note "$(ctx_carried "$ctx")" "$crossed" "$2" "$band" "$thresholds" repeat)"
     else
-      envelope patrol "$(band_note "$ctx" "$crossed" "$2" "$band" "$thresholds")"
+      envelope patrol "$(band_note "$(ctx_carried "$ctx")" "$crossed" "$2" "$band" "$thresholds")"
     fi
     inject "$1" "$ENVELOPE"
     if [ "$top_repeat" -eq 1 ]; then
@@ -3320,7 +3346,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
     # band was advanced above and nothing retries a warning the harness could
     # not parse. python3 is a hard dependency of this command already.
     python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
-      "$event" "$(band_note "$ctx" "$crossed" "$agent" "$band" "$thresholds")"
+      "$event" "$(band_note "$(ctx_carried "$ctx")" "$crossed" "$agent" "$band" "$thresholds")"
   fi
   exit 0
 }
