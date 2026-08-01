@@ -171,15 +171,20 @@ MESSAGE
 
 ## Context readouts and warnings
 
-Every context consumer goes through the active profile's `profile_context`:
-`gang context`, the roster column, patrol, compaction proof, and the in-turn
-band note `gang hook` returns.
+Every context consumer — `gang context`, the roster column, patrol, compaction
+proof, and the in-turn band note `gang hook` returns — reads the same tier
+order: the window's owned context fact where the harness's own wiring writes
+one, then the active profile's `profile_context` scrape. Whichever tier
+answers, the readout comes out in one shape, so nothing downstream can tell
+which witness spoke.
 
 The shipped profiles obtain the value differently:
 
 - **Claude Code:** `statusline/claude-code-context.sh` formats the harness's own
-  statusline payload into a `ctx <used>k/<window>k <percent>%` pane beacon. Wire
-  it into `settings.json` as shown in the README.
+  statusline payload into a `ctx <used>k/<window>k <percent>%` pane beacon and
+  writes the same figures to the owned context fact in the same breath. A fresh
+  fact is the readout; the beacon is the scrape it falls back to. Wire the
+  script into `settings.json` as shown in the README.
 - **Codex:** a hitch-time random marker links the window to exactly one rollout
   JSONL file. The profile reads its last `token_count` event. An adopted Codex
   window has no marker and cannot provide context.

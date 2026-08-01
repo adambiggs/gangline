@@ -442,7 +442,7 @@ table names what each harness's side witnesses:
 | Predicate | claude-code | codex | opencode | pi |
 |---|---|---|---|---|
 | busy | turn bracket from the wired hook events, then the scrape arms | scrape | scrape | scrape |
-| compacting | event bracket, the only witness of the harness's own auto-compaction; no marker is scrapable | no scrapable marker — the mark alone | no scrapable marker — the mark alone | painted marker |
+| compacting | event bracket, the only witness of the harness's own auto-compaction; the scrape deliberately undeclared — a manual compaction paints the busy regex's own bar, and one glyph must not carry two predicates | no scrapable marker — the mark alone | no scrapable marker — the mark alone | painted marker |
 | occupied | permission-request raise, retired by the pane, above the modal scrape | modal scrape | modal scrape | modal scrape |
 | context | written by the shipped statusline script beside the beacon it paints, above the beacon scrape | owned file — the rollout is read, never the pane | pane hint row, with the window size joined from the catalog file | native readout scrape |
 
