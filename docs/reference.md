@@ -393,6 +393,26 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `profile_context` | print one parseable context-usage line |
 | `profile_vet` | optional gate on harness files — formats the profile parses, and configuration its readers require |
 
+The scrape declarations above are every predicate's bottom tier. Per predicate,
+evidence is tiered — owned event > owned file > pane scrape — and every reader
+takes the highest tier still fresh, refusing a fact past its bound rather than
+trusting it as last-known-good (ADR-0008). A profile adds a tier above the
+scrape by wiring the harness's own surfaces into the launch line at hitch — an
+inline settings string naming `gang hook`, a notify program — never by a
+generated file on disk. Degradation is per predicate, not per profile: a
+harness with event-witnessed turns and scrape-witnessed dialogs is a portfolio,
+not a partial migration.
+
+Gang's own issued-compaction mark is substrate and exists on every profile; the
+table names what each harness's side witnesses:
+
+| Predicate | claude-code | codex | opencode | pi |
+|---|---|---|---|---|
+| busy | turn bracket from the wired hook events, then the scrape arms | scrape | scrape | scrape |
+| compacting | event bracket, the only witness of the harness's own auto-compaction; no marker is scrapable | no scrapable marker — the mark alone | no scrapable marker — the mark alone | painted marker |
+| occupied | permission-request raise, retired by the pane, above the modal scrape | modal scrape | modal scrape | modal scrape |
+| context | written by the shipped statusline script beside the beacon it paints, above the beacon scrape | owned file — the rollout is read, never the pane | pane hint row, with the window size joined from the catalog file | native readout scrape |
+
 ### `gang roles`
 
 Lists role names from `GANG_ROLES` and the shipped directory, deduplicated with
