@@ -3067,14 +3067,58 @@ probe_work() {
     | "$FACTS_SL"
 }
 RC
+# TWO MORE WRITERS, AND WHAT SEPARATES THEM FROM THE SKEW BELOW. factsskewmark
+# writes nothing at all, which is what a rewiring leaves behind. These two are
+# what a writer that RAN leaves behind: a bracket opened and never closed, and
+# records that arrived and cannot be read. All three end with the same readers
+# falling to the tier below, and the probe has to say which, because a hook
+# nobody wired and a turn that died mid-flight are not fixed the same way.
+#
+# The Stop is the only line this one drops, and it is not a contrived fixture: a
+# turn whose permission dialog is Esc-dismissed ends in the pane and fires no
+# Stop at all, measured in ADR-0008 — the ordinary end of an interrupted turn.
+cat > "$SHIM/probedir/factsopen.rc" <<'RC'
+PS1='❯ '
+probe_work() {
+  local i=0
+  printf '{"hook_event_name":"UserPromptSubmit"}' | "$FACTS_GANG" hook
+  while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.4; i=$((i+1)); done
+  clear
+  printf '{"context_window":{"current_usage":{"input_tokens":12000},"context_window_size":200000}}' \
+    | "$FACTS_SL"
+}
+RC
+cat > "$SHIM/probedir/factsunread.rc" <<'RC'
+PS1='❯ '
+probe_work() {
+  local i=0
+  printf '{"hook_event_name":"UserPromptSubmit"}' | "$FACTS_GANG" hook
+  while [ $i -lt 8 ]; do printf 'PROBEBUSY\n'; sleep 0.4; i=$((i+1)); done
+  printf '{"hook_event_name":"Stop"}' | "$FACTS_GANG" hook
+  clear
+  printf '{"context_window":{"current_usage":{"input_tokens":12000},"context_window_size":200000}}' \
+    | "$FACTS_SL"
+  # Written by the shipped writers first and corrupted after, which is the only
+  # honest way to reach this state: no correct writer emits either value, so
+  # there is nothing to drive it WITH. Everything the SCREEN shows is produced
+  # the way the passing specimen produces it, and the record is the only thing
+  # that differs — the zero because the statusline prints "ctx -" and writes
+  # nothing when it has no usage, so a zero in the record is a figure gang did
+  # not put there, and stamped now so staleness is not what refuses it.
+  tmux set-option -w -t "$TMUX_PANE" @gl_turn 'not-a-bracket'
+  tmux set-option -w -t "$TMUX_PANE" @gl_ctx "ctx 0 200000 $(date +%s)"
+}
+RC
 # 12000 of 200000 is the beacon every other stand-in in this section echoes as a
 # literal, which is not a coincidence to be tidied away: here the real statusline
 # derives it, so the pane the scrape reads and the record the fact reads come out
 # of one set of numbers, exactly as they do on a live agent.
-for _f in factsmark factsskewmark; do
+for _f in factsmark factsskewmark factsopenmark factsunreadmark; do
   case "$_f" in
-    factsmark)     _frc=facts.rc; _ffacts="turn ctx occupied compaction" ;;
-    factsskewmark) _frc=live.rc;  _ffacts="turn ctx gizmo" ;;
+    factsmark)       _frc=facts.rc;  _ffacts="turn ctx occupied compaction" ;;
+    factsskewmark)   _frc=live.rc;   _ffacts="turn ctx gizmo" ;;
+    factsopenmark)   _frc=factsopen.rc;   _ffacts="turn ctx" ;;
+    factsunreadmark) _frc=factsunread.rc; _ffacts="turn ctx" ;;
   esac
   cat > "$SHIM/probedir/$_f.sh" <<SH
 GANG_LAUNCH="FACTS_GANG=$GANG FACTS_SL=$CCBEACON bash --rcfile $SHIM/probedir/$_frc -i"
@@ -3128,6 +3172,39 @@ check "and the beacon-without-a-record skew is named as what it is" "yes" \
 check "a declared fact this probe has no leg for is not counted as having arrived" "yes" \
   "$(holds "$pout" "fact 'gizmo' NOT PROBED.*no leg in here knows how to drive")"
 check "and a declared fact that never arrived exits nonzero" "1" "$prc"
+
+# THE BRACKET THAT ARRIVED AND STAYED OPEN, which is the failure the row above
+# cannot see: the hook fired, gang wrote the fact, and the turn it opened is over
+# with nothing to close it. Read as an arriving fact it is a pass; read honestly
+# it is worse than an absent one, because every send to that harness is refused
+# as busy until the bound expires rather than falling to a scrape that would have
+# answered. The ctx leg is declared beside it to hold down that a fact which DID
+# arrive is still reported: a loop that stopped at the first finding would hide
+# a healthy record behind a broken one and call the profile diagnosed.
+pout="$(probe_run factsopenmark)"; prc=$?
+check "a bracket the harness opened and nothing closed is a finding, not a confirmation" "yes" \
+  "$(holds "$pout" "fact 'turn' DECLARED AND MISSING.*opened and never closed")"
+check "and it quotes the state it is stuck in rather than reporting it absent" "yes" \
+  "$(holds "$pout" "it still reads 'open' with the pane long quiet")"
+check "and the fact that did arrive is still reported beside it" "yes" \
+  "$(holds "$pout" "fact 'ctx' CONFIRMED.*12000 of 200000 tokens")"
+check "and one bracket nothing will close is enough to exit nonzero" "1" "$prc"
+
+# AND THE PAIR GANG WROTE AND CANNOT READ BACK. A record that arrived and cannot
+# be parsed is worth exactly as much as none at all to every reader below it, and
+# it is the one shape a presence test calls healthy — the option is set, the
+# writer plainly ran. What separates it from the skew case is where the fix goes:
+# there, nothing is wired; here, two things are wired and one of them is wrong.
+pout="$(probe_run factsunreadmark)"; prc=$?
+check "a pane whose records are unreadable still passes the scrape it was passing" "yes" \
+  "$(holds "$pout" 'busy marker fired and cleared; context 12k/200k \(6%\)')"
+check "a bracket gang wrote and gang cannot read back is missing, not merely old" "yes" \
+  "$(holds "$pout" "fact 'turn' DECLARED AND MISSING.*cannot read back")"
+check "a record gang's own reader refuses is not spent as a record that arrived" "yes" \
+  "$(holds "$pout" "fact 'ctx' DECLARED AND MISSING.*reader refused it")"
+check "and the refused value is shown, because that is what says where to look" "yes" \
+  "$(holds "$pout" 'as much as none at all: ctx 0 200000')"
+check "and records gang cannot read exit nonzero like records that never came" "1" "$prc"
 
 # The probe drives real tmux servers, and the one rule it cannot get wrong is
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would
