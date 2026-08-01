@@ -66,6 +66,16 @@ ln -sf "$HOME_DIR/bin/gang" "$BIN_DIR/gang"
 "$BIN_DIR/gang" profiles >/dev/null || die "installed, but 'gang profiles' failed"
 "$BIN_DIR/gang" roles    >/dev/null || die "installed, but 'gang roles' failed"
 
+# A crontab entry is the one part of an install that updating never touches, and
+# that is not a small gap: a patrol entry pasted from the README once went on
+# sweeping with flags the tool had outgrown, for days, with nothing to say so.
+# So an update refreshes an entry that EXISTS. It never adds one — a `curl | sh`
+# that writes itself into somebody's crontab is a different bug, and `gang cron
+# --install` is how an operator opts in. Non-fatal either way: the install itself
+# is already proven above, and cron is one feature of it.
+"$BIN_DIR/gang" cron --refresh \
+  || echo "gangline: could not refresh the patrol crontab entry — run 'gang cron' to see the line it wanted" >&2
+
 echo
 echo "gang installed -> $BIN_DIR/gang"
 echo "  harnesses: $("$BIN_DIR/gang" profiles | tr '\n' ' ')"
