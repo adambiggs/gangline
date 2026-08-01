@@ -1413,17 +1413,29 @@ check "and an agent quoting them still takes mail" "no" "$(has busybee "refusing
 # it is up, which is why an unmarked gate read idle in the first place. The
 # stand-in models that — dialog painted, prompt gone — rather than printing the
 # words underneath a live prompt and calling the false positive proof.
-# Both wait on a WHOLE line, which is what tells the dialog apart from the shell
+# Up waits on a WHOLE line, which is what tells the dialog apart from the shell
 # echoing the command that draws it: the echo always carries the printf around it.
-# Down waits on the prompt rather than on the dialog's absence — the prompt is the
-# arrival, and gate_up left no ❯ on screen for a stale one to be mistaken for.
+#
+# Down waits twice and needs both, because neither answer is the state on its own.
+# The absence is what proves the clear ran at all, and it cannot pass early: up
+# waited for its own wording, so the dialog is on screen when this is called. It
+# is matched as a SUBSTRING, loosely on purpose — any trace of either dialog left
+# anywhere should hold the wait open. But `PS1='❯ '; clear` leaves the screen
+# empty for a moment before the new prompt paints, and that gap is not idle: no
+# input box and no busy marker is the unknown that resolves to OCCUPIED, which is
+# exactly what the checks after this read for. So the box is waited for too.
+# The order is load-bearing. The arrival cannot go first: the third caller below
+# paints its own ❯ before calling down, and a stale one would satisfy the wait
+# with the dialog still up.
 gate_up()   { tmux send-keys -t "$(target_of "$1")" \
                 "clear; PS1=''; printf 'Do you want to proceed?\\n'" Enter
               wait_for "$1" "the gate to take $1's screen" yes \
                 pane_lists "$1" 'Do you want to proceed?'; }
 gate_down() { tmux send-keys -t "$(target_of "$1")" "PS1='❯ '; clear" Enter
               wait_for "$1" "the dialog to leave $1's screen" no \
-                pane_holds "$1" 'Do you want to proceed\?|Select model'; }
+                pane_holds "$1" 'Do you want to proceed\?|Select model'
+              wait_for "$1" "the input box to come back on $1's screen" yes \
+                pane_lists "$1" '❯'; }
 
 gate_up busybee
 check "a permission prompt that owns the screen reads as occupied" \
@@ -2939,7 +2951,17 @@ tmux new-session -d -s "$PROGSESS" -n w \
 # that no longer exists for the rest of its deadline. The wait's own failure is
 # not scored — the control check below is what reports it, with the pane in hand.
 prog_pane() { tmux capture-pane -pJ -t "=$PROGSESS":w 2>/dev/null || exit 1; }
-prog_driven() { holds "$(prog_pane)" 'profile\(s\) driven'; }
+prog_driven() {
+  # The capture is assigned in this function's own shell rather than substituted
+  # straight into the argument, and that is the whole of what carries the refusal:
+  # inside `holds "$(prog_pane)"` the failure dies with the subshell, holds greps
+  # empty text, answers a well-formed "no", and returns 0 — so the wait reads "not
+  # yet" and polls a session that is gone for the rest of its 120s. Same shape as
+  # grew_since above, and for the same reason.
+  local p
+  p="$(prog_pane)" || return $?
+  holds "$p" 'profile\(s\) driven'
+}
 WAIT_TIMEOUT=120 wait_for '' "the windowed probe to print its own summary" yes prog_driven \
   || true
 progpane="$(prog_pane 2>/dev/null || true)"
