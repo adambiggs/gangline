@@ -2508,8 +2508,8 @@ check "a second sweep holds its peace" "steady (band 1)" \
 # The in-turn leg shares that band memory, so it must not re-warn what patrol
 # already warned about — one note per band, not one per leg.
 p="$(tmux list-panes -t "$(id_of ctxagent)" -F '#{pane_id}')"
-hook() { # optional event name; ctxagent's pane is the subject
-  printf '{"hook_event_name":"%s"}' "${1:-PostToolUse}" \
+hook() { # ctxagent's pane is the subject, at the event a turn ends on
+  printf '{"hook_event_name":"PostToolUse"}' \
     | TMUX_PANE="$p" "$GANG" context-hook
 }
 check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
@@ -2772,7 +2772,7 @@ check "and the roll keeps exactly one previous generation" "no" \
 rm -f "$PLOG" "$PLOG.1"
 tmux set-option -w -t "$(id_of logagent)" @gl_band 'banana'
 check "an empty destination writes nothing at all" "no" \
-  "$(GANG_PATROL_LOG= "$GANG" patrol >/dev/null; [ -f "$PLOG" ] && echo yes || echo no)"
+  "$(GANG_PATROL_LOG='' "$GANG" patrol >/dev/null; [ -f "$PLOG" ] && echo yes || echo no)"
 "$GANG" drop logagent >/dev/null 2>&1 || true
 
 # --- the crontab entry that runs the sweep -------------------------------------
