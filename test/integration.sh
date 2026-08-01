@@ -3528,11 +3528,17 @@ check "and writes no fact either, so the zero guard stays the scrape's problem" 
 cfset "ctx 167500 200000 $(ago 30)"
 check "a fact inside the bound answers, ahead of the beacon" "167k/200k (83%)" \
   "$("$GANG" context ctxfact)"
-cfset "ctx 167500 200000 $(ago 120)"
+# The spent record is captured ONCE and compared against itself. ago() re-reads
+# the clock per call, so building the expectation from a second one — a whole
+# `gang context` after the first — lets a second boundary fall between them and
+# reddens a check with nothing wrong behind it. The cfbad loop below already
+# compares the row it set; this is the same idiom.
+cfspent="ctx 167500 200000 $(ago 120)"
+cfset "$cfspent"
 check "and a fact past it hands the same pane back to the scrape" "130k/200k (65%)" \
   "$("$GANG" context ctxfact)"
 check "which leaves the spent record standing, as the evidence for why" \
-  "ctx 167500 200000 $(ago 120)" "$(cfrec)"
+  "$cfspent" "$(cfrec)"
 
 # Every way a record can be one gang will not believe, and the same answer to all
 # of them: fall through, write nothing. The reader of this bracket never writes,
