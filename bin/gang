@@ -5054,6 +5054,120 @@ EOF
   return "$drift"
 }
 
+vet_tier_row() { # $1 = agent, $2 = profile, $3 = colour, $4 = text
+  printf '%-12s %-26s %s\n' "$1" "$2" "$(colour "$3" "$4")"
+}
+
+vet_tiers_agent() { # $1 = window id, $2 = name; 2 = the two witnesses disagree
+  # TIERS PICK WITNESSES, THEY DO NOT VOTE (ADR-0008), and this changes no
+  # answer. gang still replies from the highest fresh tier for every predicate
+  # below; what is reported here is that the tier UNDER it, freshly read, says
+  # something else. Two witnesses that were both written seconds ago and do not
+  # match is a fact about gang rather than about the agent — one of the two
+  # writers behind them has rotted — and it is invisible from every surface an
+  # operator has, precisely because the tier order works: the good witness
+  # answers and the rotted one is never consulted again.
+  #
+  # NOT FRESH IS NOT A FINDING. A tier that has expired, or that this profile
+  # never had, leaves one witness answering alone — which is the tier order doing
+  # its job, not a disagreement. Only both-fresh-and-apart is reported, and every
+  # arm below is written so that a missing witness falls out silently.
+  local prof rc=0 turn_rc=0 beacon used fact_k
+  prof="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || prof=""
+  # An unadopted window is somebody's shell, not an agent, and it declares no
+  # tiers at all. The roster is where an operator learns it is there.
+  [ -n "$prof" ] || return 0
+  profile_file "$prof" >/dev/null 2>&1 || {
+    vet_tier_row "$2" "$prof" "$C_DIM" "profile not found (GANG_PROFILES?) — no second witness to hold the first against"
+    return 0
+  }
+  load_profile "$prof"
+
+  # THE CONTEXT PREDICATE, COMPARED AT THE BEACON'S OWN GRANULARITY. The record
+  # carries an exact count and the beacon is rounded to thousands, so holding the
+  # raw figures against each other reports every healthy agent on the team as a
+  # conflict, every sweep. The fact is rendered down to what the pane can express
+  # — the same integer division context_now already prints with — so the two are
+  # things that CAN be equal, and an inequality means they genuinely differ.
+  #
+  # Both dies are contained by command substitution: profile_context dies rather
+  # than return an empty readout, and a profile with no context at all has no
+  # function to call.
+  if ctx_fact_read "$1" && declare -F profile_context >/dev/null; then
+    beacon="$(profile_context "$1" 2>/dev/null)" || beacon=""
+    used="${beacon%%k/*}"
+    # A readout this reader cannot parse is a could-not-compare, never a finding.
+    # profile_context is the profile's own code (law 4) and vet is the command an
+    # operator runs when a profile is already suspect — reading junk as a
+    # disagreement would report the rot in the wrong place.
+    if [ -n "$beacon" ] && [[ "$used" =~ ^[0-9]+$ ]]; then
+      fact_k=$(( CTX_FACT_TOKENS / 1000 ))
+      if [ "$fact_k" -ne "$used" ]; then
+        vet_tier_row "$2" "$prof" "$C_BAD" \
+          "ROT RISK — the context tiers disagree: the owned record on @gl_ctx says ${fact_k}k and the beacon on the pane says ${used}k. gang answers from the record; two witnesses this fresh and this far apart mean one of the two writers behind them has stopped keeping up."
+        rc=2
+      fi
+    fi
+  fi
+
+  # THE BUSY PREDICATE, IN ONE DIRECTION ONLY. A closed bracket under a painted
+  # marker is the disagreement: an event tier saying idle while the pane still
+  # paints a spinner means the scrape regex has almost certainly rotted.
+  #
+  # The reverse — an OPEN bracket over a pane painting nothing — is the ordinary
+  # case and firing on it would bury the report. A harness paints its marker on a
+  # small minority of the frames it draws during a live turn, so most reads of a
+  # genuinely busy agent find the bracket open and the pane blank. That is the
+  # asymmetry the tier order is built on rather than a fault in it.
+  #
+  # The read-path half of this rule is turn_vets_paint, which files a row in the
+  # patrol log the moment a sweep detects it. This is the same rule asked at a
+  # different moment and for a different reader: the log witnesses when it
+  # happened, and an operator running vet is asking what is true now. Change one
+  # and the other needs the same thought.
+  turn_witness "$1" || turn_rc=$?
+  # busy_painted dies rather than guess when a pane cannot be read, and this is a
+  # report over a whole team — the capture is proven first so one window that went
+  # away mid-loop does not take the rest of the section with it.
+  if [ "$turn_rc" -eq 1 ] && capture_joined "$1" >/dev/null 2>&1 && busy_painted "$1"; then
+    vet_tier_row "$2" "$prof" "$C_BAD" \
+      "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker ($GANG_BUSY_REGEX). gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
+    rc=2
+  fi
+  return "$rc"
+}
+
+vet_tiers() { # the live team's own witnesses, held against each other; 1 = a disagreement
+  local id name wins rc=0 seen=0 frc
+  if ! session_live; then
+    # Named rather than skipped. This section asks a question ABOUT AGENTS, and a
+    # silent absence would read as the question having been asked and answered.
+    vet_tier_row 'live team' '-' "$C_DIM" \
+      "no session '$SESSION' running — no agent's witnesses could be held against each other"
+    return 0
+  fi
+  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W' 2>/dev/null)" || wins=""
+  while read -r id name; do
+    [ -n "$id" ] || continue
+    seen=$((seen + 1))
+    # Subshelled, so a profile that dies on this agent costs one row instead of
+    # the section — and given its own code for a finding, because die exits 1 and
+    # an agent gang could not read must never be counted as one it read and found
+    # wrong (law 8).
+    frc=0; ( vet_tiers_agent "$id" "$name" ) || frc=$?
+    case "$frc" in
+      0) ;;
+      2) rc=1 ;;
+      *) vet_tier_row "$name" '?' "$C_DIM" "could not read this agent's witnesses" ;;
+    esac
+  done <<EOF
+$wins
+EOF
+  [ "$rc" -eq 0 ] || return 1
+  vet_tier_row 'live team' "$seen agent(s)" "$C_DIM" \
+    "every predicate whose two tiers were both fresh had them agree"
+}
+
 cmd_vet() { # strategy-rot check: installed harness version vs each profile's pins
   # Scraped TUI markers rot silently when a harness updates (lived it: a
   # Claude Code build stopped painting 'esc to interrupt' and busy() false-
@@ -5243,6 +5357,12 @@ EOF
       drift=1
     fi
   fi
+  # The one part of this report that reads the TEAM rather than the install, and
+  # it is on the plain run rather than behind --probe: it fires nothing, drives
+  # nothing and costs a handful of tmux reads per agent. It is also the only rot
+  # this command can see WITHOUT a version having moved — the case every pin above
+  # is blind to by construction.
+  vet_tiers || drift=1
   # Only on a clean bill, because that is when it is the remaining hypothesis:
   # vet is run when scraping already misbehaves, and pins watch harness
   # versions, which UI mods never move — a theme, a replacement statusline, or a
@@ -5255,7 +5375,7 @@ EOF
     # a clean bill that leaves the reader to assume a marker was fired at a pane
     # is what let three dead markers through, and the fix for that is a report
     # that states its own scope, not a louder guard.
-    printf '%s\n' "$(colour "$C_DIM" "compared version strings only — no marker was fired at any pane. gang vet --probe launches each installed harness and watches its declared markers across a real turn.")"
+    printf '%s\n' "$(colour "$C_DIM" "compared version strings, and read the live team's own witnesses against each other — but no marker was fired at any pane. gang vet --probe launches each installed harness and watches its declared markers across a real turn.")"
     [ "$drift" -ne 0 ] \
       || printf '%s\n' "$(colour "$C_DIM" "all pins verified — but pins watch harness versions, which UI mods never move. Scraping misbehaving anyway? A theme, statusline, or TUI extension may have moved a marker with every row above reading OK: gang vet --probe fires the markers at a live harness, and shadowing the profile via GANG_PROFILES is how you re-verify one against the TUI as you actually run it (README: Strategy rot).")"
   fi

@@ -2021,6 +2021,34 @@ check "a fresh bracket outranks the paint instead of averaging with it" "idle (s
   "$(GANG_PATROL_LOG="$TLOG" "$GANG" status bracket | head -1)"
 check "and the disagreement is recorded as a finding" "yes" \
   "$(holds "$(cat "$TLOG" 2>/dev/null)" 'TIER DISAGREEMENT')"
+# THE SAME RULE, ASKED BY THE OTHER READER. The row above is written the instant a
+# sweep meets this state and it witnesses WHEN; vet is where an operator asks what
+# is true NOW, which is the question they actually have — scraping is already
+# misbehaving and nobody was tailing a log while it went wrong. Both readers have
+# to call this state a finding, or a postmortem and a report describe different
+# systems and the one an operator reached for is the one that stayed quiet.
+#
+# Isolated the way the between-verdict check is: nothing here maintains the pins
+# in the ambient tree, so the profile this agent runs is copied beside shadows
+# that verify, and the finding is left as the only thing in the report that could
+# be one. The FIXTURE is untouched — the closed bracket and the painted marker
+# above are exactly what vet reads.
+mkdir -p "$SHIM/vetbracket"
+cp "$SHIM/custom-profiles/bracketed.sh" "$SHIM/vetbracket/bracketed.sh"
+for p in claude-code codex opencode pi; do
+  printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERIFIED_VERSIONS="any"\n' \
+    > "$SHIM/vetbracket/$p.sh"
+done
+bvet() { GANG_PROFILES="$SHIM/vetbracket" "$GANG" vet 2>&1; }
+bout="$(bvet)"
+check "vet holds the same two witnesses against each other" "yes" \
+  "$(holds "$bout" '^bracket +bracketed +ROT RISK — the busy tiers disagree')"
+# Named, both of them, and the scrape by the regex it is declared with. An
+# operator told only that the tiers disagree has been told a writer rotted without
+# being told which file to open, and this is the report they run when they already
+# know something is wrong.
+check "and names the scrape that rotted, not only the bracket that outranked it" "yes" \
+  "$(holds "$bout" '@gl_turn says the turn closed.*[(]FORCE_BUSY[)]')"
 # The other direction is not a finding and must not be logged as one. Only the
 # closed-bracket-over-painted-marker case says anything about gang; an OPEN
 # bracket with the marker up is two tiers AGREEING, and an open bracket over a
@@ -2036,6 +2064,10 @@ check "the marker is still up, so the untested direction is genuinely exercised"
   "$(has bracket FORCE_BUSY)"
 check "and an open bracket raises no finding against a pane that agrees with it" "0" \
   "$(rows 'TIER DISAGREEMENT')"
+check "and vet reads that direction the same way the log does" "no" \
+  "$(holds "$(bvet)" 'ROT RISK — the busy tiers disagree')"
+rm -rf "$SHIM/vetbracket"
+unset -f bvet
 "$GANG" drop bracket >/dev/null 2>&1
 unset GANG_PROFILES
 
@@ -3186,8 +3218,14 @@ rm -rf "$LEAKD"
 # Finding F, as a report rather than a guard: a clean bill that leaves the reader
 # to assume a marker was fired is what let three dead markers through, and the
 # only fix for a report that overstates its scope is a report that states it.
+vout="$("$GANG" vet 2>/dev/null || true)"
 check "plain vet says it fired nothing at a pane" "yes" \
-  "$(holds "$("$GANG" vet 2>/dev/null || true)" 'compared version strings only')"
+  "$(holds "$vout" 'no marker was fired at any pane')"
+# The other half of stating a scope: a run that reads a surface and does not name
+# it overstates itself in the opposite direction, and the sentence is the only
+# place either fact is written down.
+check "and names the surface it did read instead" "yes" \
+  "$(holds "$vout" "read the live team's own witnesses against each other")"
 rm -rf "$SHIM/probedir"
 
 GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch slowpoke -p slowboot -r worker -d /tmp >/dev/null
@@ -3691,15 +3729,84 @@ cfset "ctx 167500 200000 $(ago 30)"
 check "the roster column reports the tier that answered, not the one on screen" "yes" \
   "$(holds "$("$GANG" roster)" 'ctxfact.*167k/200k')"
 
-# TWO PLACES NAME THE SCRAPE BY HAND, and both are load-bearing. One is the tier
-# order's own fallback. The other is the setup probe, where the beacon being on
-# the screen IS the question — reaching for the fact there would let a wired
-# statusline vouch for a readout gang can no longer find, which is the fault the
-# probe exists to report.
-check "only the tier order and the probe reach for the scrape by name" "2" \
+# WHAT NO SURFACE AN OPERATOR HAS CAN SHOW THEM. The check above is the tier order
+# working — gang answers 167k and never consults the pane again — and that is
+# precisely why a beacon which has stopped keeping up leaves no mark anywhere. The
+# good witness answers every time it is asked and the rotted one is never asked
+# again. So the state this whole section has been sitting in IS the fixture:
+# nothing is arranged below that was not already true one line up.
+#
+# Isolated by shadowing every shipped pin to `any`, the same way the between
+# verdict is, because vet's exit status is asserted here and almost anything in a
+# real profile tree drifts. `bash` is deliberately left alone: it is the profile
+# this agent runs and the one declaring the beacon reader being held against the
+# record.
+mkdir -p "$SHIM/vetctx"
+for p in claude-code codex opencode pi; do
+  printf 'GANG_LAUNCH="true"\nGANG_BUSY_REGEX="x"\nGANG_VERIFIED_VERSIONS="any"\n' \
+    > "$SHIM/vetctx/$p.sh"
+done
+cfvet() { GANG_PROFILES="$SHIM/vetctx" "$GANG" vet 2>&1; }
+vout="$(cfvet)"; rc=$?
+check "vet reports the two context tiers disagreeing" "yes" \
+  "$(holds "$vout" '^ctxfact +bash +ROT RISK — the context tiers disagree')"
+check "and carries the figure each witness holds, so the rotted one is nameable" "yes" \
+  "$(holds "$vout" '@gl_ctx says 167k and the beacon on the pane says 130k')"
+check "and a finding moves the exit status a script reads" "1" "$rc"
+
+# THE CONTROL, AND THE CHECK THE ROUNDING EXISTS FOR. The record is exact and the
+# beacon is thousands, so holding the raw figures against each other reports every
+# healthy agent on the team as a conflict, every sweep — and a report that cries
+# wolf is a report nobody reads on the day it is right. Rendered down to what a
+# pane can express, 130400 and 130k are one reading rather than two.
+cfset "ctx 130400 200000 $(ago 30)"
+vout="$(cfvet)"; rc=$?
+check "a record that rounds to the beacon beside it is not a disagreement" "no" \
+  "$(holds "$vout" 'ROT RISK — the context tiers disagree')"
+check "and the section says it looked, rather than going quiet on a clean pass" "yes" \
+  "$(holds "$vout" 'every predicate whose two tiers were both fresh had them agree')"
+check "and nothing found is a clean exit" "0" "$rc"
+
+# ONE WITNESS ANSWERING ALONE IS THE TIER ORDER WORKING, NOT A DISAGREEMENT. The
+# spent record and the pane say different things here just as loudly as they did
+# above, and it means nothing: the reader has already fallen to the beacon, so
+# there are not two live claims to be in conflict. Firing on this would report
+# every agent whose statusline is doing its job and whose fact has merely aged,
+# which is every agent on a quiet team.
+cfset "ctx 167500 200000 $(ago 120)"
+check "a spent record is not held against the pane it no longer outranks" "no" \
+  "$(holds "$(cfvet)" 'ROT RISK — the context tiers disagree')"
+
+# NAMED RATHER THAN SKIPPED, when there is no team to read at all. This section
+# asks a question ABOUT AGENTS, and an absence printed as silence reads as the
+# question having been asked and answered — the same overstated clean bill the
+# scope line refuses.
+vout="$(GANG_SESSION="${GANG_SESSION}-nope" GANG_PROFILES="$SHIM/vetctx" \
+  "$GANG" vet 2>&1)"; rc=$?
+check "with no team up vet says whose witnesses it could not read" "yes" \
+  "$(holds "$vout" "^live team +- +no session '${GANG_SESSION}-nope' running")"
+check "and having nobody to ask is not a finding about anybody" "0" "$rc"
+rm -rf "$SHIM/vetctx"
+unset -f cfvet
+
+# THREE PLACES NAME THE SCRAPE BY HAND, and each is load-bearing for its own
+# reason. One is the tier order's own fallback. One is the setup probe, where the
+# beacon being on the screen IS the question — reaching for the fact there would
+# let a wired statusline vouch for a readout gang can no longer find, which is the
+# fault the probe exists to report. The third is vet holding the tiers against
+# each other, which has to reach the lower one SPECIFICALLY: routed through the
+# order it would be handed the same answer twice and compare the record with
+# itself. Every other reader goes through the order, and this count is what keeps
+# it that way — a fourth site is a reader that has quietly stopped asking gang.
+check "only the tier order, the probe and the comparison reach for the scrape" "3" \
   "$(grep -c 'profile_context "' "$GANG")"
-check "and the probe is the one that does, where the scrape is the subject" "yes" \
+check "and the probe is one of them, where the scrape is the subject" "yes" \
   "$(holds "$(grep 'profile_context "' "$GANG")" 'profile_context "\$id"')"
+# Which site the third one is, rather than that a third exists. A count alone
+# would be satisfied by any new reader appearing anywhere, including the one this
+# pin is meant to refuse.
+check "and the third is the comparison, inside the function that holds them apart" "yes" \
+  "$(holds "$(sed -n '/^vet_tiers_agent()/,/^}/p' "$GANG")" 'profile_context "\$1"')"
 "$GANG" drop ctxfact >/dev/null 2>&1 || true
 
 
