@@ -227,9 +227,9 @@ Performs one roster sweep. For each adopted agent it:
 5. re-arms warning state when usage falls;
 6. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
    safe;
-7. while usage remains in the final band, repeats a distinct final-band reminder
-   on every safe sweep. The repeat says it is not a fresh crossing and continues
-   until usage drops out of that band.
+7. while usage remains in the final band, repeats a distinctly worded reminder on
+   every safe sweep. The repeat states that the agent has not compacted, and that
+   the note arrives again every turn until it does.
 
 A gang-issued compaction, an occupied UI, or a non-empty input box holds both a
 crossing warning and a final-band repeat without advancing state, so a later

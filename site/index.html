@@ -473,11 +473,13 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
     together toward the top, where the hazard stops being rot and starts being
     running out of room.
   </p>
-  <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k in context — crossed the
-158000-token band. At the next checkpoint (arc boundary), write the handoff to a
-file, then run:
+  <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k in context — past the
+158000-token band. Start no new work. Close what is open, then compact. Your
+recall is already degrading: instructions given once earlier in this
+conversation are dropping out, and you cannot tell which ones.
+Write the handoff to a file, then run:
 gang compact worker --from worker --resume-stdin &lt; resume-file
-— it queues behind the turn you are in, and the resume is delivered once
+— this queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
   <p class="lede">
     Where the harness accepts compaction during an active task, the agent then

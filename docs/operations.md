@@ -251,27 +251,37 @@ toward the top, so the warnings arrive faster as the situation gets worse
 ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
 
 The note escalates with the rung, and what escalates is the ask rather than the
-volume. Below the top it asks for a compaction at the next arc boundary and states
-how many bands remain before that stops being optional, which puts the deadline in
-front of the agent as arithmetic from its first warning instead of springing it at
-the last. At the top rung it asks the agent to stop where it is, close what it is
-holding into handoff assets, and compact immediately. That is not a request to
-compact mid-thought: an arc boundary is only ever wanted because it is a moment with
-something coherent to write down, so writing it down is what makes this moment that
-boundary, and waiting for a better one spends the last of the window on the work
-whose handoff was the thing at risk.
+volume. The lowest rung asks the agent to finish the task in hand and then compact;
+the rung below the top closes the door on starting anything new; the top rung stops
+asking and instructs the agent to compact now, before its next action. That is not a
+request to compact mid-thought: a boundary is only ever wanted because it is a moment
+with something coherent to write down, so writing the handoff is what makes this
+moment that boundary, and waiting for a better one spends the last of the window on
+the work whose handoff was the thing at risk.
 
-The figure an agent is handed is what it is carrying and nothing else: a window
-beside it reads as headroom, and headroom is the belief the absolute bands exist
-to correct. Operator-facing surfaces keep the window, because an operator is
-diagnosing and it says which profile spoke.
+Every rung states its reason in terms of what is happening to that context now —
+recall degrading, instructions dropping out, unwritten work lost at the cut —
+because an instruction carrying its cost can be weighed against the work in front of
+the agent, and a bare one loses that comparison every time. Each is written as an
+instruction rather than as prose about context: action first, one clause per
+sentence, literal consequences, no metaphor. These notes arrive in a context that is
+already degrading, so a sentence the agent has to unpack before it can act is charged
+against the thing the note is trying to save.
+
+No rung refers to any other, and none counts what is left. A tally of remaining
+bands is arithmetic about the ladder rather than about the context, it reads as an
+allowance to spend, and nothing an agent does with the number changes what it should
+do next. For the same reason the figure an agent is handed is what it is carrying
+and nothing else: a window beside it reads as headroom, and headroom is the belief
+the absolute bands exist to correct. Operator-facing surfaces keep the window,
+because an operator is diagnosing and it says which profile spoke.
 
 Crossings remain one-shot below the top. Once the final band has been recorded,
 patrol sends a separately worded repeat on every safe sweep until usage drops out
-of that band. It explicitly identifies itself as a repeated final-band reminder,
-not a fresh crossing. Pending or unproved compaction, an occupied UI, and a
-non-empty composer retain the same precedence and hold the repeat; the top-band
-exception reaches those guards before any injection.
+of that band, and the top rung says so — an agent that does not know the note is
+coming back can read one deferral as the end of it. Pending or unproved compaction,
+an occupied UI, and a non-empty composer retain the same precedence and hold the
+repeat; the top-band exception reaches those guards before any injection.
 
 A window too small to reach the floor keeps a single rung at its ceiling: it cannot
 be warned about rot it has no room to suffer, so the one hazard left is exhaustion.
