@@ -4,7 +4,11 @@
 # Laws: CONSTITUTION.md. Transport decision: docs/adr/0001-tmux-is-the-substrate.md
 set -euo pipefail
 
-SESSION="${GANG_SESSION:-gangline}"
+# Named rather than written inline, because the crontab reader below has to work
+# out which session an entry sweeps and an entry that names none sweeps this one.
+# A default spelled in two places is a default that eventually disagrees.
+DEFAULT_SESSION=gangline
+SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
 
 # Every marker gang matches is a glyph a TUI painted: spinners, progress-bar
 # segments, menu cursors. Matching them means nothing outside a UTF-8 locale —
@@ -261,6 +265,13 @@ gang — drive a team of CLI agents as tmux windows
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
                                               reports occupied boxes and refused inbound
+  gang cron [--install|--refresh]             print the crontab entry that runs patrol for
+                                              this install: this gang's path, and the GANG_*
+                                              overrides exported here so a sweep agrees with
+                                              the team. --install writes it, replacing an
+                                              existing entry for this session in place;
+                                              --refresh replaces one only if it is already
+                                              there, which is what updating an install does
   gang vet [--file-issue] [--probe [name]]    strategy-rot check: installed harness version
                                               vs each profile's verified pins; exits nonzero
                                               on drift; --file-issue files a deduped rot
@@ -3021,6 +3032,188 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   fi
 }
 
+# --- the patrol crontab entry -----------------------------------------------
+#
+# gang derives this entry instead of a README asking somebody to paste one, and
+# the reason is the outage recorded beside GANG_PATROL_LOG: the entry was pasted
+# once, the tool changed under it, and a crontab is the one part of an install
+# that updating never touches. So the canonical line comes from this install,
+# `gang cron --install` writes it, install.sh refreshes one that already exists,
+# and `gang vet` says when the entry in force stopped matching. Nothing here runs
+# on a schedule — cron does that, and gang only ever describes the entry.
+
+cron_quote() { # $1 = value, as /bin/sh and then cron will read it
+  # Quoted only when it has to be. A bare path is what an operator writes by
+  # hand and vet compares this text against theirs, so quoting everything would
+  # report drift on a line that is already right. The % escape goes on last
+  # because it belongs to cron's layer rather than the shell's: cron reads an
+  # unescaped % as a newline and would cut the command off at it.
+  local v="$1"
+  case "$v" in
+    ''|*[!A-Za-z0-9_./:@+,=-]*) v="'${v//\'/\'\\\'\'}'" ;;
+  esac
+  printf '%s' "${v//%/\\%}"
+}
+
+cron_gang() { # the path a crontab should call, for this install
+  # The name on PATH wins when it resolves to THIS tree: that is the path the
+  # docs show, and it survives a reinstall into a different directory because
+  # install.sh repoints the symlink while the crontab entry stays put. Anything
+  # else — no PATH entry at all, or one belonging to a second install — falls
+  # back to this tree's own bin, which is unambiguous if less durable.
+  local p
+  if p="$(command -v gang 2>/dev/null)" && [ -n "$p" ]; then
+    case "$p" in
+      /*) [ "$(gang_root "$p" 2>/dev/null)" != "$ROOT" ] || { printf '%s\n' "$p"; return; } ;;
+    esac
+  fi
+  printf '%s\n' "$ROOT/bin/gang"
+}
+
+cron_line() { # the canonical patrol entry for this install and this environment
+  # The carried overrides are an EXCLUSION list, for the reason the patrol log is
+  # one: a list of knobs worth carrying cannot carry a knob that did not exist
+  # when the list was written, and nobody revisits a crontab entry when the tool
+  # changes. So every GANG_* override exported here goes into the line, and the
+  # four that are per-invocation or test-only are named. TMUX_TMPDIR joins them
+  # because it is the variable tmux reads to find its socket directory, and a
+  # sweep that cannot reach the server is the outage by another route;
+  # XDG_STATE_HOME because a sweep logging somewhere other than the interactive
+  # runs do splits the record in half.
+  #
+  # Only what is EXPORTED, never a default: gang's own defaults are plain shell
+  # variables, and writing them into cron would freeze today's value into a line
+  # that outlives the version that chose it.
+  local n names out='*/2 * * * * '
+  # Sorted so the same environment always produces the same text, because vet
+  # compares this against what is in force and bash's own variable order is not a
+  # promise. Selected in shell rather than through grep, and the failure is fatal
+  # rather than empty: a filter that comes back with nothing to say looks exactly
+  # like an environment with nothing to carry, and the entry it would then write —
+  # no session, no lock directory — sweeps the wrong team every two minutes and
+  # says so nowhere.
+  names="$(compgen -e | sort)" \
+    || die "cron: could not read the exported environment, so the entry cannot say what a sweep must agree with"
+  while IFS= read -r n; do
+    case "$n" in
+      GANG_FROM|GANG_PROFILE_FILE|GANG_SESSION_KEY|GANG_TEST_PROFILES) continue ;;
+      GANG_*|TMUX_TMPDIR|XDG_STATE_HOME) ;;
+      *) continue ;;
+    esac
+    out="$out$n=$(cron_quote "${!n}") "
+  done <<EOF
+$names
+EOF
+  printf '%s%s patrol >/dev/null 2>&1\n' "$out" "$(cron_quote "$(cron_gang)")"
+}
+
+cron_is_patrol() { # $1 = a crontab line; a live gang patrol entry?
+  local t="$1" re="gang['\"]?[[:space:]]+patrol([[:space:]]|\$)"
+  t="${t#"${t%%[![:space:]]*}"}"
+  # A commented-out entry stays commented. Replacing one would re-enable a sweep
+  # the operator turned off, which is the opposite of what either verb promises.
+  case "$t" in ''|'#'*) return 1 ;; esac
+  [[ "$t" =~ $re ]]
+}
+
+cron_line_session() { # $1 = a crontab line; the session its patrol sweeps
+  # A patrol sweeps one session, so a two-team host runs two entries and each
+  # verb here has to leave the other one alone.
+  local s="$1"
+  case "$s" in
+    *GANG_SESSION=*) s="${s#*GANG_SESSION=}"; s="${s%%[[:space:]]*}"
+                     s="${s#[\'\"]}"; s="${s%[\'\"]}" ;;
+    *) s="$DEFAULT_SESSION" ;;
+  esac
+  printf '%s\n' "$s"
+}
+
+cron_read() { # the crontab in force, or nothing when there is none
+  # `crontab -l` exits nonzero both for "no crontab for this user" and for a real
+  # failure, and nothing portable tells them apart. Reading either as empty is
+  # safe here for one reason: the only writer is `crontab -`, run as the same
+  # user through the same binary, so an environment that cannot list a crontab
+  # cannot replace one either — the write fails loud rather than landing a table
+  # with the operator's other entries missing.
+  crontab -l 2>/dev/null || true
+}
+
+cron_installed() { # the patrol entry in force for THIS session, if any
+  local line
+  while IFS= read -r line; do
+    cron_is_patrol "$line" || continue
+    [ "$(cron_line_session "$line")" = "$SESSION" ] || continue
+    printf '%s\n' "$line"
+    return 0
+  done <<EOF
+$(cron_read)
+EOF
+  return 1
+}
+
+cmd_cron() {
+  local mode=print
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --install) mode=install; shift ;;
+      # The installer's verb: it refreshes what the operator already chose and
+      # never chooses for them. A `curl | sh` that writes itself into somebody's
+      # crontab is a different bug from the one this command exists to fix.
+      --refresh) mode=refresh; shift ;;
+      *) die "cron: unknown argument '$1'" ;;
+    esac
+  done
+  local want; want="$(cron_line)"
+  [ "$mode" != print ] || { printf '%s\n' "$want"; return 0; }
+
+  if ! command -v crontab >/dev/null 2>&1; then
+    # Nothing to refresh on a host with no crontab, and nothing this command can
+    # do about it either. `gang cron` still prints the line for whatever else
+    # schedules jobs here.
+    [ "$mode" != refresh ] || return 0
+    die "cron: no crontab command on this host — 'gang cron' prints the entry for whatever schedules jobs here"
+  fi
+
+  local have; have="$(cron_installed)" || have=""
+  if [ "$have" = "$want" ]; then
+    printf 'patrol entry for session %s is already current\n' "$SESSION"
+    return 0
+  fi
+  if [ -z "$have" ] && [ "$mode" = refresh ]; then
+    printf 'no patrol entry for session %s — crontab left alone (gang cron --install adds one)\n' "$SESSION"
+    return 0
+  fi
+
+  local cur line out="" found=0
+  cur="$(cron_read)"
+  if [ -n "$cur" ]; then
+    while IFS= read -r line; do
+      # Replaced where it sits, so the operator's ordering and their other
+      # entries survive a refresh unchanged.
+      if [ "$found" -eq 0 ] && cron_is_patrol "$line" \
+         && [ "$(cron_line_session "$line")" = "$SESSION" ]; then
+        found=1
+        out="$out$want"$'\n'
+        continue
+      fi
+      out="$out$line"$'\n'
+    done <<EOF
+$cur
+EOF
+  fi
+  [ "$found" -eq 1 ] || out="$out$want"$'\n'
+  printf '%s' "$out" | crontab - \
+    || die "cron: could not write the crontab — the entry in force is unchanged"
+  if [ "$found" -eq 1 ]; then
+    # The displaced entry is printed because there is no undo for a crontab and
+    # this is the only moment it can be shown. An operator who wanted it back has
+    # it on screen to paste; one who does not can ignore two lines.
+    printf 'patrol entry for session %s replaced.\n  was: %s\n  now: %s\n' "$SESSION" "$have" "$want"
+  else
+    printf 'patrol entry for session %s added:\n  %s\n' "$SESSION" "$want"
+  fi
+}
+
 cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the agent's pane
   # Wire in Claude Code's hooks config as:
   #   {"type": "command", "command": "gang context-hook"}
@@ -4124,6 +4317,7 @@ case "$cmd" in
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
+  cron)     cmd_cron "$@" ;;
   vet|doctor) cmd_vet "$@" ;;
   attach)   cmd_attach ;;
   drop)     [ $# -ge 1 ] || usage_die; cmd_drop "$1" ;;

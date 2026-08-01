@@ -239,6 +239,28 @@ last rung is a permanently open question.
 Unadopted windows and agents with missing profiles or readouts are reported as
 not patrolled. With no team, patrol prints a no-team line and succeeds.
 
+### `gang cron [--install|--refresh]`
+
+Derives the crontab entry that runs `gang patrol` every two minutes for this
+install, and with no argument prints it. The command it names is the `gang` on
+PATH when that resolves to this install tree, and this tree's own `bin/gang`
+otherwise. It carries every `GANG_*` variable exported in the calling
+environment, minus `GANG_FROM`, `GANG_PROFILE_FILE`, `GANG_SESSION_KEY` and
+`GANG_TEST_PROFILES`, plus `TMUX_TMPDIR` and `XDG_STATE_HOME` when set. Values
+are shell-quoted only where they need it, and `%` is escaped for cron, which
+reads a bare one as a newline. Defaults are never carried.
+
+`--install` writes the entry, replacing an existing one for this session where it
+sits and printing the line it displaced; with none present it appends. An entry
+sweeping another session, and one commented out, are both left as they are. It
+reports `already current` and writes nothing when the entry in force is byte-identical.
+
+`--refresh` is the same replacement with the append removed: present entries are
+updated, an absent one is reported and nothing is written. It is what `install.sh`
+runs, so updating Gangline refreshes an entry the operator chose without ever
+adding one they did not. It is a silent success on a host with no `crontab`
+command, where `--install` fails loudly instead.
+
 ### `gang context-hook`
 
 Harness hook entry point for in-turn warnings. It reads a JSON hook payload from

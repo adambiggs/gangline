@@ -470,23 +470,31 @@ a later sweep retries. A busy agent is nudged rather than skipped: the note is
 prose, so it queues behind the turn it arrives in, and a busy agent is the one
 whose context is climbing.
 
-Run patrol periodically if you want ambient warnings:
+Run patrol periodically if you want ambient warnings. `gang cron` prints the
+entry for your install — this `gang`'s path, and the `GANG_*` overrides exported
+in your shell, so a sweep from cron agrees with the team it sweeps. `--install`
+writes it, replacing an existing entry for this session in place and printing
+what it displaced:
 
-```cron
-*/2 * * * * $HOME/.local/bin/gang patrol >/dev/null 2>&1
+```sh
+gang cron --install
 ```
+
+A sweep covers one session, so a second team is a second entry, and neither
+command touches the other's.
+
+The entry carries every `GANG_*` override exported where you ran `gang cron`,
+which is why you run it from the same shell the team runs in — a patrol that
+disagrees about the lock directory stops serialising with the other writers, and
+one that disagrees about the session sweeps nobody. Defaults are left out: an
+entry outlives the version that chose them.
 
 A sweep that is not attached to a terminal records itself, timestamped, to
 `$XDG_STATE_HOME/gangline/patrol.log` (`~/.local/state/...` by default), creating
 the directory if it needs to. Routine `steady` rows are the only thing left out,
-so a verdict added in a later version is recorded without anyone editing this
-line. `GANG_PATROL_LOG` moves the file, or writes none when set empty;
+so a verdict added in a later version is recorded without anyone touching the
+crontab. `GANG_PATROL_LOG` moves the file, or writes none when set empty;
 `GANG_PATROL_LOG_MAX` (1 MiB) is the size at which it rolls to a single `.1`.
-
-The cron environment must carry the same `GANG_SESSION`, `GANG_PROFILES`,
-`GANG_CONTEXT_BANDS` and `GANG_LOCK_DIR` values as the team
-when you override them. A patrol that disagrees about the lock directory stops
-serialising with the other writers.
 
 At a clean checkpoint, an agent whose harness accepts compaction during an active
 task can compact itself in one command:

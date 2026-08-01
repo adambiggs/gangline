@@ -566,6 +566,9 @@ UI instead of landing (gang attach)</code></pre>
     <tr><td><code>gang patrol</code></td>
         <td>ambient roster sweep from cron: band warnings in, occupancy and
             refused inbound out</td></tr>
+    <tr><td><code>gang cron [--install]</code></td>
+        <td>the crontab entry that runs the sweep, derived from this install and
+            the overrides in force; installing replaces a stale one in place</td></tr>
     <tr><td><code>gang vet [--probe [profile]]</code></td>
         <td>check installed versions and file schemas; optionally launch a real
             turn on a private tmux socket and fire declared markers</td></tr>

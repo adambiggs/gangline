@@ -2775,6 +2775,159 @@ check "an empty destination writes nothing at all" "no" \
   "$(GANG_PATROL_LOG= "$GANG" patrol >/dev/null; [ -f "$PLOG" ] && echo yes || echo no)"
 "$GANG" drop logagent >/dev/null 2>&1 || true
 
+# --- the crontab entry that runs the sweep -------------------------------------
+#
+# The entry existed only as a README paragraph somebody pasted once. Nothing in an
+# update ever touched it afterwards, so it went on running flags the tool had
+# outgrown while every other part of the install moved on — which is how a stale
+# filter discarded five hours of a real failure. gang derives the entry now, so it
+# is a thing with tests rather than a paragraph.
+#
+# The crontab here is a file. A suite that drove the real crontab(1) would be
+# rewriting the operator's own scheduled jobs to check its work.
+CRONDIR="$SHIM/cron"
+mkdir -p "$CRONDIR"
+cat > "$CRONDIR/crontab" <<'SH'
+#!/usr/bin/env bash
+# `crontab -l` exits nonzero for a user who has no crontab, exactly as it does for
+# a real failure — so gang's reader has to treat a nonzero listing as "no entries"
+# and this stand-in reproduces that rather than smoothing it over.
+case "${1:-}" in
+  -l) [ -s "$FAKE_CRONTAB" ] || exit 1; cat "$FAKE_CRONTAB" ;;
+  -)  cat > "$FAKE_CRONTAB" ;;
+  *)  echo "crontab: the suite's stand-in was given ${1:-nothing}" >&2; exit 64 ;;
+esac
+SH
+chmod +x "$CRONDIR/crontab"
+export FAKE_CRONTAB="$SHIM/crontab.tab"
+gcron() { PATH="$CRONDIR:$PATH" "$GANG" cron "$@"; }
+# The command an entry calls, with the schedule and any carried overrides removed.
+cron_cmd() { sed -e 's/ patrol >.*//' -e 's/.* //'; }
+
+: > "$FAKE_CRONTAB"
+cline="$(gcron)"
+check "the entry sweeps on a schedule and says nothing when it is routine" "yes" \
+  "$(holds "$cline" '^\*/2 \* \* \* \* .* patrol >/dev/null 2>&1$')"
+check "and calls an absolute gang, cron having no PATH worth trusting" "yes" \
+  "$(holds "$cline" ' /[^ ]*/gang patrol ')"
+# A sweep covers one session, so an entry that does not name one is an entry
+# sweeping somebody else's team.
+check "and names the session it sweeps" "yes" \
+  "$(contains "$cline" "GANG_SESSION=$GANG_SESSION")"
+# What the OPERATOR set, never what gang defaulted to. A default written into a
+# crontab freezes today's value into an entry that outlives the version that chose
+# it — and the whole reason this command exists is that entries outlive versions.
+check "a default gang was never asked for stays out of the entry" "no" \
+  "$(contains "$cline" 'GANG_COMPACT_GRACE=')"
+check "and so does an override that means nothing to a sweep" "no" \
+  "$(contains "$(PATH="$CRONDIR:$PATH" GANG_FROM=lead "$GANG" cron)" 'GANG_FROM=')"
+
+# Both escapes are about a layer below gang. cron hands the command to /bin/sh, so
+# a value with a space has to survive that; but cron reads an unescaped % as a
+# newline first, and would cut the command off at it before any shell saw it.
+check "a value with a space survives the shell cron hands the command to" "yes" \
+  "$(contains "$(PATH="$CRONDIR:$PATH" GANG_LOCK_DIR='/tmp/two words' "$GANG" cron)" \
+     "GANG_LOCK_DIR='/tmp/two words'")"
+check "and a percent survives cron, which reads a bare one as a newline" "yes" \
+  "$(contains "$(PATH="$CRONDIR:$PATH" GANG_LOCK_DIR='/tmp/a%b' "$GANG" cron)" \
+     "GANG_LOCK_DIR='/tmp/a\\%b'")"
+
+# Which gang the entry calls, when there is more than one answer. A symlink on
+# PATH pointing into THIS tree wins, because install.sh repoints it when the tree
+# moves while a crontab entry stays exactly where it was written.
+mkdir -p "$SHIM/onpath"
+ln -sf "$GANG" "$SHIM/onpath/gang"
+check "a gang on PATH belonging to this install is the one the entry calls" \
+  "$SHIM/onpath/gang" \
+  "$(PATH="$SHIM/onpath:$CRONDIR:$BAREPATH" "$GANG" cron | cron_cmd)"
+# Two installs on one host is the case where preferring PATH blindly would point
+# an operator's cron at somebody else's tree, with both of them reporting fine.
+mkdir -p "$SHIM/otherinstall/bin" "$SHIM/otherbin"
+: > "$SHIM/otherinstall/bin/gang"; chmod +x "$SHIM/otherinstall/bin/gang"
+ln -sf "$SHIM/otherinstall/bin/gang" "$SHIM/otherbin/gang"
+check "a gang on PATH from a DIFFERENT install is not" \
+  "$ROOT/bin/gang" \
+  "$(PATH="$SHIM/otherbin:$CRONDIR:$BAREPATH" "$GANG" cron | cron_cmd)"
+check "and with no gang on PATH at all the entry names this tree's own bin" \
+  "$ROOT/bin/gang" \
+  "$(PATH="$CRONDIR:$BAREPATH" "$GANG" cron | cron_cmd)"
+# The overrides are selected in shell, not through a filter that can come back
+# empty because it failed. An entry naming no session sweeps the wrong team every
+# two minutes and reads exactly like an entry that had nothing to carry.
+check "and a stripped PATH still produces an entry that knows its session" "yes" \
+  "$(contains "$(PATH="$CRONDIR:$BAREPATH" "$GANG" cron)" "GANG_SESSION=$GANG_SESSION")"
+
+printf '0 4 * * * /usr/local/bin/backup run\n' > "$FAKE_CRONTAB"
+gcron --install >/dev/null
+check "installing writes the entry" "yes" \
+  "$(holds "$(cat "$FAKE_CRONTAB")" 'gang patrol >/dev/null 2>&1$')"
+check "and leaves a job that is not a sweep exactly where it was" "yes" \
+  "$(contains "$(cat "$FAKE_CRONTAB")" '0 4 * * * /usr/local/bin/backup run')"
+cout="$(gcron --install)"
+check "installing again reports the entry is already current" "yes" \
+  "$(contains "$cout" 'already current')"
+check "and does not leave the same session swept twice" "1" \
+  "$(grep -c ' patrol ' "$FAKE_CRONTAB")"
+
+# The regression in the shape it actually had: an entry pasted from an older
+# README, still firing every two minutes, still filtering out the verdict that
+# mattered.
+{ printf '0 4 * * * /usr/local/bin/backup run\n'
+  printf '*/2 * * * * GANG_SESSION=%s %s patrol 2>&1 | grep -v steady >> /tmp/patrol.log\n' \
+    "$GANG_SESSION" "$ROOT/bin/gang"
+  printf '@reboot /usr/local/bin/warm-cache\n'; } > "$FAKE_CRONTAB"
+cout="$(gcron --install)"
+check "a stale entry is replaced, not joined by a second one" "1" \
+  "$(grep -c ' patrol ' "$FAKE_CRONTAB")"
+# A crontab has no undo, and this is the only moment the displaced entry can be
+# shown. Printing it turns "gone" into "on screen, paste it back".
+check "and what it displaced is printed, because a crontab has no undo" "yes" \
+  "$(holds "$cout" 'was: .*grep -v steady')"
+check "and replaced where it sat, so the order around it survives" "2" \
+  "$(grep -n ' patrol ' "$FAKE_CRONTAB" | cut -d: -f1)"
+check "and the job after it is still scheduled" "yes" \
+  "$(contains "$(cat "$FAKE_CRONTAB")" '@reboot /usr/local/bin/warm-cache')"
+
+# One sweep per session means a two-team host runs two entries, and the other
+# team's is not this install's to rewrite.
+printf '*/2 * * * * GANG_SESSION=otherteam %s patrol >/dev/null 2>&1\n' "$ROOT/bin/gang" \
+  > "$FAKE_CRONTAB"
+gcron --install >/dev/null
+check "an entry sweeping another session is left for that session" "2" \
+  "$(grep -c ' patrol ' "$FAKE_CRONTAB")"
+check "and it is the other team's entry that survived intact" "yes" \
+  "$(contains "$(cat "$FAKE_CRONTAB")" 'GANG_SESSION=otherteam')"
+
+# Commenting a sweep out is how you turn it off. Replacing that line would be gang
+# overruling the operator and calling it an upgrade.
+printf '# */2 * * * * GANG_SESSION=%s %s patrol >/dev/null 2>&1\n' \
+  "$GANG_SESSION" "$ROOT/bin/gang" > "$FAKE_CRONTAB"
+gcron --install >/dev/null
+check "a commented-out entry stays commented" "yes" \
+  "$(holds "$(cat "$FAKE_CRONTAB")" '^# \*/2 ')"
+check "and installing adds a live entry rather than uncommenting theirs" "1" \
+  "$(grep -c '^\*/2 ' "$FAKE_CRONTAB")"
+
+# What updating an install does, and the line between the two verbs. Installing
+# gangline is not consent to a scheduled job, so an update refreshes the entry an
+# operator already chose and adds none.
+: > "$FAKE_CRONTAB"
+cout="$(gcron --refresh)"
+check "an update adds no sweep where the operator wanted none" "no" \
+  "$([ -s "$FAKE_CRONTAB" ] && echo yes || echo no)"
+check "and says so, rather than passing in silence" "yes" \
+  "$(contains "$cout" 'crontab left alone')"
+printf '*/2 * * * * GANG_SESSION=%s %s patrol 2>&1 | grep -v steady >> /tmp/patrol.log\n' \
+  "$GANG_SESSION" "$ROOT/bin/gang" > "$FAKE_CRONTAB"
+gcron --refresh >/dev/null
+check "an update refreshes the stale entry it finds, which is the whole order" "yes" \
+  "$(holds "$(cat "$FAKE_CRONTAB")" 'gang patrol >/dev/null 2>&1$')"
+
+rm -rf "$SHIM/onpath" "$SHIM/otherbin" "$SHIM/otherinstall"
+rm -f "$FAKE_CRONTAB"
+unset -f gcron cron_cmd
+unset FAKE_CRONTAB
+
 # Two declared markers, one controlled profile, and the pair is the whole policy:
 # a busy agent is delivered to and an occupied one is refused. The difference is
 # not how available the agent looks, it is what a keystroke would DO — queue

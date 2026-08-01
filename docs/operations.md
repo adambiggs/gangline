@@ -193,11 +193,29 @@ A missing readout is not hidden: the dedicated command fails, roster displays
 
 ### Ambient patrol
 
-`gang patrol` is a one-shot sweep, suitable for cron:
+`gang patrol` is a one-shot sweep, and `gang cron` derives the crontab entry that
+runs it every two minutes:
 
-```cron
-*/2 * * * * $HOME/.local/bin/gang patrol >/dev/null 2>&1
+```sh
+gang cron             # print the entry for this install
+gang cron --install   # write it, replacing an existing entry for this session
 ```
+
+The entry names an absolute `gang` — the one on your PATH when it belongs to this
+install, since an update repoints that symlink while a crontab entry stays where
+it was written, and this tree's own `bin/gang` otherwise. It carries every
+`GANG_*` override exported where you ran the command, plus `TMUX_TMPDIR` and
+`XDG_STATE_HOME` when they are set: the first is how tmux finds its socket, and a
+sweep that cannot reach the server fails the same way a missing entry does.
+Defaults are never written in — an entry outlives the version that chose them.
+
+`--install` replaces an existing entry for this session where it sits, so the
+order of your other jobs survives, and prints the line it displaced because a
+crontab has no undo. An entry sweeping a different session is left alone, and one
+commented out stays commented. `--refresh` is the same replacement without the
+add: it is what `install.sh` runs on an update, so refreshing an entry you chose
+never becomes adding one you did not.
+
 
 A sweep whose stdout is not a terminal records itself; one run interactively and
 it only prints. The destination is `GANG_PATROL_LOG`, defaulting to
@@ -211,10 +229,10 @@ Routine `steady` rows are excluded by name and everything else is kept. That
 direction is the point: filtering by a list of verdicts worth keeping cannot
 report one that did not exist when the list was written, and a crontab line is not
 something anybody revisits when the tool changes. A patrol only sweeps
-`GANG_SESSION`; use one cron entry per session. Carry
-`GANG_PROFILES`, any of the three ladder settings and `GANG_LOCK_DIR` into cron
-too when the team overrides them: a patrol that disagrees about the lock directory
-stops serialising with the other writers.
+`GANG_SESSION`, so a host running two teams runs two entries — write each from
+the shell that team runs in, which is where `gang cron` reads the overrides it
+carries. A patrol that disagrees about the lock directory stops serialising with
+the other writers.
 
 The ladder is derived, and both of its ends are absolute token counts. It starts at
 `GANG_CONTEXT_FLOOR` (120000) on every harness, because context rot tracks how long
