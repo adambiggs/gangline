@@ -70,6 +70,32 @@ every shipped harness will be one.
   an expected fact that stops arriving surfaces as expiry, and `vet --probe`
   asserts the pipeline end to end.
 
+- **The write path is dumb; the read path is smart.** Ingestion distills a
+  payload to the fact vocabulary — event name, epoch, and the field or two a
+  predicate reads (a trigger, a notification type) — and stores nothing else.
+  Interpretation happens at read time, where the verdict functions weigh tier
+  and freshness at the moment a question is asked. Nothing processes a stream,
+  which is why nothing needs a daemon.
+
+- **Wired per predicate, not per firehose.** The harness offers dozens of
+  events; the wiring names exactly those that feed a declared predicate with a
+  live consumer (law 5). One more event later costs a settings line and a
+  mapping case, which is why none are wired in case.
+
+- **Tiers pick witnesses; they don't vote.** The reader takes the highest tier
+  that is still fresh — it never blends witnesses into a score. When two tiers
+  are both fresh and disagree, that is a finding, not an averaging problem: an
+  event saying idle under a pane still painting a spinner means the scrape
+  regex has almost certainly rotted, and the disagreement feeds the ROT RISK
+  surface `vet` already owns. The event tier thereby vets the scrape tier
+  passively, during ordinary operation, for free.
+
+- **The paper trail is a log, not a store.** Fact transitions — a bracket
+  opening or closing, a compaction starting or ending, an occupied raise or
+  clear — append a row to the rotated log family the patrol log established;
+  heartbeats do not. A postmortem reads that log beside the harness's own
+  transcript. Window options remain the only live store.
+
 - **A fact lands with its consumer** (law 5). Turn brackets land in the same
   change that teaches `busy()` to prefer a fresh bracket over paint and pty;
   compaction events land with the `compaction_pending()` branches that read
@@ -102,6 +128,13 @@ every shipped harness will be one.
   capability is the predicate.
 - Not a transport change. ADR-0002 stands: inbound is the tty, and nothing here
   wakes an idle agent.
+- Not a warehouse. The last write per predicate and tier is the entire evidence
+  store, and a fact past its bound is refused, not archived — forgetting is the
+  feature. History-questions read the harness's own records where they live
+  (codex's rollout JSONL, claude-code's transcripts); copying them gang-side is
+  two truths drifting on separate lifecycles, ADR-0003's vendoring argument in
+  a new costume. ADR-0007 already rejected a one-line durable file; a database
+  is that objection multiplied, and law 1 says the word outright.
 - Not authentication (law 2). A fact is a trusted claim from a trusted harness
   in a single-tenant system, bound to its window the way context-hook already
   is.
@@ -136,3 +169,8 @@ every shipped harness will be one.
 - The measured numbers are recorded where they were measured, in
   profiles/claude-code.sh's comments; this page cites rather than restates
   them.
+- **2026-08-01, review** — a per-harness evidence database was proposed and
+  closed the same day: runtime questions are about now, and the fact layer with
+  expiry already answers them; correlation was sharpened from fusion to
+  conflict-surfacing (tiers pick witnesses), and the postmortem trail was fixed
+  as log-shaped. The bullets above are that review made standing.
