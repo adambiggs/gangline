@@ -410,7 +410,10 @@ Changing compaction timing requires care, and the two readers part company at
 expiry. On the resume leg, when a context baseline was captured, a missing drop
 at `GANG_COMPACT_GRACE` sends the resume through the weaker screen-settling
 fallback; after `GANG_RESUME_TIMEOUT`, delivery is attempted regardless, still
-through the verified injection path. Patrol never turns expiry into clearance: a
-gang-issued compaction with no drop to show for it keeps holding its nudge and
-reports `UNPROVED past the grace` every sweep, until the context drops, a fresh
-request replaces the mark, or the window dies.
+through the verified injection path. On the patrol leg, expiry is not clearance
+either, but it is not evidence of a live compaction — so a gang-issued compaction
+with no drop to show for it is reported once as never proved, its mark is cleared,
+and the next sweep patrols that agent normally. Holding on an expired mark
+suppressed the warning for the life of the window, since nothing rewrites one; and
+a mark recorded while the context readout was unavailable carries a zero, which
+the drop check skips, so expiry was the only end it could ever reach.

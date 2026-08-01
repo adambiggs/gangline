@@ -1164,14 +1164,16 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   # Shared with resume_after_compaction, which uses the same number to decide when
   # to give up waiting for the drop; overrunning it there is corrupting, not noisy.
   #
-  # Running the clock out is the THIRD answer and never the first. It establishes
-  # that gang waited, never that compaction ended, so returning "nothing pending"
-  # here would spend an unproved timeout as permission to inject — into the one
-  # pane shape every scraped guard downstream reads as safe, since a markerless
-  # compaction paints no busy hint and holds a still screen. The mark is KEPT so
-  # the uncertainty outlives the sweep that found it. It dies by the drop check
-  # above, which runs first on every call, by a fresh request overwriting it, or
-  # with the window.
+  # Running the clock out is the THIRD answer and never the first, because it
+  # establishes that gang waited and never that compaction ended. Verdict 2 says
+  # exactly that and nothing more. What a caller may do with it is the caller's
+  # question: the waiter treats it as time to stop waiting, and patrol treats it
+  # as a mark that has stopped carrying information — reporting it once, clearing
+  # it, and resuming. Neither reads it as proof a compaction happened.
+  #
+  # This function does not clear the mark here, so a caller that wants the fact
+  # can still see it; the drop check above clears it on the positive evidence, and
+  # a fresh request overwrites it.
   require_whole GANG_COMPACT_GRACE "$GANG_COMPACT_GRACE" seconds
   [ $(( now - issued )) -lt "$GANG_COMPACT_GRACE" ] || return 2
   return 0
@@ -2897,18 +2899,38 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   elif [ "$band" -eq "$prev" ] && [ "$top_repeat" -eq 0 ]; then
     say "$2" "$ctx" "steady (band $band)"
   elif [ "$compaction_rc" -eq 0 ]; then
-    # The one signal in this chain that cannot rot, and the only thing standing
-    # between a nudge and a live compaction. The pane it protects reads perfectly
-    # idle — a compacting claude-code pane paints no marker and holds a still
-    # screen — so nothing scraped off that pane can answer this question, and a
-    # guard that tried is what used to sit here.
+    # A REDUNDANCY guard, not a safety one, and the distinction is what bounds it.
+    # This agent was told to compact within the grace window and is presumably
+    # acting on that, so a second note carrying the same instruction is noise.
+    # GANG_COMPACT_GRACE is the whole of its reach, which is what makes it
+    # incapable of the permanent silence the expired case below used to cause.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
   elif [ "$compaction_rc" -eq 2 ]; then
-    # Louder than a routine hold on purpose — this one is not waiting for
-    # anything on a clock,
-    # and it stays until evidence ends it, so a sweep that says it every time is
-    # the record of an open question rather than noise.
-    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, UNPROVED past the grace, holding nudge" "$C_BAD"
+    # The grace ran out and the context never dropped, so gang has no evidence
+    # either way about whether a compaction happened. Holding on that spent
+    # "could not determine" as "determined", in the one direction with no floor
+    # under it: nothing rewrites an expired mark, so the hold outlived every
+    # sweep and the agent went unwarned for as long as its window lived.
+    #
+    # It was reachable by construction, too. compaction_mark records tokens=0
+    # when the readout is unavailable, and the drop check that would clear the
+    # mark is gated on a NONZERO issue figure — so a zero mark can only ever
+    # arrive here, permanently. The readout is least available mid-render, which
+    # is exactly when a compaction is running.
+    #
+    # So: reported once, then repaired. Same shape as an unreadable band memory —
+    # name the anomaly, clear the state that cannot be trusted, let the next sweep
+    # patrol normally. One sweep of delay, and it cannot recur for this mark
+    # because the mark is gone.
+    #
+    # This was never a safety guard, whatever the wording suggested. Injecting
+    # into a compacting pane has not been shown to lose a message: on claude-code,
+    # input entered once compaction is UNDERWAY queues and is submitted when it
+    # finishes. Nor does gang have to predict it, on that harness or any other,
+    # because inject verifies the paste it makes and refuses loudly when it does
+    # not land — which is a measurement, where this was a guess.
+    compaction_clear "$1"
+    say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued never proved; mark cleared, warnings resume next sweep" "$C_BAD"
   # busy_painted and pane_stable are deliberately NOT asked here. Both were
   # proxies for "this pane might be compacting", and as proxies they fail in both
   # directions at once. Under-inclusive: the compacting claude-code pane they were
