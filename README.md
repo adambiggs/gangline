@@ -464,9 +464,11 @@ top, because there the hazard is running out of room rather than rot
 ([ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md)). Setting
 `GANG_CONTEXT_BANDS` replaces the ladder outright, and a percentage of the window
 works there as an escape hatch for an unusual one
-([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips a
-painted-busy, churning, occupied, gang-compacting, or non-empty input area without
-advancing the band, so a later sweep retries.
+([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips an
+occupied, gang-compacting, or non-empty input area without advancing the band, so
+a later sweep retries. A busy agent is nudged rather than skipped: the note is
+prose, so it queues behind the turn it arrives in, and a busy agent is the one
+whose context is climbing.
 
 Run patrol periodically if you want ambient warnings:
 

@@ -2897,26 +2897,42 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   elif [ "$band" -eq "$prev" ] && [ "$top_repeat" -eq 0 ]; then
     say "$2" "$ctx" "steady (band $band)"
   elif [ "$compaction_rc" -eq 0 ]; then
-    # Asked before the scraped guards because it is the one signal here that
-    # cannot rot, and because the pane it protects reads perfectly idle: a
-    # compacting claude-code pane paints no marker and holds a still screen, so
-    # busy_painted and pane_stable both wave a nudge straight through it.
+    # The one signal in this chain that cannot rot, and the only thing standing
+    # between a nudge and a live compaction. The pane it protects reads perfectly
+    # idle — a compacting claude-code pane paints no marker and holds a still
+    # screen — so nothing scraped off that pane can answer this question, and a
+    # guard that tried is what used to sit here.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, unconfirmed, holding nudge" "$C_WORK"
   elif [ "$compaction_rc" -eq 2 ]; then
-    # Beside the branch above rather than below the scraped guards, because it is
-    # the same pane and the same blindness: those guards cannot see a compaction
-    # that paints nothing, so reaching them at all is the failure. Louder than a
-    # routine hold on purpose — this one is not waiting for anything on a clock,
+    # Louder than a routine hold on purpose — this one is not waiting for
+    # anything on a clock,
     # and it stays until evidence ends it, so a sweep that says it every time is
     # the record of an open question rather than noise.
     say "$2" "$ctx" "past the ${crossed}-token band — compaction gang issued, UNPROVED past the grace, holding nudge" "$C_BAD"
-  elif busy_painted "$1"; then
-    # Also the pane question, for the same reason as the guards around it: this
-    # chain decides whether an injection is SAFE, and a parked agent is inside a
-    # live turn however available it is. Holding costs one sweep.
-    say "$2" "$ctx" "past the ${crossed}-token band — busy, retrying next patrol" "$C_WORK"
-  elif ! pane_stable "$1"; then
-    say "$2" "$ctx" "past the ${crossed}-token band — pane churning (mid-render or compacting), holding nudge" "$C_WORK"
+  # busy_painted and pane_stable are deliberately NOT asked here. Both were
+  # proxies for "this pane might be compacting", and as proxies they fail in both
+  # directions at once. Under-inclusive: the compacting claude-code pane they were
+  # written for paints no marker and holds a still screen, so it satisfies both and
+  # sails through — the branch above says as much, which means the mark is already
+  # carrying that case alone. Over-inclusive: every agent doing work churns, and an
+  # agent doing work is precisely the one whose context climbs, so the guards
+  # excluded exactly the population the warning leg exists to serve. Watched a lead
+  # hold at 199k-201k for six consecutive sweeps and get through at 211k only
+  # because one sample happened to land on a still frame.
+  #
+  # And the thing being gated is PROSE. It queues: both shipped harnesses take
+  # type-ahead during a turn, so a nag pasted into a busy agent arrives one turn
+  # late, which is what a nag is for. Weigh that against a nag that never arrives
+  # and the asymmetry is entirely one-sided. Note which way it used to run — the
+  # strict bar was on the nag and the weak one on the thing that actually types.
+  #
+  # What is left is not weaker, it is more exact. The compaction mark above is a
+  # signal rather than a scrape. input_clear below keeps gang out of somebody's
+  # draft. inject refuses an occupied pane, because a modal owns its input box and
+  # keystrokes would answer a dialog instead of landing — real damage, unlike a
+  # late message — and refuses a composer in motion. Past that, inject VERIFIES,
+  # so a paste that does not land fails loud instead of being guessed at in
+  # advance, which is the whole of law 3.
   elif ! input_clear "$1"; then
     # Somebody's unsent text is in the input box and an injection would
     # interleave with it. On a profile that cannot tell typed text from the

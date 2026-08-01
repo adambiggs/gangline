@@ -231,10 +231,11 @@ Performs one roster sweep. For each adopted agent it:
    on every safe sweep. The repeat says it is not a fresh crossing and continues
    until usage drops out of that band.
 
-A gang-issued compaction, painted busy marker, churning pane, or non-empty input
-box holds both a crossing warning and a final-band repeat without advancing
-state, so a later patrol retries. Lower steady bands remain quiet: only the last
-rung is a permanently open question.
+A gang-issued compaction, an occupied UI, or a non-empty input box holds both a
+crossing warning and a final-band repeat without advancing state, so a later
+patrol retries. A busy agent is delivered to, not held: the warning is prose and
+queues behind the turn it lands in. Lower steady bands remain quiet: only the
+last rung is a permanently open question.
 Unadopted windows and agents with missing profiles or readouts are reported as
 not patrolled. With no team, patrol prints a no-team line and succeeds.
 

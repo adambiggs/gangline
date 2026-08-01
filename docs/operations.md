@@ -234,9 +234,9 @@ whose handoff was the thing at risk.
 Crossings remain one-shot below the top. Once the final band has been recorded,
 patrol sends a separately worded repeat on every safe sweep until usage drops out
 of that band. It explicitly identifies itself as a repeated final-band reminder,
-not a fresh crossing. Pending or unproved compaction, a busy or churning pane, an
-occupied UI, and a non-empty composer retain the same precedence and hold the
-repeat; the top-band exception reaches those guards before any injection.
+not a fresh crossing. Pending or unproved compaction, an occupied UI, and a
+non-empty composer retain the same precedence and hold the repeat; the top-band
+exception reaches those guards before any injection.
 
 A window too small to reach the floor keeps a single rung at its ceiling: it cannot
 be warned about rot it has no room to suffer, so the one hazard left is exhaustion.

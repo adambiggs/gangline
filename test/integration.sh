@@ -2638,17 +2638,22 @@ check "and no repeated note was pasted into that draft" "no" \
   "$(has topbig 'repeated final-band reminder')"
 tmux send-keys -t "$(target_of topbig)" C-u; sleep 0.5
 
+# Pane MOTION is not a verdict of its own any more, and this is what that looks
+# like from outside: the fixture that used to report churn now reports whatever
+# is in the box, because the command driving the churn is what is sitting in it.
+# That is the whole objection to the guard that used to read this — a shell stand-
+# in cannot paint a churning transcript above a live composer the way a real TUI
+# does, and neither could pane_stable tell those two apart. Re-adding it flips
+# this verdict back to the churn phrase and fails here.
 tmux send-keys -t "$(target_of topbig)" \
   "clear; printf 'ctx 900k/1000k 90%%\\n'" Enter; sleep 0.6
 tmux send-keys -t "$(target_of topbig)" \
   "i=0; while [ \$i -lt 30 ]; do printf '\\rTOPCHURN%02d' \"\$i\"; i=\$((i+1)); sleep 0.1; done; printf '\\n'" Enter
 sleep 0.2
-check "a steady top-band repeat still holds while the pane churns" \
-  "past the 350000-token band — pane churning (mid-render or compacting), holding nudge" \
+check "a moving pane is judged by its box, not by its motion" \
+  "past the 350000-token band — input box has content, holding nudge" \
   "$("$GANG" patrol | verdict topbig)"
 sleep 3
-check "and no repeated note was queued behind the moving pane" "no" \
-  "$(has topbig 'repeated final-band reminder')"
 "$GANG" drop topbig >/dev/null 2>&1 || true
 "$GANG" drop topsmall >/dev/null 2>&1 || true
 
@@ -2708,10 +2713,13 @@ check "and the next sweep nudges rather than waiting for a crossing that cannot 
   "$("$GANG" patrol | verdict bandrot)"
 "$GANG" drop bandrot >/dev/null 2>&1 || true
 
-# Snapshot guards get their own controlled profile. The busy case keeps a live
-# composer beside its marker; the modal case removes the composer and leaves a
-# declared occupied marker. Both carry a valid top-band context, and both begin
-# with final-band memory already written.
+# Two declared markers, one controlled profile, and the pair is the whole policy:
+# a busy agent is delivered to and an occupied one is refused. The difference is
+# not how available the agent looks, it is what a keystroke would DO — queue
+# behind a turn, or answer a dialog. The busy case keeps a live composer beside
+# its marker so there is somewhere for the nag to land; the modal case removes the
+# composer and leaves a declared occupied marker. Both carry a valid top-band
+# context, and both begin with final-band memory already written.
 cat > "$SHIM/custom-profiles/topguards.sh" <<'SH'
 GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX="TOPBUSY"
@@ -2734,10 +2742,15 @@ export GANG_PROFILES="$SHIM/custom-profiles"
 paint topbusy 'ctx 900k/1000k 90%'
 tmux set-option -w -t "$(target_of topbusy)" @gl_band 5
 paint topbusy 'TOPBUSY'
-check "a steady top-band repeat still holds on a busy marker" \
-  "past the 350000-token band — busy, retrying next patrol" \
+# A busy agent is the one that MOST needs the nag — it is the one whose context is
+# climbing — and the nag is prose, so it queues behind the turn it interrupts and
+# arrives one turn late. Weighed against never arriving, there is no contest, and
+# holding here is what let a lead run to 320k unwarned. The composer beside the
+# marker is what makes this a coherent state to deliver into.
+check "a busy agent past the last band is nudged, because the nag queues" \
+  "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$("$GANG" patrol | verdict topbusy)"
-check "and no repeat was injected into the busy pane" "no" \
+check "and the note reaches the busy pane" "yes" \
   "$(has topbusy 'repeated final-band reminder')"
 "$GANG" drop topbusy >/dev/null 2>&1 || true
 
