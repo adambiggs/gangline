@@ -303,13 +303,28 @@ shipped statusline script writes that fact directly as it paints the beacon.
 
 Plain vet visits every installed profile, including custom and test-only files.
 It compares the harness's installed version with the profile's verified version
-words, runs an optional profile-owned gate over the harness's files, checks that
-a UTF-8 locale is available, reports the patrol crontab entry, and exits nonzero
-on drift. For an unpinned dotted-numeric
-version it reports whether the installed build is newer than all pins, older than
-all pins, or between pins when that ordering is unambiguous; otherwise the
-`ROT RISK` remains deliberately unranked. Plain vet does **not** fire marker
-regexes at a pane.
+words, runs an optional profile-owned gate over the harness's files, checks
+that a UTF-8 locale is available, reports the patrol crontab entry, and exits
+nonzero on drift. For an unpinned dotted-numeric version it reports whether the
+installed build is newer than all pins, older than all pins, or between pins
+when that ordering is unambiguous; otherwise the `ROT RISK` remains
+deliberately unranked.
+
+Where a team is up, plain vet also holds each live agent's two witnesses for
+the same predicate against each other. Tiers pick witnesses rather than vote,
+so this changes no answer `gang` gives; what it catches is the one rot no
+version pin can see, because no version moved — a writer that stopped keeping
+up while the tier above it answers alone. Both witnesses fresh and apart is
+`ROT RISK`, naming both witnesses and both figures. A witness that is stale,
+spent, or absent is the tier order doing its job, never a finding; busy is
+compared in one direction only — a closed turn bracket under a still-painted
+busy marker — and context at the beacon's own granularity, so rounding is
+never drift. An agent whose witnesses could not be read is reported exactly so
+rather than counted as read and found wrong, and a run with no team up names
+the session it could not find instead of skipping the section. The closing
+scope line states both halves: version strings were compared and the live
+team's own witnesses read against each other, but no marker was fired at any
+pane.
 
 The profile-owned gate is also where harness-specific setup is checked, and a
 finding names the edit that fixes it. `codex` and `opencode` gate the file
@@ -328,15 +343,31 @@ drift, and the row prints the entry in force beside the one `gang cron` would
 write. Absence is a choice an install is entitled to make, and a diagnostic that
 goes red for a choice can never go green again.
 
-- `--file-issue`: for each version-pin `ROT RISK`, use `gh` to create a deduplicated
-  GitHub issue in this repository. Failure to list open issues is fatal rather
-  than risking a duplicate.
+- `--file-issue`: for each version-pin and each tier-conflict `ROT RISK`, use
+  `gh` to create a deduplicated GitHub issue in this repository. The title is
+  the dedup key, so everything that varies between two sightings of one fault —
+  the version ordering, the agent, the figures — rides the body, and one
+  unfixed fault stays one issue however many sweeps see it. No issue is created
+  without a successful listing of what is already open. A gh failure on a
+  version-pin finding is fatal rather than risking a duplicate; on a tier
+  conflict, filing is the optional half — the finding is printed and its exit
+  code raised before gh is reached, so the failure leaves a row saying the
+  finding stands unfiled and changes nothing else.
 - `--probe`: after the version and format checks, launch each installed harness
   on a private `tmux -L` socket, give it a real turn, require its declared busy
   marker to be absent at rest, present while working, and absent after settling,
-  then read its declared context value. Where a profile declares
-  `GANG_MIDTURN_ACTS=1`, a second turn also attempts the asymmetric filesystem
-  ordering probe described below.
+  then read its declared context value. For each fact the profile declares in
+  `GANG_PROBE_FACTS`, the probe then reads back what the harness's own wiring
+  wrote across that same turn, through the readers the live team uses — never a
+  new scrape. A declared fact confirmed is a row; a declared fact missing after
+  a driven turn is `DECLARED AND MISSING`, which is drift, because the record
+  is on the window or it is not. A fact no leg can drive honestly is
+  `not probed` with the reason — occupancy needs a real permission dialog,
+  which `gang` never answers, and compaction needs a context window filled past
+  the harness's own threshold. The fact rows close with an
+  `Owned facts: N confirmed, M not probed` summary, and a not-probed fact is
+  not a pass. Where a profile declares `GANG_MIDTURN_ACTS=1`, a second turn
+  also attempts the asymmetric filesystem ordering probe described below.
 - `--probe <profile>`: narrow both the ordinary vet report and probe to one
   installed profile. An unknown name is an error.
 
@@ -350,9 +381,10 @@ spinner-shaped frame matches a shipped busy marker.
 A probe spends harness tokens. Not installed, no declared busy marker, first-run
 dialog, launch failure, or a turn that never starts or settles is reported as
 **not probed**, not as success. Zero means every marker that was actually fired
-passed; it says nothing about skipped profiles. Gates, compacting markers, and
-alternate busy-regex branches an ordinary turn did not paint remain outside the
-probe's coverage.
+and every fact that was actually read back passed; it says nothing about
+skipped profiles or not-probed rows. Gates, compacting markers, alternate
+busy-regex branches an ordinary turn did not paint, and the facts no probe leg
+can drive honestly remain outside the probe's coverage.
 
 The mid-turn probe does not derive a verdict from pane text. Turn 1 creates a
 start file, performs a slow action, and creates boundary file A as its last
@@ -389,6 +421,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | `GANG_SESSION_KEY=1` | hitch must mint and deliver a transcript marker |
 | `GANG_VERSION_CMD` | installed-version command |
 | `GANG_VERIFIED_VERSIONS` | space-separated verified prefixes, or `any` only when there are no scraped markers |
+| `GANG_PROBE_FACTS` | space-separated facts whose owned records `vet --probe` must find the harness's own wiring writing across a driven turn; a declared fact missing after that turn is drift |
 | `profile_input` | print the live composer, or fail when none exists |
 | `profile_context` | print one parseable context-usage line |
 | `profile_vet` | optional gate on harness files — formats the profile parses, and configuration its readers require |

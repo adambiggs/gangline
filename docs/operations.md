@@ -400,8 +400,9 @@ being there proves the words are talk *about* a prompt — and busy has no equiv
 the composer is painted through a turn on some harnesses and dropped on others, so
 neither its presence nor its absence settles anything. Position does not work either;
 prose-quoted markers land inside a fixed bottom window about as readily as outside
-it, so where the text sits discriminates nothing. And conjoining the two signals that *can* tell a live turn
-from static text — recent pty activity and churn — would inverse the failure
+it, so where the text sits discriminates nothing. And conjoining the two signals
+that *can* tell a live turn from static text — recent pty activity and churn —
+would inverse the failure
 direction, because both are unavailable unless a profile declares itself quiet at
 rest, and an `AND` against an unavailable signal reads every busy agent as idle. That
 trades this bounded cost for an unbounded one.
@@ -504,8 +505,10 @@ Interpret results narrowly:
 
 After live re-verification, shadow the profile through `GANG_PROFILES` if you
 need a local repair. `gang vet` prints the custom file path when it is the one
-loaded. `gang vet --file-issue` can file a deduplicated issue for version-pin rot
-when the GitHub CLI is installed and authenticated.
+loaded. `gang vet --file-issue` can file a deduplicated issue for version-pin
+rot and for a tier conflict on a live agent, when the GitHub CLI is installed
+and authenticated; a failure to file never unsays a printed finding or its
+exit status.
 
 ## tmux socket safety
 
