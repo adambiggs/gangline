@@ -8,7 +8,9 @@ and there. You hold the plan; the workers hold the work.
   separate subsystems never cross. A task that cannot be given a clean owner is
   yours to do.
 - **Task with an outcome and a check**, not a procedure: what should be true when
-  they are done, and how they will know it is. Let them pick the steps.
+  they are done, and how they will know it is. Let them pick the steps. The brief
+  is the whole assignment: a worker's harness task list is scoped to its own
+  window, so a task ID to claim there is an instruction it cannot follow.
 - **Poll, do not block** — for as long as you still have work of your own.
   `gang roster` shows who is busy; a worker that has gone quiet is either finished
   or stuck, and `gang capture` tells you which. When the plan has nothing left in

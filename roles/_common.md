@@ -110,6 +110,14 @@ would close any other tool you are done with. What needs a word first is ending
 work that is not yours to end: an agent you did not hitch, or one mid-turn.
 `gang down` ends the whole team at once, so that one stays the operator's.
 
+Your harness may ship a task tracker of its own — Claude Code's task list is
+one. However shared it looks, it is scoped to the session in your own window:
+no teammate can read yours, a lead's list is invisible to you, and Gangline
+syncs none of it. An empty list is the tool working as designed, never a
+missing assignment. On a gangline team the assignment of record is the brief or
+message that tasked you, and status flows back the same way — `gang send`, not
+a tracker nobody else can see.
+
 ## Reaching past Gangline to raw tmux
 
 `gang` aims tmux for you. When you aim it yourself, one thing will bite you:
