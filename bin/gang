@@ -2837,7 +2837,17 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   while [ $# -gt 0 ]; do case "$1" in
     --resume-stdin) [ "$resume_stdin" -eq 0 ] || die "compact: --resume-stdin may be passed only once"
                     resume_stdin=1; shift ;;
-    --resume) die "compact: inline resume argv is not accepted; write the resume to a file, then run: gang compact $name --from $from --resume-stdin < file" ;;
+    --resume) # Both names go into a command the agent is told to RUN, so they are
+              # quoted for the shell that will read it rather than pasted raw. This
+              # site is worse placed than the band note's: the die fires BEFORE
+              # resolve, so the name is raw argv that never met valid_name, and
+              # --from may not have been parsed yet — %q renders an empty one as ''
+              # rather than letting the flag collapse into the word after it. The
+              # fail-loud column, not the security one (law 2), and a name that
+              # passed valid_name comes through %q byte-identical.
+              local qname qfrom
+              printf -v qname '%q' "$name"; printf -v qfrom '%q' "$from"
+              die "compact: inline resume argv is not accepted; write the resume to a file, then run: gang compact $qname --from $qfrom --resume-stdin < file" ;;
     --from)   [ $# -ge 2 ] || die "compact: $1 needs a value"; from="$2";   shift 2 ;;
     *) die "compact: unknown argument '$1'" ;;
   esac; done
