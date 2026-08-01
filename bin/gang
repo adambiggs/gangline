@@ -927,16 +927,28 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
 
   since="$(tmux show-options -wqv -t "$1" @gl_activity_only_since 2>/dev/null)" \
     || die "cannot read the activity-only bound for pane $1 — refusing to guess"
+  # Absent, unreadable, and later than now are ONE fact — no usable bound is
+  # recorded — and they get one answer, because gang wrote this option and an
+  # option gang wrote is gang's to rebuild rather than gang's to refuse over.
+  # Refusing spent a single bad value as a permanent kill of status, roster,
+  # wait, send and patrol for the life of the window, over a cache whose only job
+  # is to remember when the bound started. Nothing downstream would ever rewrite
+  # it, so the refusal could not end: exactly how a @gl_band this reader had
+  # stopped understanding silenced patrol for five hours. Writing it is what the
+  # absent case already did three lines up; the other two were the same case
+  # wearing a different value.
+  case "$since" in
+    ''|*[!0-9]*) since="" ;;
+    *) [ "$since" -le "$now" ] || since="" ;;
+  esac
   if [ -z "$since" ]; then
+    # This one stays fatal, and the difference is whose failure it is: above,
+    # gang could not read what gang wrote; here tmux will not accept a write.
+    # An unbounded busy state is the hazard the whole bound exists to prevent.
     tmux set-option -w -t "$1" @gl_activity_only_since "$now" 2>/dev/null \
       || die "cannot record the activity-only bound for pane $1 — refusing an unbounded busy state"
     since="$now"
   fi
-  case "$since" in
-    *[!0-9]*) die "malformed @gl_activity_only_since on pane $1: '$since'" ;;
-  esac
-  [ "$since" -le "$now" ] \
-    || die "future @gl_activity_only_since on pane $1: $since > $now"
   [ $(( now - since )) -lt "$GANG_ACTIVITY_LIMIT" ] && return 0
   return 2
 }
@@ -1413,7 +1425,18 @@ parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
   [ -n "$held" ] || return 1
   holder="${held%% *}"
   case "$holder" in
-    ''|*[!0-9]*) die "malformed @gl_waiting on pane $1: '$held'" ;;
+    ''|*[!0-9]*)
+      # Same rule as the activity bound, and the stakes are higher here: parked()
+      # is on the path for status, roster, patrol AND send, so refusing over one
+      # unreadable value took message delivery down for the whole life of the
+      # window — not just a warning leg. It also never needed to guess. The
+      # question is "is a live gang wait parked here", and a holder that is not a
+      # pid names no live process, so the answer is no on the evidence rather
+      # than by assumption. Discarding it is the same reclaim the dead-waiter
+      # path below performs, for a mark that is dead in a different way.
+      printf 'gang: discarded an unreadable gang-wait mark on pane %s: %s\n' "$1" "$held" >&2
+      tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
+      return 1 ;;
   esac
   case "$held" in
     *' '*) PARKED_WAIT_TARGET="${held#* }" ;;

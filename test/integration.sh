@@ -1493,6 +1493,47 @@ check "an unreadable activity stamp refuses to manufacture a state" "1" "$rc"
 check "and the refusal positively identifies the unreadable stamp" "yes" \
   "$(contains "$out" "unreadable activity stamp")"
 
+# The mirror of the check above, and the line between them is whose failure it
+# is. That stamp comes from TMUX and gang cannot heal it, so it dies. This bound
+# is gang's OWN option: a value gang wrote and can write again, so a shape this
+# reader stopped understanding is grounds to re-record the bound, never to refuse
+# — the refusal reached status, roster, wait, send and patrol, and nothing
+# downstream would rewrite the value, so it lasted as long as the window.
+qid="$(target_of quietly)"
+tmux set-option -w -t "$qid" @gl_activity_only_since 'not-a-stamp'
+"$GANG" status quietly >/dev/null 2>&1
+check "an unreadable bound gang wrote itself does not refuse" "0" "$?"
+check "and is re-recorded rather than left to refuse again" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$qid" @gl_activity_only_since)" '^[0-9]+$')"
+# A clock that moved is the same fact in a different disguise: no usable bound.
+tmux set-option -w -t "$qid" @gl_activity_only_since "$(( $(date +%s) + 9999 ))"
+"$GANG" status quietly >/dev/null 2>&1
+check "a bound in the future is re-recorded too, not refused" "0" "$?"
+check "and the replacement is not still in the future" "yes" \
+  "$([ "$(tmux show-options -wqv -t "$qid" @gl_activity_only_since)" -le "$(date +%s)" ] \
+     && echo yes || echo no)"
+
+# @gl_waiting is the same rule on a costlier reader, which is why it is asserted
+# beside the bound rather than with the parked tests: parked() runs for status,
+# roster, patrol AND send, so refusing over one unreadable value took MESSAGE
+# DELIVERY down for the life of the window. It also never had to guess — a holder
+# that is not a pid names no live process, so "no live wait is parked here" is
+# the answer on the evidence, and discarding the mark is the same reclaim the
+# dead-waiter path already performs.
+tmux set-option -w -t "$qid" @gl_waiting 'not-a-pid something'
+out="$("$GANG" status quietly 2>&1)"; rc=$?
+check "an unreadable wait mark does not refuse the state" "0" "$rc"
+check "and the state it reports is the one the pane earned" "yes" \
+  "$(contains "$out" "busy (tight tug)")"
+check "and the unreadable mark is discarded, not left to refuse again" "" \
+  "$(tmux show-options -wqv -t "$qid" @gl_waiting)"
+check "and discarding it is said out loud rather than done quietly" "yes" \
+  "$(contains "$out" "discarded an unreadable gang-wait mark")"
+# A send is the reader that made this permanent rather than merely quiet.
+tmux set-option -w -t "$qid" @gl_waiting 'not-a-pid something'
+"$GANG" roster >/dev/null 2>&1
+check "and the roster survives it too" "0" "$?"
+
 tmux send-keys -t "$(target_of quietly)" C-c
 tmux send-keys -t "$(target_of loudly)" C-c
 # Bounded, and gang's own: the arm has to GO QUIET or it is the sign-flipped bug
