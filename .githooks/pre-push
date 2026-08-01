@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+#
+# The push-triggered CI checks that are quick enough to run before the push
+# instead of learning their result minutes after it. Enable in a clone with:
+#   git config core.hooksPath .githooks
+#
+# Deliberately NOT here: test/integration.sh (minutes, not seconds — the whole
+# point of a pre-push gate is that you wait for it), the installer step (it
+# writes outside the repo and wants a real clone), and tmux-floor (pulls distro
+# images). So a green hook means the quick gates passed, never that CI will.
+#
+# Refuse rather than skip. Every check below either runs or fails the push with
+# a reason; `git push --no-verify` is the way past one you have judged.
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+zero=0000000000000000000000000000000000000000
+fail=0
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" != "$zero" ] || continue   # deleting a ref pushes no commits
+
+  # Lint what is being PUSHED, not what is lying in the working tree. Those are
+  # different trees whenever anything is uncommitted, and linting the wrong one
+  # gives both false answers: a red hook over work-in-progress nobody is
+  # sending, or a green one over a commit nobody read.
+  work="$tmp/tree"
+  rm -rf "$work"; mkdir -p "$work"
+  git archive "$local_sha" | tar -x -C "$work"
+  if [ -x "$work/test/lint.sh" ]; then
+    (cd "$work" && ./test/lint.sh) || fail=1
+  else
+    echo "pre-push: $local_sha carries no test/lint.sh, so nothing was linted" >&2
+    fail=1
+  fi
+
+  # The same conventional-commits gate CI runs over the same range. commit-msg
+  # guards the message you type; it does not see an amend, a rebase, or a commit
+  # made with --no-verify, and all three reach the remote through here.
+  if [ "$remote_sha" != "$zero" ] && git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
+    revs=("${remote_sha}..${local_sha}")
+  else
+    # New branch: everything on it that is not already published somewhere.
+    revs=("$local_sha" --not --remotes)
+  fi
+  n=0 bad=0
+  for sha in $(git rev-list "${revs[@]}"); do
+    n=$((n + 1))
+    git log -1 --format=%B "$sha" > "$tmp/msg"
+    .githooks/commit-msg "$tmp/msg" || {
+      echo "  ^ $(git log -1 --format='%h by %an' "$sha")" >&2
+      bad=$((bad + 1))
+    }
+  done
+  [ "$bad" -eq 0 ] || { echo "pre-push: $bad of $n commit(s) do not conform" >&2; fail=1; }
+done
+
+[ "$fail" -eq 0 ] || {
+  echo "pre-push: refusing — the checks above are the ones CI runs on this push." >&2
+  echo "          push anyway with: git push --no-verify" >&2
+  exit 1
+}

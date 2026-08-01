@@ -9,8 +9,13 @@ is a defect — not a style disagreement.
 git config core.hooksPath .githooks
 ```
 
-Enables the `commit-msg` gate. It is not installed automatically; a clone without
-it commits unchecked.
+Enables the `commit-msg` gate and the `pre-push` gate. Neither is installed
+automatically; a clone without this commits and pushes unchecked.
+
+`pre-push` runs the CI checks that take seconds — `test/lint.sh` over the tree
+being pushed, and the Conventional Commits regex over the range being pushed. It
+does not run the integration suite, so passing it is not a prediction that CI
+will pass. `git push --no-verify` skips it.
 
 ## Commits
 
