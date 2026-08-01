@@ -2839,7 +2839,31 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   fi
   if band_state_read "$1"; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
-    say "$2" "$ctx" "malformed context-band state — not patrolled" "$C_BAD"
+    # An unreadable memory is grounds to REBUILD the memory, never to stop
+    # patrolling the agent. This option is a cache and nothing else — which band
+    # an agent was last warned in — and refusing on it spends that one uncertainty
+    # as a decision to disable the warning leg for the whole life of the window,
+    # because a `return` here reaches nothing that would ever rewrite the value.
+    # Permanent, and silent: the verdict below is the only trace, and it names no
+    # band, so it does not match a log filter written around band phrases.
+    #
+    # Lived it. A window carried the three-field value an older gang wrote; the
+    # reader that understood that shape was deleted along with the apparatus that
+    # needed it, and this agent went unpatrolled for five hours with its context
+    # climbing the whole time, while a sweep every two minutes said so into a pipe
+    # that dropped the line.
+    #
+    # Re-establishing at the CURRENT band keeps the guarantee the refusal was
+    # protecting — an agent already warned is not warned twice — and gives up at
+    # most the one crossing already behind us. It heals in a single sweep, which
+    # is what makes it a general answer rather than a patch for one format: every
+    # future change to this value's shape now costs one skipped nudge instead of a
+    # silent agent. And it gives up least where silence costs most, because an
+    # agent re-established at its ladder's top is nudged again on the next sweep
+    # regardless (ladder_at_top), rather than waiting for a crossing that cannot
+    # come.
+    band_state_write "$1" "$band"
+    say "$2" "$ctx" "context-band memory was unreadable — re-established at band $band, warnings resume next sweep" "$C_BAD"
     return
   fi
   prev="$BAND_STATE_BAND"
@@ -2955,6 +2979,13 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   fi
   if band_state_read "$TMUX_PANE"; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
+    # Rebuilt, not refused, for the reason patrol's leg gives at length: this
+    # value is a cache, and an unreadable cache that switches the leg off for the
+    # window's whole life is the expensive way to be careful. Silent because a
+    # hook's stdout is JSON the harness parses and there is nowhere here to say
+    # it — so the write carries the recovery and patrol's leg does the talking.
+    # Both legs share this memory, so healing in either one heals both.
+    band_state_write "$TMUX_PANE" "$band"
     exit 0
   fi
   prev="$BAND_STATE_BAND"

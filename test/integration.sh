@@ -2652,6 +2652,62 @@ check "and no repeated note was queued behind the moving pane" "no" \
 "$GANG" drop topbig >/dev/null 2>&1 || true
 "$GANG" drop topsmall >/dev/null 2>&1 || true
 
+# --- an unreadable band memory heals, and never silences the leg ---------------
+#
+# The regression these assert against ran for five hours on a live agent. @gl_band
+# was widened to three fields, then narrowed back to a plain integer, and the
+# reader for the wide shape went with it — so a window that was ALIVE across that
+# change carried a value its own gang could no longer parse. band_state_read said
+# malformed, patrol said "not patrolled" and returned, and nothing downstream of
+# that return ever rewrites the option. The refusal was therefore permanent, and
+# it was invisible: the verdict names no band, so it matched no log filter written
+# around band phrases, while the agent climbed past every rung unwarned.
+#
+# The value below is the exact one recovered from that window. The garbage case
+# beside it is the one that matters more, though: healing is deliberately NOT a
+# migration for that shape — no reader for it is coming back — so the test that
+# proves the fix general is the one whose value never had a format at all.
+"$GANG" hitch bandrot -p bash -d /tmp >/dev/null
+paint bandrot 'ctx 200k/1000k 20%'
+tmux set-option -w -t "$(id_of bandrot)" @gl_band '2 1 1785514081'
+check "an unreadable band memory is rebuilt instead of refused" \
+  "context-band memory was unreadable — re-established at band 2, warnings resume next sweep" \
+  "$("$GANG" patrol | verdict bandrot)"
+check "and it is rebuilt as a value this gang can read" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^2$')"
+check "the healing sweep does not double-warn a band already crossed" "no" \
+  "$(has bandrot '[context-usage]')"
+check "and the very next sweep patrols the agent normally" "steady (band 2)" \
+  "$("$GANG" patrol | verdict bandrot)"
+
+tmux set-option -w -t "$(id_of bandrot)" @gl_band 'banana'
+check "a value that never had a format heals the same way" \
+  "context-band memory was unreadable — re-established at band 2, warnings resume next sweep" \
+  "$("$GANG" patrol | verdict bandrot)"
+
+# The hook shares the memory, so it must heal it too — silently, because its
+# stdout is JSON the harness parses. Asserted by the write, not by a message.
+bandrot_pane="$(tmux list-panes -t "$(id_of bandrot)" -F '#{pane_id}')"
+tmux set-option -w -t "$(id_of bandrot)" @gl_band 'banana'
+check "the in-turn leg heals an unreadable memory without emitting a note" "" \
+  "$(printf '{"hook_event_name":"PostToolUse"}' \
+     | TMUX_PANE="$bandrot_pane" "$GANG" context-hook)"
+check "and leaves the shared memory readable for both legs" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^2$')"
+
+# Where silence costs most, healing gives up least: an agent re-established at the
+# top of its ladder has no crossing left to wait for, so the repeat rule is what
+# must carry it — one skipped sweep, then nudged, rather than nudged never.
+paint bandrot 'ctx 900k/1000k 90%'
+tmux set-option -w -t "$(id_of bandrot)" @gl_band 'banana'
+check "an unreadable memory at the top of the ladder heals to the top" \
+  "context-band memory was unreadable — re-established at band 5, warnings resume next sweep" \
+  "$("$GANG" patrol | verdict bandrot)"
+check "and the next sweep nudges rather than waiting for a crossing that cannot come" \
+  "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
+  "$("$GANG" patrol | verdict bandrot)"
+"$GANG" drop bandrot >/dev/null 2>&1 || true
+
 # Snapshot guards get their own controlled profile. The busy case keeps a live
 # composer beside its marker; the modal case removes the composer and leaves a
 # declared occupied marker. Both carry a valid top-band context, and both begin
