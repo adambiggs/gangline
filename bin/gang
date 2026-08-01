@@ -4282,7 +4282,16 @@ file_issue_once() { # $1 = title, WHICH IS THE DEDUP KEY; $2 = body
     echo "  issue already open: '$1' — not duplicating"
     return 0
   fi
-  (cd "$ROOT" && gh issue create --title "$1" --body "$2")
+  # The create carries its own failure rather than leaning on errexit, because
+  # errexit is not reliably on when this runs. The tier caller contains this
+  # function on the non-final side of a `||`, and bash suppresses -e for every
+  # command inside a compound in that position — so an unguarded create that
+  # failed would fall straight through to the line below, out of the one function
+  # both callers trust to die rather than report a filing that never happened.
+  # The two calls are independent: the list can answer and the create still fail,
+  # on a rate limit landing between them, a read-scoped token, a read-only repo.
+  (cd "$ROOT" && gh issue create --title "$1" --body "$2") \
+    || die "vet --file-issue: gh issue create failed — the finding stands unfiled"
   echo "  filed rot issue: '$1'"
 }
 
@@ -4319,11 +4328,12 @@ file_tier_issue() { # $1 = agent, $2 = profile, $3 = predicate, $4 = the two wit
   # nobody has fixed yet. Both go in the body, which is a record of a sighting and
   # may hold a number that has already stopped being true.
   #
-  # Subshelled, because file_issue_once DIES when gh is missing or cannot list
-  # what is already open, and every caller has printed its finding and raised its
-  # own code before reaching here. Letting that die out would take the finding's
-  # code with it — the conflict shown to the operator and then not counted, which
-  # is exactly the fabricated status law 8 refuses. Filing is the optional half.
+  # Subshelled, because file_issue_once DIES on any gh it cannot reach, list
+  # through, or create through, and every caller has printed its finding and
+  # raised its own code before reaching here. Letting that die out would take
+  # the finding's code with it — the conflict shown to the operator and then not
+  # counted, which is exactly the fabricated status law 8 refuses. Filing is the
+  # optional half.
   ( file_issue_once "strategy rot: $2 $3 tiers disagree" "\
 gang vet found two fresh witnesses for the same predicate disagreeing.
 

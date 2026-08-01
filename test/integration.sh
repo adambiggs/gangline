@@ -2062,6 +2062,11 @@ cat > "$GHDIR/gh" <<'SH'
 case "$1 $2" in
   "issue list") cat "$FAKE_GH_OPEN" ;;
   "issue create")
+    # The half-dead arm: the list answers and the create does not. It writes
+    # NOTHING either side, because a create that failed filed nothing and left
+    # nothing open for the next sweep to dedup against.
+    [ -z "${FAKE_GH_CREATE_FAILS:-}" ] || {
+      echo "gh: the suite's stand-in was told to fail this create" >&2; exit 1; }
     shift 2; t=""; b=""
     while [ $# -gt 0 ]; do
       case "$1" in
@@ -3900,6 +3905,23 @@ check "a gh that cannot answer does not swallow the finding" "yes" \
 check "and the report says the finding stands and was not filed" "yes" \
   "$(holds "$gout" 'the finding above stands — filing it failed')"
 check "and the exit status is still the finding's own" "1" "$rc"
+
+# THE HALF-DEAD GH, which the trio above cannot stand in for: that one dies at
+# the LIST, and the create is a second call that can fail on its own — a rate
+# limit landing between the two, a read-scoped token, a repo gone read-only.
+# Errexit does not cover it. Bash suppresses -e for everything inside a compound
+# on the non-final side of a `||`, which is exactly the containment shape this
+# path runs under, so a create left to errexit would fall through to the success
+# line: filing reported, no issue, and the dim row that is supposed to say so
+# never reached.
+: > "$FAKE_GH_OPEN"; : > "$FAKE_GH_FILED"
+gout="$(FAKE_GH_CREATE_FAILS=1 PATH="$GHDIR:$PATH" GANG_PROFILES="$SHIM/vetctx" \
+  "$GANG" vet --file-issue 2>/dev/null)"; rc=$?
+check "a create that fails is never reported as a filing" "no" \
+  "$(holds "$gout" 'filed rot issue')"
+check "the dim row fires for a dead create as it does for a dead list" "yes" \
+  "$(holds "$gout" 'the finding above stands — filing it failed')"
+check "and the finding's own exit status survives the failed create" "1" "$rc"
 rm -rf "$SHIM/ghdead" "$GHDIR"
 unset -f ghvet
 unset FAKE_GH_OPEN FAKE_GH_FILED
