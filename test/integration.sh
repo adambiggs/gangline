@@ -1668,10 +1668,20 @@ check "and is could-not-determine, not an idle it never witnessed" "yes" \
   "$(contains "$out" "expired (turn-bracket value unreadable)")"
 check "and the unreadable value is discarded so the next event heals it" "" \
   "$(tmux show-options -wqv -t "$bwin" @gl_turn)"
-# A clock that moved is the same fact in a different disguise: no usable epoch.
+# A clock that moved leaves no freshness to test either, so it reads the same
+# could-not-determine — under its own qualifier, because the two are not fixed the
+# same way, and NOT discarded, because that is the difference between them. A
+# malformed value can never be true, so clearing it costs nothing. A future stamp
+# CAN be true: a backward clock step makes a genuinely open bracket written seconds
+# ago read as future, and clearing it would throw away a correct fact and drop a
+# live turn to the scrape tier. So it stands until an event overwrites it.
 tmux set-option -w -t "$bwin" @gl_turn "open $(( $(date +%s) + 9999 ))"
-check "a bracket stamped in the future is unreadable too, not fresh" "yes" \
-  "$(contains "$("$GANG" status bracket 2>&1)" "expired (turn-bracket value unreadable)")"
+check "a bracket stamped in the future is could-not-determine too, not fresh" "yes" \
+  "$(contains "$("$GANG" status bracket 2>&1)" "expired (turn-bracket stamped in the future)")"
+check "and says the clock moved rather than borrowing the unreadable wording" "no" \
+  "$(contains "$("$GANG" status bracket 2>&1)" "value unreadable")"
+check "and is left standing, because a future stamp can still be a true fact" \
+  "open" "$(tmux show-options -wqv -t "$bwin" @gl_turn | cut -d' ' -f1)"
 
 # TIERS PICK WITNESSES; THEY DO NOT VOTE. With the bracket closed and fresh AND
 # the busy marker on screen, the two tiers disagree — and the answer is the higher
@@ -2107,6 +2117,13 @@ check "an unwired statusline fails the command" "1" "$?"
 ccwire "$CCBEACON"
 check "a wired one passes" "yes" \
   "$(holds "$(ccvet)" 'harness files: OK [(]context beacon wired in ')"
+# The same row answers for the event tier, and it is the only thing that does. The
+# turn hooks are built into the launch line at profile load from $ROOT; nothing
+# else parses that string back, so a template typo would ship a launch line the
+# harness rejects with exit 1 and an empty window. Asserted on the OK leg because
+# that is the leg a working install takes.
+check "and the same row reports the turn hooks it wired" "yes" \
+  "$(holds "$(ccvet)" 'turn hooks wired to .*/bin/gang[)]')"
 # The false-alarm direction, and the reason the command is split like a shell
 # rather than compared as a path: an interpreter, arguments, or an install
 # somewhere else are all still wired, and nagging a working host teaches an
@@ -2143,6 +2160,122 @@ check "an uninstalled harness is not nagged about its configuration" "yes" \
       'harness files: claude is not installed')"
 rm -rf "$CCFX" "$SHIM/haveclaude"
 unset -f ccvet ccwire
+
+# --- the claude-code turn-hook wiring -----------------------------------------
+
+# The event tier is a JSON string built into a launch line (ADR-0008), and every
+# way it can be wrong is silent at the moment it happens. A malformed payload is
+# an exit-1 launch death with an empty window; a valid payload naming an event
+# this harness does not recognise is accepted WITHOUT A WORD and then never fires,
+# so the wiring looks live and no fact ever arrives. Neither shows up as a failing
+# command anywhere, which is why the shape is asserted here rather than trusted to
+# review.
+#
+# Driven against the real profiles/claude-code.sh, sourced the way bin/gang
+# sources it. What the launch line MEANS to the harness is not reachable from a
+# suite that must run offline — that was driven at a live pane and is recorded in
+# the profile — so what is pinned here is the string gang builds.
+CCTREE="$(cd -P "$(dirname "$GANG")/.." && pwd)"
+ccsrc() { # $1 = the ROOT to build against, $2 = which launch variable to print
+  # set -euo pipefail because that is what bin/gang sources a profile under, and
+  # the wiring below branches: a guard leg that exits non-zero, or reads an unset
+  # variable, would take load_profile down for every caller and pass a laxer shell.
+  GANG_TEST_PROFILES='' ROOT="$1" bash -c \
+    'set -euo pipefail; . "$0/profiles/claude-code.sh"; printf %s "${!1}"' "$CCTREE" "$2"
+}
+ccpayload() { # the --settings JSON out of a built launch line, the way vet reads it
+  local l; l="$(ccsrc "$CCTREE" "$1")"; l="${l#*--settings \'}"; printf '%s' "${l%%\'*}"
+}
+
+check "the ordinary launch line carries a --settings payload" "yes" \
+  "$(contains "$(ccsrc "$CCTREE" GANG_LAUNCH)" "--settings")"
+# The template has one hole and a typo in it ships to every agent at once, so the
+# payload is parsed rather than pattern-matched. python3 is the same reader vet
+# uses, which is the point: if this parses, the harness's parser sees valid JSON.
+check "and that payload is valid JSON" "yes" \
+  "$(python3 -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' \
+       "$(ccpayload GANG_LAUNCH)" 2>/dev/null || echo no)"
+# Exactly the three cmd_hook maps, as a SET. An extra name is as much a finding as
+# a missing one — this is the anti-SubagentStop guard, and the reason it is a
+# check rather than a comment is that adding one costs a single line and breaks
+# nothing visible: SubagentStop fires after Stop on ordinary main-agent turns, so
+# wiring it would close brackets on a false signal.
+check "and it wires exactly the three events gang maps, and no fourth" \
+  "PostToolUse Stop UserPromptSubmit" \
+  "$(python3 -c 'import json,sys; print(" ".join(sorted(json.loads(sys.argv[1])["hooks"])))' \
+       "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+# Every hook points at THIS tree's bin/gang, never a bare `gang` off PATH: the hook
+# writes @gl_turn in a format one particular bin/gang reads back, so the reader and
+# the fact vocabulary stay versioned together.
+check "and every wired command is this tree's own bin/gang" "$CCTREE/bin/gang" \
+  "$(python3 -c '
+import json, sys
+h = json.loads(sys.argv[1])["hooks"]
+print(" ".join(sorted({e["command"] for g in h.values() for m in g for e in m["hooks"]})))' \
+       "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+# EXEC FORM, and this is the check that keeps the wiring alive on an ordinary
+# install. A hook command given without `args` is handed to a SHELL at fire time —
+# 2.1.220 says so in its own refusal text, that a substituted value "would be
+# re-parsed by the shell. Use exec form instead" — so a one-string command from a
+# tree under a path with a space execs its first token and stops. Driven against
+# 2.1.220 with a stub hook logging its own argv, one variable apart: shell form
+# fires from an unspaced path and NEVER FIRES from a spaced one, silently, while
+# exec form fires from the spaced path with argv exactly ["hook"]. Nothing reports
+# that failure — the JSON is valid, the launch succeeds, vet reads OK — so the
+# shape is pinned here.
+check "and carries its verb in args, so no shell re-parses the path at fire time" \
+  '["hook"]' \
+  "$(python3 -c '
+import json, sys
+h = json.loads(sys.argv[1])["hooks"]
+a = {json.dumps(e.get("args")) for g in h.values() for m in g for e in m["hooks"]}
+print(" ".join(sorted(a)))' "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+# The regression this commit is most likely to grow later. An agent rebuilt after a
+# tmux server death (ADR-0007) needs the event tier as much as a fresh one, and a
+# resume form left bare would drop every rebuilt agent to the scrape tier with
+# nothing saying so — no error, no finding, just turns read off a pane that marks
+# 8.6% of their frames.
+check "the resume form carries the identical payload, not a bare relaunch" "yes" \
+  "$([ "$(ccpayload GANG_RESUME_LAUNCH)" = "$(ccpayload GANG_LAUNCH)" ] && echo yes || echo no)"
+
+# THE SKIP LEG. The launch line is handed to sh and then to a JSON parser, so an
+# install path holding a single quote, a double quote, a backslash or a control
+# character cannot be wired into it. The profile leaves both lines bare rather than
+# dying, because degrading to the scrape tier only costs a tier while a die here
+# would take `gang roster` and `gang status` down for every claude-code agent.
+#
+# The fixture is a real tree with an executable bin/gang in it, at a path with a
+# quote. That matters: the profile also skips when $ROOT/bin/gang is missing, so a
+# fixture that was merely absent would take the skip for the wrong reason and this
+# check would pass without ever exercising the guard.
+CCQ="$SHIM/it's"
+mkdir -p "$CCQ/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CCQ/bin/gang"; chmod +x "$CCQ/bin/gang"
+check "an install path gang cannot quote leaves the launch line bare" "claude" \
+  "$(ccsrc "$CCQ" GANG_LAUNCH)"
+check "and leaves the resume line bare with it, rather than half-wiring" "claude --continue" \
+  "$(ccsrc "$CCQ" GANG_RESUME_LAUNCH)"
+# The control, and without it every check above passes on a guard that rejects
+# everything. Same fixture, same executable, one character different in the path.
+CCOK="$SHIM/itis"
+mkdir -p "$CCOK/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CCOK/bin/gang"; chmod +x "$CCOK/bin/gang"
+check "while the same tree at a quotable path wires normally" "yes" \
+  "$(contains "$(ccsrc "$CCOK" GANG_LAUNCH)" "--settings")"
+# A space is not a hazard in either REMAINING layer — the payload sits inside single
+# quotes in the launch line, and exec form hands the path to execve with no shell —
+# so wiring one is correct rather than merely tolerated. This check only became true
+# with exec form: under a one-string command it asserted a launch line that built
+# perfectly and then never fired a hook. It stays because over-restricting the
+# charset is the cheap wrong fix for the case above, and ~/Application Support is an
+# ordinary place to install.
+CCSP="$SHIM/has space"
+mkdir -p "$CCSP/bin"
+printf '#!/bin/sh\nexit 0\n' > "$CCSP/bin/gang"; chmod +x "$CCSP/bin/gang"
+check "and a path with a space in it is wired, not treated as a hazard" "yes" \
+  "$(contains "$(ccsrc "$CCSP" GANG_LAUNCH)" "--settings")"
+rm -rf "$CCQ" "$CCOK" "$CCSP"
+unset -f ccsrc ccpayload
 
 # --- vet --probe: the markers fired at a live pane -----------------------------
 

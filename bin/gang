@@ -1038,8 +1038,17 @@ turn_mark() { # $1 = window id, $2 = open|closed; write the fact, log the transi
   # reads under a transcript gang already refuses to keep a second copy of.
   #
   # The test is the STATE, not the event that carried it: an open following an
-  # open is a heartbeat whatever fired it, and an open following a close, an
-  # expiry, or a value this reader could not parse is a transition worth a row.
+  # open is a heartbeat whatever fired it, and what rows is a close, an open after
+  # a close or after nothing at all, or a write following a value the reader threw
+  # away.
+  #
+  # An expiry is NOT in that list, and the omission is deliberate. A bracket past
+  # its bound still stores `open`, so the next open matches it and writes no row —
+  # the expiry was a reading, and it left no mark here to compare against. Closing
+  # that would mean deciding freshness at write time, which is exactly the
+  # smartness ADR-0008 keeps out of the write path; the log loses one row for a
+  # turn that resumed after a long silence, and the reader still reports it
+  # correctly.
   [ "$prev" != "$2" ] || return 0
   patrol_log "$(agent_name_of "$1")" turn-bracket "bracket $2"
 }
@@ -1079,9 +1088,22 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   [ "$TURN_STATE" = open ] || return 1
   require_whole GANG_TURN_LIMIT "$GANG_TURN_LIMIT" seconds
   now="$(date +%s)"
-  # A stamp from the future is the same fact as one that will not parse: no
-  # usable epoch, so no freshness left to test.
-  [ "$TURN_AT" -le "$now" ] || { BUSY_EXPIRED_WHAT="turn-bracket value unreadable"; return 2; }
+  # A stamp from the future has no freshness left to test, so it reads the same
+  # could-not-determine an unparseable one does — but it is NOT discarded the way
+  # that one is, and the asymmetry is the point. A malformed value can never be
+  # true, so clearing it loses nothing and restores an honest "no event tier". A
+  # future stamp can be true: a backward clock step makes a genuinely open bracket
+  # written seconds ago read as future, and clearing that would throw away a
+  # correct fact and drop a live turn to the scrape tier. So it stands and reads
+  # could-not-determine until any event overwrites it — one heartbeat away on a
+  # live turn, and never on a dead one, which is the direction law 8 wants.
+  #
+  # Its own qualifier, by this file's own rule that two different exhausted
+  # signals under one wording is a fabricated status. They are not fixed the same
+  # way: one says the clock moved, the other says something wrote a value gang
+  # cannot read.
+  [ "$TURN_AT" -le "$now" ] \
+    || { BUSY_EXPIRED_WHAT="turn-bracket stamped in the future"; return 2; }
   # WHAT THIS BOUND IS ACTUALLY CLOSING, measured rather than imagined: a turn
   # whose permission dialog is Esc-dismissed or explicitly denied ends in the pane
   # — the composer comes back — and fires NO Stop. Watched twice, ending at +12s

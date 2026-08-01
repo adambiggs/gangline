@@ -25,6 +25,97 @@ GANG_LAUNCH="claude"
 # anywhere on the machine. Directory and recency are the whole of the selection;
 # no agent name reaches it, so "its own" holds only where one agent worked there.
 GANG_RESUME_LAUNCH="claude --continue"
+# THE EVENT TIER, wired at hitch with nothing on disk (ADR-0008). Claude Code
+# fires hooks from its settings, and --settings takes an inline JSON string — so
+# the operator's own settings.json is untouched and there is no generated file to
+# owe law 6 a deletion path. Two things were driven against 2.1.220 before this
+# was called load-bearing. Hooks supplied this way face NO trust gate, which was
+# the ADR's open verification item. And the merge is ADDITIVE: the operator's own
+# statusLine survives alongside these hooks, which is the difference between a
+# working agent and a blind one, because that statusLine is the only thing
+# painting the ctx beacon profile_context reads below.
+#
+# EXACTLY THREE EVENTS, because the wiring names only what feeds a declared
+# predicate with a live consumer (law 5): UserPromptSubmit opens the turn
+# bracket, PostToolUse refreshes it, Stop closes it. Those are the three cmd_hook
+# maps and there is no fourth. Each shape is as measured — PostToolUse takes a
+# matcher, the other two take none — and a name this harness does not recognise
+# is accepted SILENTLY and then never fires, so the list is written out literally
+# rather than built from a loop, and profile_vet reads the result back.
+#
+# NEVER SubagentStop, which fires after Stop on ordinary main-agent turns, and
+# NEVER SessionStart, a second one of which fires at the end of a compaction. The
+# measurements are at their mapping sites in bin/gang; the prohibitions are
+# repeated here because this file, not that one, is where somebody adds an event.
+#
+# BOTH LAUNCH FORMS CARRY IT. An agent rebuilt after a server death needs the
+# event tier exactly as much as a fresh one, and wiring only the first line would
+# drop every resumed agent to the scrape tier with nothing saying so. That
+# --continue and --settings compose is ordinary flag composition rather than
+# something the probe drove separately; what checks it is profile_vet, which
+# parses the line this builds.
+#
+# $ROOT/bin/gang, not a bare `gang` off PATH. The hook writes @gl_turn in a format
+# one particular bin/gang reads back, so the reader and the fact vocabulary are
+# versioned together and the wiring names this tree outright instead of whatever a
+# PATH lookup finds at hook time. It costs a longer string in the pane echo after a
+# compaction, and that string matches no marker gang scrapes — busy, occupied and
+# beacon were all checked against it — so the cost is cosmetic.
+#
+# EXEC FORM — `command` plus `args`, never one string. A hook command given WITHOUT
+# args is handed to a shell at fire time, and the binary says so itself: 2.1.220
+# refuses a plugin hook that interpolates into a shell-form command because "the
+# substituted value would be re-parsed by the shell. Use exec form instead". With
+# args present there is no shell, no tokenisation, and the path reaches execve
+# whole.
+#
+# That is a THIRD quoting layer, and it is the one that bites without a symptom.
+# Measured on 2.1.220 against a stub hook that logs its own argv, four runs, one
+# variable apart: shell form from a path with no space FIRES; shell form from a
+# path with a space NEVER FIRES AT ALL, silently — the JSON is valid, the launch
+# succeeds, vet reports the wiring OK, and the harness execs the first token and
+# gives up. Exec form from that same spaced path fires with argv exactly ["hook"],
+# and so does exec form from a path holding a dollar sign and a backtick. Exec form
+# does not quote that layer better; it removes it.
+#
+# MALFORMED JSON HERE IS A HARD LAUNCH FAILURE: "Error: Invalid JSON provided to
+# --settings", exit 1, a dead window and nothing painted. So the string is
+# validated before it can reach a command line. The template has exactly ONE hole,
+# $ROOT, which makes validating the input equivalent to validating the output —
+# in shell, with no interpreter spawned on a path that runs once per agent every
+# time a roster is drawn.
+#
+# Two quoting layers remain once exec form has deleted the third, and three unsafe
+# classes sit between them: a single quote breaks the sh quoting the launch line is
+# handed to, a double quote or a backslash breaks the JSON string, and a control
+# character breaks the JSON. Everything else is safe and is deliberately NOT
+# rejected. The launch line carries the payload inside SINGLE quotes, where a
+# dollar sign and a backtick are literal, and exec form hands the path to execve
+# without a shell, so a space, a dollar sign, a backtick and non-ASCII all survive
+# both layers — measured, in the runs above, not reasoned about. An install under
+# "~/Application Support" is ordinary, and a guard that refused one would be
+# inventing a fault to protect against a fault.
+#
+# An install path that cannot be wired leaves both launch lines bare rather than
+# refusing to load. Degrading to the scrape tier is what ADR-0008 designs for,
+# while dying here would take `gang roster` and `gang status` down for every
+# claude-code agent over a condition that only stops new hitches — the same call
+# opencode.sh makes, for the same reason. What would be dishonest is doing it
+# quietly, so profile_vet reports it as a finding.
+if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
+  case "$ROOT" in
+    *[\'\"\\]*|*[[:cntrl:]]*) ;;   # unwirable path — profile_vet says so, loudly
+    *)
+      _gl_cc_cmd="{\"type\":\"command\",\"command\":\"$ROOT/bin/gang\",\"args\":[\"hook\"]}"
+      _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
+      GANG_LAUNCH="claude --settings '$_gl_cc_json'"
+      GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
+      unset _gl_cc_cmd _gl_cc_json
+      ;;
+  esac
+fi
 # From `claude --help`: --model takes an alias ("sonnet", "opus") or a full
 # model id ("claude-fable-5").
 GANG_MODEL_OPT="--model"
@@ -221,7 +312,76 @@ profile_vet() { # setup gate: is anything actually painting the beacon read abov
   # nagged about a harness it does not have.
   command -v claude >/dev/null \
     || { echo "claude is not installed — nothing to gate"; return 0; }
-  local beacon out status detail cmd src tok
+  local beacon out status detail cmd src tok wired
+  # The event tier first, because a fault in it is gang's own rather than the
+  # operator's. It is checked HERE, and not at profile load, for two reasons: vet
+  # is the tool for a static configuration fault, and it already runs python3, so
+  # the literal "does this parse" test costs nothing on a path that runs once per
+  # agent. The failure it catches is silent by construction — an install path gang
+  # cannot quote leaves a profile that launches bare, and every agent on it reads
+  # its turns off a pane that marks 8.6% of a live turn's frames.
+  #
+  # Under the same binary gate as the beacon below, and for the same reason: a host
+  # that runs codex alone must not be told about a launch line for a harness it
+  # does not have.
+  case "$GANG_LAUNCH" in
+    *--settings*) ;;
+    *) echo "gang's own claude-code launch line carries no --settings, so nothing wires the turn-bracket hooks and every claude-code agent falls back to reading its turns off the pane. The profile builds that wiring from \$ROOT and skips when the install path cannot be quoted into a launch line — a single quote, a double quote, a backslash or a control character — or when \$ROOT/bin/gang is not executable. This install is $ROOT"
+       return 1 ;;
+  esac
+  # Exact, because the guard that built this string guarantees no single quote
+  # inside it: everything between the first --settings quote and the next one is
+  # the payload.
+  wired="${GANG_LAUNCH#*--settings \'}"
+  wired="${wired%%\'*}"
+  python3 - "$wired" "$ROOT/bin/gang" <<'PY' || return 1
+import json, sys
+
+raw, want = sys.argv[1], sys.argv[2]
+try:
+    d = json.loads(raw)
+except ValueError as e:
+    print("the --settings payload this profile builds does not parse (%s), so every "
+          "claude-code hitch dies at launch with exit 1 and an empty window" % e,
+          file=sys.stderr)
+    sys.exit(1)
+h = d.get("hooks") if isinstance(d, dict) else None
+if not isinstance(h, dict):
+    print("the --settings payload carries no hooks object, so no turn event reaches "
+          "gang and every claude-code agent reads its turns off the pane",
+          file=sys.stderr)
+    sys.exit(1)
+# Exactly the three cmd_hook maps, asserted as a SET rather than as a subset. An
+# extra name is as much a finding as a missing one: this harness accepts an event
+# name it does not know without a word and then never fires it, so an unmapped
+# name here is wiring that looks live and is not.
+have = sorted(h)
+if have != ["PostToolUse", "Stop", "UserPromptSubmit"]:
+    print("the --settings payload wires %s, not the three events cmd_hook maps "
+          "(PostToolUse, Stop, UserPromptSubmit)"
+          % (", ".join(have) or "no events"), file=sys.stderr)
+    sys.exit(1)
+# Exec form, asserted as command-plus-args rather than as a string. A hook with no
+# args is re-parsed by a shell at fire time, so an install path holding a space
+# would exec its first token and the fact would never arrive — with this payload
+# still parsing, the launch still succeeding and this row still reading OK. That is
+# the one failure this check exists to make impossible.
+for ev in have:
+    got, ok = [], isinstance(h[ev], list)
+    for g in h[ev] if ok else []:
+        if not isinstance(g, dict) or not isinstance(g.get("hooks"), list):
+            ok = False
+            break
+        got += [(e.get("command"), e.get("args")) if isinstance(e, dict) else (None, None)
+                for e in g["hooks"]]
+    if not ok or not got or any(c != want or a != ["hook"] for c, a in got):
+        print("the --settings payload wires %s to %s, not to command \"%s\" with args "
+              "[\"hook\"] — a hook pointing anywhere else writes no fact gang can read, "
+              "and one carrying no args is re-parsed by a shell at fire time, which "
+              "loses every install path holding a space"
+              % (ev, got or "nothing", want), file=sys.stderr)
+        sys.exit(1)
+PY
   beacon="$ROOT/statusline/claude-code-context.sh"
   # Lowest precedence first, so a later file wins the same way the harness
   # resolves them. CLAUDE_CONFIG_DIR relocates the user scope: in the installed
@@ -297,7 +457,7 @@ PY
     echo "$src wires the beacon as $tok and that path is not readable, so the statusline runs nothing and the pane carries no beacon. This install's copy is $beacon"
     return 1
   fi
-  echo "OK (context beacon wired in $src)"
+  echo "OK (context beacon wired in $src; turn hooks wired to $ROOT/bin/gang)"
 }
 
 profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
