@@ -150,9 +150,13 @@ It may then print diagnostic lines for a resume that failed after compaction or
 an undelivered paste recorded in the input box. Scripts should match the first
 line's state prefix rather than requiring single-line output.
 
-Busy can be established by a declared busy marker, recent pty activity on a
-profile known to be quiet at rest, or pane movement between captures. Occupancy
-takes precedence over busy.
+Busy takes the highest evidence tier still fresh (ADR-0008): a live turn
+bracket fed by the harness's own hook events where the profile wires them, then
+a declared busy marker, recent pty activity on a profile known to be quiet at
+rest, or pane movement between captures. Occupancy takes precedence over busy,
+and is itself witnessed by a permission-request raise where one is wired —
+retired only when the pane proves the dialog gone — with the modal scrape as
+the tier below.
 
 `occupied` says a harness-owned UI has the input box and nothing about who may
 clear it. No shipped profile classifies the UI it found, so the qualifier is
@@ -172,9 +176,11 @@ to idle is what would make a fabricated busy permanent.
 
 ### `gang context <name>`
 
-Runs the profile's context reader. A successful shipped reader prints
-`<used>k/<window>k (<percent>%)`. The command fails if the profile declares no
-reader or the reader cannot establish a value.
+Prints the best fresh context witness (ADR-0008): a figure the owned tier
+recorded — on claude-code, the shipped statusline script writes it as it paints
+the beacon — and the profile's own reader when no fresh fact exists. A
+successful readout prints `<used>k/<window>k (<percent>%)`. The command fails
+if the profile declares no reader or no tier can establish a value.
 
 ### `gang wait <name> [timeout_seconds]`
 
@@ -266,19 +272,30 @@ command, where `--install` fails loudly instead.
 Ingestion verb for harness hook events (ADR-0008). It reads a JSON hook payload
 from stdin, identifies the current agent through `TMUX_PANE`, branches on the
 native `hook_event_name`, and writes the mapped fact to that agent's own window
-options: `UserPromptSubmit` opens the turn bracket, `PostToolUse` refreshes it,
-`Stop` closes it. On `UserPromptSubmit` and `PostToolUse` it also applies the
-same band ladder and window option as patrol and emits a JSON
-`additionalContext` reply when a higher band is crossed; on every other event
-it emits nothing, so a hook whose output the harness treats as a decision can
-never be steered by gang's reply.
+options. Three events carry the turn bracket: `UserPromptSubmit` opens it,
+`PostToolUse` refreshes it, `Stop` closes it. Two carry the compaction bracket:
+`PreCompact` opens it and `PostCompact` closes it, each recording the payload's
+trigger, which is how gang's own `/compact` is told apart from the harness
+compacting on its own threshold. One raises occupancy: `PermissionRequest`
+records that a permission dialog owns the input box — and because nothing fires
+when a dialog is dismissed, only the pane retires that raise.
+
+On `UserPromptSubmit` and `PostToolUse` it also applies the same band ladder
+and window option as patrol and emits a JSON `additionalContext` reply when a
+higher band is crossed; on every other event it emits nothing. On
+`PermissionRequest` that silence is the safety boundary, not a convention: the
+harness reads this hook's stdout as the answer to the open permission dialog,
+so a hook whose output the harness treats as a decision can never be steered by
+gang's reply.
 
 It exits 0 on every path: malformed JSON, an unknown event name, a missing
 `TMUX_PANE` or profile binding, and an unavailable context readout are silent
 successes, so fact ingestion can never block the work it observes. Once a
 profile is resolved, profile-loading and band-configuration errors remain loud.
-The claude-code profile wires the three mapped events to this verb at hitch, on
-both launch forms, so nothing is configured by the operator.
+The claude-code profile wires all six mapped events to this verb at hitch, on
+both launch forms, so nothing is configured by the operator. Context is the one
+predicate this verb does not carry: no hook payload holds a token count, so the
+shipped statusline script writes that fact directly as it paints the beacon.
 
 ## Diagnostics and discovery
 
@@ -417,6 +434,10 @@ These are useful when the corresponding path is in use:
 | `GANG_ACTIVITY_LIMIT` | how long pty activity **alone** may hold the busy verdict before the state becomes `expired`; whole seconds, and a non-numeric value is refused | `300` |
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
 | `GANG_COMPACT_GRACE` | maximum wait for gang-issued compaction proof | `300` seconds |
+| `GANG_TURN_LIMIT` | how long an open turn bracket holds busy without a heartbeat; expiry is could-not-determine, and busy falls to the scrape tiers | `300` seconds |
+| `GANG_COMPACTION_LIMIT` | how long an open compaction bracket holds the compacting verdict; undershooting drops a live compaction to a tier that reads it idle, so the error direction is chosen long | `300` seconds |
+| `GANG_OCCUPIED_LIMIT` | how long a raised occupancy stays credible; the pane retires the raise by proving the dialog gone, and expiry stops believing it without clearing it | `900` seconds |
+| `GANG_CONTEXT_FACT_LIMIT` | how long a written context figure is preferred over the beacon scrape; a stale figure reads low across a band edge, so the bound is short and the scrape does the work in any doubt | `60` seconds |
 | `GANG_RESUME_TIMEOUT` | detached resume wait ceiling | `900` seconds |
 | `GANG_PATROL_LOG` | where a non-interactive sweep records itself; empty writes no file | `$XDG_STATE_HOME/gangline/patrol.log` |
 | `GANG_PATROL_LOG_MAX` | size at which that log rolls to a single `.1`; whole bytes, and a non-numeric value is refused | `1048576` |
@@ -436,12 +457,12 @@ These are useful when the corresponding path is in use:
 | `GANG_CLEAR_PRESSES` | maximum verified `Ctrl-u` attempts when reclaiming a staged paste | `40` |
 | `GANG_TEST_PROFILES=1` | expose the Bash stand-in used by Gangline's own suite | unset |
 
-`GANG_ACTIVITY_LIMIT`, `GANG_COMPACT_GRACE` and `gang wait`'s timeout all default to
-300 seconds, and that is a coincidence rather than a shared constant. They bound three
-unrelated things — how long pty activity alone may support a busy verdict, how long
-Gangline waits for proof that a compaction it issued ran, and how long one caller is
-willing to poll all busy evidence. Changing any one of them must not move the others,
-so do not fold them into a single value.
+`GANG_ACTIVITY_LIMIT`, `GANG_COMPACT_GRACE`, `GANG_TURN_LIMIT`,
+`GANG_COMPACTION_LIMIT` and `gang wait`'s timeout all default to 300 seconds,
+and that is a coincidence rather than a shared constant. Each bounds a
+different thing, each fact bound's comment in bin/gang argues its own error
+direction, and changing any one of them must not move the others — do not fold
+them into a single value.
 
 Changing compaction timing requires care, and the two readers part company at
 expiry. On the resume leg, when a context baseline was captured, a missing drop
