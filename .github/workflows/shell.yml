@@ -105,14 +105,10 @@ jobs:
           echo "awk: $v"
 
       - name: Syntax and lint
-        run: |
-          set -euo pipefail
-          # site/demo/record.sh ships in the repo and was unchecked until a bug in
-          # it cost two demo takes. Every shell file here is checked or none is.
-          files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh .githooks/commit-msg site/demo/record.sh .github/workflows/*.sh"
-          # bash -n reads one script per call; shellcheck takes the set.
-          for f in $files; do bash -n "$f"; done
-          shellcheck -S warning $files
+        # The file list lives in test/lint.sh, which the pre-push hook also
+        # runs. Inlining it here again would put the same list in two places,
+        # and the shorter of two copies stays green over what it never read.
+        run: test/lint.sh
 
       - name: Installer
         run: |
