@@ -234,10 +234,11 @@ GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
 # compaction is over in seconds, and a bound near that would be the tightest
 # thing in this file; auto-compaction on a large window is unobserved (gh #57),
 # and it is the case this tier exists to cover, so the bound is set for the case
-# nobody has measured rather than the one somebody did. Overrunning it costs a held nudge, which is noisy; undershooting it drops a
-# genuinely compacting pane back to a tier that reads it idle, and patrol then
-# injects into the compaction — corrupting. So the error direction is chosen and
-# the number is policy, not an observation.
+# nobody has measured rather than the one somebody did. Overrunning it costs a
+# held nudge, which is noisy; undershooting it drops a genuinely compacting pane
+# back to a tier that reads it idle, and patrol then injects into the compaction
+# — corrupting. So the error direction is chosen and the number is policy, not an
+# observation.
 GANG_COMPACTION_LIMIT="${GANG_COMPACTION_LIMIT:-300}"
 
 # How long a raised occupancy stays credible, and it is the longest bound in this
@@ -257,6 +258,28 @@ GANG_COMPACTION_LIMIT="${GANG_COMPACTION_LIMIT:-300}"
 # nobody meant to answer. Corrupting, unrecoverable, and silent. So the bound is
 # set long and the error direction is chosen rather than balanced.
 GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
+
+# How long a written context figure stays credible, and it is the SHORTEST bound
+# in this file for the same reason the one above is the longest. The others bound
+# a fact whose fallback is worse than it is; this one does not. The statusline
+# writes this record and paints the beacon in the same breath, from the same
+# numbers, so falling through costs a capture-pane and returns what the fact would
+# have said. Being early is close to free.
+#
+# Being late is not, and the asymmetry is what sets the number. Within a turn the
+# figure only climbs, so a stale one reads LOW, and patrol spends it as evidence
+# that an agent has not reached a band it is already past. The nudge then arrives
+# late — and a nudge to compact is worth what it is worth precisely because it
+# comes before the thread is lost, so lateness does not merely delay the warning,
+# it spends the thing the warning was protecting. Short, therefore, and the
+# fallback does the work wherever there is any doubt.
+#
+# What expiry means here is not "this figure is wrong" but "nothing is refreshing
+# it" — which describes an agent that is not working, whose beacon says exactly
+# what the record says. That is why a bound this short does not make the tier
+# pointless: the reads that matter are taken while an agent is moving, and a
+# moving agent repaints.
+GANG_CONTEXT_FACT_LIMIT="${GANG_CONTEXT_FACT_LIMIT:-60}"
 
 # Where a non-interactive sweep records what it found. gang owns this rather than
 # leaving it to a shell pipeline in a crontab line, and the reason is a five-hour
@@ -1433,7 +1456,7 @@ compaction_mark() { # $1 = target; record that WE issued one, with the tokens at
   local at=0 ctx tw tokens window now
   now="$(date +%s)"
   if declare -F profile_context >/dev/null \
-     && ctx="$(profile_context "$1" 2>/dev/null)" \
+     && ctx="$(context_now "$1" 2>/dev/null)" \
      && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
     read -r tokens window <<<"$tw"; at="$tokens"
   fi
@@ -2554,7 +2577,7 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
         # fifteen minutes over a compaction that never happened.
         at_issue=""
       else
-        if ctx="$(profile_context "$1" 2>/dev/null)" \
+        if ctx="$(context_now "$1" 2>/dev/null)" \
            && tw="$(ctx_tokens "${ctx%%$'\n'*}")"; then
           read -r tokens window <<<"$tw"
           [ "$tokens" -lt $(( at_issue / 2 )) ] && break
@@ -2616,6 +2639,99 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   [ -z "$err" ] || printf '%s\n' "$err" >&2
   return "$rc"
 }
+
+# ===[ context-fact ]=========================================================
+#
+# The context predicate's owned tier (ADR-0008), and the only one `gang hook` does
+# not write. Nothing in the harness's event vocabulary carries a context figure,
+# so there is no harness voice here for the one-verb rule to keep single: the
+# writer is statusline/claude-code-context.sh, which is gangline's own code
+# running in the harness's statusline callback. That is what the ADR means by
+# written DIRECTLY. It keeps painting the beacon byte-identically as it goes,
+# because the human reads that line and so does the scrape tier below.
+#
+# WHAT THIS REPLACES IS A ROUND TRIP. The same script already had the figures; it
+# printed them into the pane, and gang captured the pane and parsed them back out.
+# Every way that trip goes wrong is the trip's own fault — a capture landing
+# mid-paint reads a torn line, a dialog drawn over the statusline hides it
+# entirely, and the zero the guards downstream refuse is a beacon caught between
+# paints. This tier is the same script's own numbers with the screen taken out of
+# the middle.
+#
+# THE READER NEVER WRITES, which is where this bracket parts company with the
+# other three. Their readers clear — a malformed record, a raise the pane has
+# retired — because nothing else was ever going to rewrite one. This record is
+# rewritten on EVERY repaint, so no clear here can be the thing that repairs it: a
+# clear is either overwritten moments later or it deletes a figure the writer was
+# about to refresh anyway. Expired, malformed and future-stamped therefore all
+# fall through to the scrape and leave the record where it lies — and the record
+# that stays is the only evidence an operator has for WHY the fallback is
+# answering.
+#
+# That decision settles the verdict's shape too. The other readers split absent
+# from malformed so the malformed arm can clear; with no clear there is nothing
+# for the split to decide, so this one answers yes or no (law 5).
+CTX_FACT_TOKENS=0
+CTX_FACT_WINDOW=0
+
+ctx_fact_read() { # $1 = window id; 0 = a fact this reader believes, sets CTX_FACT_*
+  local raw word tokens window at now
+  raw="$(tmux show-options -wqv -t "$1" @gl_ctx 2>/dev/null)" || raw=""
+  CTX_FACT_TOKENS=0; CTX_FACT_WINDOW=0
+  [ -n "$raw" ] || return 1
+  # A trailing field this reader has no name for is TOLERATED, where the record's
+  # own four are not. The statusline is wired into settings.json by absolute path,
+  # so it can be a different checkout from the gang reading it — the skew vet
+  # exists to report — and a newer writer's extra field is the survivable half of
+  # that. Refusing the whole figure over it turns a skew into a blind spot.
+  read -r word tokens window at _ <<<"$raw"
+  # Every field before any of them, @gl_turn's rule, and the globals are assigned
+  # only once all four have passed. A reader that fills them as it goes leaves a
+  # half-parsed record standing behind a refusal, where the next caller to forget
+  # the verdict finds a number waiting for it.
+  [ "$word" = ctx ] || return 1
+  # Zero is refused HERE rather than downstream, because on this tier it is not
+  # the beacon-between-paints case at all: the writer prints "ctx -" and writes
+  # nothing when it has no usage to report, so a zero in this record is a value
+  # gang did not put there. The guards in the two ladder legs keep their own zero
+  # check for the tier that really can produce one.
+  [[ "$tokens" =~ ^[0-9]+$ ]] && [ "$tokens" -gt 0 ] || return 1
+  [[ "$window" =~ ^[0-9]+$ ]] && [ "$window" -gt 0 ] || return 1
+  [[ "$at" =~ ^[0-9]+$ ]] || return 1
+  require_whole GANG_CONTEXT_FACT_LIMIT "$GANG_CONTEXT_FACT_LIMIT" seconds
+  now="$(date +%s)"
+  # A future stamp is not believed and not cleared, the turn bracket's rule: a
+  # backward clock step makes a live figure read future, and the next repaint
+  # will restamp it without anyone's help.
+  [ "$at" -le "$now" ] || return 1
+  [ $(( now - at )) -lt "$GANG_CONTEXT_FACT_LIMIT" ] || return 1
+  CTX_FACT_TOKENS="$tokens"; CTX_FACT_WINDOW="$window"
+}
+
+context_now() { # $1 = window id, profile loaded; the readout, best tier first
+  # What comes out is the profile-readout data interface — "<used>k/<win>k
+  # (<pct>%)" — whichever tier answered, so ctx_measured, ctx_carried and
+  # ctx_tokens below are untouched and none of them can tell. That is what a tier
+  # is for: it picks the witness, it does not change the vocabulary.
+  #
+  # The interface is thousands and the fact is exact, so the render throws away
+  # under a thousand tokens. Nothing downstream can spend that: the ladder's rungs
+  # are set in absolute counts far coarser than a thousand, and the figure an
+  # agent is handed is printed in thousands as well.
+  if ctx_fact_read "$1"; then
+    printf '%sk/%sk (%s%%)\n' \
+      "$(( CTX_FACT_TOKENS / 1000 ))" "$(( CTX_FACT_WINDOW / 1000 ))" \
+      "$(( 100 * CTX_FACT_TOKENS / CTX_FACT_WINDOW ))"
+    return 0
+  fi
+  # The profile gate stays with the callers rather than moving in here, because
+  # each of them has a different thing to say when a profile has no context at all
+  # — a die, a dash in a column, a row that says not patrolled. This tier order is
+  # all that lives here.
+  declare -F profile_context >/dev/null || return 1
+  profile_context "$1"
+}
+# ===[ /context-fact ]========================================================
 
 # --- context bands ----------------------------------------------------------
 
@@ -3308,7 +3424,7 @@ cmd_context() { # context-window usage via the profile's own introspection
   resolve "$name"
   declare -F profile_context >/dev/null \
     || die "profile '$AGENT_PROFILE' declares no context introspection"
-  profile_context "$AGENT_ID"
+  context_now "$AGENT_ID"
 }
 
 cmd_roster() {
@@ -3344,7 +3460,7 @@ roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolv
   state="$(state_now "$1" "${3:-}")"
   # context column is best-effort observation; the dedicated command dies loud
   if declare -F profile_context >/dev/null; then
-    ctx="$(profile_context "$1" 2>/dev/null)" || ctx="-"
+    ctx="$(context_now "$1" 2>/dev/null)" || ctx="-"
   fi
   ctx="${ctx%%$'\n'*}"
   # The roster is the surface a lead scans, so an abandoned paste sitting in
@@ -3478,16 +3594,19 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   fi
   declare -F profile_context >/dev/null \
     || { say "$2" "" "profile declares no context readout — not patrolled"; return; }
-  ctx="$(profile_context "$1" 2>/dev/null)" \
+  ctx="$(context_now "$1" 2>/dev/null)" \
     || { say "$2" "" "no context readout — not patrolled (beacon missing?)" "$C_BAD"; return; }
   ctx="${ctx%%$'\n'*}"
   ctx="$(ctx_measured "$ctx")"
   tw="$(ctx_tokens "$ctx")" \
     || { say "$2" "$ctx" "unparseable readout — not patrolled" "$C_BAD"; return; }
   read -r tokens window <<<"$tw"
-  # Zero is not a reading of zero. Every live agent carries a system prompt of
-  # thousands of tokens, so a zero used-figure is the beacon caught between
-  # paints — and the ladder below would spend it as EVIDENCE THAT USAGE DROPPED.
+  # Zero is not a reading of zero, and it is the FALLBACK TIER'S way of being
+  # wrong: the owned fact refuses a zero before it is believed at all, so a zero
+  # arriving here has come off the pane by construction. Every live agent carries
+  # a system prompt of thousands of tokens, so a zero used-figure is the beacon
+  # caught between paints — and the ladder below would spend it as EVIDENCE THAT
+  # USAGE DROPPED.
   # An agent sitting at the top rung has its band memory re-armed to the bottom,
   # and its next real warning arrives as the gentle first-rung note, at the point
   # where it least applies. Four rows of `0k/1000k re-armed (usage dropped)` in
@@ -3969,14 +4088,15 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   load_profile "$prof"
   declare -F profile_context >/dev/null \
     || exit 0
-  ctx="$(profile_context "$TMUX_PANE" 2>/dev/null)" \
+  ctx="$(context_now "$TMUX_PANE" 2>/dev/null)" \
     || exit 0
   ctx="${ctx%%$'\n'*}"
   tw="$(ctx_tokens "$ctx")" \
     || exit 0
   read -r tokens window <<<"$tw"
-  # Zero is the beacon between paints, not a reading — see the same guard in
-  # patrol_one. This leg shares patrol's band memory, so believing it here would
+  # Zero is the beacon between paints, not a reading, and so it is a guard on the
+  # fallback path only — see the same guard, and the same reason, in patrol_one.
+  # This leg shares patrol's band memory, so believing it here would
   # re-arm the agent's ladder to the bottom just as surely, and silently: this
   # command's stdout is the hook's JSON reply, so it has nowhere to say so.
   [ "$tokens" -gt 0 ] || exit 0
@@ -4753,6 +4873,12 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
     return 1
   fi
 
+  # THE SCRAPE, DELIBERATELY, AND NOT context_now. Every other reader wants the
+  # best answer available; this one is asking whether the beacon is on the screen,
+  # which is the question the whole probe exists to answer. Reaching for the owned
+  # fact here would let a wired statusline vouch for a readout gang can no longer
+  # find in the pane — a probe that passes on the strength of the tier that made
+  # the scrape less load-bearing, exactly where the scrape is the subject.
   if declare -F profile_context >/dev/null; then
     if out="$(profile_context "$id" 2>&1)" && [ -n "$out" ]; then
       ctx="$out"

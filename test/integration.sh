@@ -3466,6 +3466,137 @@ check "and leaves the shared memory at the band both legs read from" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^5$')"
 "$GANG" drop bandrot >/dev/null 2>&1 || true
 
+
+# --- the context fact, the tier above the beacon -------------------------------
+#
+# The beacon is a round trip: gangline's own statusline computes a figure, paints
+# it into the pane, and gang captures the pane to read it back. The owned tier
+# takes the screen out of the middle — the same script writes @gl_ctx as it
+# paints — so the checks below have to prove BOTH halves and prove they are not
+# the same half twice. The pane is painted with one figure and the fact carries
+# another, throughout: a check that passed on the beacon would be reading the tier
+# this arc exists to sit above.
+"$GANG" hitch ctxfact -p bash -d /tmp >/dev/null
+paint ctxfact 'ctx 130k/200k 65%'
+cfpane="$(tmux list-panes -t "$(id_of ctxfact)" -F '#{pane_id}')"
+cfrec() { tmux show-options -wqv -t "$(id_of ctxfact)" @gl_ctx; }
+cfclear() { tmux set-option -uw -t "$(id_of ctxfact)" @gl_ctx; }
+cfset() { tmux set-option -w -t "$(id_of ctxfact)" @gl_ctx "$1"; }
+slpay() { # $1 = input tokens, $2 = cache-read tokens, $3 = window
+  printf '{"context_window":{"current_usage":{"input_tokens":%s,"cache_read_input_tokens":%s},"context_window_size":%s}}' \
+    "$1" "$2" "$3"
+}
+slfire() { printf '%s' "$1" | TMUX_PANE="$cfpane" "$CCBEACON"; }
+
+# THE WRITER, driven as the harness drives it. $CCBEACON is the same path vet
+# checks settings.json points at, so the file that must be wired is the file that
+# writes.
+cfclear
+# 500 + 167000 prompt-side, and the whole of stdout: a second line here would be
+# a fact printed onto the human's statusline, so this is the silence check too.
+check "the statusline still paints the beacon, and paints nothing else" "ctx 167k/200k 83%" \
+  "$(slfire "$(slpay 500 167000 200000)")"
+# Exact counts, not the beacon's thousands — the fact never went through a screen,
+# so nothing had to be rounded to fit one. Four fields and no fifth.
+check "and writes the figure behind it, exact rather than rounded to the beacon" "yes" \
+  "$(holds "$(cfrec)" '^ctx 167500 200000 [0-9]+$')"
+# The round trip closed: the pane says 130k, the fact says 167k, and the reader
+# takes the fact. Nothing below this line could pass off the beacon.
+check "and gang reads the fact rather than the beacon it is painted beside" "167k/200k (83%)" \
+  "$("$GANG" context ctxfact)"
+
+# PAINT-ONLY DEGRADATION. A statusline that dies blinds the human as well as the
+# machine, so every way the write can fail is a silent paint.
+cfclear
+check "outside a pane the beacon is still painted" "ctx 167k/200k 83%" \
+  "$(printf '%s' "$(slpay 500 167000 200000)" | env -u TMUX_PANE "$CCBEACON")"
+check "and nothing is written, because there was nowhere to write it" "" "$(cfrec)"
+out="$(printf '%s' "$(slpay 500 167000 200000)" | TMUX_PANE='%999999' "$CCBEACON")"; rc=$?
+check "a pane tmux cannot resolve costs the write and not the paint" "ctx 167k/200k 83%" "$out"
+check "and does not fail the statusline it was riding on" "0" "$rc"
+# Having nothing to report and writing nothing are one path rather than two, so
+# the record cannot be left standing at a figure the beacon has already dropped.
+check "a payload with no usage in it yet paints the empty beacon" "ctx -" "$(slfire '{}')"
+check "and writes no fact to sit at a figure that no longer holds" "" "$(cfrec)"
+check "a payload whose prompt side is still zero paints the zero" "ctx 0k/200k 0%" \
+  "$(slfire "$(slpay 0 0 200000)")"
+check "and writes no fact either, so the zero guard stays the scrape's problem" "" \
+  "$(cfrec)"
+
+# THE READER. The bound pinned from both sides, and the tiers disagreeing across
+# it: 167k while the fact is fresh, 130k off the pane once it is spent.
+cfset "ctx 167500 200000 $(ago 30)"
+check "a fact inside the bound answers, ahead of the beacon" "167k/200k (83%)" \
+  "$("$GANG" context ctxfact)"
+cfset "ctx 167500 200000 $(ago 120)"
+check "and a fact past it hands the same pane back to the scrape" "130k/200k (65%)" \
+  "$("$GANG" context ctxfact)"
+check "which leaves the spent record standing, as the evidence for why" \
+  "ctx 167500 200000 $(ago 120)" "$(cfrec)"
+
+# Every way a record can be one gang will not believe, and the same answer to all
+# of them: fall through, write nothing. The reader of this bracket never writes,
+# because the writer rewrites this record on every repaint — a clear is either
+# overwritten moments later or it throws away a figure that was about to be
+# refreshed. Both halves are asserted for each, so a fall-through that quietly
+# cleared would still go red.
+cfnow="$(date +%s)"
+cfbad=(
+  "ctx 44000 200000"                     # no stamp at all
+  "ctx banana 200000 $(ago 5)"           # a token count that is not one
+  "ctx 44000 window $(ago 5)"            # a window that is not one
+  "ctx 44000 200000 lately"              # a stamp that is not one
+  "open 44000 200000 $(ago 5)"           # another bracket's state word
+  "44000 200000 $(ago 5)"                # no state word to refuse a foreign value by
+  "ctx 0 200000 $(ago 5)"                # zero tokens: not a reading of zero
+  "ctx 44000 0 $(ago 5)"                 # zero window: a denominator nobody can divide by
+  "ctx 44000 200000 $(( cfnow + 600 ))"  # stamped in a future no clock reached yet
+)
+for cfrow in "${cfbad[@]}"; do
+  cfset "$cfrow"
+  check "a record gang will not believe falls through to the beacon: $cfrow" \
+    "130k/200k (65%)" "$("$GANG" context ctxfact)"
+  check "and is left exactly where it lies: $cfrow" "$cfrow" "$(cfrec)"
+done
+# Forward, though, not backward: the statusline is wired by absolute path into
+# settings.json, so it can be a DIFFERENT checkout from the gang reading it — the
+# skew vet exists to catch. A field this reader has no name for is a newer writer
+# talking, and dropping the whole figure over it would turn a survivable skew into
+# a blind one.
+cfset "ctx 167500 200000 $(ago 5) something-later"
+check "a field a newer writer added does not cost the fields this one knows" \
+  "167k/200k (83%)" "$("$GANG" context ctxfact)"
+
+# THE LADDER DECIDES ON THE FACT, which is the half that matters: a tier that only
+# changed what an operator reads would have left every decision on the scrape.
+# Same pane, same beacon, opposite rungs — 167k is the fourth of this window's
+# five, 130k is the first.
+cfset "ctx 167500 200000 $(ago 30)"
+tmux set-option -w -t "$(id_of ctxfact)" @gl_band 0
+check "patrol crosses the band the fact puts the agent at" \
+  "NUDGED (crossed the 166000-token band)" "$("$GANG" patrol | verdict ctxfact)"
+paint ctxfact 'ctx 130k/200k 65%'
+cfset "ctx 167500 200000 $(ago 120)"
+tmux set-option -w -t "$(id_of ctxfact)" @gl_band 0
+check "and crosses the beacon's once the fact is spent" \
+  "NUDGED (crossed the 120000-token band)" "$("$GANG" patrol | verdict ctxfact)"
+paint ctxfact 'ctx 130k/200k 65%'
+cfset "ctx 167500 200000 $(ago 30)"
+check "the roster column reports the tier that answered, not the one on screen" "yes" \
+  "$(holds "$("$GANG" roster)" 'ctxfact.*167k/200k')"
+
+# TWO PLACES NAME THE SCRAPE BY HAND, and both are load-bearing. One is the tier
+# order's own fallback. The other is the setup probe, where the beacon being on
+# the screen IS the question — reaching for the fact there would let a wired
+# statusline vouch for a readout gang can no longer find, which is the fault the
+# probe exists to report.
+check "only the tier order and the probe reach for the scrape by name" "2" \
+  "$(grep -c 'profile_context "' "$GANG")"
+check "and the probe is the one that does, where the scrape is the subject" "yes" \
+  "$(holds "$(grep 'profile_context "' "$GANG")" 'profile_context "\$id"')"
+"$GANG" drop ctxfact >/dev/null 2>&1 || true
+
+
 # --- what a sweep leaves behind ------------------------------------------------
 #
 # gang writes this log itself. What it replaces was a shell pipeline pasted into a
