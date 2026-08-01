@@ -1,6 +1,6 @@
 # ADR-0008: Evidence is tiered per predicate
 
-- **Status:** Proposed — acceptance is the operator's word
+- **Status:** Accepted
 - **Date:** 2026-08-01
 
 ## Context

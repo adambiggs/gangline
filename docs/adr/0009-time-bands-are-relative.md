@@ -1,6 +1,6 @@
 # ADR-0009: Time bands are relative to a declared deadline
 
-- **Status:** Proposed — acceptance is the operator's word
+- **Status:** Accepted
 - **Date:** 2026-08-01
 
 ## Context
