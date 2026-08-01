@@ -2,6 +2,13 @@
 
 - **Status:** Accepted
 - **Date:** 2026-08-01
+- **Erratum (2026-08-01):** the Context observation that compaction paints
+  nothing (637 samples, zero hits) was refuted for manual `/compact` on
+  claude-code 2.1.220, which paints "Compacting conversation" over a bar the
+  busy regex matches; auto-compaction remains unobserved (gh #57). Current
+  account: profiles/claude-code.sh, landed with the compaction bracket
+  (3698e20). The decision is unaffected — the event tier exists for what the
+  pane cannot witness, and the unobserved auto case is exactly that.
 
 ## Context
 
