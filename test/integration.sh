@@ -4129,7 +4129,14 @@ paint cbover 'ctx 900k/1000k 90%'
 "$GANG" compact cbover --from tester >/dev/null 2>&1
 check "the overlap fixture carries a real mark to be outranked" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of cbover)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
-fact_set cbover @gl_compact_bracket "open $(ago 5) manual"
+# NEAR THE BOUND FROM BELOW, which is the half of the pin the twin below cannot
+# carry. That twin back-dates past the bound and so pins it at 400 or less; a
+# fresh stamp seconds old would pin it only at more-than-a-few, and between those
+# two a silent drift from 300 down to 100 passes every check in this section.
+# Downward is the corrupting direction by this bound's own argument — it drops a
+# genuinely compacting pane to a tier that reads it idle and patrol injects into
+# the compaction — so the shipped value is pinned from the side that costs.
+fact_set cbover @gl_compact_bracket "open $(ago 250) manual"
 check "the event tier answers over the mark rather than beside it" \
   "past the 350000-token band — harness compaction in flight (manual), holding nudge" \
   "$("$GANG" patrol | verdict cbover)"
