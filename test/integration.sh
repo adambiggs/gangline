@@ -1468,7 +1468,7 @@ check "and positively names the state it carried" "expired (pty activity bound r
 out="$(GANG_ACTIVITY_LIMIT=0 send_text quietly tester MARK_EXPIRED 2>&1)"; rc=$?
 check "a send refuses when activity expiry leaves its landing boundary unknown" "1" "$rc"
 check "and names the exhausted evidence rather than claiming busy" "yes" \
-  "$(contains "$out" "activity-only bound")"
+  "$(contains "$out" "pty activity bound reached")"
 out="$(GANG_ACTIVITY_LIMIT=0 "$GANG" compact quietly --from tester 2>&1)"; rc=$?
 check "peer compaction also refuses the unknown live-turn boundary" "1" "$rc"
 check "and says which fact it could not determine" "yes" \
@@ -1561,6 +1561,149 @@ check "the independent-marker fixture really painted its proof" "yes" \
 check "and a painted marker still proves busy after activity has expired" \
   "busy (tight tug)" "$(GANG_ACTIVITY_LIMIT=0 "$GANG" status quietly | head -1)"
 "$GANG" drop quietly >/dev/null 2>&1; "$GANG" drop loudly >/dev/null 2>&1
+unset GANG_PROFILES
+
+# --- the turn bracket, the tier above every scrape below it --------------------
+#
+# ADR-0008: per predicate, evidence is tiered — owned event > owned file > pane
+# scrape — and the reader takes the highest tier that is still FRESH. For
+# busy/idle on claude-code the top tier is the harness's own account of its turn:
+# UserPromptSubmit opens a bracket, Stop closes it, PostToolUse refreshes the open
+# one, and `gang hook` is the single verb all three fire.
+#
+# The fixture gives the bracket a pane where nothing else can answer. Its declared
+# busy marker is absent from the screen, it does not declare quiet-at-rest, and it
+# holds still — so paint, pty and churn all read "not busy" and every busy verdict
+# below is the bracket's alone. The marker is DECLARED so the disagreement case at
+# the end of the section can paint it and prove the tiers are ordered rather than
+# merely both consulted.
+cat > "$SHIM/custom-profiles/bracketed.sh" <<'SH'
+GANG_LAUNCH="bash --norc"
+GANG_BUSY_REGEX="FORCE_BUSY"
+GANG_COMPACT_CMD="#compact"
+GANG_VERIFIED_VERSIONS="any"
+profile_input() { printf ''; }
+SH
+export GANG_PROFILES="$SHIM/custom-profiles"
+"$GANG" hitch bracket -p bracketed -d /tmp >/dev/null
+sleep 0.5
+bpane="$(tmux list-panes -t "$(id_of bracket)" -F '#{pane_id}')"
+bwin="$(target_of bracket)"
+TLOG="$SHIM/turn.log"
+: > "$TLOG"
+fire() { # $1 = the native event name; the harness's own voice, through the one verb
+  # stdout is redirected because patrol_log will not write down a run somebody is
+  # watching, and this suite is run both ways. A tty here would suppress exactly
+  # the rows the transition checks below are about.
+  printf '{"hook_event_name":"%s","session_id":"s","cwd":"/tmp"}' "$1" \
+    | GANG_PATROL_LOG="$TLOG" TMUX_PANE="$bpane" "$GANG" hook >/dev/null
+}
+rows() { grep -c "$1" "$TLOG" 2>/dev/null || true; }
+
+check "a still pane with no bracket yet falls through to the tiers below" "idle (slack tug)" \
+  "$("$GANG" status bracket | head -1)"
+fire UserPromptSubmit
+check "an open bracket witnesses busy with nothing painted on the pane at all" \
+  "busy (tight tug)" "$("$GANG" status bracket | head -1)"
+# The check above is the one that could pass for the wrong reason, so the fixture
+# is asserted rather than assumed: if the marker were on screen, paint would have
+# answered and the bracket would have proved nothing.
+check "and the pane really is bare, so it was the bracket that answered" "no" \
+  "$(has bracket FORCE_BUSY)"
+check "and the batched roster column reads the same tier" "busy" \
+  "$("$GANG" roster | awk '$1=="bracket"{print $3}')"
+fire Stop
+check "and Stop closes the bracket back to idle" "idle (slack tug)" \
+  "$("$GANG" status bracket | head -1)"
+
+# The paper trail is a log, not a store: transitions are rows, heartbeats are not.
+# PostToolUse fires once per tool call, so a row apiece would bury the two rows a
+# postmortem actually reads.
+: > "$TLOG"
+fire UserPromptSubmit
+check "opening the bracket leaves a row behind" "1" "$(rows 'bracket open')"
+fire PostToolUse
+fire PostToolUse
+check "and two heartbeats on an open bracket leave none" "1" "$(rows 'bracket open')"
+fire Stop
+check "and closing it writes its own transition" "1" "$(rows 'bracket closed')"
+check "and the rows are stamped, which is what a postmortem asks first" "yes" \
+  "$(holds "$(head -1 "$TLOG")" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[-+][0-9]{4} ')"
+
+# EXPIRY IS THE ONLY CLOSER FOR A DISMISSED PERMISSION DIALOG, and that is
+# measured rather than defensive. A turn whose dialog is Esc-dismissed or
+# explicitly denied ends in the pane — the composer comes back — and fires no Stop
+# at all: watched twice, ending at +12s and +15s with the event counts frozen. So
+# the bracket stays open forever and the screen is idle-SHAPED, which is precisely
+# the state where reading the shape would be the assumption this tier exists to
+# stop making. Neither believed nor inverted: the third answer, never idle.
+fire UserPromptSubmit
+check "an open bracket nobody closed is could-not-determine once its bound is spent" \
+  "expired (turn-bracket bound reached)" \
+  "$(GANG_TURN_LIMIT=0 "$GANG" status bracket | head -1)"
+check "and the roster preserves that answer rather than calling it idle" "expired" \
+  "$(GANG_TURN_LIMIT=0 "$GANG" roster | awk '$1=="bracket"{print $3}')"
+out="$(GANG_TURN_LIMIT=0 "$GANG" wait bracket 10 2>&1)"; rc=$?
+check "a wait carries bracket expiry as its distinct exit" "2" "$rc"
+# The qualifier is load-bearing, not decoration. Two different exhausted signals
+# reported under one wording is a fabricated status, and they are not fixed the
+# same way: one is a bracket nobody closed, the other is a pty that went quiet.
+check "and names the bracket rather than the pty bound it is not" \
+  "expired (turn-bracket bound reached)" "$out"
+out="$(GANG_TURN_LIMIT=0 "$GANG" compact bracket --from tester 2>&1)"; rc=$?
+check "peer compaction refuses a live-turn boundary it cannot resolve" "1" "$rc"
+check "and says which evidence left it unresolved" "yes" \
+  "$(contains "$out" "turn-bracket bound reached")"
+
+# A value gang wrote and gang cannot read back. @gl_band's precedent says rebuild
+# rather than refuse, and there is nothing here to rebuild — whether a turn is
+# open is exactly what was lost — so the mark is discarded the way an unreadable
+# @gl_waiting is, and the READ answers could-not-determine. What it must never do
+# is spend an unparseable fact as "no turn open", which is the one answer that
+# lets a send land in a live turn.
+tmux set-option -w -t "$bwin" @gl_turn 'not-a-bracket'
+out="$("$GANG" status bracket 2>&1)"; rc=$?
+check "an unreadable bracket does not refuse the state" "0" "$rc"
+check "and is could-not-determine, not an idle it never witnessed" "yes" \
+  "$(contains "$out" "expired (turn-bracket value unreadable)")"
+check "and the unreadable value is discarded so the next event heals it" "" \
+  "$(tmux show-options -wqv -t "$bwin" @gl_turn)"
+# A clock that moved is the same fact in a different disguise: no usable epoch.
+tmux set-option -w -t "$bwin" @gl_turn "open $(( $(date +%s) + 9999 ))"
+check "a bracket stamped in the future is unreadable too, not fresh" "yes" \
+  "$(contains "$("$GANG" status bracket 2>&1)" "expired (turn-bracket value unreadable)")"
+
+# TIERS PICK WITNESSES; THEY DO NOT VOTE. With the bracket closed and fresh AND
+# the busy marker on screen, the two tiers disagree — and the answer is the higher
+# tier's, not a blend and not the more alarming of the two. An event saying idle
+# under a pane still painting a spinner means the scrape regex has almost
+# certainly rotted, which is a finding about gang rather than about the agent, so
+# it is written down where vet can grow a surface onto it.
+: > "$TLOG"
+paint bracket FORCE_BUSY
+fire Stop
+check "the marker really is painted, so the two tiers genuinely disagree" "yes" \
+  "$(has bracket FORCE_BUSY)"
+check "a fresh bracket outranks the paint instead of averaging with it" "idle (slack tug)" \
+  "$(GANG_PATROL_LOG="$TLOG" "$GANG" status bracket | head -1)"
+check "and the disagreement is recorded as a finding" "yes" \
+  "$(holds "$(cat "$TLOG" 2>/dev/null)" 'TIER DISAGREEMENT')"
+# The other direction is not a finding and must not be logged as one. Only the
+# closed-bracket-over-painted-marker case says anything about gang; an OPEN
+# bracket with the marker up is two tiers AGREEING, and an open bracket over a
+# bare pane is the ordinary case on this harness, where 8.6% of demonstrably-
+# changing frames carry any marker at all. The marker is deliberately left
+# painted from the block above rather than cleared with a keystroke: a cleared
+# pane would make this pass whether or not the direction is checked, since an
+# open bracket never reaches the comparison at all.
+: > "$TLOG"
+fire UserPromptSubmit
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "the marker is still up, so the untested direction is genuinely exercised" "yes" \
+  "$(has bracket FORCE_BUSY)"
+check "and an open bracket raises no finding against a pane that agrees with it" "0" \
+  "$(rows 'TIER DISAGREEMENT')"
+"$GANG" drop bracket >/dev/null 2>&1
 unset GANG_PROFILES
 
 # --- diagnostics that do not assert a cause gang never checked -----------------
@@ -2549,9 +2692,9 @@ check "a second sweep holds its peace" "steady (band 1)" \
 # The in-turn leg shares that band memory, so it must not re-warn what patrol
 # already warned about — one note per band, not one per leg.
 p="$(tmux list-panes -t "$(id_of ctxagent)" -F '#{pane_id}')"
-hook() { # ctxagent's pane is the subject, at the event a turn ends on
-  printf '{"hook_event_name":"PostToolUse"}' \
-    | TMUX_PANE="$p" "$GANG" context-hook
+hook() { # ctxagent's pane is the subject; $1 = the event, default the mid-turn one
+  printf '{"hook_event_name":"%s"}' "${1:-PostToolUse}" \
+    | TMUX_PANE="$p" "$GANG" hook
 }
 check "the hook is quiet on a band patrol already warned about" "" "$(hook)"
 tmux set-option -w -t "$p" @gl_band 0
@@ -2596,6 +2739,24 @@ check "and reports rot as a cost already being paid" "yes" \
 check "and still names no band but the one crossed" "no" \
   "$(like "$note_last" "*band left*")"
 
+# SOME OF THIS HARNESS'S EVENTS ARE DECISION HOOKS, and on those, stdout is not a
+# note channel — it is the answer. The installed binary carries "Permission denied
+# by PermissionRequest hook" and "PermissionRequest hook allowed", so a context
+# nudge printed on that event approves or refuses whatever the operator was being
+# asked, silently and on their behalf. The one ingestion verb therefore speaks
+# only on the events whose reply channel is additionalContext, and writes its fact
+# in silence everywhere else.
+#
+# Armed to warn, which is what makes this a test rather than a tautology: the band
+# is reset and the pane is carrying 170k, so any speaking event here emits a note.
+tmux set-option -w -t "$p" @gl_band 0
+check "a decision event gets no reply at all, however loudly a band is due" "" \
+  "$(hook PermissionRequest)"
+check "and the band is left un-advanced for an event allowed to speak" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^0$')"
+check "while the same band on a speaking event still warns" "yes" \
+  "$(like "$(hook UserPromptSubmit)" "*additionalContext*")"
+
 # A window too small for a five-rung ladder collapses to one rung, and that rung is
 # simultaneously the first crossing and the top. It must land on the terminal
 # instruction rather than the gentlest: there is nothing above it to escalate to,
@@ -2603,7 +2764,7 @@ check "and still names no band but the one crossed" "no" \
 # behind it.
 tmux set-option -w -t "$p" @gl_band 0
 note_only="$(printf '{"hook_event_name":"UserPromptSubmit"}' \
-  | GANG_CONTEXT_BANDS=100000 TMUX_PANE="$p" "$GANG" context-hook)"
+  | GANG_CONTEXT_BANDS=100000 TMUX_PANE="$p" "$GANG" hook)"
 check "a one-rung ladder stops asking and instructs" "yes" \
   "$(like "$note_only" "*Stop and compact now*")"
 check "and says the choice of moment is gone" "yes" \
@@ -2766,7 +2927,7 @@ bandrot_pane="$(tmux list-panes -t "$(id_of bandrot)" -F '#{pane_id}')"
 tmux set-option -w -t "$(id_of bandrot)" @gl_band 'banana'
 check "the in-turn leg heals an unreadable memory without emitting a note" "" \
   "$(printf '{"hook_event_name":"PostToolUse"}' \
-     | TMUX_PANE="$bandrot_pane" "$GANG" context-hook)"
+     | TMUX_PANE="$bandrot_pane" "$GANG" hook)"
 check "and leaves the shared memory readable for both legs" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^2$')"
 
@@ -2797,7 +2958,7 @@ check "and the memory it would have re-armed is still the one the agent earned" 
   "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^5$')"
 check "the in-turn leg refuses the same readout, silently" "" \
   "$(printf '{"hook_event_name":"PostToolUse"}' \
-     | TMUX_PANE="$bandrot_pane" "$GANG" context-hook)"
+     | TMUX_PANE="$bandrot_pane" "$GANG" hook)"
 check "and leaves the shared memory at the band both legs read from" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of bandrot)" @gl_band)" '^5$')"
 "$GANG" drop bandrot >/dev/null 2>&1 || true

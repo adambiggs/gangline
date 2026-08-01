@@ -180,6 +180,24 @@ GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 # without patching gang.
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 
+# How long an OPEN turn bracket alone may witness busy. The bracket is the event
+# tier for that predicate (ADR-0008) and it is refreshed on every tool call, so
+# what this bound has to clear is the longest stretch of one turn that calls no
+# tool: thinking, then streaming an answer.
+#
+# Policy, not a measurement, and the same number as the bound above because it is
+# the same question — how long may ONE signal hold an agent busy on its own. The
+# two directions are not symmetric here either. TOO LARGE is the hazard that put
+# the bound here at all: `Stop` is silent on an Esc interrupt and on a crash, so
+# an interrupted turn leaves a bracket nobody will ever close, and without a bound
+# that agent reads busy for the life of its window. TOO SMALL costs much less than
+# it looks like it should, because expiry does not fall through to idle — it falls
+# through to the tiers below, where a live turn on a quiet-at-rest harness is still
+# positively witnessed by the pty arm. So the error direction that survives is a
+# long tool-less turn reported could-not-determine while it is in fact working,
+# which refuses a send rather than misdelivering one.
+GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
+
 # One number with two users, and they ask the same physical question: how long
 # after `/compact` is typed can that compaction still credibly be in flight.
 # compaction_pending asks it to decide when a pending mark becomes an UNPROVED
@@ -251,7 +269,9 @@ gang — drive a team of CLI agents as tmux windows
                                               self-compaction path (--from/GANG_FROM required)
   gang status <name>                          busy (tight tug) | idle (slack tug) |
                                               parked (waiting on <agent>) |
-                                              expired (pty activity bound reached) |
+                                              expired (<the evidence that ran out>:
+                                              neither busy nor idle, and never
+                                              last-known-good) |
                                               occupied (authority unknown: a UI owns
                                               the input box — a permission prompt, a
                                               picker, or anything else Gangline was not
@@ -289,8 +309,11 @@ gang — drive a team of CLI agents as tmux windows
   gang down                                   end the whole session (every agent)
   gang profiles                               list available profiles (harnesses)
   gang roles                                  list available roles (briefs)
-  gang context-hook                           harness hook mode: warn the agent in-turn when
-                                              it crosses a context band (see README)
+  gang hook                                   harness hook mode: the one verb every wired
+                                              event fires, reading its payload on stdin.
+                                              Records the turn bracket that busy() reads,
+                                              and warns the agent in-turn when it crosses a
+                                              context band (see README)
 
 Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      the lead with: lead), GANG_FROM (sender identity for send),
@@ -953,7 +976,158 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   return 2
 }
 
-busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = activity-only hold expired
+# ===[ turn-bracket ]=========================================================
+#
+# The harness's own account of whether a turn is running: the event tier for
+# busy/idle (ADR-0008). The harness fires `gang hook` at named
+# moments and the verb writes one window option: UserPromptSubmit opens the
+# bracket, Stop closes it, PostToolUse refreshes the open one. Every scrape in
+# this file sits below it, and the pane stays the only witness for everything the
+# events cannot see — boot, death, and a dialog nobody dismissed.
+#
+# Shape is @gl_compacting's, because a fact with an epoch already exists here and
+# a second convention is a second thing to get wrong: one space-separated string,
+# named fields out of `read -r`, timestamp trailing the value it stamps.
+#
+# THE EPOCH IS NOT DECORATION. `Stop` is silent on an Esc interrupt and silent on
+# a crash — verified against the vendor's own docs, ADR-0008 — so an open bracket
+# with nobody left to close it is the ordinary end of an interrupted turn, not an
+# exotic failure. The bound is the only thing that covers those two, and without
+# it the fact this file trusts most is also the one that can never be wrong.
+TURN_STATE=""
+TURN_AT=0
+turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2 = malformed
+  local raw
+  raw="$(tmux show-options -wqv -t "$1" @gl_turn 2>/dev/null)" || raw=""
+  TURN_STATE=""; TURN_AT=0
+  [ -n "$raw" ] || return 1
+  read -r TURN_STATE TURN_AT _ <<<"$raw"
+  # Both halves are checked before either is believed. A value carrying a state
+  # this reader does not know is not a bracket in some other shape — it is a
+  # value gang cannot interpret, and interpreting it anyway is how a fact layer
+  # starts inventing answers.
+  case "$TURN_STATE" in
+    open|closed) ;;
+    *) TURN_STATE=""; return 2 ;;
+  esac
+  [[ "$TURN_AT" =~ ^[0-9]+$ ]] || { TURN_STATE=""; return 2; }
+}
+
+turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
+  # Never fatal, and that is the ADR's answer rather than a lapse from law 8. A
+  # translator that can fail its harness's own turn is the self-management loop
+  # law 7 forbids wearing a new coat, so a hook writes its fact and steps aside.
+  # A fact that cannot be written simply does not arrive, the reader falls to the
+  # tier below, and the loudness lives one level up: an expected fact that stops
+  # arriving surfaces as expiry, which is a state an operator can see.
+  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
+}
+
+turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
+
+agent_name_of() { # $1 = window id; the name a log row is filed under
+  tmux display-message -p -t "$1" '#W' 2>/dev/null || printf 'COULD-NOT-DETERMINE'
+}
+
+turn_mark() { # $1 = window id, $2 = open|closed; write the fact, log the transitions
+  local prev=""
+  turn_state_read "$1" && prev="$TURN_STATE"
+  turn_state_write "$1" "$2"
+  # Transitions log and heartbeats do not (ADR-0008). PostToolUse fires once per
+  # tool call, so a row apiece would bury the two rows a postmortem actually
+  # reads under a transcript gang already refuses to keep a second copy of.
+  #
+  # The test is the STATE, not the event that carried it: an open following an
+  # open is a heartbeat whatever fired it, and an open following a close, an
+  # expiry, or a value this reader could not parse is a transition worth a row.
+  [ "$prev" != "$2" ] || return 0
+  patrol_log "$(agent_name_of "$1")" turn-bracket "bracket $2"
+}
+
+turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no event tier
+  local rc=0 now
+  turn_state_read "$1" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 3 ;;
+    2) # gang wrote this value and gang cannot read it back. @gl_band's precedent
+       # is rebuild rather than refuse, and there is nothing here to rebuild —
+       # whether a turn is open is exactly what was lost — so the mark is
+       # discarded the way an unreadable @gl_waiting is, leaving the next event
+       # to heal it. What this read must NOT do is spend an unparseable fact as
+       # "no turn open": that inverts a fact it could not read into the one
+       # answer that lets a send land in a live turn.
+       turn_state_clear "$1"
+       BUSY_EXPIRED_WHAT="turn-bracket value unreadable"
+       return 2 ;;
+    *) die "internal: turn_state_read returned unknown verdict $rc" ;;
+  esac
+  # A closed bracket does not expire, and the asymmetry is the point rather than
+  # an oversight. An OPEN bracket claims a turn is running, and turns end, so the
+  # claim decays with nothing to renew it. A CLOSED bracket claims no turn is
+  # open, and on this harness only an event can open one — so age adds no doubt
+  # to it, and bounding it would report every genuinely idle agent as
+  # could-not-determine within minutes, which is the tool not working.
+  #
+  # The residual is named rather than argued away: if the hooks stop firing
+  # altogether while the bracket reads closed, this witnesses idle over a working
+  # agent and no expiry can catch it, because the fact that would have expired is
+  # the one that never arrived. What catches it is the disagreement check below —
+  # the pane painting a busy marker under a closed bracket — and that is a
+  # partial cover on this harness by measurement (8.6% of changing frames carry
+  # any marker), not a complete one.
+  [ "$TURN_STATE" = open ] || return 1
+  require_whole GANG_TURN_LIMIT "$GANG_TURN_LIMIT" seconds
+  now="$(date +%s)"
+  # A stamp from the future is the same fact as one that will not parse: no
+  # usable epoch, so no freshness left to test.
+  [ "$TURN_AT" -le "$now" ] || { BUSY_EXPIRED_WHAT="turn-bracket value unreadable"; return 2; }
+  # WHAT THIS BOUND IS ACTUALLY CLOSING, measured rather than imagined: a turn
+  # whose permission dialog is Esc-dismissed or explicitly denied ends in the pane
+  # — the composer comes back — and fires NO Stop. Watched twice, ending at +12s
+  # and +15s with the event counts frozen. So a dismissed dialog leaves a bracket
+  # that nothing will ever close, and expiry is its only closer. That is why the
+  # answer here is could-not-determine and not idle: the pane is idle-SHAPED in
+  # exactly this case, and reading the shape would be the assumption this whole
+  # tier exists to stop making.
+  #
+  # THE SEAM THE OCCUPIED ARC FILLS. While a dialog is up nothing heartbeats at
+  # all — one permission event, then 90 seconds of measured silence — so a
+  # legitimately paused turn outlives any bound this can safely carry. The fix is
+  # not a longer bound, it is a second fact: a fresh occupied raise EXPLAINS a
+  # stale bracket instead of letting it expire into noise. That fact has no writer
+  # and no reader yet, so it is not consulted here (law 5); this is where it goes.
+  [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] \
+    || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; return 2; }
+  return 0
+}
+
+turn_vets_paint() { # $1 = window id; the event tier vetting the scrape tier, for free
+  # Tiers pick witnesses; they do not vote (ADR-0008). So when the bracket says
+  # closed and the pane paints a busy marker, this does not average them and does
+  # not switch verdicts — the higher tier still wins, and the disagreement is
+  # recorded as a FINDING. An event saying idle under a pane still painting a
+  # spinner means the scrape regex has almost certainly rotted, which is a thing
+  # about gang rather than about the agent.
+  #
+  # Written down on every read it is detected on, not once per episode. A standing
+  # disagreement therefore writes a row per sweep, which is the loud direction and
+  # the rotated log bounds what it costs; the alternative is a second window
+  # option nothing reads until vet grows the surface, and a fact nobody reads the
+  # day it merges does not merge (law 5).
+  busy_painted "$1" || return 0
+  patrol_log "$(agent_name_of "$1")" turn-bracket \
+    "TIER DISAGREEMENT: bracket closed but the busy marker is painted — scrape regex suspect"
+}
+
+# Which evidence ran out, so the third answer can name itself. busy() sets this
+# whenever it returns 2 and every phrase an operator reads is built from it: two
+# different exhausted signals reported under one wording is a fabricated status
+# (law 8), and the two are not fixed the same way.
+BUSY_EXPIRED_WHAT="pty activity bound reached"
+# ===[ /turn-bracket ]========================================================
+
+busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # The transport question — "will a send land at a sane boundary?" — which is
   # the same as the pane question everywhere except one case.
   #
@@ -968,6 +1142,29 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = activity-only hold expire
     activity_hold_clear "$1"
     return 1
   fi
+  # The highest tier that is still fresh answers, and nothing below it is
+  # consulted (ADR-0008): a fresh bracket beats paint, and paint beats pty. No
+  # blending and no scoring — a witness is chosen, and the ones underneath it are
+  # evidence about GANG when they disagree, not evidence about the agent.
+  #
+  # Expiry is the one case that does not short-circuit, and it behaves exactly as
+  # the pty arm's expiry already does below: an exhausted fact loses its power to
+  # SAY busy without gaining the power to say idle. Positive evidence from a lower
+  # tier still wins on its own merits; what the expired fact forbids is concluding
+  # idle from silence, which would be reading it as last-known-good inverted.
+  local turn_rc=0 undetermined=0
+  # Reset per call: a roster asks this of every agent in one process, and a
+  # reason left over from the previous one would name the wrong exhausted signal
+  # on the next.
+  BUSY_EXPIRED_WHAT="pty activity bound reached"
+  turn_witness "$1" || turn_rc=$?
+  case "$turn_rc" in
+    0) activity_hold_clear "$1"; return 0 ;;
+    1) turn_vets_paint "$1"; activity_hold_clear "$1"; return 1 ;;
+    2) undetermined=1 ;;
+    3) ;;
+    *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
+  esac
   if busy_painted "$1"; then
     activity_hold_clear "$1"
     return 0
@@ -987,7 +1184,8 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = activity-only hold expire
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
     0) return 0 ;;
-    1|2) ;;
+    1) ;;
+    2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
   # A missing marker is not a missing turn, and there is nothing to widen a
@@ -1014,10 +1212,10 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = activity-only hold expire
   # roster pays one sleep rather than one per agent. Absent, this asks for itself.
   case "${2:-}" in
     churning) activity_hold_clear "$1"; return 0 ;;
-    still)    [ "$activity_rc" -eq 2 ] && return 2; return 1 ;;
+    still)    [ "$undetermined" -eq 1 ] && return 2; return 1 ;;
   esac
   if pane_stable "$1"; then
-    [ "$activity_rc" -eq 2 ] && return 2
+    [ "$undetermined" -eq 1 ] && return 2
     return 1
   fi
   activity_hold_clear "$1"
@@ -1483,9 +1681,11 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
            unpark
            return 0
          fi ;;
-      2) # The pty arm has spent its whole allowance. Waiting longer would turn
-         # a five-minute policy into the permanent fabricated busy it bounds.
-         WAIT_STATE="expired (pty activity bound reached)"
+      2) # An arm has spent its whole allowance — which one is in the phrase,
+         # because a bracket nobody closed and a pty signal that ran out are not
+         # the same fault and are not fixed the same way. Waiting longer would
+         # turn a bounded policy into the permanent fabricated busy it bounds.
+         WAIT_STATE="expired ($BUSY_EXPIRED_WHAT)"
          unpark
          return 0 ;;
       *) die "internal: busy returned unknown verdict $busy_rc" ;;
@@ -2550,7 +2750,11 @@ cmd_send() {
   case "$busy_rc" in
     0) if [ "$wait" -eq 1 ]; then
          wait_idle "$AGENT_ID" "$name" "$timeout"
-         [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || activity_expired=1
+         # Matched on the STATE WORD, never on the whole phrase. The qualifier in
+         # brackets names which evidence ran out and there is more than one, so a
+         # reader testing the full string reads a bracket expiry as "not expired"
+         # and delivers into a turn gang could not resolve.
+         case "$WAIT_STATE" in expired*) activity_expired=1 ;; esac
        elif [ "${GANG_MIDTURN_INPUT:-}" = 1 ]; then
          midturn=1
        else
@@ -2563,7 +2767,7 @@ cmd_send() {
        fi ;;
     2) if [ "$wait" -eq 1 ]; then
          wait_idle "$AGENT_ID" "$name" "$timeout"
-         [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || activity_expired=1
+         case "$WAIT_STATE" in expired*) activity_expired=1 ;; esac
        else
          activity_expired=1
        fi ;;
@@ -2575,7 +2779,7 @@ cmd_send() {
     # paste would land in the harness or in a live tool, so the third verdict is
     # a refusal rather than a false idle.
     [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-      || die "'$name' has exceeded the pty activity-only bound, so gang cannot determine busy/idle; profile '$AGENT_PROFILE' declares no safe mid-turn input"
+      || die "'$name' is in a state gang cannot resolve ($BUSY_EXPIRED_WHAT), so gang cannot determine busy/idle; profile '$AGENT_PROFILE' declares no safe mid-turn input"
     midturn=1
   fi
   envelope "$from" "$body"
@@ -2586,7 +2790,7 @@ cmd_send() {
   # is a delivery and not an attempt.
   blocked_forget "$AGENT_ID"
   if [ "$activity_expired" -eq 1 ]; then
-    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; pty activity bound expired, accepted as potentially mid-turn)")"
+    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; $BUSY_EXPIRED_WHAT, accepted as potentially mid-turn)")"
   elif [ "$midturn" -eq 1 ]; then
     # "accepted", not "queued": the box shows a queued-message hint either way,
     # but what the harness does next is its own call — Claude Code hands queued
@@ -2633,7 +2837,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     case "$busy_rc" in
       0) die "'$name' is mid-turn; compacting now would cut a live turn (gang wait $name first)" ;;
       1) ;;
-      2) die "'$name' has exceeded the pty activity-only bound, so gang cannot determine whether a live turn would be cut; refusing compaction" ;;
+      2) die "'$name' is in a state gang cannot resolve ($BUSY_EXPIRED_WHAT), so gang cannot determine whether a live turn would be cut; refusing compaction" ;;
       *) die "internal: busy returned unknown verdict $busy_rc" ;;
     esac
   fi
@@ -2719,7 +2923,7 @@ state_now() { # $1 = window id, profile loaded -> the state, in words
   case "$busy_rc" in
     0) echo "busy (tight tug)" ;;
     1) echo "idle (slack tug)" ;;
-    2) echo "expired (pty activity bound reached)" ;;
+    2) echo "expired ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
 }
@@ -2866,7 +3070,7 @@ patrol_log() { # $1 = name, $2 = readout, $3 = verdict; the record a sweep leave
 }
 
 cmd_patrol() { # ambient warning leg: nudge any agent past a context band
-  # context-hook covers harnesses whose hook system can call gang in-turn;
+  # gang hook covers harnesses whose hook system can call gang in-turn;
   # patrol covers the rest (Pi's model never sees its own status bar). Both
   # read the same profile readout, run the same ladder, and share the same
   # @gl_band memory, so whichever notices a crossing first advances the band
@@ -3289,26 +3493,94 @@ EOF
   fi
 }
 
-cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the agent's pane
-  # Wire in Claude Code's hooks config as:
-  #   {"type": "command", "command": "gang context-hook"}
-  # on UserPromptSubmit and PostToolUse. Measures with the same profile readout
-  # patrol uses and shares patrol's @gl_band memory, so the two legs cannot both
-  # warn about one crossing. Emits one additionalContext note per band. Never
-  # blocks a turn: anything it cannot determine is a silent exit 0.
-  local event prof agent ctx tw tokens window band crossed thresholds prev rung now
-  local state_rc
-  # The payload is on stdin; the event name is the only field this needs, and it
-  # goes straight back out in the reply.
-  event="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
+# ===[ hook-ingestion ]=======================================================
+
+cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pane, per event
+  # ADR-0008. The harness runs the SAME command for every event it is wired for,
+  # this branches on the native event name, and the event-to-fact mapping is
+  # gangline's vocabulary rather than the settings file's — so the wiring names
+  # claude-code's events and nothing else, and what those MEAN to gang is decided
+  # here, in one place, beside the readers that consume them.
+  #
+  # The binding is $TMUX_PANE to @gl_profile to that window's own options, and it
+  # is the only one there is: TMUX_PANE is inherited by everything the harness
+  # spawns inside its pane, and no hook payload carries a pane id. No pane means
+  # this harness is not a gangline agent and has no fact to record.
+  #
+  # THIS COMMAND ALWAYS EXITS 0. A translator that can fail its harness's own turn
+  # is the self-management loop law 7 forbids wearing a new coat, so there is no
+  # decision channel here — no exit 2, no "decision":"block" — and every leg is
+  # arranged so the worst it can do is write nothing. Law 8's loudness lives one
+  # level up, where a fact that stops arriving surfaces as expiry.
+  local payload event prof
+  payload="$(cat)" || payload=""
+  event="$(printf '%s' "$payload" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
     2>/dev/null)" || exit 0
   [ -n "$event" ] || exit 0
-  # TMUX_PANE is inherited by everything the harness spawns inside its pane; no
-  # pane means this harness is not a gangline agent and has no band to track.
   [ -n "${TMUX_PANE:-}" ] || exit 0
   prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
   [ -n "$prof" ] || exit 0
-  agent="$(tmux display-message -p -t "$TMUX_PANE" '#W' 2>/dev/null)" || agent=COULD-NOT-DETERMINE
+
+  # The write path, and it is dumb on purpose: distil the payload to the fact
+  # vocabulary and store it. Nothing here weighs, compares or decides — that
+  # happens at read time, in the verdict functions, at the moment a question is
+  # actually asked. It is why nothing processes a stream and nothing needs a
+  # daemon.
+  #
+  # An event with no case is ignored in silence, and that is the wiring rule
+  # rather than a gap: only events feeding a declared predicate with a live
+  # consumer are wired (law 5), so one arriving here unmapped is either an
+  # operator's own hook sharing the command or an event whose consumer has not
+  # landed yet. Neither is gang's to act on.
+  case "$event" in
+    # Both open the bracket, and the difference between them is entirely in
+    # turn_mark: the first is a transition and gets a log row, the second lands on
+    # a bracket already open and is a heartbeat, which does not.
+    UserPromptSubmit|PostToolUse) turn_mark "$TMUX_PANE" open ;;
+    Stop)                         turn_mark "$TMUX_PANE" closed ;;
+    # NEVER ADD SubagentStop HERE. The name reads like the obvious companion to
+    # Stop and it is not: on 2.1.220 it fires after Stop on ordinary main-agent
+    # turns with no subagent involved at all, watched twice. Mapping it to
+    # anything would close brackets on the strength of a false signal.
+    #
+    # AND IF SessionStart IS EVER WIRED, IT MUST BRANCH ON ITS `source`. A second
+    # SessionStart fires at the END of a compaction carrying source:"compact",
+    # with the same session_id, in the same second as PostCompact — so a mapping
+    # that reads SessionStart as "a fresh harness booted" would treat every
+    # mid-session compaction as a new agent and clobber this window's facts. It
+    # is unwired today because no predicate consumes it (law 5), which is the
+    # only reason the trap is not already live.
+  esac
+
+  # The in-turn band warning, and the allowlist below is a SAFETY BOUNDARY rather
+  # than a tidy-up. Some of this harness's events are decision hooks — the binary
+  # carries "Permission denied by PermissionRequest hook" and "PermissionRequest
+  # hook allowed" — so on those events anything at all on stdout is an answer to
+  # a real permission dialog, and a context nudge would auto-allow or auto-deny
+  # whatever the operator was being asked. This command therefore SPEAKS ONLY on
+  # the two events whose reply channel is additionalContext, and every other
+  # event, wired today or wired later, writes its fact in silence.
+  #
+  # Run in a subshell so that a refusal inside the note — an unloadable profile,
+  # an unwritable option — ends the note and never this command: the fact above is
+  # already written, and a warning leg may not take a turn down with it.
+  case "$event" in
+    UserPromptSubmit|PostToolUse) ( hook_band_note "$event" "$prof" ) || true ;;
+  esac
+  exit 0
+}
+
+hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in a subshell
+  # Measures with the same profile readout patrol uses and shares patrol's
+  # @gl_band memory, so the two legs cannot both warn about one crossing. Emits
+  # one additionalContext note per band. Anything it cannot determine is a silent
+  # exit 0 — this leg's stdout is the hook's JSON reply, so it has nowhere to say
+  # so, and patrol's leg is the one that does the talking.
+  local event="$1" prof="$2"
+  local agent ctx tw tokens window band crossed thresholds prev rung now
+  local state_rc
+  agent="$(agent_name_of "$TMUX_PANE")"
   load_profile "$prof"
   declare -F profile_context >/dev/null \
     || exit 0
@@ -3364,6 +3636,7 @@ cmd_context_hook() { # in-turn warning leg: a harness hook calls this from the a
   fi
   exit 0
 }
+# ===[ /hook-ingestion ]======================================================
 
 # --- diagnostics ------------------------------------------------------------
 
@@ -4417,12 +4690,12 @@ case "$cmd" in
   compact)  cmd_compact "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   context)  cmd_context "$@" ;;
-  context-hook) cmd_context_hook ;;
+  hook)     cmd_hook ;;
   wait)     [ $# -ge 1 ] || usage_die
             case "${2:-300}" in ''|*[!0-9]*) die "wait: timeout takes whole seconds, got '${2:-}'" ;; esac
             resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"
             echo "$WAIT_STATE"
-            [ "$WAIT_STATE" != "expired (pty activity bound reached)" ] || exit 2 ;;
+            case "$WAIT_STATE" in expired*) exit 2 ;; esac ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   patrol)   cmd_patrol ;;
