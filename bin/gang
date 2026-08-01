@@ -240,6 +240,24 @@ GANG_COMPACT_GRACE="${GANG_COMPACT_GRACE:-300}"
 # the number is policy, not an observation.
 GANG_COMPACTION_LIMIT="${GANG_COMPACTION_LIMIT:-300}"
 
+# How long a raised occupancy stays credible, and it is the longest bound in this
+# file on purpose. The others bound a fact that something keeps refreshing; this
+# one bounds a fact NOTHING refreshes, because a harness sitting at a permission
+# dialog fires one event and then goes completely silent — no heartbeat, no
+# second event, nothing on dismissal. So this number is the whole reach of the
+# fact rather than a gap between two of them, and it has to cover a dialog an
+# operator walks away from.
+#
+# The two directions do not cost alike, which is what sets it. Overrunning holds
+# sends off a pane whose dialog is already gone: noisy, and self-healing besides,
+# since the reader clears the raise the moment it can see a composer again — the
+# common case never reaches this bound at all. Undershooting drops a pane with a
+# LIVE dialog back to a scrape that reads it idle, and every keystroke sent there
+# lands IN the dialog, where it ACTS on it: an answer to a permission question
+# nobody meant to answer. Corrupting, unrecoverable, and silent. So the bound is
+# set long and the error direction is chosen rather than balanced.
+GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
+
 # Where a non-interactive sweep records what it found. gang owns this rather than
 # leaving it to a shell pipeline in a crontab line, and the reason is a five-hour
 # outage: that pipeline filtered by an ALLOWLIST of verdict phrases, so the one
@@ -1130,12 +1148,26 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   # exactly this case, and reading the shape would be the assumption this whole
   # tier exists to stop making.
   #
-  # THE SEAM THE OCCUPIED ARC FILLS. While a dialog is up nothing heartbeats at
-  # all — one permission event, then 90 seconds of measured silence — so a
-  # legitimately paused turn outlives any bound this can safely carry. The fix is
-  # not a longer bound, it is a second fact: a fresh occupied raise EXPLAINS a
-  # stale bracket instead of letting it expire into noise. That fact has no writer
-  # and no reader yet, so it is not consulted here (law 5); this is where it goes.
+  # THE OCCUPANCY RAISE DOES NOT BELONG HERE, and working out why is worth more
+  # than the branch would have been. A turn paused at a permission dialog outlives
+  # any bound this can safely carry — nothing heartbeats while a dialog is up — so
+  # a fresh raise looks like exactly the fact that should explain a stale bracket
+  # and keep it from expiring into noise.
+  #
+  # It cannot, because occupancy strictly DOMINATES busy. occupied() consults the
+  # same raise as its own first tier and answers on it, every caller of busy() asks
+  # occupied() first and returns on that answer, and a raise the pane has retired is
+  # cleared by that call before this one could read it. So the state where this
+  # branch would fire is the state nobody reaches: the operator is told `occupied`,
+  # which is both truer and more actionable than a busy they cannot send into. A
+  # branch here would be a second reader of one fact that can never disagree with
+  # the first — dead by construction rather than by oversight (law 5).
+  #
+  # What is left uncovered is the window AFTER the dialog is answered and before
+  # the harness fires its next event, where this bracket can read expired with the
+  # raise already retired. Closing that needs a fact that outlives the dialog, and
+  # a lingering raise is precisely what would let a crashed turn borrow a dialog's
+  # alibi — so it is named here rather than reached for.
   [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] \
     || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; return 2; }
   return 0
@@ -1605,6 +1637,96 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   return 0
 }
 
+# ===[ occupied-bracket ]=====================================================
+#
+# The harness's own account of a permission dialog: the event tier for the
+# occupied predicate (ADR-0008), sitting above the two pane scrapes below it.
+# PermissionRequest raises it, `gang hook` is the one verb that writes it, and the
+# shape is the compaction bracket's — a stamped fact, every field validated before
+# any of them is believed, written by a writer that can never be fatal.
+#
+# IT ONLY EVER RAISES, and that is forced rather than chosen. Verified against the
+# vendor's own docs: PermissionRequest fires just before the dialog is presented,
+# and NOTHING fires when it goes away — Esc, an explicit No, and the harness's own
+# dismissal are all silent, and no Stop fires for it either. PermissionDenied is
+# not the missing closer despite the name: it fires only for auto-mode classifier
+# denials, which are decided with no dialog on screen at all, so wiring it would
+# raise occupancy for a prompt nobody was ever shown.
+#
+# The record still carries a state word rather than a bare epoch, because a lone
+# number is not self-describing: a foreign value landing in this option could not
+# be told from a stamp, and the read below has to be able to refuse one.
+#
+# WHAT RETIRES A RAISE IS THE PANE, and that is not the scrape outvoting the event
+# tier — tiers pick witnesses, they do not vote (ADR-0008). It is this fact
+# reaching its end and the pane being able to prove it, the same shape as the
+# compaction mark settling on an observed context drop. Expiry is the only other
+# closer, and it costs the tier rather than answering with it.
+#
+# NOTHING IS READ OUT OF THE PAYLOAD. The dialog's tool name is the obvious field
+# to keep and is deliberately dropped: no predicate consumes it (law 5), a tool
+# name is an open vocabulary where `trigger` was a closed one, and an unbounded
+# string has no business in a space-separated record.
+OCCUPY_STATE=""
+OCCUPY_AT=0
+
+occupied_raise_read() { # $1 = window id; sets OCCUPY_*; 1 = absent, 2 = malformed
+  local raw
+  raw="$(tmux show-options -wqv -t "$1" @gl_occupied 2>/dev/null)" || raw=""
+  OCCUPY_STATE=""; OCCUPY_AT=0
+  [ -n "$raw" ] || return 1
+  read -r OCCUPY_STATE OCCUPY_AT _ <<<"$raw"
+  # Both fields before either of them, @gl_turn's rule. One state word is the whole
+  # vocabulary here, so anything else is a record gang did not write.
+  [ "$OCCUPY_STATE" = open ] || { OCCUPY_STATE=""; return 2; }
+  [[ "$OCCUPY_AT" =~ ^[0-9]+$ ]] || { OCCUPY_STATE=""; OCCUPY_AT=0; return 2; }
+}
+
+occupied_raise_write() { # $1 = window id; never fatal (law 7)
+  tmux set-option -w -t "$1" @gl_occupied "open $(date +%s)" 2>/dev/null || true
+}
+
+occupied_raise_clear() { tmux set-option -uw -t "$1" @gl_occupied 2>/dev/null || true; }
+
+occupied_raise_mark() { # $1 = window id; the hook's writer
+  local prev=""
+  occupied_raise_read "$1" && prev="$OCCUPY_STATE"
+  occupied_raise_write "$1"
+  # A dialog raised while one is already up is a heartbeat and gets no row. The
+  # stamp still moves, so a dialog answered and immediately re-raised carries its
+  # own full bound instead of aging out on the first one's clock.
+  [ "$prev" != open ] || return 0
+  patrol_log "$(agent_name_of "$1")" occupied-bracket "permission dialog raised"
+}
+
+occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
+  local now rc=0
+  occupied_raise_read "$1" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 1 ;;
+    2) occupied_raise_clear "$1"; return 1 ;;
+    *) die "internal: occupied_raise_read returned unknown verdict $rc" ;;
+  esac
+  require_whole GANG_OCCUPIED_LIMIT "$GANG_OCCUPIED_LIMIT" seconds
+  now="$(date +%s)"
+  # A future stamp is not discarded, for the turn bracket's reason: a backward
+  # clock step makes a true raise read future, and clearing it would throw away a
+  # live dialog and hand the pane to scrapes that may not have a name for it.
+  [ "$OCCUPY_AT" -le "$now" ] || return 1
+  [ $(( now - OCCUPY_AT )) -lt "$GANG_OCCUPIED_LIMIT" ] || return 1
+  # THE CLEAR. A composer back on screen is the dialog gone: every dialog watched
+  # live owns the screen while it is up, which is the same structural companion the
+  # declared marker below leans on. Cleared rather than left to age out, so no
+  # later reader is still answering off a dialog somebody dismissed minutes ago.
+  if composer_live "$1"; then
+    occupied_raise_clear "$1"
+    return 1
+  fi
+  return 0
+}
+# ===[ /occupied-bracket ]====================================================
+
 occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
   # The third state, and the one that must not pass for the other two: a harness
   # whose own UI has displaced the composer is not working and not reachable —
@@ -1620,7 +1742,13 @@ occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
   # whether it clears itself, is a different question with a different answer,
   # and no caller may read one off the other (ADR-0004).
   #
-  # There are two ways in, because enumerating modal chrome will always miss one.
+  # There are three ways in, because enumerating modal chrome will always miss
+  # one — and the first of them does not read the pane for the answer at all. The
+  # harness says a dialog went up, so nothing has to be recognised for this to be
+  # true, which is exactly what the two scrapes below cannot manage: one needs a
+  # marker somebody watched live, and the other infers occupancy from failing to
+  # find a composer.
+  if occupied_witness "$1"; then return 0; fi
   local pane
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
     # The declared marker: the dialogs somebody has watched live, named in the
@@ -3762,6 +3890,18 @@ cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pan
     # Whatever else changes here, neither name may join that list.
     PreCompact)  compaction_bracket_mark "$TMUX_PANE" open   "$(hook_trigger_of "$payload")" ;;
     PostCompact) compaction_bracket_mark "$TMUX_PANE" closed "$(hook_trigger_of "$payload")" ;;
+    # The occupancy raise, and it is a raise rather than a bracket: nothing at all
+    # fires when the dialog goes away, so this arm can only ever add the fact and
+    # the pane is what retires it.
+    #
+    # SILENT, and on this event that is not a convention but the entire safety
+    # boundary. Its stdout is a DECISION channel — the vendor documents writing an
+    # allow verdict to it, and this binary carries both "Permission denied by
+    # PermissionRequest hook" and "PermissionRequest hook allowed" — so one byte
+    # printed from this arm ANSWERS the permission question the operator is being
+    # shown, in whichever direction the bytes happen to parse as. Of every event
+    # wired here this is the one that must never join the allowlist below.
+    PermissionRequest) occupied_raise_mark "$TMUX_PANE" ;;
     # NEVER ADD SubagentStop HERE. The name reads like the obvious companion to
     # Stop and it is not: on 2.1.220 it fires after Stop on ordinary main-agent
     # turns with no subagent involved at all, watched twice. Mapping it to

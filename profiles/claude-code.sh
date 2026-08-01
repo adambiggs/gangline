@@ -35,23 +35,36 @@ GANG_RESUME_LAUNCH="claude --continue"
 # working agent and a blind one, because that statusLine is the only thing
 # painting the ctx beacon profile_context reads below.
 #
-# EXACTLY FIVE EVENTS, because the wiring names only what feeds a declared
+# EXACTLY SIX EVENTS, because the wiring names only what feeds a declared
 # predicate with a live consumer (law 5). Three carry the turn bracket:
 # UserPromptSubmit opens it, PostToolUse refreshes it, Stop closes it. Two carry
 # the compaction bracket: PreCompact opens it, PostCompact closes it, and that
 # pair is what lets gang see a compaction it did not type — the harness
 # auto-compacting at its own threshold, which no mark and no scrape on this
-# harness can witness. Those are the five cmd_hook maps and there is no sixth.
+# harness can witness. The sixth raises occupancy: PermissionRequest fires as a
+# dialog takes the screen, and it has no partner because nothing whatever fires
+# when that dialog leaves. Those are the six cmd_hook maps and there is no seventh.
 #
 # Each shape is as measured, and the matchers are where a wrong one hides. A
-# matcher filters a DIFFERENT field per event — tool name on PostToolUse, trigger
-# on the compaction pair — so a matcher on either compaction event would silently
-# wire half the cases: PreCompact matched to "manual" fires for gang's own
-# /compact and never for the auto-compaction this pair exists to catch. A group
-# with no matcher matches everything, so both are wired bare. A name this harness
-# does not recognise is accepted SILENTLY and then never fires, so the list is
-# written out literally rather than built from a loop, and profile_vet reads the
-# result back.
+# matcher filters a DIFFERENT field per event, so the question has to be asked per
+# event and never answered by symmetry with the one above it. On the compaction
+# pair it filters `trigger`, so a matcher there would silently wire half the
+# cases: PreCompact matched to "manual" fires for gang's own /compact and never
+# for the auto-compaction the pair exists to catch. On PostToolUse and on
+# PermissionRequest it filters the TOOL NAME instead — same field, and on
+# PermissionRequest a matcher would answer a narrower question than the one asked,
+# since gang wants every dialog whatever tool provoked it. Different reasons,
+# same conclusion: all three of those groups are wired bare, and a group with no
+# matcher matches everything.
+#
+# A name this harness does not recognise is accepted SILENTLY and then never
+# fires, so the list is written out literally rather than built from a loop, and
+# profile_vet reads the result back.
+#
+# NEVER PermissionDenied, whatever its name suggests. It is not the close this
+# raise lacks: it fires only when the auto-mode classifier denies a call, which is
+# decided with no dialog on screen at all, so wiring it would raise occupancy for
+# a prompt nobody was ever shown.
 #
 # NEVER SubagentStop, which fires after Stop on ordinary main-agent turns, and
 # NEVER SessionStart, a second one of which fires at the end of a compaction. The
@@ -121,7 +134,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
+      _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
       unset _gl_cc_cmd _gl_cc_json
@@ -376,14 +390,14 @@ if not isinstance(h, dict):
           "gang and every claude-code agent reads its turns off the pane",
           file=sys.stderr)
     sys.exit(1)
-# Exactly the five cmd_hook maps, asserted as a SET rather than as a subset. An
+# Exactly the six cmd_hook maps, asserted as a SET rather than as a subset. An
 # extra name is as much a finding as a missing one: this harness accepts an event
 # name it does not know without a word and then never fires it, so an unmapped
 # name here is wiring that looks live and is not.
-WANT = ["PostCompact", "PostToolUse", "PreCompact", "Stop", "UserPromptSubmit"]
+WANT = ["PermissionRequest", "PostCompact", "PostToolUse", "PreCompact", "Stop", "UserPromptSubmit"]
 have = sorted(h)
 if have != WANT:
-    print("the --settings payload wires %s, not the five events cmd_hook maps (%s)"
+    print("the --settings payload wires %s, not the six events cmd_hook maps (%s)"
           % (", ".join(have) or "no events", ", ".join(WANT)), file=sys.stderr)
     sys.exit(1)
 # Exec form, asserted as command-plus-args rather than as a string. A hook with no

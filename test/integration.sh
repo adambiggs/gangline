@@ -2520,27 +2520,36 @@ check "the ordinary launch line carries a --settings payload" "yes" \
 check "and that payload is valid JSON" "yes" \
   "$(python3 -c 'import json,sys; json.loads(sys.argv[1]); print("yes")' \
        "$(ccpayload GANG_LAUNCH)" 2>/dev/null || echo no)"
-# Exactly the five cmd_hook maps, as a SET. An extra name is as much a finding as
+# Exactly the six cmd_hook maps, as a SET. An extra name is as much a finding as
 # a missing one — this is the anti-SubagentStop guard, and the reason it is a
 # check rather than a comment is that adding one costs a single line and breaks
 # nothing visible: SubagentStop fires after Stop on ordinary main-agent turns, so
 # wiring it would close brackets on a false signal. Three carry the turn bracket
 # and two carry the compaction bracket; a missing PreCompact costs the only tier
-# that can see a harness auto-compacting, silently.
-check "and it wires exactly the five events gang maps, and no sixth" \
-  "PostCompact PostToolUse PreCompact Stop UserPromptSubmit" \
+# that can see a harness auto-compacting, silently. The sixth raises occupancy,
+# and PermissionDenied is the name to keep OUT of this set: it fires only for
+# auto-mode classifier denials, decided with no dialog on screen at all, so it is
+# not the close the raise lacks and wiring it would raise occupancy for a prompt
+# nobody was shown.
+check "and it wires exactly the six events gang maps, and no seventh" \
+  "PermissionRequest PostCompact PostToolUse PreCompact Stop UserPromptSubmit" \
   "$(python3 -c 'import json,sys; print(" ".join(sorted(json.loads(sys.argv[1])["hooks"])))' \
        "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
-# The compaction pair is wired BARE, and that is a correctness check rather than a
-# tidiness one. A matcher filters a different field per event — tool name on
-# PostToolUse, trigger on these two — so `"matcher":"manual"` on PreCompact would
-# parse, validate, vet clean, and fire for gang's own /compact while never firing
-# for the auto-compaction the pair exists to catch. Half the coverage, no symptom.
-check "and wires the compaction pair with no matcher, so both triggers fire it" "" \
+# Three groups are wired BARE, and that is a correctness check rather than a
+# tidiness one. A matcher filters a DIFFERENT field per event, so the question has
+# to be asked per event and never answered by symmetry with the one above it. On
+# the compaction pair it filters `trigger`, so `"matcher":"manual"` on PreCompact
+# would parse, validate, vet clean, and fire for gang's own /compact while never
+# firing for the auto-compaction the pair exists to catch. On PermissionRequest it
+# filters the TOOL NAME instead, so a matcher there would answer a narrower
+# question than the one asked — gang wants every dialog, whatever tool provoked
+# it. Different fields, different reasons, one conclusion; and either mistake is
+# half the coverage with no symptom.
+check "and wires all three matcherless groups bare, so every case fires them" "" \
   "$(python3 -c '
 import json, sys
 h = json.loads(sys.argv[1])["hooks"]
-bad = [ev for ev in ("PreCompact", "PostCompact")
+bad = [ev for ev in ("PreCompact", "PostCompact", "PermissionRequest")
        for g in h.get(ev, []) if "matcher" in g]
 print(" ".join(bad))' "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
 # Every hook points at THIS tree's bin/gang, never a bare `gang` off PATH: the hook
@@ -4214,6 +4223,214 @@ check "a close from before the mark settles nothing and leaves it to the tiers b
 check "and the mark it could not answer for is still there" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$(id_of cbstale)" @gl_compacting)" '^[0-9]+ [0-9]+$')"
 for a in cbracket cbauto cbover cbclose cbstale; do "$GANG" drop "$a" >/dev/null 2>&1; done
+
+# --- the occupied bracket, the tier above both scrapes -------------------------
+#
+# ADR-0008 on the third predicate: owned event beats owned file beats pane scrape.
+# occupied() has had two scrapes and no event tier — one matching declared modal
+# chrome, one inferring occupancy from failing to find a composer — and both are
+# recognition problems, which is the class of problem that misses the dialog
+# nobody has watched yet. PermissionRequest is the harness saying a dialog went
+# up, so nothing has to be recognised for it to be true.
+#
+# IT ONLY EVER RAISES. Nothing whatever fires when the dialog leaves: Esc, an
+# explicit No, and the harness's own dismissal are all silent, and no Stop follows
+# either. So this is a raise rather than a bracket, and what retires it is the
+# pane or the bound — never a closing event, because there is none to wire.
+"$GANG" hitch obracket -p compactable -d /tmp >/dev/null
+opane="$(tmux list-panes -t "$(id_of obracket)" -F '#{pane_id}')"
+owin="$(target_of obracket)"
+OBLOG="$SHIM/occupied.log"
+: > "$OBLOG"
+OFIRE_OUT=""
+ofire() { # the harness's own voice, through the one verb
+  # Captured for both of cfire's reasons, and on THIS event the second one is not
+  # a convenience. Command substitution takes stdout off a tty so patrol_log
+  # writes the rows the transition checks read; and what the hook said is then
+  # assertable, which is the check this arm exists under.
+  #
+  # The payload carries a tool and its arguments because a real one does, and
+  # because what gang keeps out of the record is asserted below rather than
+  # assumed from a body that never held anything to drop.
+  OFIRE_OUT="$(printf '%s' \
+    '{"hook_event_name":"PermissionRequest","session_id":"s","cwd":"/tmp","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+    | GANG_PATROL_LOG="$OBLOG" TMUX_PANE="$opane" "$GANG" hook)"
+}
+orows() { grep -c "$1" "$OBLOG" 2>/dev/null || true; }
+ofact() { tmux show-options -wqv -t "$owin" @gl_occupied; }
+
+ofire
+check "PermissionRequest raises the occupancy, stamped" "yes" \
+  "$(holds "$(ofact)" '^open [0-9]+$')"
+# THE SAFETY BOUNDARY, and on this event it is the whole reason the arm is one
+# line long. Its stdout is a DECISION channel — the vendor documents writing an
+# allow verdict to it, and this harness carries both an allowed and a denied
+# outcome for it — so a byte printed here ANSWERS the permission question the
+# operator is being shown, in whichever direction the bytes happen to parse as.
+# The allowlist that keeps every hook silent is two names long and adding a third
+# costs one word; of everything wired, this is the name that must never join it.
+check "and says nothing at all, because anything it said would answer the dialog" \
+  "" "$OFIRE_OUT"
+# NOTHING IS READ OUT OF THE PAYLOAD. The tool name is the obvious field to keep
+# and is deliberately dropped: no predicate consumes it (law 5), it is an OPEN
+# vocabulary where the compaction bracket's trigger was a closed one, and an
+# unbounded string has no business in a space-separated record. Asserted as the
+# absence of a third field rather than as "Bash is not in there", so a record that
+# grew any field at all fails here.
+check "so the record is two fields, and what the dialog is about is not one of them" \
+  "" "$(cut -d' ' -f3- <<<"$(ofact)")"
+check "and the one state word is the whole vocabulary" "open" \
+  "$(cut -d' ' -f1 <<<"$(ofact)")"
+
+# Transitions row and heartbeats do not, the turn bracket's rule. A dialog raised
+# while one is already up is the heartbeat case here, and unlike the compaction
+# pair it is not hypothetical: a harness answering one dialog and immediately
+# asking another fires this event twice with nothing in between.
+: > "$OBLOG"
+tmux set-option -uw -t "$owin" @gl_occupied
+ofire
+check "raising the occupancy leaves a row behind" "1" "$(orows 'permission dialog raised')"
+# The STAMP still moves on that second raise, which is the half a row count cannot
+# see and the half that matters. Nothing fires between two dialogs, so a second one
+# aging out on the first one's clock is a live dialog dropped to the scrapes
+# mid-way through its own bound. Back-dated first, so the move is a fact about the
+# write rather than about two reads landing in different seconds.
+fact_set obracket @gl_occupied "open $(ago 100)"
+ostale="$(ofact)"
+ofire
+check "and a second raise on an open one leaves none" "1" "$(orows 'permission dialog raised')"
+check "but the stamp still moves, so the second dialog carries its own full bound" \
+  "no" "$(contains "$(ofact)" "$ostale")"
+check "and the rows are stamped, which is what a postmortem asks first" "yes" \
+  "$(holds "$(head -1 "$OBLOG")" '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[-+][0-9]{4} ')"
+
+# THE SCREEN A DIALOG ACTUALLY LEAVES, which is the case neither scrape can reach:
+# the busy marker still painted from the turn that provoked it, and no composer.
+# Below this tier that reads BUSY — a turn in flight explains the missing box —
+# and busy is the dangerous polarity, because `gang wait` keys on BECOMING idle
+# and this pane never will. No declared modal regex matches it either, since the
+# fixture paints no chrome to recognise. So the fallback and the declared branch
+# both answer wrong here, and only the harness's own account is left.
+odialog() { # $1 = agent; marker up, composer gone
+  tmux send-keys -t "$(target_of "$1")" "clear; PS1=''; printf 'WORKING...\\n'" Enter
+  # Waited on the OUTPUT line, which the echoed command cannot satisfy: that line
+  # always carries the printf around it. Reaching it means the clear has run and
+  # the empty PS1 is already in force, so the composer went with it.
+  wait_for "$1" "the dialog-shaped screen to take $1's pane" yes \
+    pane_lists "$1" 'WORKING...'
+}
+obox() { # $1 = agent; the composer back, which is the only proof a dialog ended
+  tmux send-keys -t "$(target_of "$1")" "PS1='❯ '; clear" Enter
+  wait_for "$1" "the composer to come back on $1's screen" yes pane_lists "$1" '❯'
+}
+"$GANG" hitch oscreen -p compactable -d /tmp >/dev/null
+odialog oscreen
+check "the fixture really has no composer, so the missing box is not assumed" "no" \
+  "$(pane_lists oscreen '❯')"
+check "and its marker really is painted, so the scrape below has a turn to blame" "yes" \
+  "$(pane_lists oscreen 'WORKING...')"
+check "so that screen reads busy on the tiers below, not occupied" "busy (tight tug)" \
+  "$("$GANG" status oscreen | head -1)"
+# NEAR THE BOUND FROM BELOW. The twin further down back-dates past it, which pins
+# it at no more than the larger number; a stamp seconds old would pin it only at
+# more-than-a-few, and between those two a silent drift passes every check here.
+# Downward is the corrupting direction by this bound's own argument — it drops a
+# pane with a LIVE dialog to a scrape that reads it sendable, and every keystroke
+# that lands there ACTS on the dialog — so the shipped value is pinned from the
+# side that costs.
+fact_set oscreen @gl_occupied "open $(ago 800)"
+check "the raise names it occupied over a scrape that had a turn to blame" \
+  "occupied (authority unknown)" "$("$GANG" status oscreen | head -1)"
+check "and the roster column carries the same word" "occupied" \
+  "$("$GANG" roster | awk '$1=="oscreen"{print $3}')"
+# The consequence, which is the whole point of the word: the refusal names the
+# occupancy rather than the turn. Both states refuse a send on this profile, so the
+# rc alone would pass either way and only the wording tells the operator which
+# thing to go and fix.
+out="$(send_text oscreen tester "MARK_RAISED" 2>&1)"; rc=$?
+check "a send is refused on the strength of the harness's own account" "1" "$rc"
+check "naming the occupancy rather than the mid-turn boundary it is not" "yes" \
+  "$(contains "$out" "occupied (authority unknown)")"
+check "with nothing typed into the dialog" "no" "$(has oscreen MARK_RAISED)"
+check "and patrol reports it for the operator instead of skipping it" "yes" \
+  "$(contains "$("$GANG" patrol | verdict oscreen)" \
+     "OCCUPIED (authority unknown) — a UI owns the input box")"
+# NEAR THE BOUND FROM ABOVE. Back-dated rather than read under a zeroed bound:
+# zeroing makes the comparison false for every stamp that could exist, so the
+# shipped bound would never be evaluated and no change to it could fail a check
+# here. Both margins are wide, because these lines and the reads under them do not
+# land in the same second and a boundary tested to the second is a flake.
+fact_set oscreen @gl_occupied "open $(ago 1200)"
+check "and a raise past its bound hands the same screen back to the scrapes" \
+  "busy (tight tug)" "$("$GANG" status oscreen | head -1)"
+# A value gang wrote and gang cannot read back is discarded, the way an unreadable
+# @gl_turn is: there is nothing to rebuild, since whether a dialog is up is exactly
+# what was lost, and the next dialog heals it.
+fact_set oscreen @gl_occupied 'not-a-raise'
+check "an unreadable raise answers nothing either" "busy (tight tug)" \
+  "$("$GANG" status oscreen | head -1)"
+check "and is discarded so the next dialog can heal it" "" \
+  "$(tmux show-options -wqv -t "$(id_of oscreen)" @gl_occupied)"
+# The state word is validated WITH the stamp, not after it. A record gang did not
+# write is not a raise in some looser shape, and reading the part it recognises out
+# of one it does not is how a fact layer starts inventing.
+fact_set oscreen @gl_occupied "closed $(ago 5)"
+check "a state word outside the vocabulary does not answer on the stamp that parsed" \
+  "busy (tight tug)" "$("$GANG" status oscreen | head -1)"
+check "and that record is discarded too" "" \
+  "$(tmux show-options -wqv -t "$(id_of oscreen)" @gl_occupied)"
+# A stamp from the future has no freshness to test — and unlike a malformed value
+# it is NOT discarded, because a backward clock step can make a genuinely open
+# raise read future, and clearing it would throw away a true fact and drop a live
+# dialog to scrapes that have no name for it.
+fact_set oscreen @gl_occupied "open $(( $(date +%s) + 9999 ))"
+check "a raise stamped in the future does not answer" "busy (tight tug)" \
+  "$("$GANG" status oscreen | head -1)"
+check "but is left standing, because a future stamp can still be a true fact" "open" \
+  "$(tmux show-options -wqv -t "$(id_of oscreen)" @gl_occupied | cut -d' ' -f1)"
+
+# WHAT RETIRES A RAISE IS THE PANE, and that is not the scrape outvoting the tier
+# above it — tiers pick witnesses, they do not vote. It is this fact reaching its
+# end with something able to prove it, the same shape as the compaction mark
+# settling on an observed context drop. Every dialog watched live owns the screen
+# while it is up, so a composer back on it is the dialog gone.
+fact_set oscreen @gl_occupied "open $(ago 5)"
+check "the raise is answering right up until the box comes back" \
+  "occupied (authority unknown)" "$("$GANG" status oscreen | head -1)"
+obox oscreen
+check "and a composer back on screen is the dialog gone" "idle (slack tug)" \
+  "$("$GANG" status oscreen | head -1)"
+check "so the raise is cleared rather than left to age out on a pane that ended it" \
+  "" "$(tmux show-options -wqv -t "$(id_of oscreen)" @gl_occupied)"
+# EXPIRY DOES NOT CLEAR, and the asymmetry with the line above is the point rather
+# than an oversight. A raise past its bound stops witnessing BEFORE it looks at the
+# pane, so gang never reaches the proof the dialog ended — it has only a bound
+# spent. Same composer, same screen, opposite disposal, because one of them was
+# proved over and the other merely ran out.
+fact_set oscreen @gl_occupied "open $(ago 1200)"
+"$GANG" status oscreen >/dev/null
+check "an expired raise is left standing where a proved-over one was cleared" "open" \
+  "$(tmux show-options -wqv -t "$(id_of oscreen)" @gl_occupied | cut -d' ' -f1)"
+
+# ONE READER, and this is the law-5 check on it. Occupancy strictly DOMINATES
+# busy: occupied() answers on this raise as its own first tier, every caller of
+# busy() asks occupied() first and returns on that answer, and a raise the pane has
+# retired is cleared by that call before any later reader could see it. So a second
+# reader inside the busy path — turn_witness is the obvious place, where a stale
+# turn bracket looks like it wants explaining — could never disagree with the
+# first, and a branch that cannot change an answer is dead code wearing a
+# rationale. The count is what says so out loud.
+check "the raise has exactly one reader, because a second could never disagree" "1" \
+  "$(grep -c 'occupied_witness "\$1"' "$GANG")"
+# And the state that reader would have been for is still reported, under the word
+# that is truer and more actionable than the busy it would have produced: a stale
+# turn bracket under a live dialog never reaches the turn tier at all.
+fact_set oscreen @gl_occupied "open $(ago 5)"
+fact_set oscreen @gl_turn "open $(ago 301)"
+odialog oscreen
+check "a turn bracket spent under a live dialog is reported as the occupancy it is" \
+  "occupied (authority unknown)" "$("$GANG" status oscreen | head -1)"
+for a in obracket oscreen; do "$GANG" drop "$a" >/dev/null 2>&1; done
 
 # The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
 # busy_painted, which is false for most of a turn, so after about sixteen seconds
