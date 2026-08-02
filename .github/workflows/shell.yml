@@ -1,6 +1,14 @@
 name: shell
 
-on: [push, pull_request]
+# NARROWED ON THIS BRANCH ONLY, and never to be merged. probe/** branches carry
+# a measurement instrument and spend their macOS cell on probe.yml; running the
+# full suite alongside it would put two tmux workloads on one runner and make
+# every timing number this branch reports a measurement of the other one.
+# Deleting these two lines restores the shipped trigger.
+on:
+  push:
+    branches-ignore: ['probe/**']
+  pull_request:
 
 # Matrix axes are chosen, not accumulated — see issue #8.
 #
