@@ -366,8 +366,9 @@ UI instead of landing (gang attach)</code></pre>
 158000-token band. Start no new work. Close what is open, then compact. Your
 recall is already degrading: instructions given once earlier in this
 conversation are dropping out, and you cannot tell which ones.
-Write the handoff to a file, then run:
-gang compact worker --from worker --resume-stdin &lt; resume-file
+Check the handoff you have been keeping and refresh what this arc changed —
+if you have none yet, write one now; your role brief says where. Then run:
+gang compact worker --from worker --resume-stdin &lt; your-handoff
 — this queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
 
