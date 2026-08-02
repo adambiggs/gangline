@@ -452,12 +452,13 @@ warning naming the highest rung crossed — a single read can clear several rung
 once, and that is one warning, not a queue of them. What the warning *asks*
 changes with the rung: below the top it asks for a compaction at the next arc
 boundary, and at the top it asks the agent to stop where it is, refresh the
-handoff it has been keeping, and compact immediately. Escalating the ask rather than the volume is the point — a
-louder note carrying the same deferrable instruction defers exactly as well, and
-"at the next checkpoint" is satisfiable forever because there is always a next
-checkpoint. Lower steady bands stay quiet. The final band is the exception: its
-open compaction question repeats on every safe patrol until usage drops, with
-wording that calls it a repeated reminder rather than a fresh crossing.
+handoff it has been keeping, and compact immediately. Escalating the ask rather
+than the volume is the point — a louder note carrying the same deferrable
+instruction defers exactly as well, and "at the next checkpoint" is satisfiable
+forever because there is always a next checkpoint. Lower steady bands stay
+quiet. The final band is the exception: its open compaction question repeats on
+every safe patrol until usage drops, with wording that calls it a repeated
+reminder rather than a fresh crossing.
 
 Both ends of the ladder are absolute token counts, because context rot tracks how
 long a context is and not how full its window is: every agent's first warning
@@ -517,8 +518,8 @@ Self-compaction may queue behind the caller's current turn. Codex is a known
 exception: it rejects `/compact` while a task is active, and running
 `gang compact` from its own pane is itself such a task. Compact an idle Codex
 from another caller, or let it auto-compact. Do not use a self-issued Codex
-`--resume-stdin`: Gangline verifies command
-delivery, not whether Codex accepted the native command. Compacting any busy peer is refused because it would cut off
+`--resume-stdin`: Gangline verifies command delivery, not whether Codex accepted
+the native command. Compacting any busy peer is refused because it would cut off
 live work. Resume delivery is attempted by a detached waiter rather than pasted
 behind the slash command, where the current turn could consume it first. A failed
 resume is reported by `gang status` and `gang patrol`.
