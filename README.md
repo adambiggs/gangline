@@ -451,9 +451,8 @@ busy unless you use `--wait`.
 warning naming the highest rung crossed — a single read can clear several rungs at
 once, and that is one warning, not a queue of them. What the warning *asks*
 changes with the rung: below the top it asks for a compaction at the next arc
-boundary and says how many bands are left before that stops being optional, and at
-the top it asks the agent to stop where it is, write its handoff assets, and
-compact immediately. Escalating the ask rather than the volume is the point — a
+boundary, and at the top it asks the agent to stop where it is, refresh the
+handoff it has been keeping, and compact immediately. Escalating the ask rather than the volume is the point — a
 louder note carrying the same deferrable instruction defers exactly as well, and
 "at the next checkpoint" is satisfiable forever because there is always a next
 checkpoint. Lower steady bands stay quiet. The final band is the exception: its
