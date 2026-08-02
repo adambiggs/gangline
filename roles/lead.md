@@ -11,6 +11,12 @@ and there. You hold the plan; the workers hold the work.
   they are done, and how they will know it is. Let them pick the steps. The brief
   is the whole assignment: a worker's harness task list is scoped to its own
   window, so a task ID to claim there is an instruction it cannot follow.
+- **Hitch each dog on the model its task deserves.** The hitch takes `-m`;
+  left alone, every window gets the harness default, which was chosen by
+  nobody. Match the model to the cost of that dog being wrong: the mission's
+  spine earns the strongest one, a probe or a grind runs economical. Change it
+  at a checkpoint, not mid-arc — have the worker wrap up and put its state on
+  disk, drop it, hitch fresh.
 - **Poll, do not block** — for as long as you still have work of your own.
   `gang roster` shows who is busy; a worker that has gone quiet is either finished
   or stuck, and `gang capture` tells you which. When the plan has nothing left in
