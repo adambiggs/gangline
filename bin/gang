@@ -3300,6 +3300,26 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # only ever wanted because it is a moment with something coherent to write
   # down, so writing the handoff IS the boundary, and it is reachable at any
   # moment for the cost of doing it.
+  #
+  # And the tail sends an agent to the handoff it already has rather than asking
+  # it to start one. The role brief moved that file to something opened at task
+  # start and superseded at every checkpoint, so by the time a band is crossed it
+  # usually exists — while this note went on saying "write the handoff", which
+  # asks for the composition that most needs recall in the same breath as telling
+  # the agent its recall is unreliable. Steering costs a clause and buys a
+  # re-read; prompting from scratch invites a second file and strands the
+  # evidenced claims in the first.
+  #
+  # BOTH CASES ARE CARRIED IN THE PROSE because gang cannot know which one it is
+  # in. Where a handoff lives is the brief's to say, deliberately, so a team can
+  # keep its own — so branching on the file would mean minting a path here that
+  # the contract left per-brief, and a branch on a path gang guessed is worse
+  # than a clause an agent resolves against the brief in front of it. That is
+  # also why the tail POINTS at the brief instead of repeating it: off /tmp, how
+  # a claim is labelled, what a pointer has to resolve to, are all argued there
+  # to an agent that has already read them. A second copy in a string here would
+  # drift from the first and spend the note's length on rules rather than on the
+  # action it is interrupting the agent to ask for.
   local total remaining tail qname
   local -a rungs
   IFS=',' read -r -a rungs <<<"$5"
@@ -3313,7 +3333,7 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # that passed valid_name byte-identical, so the suggestion an agent actually
   # reads is unchanged in every case that is not already broken.
   printf -v qname '%q' "$3"
-  tail="Write the handoff to a file, then run: gang compact $qname --from $qname --resume-stdin < resume-file — this queues behind the turn you are in, and the resume is delivered once compaction settles."
+  tail="Check the handoff you have been keeping and refresh what this arc changed — if you have none yet, write one now; your role brief says where. Then run: gang compact $qname --from $qname --resume-stdin < your-handoff — this queues behind the turn you are in, and the resume is delivered once compaction settles."
   if [ "${6:-}" = repeat ]; then
     printf '[context-usage] %s in context — still past the %s-token band. You have not compacted. Do it now, before your next action. Each turn you take instead adds to this context and degrades your recall of it. Anything you have not written down is lost when the context is cut. You will get this note on every turn until you compact. %s' \
       "$1" "$2" "$tail"

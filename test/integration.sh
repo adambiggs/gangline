@@ -4026,6 +4026,31 @@ check "without a window beside it to read as headroom" "no" \
   "$(like "$note_low" "*130k/200k*")"
 check "and without a percentage of a window nobody should be aiming for" "no" \
   "$(like "$note_low" "*%*")"
+# The handoff is kept continuously — opened at task start, superseded at every
+# checkpoint (roles/_common.md, "Your context window") — so by the time a band is
+# crossed the file usually exists, and the note's job is to send the agent to it.
+# Asking for the handoff to be written here asked for the composition that most
+# needs recall, one sentence after telling the agent its recall is unreliable.
+check "the note sends the agent to the handoff it has been keeping" "yes" \
+  "$(like "$note_low" "*refresh what this arc changed*")"
+# It is not assumed to exist, because gang cannot find out: where a handoff lives
+# is the brief's to say, deliberately, so a team can keep its own. Both cases ride
+# in the same prose and the agent resolves which one it is in.
+check "and still says what to do having never started one" "yes" \
+  "$(like "$note_low" "*if you have none yet*")"
+check "pointing at the brief for where it belongs" "yes" \
+  "$(like "$note_low" "*your role brief says where*")"
+# STEERS, DOES NOT RESTATE. A path minted here would be gang answering the
+# question the contract left per-brief — and the wording this note replaces was
+# the second copy of a rule that has since changed underneath it, which is the
+# argument rather than an illustration of it.
+check "and minting no path of its own to compete with the brief's" "no" \
+  "$(like "$note_low" "*/tmp*")"
+# The exact command survives the rewording, with the agent's own name in both
+# halves. "Compact soon" would leave the resume to be got wrong, and the resume is
+# the part that gets got wrong.
+check "the note still carries the command it tells the agent to run" "yes" \
+  "$(like "$note_low" "*gang compact ctxagent --from ctxagent --resume-stdin <*")"
 check "and advances rich shared band memory" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1$')"
 
@@ -4077,6 +4102,11 @@ check "and promises the note comes back until it is done" "yes" \
   "$(like "$note_only" "*on every turn until you compact*")"
 check "and does not offer a later boundary that does not exist" "no" \
   "$(like "$note_only" "*then compact*")"
+# One tail, every rung. The rung that has stopped asking is the one an agent is
+# most likely to act on without reading twice, so it is the one that can least
+# afford to hand back a bare command and let the handoff be improvised.
+check "and the rung that stops asking still points at the handoff" "yes" \
+  "$(like "$note_only" "*refresh what this arc changed*")"
 
 # --- one ladder, absolute at both ends (ADR-0006) ------------------------------
 #
