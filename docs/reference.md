@@ -262,23 +262,36 @@ command prints the declaration, or `no cutoff declared`; an explicit query is
 answered rather than met with silence. `clear` removes it, and apart from the
 session ending it is the only thing that does.
 
+Once declared, every `gang patrol` row carries the team's position in that budget;
+with nothing declared a sweep says nothing about time at all.
+
 Nothing is enforced. Declaring a cutoff records operator intent and changes no
 behaviour on its own.
 
-## Context warnings
+## The warning legs
 
 ### `gang patrol`
 
 Performs one roster sweep. For each adopted agent it:
 
-1. reports a failed resume or recorded undelivered paste;
-2. reports and stops on an occupied input box;
-3. reads and parses context usage;
-4. evaluates the band ladder against the window's last warned band;
-5. re-arms warning state when usage falls;
-6. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
+1. reports a failed resume, and inbound sends refused while it was blocked;
+2. reports where the team stands in a declared cutoff — which time band, and how
+   much budget is left — escalating to the banking reserve at the last rung and to
+   a distinct overrun line past the cutoff. The rungs are fractions of the declared
+   budget minus `GANG_TIME_RESERVE`, so the same elapsed minutes land differently
+   under different budgets ([ADR-0009](adr/0009-time-bands-are-relative.md)). It
+   needs no profile and no readout, which is why it is reported ahead of everything
+   that needs one, and why an agent gang cannot otherwise patrol still carries it;
+   with no cutoff declared there is no row and no log line. Nothing is injected —
+   this leg reports;
+3. reports a recorded undelivered paste, and clears it where it can;
+4. reports and stops on an occupied input box;
+5. reads and parses context usage;
+6. evaluates the band ladder against the window's last warned band;
+7. re-arms warning state when usage falls;
+8. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
    safe;
-7. while usage remains in the final band, repeats a distinctly worded reminder on
+9. while usage remains in the final band, repeats a distinctly worded reminder on
    every safe sweep. The repeat states that the agent has not compacted, and that
    the note arrives again every turn until it does.
 
@@ -524,6 +537,7 @@ fragments and are not listed as roles.
 | `GANG_CONTEXT_FLOOR` | first rung, in absolute tokens — the same number on every harness | `120000` |
 | `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)) | `350000` |
 | `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `auto` |
+| `GANG_TIME_RESERVE` | banking room held back from the end of a declared cutoff, so the last time rung fires where banking has to start rather than where the budget stops. A whole percentage below 100, or a duration (`15m`). The absolute form is an operator's to pick rather than a convenience: writing results out costs roughly the same however much budget is left, so a proportional reserve shrinks below the cost of banking exactly when the budget is short ([ADR-0009](adr/0009-time-bands-are-relative.md)) | `10%` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |

@@ -356,7 +356,8 @@ gang — drive a team of CLI agents as tmux windows
   gang patrol                                 sweep the roster; nudge any agent past a
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
-                                              reports occupied boxes and refused inbound
+                                              reports occupied boxes, refused inbound, and
+                                              the team's budget once a cutoff is declared
   gang cron [--install|--refresh]             print the crontab entry that runs patrol for
                                               this install: this gang's path, and the GANG_*
                                               overrides exported here so a sweep agrees with
@@ -396,6 +397,9 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
        token counts and only the spacing fits the window: ADR-0006),
      GANG_CONTEXT_BANDS (explicit ladder, bypassing that derivation; % of the
        window is an escape hatch, never a default: ADR-0005),
+     GANG_TIME_RESERVE (banking room held back from the end of a declared cutoff,
+       so the last time rung fires where banking has to start; a whole percentage
+       below 100, or a duration like 15m; default 10%),
      GANG_LOCK_DIR (delivery locks; default /tmp/gangline-<uid>, created 0700 and
        reachable from a sandbox — they die at reboot, not at logout),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
@@ -3091,6 +3095,35 @@ context_rungs() { # $1 = window; sets LADDER_AUTO to the derived CSV. Dies on a 
   LADDER_AUTO="$rungs"
 }
 
+time_rungs() { # $1 = the usable span in seconds; sets LADDER_AUTO to the derived CSV.
+               # Dies on a span it cannot divide.
+  # The interior alone, and the missing opening rung is this axis's argument rather
+  # than an omission: a rung at zero claims the start of the span is already a
+  # hazard, and the start of a budget is the one moment nothing has been spent
+  # (ADR-0009). Context takes that rung because a context at the floor is already
+  # rotting; time has no onset to warn about, so a warning at the starting line
+  # would warn about nothing.
+  #
+  # No numeric guard on the span, deliberately, where context_rungs guards its
+  # window: a window is a figure scraped off somebody else's screen and arrives
+  # missing, while a span is this file's own subtraction and arrives a number or not
+  # at all. A guard here could only fire on a bug in the caller, and a guard that
+  # cannot fire is one more thing to keep true.
+  local span="$1" f t rungs=""
+  for f in $LADDER_INTERIOR; do
+    t=$(( span * f / 1000 ))
+    # Whole seconds, so a span short enough to floor a fraction to zero has no
+    # ladder rather than a broken one. Refused here, where the span is known, so
+    # that every rung this deriver hands out is a positive whole number and the
+    # placement refusals inside `ladder` stay out of this axis's reach — they name
+    # the context hatch, which is not this axis's to name.
+    [ "$t" -gt 0 ] \
+      || die "cannot derive the time ladder: a ${span}-second span is too short to place a rung above zero — declare a longer cutoff, or lower GANG_TIME_RESERVE"
+    rungs="${rungs:+$rungs,}$t"
+  done
+  LADDER_AUTO="$rungs"
+}
+
 auto_rungs() { # $1 = axis, $2 = the extent its rungs are derived across -> LADDER_AUTO
   # The axis names which derivation the word `auto` stands for. One name, one deriver,
   # and an axis nobody wrote one for is a mistake in this file rather than a ladder to
@@ -3098,6 +3131,7 @@ auto_rungs() { # $1 = axis, $2 = the extent its rungs are derived across -> LADD
   # gets here, so there is no sensible fallback to pick.
   case "$1" in
     context) context_rungs "$2" ;;
+    time)    time_rungs "$2" ;;
     *)       die "internal: no band ladder is derived for the '$1' axis" ;;
   esac
 }
@@ -3116,13 +3150,16 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
   # that is load-bearing (ADR-0006). Its explicit CSV is read as written, and the %
   # suffix remains in that syntax as an escape hatch for an unusual window — the one
   # place a fraction is the operator's intent rather than a mistake. It is not a
-  # default and must not become one. Every refusal this function can reach is that
-  # axis's own and names its hatch outright, because it is the only explicit ladder
-  # there is to name.
+  # default and must not become one. Every refusal written into this function belongs
+  # to that axis and names its hatch outright, because it is the only explicit ladder
+  # there is to name; the time axis cannot reach any of them, because a derivation is
+  # the whole of its ladder and time_rungs refuses before it hands out a rung that
+  # would trip one.
   local axis="$1" position="$2" extent="$3"
   local band=0 crossed=0 part n t resolved="" list
   case "$axis" in
     context) list="$BANDS" ;;
+    time)    list=auto ;;
     *)       die "internal: no band ladder is defined for the '$axis' axis" ;;
   esac
   if [ "$list" = auto ]; then
@@ -3158,8 +3195,11 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
 
 ladder_at_top() { # $1 = current band, $2 = resolved CSV; true at or beyond its last rung
   # The caller supplies the RESOLVED ladder rather than assuming the default has
-  # five rungs. A one-rung exhaustion ladder, an explicit operator ladder, and a
-  # future wall-clock ladder all reach their own top through the same question.
+  # five rungs. A one-rung exhaustion ladder, an explicit operator ladder, and the
+  # time ladder all reach their own top through the same question. The last of
+  # those read "a future wall-clock ladder" until the time axis landed, and the
+  # arrival cost this function nothing — which is the claim ADR-0009 makes about
+  # this seam, kept true here rather than asserted there alone.
   local total=0 rung
   for rung in ${2//,/ }; do total=$((total + 1)); done
   [ "$1" -ge "$total" ]
@@ -3354,6 +3394,39 @@ cutoff_refuse() { # $1 = what the operator typed
   die "cannot read '$1' as a cutoff — give a duration (90m, 2h, 1h30m) or a clock time (17:30)"
 }
 
+# One or more <whole><unit> groups, units h/m/s, each used at most once. Order is
+# not policed because it cannot be ambiguous: 30m2h and 2h30m name the same span,
+# and a rule that only rejects spellings buys an operator nothing.
+#
+# Refuses by STATUS rather than by dying, because the things spelled this way are
+# refused in different words: a cutoff names the clock form it also takes, a reserve
+# names the percentage form it also takes. One parser, and whoever knows which knob
+# was wrong is the one that says so. The seconds travel back in a global while the
+# status travels in the exit code, so a caller cannot read a refusal as a span.
+DURATION_PARSED=0
+duration_seconds() { # $1 = a duration word -> DURATION_PARSED; 1 = not a duration
+  local rest="$1" digits unit total=0 seen_h=0 seen_m=0 seen_s=0
+  while [ -n "$rest" ]; do
+    digits="${rest%%[hms]*}"
+    # Nothing left to cut on means no unit at all. A bare number is refused rather
+    # than guessed at: "gang cutoff 90" is ninety of something, and choosing which
+    # for the operator fabricates the intent law 8 refuses.
+    [ "$digits" != "$rest" ] || return 1
+    case "$digits" in ''|*[!0-9]*) return 1 ;; esac
+    rest="${rest#"$digits"}"
+    unit="${rest%"${rest#?}"}"
+    rest="${rest#?}"
+    # 10# on every read, because a leading zero is an ordinary way to write a time
+    # and bash reads 08 as a broken octal literal rather than eight.
+    case "$unit" in
+      h) [ "$seen_h" -eq 0 ] || return 1; seen_h=1; total=$(( total + 10#$digits * 3600 )) ;;
+      m) [ "$seen_m" -eq 0 ] || return 1; seen_m=1; total=$(( total + 10#$digits * 60 )) ;;
+      s) [ "$seen_s" -eq 0 ] || return 1; seen_s=1; total=$(( total + 10#$digits )) ;;
+    esac
+  done
+  DURATION_PARSED="$total"
+}
+
 # Sets a global rather than printing, for LADDER_AUTO's reason: the refusal has to
 # be heard. `die` inside a command substitution ends only that subshell, so a
 # caller reading a REJECTED duration through `$(...)` would take the empty string
@@ -3361,8 +3434,7 @@ cutoff_refuse() { # $1 = what the operator typed
 # exists to produce into a silently corrupt declaration.
 CUTOFF_PARSED=0
 cutoff_parse() { # $1 = the operator's word, $2 = now; sets CUTOFF_PARSED, or dies
-  local spec="$1" now="$2" rest digits unit total=0 hh mm hms nowh nowm nows midnight
-  local seen_h=0 seen_m=0 seen_s=0
+  local spec="$1" now="$2" hh mm hms nowh nowm nows midnight
   case "$spec" in
     *:*)
       # A clock time is the NEXT occurrence of HH:MM. An operator who types a
@@ -3390,30 +3462,8 @@ cutoff_parse() { # $1 = the operator's word, $2 = now; sets CUTOFF_PARSED, or di
       [ "$CUTOFF_PARSED" -gt "$now" ] || CUTOFF_PARSED=$(( CUTOFF_PARSED + 86400 ))
       ;;
     *)
-      # A duration is one or more <whole><unit> groups, units h/m/s, each used at
-      # most once. Order is not policed because it cannot be ambiguous: 30m2h and
-      # 2h30m name the same span, and a rule that only rejects spellings buys an
-      # operator nothing.
-      rest="$spec"
-      while [ -n "$rest" ]; do
-        digits="${rest%%[hms]*}"
-        # Nothing left to cut on means no unit at all. A bare number is refused
-        # rather than guessed at: "gang cutoff 90" is ninety of something, and
-        # choosing which for the operator fabricates the intent law 8 refuses.
-        [ "$digits" != "$rest" ] || cutoff_refuse "$spec"
-        case "$digits" in ''|*[!0-9]*) cutoff_refuse "$spec" ;; esac
-        rest="${rest#"$digits"}"
-        unit="${rest%"${rest#?}"}"
-        rest="${rest#?}"
-        # 10# on every read, because a leading zero is an ordinary way to write a
-        # time and bash reads 08 as a broken octal literal rather than eight.
-        case "$unit" in
-          h) [ "$seen_h" -eq 0 ] || cutoff_refuse "$spec"; seen_h=1; total=$(( total + 10#$digits * 3600 )) ;;
-          m) [ "$seen_m" -eq 0 ] || cutoff_refuse "$spec"; seen_m=1; total=$(( total + 10#$digits * 60 )) ;;
-          s) [ "$seen_s" -eq 0 ] || cutoff_refuse "$spec"; seen_s=1; total=$(( total + 10#$digits )) ;;
-        esac
-      done
-      CUTOFF_PARSED=$(( now + total ))
+      duration_seconds "$spec" || cutoff_refuse "$spec"
+      CUTOFF_PARSED=$(( now + DURATION_PARSED ))
       ;;
   esac
 }
@@ -3464,6 +3514,110 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
   # sequence is nine of them, so colouring before padding eats nine characters of
   # the field and the roster stops lining up.
   printf '%s%s%s' "$1" "$2" "$C_OFF"
+}
+
+# --- what a sweep says about the budget --------------------------------------
+#
+# The cutoff is the declaration; this is the ladder cut from it (ADR-0009). They are
+# kept apart because one is operator intent and the other is arithmetic over it, and
+# only the arithmetic changes between one sweep and the next.
+
+TIME_RESERVE=0
+time_reserve() { # $1 = the declared budget in seconds -> TIME_RESERVE. Dies on a bad value.
+  # Banking room, held back from the END of the budget so the last rung fires where
+  # banking has to start rather than where the budget stops. Work that exists only
+  # in an agent's head or its pane dies with the cutoff; work on disk survives it,
+  # and a warning at the cutoff arrives after the cutoff has already spent it.
+  #
+  # Both spellings are the operator's to pick, and the absolute one is not a
+  # convenience. Writing results out costs roughly the same however much budget is
+  # left, so a proportional reserve shrinks below the cost of banking exactly when
+  # the budget is short — which is the run where losing the work costs most.
+  #
+  # Sets a global for LADDER_AUTO's reason: the refusal has to be heard, and `die`
+  # inside a command substitution ends only that subshell.
+  local spec="${GANG_TIME_RESERVE:-10%}" pct
+  case "$spec" in
+    *%) pct="${spec%\%}"
+        # A reserve of the whole budget is refused with the malformed ones, because
+        # what it asks for is not a high reserve but a ladder with nothing to divide.
+        [[ "$pct" =~ ^[0-9]+$ ]] && [ "$pct" -lt 100 ] \
+          || die "invalid GANG_TIME_RESERVE '$spec' — a proportional reserve is a whole percentage below 100, like 10%"
+        TIME_RESERVE=$(( $1 * pct / 100 )) ;;
+    *)  duration_seconds "$spec" \
+          || die "invalid GANG_TIME_RESERVE '$spec' — give a percentage (10%) or a duration (15m, 1h, 90s)"
+        TIME_RESERVE="$DURATION_PARSED" ;;
+  esac
+}
+
+# What every row of one sweep carries about the budget, settled ONCE at the top of
+# it. The figures are the TEAM's rather than any agent's — one cutoff, one clock —
+# so two rows of a single sweep reporting different remaining time would be one fact
+# contradicting itself. Settling it in one place is also what holds a misconfigured
+# reserve to one loud complaint instead of one per agent, which is the reason the
+# context ladder is warmed up in the same place.
+TIME_SAY=""      # what to report; empty is the whole of "nothing to report"
+TIME_COLOUR=""
+time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOUR
+  local rc=0 now budget span elapsed rung band rungs
+  TIME_SAY=""; TIME_COLOUR=""
+  cutoff_read || rc=$?
+  # An undeclared budget produces silence, and the silence is total: no row, no log
+  # line, no phrase of its own (ADR-0009). A phrase of its own would be one line per
+  # agent on every sweep for the whole life of a team that never asked for a budget,
+  # which is how a log stops being read.
+  [ "$rc" -ne 1 ] || return 0
+  if [ "$rc" -eq 2 ]; then
+    # A stored pair gang cannot read is a third answer rather than absence — the
+    # discipline cutoff_read keeps, and the reason it keeps it. Reported instead of
+    # skipped, because treating it as "no budget declared" answers a question about
+    # the team's budget with a confident wrong fact (law 8). The remedy is named,
+    # because a report an operator cannot act on costs another sweep. The context
+    # leg is untouched by it: one axis's declaration going unreadable is no reason
+    # to stop warning about the other.
+    TIME_SAY="THE TEAM'S CUTOFF IS UNREADABLE — not a pair of epochs; 'gang cutoff clear' removes it"
+    TIME_COLOUR="$C_BAD"
+    return 0
+  fi
+  now="$(now_epoch)"
+  # Past the cutoff there is no ladder left to place anything on, so this is asked
+  # before a span the run has already spent is divided into rungs. The sentence
+  # changes rather than repeating the last rung's ask: an ask about pacing a budget
+  # that no longer exists is noise and is also false, while going quiet would
+  # fabricate an all-clear at the moment it is least earned (ADR-0009).
+  if [ "$now" -ge "$CUTOFF_AT" ]; then
+    TIME_SAY="PAST THE CUTOFF — $(human_span $(( now - CUTOFF_AT ))) past the declared budget"
+    TIME_COLOUR="$C_BAD"
+    return 0
+  fi
+  budget=$(( CUTOFF_AT - CUTOFF_DECLARED ))
+  elapsed=$(( now - CUTOFF_DECLARED ))
+  time_reserve "$budget"
+  span=$(( budget - TIME_RESERVE ))
+  [ "$span" -gt 0 ] \
+    || die "GANG_TIME_RESERVE holds back $(human_span "$TIME_RESERVE") of a $(human_span "$budget") budget, which leaves no span to divide — reserve less than the budget, or declare a longer cutoff"
+  # Asked for at statement level before the ladder is read through a command
+  # substitution, because `die` inside one ends only that subshell and the caller
+  # would read an empty band where a refusal was meant. The context ladder is warmed
+  # up for the same reason; it warms up through `ladder` because an explicit CSV puts
+  # refusals in there too, while the time axis has no explicit ladder and the whole
+  # of its refusal surface is this derivation.
+  auto_rungs time "$span"
+  # The band and the resolved ladder. The rung's own position is the third field and
+  # this leg has no use for it: what a row states is what is LEFT, which is the
+  # figure an operator paces against (ADR-0009).
+  rung="$(ladder time "$elapsed" "$span")"
+  band="${rung%% *}"; rungs="${rung##* }"
+  if ladder_at_top "$band" "$rungs"; then
+    TIME_SAY="INSIDE THE BANKING RESERVE (time band $band) — $(human_span $(( CUTOFF_AT - now ))) of budget left"
+    TIME_COLOUR="$C_WORK"
+  else
+    # `steady` is not a mood, it is the word patrol_log drops by name, and a budget
+    # that is merely running is the routine a sweep is mostly made of. What the log
+    # keeps is what a postmortem asks for: when the run reached its banking reserve,
+    # when it went past the cutoff, and when its declaration stopped being readable.
+    TIME_SAY="steady (time band $band — $(human_span $(( CUTOFF_AT - now ))) of budget left)"
+  fi
 }
 
 # --- commands ---------------------------------------------------------------
@@ -4147,6 +4301,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   ladder context 0 200000 >/dev/null  # one loud complaint about a bad ladder, not one per agent
+  time_sweep                          # the team's budget, settled once for every row this prints
   local id name
   while read -r id name; do
     ( patrol_one "$id" "$name" ) || true
@@ -4170,6 +4325,14 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   [ -z "$blocked" ] || say "$2" "-" "$blocked" "$C_BAD"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { say "$2" "" "unadopted — not patrolled"; return; }
+  # The time axis needs no profile and no readout, so its row is produced above every
+  # early return that turns on one — the resume-failed and blocked-line reports are
+  # the same shape for the same reason. It sits under the adoption check because a
+  # window nobody hitched is not an agent and has no budget to be reported against,
+  # and over the profile checks because a budget is gang's own arithmetic rather than
+  # anything a harness reports. The readout column is a dash for the same reason
+  # those two reports use one: there is no context figure in this row.
+  [ -z "$TIME_SAY" ] || say "$2" "-" "$TIME_SAY" "$TIME_COLOUR"
   profile_file "$prof" >/dev/null \
     || { say "$2" "" "profile '$prof' not found (GANG_PROFILES?) — not patrolled" "$C_BAD"; return; }
   load_profile "$prof"

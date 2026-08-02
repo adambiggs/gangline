@@ -6076,6 +6076,236 @@ check "an unknown argument still dies beside the new one" "1" "$?"
 for _cd in cutdog cutdog2 cutbad; do "$GANG" drop "$_cd" >/dev/null 2>&1; done
 "$GANG" cutoff clear >/dev/null
 
+# --- the time ladder, cut from the declared budget -----------------------------
+
+# The cutoff is the declaration; this is the ladder cut from it (ADR-0009). What
+# makes these rungs a different kind of thing from the context ladder's is that
+# they are RELATIVE: a rung measures how much of the declared span has been spent,
+# so the same elapsed minutes are a different band under a different budget.
+#
+# The pair of rows named "the same hour" is the executable form of that decision
+# and is why this section exists. Under time rungs made absolute — fixed durations,
+# or a budget hardcoded at any size — those two rows report the same band and the
+# pair parts. Under a relative ladder they cannot, because no one fixed span puts
+# an hour in two places at once.
+#
+# Every case here pins its own clock through GANG_NOW, for the reason the stored
+# pair's cases give: a case about a two-hour budget must not cost two hours, or any
+# minutes at all. Patrol is the only surface this leg reaches and it REPORTS —
+# nothing is injected and no band is remembered — so every row below states a
+# POSITION in the budget and never a crossing.
+TB_NOW=$(( CUT_NOW + 200000 ))   # a fresh moment; no span the cutoff cases declared is reused
+TB_LOG="$SHIM/time-patrol.log"
+# Far under the first rung of its own context ladder, so this agent's context row
+# reads the same in every sweep here and anything else in its rows is the time leg.
+probe tdog '10k/1000k 1%'
+
+# Captured whole and then read row by row, never piped into a reader that can stop
+# early: this suite runs pipefail, and `holds` sets out at length what that costs.
+tsweep() { # $1 = the moment to sweep at, $2 = a GANG_TIME_RESERVE for that sweep alone
+  if [ $# -ge 2 ]
+  then GANG_NOW="$1" GANG_TIME_RESERVE="$2" "$GANG" patrol
+  else GANG_NOW="$1" "$GANG" patrol
+  fi
+}
+rows_of() { # $1 = a captured sweep, $2 = an agent -> every row that sweep printed for it
+  verdict "$2" <<<"$1"
+}
+# The time row is the FIRST row an agent gets, and that is the hoist rather than a
+# formatting accident: it is produced above every early return that turns on a
+# profile or a readout. The row after it is the one that had to resolve a profile
+# before it could say anything.
+time_row()  { printf '%s' "${1%%$'\n'*}"; }
+after_row() { printf '%s' "${1##*$'\n'}"; }
+tverdict() { # $1 = the moment, $2 = a GANG_TIME_RESERVE for that sweep alone -> tdog's time row
+  local rows
+  rows="$(rows_of "$(tsweep "$@")" tdog)"
+  time_row "$rows"
+}
+
+# Silence, and it is total: no row, which is a stronger claim than a row saying
+# nothing is declared. A phrase of its own would be one line per agent on every
+# sweep for the whole life of a team that never asked for a budget, and a log
+# nobody can read is the failure the sweep's own record was written against.
+check "with nothing declared a sweep says nothing about time at all" "steady (band 0)" \
+  "$(rows_of "$(tsweep "$TB_NOW")" tdog)"
+rm -f "$TB_LOG"
+GANG_NOW=$TB_NOW GANG_PATROL_LOG="$TB_LOG" "$GANG" patrol >/dev/null
+check "and writes nothing about it into the record either" "no" \
+  "$(holds "$(cat "$TB_LOG" 2>/dev/null)" 'budget')"
+
+GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
+
+# NO RUNG AT ZERO, and its absence is this axis's argument rather than an omission:
+# the start of a budget is the one moment nothing has been spent. Given the opening
+# rung the context ladder takes, this row reads band 1 at the starting line, which
+# is a warning about nothing.
+check "the start of a budget is not already a hazard" \
+  "steady (time band 0 — 2h of budget left)" "$(tverdict "$TB_NOW")"
+
+# THE HEART OF THE FEATURE. One elapsed hour, two budgets, two bands — which is
+# what "relative" means once it is executable, and it goes red the moment a time
+# rung becomes an absolute duration or a budget is hardcoded at any size.
+check "an hour into a two-hour budget is most of the way up the ladder" \
+  "steady (time band 2 — 1h of budget left)" "$(tverdict $(( TB_NOW + 3600 )))"
+GANG_NOW=$TB_NOW "$GANG" cutoff 6h >/dev/null
+check "and the same hour into a six-hour budget has barely started it" \
+  "steady (time band 0 — 5h of budget left)" "$(tverdict $(( TB_NOW + 3600 )))"
+GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
+
+# The reserve is banking room held back from the END of the budget, so it moves
+# every rung without moving the clock: these three rows are one moment of one
+# budget, stating identical remaining time from different bands.
+#
+# Both spellings are the operator's to pick and the absolute one is not a
+# convenience — writing results out costs about the same however much budget is
+# left, so a proportional reserve shrinks below the cost of banking exactly when
+# the budget is short. Setting the percentage form here also takes one of the two
+# ways out that the malformed-reserve refusal names, and setting the duration form
+# takes the other.
+check "fifty minutes into a two-hour budget is one rung up" \
+  "steady (time band 1 — 1h10m of budget left)" "$(tverdict $(( TB_NOW + 3000 )))"
+check "and the percentage an operator would have to type is the shipped default" \
+  "steady (time band 1 — 1h10m of budget left)" "$(tverdict $(( TB_NOW + 3000 )) '10%')"
+check "while an hour banked off the end is three rungs up at that same moment" \
+  "steady (time band 3 — 1h10m of budget left)" "$(tverdict $(( TB_NOW + 3000 )) '1h')"
+
+# The last rung fires where the reserve BEGINS, which is what makes its ask about
+# banking rather than about pacing. This pair straddles it by one second: the band
+# moves, the remaining time reads the same, and ladder_at_top is the only thing
+# that tells the two apart.
+check "a second under the reserve is still pacing the budget" \
+  "steady (time band 3 — 12m of budget left)" "$(tverdict $(( TB_NOW + 6479 )))"
+check "and the rung the reserve starts at asks for the work to be banked" \
+  "INSIDE THE BANKING RESERVE (time band 4) — 12m of budget left" \
+  "$(tverdict $(( TB_NOW + 6480 )))"
+
+# Past the cutoff the sentence CHANGES rather than repeating the top rung's ask:
+# advice about pacing a budget that no longer exists is noise and is also false,
+# while going quiet would fabricate an all-clear at the moment it is least earned.
+# Restated fresh every sweep, which is why the overrun grows between these two.
+check "the moment the budget runs out is reported as the overrun it is" \
+  "PAST THE CUTOFF — 0s past the declared budget" "$(tverdict $(( TB_NOW + 7200 )))"
+check "and it goes on counting rather than settling into a phrase" \
+  "PAST THE CUTOFF — 15m past the declared budget" "$(tverdict $(( TB_NOW + 8100 )))"
+
+# THE HOIST. The time axis needs no profile and no readout, so its row is produced
+# above every early return that turns on one — and the way to state that in a test
+# is an agent that HAS no readout and is told where the budget stands anyway.
+# tblind is hitched and never painted, so the row that needs a readout is the row
+# that reports it missing.
+"$GANG" hitch tblind -p bash -d /tmp >/dev/null
+tb_rows="$(rows_of "$(tsweep $(( TB_NOW + 3600 )))" tblind)"
+check "an agent with no readout is still told where the team's budget stands" \
+  "steady (time band 2 — 1h of budget left)" "$(time_row "$tb_rows")"
+check "and the row that needed the readout still reports it missing" "yes" \
+  "$(holds "$(after_row "$tb_rows")" 'not patrolled')"
+# The same claim one early return further out: a profile gang cannot resolve at
+# all. This is the check that goes red if the time row is ever produced under
+# profile_file rather than over it.
+fact_set tblind @gl_profile bogus
+tb_rows="$(rows_of "$(tsweep $(( TB_NOW + 3600 )))" tblind)"
+check "an agent whose profile cannot be found is told the same thing first" \
+  "steady (time band 2 — 1h of budget left)" "$(time_row "$tb_rows")"
+check "before the sweep gives up on it over the profile" "yes" \
+  "$(holds "$(after_row "$tb_rows")" "profile 'bogus' not found")"
+"$GANG" drop tblind >/dev/null 2>&1
+
+# The other side of that placement, and the reason the row sits under the adoption
+# check rather than at the top of the sweep: a window nobody hitched is not an
+# agent and has no budget to be reported against. Its whole sweep is the one row.
+tmux new-window -d -t "$GANG_SESSION:" -n tplain 'sleep 600'
+check "a window nobody hitched has no budget and is told nothing about one" \
+  "unadopted — not patrolled" "$(rows_of "$(tsweep $(( TB_NOW + 3600 )))" tplain)"
+tmux kill-window -t "$(target_of tplain)"
+
+# A misconfigured reserve is one loud complaint for the whole sweep rather than one
+# per agent, which is what comes free from settling the budget once at the top of
+# it. Routed through a file so a single run answers for all three halves: what it
+# printed, what it refused with, and the status it left.
+treject() { # $1 = a GANG_TIME_RESERVE the sweep must refuse -> TB_OUT, TB_RC, TB_ERR
+  TB_OUT="$(GANG_NOW=$TB_NOW GANG_TIME_RESERVE="$1" "$GANG" patrol 2>"$SHIM/tb-refusal")"
+  TB_RC=$?
+  TB_ERR="$(cat "$SHIM/tb-refusal")"
+}
+
+treject lots
+check "a reserve that is neither a percentage nor a duration refuses the sweep" "1" "$TB_RC"
+check "and a refused sweep reports on no agent at all" "" "$TB_OUT"
+check "and the refusal names both forms that would have worked" "yes" \
+  "$(holds "$TB_ERR" 'give a percentage .* or a duration')"
+
+# A reserve of the whole budget is refused alongside the malformed ones, because
+# what it asks for is not a high reserve but a ladder with nothing left to divide.
+# The case under it is not refused, and is what says where the line falls.
+treject 100%
+check "a reserve of the entire budget is refused" "1" "$TB_RC"
+check "and the refusal says which side of a hundred a percentage lives on" "yes" \
+  "$(holds "$TB_ERR" 'a whole percentage below 100')"
+check "while a reserve of very nearly all of it puts an hour past the last rung" \
+  "INSIDE THE BANKING RESERVE (time band 4) — 1h of budget left" \
+  "$(tverdict $(( TB_NOW + 3600 )) '99%')"
+
+# An absolute reserve can exceed the budget in a way a percentage cannot, which is
+# the price of the form and the reason this refusal names two ways out of it.
+treject 3h
+check "a reserve longer than the budget is refused" "1" "$TB_RC"
+check "and the refusal states the two spans it could not subtract" "yes" \
+  "$(holds "$TB_ERR" 'holds back 3h of a 2h budget')"
+check "reserving less than the budget is one way out of that" \
+  "steady (time band 1 — 1h10m of budget left)" "$(tverdict $(( TB_NOW + 3000 )) '15m')"
+GANG_NOW=$TB_NOW "$GANG" cutoff 6h >/dev/null
+check "and a longer cutoff is the other way out of a reserve past the budget" \
+  "steady (time band 1 — 5h of budget left)" "$(tverdict $(( TB_NOW + 3600 )) '3h')"
+
+# The floor of the whole arithmetic: a span whose first fraction floors to zero has
+# no ladder rather than a broken one, and it is refused where the span is known
+# rather than left to the placement refusals, which name the context hatch.
+GANG_NOW=$TB_NOW "$GANG" cutoff 10s >/dev/null
+treject 9s
+check "a span too short to place a rung above zero refuses the sweep" "1" "$TB_RC"
+check "and the refusal names the span it could not divide" "yes" \
+  "$(holds "$TB_ERR" 'a 1-second span is too short')"
+check "lowering the reserve is one way out of that" \
+  "steady (time band 0 — 9s of budget left)" "$(tverdict $(( TB_NOW + 1 )) '0s')"
+GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
+check "and a longer cutoff is the other way out of a span too short to divide" \
+  "steady (time band 0 — 1h59m of budget left)" "$(tverdict $(( TB_NOW + 60 )) '9s')"
+
+# A stored pair gang cannot read is a THIRD answer rather than absence, and the
+# time leg reports it instead of skipping: reading it as "no budget declared" would
+# answer a question about the team's budget with a confident wrong fact. The
+# context row is the other half of this case — one axis's declaration going
+# unreadable is no reason to stop warning about the other.
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "not-a-pair"
+tb_rows="$(rows_of "$(tsweep $(( TB_NOW + 3600 )))" tdog)"
+check "a cutoff gang cannot read is reported rather than read as none declared" \
+  "THE TEAM'S CUTOFF IS UNREADABLE — not a pair of epochs; 'gang cutoff clear' removes it" \
+  "$(time_row "$tb_rows")"
+check "and the context leg is untouched by the other axis's broken declaration" \
+  "steady (band 0)" "$(after_row "$tb_rows")"
+"$GANG" cutoff clear >/dev/null
+check "and the way out that report names returns the sweep to silence" "steady (band 0)" \
+  "$(rows_of "$(tsweep $(( TB_NOW + 3600 )))" tdog)"
+
+# What the record keeps is what a postmortem asks for. The routine verdict is
+# worded `steady`, which is the word patrol_log drops by name, so a budget that is
+# merely running leaves no line behind — while the reserve and the overrun do.
+GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
+rm -f "$TB_LOG"
+GANG_NOW=$(( TB_NOW + 8100 )) GANG_PATROL_LOG="$TB_LOG" "$GANG" patrol >/dev/null
+check "a budget gone past is written down" "yes" \
+  "$(holds "$(cat "$TB_LOG")" 'tdog .*PAST THE CUTOFF')"
+GANG_NOW=$(( TB_NOW + 6480 )) GANG_PATROL_LOG="$TB_LOG" "$GANG" patrol >/dev/null
+check "and so is the rung that asks for the work to be banked" "yes" \
+  "$(holds "$(cat "$TB_LOG")" 'tdog .*INSIDE THE BANKING RESERVE')"
+GANG_NOW=$(( TB_NOW + 3600 )) GANG_PATROL_LOG="$TB_LOG" "$GANG" patrol >/dev/null
+check "while a budget that is merely running is not" "no" \
+  "$(holds "$(cat "$TB_LOG")" 'steady \(time band')"
+
+"$GANG" drop tdog >/dev/null 2>&1
+"$GANG" cutoff clear >/dev/null
+
 # --- file-based context (codex) ----------------------------------------------
 
 # Codex paints no readout a passive observer can reach; its profile reads the
