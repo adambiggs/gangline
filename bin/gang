@@ -5199,12 +5199,14 @@ vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witn
   # agent" — every real finding turned into a dim row and a clean exit. Defaulted,
   # the same mistake costs the filing and leaves the finding standing. What proves
   # the wiring is a check that files, not this line.
-  local prof rc=0 turn_rc=0 beacon used fact_k fissue="${3:-0}"
+  local prof pfile rc=0 turn_rc=0 beacon used fact_k fissue="${3:-0}"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || prof=""
   # An unadopted window is somebody's shell, not an agent, and it declares no
   # tiers at all. The roster is where an operator learns it is there.
   [ -n "$prof" ] || return 0
-  profile_file "$prof" >/dev/null 2>&1 || {
+  # Kept rather than discarded: the busy row below names this file instead of
+  # reproducing the pattern it holds, for the reason argued there.
+  pfile="$(profile_file "$prof" 2>/dev/null)" || {
     vet_tier_row "$2" "$prof" "$C_DIM" "profile not found (GANG_PROFILES?) — no second witness to hold the first against"
     return 0
   }
@@ -5260,8 +5262,26 @@ vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witn
   # report over a whole team — the capture is proven first so one window that went
   # away mid-loop does not take the rest of the section with it.
   if [ "$turn_rc" -eq 1 ] && capture_joined "$1" >/dev/null 2>&1 && busy_painted "$1"; then
+    # THE FILE, NOT THE PATTERN, and the difference is a live failure rather than
+    # a preference. This row is printed by an ordinary `gang vet`, and the thing
+    # an operator most often runs `gang vet` from is an agent's own pane — so a
+    # row carrying the pattern verbatim paints claude-code's bar glyphs onto a
+    # pane gang scrapes, and busy_painted reads the WHOLE pane. That agent then
+    # reads BUSY for as long as the line stays on screen: every send refused,
+    # every wait timed out, on a harness that is perfectly idle. It is the same
+    # rule probe_note is written to obey and the same accident that once had
+    # compacting() true for three minutes off a reviewer's own grep output, and
+    # it was caught here by the suite's own baseline — gang printed a shipped
+    # profile's regex into the pane of a probe that was measuring exactly this.
+    #
+    # The stated reason for naming the scrape at all was to tell an operator
+    # WHICH FILE TO OPEN, and the path serves that better than the pattern does:
+    # the declaration is what they have to edit, and it arrives with the comment
+    # block that says what the pattern was verified against. The pattern itself
+    # still travels in the filed issue below, which is read somewhere other than
+    # a pane and is the durable record this row is only a sighting of.
     vet_tier_row "$2" "$prof" "$C_BAD" \
-      "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker ($GANG_BUSY_REGEX). gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
+      "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker declared in $pfile. gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
     rc=2
     [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" busy "\
 - owned bracket (@gl_turn): the turn closed

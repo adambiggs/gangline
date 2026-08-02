@@ -2186,12 +2186,24 @@ bvet() { GANG_PROFILES="$SHIM/vetbracket" "$GANG" vet 2>&1; }
 bout="$(bvet)"
 check "vet holds the same two witnesses against each other" "yes" \
   "$(holds "$bout" '^bracket +bracketed +ROT RISK — the busy tiers disagree')"
-# Named, both of them, and the scrape by the regex it is declared with. An
-# operator told only that the tiers disagree has been told a writer rotted without
-# being told which file to open, and this is the report they run when they already
-# know something is wrong.
+# Named, both of them, and the scrape by the FILE that declares it. An operator
+# told only that the tiers disagree has been told a writer rotted without being
+# told which file to open, and this is the report they run when they already know
+# something is wrong — so the path is the part that has to be here, since the
+# declaration is what they have to edit.
 check "and names the scrape that rotted, not only the bracket that outranked it" "yes" \
-  "$(holds "$bout" '@gl_turn says the turn closed.*[(]FORCE_BUSY[)]')"
+  "$(holds "$bout" "@gl_turn says the turn closed.*declared in $SHIM/vetbracket/bracketed.sh")"
+# THE ROW MAY NOT REPRODUCE THE PATTERN, and this is a regression check for a live
+# failure, not a style rule. `gang vet` is most often run from an agent's own pane;
+# busy_painted reads the WHOLE pane; so a row echoing the pattern verbatim leaves
+# that agent reading BUSY for as long as the line is on screen — every send
+# refused, every wait timed out, on a harness that is idle. It reached this suite
+# the only way it could: the windowed probe's own baseline caught gang painting a
+# shipped profile's regex, intermittently, because it took a live agent in this
+# state to fire the row. The stand-in's pattern is a bare word on purpose — a
+# pattern that matches itself is exactly the contaminating case.
+check "and does not paint the pattern onto the pane it is printed into" "no" \
+  "$(holds "$bout" 'FORCE_BUSY')"
 
 # --file-issue REACHES THIS CLASS, and it is driven against a stand-in because the
 # real gh would file against this repo from a test run. The stand-in answers
