@@ -610,6 +610,10 @@ shaped this way.
 - [ADR-0005](docs/adr/0005-context-bands-are-absolute.md) — context bands are absolute
 - [ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md) — the band ladder spans absolute bounds
 - [ADR-0007](docs/adr/0007-server-death-is-a-relaunch-not-a-restore.md) — recovery from tmux server death is a relaunch, not a restore
+- [ADR-0008](docs/adr/0008-evidence-is-tiered-per-predicate.md) — evidence is tiered per predicate
+- [ADR-0009](docs/adr/0009-time-bands-are-relative.md) — time bands are relative to a declared cutoff
+- [ADR-0010](docs/adr/0010-a-benchmark-is-a-consumer-not-a-design-input.md) — a benchmark is a consumer, not a design input
+- [ADR-0011](docs/adr/0011-a-rename-before-publication-is-total-and-retroactive.md) — a rename before publication is total and retroactive
 
 ## Project guide
 
