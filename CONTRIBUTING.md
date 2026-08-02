@@ -17,6 +17,20 @@ being pushed, and the Conventional Commits regex over the range being pushed. It
 does not run the integration suite, so passing it is not a prediction that CI
 will pass. `git push --no-verify` skips it.
 
+## Public content
+
+The no-PII policy in
+[ADR-0013](docs/adr/0013-a-pii-control-is-a-gate-not-a-history-rewrite.md)
+covers commits and pushes automatically, through `pre-push` and CI. It does
+not cover issue and pull request bodies — those never become a commit — so
+run
+
+```sh
+tools/pii-scan --stdin < body.txt
+```
+
+before `gh issue create` or `gh pr create`.
+
 ## Commits
 
 Conventional Commits:
