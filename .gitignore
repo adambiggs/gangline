@@ -4,3 +4,4 @@ packaging/pypi/*.egg-info/
 *.tgz
 .gang-briefs/
 .claude/settings.local.json
+.pii-scan-denylist

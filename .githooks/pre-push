@@ -57,6 +57,21 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
     }
   done
   [ "$bad" -eq 0 ] || { echo "pre-push: $bad of $n commit(s) do not conform" >&2; fail=1; }
+
+  # PII scan over the same outgoing range computed above. Run the PUSHED
+  # version of the scanner, not whatever tools/pii-scan happens to sit in the
+  # working tree — the same "lint what's pushed" reasoning as above, but
+  # tools/pii-scan needs a real .git (git rev-list, git show) to run, so
+  # unlike test/lint.sh it cannot run from the archived $work tree; extract
+  # its pushed blob instead and run it here, where the toplevel cd at the top
+  # of this hook still resolves.
+  scanner="$tmp/pii-scan"
+  if git show "${local_sha}:tools/pii-scan" > "$scanner" 2>/dev/null; then
+    bash "$scanner" --range "${revs[@]}" || fail=1
+  else
+    echo "pre-push: $local_sha carries no tools/pii-scan, so nothing was PII-scanned" >&2
+    fail=1
+  fi
 done
 
 [ "$fail" -eq 0 ] || {
