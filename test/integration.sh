@@ -1530,8 +1530,8 @@ check "and lands once the pane settles" "yes" "$(has busybee "MARK_RESUMED")"
 # Waiting for quiet is the fallback, not the goal. A compaction that is visibly
 # running is already past the turn that would have eaten the resume, and reads no
 # input itself, so the message can go straight into the queue it drains on the way
-# out. The clock is the assertion: the quiet path cannot deliver before its ten
-# second floor, so anything that lands inside seven took the other branch.
+# out. Which of the waiter's exits delivered is ASSERTED below rather than inferred
+# from how fast the message arrived.
 paint busybee 'WORKING...'
 printf '%s' MARK_FAST | GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
   "$GANG" compact busybee --from busybee --resume-stdin >/dev/null 2>&1
@@ -1539,12 +1539,29 @@ absence_window 2 "a resume must not go in while a turn that could eat it is runn
 check "a resume still holds while a turn that could eat it runs" "no" "$(has busybee MARK_FAST)"
 tmux send-keys -t "$(target_of busybee)" clear Enter   # that turn ends...
 paint busybee 'COMPACTING...'                          # ...and the compaction starts
-# TIMING UNDER TEST, so the deadline is the assertion and is pinned here rather
-# than inherited. Seven seconds is the gap between the two paths: the quiet path
-# cannot deliver before its ten second floor, so anything arriving inside this
-# window took the compaction-visible branch. Lowering it for speed elsewhere would
-# quietly turn the only case that tells the branches apart into one that cannot.
-WAIT_TIMEOUT=7 wait_for busybee "the resume to go straight in behind a visible compaction" \
+# THE TWO GATES, and they are what makes the arrival below mean the compaction
+# branch. resume_after_compaction leaves its wait three other ways, and these are
+# the two a stopwatch was standing in for:
+#   the settle path resets its streak on any poll that reads the pane BUSY, so a
+#   pane painting a marker its profile counts as busy can never hand that path the
+#   consecutive quiet polls it needs — at any deadline, which is why this replaces
+#   a deadline rather than tightening one;
+#   the context-drop path measures a fall from the count recorded when the command
+#   was typed, and a profile with no readout to record leaves a zero there, which
+#   is nothing to fall from.
+# `status` is the readable end of the first, and it is an IMPLICATION rather than
+# an identity: busy() answers from the highest fresh tier, so a busy state proves
+# gang saw this pane as busy without proving which witness said so. That is what
+# the streak reset needs and all this claims.
+check "a pane painting its compaction is one the quiet path cannot settle" \
+  "busy (tight tug)" "$("$GANG" status busybee)"
+check "and nothing was recorded at issue for a context drop to be measured from" \
+  "0" "$(tmux show-options -wqv -t "$(target_of busybee)" @gl_compacting | cut -d' ' -f2)"
+# The waiter's remaining exit is its timeout, and bounding the run is now this
+# deadline's whole job — it no longer tells the branches apart. The compaction
+# branch delivers on the first poll after the marker is painted and the timeout
+# branch delivers at GANG_RESUME_TIMEOUT, so every value between them reads alike.
+WAIT_TIMEOUT=20 wait_for busybee "the resume to go straight in behind a visible compaction" \
   yes has busybee MARK_FAST
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
 
