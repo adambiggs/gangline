@@ -4423,6 +4423,86 @@ rm -f "$FAKE_CRONTAB"
 unset -f gcron cron_cmd vetcron
 unset FAKE_CRONTAB
 
+# --- the python3 every owned fact is translated through ------------------------
+#
+# install.sh gates on python3 and says why, but it says it ONCE. Every way a host
+# stops having one happens afterwards: an OS upgrade that renames the binary, a
+# shim or a venv landing earlier on PATH, an image rebuilt from a slimmer base, or
+# an install that never ran install.sh at all — a clone plus a symlink is a
+# supported way to get here and config management does exactly that. Same lesson
+# as the crontab entry above: an install-time gate states a requirement, it does
+# not keep it true, and vet is where an operator goes when something has already
+# stopped working.
+#
+# A PATH with real tools and no python3, which is the host being modelled. Built
+# by linking what is already on PATH rather than by naming the tools gang needs,
+# because a hand-written list drifts from what gang actually calls and the check
+# would then be measuring the list.
+NOPY="$SHIM/nopython"
+mkdir -p "$NOPY"
+( IFS=:; for d in $PATH; do
+    [ -d "$d" ] && ln -s "$d"/* "$NOPY"/ 2>/dev/null
+  done ) || true
+rm -f "$NOPY"/python*
+nopyvet() { PATH="$NOPY" "$GANG" vet 2>/dev/null; }
+
+check "the no-python3 control really has no python3 on PATH" "" \
+  "$(PATH="$NOPY" command -v python3 || true)"
+# Without this the control could pass for the wrong reason — a PATH so bare that
+# vet fails on something else entirely says nothing about python3.
+check "and still finds the tools gang needs, so the control is about python3 alone" "yes" \
+  "$(PATH="$NOPY" command -v tmux >/dev/null 2>&1 && echo yes || echo no)"
+check "vet names a host that cannot translate a hook payload" "yes" \
+  "$(holds "$(nopyvet)" '^python3 +- +not on PATH')"
+# The row has to say what stops, because nothing else will: law 7 builds cmd_hook
+# to exit 0 having written nothing and said nothing, so silence is the designed
+# behaviour of every leg below this one.
+check "and names what stops, since every one of those failures is silent" "yes" \
+  "$(holds "$(nopyvet)" 'turn bracket, compaction bracket, occupancy')"
+nopyvet >/dev/null
+check "and calls it drift, which is what a script reads" "1" "$?"
+
+# The case a lookup cannot see, and the reason this row RUNS the reader rather
+# than asking whether a file exists: an interpreter that answers `command -v` and
+# cannot do the work. A shim pointing at a runtime that was removed under it, a
+# wrapper, a stripped image whose stdlib has no json — every one passes a lookup
+# and fails the job.
+mkdir -p "$SHIM/pystub"
+printf '#!/bin/sh\nexit 1\n' > "$SHIM/pystub/python3"
+chmod +x "$SHIM/pystub/python3"
+stubvet() { PATH="$SHIM/pystub:$NOPY" "$GANG" vet 2>/dev/null; }
+check "a python3 that exists and cannot do the job is still a finding" "yes" \
+  "$(holds "$(stubvet)" '^python3 .*cannot run gang'"'"'s hook translator')"
+check "and vet names the interpreter it actually resolved, since that is the fault" "yes" \
+  "$(contains "$(stubvet)" "$SHIM/pystub/python3")"
+# The regression this cost a run to learn: bin/gang runs under pipefail, so
+# `python3 -V` through a pipe fails as a PIPELINE against a stub that exits
+# nonzero, and an untested leg took the whole run down before it could print the
+# row it was collecting for. A check for a broken interpreter has to outlive the
+# broken interpreter.
+check "and the run survives it rather than dying at the row that reports it" "yes" \
+  "$(holds "$(stubvet)" '^live team')"
+
+# The healthy row is asserted too, because it carries the other half of the
+# diagnostic: WHICH python3 gang resolved. An operator chasing a shadowed
+# interpreter needs to see the one gang got on a run where it works — this very
+# tree resolves python3 through a version-manager shim.
+check "a working python3 reads OK and names the one gang resolved" "yes" \
+  "$(holds "$("$GANG" vet 2>/dev/null)" '^python3 +[0-9][^ ]* +OK \(/')"
+
+# Said at hitch as well as in vet, because this is the moment a blind agent is
+# CREATED and the hitch line is where the operator is already looking.
+hout="$(PATH="$NOPY" "$GANG" hitch blindagent -p bash -d /tmp 2>&1)"; hrc=$?
+check "hitch warns when it is creating an agent whose owned facts cannot arrive" "yes" \
+  "$(contains "$hout" "no python3 on this host")"
+# Non-fatal on purpose: the agent still works off the pane exactly as a profile
+# that declares no facts does, so refusing would trade a degraded agent for none.
+check "and the hitch still succeeds, since a degraded agent beats no agent" "0" "$hrc"
+"$GANG" drop blindagent >/dev/null 2>&1 || true
+rm -rf "$NOPY" "$SHIM/pystub"
+unset -f nopyvet stubvet
+unset NOPY hout hrc
+
 # Two declared markers, one controlled profile, and the pair is the whole policy:
 # a busy agent is delivered to and an occupied one is refused. The difference is
 # not how available the agent looks, it is what a keystroke would DO — queue

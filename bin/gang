@@ -3130,6 +3130,19 @@ cmd_hitch() {
     msg="$(marker_line "$key")"
   fi
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
+  # Said here as well as in vet because this is the moment a blind agent is
+  # CREATED, and this line is where the operator is already looking. Non-fatal on
+  # purpose: an agent with no owned-event tier still works, since every predicate
+  # falls back to the pane exactly as it does for a profile that declares no facts
+  # at all, and refusing the hitch would trade a degraded agent for no agent.
+  #
+  # A LOOKUP, NOT A RUN, and the split is deliberate. The present-but-broken
+  # python3 belongs to vet: vet is the diagnostic, it is run once when something
+  # is already wrong, and it can afford to start an interpreter to tell a stub
+  # from the real thing. hitch is on the per-agent path and owes the operator only
+  # the loud case, cheaply — `command -v` is a builtin, so this costs nothing.
+  command -v python3 >/dev/null 2>&1 \
+    || printf '%s\n' "$(colour "$C_BAD" "no python3 on this host: nothing can translate a hook payload or read a context window, so any fact $prof owns through them never arrives and its predicates fall back to the pane — 'gang vet' has the detail")"
   # Readiness is checked whether or not there is a brief to deliver. A role-less
   # hitch used to return right here, reporting success while a first-run dialog
   # owned the screen — and no later surface said so either: a dialog drops the
@@ -5479,6 +5492,59 @@ EOF
   if ! utf8_locale; then
     printf '%-12s %-26s %s\n' 'locale' "${LC_ALL:-${LC_CTYPE:-${LANG:-C}}}" \
       "$(colour "$C_BAD" "no UTF-8 locale available — multibyte markers cannot match")"
+    drift=1
+  fi
+  # python3 is a hard requirement and install.sh already says so — but it says so
+  # ONCE, and every way a host loses it happens afterwards: an OS upgrade that
+  # renames the binary, a venv or a shim landing earlier on PATH, an image rebuilt
+  # from a slimmer base, or an install that never ran install.sh at all, since a
+  # clone plus a symlink is a supported way to get here and config management does
+  # exactly that. Same tissue as the two rows around it — a host fact a gang
+  # behaviour needs — and the same lesson as the patrol line: an install-time gate
+  # states a requirement, it does not keep it true.
+  #
+  # WHY THIS RUNS THE READER INSTEAD OF LOOKING IT UP. `command -v python3`
+  # answers a question that is not the one that costs. The expensive failure is a
+  # python3 that EXISTS and cannot do the one job gang gives it: a stub or wrapper
+  # on PATH, a shim pointing at an interpreter that was removed under it, a
+  # stripped image whose stdlib has no json. Every one of those passes a lookup
+  # and fails the work, so this runs the exact line cmd_hook runs, on the smallest
+  # payload that has a right answer, and requires the answer back.
+  #
+  # WHAT STOPS is the whole owned-event tier at once. cmd_hook translates every
+  # payload through that one line, so with it broken the turn bracket, the
+  # compaction bracket and the occupancy fact are never written, the context fact
+  # and its band note are never parsed, and the beacon prints nothing — every
+  # predicate in ADR-0008 drops to its scrape tier. SILENTLY, and that is the
+  # whole reason this row has to exist: law 7 forbids a translator failing its
+  # harness's turn, so cmd_hook is built to exit 0 having written nothing and said
+  # nothing. That is correct there and it is why the loudness has to be here.
+  # The row is printed on the healthy path too, unlike the locale row above,
+  # because WHICH python3 gang resolves is itself the diagnostic — an operator
+  # chasing a shadowed interpreter needs to see the one gang got even on a run
+  # where it works.
+  # EVERY leg here is in a tested context, and that is not defensive habit — the
+  # first cut of this row killed `gang vet` outright on exactly the host it exists
+  # to diagnose. This file runs under pipefail, so `python3 -V | sed` fails as a
+  # PIPELINE when python3 is a stub that exits nonzero, and an untested failure
+  # there ends the run before the row it was collecting for can print. A check for
+  # a broken interpreter must survive the broken interpreter.
+  local pyver pypath pyout pywhy
+  pypath="$(command -v python3 2>/dev/null)" || pypath=""
+  pyver="$(python3 -V 2>/dev/null | sed -n 's/^Python //p')" || pyver=""
+  pyout="$(printf '{"hook_event_name":"Stop"}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
+    2>/dev/null)" || pyout=""
+  if [ "$pyout" = Stop ]; then
+    printf '%-12s %-26s %s\n' 'python3' "${pyver:-?}" "$(colour "$C_OK" "OK ($pypath)")"
+  else
+    if [ -n "$pypath" ]; then
+      pywhy="on PATH at $pypath and cannot run gang's hook translator — a shim, a wrapper, or an interpreter with no json module answers a lookup and still fails the work"
+    else
+      pywhy="not on PATH — gang's hook translator cannot run at all (macOS ships no python3 by default)"
+    fi
+    printf '%-12s %-26s %s\n' 'python3' "${pyver:--}" "$(colour "$C_BAD" "$pywhy")"
+    printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "every owned-event fact stops being written and says nothing: turn bracket, compaction bracket, occupancy, context fact and its band note. Every predicate falls back to the pane")"
     drift=1
   fi
   # A crontab entry is the one part of an install that updating never touches,
