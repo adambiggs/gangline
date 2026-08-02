@@ -122,6 +122,11 @@ Same discriminator, different answers. A rule that derives them from one
 question is easier to apply at the moment of writing than separate rules held
 side by side.
 
+The compass over all three is **think declaratively**: state the design in
+sentences only a decision can falsify — narrating process is the register every
+failure here shares, and the dated historical record is where the compass
+deliberately yields.
+
 ### What this is not
 
 - **Not a ban on numbers.** Design constants, thresholds and the arithmetic
