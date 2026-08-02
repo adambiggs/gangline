@@ -252,9 +252,9 @@ how pasted input is interpreted [in
 3.6](https://github.com/tmux/tmux/blob/master/CHANGES).
 
 Requirement is not the same as coverage. CI exercises the floor itself and one
-version below it on every change to the installer, and runs the full suite on tmux
-3.4 and 3.7b — so versions between 2.7 and 3.3 meet the enforced floor without the
-suite ever running on them.
+version below it on every change to the installer, and runs the full suite on the
+newer versions its workflow pins — so the range between the floor and those meets
+the enforced floor without the suite ever running on it.
 
 </details>
 
