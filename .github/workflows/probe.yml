@@ -1,0 +1,90 @@
+name: probe
+
+# This file exists ONLY on probe/** branches and never lands on main.
+#
+# It is an instrument, not a gate. Reds from the units under measurement are the
+# DATA this run exists to collect, so a job's status must never be read as a
+# verdict about gang: probe-loop.sh exits non-zero for exactly one reason, that
+# the forced-failure arm failed to fail, which voids every number it printed.
+#
+# One job per arm rather than one job running every arm in series. The arms are
+# independent by construction and the allocation is fixed, so serialising them
+# would buy nothing and spend the whole allocation's wall-clock on one cell.
+# Split, each cell's wall is bounded by the LARGEST single arm — which trims
+# elapsed time without trimming a single iteration. Nothing here is capped.
+on:
+  push:
+    branches: ['probe/**']
+
+jobs:
+  probe:
+    strategy:
+      # Every arm's number is wanted, including from a cell where another arm
+      # voided. This is the same reason shell.yml sets it: a failure on one cell
+      # must not cancel the cell that was going to answer the question.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        arm: [D, A, Anolog, C, B, E]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # install.sh clones from this checkout
+
+      - name: Dependencies
+        run: |
+          set -eu
+          if command -v tmux >/dev/null; then exit 0; fi
+          case "${{ runner.os }}" in
+            Linux) sudo apt-get install -y tmux ;;
+            # No coreutils, for shell.yml's reason: putting brew's gnubin on PATH
+            # would hide the BSD userland this cell exists to run against.
+            macOS) brew install tmux ;;
+            *) echo "no dependency recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
+          esac
+
+      - name: Versions
+        # The failing mode is macOS-only and the -J premise under arm D's reading
+        # is version-dependent, so the versions are evidence, not decoration.
+        run: |
+          set -euo pipefail
+          printf 'uname:  %s\n' "$(uname -a)"
+          printf 'bash:   %s\n' "$(bash --version | head -1)"
+          printf 'tmux:   %s\n' "$(tmux -V)"
+          printf 'awk:    %s\n' "$(awk --version 2>&1 | head -1 || true)"
+
+      - name: Run arm ${{ matrix.arm }}
+        env:
+          PROBE_ARMS: ${{ matrix.arm }}
+        run: |
+          set -euo pipefail
+          # Allocation is per-arm and IDENTICAL on both cells, as ratified. An
+          # arm with no count here stops the job rather than quietly taking a
+          # default: a rate reported against a count nobody chose is a number
+          # nobody can interpret.
+          case "$PROBE_ARMS" in
+            D)          n=120 ;;
+            A|Anolog|C) n=30  ;;
+            B)          n=10  ;;
+            E)          n=3   ;;
+            *) echo "no iteration count for arm '$PROBE_ARMS'" >&2; exit 1 ;;
+          esac
+          export PROBE_N="$n"
+          # A socket and a lock dir of this run's own. The default socket is
+          # shared, and a probe that reached a session it did not create would be
+          # measuring somebody else's screen.
+          export TMUX_TMPDIR="$RUNNER_TEMP/probe-tmux"
+          export GANG_LOCK_DIR="$RUNNER_TEMP/probe-locks"
+          mkdir -p "$TMUX_TMPDIR" "$GANG_LOCK_DIR"
+          ./test/probe-loop.sh
+
+      - name: Artifacts
+        # always(), because a voided arm's captures are the evidence FOR the
+        # void — the one case where the run must not throw its own reasons away.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-${{ matrix.os }}-${{ matrix.arm }}
+          path: probe-artifacts/
+          if-no-files-found: warn
