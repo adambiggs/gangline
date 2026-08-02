@@ -16,7 +16,7 @@ selects the new window. When called from inside tmux, it switches the current
 client instead of nesting an attachment. An explicit `-r` overrides
 `GANG_ROLE`, including when a different name is supplied.
 
-### `gang hitch <name> [-p profile] [-r role] [-d dir] [-m model] [--resume]`
+### `gang hitch <name> [-p profile] [-r role] [-d dir] [-m model] [--resume] [--cutoff duration|clock]`
 
 Starts a harness in a new tmux window. `spawn` is an alias.
 
@@ -32,6 +32,10 @@ Starts a harness in a new tmux window. `spawn` is an alias.
   A profile without a declared resume form refuses the flag rather than launching
   bare — see [ADR-0007](adr/0007-server-death-is-a-relaunch-not-a-restore.md),
   which also records why `opencode` and `pi` declare none.
+- `--cutoff`: declare the team's cutoff while hitching, in the forms `gang cutoff`
+  itself takes — a duration or an `HH:MM` clock time, described under The cutoff
+  below. Settled before the window is opened, so a word Gangline will not accept
+  leaves no agent behind and no declaration disturbed.
 
 Gangline does not remember the team. `--resume` recovers the harness
 *conversation*, which nothing else can rebuild; names, roles, and context marks
@@ -42,6 +46,13 @@ directory: two agents resuming in the same directory get the same conversation,
 and Gangline cannot see that to refuse it. Where the directory holds no
 conversation at all, the harness starts a fresh one and exits 0, and Gangline
 reports a successful hitch rather than a blank agent (issue #52).
+
+There is no per-agent cutoff, so hitching one more dog re-declares the whole
+team's budget. Last wins, and it re-spans from the moment of the hitch rather
+than inheriting what was left of the declaration it replaces. The hitch prints
+the cutoff it declared and says whose it is: a team-wide budget that moved is not
+something to discover later. This is a second way in, not a second cutoff — the
+same storage, forms and rules as `gang cutoff`.
 
 Model spelling belongs to the harness: Claude Code accepts aliases or model IDs,
 Codex accepts a model ID, and opencode and Pi use provider/model forms (Pi also

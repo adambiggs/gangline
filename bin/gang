@@ -308,6 +308,7 @@ gang — drive a team of CLI agents as tmux windows
                                               hitches "lead" here on GANG_PROFILE
                                               with the lead role, and puts you in it
   gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>] [-m <model>] [--resume]
+                    [--cutoff <duration|clock>]
                                               hitch an agent into the team (window name =
                                               identity); -r briefs it with a role from
                                               roles/; -m launches it on a specific model,
@@ -316,7 +317,9 @@ gang — drive a team of CLI agents as tmux windows
                                               --resume picks up the harness's own last
                                               conversation in <dir> instead of starting a
                                               fresh one, for rebuilding a team after the
-                                              tmux server died; alias: spawn
+                                              tmux server died; --cutoff declares the
+                                              whole team's cutoff and re-spans it from
+                                              now, as gang cutoff does; alias: spawn
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
@@ -3335,6 +3338,7 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
 cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
+  local cutoff="" cut_now=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not a usable agent name — patrol and hitch are reserved for gang's substrate; other names use letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in gang hook's reply, and a word in the compaction command gang suggests"
@@ -3344,12 +3348,26 @@ cmd_hitch() {
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     --resume)     resume=1; shift ;;
+    --cutoff)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; cutoff="$2"; shift 2 ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
   # Resolved before anything is hitched: a typo in the role should not leave a
   # live unbriefed agent behind.
   [ -z "$role" ] || role_file "$role" >/dev/null \
     || die "hitch: unknown role '$role' (have: $(list_roles | tr '\n' ' '))"
+  # The cutoff is settled here for that same reason. `--cutoff 90` is exactly the
+  # plausible typo `gang cutoff 90` is, and a refusal raised after the window
+  # opened would leave a live agent behind for a word gang never accepted.
+  #
+  # Both calls sit at statement level deliberately. Each of them dies, and `die`
+  # inside a command substitution ends only that subshell — so a caller reading
+  # either through `$(...)` would take the empty string for a settled answer and
+  # hitch on it.
+  if [ -n "$cutoff" ]; then
+    date_dialect
+    cut_now="$(now_epoch)"
+    cutoff_parse "$cutoff" "$cut_now"
+  fi
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_profile "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
@@ -3413,7 +3431,31 @@ cmd_hitch() {
   elif [ -n "$key" ]; then
     msg="$(marker_line "$key")"
   fi
+  # Stored one statement before it is reported, and the adjacency is the whole of
+  # it. Everything above here can still die — the `died at launch` check above is
+  # the sharpest of them — and a cutoff written on the way past a hitch that then
+  # failed would leave the team on a budget nothing ever announced, which is the
+  # fabricated status law 8 refuses. Kept adjacent, gang cannot store a cutoff it
+  # did not say it stored.
+  #
+  # It cannot move earlier either: the pair is session-scoped state, and on a first
+  # hitch there is no session to hold it until `tmux new-session` has run.
+  #
+  # ONE cut_now serves the parse above and the write here, so the pair stored is
+  # exactly the pair validated. The under-a-second between them is honest — the
+  # declared-at half means the moment the operator declared, not the moment gang
+  # got round to writing it down.
+  if [ -n "$cutoff" ]; then
+    cutoff_write "$CUTOFF_PARSED" "$cut_now"
+    CUTOFF_AT="$CUTOFF_PARSED"; CUTOFF_DECLARED="$cut_now"
+  fi
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
+  # Whose cutoff it is, said on the surface that moved it. The operator asked to
+  # hitch one dog and has just re-declared everyone's budget; a team-wide fact that
+  # changed without a line saying so is the same silent status in the other
+  # direction, and the note a rung is cut from would then describe a span nobody
+  # was told about.
+  [ -z "$cutoff" ] || printf '%s\n' "$(cutoff_line "$cut_now") $(colour "$C_DIM" "— the whole team's, re-spanned from now")"
   # Said here as well as in vet because this is the moment a blind agent is
   # CREATED, and this line is where the operator is already looking. Non-fatal on
   # purpose: an agent with no owned-event tier still works, since every predicate

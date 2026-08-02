@@ -5778,6 +5778,80 @@ check "the pair dies with the session that carried it" \
   "" "$(tmux show-options -qv -t "=$CUT_S:" @gl_cutoff)"
 tmux kill-session -t "=$CUT_S" 2>/dev/null
 
+# --- the cutoff at hitch -------------------------------------------------------
+
+# One storage, two surfaces. `hitch --cutoff` is not a second kind of cutoff: it
+# writes the same pair through the same two functions the verb writes it with,
+# and what these checks hold is the two surfaces to ONE answer. A hitch that
+# stored a variant of its own would give the team two budgets and leave no way to
+# say which one a rung was cut from.
+#
+# The team-wide half is the surprising one, so it is the one pinned hardest:
+# hitching one more dog moves EVERYONE's cutoff.
+CUT_H=$(( CUT_NOW + 100000 ))     # a fresh moment, so no span above is reused here
+
+cut_hout="$(GANG_NOW=$CUT_H "$GANG" hitch cutdog -p bash -d /tmp --cutoff 90m 2>&1)"
+cut_hpair="$(cutoff_pair)"
+check "a hitch declares the pair its duration names" \
+  "$(( CUT_H + 5400 )) $CUT_H" "$cut_hpair"
+# Expected side is the VERB's pair: the same word at the same moment, through the
+# other surface. Equality here is the whole leg — one storage, two ways in.
+GANG_NOW=$CUT_H "$GANG" cutoff 90m >/dev/null
+check "and it is the same pair the verb declares from the same word" \
+  "$(cutoff_pair)" "$cut_hpair"
+
+# Moving the team's budget silently is the failure this line exists against: the
+# operator asked to hitch a dog, and a cutoff moved.
+check "the hitch reports the cutoff it declared" "yes" \
+  "$(holds "$cut_hout" 'cutoff .* remaining')"
+check "and says whose it is, which is everyone's" "yes" \
+  "$(holds "$cut_hout" "the whole team's")"
+
+# Last wins, and it RE-SPANS from now rather than inheriting what was left of the
+# declaration it replaces — declared-at moving is the point, because fractions of
+# what remains are the only budget there is.
+GANG_NOW=$CUT_H "$GANG" cutoff 2h >/dev/null
+GANG_NOW=$(( CUT_H + 1800 )) "$GANG" hitch cutdog2 -p bash -d /tmp --cutoff 30m >/dev/null
+check "hitching one more dog re-declares the whole team's cutoff" \
+  "$(( CUT_H + 3600 )) $(( CUT_H + 1800 ))" "$(cutoff_pair)"
+
+# Refused BEFORE a window exists — the rule the role check states, for the same
+# reason. `--cutoff 90` is exactly the plausible typo `gang cutoff 90` is, and
+# both halves are asserted because a refusal that still left a live agent behind
+# would be the worse of the two bugs.
+cut_hout="$(GANG_NOW=$CUT_H "$GANG" hitch cutbad -p bash -d /tmp --cutoff 90 2>&1)"; cut_rc=$?
+check "a malformed cutoff refuses the hitch" "1" "$cut_rc"
+"$GANG" status cutbad >/dev/null 2>&1
+check "before anything is hitched" "1" "$?"
+check "and the team's standing declaration is untouched by the refusal" \
+  "$(( CUT_H + 3600 )) $(( CUT_H + 1800 ))" "$(cutoff_pair)"
+
+check "the refusal names the forms that would have worked" "yes" \
+  "$(holds "$cut_hout" 'duration .*or a clock time')"
+# Every refusal that names a way out gets a check that TAKES it. This one also
+# states something no other check here does: the refused hitch left the NAME
+# free, because a window still standing would answer 'already exists' instead.
+GANG_NOW=$CUT_H "$GANG" hitch cutbad -p bash -d /tmp --cutoff 90m >/dev/null
+check "and a form it named hitches the very name it just refused" "idle (slack tug)" \
+  "$("$GANG" status cutbad)"
+check "declaring the pair the refusal would not" \
+  "$(( CUT_H + 5400 )) $CUT_H" "$(cutoff_pair)"
+
+# A flag with no value takes the next thing on the line as its value everywhere
+# it is not checked for, so the check is the difference between refusing and
+# hitching on whatever followed.
+"$GANG" hitch cutempty -p bash -d /tmp --cutoff >/dev/null 2>&1
+check "--cutoff with nothing after it dies" "1" "$?"
+"$GANG" status cutempty >/dev/null 2>&1
+check "and hitches nothing on the way" "1" "$?"
+
+# The new arm must not have widened what hitch accepts.
+"$GANG" hitch cutjunk -p bash -d /tmp --nonsense >/dev/null 2>&1
+check "an unknown argument still dies beside the new one" "1" "$?"
+
+for _cd in cutdog cutdog2 cutbad; do "$GANG" drop "$_cd" >/dev/null 2>&1; done
+"$GANG" cutoff clear >/dev/null
+
 # --- file-based context (codex) ----------------------------------------------
 
 # Codex paints no readout a passive observer can reach; its profile reads the
