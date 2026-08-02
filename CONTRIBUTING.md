@@ -66,6 +66,12 @@ An exact pathspec protects you from a peer's files, not from a peer inside your
 file. `git commit -- bin/gang` commits that file's *content*, so a teammate's
 uncommitted work in it lands under your message and your authorship.
 
+The pathspec also has a blind spot that appears exactly when the tree is dirty:
+`git commit -- <path>` reaches only *tracked* files, so on a brand-new file it
+fails with "did not match any file(s) known to git" — and the recovery that
+error tempts you toward is `git add -A`, the precise move this section exists to
+prevent. Stage by the same pathspec instead: `git add -- <paths>`, then commit.
+
 So split concurrent work by **file**, not by concern: a boundary git cannot
 enforce is not a boundary. One writer per file at a time, and the way to hand it
 over is to land a green checkpoint and push, not to hold a large batch. A batch
