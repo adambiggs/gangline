@@ -7,6 +7,38 @@
 #   test/integration.sh
 set -uo pipefail   # deliberately not -e: a failed assertion reports, not aborts
 
+# --- the environment this run refuses to inherit --------------------------------
+#
+# tmux exports exactly two variables into a pane it starts: TMUX, naming the
+# server, and TMUX_PANE, naming the pane. They are one fact in two halves, and
+# gang reads both — self_window() derives the CALLER from $TMUX_PANE, and `up`
+# switches a client rather than attaching when $TMUX is set. Handed only one of
+# them, this suite drives a program that is being told there is no server while
+# still being handed a pane id on one.
+#
+# Both present and agreeing runs green. Both absent runs green. Only the
+# half-state fails — and it fails wide, in delivery, the pane lock and
+# occupancy, which are exactly the paths that ask who is calling. Measured on
+# byte-identical trees differing in nothing but that one variable, failing the
+# same checks by name both times.
+#
+# So it is removed here rather than asked for. What used to carry this was a
+# recipe — invoke the suite through `env -u TMUX -u TMUX_PANE` — and a rule of
+# that shape is only ever as good as the last person to read it. `env -u TMUX`
+# alone looks like the whole fix and produces precisely the half-state that
+# fails; that is not a hypothetical misreading, it is the one this file was
+# actually being run under. A caller cannot hand this run a state the run
+# unsets before it does anything.
+#
+# TMUX_TMPDIR is deliberately NOT scrubbed, and the distinction is the point
+# rather than an oversight. The two above are tmux's claim about where this
+# process is running. TMUX_TMPDIR is the caller's instruction about which
+# server to speak to, and it is how this suite and every sandbox inside it stay
+# off the operator's live socket. Scrubbing it as part of "the TMUX_* family"
+# would aim the whole run at the default socket, which on a developer's box is
+# the live team's own. The checks below hold both halves of that down.
+unset TMUX TMUX_PANE
+
 # The same pure-shell resolution bin/gang uses, and for the same reason: the
 # suite shims a BSD readlink below to prove gang survives one, but resolved its
 # own path with GNU-only `readlink -f` first — so on the stock macOS that test
@@ -557,6 +589,58 @@ check "and does not spend the deadline first" "yes" \
 check "and says a producer refused rather than reporting a timeout" "yes" \
   "$(contains "$out" "producer that refused")"
 
+# --- the environment, held down rather than requested ---------------------------
+
+# The scrub at the top of this file is the first thing that runs; these are the
+# first checks that can see whether it held, and they are here rather than in a
+# comment because the claim Rider 3's page makes for this suite — that it is
+# hermetic by construction and not by convention — is worth exactly as much as
+# the check that fails when it stops being true. Asserted on the live
+# environment, so re-exporting either half anywhere above this line trips it.
+check "no inherited tmux server travels into this run" "" "${TMUX:-}"
+check "and no inherited pane id travels with it" "" "${TMUX_PANE:-}"
+# And the statement itself, which is a different question from either check above
+# and is not answered by them. Both of those pass on a run that inherited
+# nothing — which is CI, every time — so between them they would clear a file
+# whose scrub had been deleted outright. Asking instead whether TMUX_TMPDIR is
+# absent from the scrub has the same hole from the other side: absent from a
+# scrub that is not there reads exactly like absent from one that is.
+#
+# So it is read the way the tmux floor at the bottom of this file is read, for
+# the reason given there — a scrub this cannot FIND is not a scrub that AGREES.
+# Missing returns a sentinel naming the file rather than an empty string, and the
+# variable list is pinned rather than searched, which is what lets one check
+# refuse all three ways the statement can go wrong. Deleted, and the sentinel
+# fails it. Widened to the whole TMUX_* family by a later tidy, and TMUX_TMPDIR
+# joins the list and fails it — that is the silent one, because the run it would
+# otherwise clear is a run against the operator's own server. Narrowed back to
+# `unset TMUX`, and the half-state this file was actually being run under comes
+# back, failing HERE and by name rather than scattered through delivery and the
+# pane lock, which is where it used to land and where it names nothing.
+entry_scrub() { # $1 = this file -> the variables its entry scrub removes, or a sentinel
+  local line
+  line="$(grep -m1 -E '^unset +TMUX' "$1" 2>/dev/null)"
+  [ -n "$line" ] || { printf 'NO-ENTRY-SCRUB-IN-%s' "${1##*/}"; return 0; }
+  printf '%s' "${line#unset }"
+}
+check "the entry scrub removes the pane pair, and nothing but the pane pair" \
+  "TMUX TMUX_PANE" "$(entry_scrub "$SUITE")"
+# Named above rather than written inline so these drive THAT code and not a copy
+# of it that agrees with whatever it was told — the rule the socket-name helper
+# below is held to. Each of the three ways the statement can go wrong is planted
+# and read back, because a guard whose refusals are only described is a guard
+# nobody has watched refuse. The scrub is a single line by construction, so a
+# fixture that is one line is the whole shape.
+printf 'set -u\nunset GANG_PROFILES\n' > "$SHIM/scrub-gone"
+printf 'unset TMUX TMUX_PANE TMUX_TMPDIR\n' > "$SHIM/scrub-widened"
+printf 'unset TMUX\n' > "$SHIM/scrub-halved"
+check "a file with no entry scrub at all is named, not read as agreement" \
+  "NO-ENTRY-SCRUB-IN-scrub-gone" "$(entry_scrub "$SHIM/scrub-gone")"
+check "a scrub widened to take the socket directory with it is caught" \
+  "TMUX TMUX_PANE TMUX_TMPDIR" "$(entry_scrub "$SHIM/scrub-widened")"
+check "and so is the half-scrub this whole section exists to make impossible" \
+  "TMUX" "$(entry_scrub "$SHIM/scrub-halved")"
+
 # --- finding its own tree ------------------------------------------------------
 
 # `readlink -f` is GNU-only; a stock macOS readlink rejects -f. gang is normally
@@ -608,13 +692,22 @@ check "and names what is missing" "yes" \
 # Its own socket directory, and a short one: a unix socket path has a hard length
 # limit, and a TMUX_TMPDIR under a long workspace path fails to bind for a reason
 # that has nothing to do with what is being tested.
+#
+# The lines below carried `env -u TMUX` of their own until the entry scrub took
+# over the job. Kept, they would be worse than redundant: a half-scrub sitting at
+# a call site is the shape a reader copies, and it is the shape that fails.
 COLD="$(mktemp -d /tmp/gangcold.XXXXXX)"; COLDS="gangcold-$$"
-env -u TMUX TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" \
+env TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" \
   hitch coldstart -p bash -d /tmp >/dev/null 2>&1; crc=$?
 check "gang starts a team with no tmux server running at all" "0" "$crc"
 check "and the agent it hitched is really there" "idle (slack tug)" \
-  "$(env -u TMUX TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" status coldstart 2>&1)"
-env -u TMUX TMUX_TMPDIR="$COLD" tmux kill-server 2>/dev/null || true
+  "$(env TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" status coldstart 2>&1)"
+# The one command in this file that can end a tmux server, so it names the one it
+# means instead of being aimed by the environment. TMUX_TMPDIR + a bare `tmux`
+# would land here too, but only for as long as nobody edits the variable out from
+# under it; `-S` cannot be pointed at the live team's socket by any state a caller
+# arranges. Same rule the probe is held to below, applied to the sharpest verb.
+tmux -S "$COLD/tmux-$(id -u)/default" kill-server 2>/dev/null || true
 rm -rf "$COLD"
 
 # --- lifecycle ---------------------------------------------------------------
@@ -3426,6 +3519,18 @@ probe_work() {
   # that differs — the zero because the statusline prints "ctx -" and writes
   # nothing when it has no usage, so a zero in the record is a figure gang did
   # not put there, and stamped now so staleness is not what refuses it.
+  #
+  # This $TMUX_PANE is the fixture's OWN, set by the tmux that started this pane
+  # on the probe's own socket — never the pane whoever launched the suite was
+  # sitting in, which is unset at entry and could not have reached here anyway.
+  # Guarded rather than assumed, because of what tmux does with the value if it
+  # ever went missing: an empty -t is not "no pane" to tmux, it is the CURRENT
+  # one, so a fixture that lost its own id would quietly stamp these two records
+  # onto whatever window is on screen and still report a clean run. Same trap
+  # id_of() refuses to fall into, in the one file that writes a pane option from
+  # inside the pane rather than from the suite.
+  [ -n "${TMUX_PANE:-}" ] \
+    || { printf 'BUG: fixture has no pane of its own to write to\n' >&2; return 1; }
   tmux set-option -w -t "$TMUX_PANE" @gl_turn 'not-a-bracket'
   tmux set-option -w -t "$TMUX_PANE" @gl_ctx "ctx 0 200000 $(date +%s)"
 }
@@ -3529,7 +3634,16 @@ check "and records gang cannot read exit nonzero like records that never came" "
 
 # The probe drives real tmux servers, and the one rule it cannot get wrong is
 # whose. Given neither -S nor -L, tmux takes its socket from $TMUX and would
-# drive the server gang is RUNNING IN.
+# drive the server gang is RUNNING IN — which on a live box is the team's.
+#
+# That is the invariant under test and it belongs to gang, not to this file, so
+# the entry scrub does not soften it: an operator's `gang vet --probe` runs from
+# inside a pane with $TMUX set and is the case this exists for. What the scrub
+# does change is the ADDRESS the checks below read. With no $TMUX to take a
+# socket from, every bare tmux here resolves through TMUX_TMPDIR — the sandbox
+# this run was given — instead of through whichever client happened to launch
+# it. These checks used to be able to count sockets in one directory while the
+# probe leaked into another, and answer about the wrong one.
 # Scoped to sockets that appeared during THIS run's probes, by name, rather than
 # counting every `gangvet` socket in the directory. The probe names its socket
 # after the pid of the gang process driving it, which this suite cannot predict —
@@ -3669,7 +3783,7 @@ GANG_BUSY_REGEX="[unclosed"
 GANG_VERSION_CMD="echo 9.9.9"
 GANG_VERIFIED_VERSIONS="9.9.9"
 SH
-leakout="$(env -u TMUX TMUX_TMPDIR="$LEAKD/tmux" TMPDIR="$LEAKD/tmp" \
+leakout="$(env TMUX_TMPDIR="$LEAKD/tmux" TMPDIR="$LEAKD/tmp" \
   GANG_PROFILES="$LEAKD/prof" GANG_PROBE_PROMPT="probe_work" \
   GANG_PROBE_BOOT=25 GANG_PROBE_TURN=10 GANG_PROBE_SETTLE=10 GANG_PROBE_QUIET=2 \
   "$GANG" vet --probe leakmark 2>&1)"; leakrc=$?
