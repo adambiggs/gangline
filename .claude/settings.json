@@ -1,0 +1,22 @@
+{
+  "//": "Claude Code is the only harness with a config file here, by law 5: nothing lands without a live consumer, and this repo is contributed to from Claude Code today. AGENTS.md is the canonical brief and serves every harness; see its 'Agent configuration in this repo'.",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(shellcheck:*)",
+      "Bash(test/lint.sh:*)",
+      "Bash(test/integration.sh:*)",
+      "Bash(gang roster:*)",
+      "Bash(gang status:*)",
+      "Bash(gang capture:*)",
+      "Bash(gang vet:*)"
+    ],
+    "deny": [
+      "Bash(tmux kill-server:*)",
+      "Bash(tmux kill-session:*)"
+    ]
+  }
+}
