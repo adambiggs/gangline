@@ -213,19 +213,13 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <section id="solo">
   <h2>A team of one</h2>
   <p>
-    A team can have one dog in it. <code>gang up</code> with nobody else hitched
-    gives you the context loop by itself: Gangline measures the window, notes each band
-    as you cross it, and near the end compacts you and hands back the thread you
-    asked it to keep &mdash; measure, warn, act, instead of you watching a meter and
-    remembering to act on it.
+    A team can have one dog in it: <code>gang up</code> with nobody else hitched
+    gives you
+    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#a-team-of-one">the
+    context loop</a> by itself &mdash; measure, warn, act &mdash; and needs no
+    permissions decision, because you are attached and watching the pane.
   </p>
   <pre class="cmd"><code><span class="p">$</span> gang up</code></pre>
-  <p class="note">
-    Solo needs no permissions decision, because you are attached and watching the
-    pane: your harness's interactive defaults are the right ones. The team verbs are
-    all still there and none of them are required &mdash; adding a teammate later is
-    <code>gang hitch</code>, and nothing you already set up changes.
-  </p>
   </section>
 
   <section id="ideas">
@@ -268,200 +262,95 @@ worker           codex        <span class="busy">busy (tight tug)</span>   31k/2
   <section id="compare">
   <h2>Where this sits</h2>
   <p>
-    <strong>gangline is a substrate, not an orchestration framework.</strong> The
-    orchestration &mdash; who does what, in what order, what happens when one of
-    them stalls &mdash; lives in the agent and in a markdown role brief you replace
-    wholesale with <code>GANG_ROLES</code>. gangline owns the layer underneath: how
-    an agent is started, how a message is <em>proven</em> into its input box, what
-    may and may not be claimed about its state, and what becomes of its context
-    over the following six hours.
-  </p>
-  <p class="lede">
-    That boundary is not a positioning statement, it is written into the
-    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a>.
-    Law 9 gives the mission as <em>drive long-horizon multi-agent sessions with
-    minimal machinery</em>, and settles ties with &ldquo;the answer is prose in an
-    agent's prompt, not code in this repo&rdquo;. Law 7 forbids gangline from
-    growing any component whose job is watching, policing or coordinating another
-    gangline component &mdash; which is what a supervisor loop is. An orchestrator
-    is a thing that decides what runs next; <code>gang</code> never decides that,
-    and is not allowed to.
-  </p>
-  <p class="lede">
-    Which is why the shipped lead / worker / reviewer briefs are deliberately thin.
-    They are a worked example of one way to divide labour, not the product, and
-    swapping them costs a directory. That does not make gangline unopinionated
-    &mdash; it is opinionated to a fault, just not about your workflow. It is
-    opinionated about what a tool may <em>claim</em>: that a delivery is not
-    delivered until the box has been seen to change, that an unreadable pane is a
-    third answer rather than a convenient one, that &ldquo;a UI owns this input
-    box&rdquo; and &ldquo;a human must clear it&rdquo; are different findings and
-    only the first has been established.
-  </p>
-
-  <dl>
-    <dt>The axis is duration, not breadth.</dt>
-    <dd>Orchestration competes on breadth &mdash; fan out, join, retry, dependency
-        graphs, structured output. Every mechanism gangline actually invented is
-        about surviving <strong>time</strong>: self-compaction at a clean seam with
-        a detached resume; context bands keyed to how long a context <em>is</em>
-        rather than how full its window is; and a probe that fires each profile's
-        markers at a live harness, because the likeliest thing to break a
-        long-running team is a vendor moving a pixel of chrome next Tuesday. A team
-        that finishes inside one context window needs none of it. A team still
-        working tomorrow morning needs all three, and no amount of fan-out
-        substitutes.</dd>
-  </dl>
-
-  <p class="lede">
-    Every tool below solves a real problem, and for several of them the honest
-    answer is &ldquo;use that one instead&rdquo; &mdash; or &ldquo;use that one
-    <em>on top of this</em>&rdquo;, which is not a contradiction. Each is described
-    in the terms it uses for itself.
+    <strong>gangline is a substrate, not an orchestration framework.</strong> Who
+    does what, in what order, and what happens when one of them stalls lives in the
+    agent and in a role brief you replace wholesale. gangline owns the layer
+    underneath: how an agent is started, how a message is <em>proven</em> into its
+    input box, what may and may not be claimed about its state, and what becomes of
+    its context over the following six hours. The axis is duration, not breadth
+    &mdash; a team that finishes inside one context window needs none of this, and a
+    team still working tomorrow morning needs all of it.
   </p>
   <div class="tbl">
   <table>
     <tr><th></th><th>what it owns</th><th>agents run as</th><th>what stays running</th></tr>
     <tr><td><strong>gangline</strong></td>
         <td>the substrate: delivery, state, context, rot</td>
-        <td>tmux windows you attach to &mdash; Claude Code, Codex, opencode, Pi</td>
+        <td>tmux windows you attach to</td>
         <td>nothing; <code>gang</code> exits</td></tr>
     <tr><td><a href="https://code.claude.com/docs/en/agent-teams">Claude Code agent teams</a></td>
         <td>orchestration: shared task list, claiming, plan approval</td>
-        <td>rows in the lead's terminal, or split panes &mdash; Claude Code</td>
+        <td>rows in the lead's terminal, or split panes</td>
         <td>the lead session</td></tr>
     <tr><td><a href="https://github.com/smtg-ai/claude-squad">claude-squad</a></td>
         <td>isolation: a git worktree and tmux session per agent</td>
-        <td>tmux sessions in a Go TUI &mdash; Claude Code, Codex, Gemini, Aider, any command</td>
+        <td>tmux sessions in a Go TUI</td>
         <td>the TUI</td></tr>
     <tr><td><a href="https://github.com/mixpeek/amux">amux</a></td>
         <td>a control plane: dashboard, scheduler, watchdog</td>
-        <td>tmux sessions behind a web UI &mdash; Claude Code, Codex, Gemini CLI</td>
+        <td>tmux sessions behind a web UI</td>
         <td>a server on a port</td></tr>
     <tr><td><a href="https://github.com/SeemSeam/claude_codex_bridge">CCB</a></td>
         <td>collaboration graphs across many vendors</td>
-        <td>native terminal panes &mdash; Codex, Claude, Gemini, opencode, Pi and more</td>
+        <td>native terminal panes</td>
         <td>a background daemon</td></tr>
     <tr><td>Agent SDK, LangGraph, CrewAI</td>
         <td>orchestration in code you write</td>
-        <td>API calls in your program &mdash; model APIs, not CLIs</td>
+        <td>API calls in your program &mdash; model APIs, not a CLI</td>
         <td>your program</td></tr>
   </table>
   </div>
 
-  <ul>
-    <li><strong>Claude Code agent teams</strong> are the orchestration layer
-        gangline deliberately does not ship: a shared task list with dependencies
-        and file-locked claiming, plan approval before a teammate may implement,
-        hooks that fire when a teammate goes idle or a task completes. If every
-        member of your team is Claude Code, start there &mdash; it is more
-        integrated than an external process can be. What it is not is cross-vendor,
-        and its coordinator is the lead's own session.</li>
-    <li><strong>claude-squad</strong> gives each agent its own git worktree.
-        gangline gives you none. If what you need is four agents on one repo that
-        cannot collide, that is the tool and this is not.</li>
-    <li><strong>amux</strong> is a control plane and does far more at that layer:
-        live status and token stats in a browser, a cron scheduler, a kanban board,
-        an iOS app, and a watchdog that compacts context and restarts sessions on
-        its own. gangline warns; your agent is the one that acts.</li>
-    <li><strong>CCB</strong> drives a far wider set of harnesses than gangline's
-        four and arranges them into explicit collaboration graphs &mdash;
-        <code>A -&gt; B -&gt; C</code>, <code>A,B -&gt; C</code>,
-        <code>A -&gt; B,C</code> &mdash; with a background daemon that keeps project
-        state alive after you close the UI, plus a mobile app with remote terminal
-        access and file transfer.</li>
-    <li><strong>SDK frameworks</strong> are right when what you want is a program
-        rather than a team: deterministic control flow, retries, structured output,
-        tests. What you give up is the harness &mdash; there is no TUI to watch or
-        type into, because there is no harness in the loop.</li>
-  </ul>
-
   <p class="lede">
-    <strong>Where gangline is the wrong tool.</strong> No worktree isolation: every
-    agent shares one checkout, and keeping two of them off the same file is yours
-    to arrange. No dashboard, no notifications, no history to browse afterwards
-    &mdash; per-agent state lives in tmux window options and dies with the window,
-    which is the deletion path working as designed and also means nothing is kept
-    for you. No auto-restart: an agent that falls over is one you hitch again.
-    Profile version pins go stale every time a harness ships; <code>gang vet</code>
-    tells you, but re-verifying is yours. And it is Bash on tmux, so Windows means
-    WSL. Not on that list: no task list, no dependency graph, no retry policy, no
-    supervisor loop &mdash; those are absent on purpose, because they are the layer
-    above.
-  </p>
-
-  <p class="lede">
-    <strong>The client is a terminal.</strong> gangline ships no app, no web UI and
-    no mobile client, so there is nothing between you and the agent. SSH or mosh in
-    from a phone, <code>gang attach</code>, and you are in the same tmux session you
-    would be in at your desk: the harness's own interface, every pane, every
-    keystroke. A mobile client gives you a view of what is happening, chosen by
-    whoever wrote it. A terminal gives you what is happening. The cost of that
-    stance is the whole paragraph above &mdash; no push notification will ever tell
-    you an agent went idle.
-  </p>
-
-  <p class="note">
-    <strong>What would make half of this unnecessary.</strong> gangline scrapes
-    panes because the harnesses it drives expose no stable programmatic surface to
-    do it any other way, and the design accepts the consequence out loud: text
-    conventions are version-fragile, a TUI update can move a busy marker, and what
-    makes that survivable is that the break is loud and the fix is one line in a
-    profile. The probe exists because of that acceptance, not in spite of it.
-    <a href="https://agentclientprotocol.com">ACP</a> &mdash; which standardises
-    editor-to-agent communication over JSON-RPC much as LSP did for language
-    tooling &mdash; is the closest thing to the surface that would make the
-    scraping unnecessary. If the harnesses converge on it, the reading half of this
-    design should be replaced by it, and that would be a good outcome rather than
-    an embarrassing one.
+    <strong>Where gangline is the wrong tool.</strong> No worktree isolation, no
+    dashboard, no notifications, no history to browse afterwards, no auto-restart
+    &mdash; and it is Bash on tmux, so Windows means WSL. Not on that list: no task
+    list, no dependency graph, no retry policy, no supervisor loop, which are absent
+    on purpose because they are the layer above. Every tool in that table solves a
+    real problem, and for several of them the honest answer is &ldquo;use that one
+    instead&rdquo; &mdash; or &ldquo;use that one <em>on top of this</em>&rdquo;. The
+    README
+    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#where-this-sits">says
+    which, and why</a>, along with the constitution laws that put the boundary
+    there.
   </p>
   </section>
 
-  <section id="delivery">
-  <h2>Delivery is measured, not assumed</h2>
-  <p>
-    A send measures the target's input box instead of spraying keystrokes. Gangline
-    reads the box, pastes, and reads again &mdash; the box must have
-    <em>changed</em>. Enter goes in as its own keystroke, then Gangline polls until the
-    box differs from the pasted state. An empty composer and a harness's queued
-    message hint are both valid submitted states.
-  </p>
-  <p class="note">
-    The sender's shell runs before Gangline does. Single-quote literal message
-    prose: backticks or <code>$()</code> inside double quotes execute locally, and
-    Gangline can only verify the already-expanded text it receives.
-  </p>
-  <p class="lede">
-    Matching the text <em>somewhere</em> on screen would verify against an identical
-    earlier send still sitting in the transcript; a changed composer is the
-    harness-independent fact underneath every TUI's rendering. The separate Enter
-    matters too: batch text and newline into one burst and a TUI can read the
-    newline as part of the paste, parking the message unsent. If Gangline cannot
-    verify a submit, it fails loudly; it clears a stranded paste only when it can
-    prove the live composer still contains exactly that paste, and otherwise
-    reports an undelivered paste in status, roster, and patrol.
-  </p>
-  </section>
+  <section id="proof">
+  <h2>Measured, not assumed</h2>
 
-  <section id="context">
-  <h2>Context is measured, not felt</h2>
   <p>
-    Measure, warn, act &mdash; the substrate does the first two, the agent does the
-    third. Usage is read through each harness's own introspection: a statusline
-    beacon, a painted readout, or the session file the harness itself writes.
-    Two warning legs run the same band ladder over that one readout &mdash; an
-    in-turn hook where the harness has hooks, an ambient cron patrol where it
-    doesn't &mdash; and share one band memory, so an agent is warned once per band,
-    not once per leg. Both ends of that ladder are absolute token counts, because
-    context rot tracks how long a context is rather than how full its window is
-    &mdash; a 300k context is degraded whether the window is 200k or 1M, so it
-    earns the same warning on both. Every agent's first rung is
-    <code>120000</code> and none goes unwarned past <code>350000</code>: a bigger
-    window is a reason to warn on the same schedule, not a licence to fill it.
-    Between those two the five rungs are spread across the window and drawn closer
-    together toward the top, where the hazard stops being rot and starts being
-    running out of room.
+    <strong>Delivery is proven into the box.</strong> A send reads the target's
+    input box, pastes, and requires the box to have <em>changed</em>; Enter goes in
+    as its own keystroke, and a later read must differ again. Unreadable and
+    unchanged are separate failures and both are loud &mdash; a paste stranded by
+    one is reported as an undelivered paste until the box is empty.
   </p>
+
+  <p>
+    <strong>&ldquo;I cannot tell&rdquo; is a state, not a default.</strong> A
+    predicate that could not reach an answer says so rather than returning the
+    convenient one. gangline can establish that a harness-owned UI has taken an
+    input box; who may free it is a different finding, and it does not pretend to
+    have made it.
+  </p>
+
+  <pre><code><span class="p">$</span> gang send reviewer --from lead --stdin &lt;&lt;'MESSAGE'
+ship it
+MESSAGE
+gang: 'reviewer' is <span class="gate">occupied (authority unknown)</span> — a UI owns its
+input box and gang cannot establish who may clear it; a send would act on that
+UI instead of landing (gang attach)</code></pre>
+
+  <p>
+    <strong>Context is measured, not felt.</strong> A model cannot feel its own
+    token count, so the substrate reads it through the harness's own introspection
+    and warns on a ladder keyed to how long a context <em>is</em> rather than how
+    full its window is. Measure, warn, act &mdash; the substrate does the first two,
+    and the agent does the third, compacting itself at the next clean seam and
+    handing its own successor the thread.
+  </p>
+
   <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k in context — past the
 158000-token band. Start no new work. Close what is open, then compact. Your
 recall is already degrading: instructions given once earlier in this
@@ -470,63 +359,16 @@ Write the handoff to a file, then run:
 gang compact worker --from worker --resume-stdin &lt; resume-file
 — this queues behind the turn you are in, and the resume is delivered once
 compaction settles.</code></pre>
-  <p class="lede">
-    Where the harness accepts compaction during an active task, the agent then
-    compacts itself at the next clean seam &mdash; tests green, a commit made &mdash;
-    without being idle first and without anyone watching. Codex rejects
-    <code>/compact</code> during an active task, so another caller must compact it
-    once it is idle, or Codex must reach its own automatic compaction. The
-    <code>--resume-stdin</code> never rides the input queue directly behind its own
-    compaction, where the turn about to be compacted could swallow it. A detached
-    waiter uses a declared live compaction marker, a large context drop, or a
-    bounded stable-screen fallback before attempting the ordinary verified
-    delivery path. A failure is reported by status and patrol.
-  </p>
-  </section>
 
-  <section id="refusals">
-  <h2>Loud refusals, never guesses</h2>
-  <p>
-    gangline's delivery failure mode is a refusal you can read, not a guess you can't.
+  <p class="note">
+    Every one of those is a mechanism you can read rather than take on trust: the
+    measured composer sequence, the band ladder and its absolute bounds, and the
+    detached waiter that keeps a resume out of the turn being compacted are in the
+    <a href="https://github.com/adambiggs/gangline/blob/main/README.md">README</a>
+    and in
+    <a href="https://github.com/adambiggs/gangline/blob/main/docs/operations.md">operating
+    a team</a>.
   </p>
-  <pre><code><span class="p">$</span> gang send reviewer --from lead --stdin &lt;&lt;'MESSAGE'
-ship it
-MESSAGE
-gang: 'reviewer' is <span class="gate">occupied (authority unknown)</span> — a UI owns its
-input box and gang cannot establish who may clear it; a send would act on that
-UI instead of landing (gang attach)</code></pre>
-  <ul>
-    <li><strong>Gangline sends no keystrokes to occupied agents.</strong> A
-        harness whose own UI has taken its input box &mdash; a permission prompt, a
-        picker, anything that takes the screen &mdash; cannot receive a message, and
-        a send would act on that UI instead, so every delivery path refuses and
-        patrol names the occupancy loudly as what the team is waiting on. What
-        gangline establishes is that the box is taken, never who may free it, so
-        the state qualifies itself
-        <span class="gate">(authority unknown)</span> rather than asserting a human
-        is required. Where a profile declares a composer reader, a missing safe
-        composer with no painted busy state reads occupied, never idle.</li>
-    <li><strong>&ldquo;I cannot tell&rdquo; is a state, not a default.</strong> When pty
-        activity alone has been carrying a busy verdict, it may do so for
-        <code>GANG_ACTIVITY_LIMIT</code> and no longer; past that the agent reads
-        <span class="gate">expired (pty activity bound reached)</span>. That is
-        neither busy nor idle, and Gangline reports it rather than choosing &mdash; a send
-        is refused unless the profile declares a safe composer, because an arm that
-        ran out is a different answer from an agent that was never working, and
-        quietly calling it idle is how one wrong reading becomes permanent.</li>
-    <li><strong>Nudges hold for unsafe panes.</strong> Patrol checks Gangline-owned
-        compaction state, a painted busy marker, byte-identical pane captures, and
-        an empty input box before injecting. Holding costs one sweep; interleaving
-        costs the turn.</li>
-    <li><strong>An unread context window is admitted, not hidden.</strong> A
-        readout Gangline cannot reach shows as <code>-</code> in the roster and is
-        reported as not patrolled, never quietly skipped.</li>
-    <li><strong>Scrape drift is diagnosed, not endured.</strong> Every scraped
-        marker in a shipped harness profile is pinned to live-verified versions;
-        <code>gang vet</code>
-        exits nonzero on drift &mdash; and says so when a clean bill can't explain
-        misbehavior, because version pins don't watch your UI mods.</li>
-  </ul>
   </section>
 
   <section id="commands">
@@ -578,32 +420,21 @@ UI instead of landing (gang attach)</code></pre>
   <h2>Extend it</h2>
   <p>
     A profile says how to talk to a harness; a role says what an agent is for.
-    They are the same kind of extension point, and neither is an integration.
+    Neither is an integration, and both are shadowed rather than patched, so a new
+    harness &mdash; or a fix for a TUI that moved under you &mdash; costs a file of
+    the same name and never surgery on the installed tree.
+    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#profiles-roles-and-diagnostics">What
+    a profile declares</a>, and how to point gangline at your own, is in the README.
   </p>
-  <ul>
-    <li><strong>A profile is sourced shell</strong> declaring what Gangline cannot
-        know generically: launch and model syntax, busy and occupied states,
-        compaction, mid-turn input, and optional functions that read context and
-        the input box. Shipped markers nobody has watched live stay unset, and
-        Gangline takes the slower, safer branch rather than guessing.</li>
-    <li><strong>A role is a markdown brief</strong> &mdash; lead splits work and
-        guards its own context hardest, worker reports what changed and what proves
-        it, reviewer verifies claims rather than reading diffs. The brief is
-        pointed at, not pasted, so it survives compaction.</li>
-    <li><strong>Both are shadowed, not patched.</strong> <code>GANG_PROFILES</code>
-        and <code>GANG_ROLES</code> are searched before the shipped directories, so
-        a new harness &mdash; or a fix for a TUI that moved under you &mdash; costs
-        a file of the same name, never surgery on the installed tree.</li>
-  </ul>
   </section>
 
   <section id="trail">
   <h2>The trail</h2>
   <p class="lede">
-    Every term names something real in the system, and the
+    Every term names something real, and the
     <a href="https://github.com/adambiggs/gangline/blob/main/docs/field-guide.md">musher's
     field guide</a> maps all of it &mdash; roles, states and verbs, never rules.
-    The ones worth knowing before you start:
+    The four worth knowing before you start:
   </p>
   <div class="tbl">
   <table>
@@ -613,24 +444,14 @@ UI instead of landing (gang attach)</code></pre>
     <tr><td><span class="gate">hook set</span></td>
         <td>occupied &mdash; the snow hook is dug in and the team stands anchored,
             whether the musher set it or it caught on its own</td></tr>
-    <tr><td>checkpoint</td>
-        <td>the clean seam an arc ends on &mdash; tests green, a commit made &mdash;
-            where compaction and releases happen</td></tr>
     <tr><td>dropped</td>
         <td>a released window &mdash; deliberate and routine; finishing an arc and
             being released is health, not failure</td></tr>
     <tr><td>dog in the basket</td>
         <td>a finished agent left running instead of released &mdash; the
             anti-pattern <em>dropped</em> exists to prevent</td></tr>
-    <tr><td>intelligent disobedience</td>
-        <td>a good lead refuses the command onto thin ice &mdash; once, short,
-            specific; the musher's word is then final</td></tr>
   </table>
   </div>
-  <p class="note">
-    Of the 1925 serum run's lead dogs, Togo ran the long, dangerous leg while Balto
-    got the statue &mdash; credit your working dogs.
-  </p>
   </section>
 
   <p class="lede outro">
