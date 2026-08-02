@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Gangline — CLI coding agents, one coordinated team</title>
-<meta name="description" content="The substrate for long-horizon, multi-harness agent teams. Claude Code, Codex, opencode and Pi as named tmux windows, with delivery verified into the input box. One Bash script, no daemon.">
+<meta name="description" content="The substrate for long-horizon, multi-harness agent teams. CLI coding agents as named tmux windows, with delivery verified into the input box. One Bash script, no daemon.">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Gangline — CLI coding agents, one coordinated team">
 <meta property="og:description" content="Run different CLI coding agents as one team of named tmux windows. Delivery verified into the input box, state that admits what it could not determine, no daemon.">
@@ -122,38 +122,27 @@
   </nav>
 
   <p class="lede">
-    A gangline is the line down the middle of a dog team. Every dog is hitched to
-    it by its own tug line, the lead runs out front, and one look down the line
-    tells the musher who is working &mdash; a tight tug is pulling, a slack tug is
-    not.
-  </p>
-
-  <p class="lede">
-    This is that, for CLI coding agents. Claude Code, Codex, opencode and Pi run
-    as named tmux windows hitched to one session, each used where it is strongest;
-    <code>gang</code> hitches them, sends attributed messages, reads each tug tight
-    or slack, compacts them, and drops them when the work is done. One Bash CLI
-    over tmux &mdash; no daemon, message bus, database, or harness plugin, and
+    <strong>gangline is the substrate under a long-running, multi-harness agent
+    team &mdash; not the orchestration on top of it.</strong> CLI coding agents run
+    as named windows in one tmux session, each used where it is strongest;
+    <code>gang</code> hitches them, <em>proves</em> each attributed message into the
+    target's input box, reads each tug tight or slack, carries them across their own
+    context limits, and drops them when the work is done. One Bash CLI over tmux
+    &mdash; no daemon, message bus, database, or harness plugin, and
     <code>gang</code> exits after every command.
   </p>
 
   <p class="lede">
-    It is the <a href="#compare">substrate</a> under a long-running, multi-harness
-    team &mdash; not the orchestration on top of it. Who does what, and in what
-    order, is your call, and it lives in a markdown brief you can replace with a
-    directory of your own.
+    The name is literal. A gangline is the line down the middle of a dog team:
+    every dog is hitched to it by its own tug line, the lead runs out front, and one
+    look down the line tells the musher who is working &mdash; a tight tug is
+    pulling, a slack tug is not. That is what the roster below is reporting.
   </p>
 
   <p class="lede">
-    The vocabulary is the command surface, which is why it is worth thirty seconds.
-    You <code>hitch</code> an agent into the line and <code>drop</code> it at a
-    checkpoint; the roster reports a <span class="busy">tight tug</span> or a
-    <span class="ok">slack tug</span>. That column is not decoration on top of a
-    boolean &mdash;
-    <a href="https://northernwilds.com/tugline/">mushers watch tuglines more than
-    anything else</a>, because a taut tug is a dog pulling and a bouncing one says
-    something is wrong. <code>gang status</code> performs the same reading on a
-    pane, and the attachment point is the terminal, not code inside the agent.
+    Who does what, and in what order, is your call. It lives in a markdown brief you
+    can replace with a directory of your own; what gangline owns is the layer
+    <a href="#compare">underneath</a>.
   </p>
 
   <div class="term">
