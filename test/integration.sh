@@ -2266,6 +2266,81 @@ check "and an open bracket raises no finding against a pane that agrees with it"
   "$(rows 'TIER DISAGREEMENT')"
 check "and vet reads that direction the same way the log does" "no" \
   "$(holds "$(bvet)" 'ROT RISK — the busy tiers disagree')"
+
+# A SECOND LAWFUL AUTHOR OF THE SAME PAINT, and the fixture above already is one
+# with nothing wrong anywhere. A compaction repaints the progress bar a working
+# turn does — a shipped profile's marker matches that bar deliberately, so patrol
+# and every send treat a compacting pane as busy — while opening no turn, which
+# leaves @gl_turn legitimately closed over a legitimately painted marker. That is
+# the exact shape checked above as a rotted scrape, so for the length of every
+# compaction a healthy agent was reported as a gang defect on both surfaces.
+#
+# The guard consults a DIFFERENT predicate's owned event, so both directions are
+# driven here: that a compaction in flight stands the finding down on both
+# readers, and that the exemption can still FAIL — stale, closed, malformed and
+# absent brackets each have to let the row fire. A guard that cannot be shown
+# failing is a silence rather than a check.
+fire Stop
+check "the fixture is a closed bracket again" "closed" \
+  "$(tmux show-options -wqv -t "$bwin" @gl_turn | cut -d' ' -f1)"
+check "over a marker that is still painted, so the exemption has something to do" "yes" \
+  "$(has bracket FORCE_BUSY)"
+
+fact_set bracket @gl_compact_bracket "open $(ago 5) manual"
+: > "$TLOG"
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "a compaction in flight stands the disagreement down" "0" \
+  "$(rows 'TIER DISAGREEMENT')"
+# NOT SILENTLY. This log is where an operator watches scraping misbehave; a guard
+# that deleted the row would make the one state most easily mistaken for rot the
+# one state the log never mentions, and leave nothing to tell a working guard from
+# a reader that stopped running.
+check "and the row does not vanish with it — the exemption is written down" "1" \
+  "$(rows 'paint explained')"
+check "and names the fact that explained it, and which kind of compaction it was" "yes" \
+  "$(contains "$(cat "$TLOG" 2>/dev/null)" '@gl_compact_bracket is open and fresh (manual)')"
+bcomp="$(bvet)"
+check "vet exempts it the same way, since one fact has two readers" "no" \
+  "$(holds "$bcomp" 'ROT RISK — the busy tiers disagree')"
+check "and prints the exemption there too, rather than an agent quietly missing" "yes" \
+  "$(holds "$bcomp" '^bracket +bracketed +the busy tiers disagree and a compaction explains it')"
+check "and the exempting row paints no pattern into the pane either" "no" \
+  "$(holds "$bcomp" 'FORCE_BUSY')"
+
+# THE GUARD SHOWN ABLE TO FAIL, four ways. A stale bracket first, because a
+# compaction that never closed is the case an exemption would hide forever: one
+# stuck open bracket would otherwise buy permanent silence on this agent.
+fact_set bracket @gl_compact_bracket "open $(ago 400) manual"
+: > "$TLOG"
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "a compaction that never closed is no excuse — a stuck one is worth a row" "1" \
+  "$(rows 'TIER DISAGREEMENT')"
+check "and vet fires again on the same stale bracket" "yes" \
+  "$(holds "$(bvet)" 'ROT RISK — the busy tiers disagree')"
+# A CLOSED bracket is a completed event and stays valid at any age where
+# compaction_pending reads it — but a compaction that has finished is not painting
+# anything now, so it explains nothing here. The asymmetry is deliberate.
+fact_set bracket @gl_compact_bracket "closed $(ago 5) manual"
+: > "$TLOG"
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "a compaction that has finished explains no paint happening now" "1" \
+  "$(rows 'TIER DISAGREEMENT')"
+fact_set bracket @gl_compact_bracket 'not-a-bracket'
+: > "$TLOG"
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "a bracket gang cannot read is not spent as an explanation" "1" \
+  "$(rows 'TIER DISAGREEMENT')"
+# The reader that BORROWED this fact does not get to discard it. compaction_pending
+# owns the bracket and clears its own unreadable values; a report that cleared them
+# would change what the owner is entitled to find on its next read.
+check "and the borrowing reader leaves it standing for its owner" "not-a-bracket" \
+  "$(tmux show-options -wqv -t "$bwin" @gl_compact_bracket)"
+tmux set-option -uw -t "$bwin" @gl_compact_bracket
+: > "$TLOG"
+GANG_PATROL_LOG="$TLOG" "$GANG" status bracket >/dev/null
+check "and with no bracket at all the finding is exactly where it started" "1" \
+  "$(rows 'TIER DISAGREEMENT')"
+
 rm -rf "$SHIM/vetbracket"
 unset -f bvet
 "$GANG" drop bracket >/dev/null 2>&1

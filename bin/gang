@@ -1279,6 +1279,16 @@ turn_vets_paint() { # $1 = window id; the event tier vetting the scrape tier, fo
   # option nothing reads until vet grows the surface, and a fact nobody reads the
   # day it merges does not merge (law 5).
   busy_painted "$1" || return 0
+  # A DIFFERENT PREDICATE'S OWNED EVENT CAN ACCOUNT FOR THE PAINT, and when one
+  # does the row still prints — as an explanation instead of a finding. Dropping
+  # it would make the surface an operator reads to watch scraping misbehave go
+  # quiet on the one state that most resembles it, and a guard that leaves no
+  # trace cannot be told apart from a reader that stopped running.
+  if compaction_explains_paint "$1"; then
+    patrol_log "$(agent_name_of "$1")" turn-bracket \
+      "paint explained: the bracket closed and the busy marker is painted, and @gl_compact_bracket is open and fresh ($COMPACT_TRIGGER) — a compaction paints the same marker and opens no turn, so this is not a rotted scrape"
+    return 0
+  fi
   patrol_log "$(agent_name_of "$1")" turn-bracket \
     "TIER DISAGREEMENT: bracket closed but the busy marker is painted — scrape regex suspect"
 }
@@ -1617,6 +1627,60 @@ compaction_bracket_mark() { # $1 = window id, $2 = open|closed, $3 = trigger
   [ "$prev" != "$2" ] || return 0
   patrol_log "$(agent_name_of "$1")" compaction-bracket \
     "compaction $2 ($(compaction_trigger_of "$3"))"
+}
+
+compaction_explains_paint() { # $1 = window id; 0 = a live compaction accounts for the paint
+  # THE PAINT HAS A SECOND LAWFUL AUTHOR, and it is not the agent's turn. A
+  # compaction repaints the same progress bar a working turn does, and a shipped
+  # profile's GANG_BUSY_REGEX matches that bar BY DESIGN — patrol and every send
+  # want a compacting pane to read busy, and claude-code's declaration says so
+  # where the pattern is written. A compaction also opens no turn, so @gl_turn is
+  # legitimately CLOSED throughout. Closed bracket over painted marker is exactly
+  # the fixture the busy-tier disagreement is built to report, and here nothing is
+  # wrong with anything: for the length of every compaction a perfectly healthy
+  # agent was reported as a rotted scrape, on both surfaces, and under
+  # --file-issue it would open a GitHub issue about it.
+  #
+  # ASKING THIS IS WITNESS SELECTION, NOT VOTING (ADR-0008). Neither busy-tier
+  # witness is overruled and nothing is averaged: the bracket still answers idle,
+  # the paint is still on the pane, and busy() returns what it returned before.
+  # What changes is the CLAIM MADE ABOUT THE DISAGREEMENT — the row does not
+  # report a state, it reports a diagnosis, that gang's own scrape has rotted —
+  # and a different predicate's owned event says something else painted that
+  # marker. An alternative explanation for the evidence is not a third vote on the
+  # verdict.
+  #
+  # THE MARK TIER IS DELIBERATELY NOT CONSULTED, and that is the line between this
+  # and gang excusing itself. @gl_compacting records that gang TYPED /compact with
+  # no proof it ran; letting gang's own record retire a disagreement between two
+  # witnesses is the self-serving shape this function exists to avoid. Only the
+  # harness's own event explains paint. It costs nothing: the bracket sees a
+  # compaction the harness started at its own threshold, which the mark is blind
+  # to by construction, and it correctly fails to see one asked for and never run.
+  #
+  # OPEN AND FRESH, BOTH, and the freshness half is the load-bearing one. A stale
+  # open bracket is a compaction that never closed, and a stuck compaction is
+  # worth a row rather than an excuse for one — so a single write can never buy
+  # permanent silence on an agent. A CLOSED bracket explains nothing here even
+  # though it stays valid at any age in compaction_pending: a close is a completed
+  # event, and a compaction that has finished is not painting anything now.
+  #
+  # A READ, NEVER A WRITE. The malformed arm does not clear the option the way
+  # compaction_pending's does. The bracket is that predicate's fact and this is a
+  # borrowing reader; discarding it here would change what the owner is entitled
+  # to find on its next read, and the owner already knows how to.
+  local now rc=0
+  compaction_bracket_read "$1" || rc=$?
+  [ "$rc" -eq 0 ] && [ "$COMPACT_STATE" = open ] || return 1
+  require_whole GANG_COMPACTION_LIMIT "$GANG_COMPACTION_LIMIT" seconds
+  now="$(date +%s)"
+  # A stamp from the future has no freshness left to test, compaction_pending's
+  # rule: it does not answer here, and it is not cleared there.
+  [ "$COMPACT_AT" -le "$now" ] || return 1
+  [ $(( now - COMPACT_AT )) -lt "$GANG_COMPACTION_LIMIT" ] || return 1
+  # COMPACT_TRIGGER is left set for the caller to name, and it is worth naming:
+  # manual and auto are different events to an operator reading an exemption.
+  return 0
 }
 
 # Which tier answered a pending verdict, so verdict 0 can name itself. Two
@@ -5275,30 +5339,46 @@ vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witn
   # report over a whole team — the capture is proven first so one window that went
   # away mid-loop does not take the rest of the section with it.
   if [ "$turn_rc" -eq 1 ] && capture_joined "$1" >/dev/null 2>&1 && busy_painted "$1"; then
-    # THE FILE, NOT THE PATTERN, and the difference is a live failure rather than
-    # a preference. This row is printed by an ordinary `gang vet`, and the thing
-    # an operator most often runs `gang vet` from is an agent's own pane — so a
-    # row carrying the pattern verbatim paints claude-code's bar glyphs onto a
-    # pane gang scrapes, and busy_painted reads the WHOLE pane. That agent then
-    # reads BUSY for as long as the line stays on screen: every send refused,
-    # every wait timed out, on a harness that is perfectly idle. It is the same
-    # rule probe_note is written to obey and the same accident that once had
-    # compacting() true for three minutes off a reviewer's own grep output, and
-    # it was caught here by the suite's own baseline — gang printed a shipped
-    # profile's regex into the pane of a probe that was measuring exactly this.
-    #
-    # The stated reason for naming the scrape at all was to tell an operator
-    # WHICH FILE TO OPEN, and the path serves that better than the pattern does:
-    # the declaration is what they have to edit, and it arrives with the comment
-    # block that says what the pattern was verified against. The pattern itself
-    # still travels in the filed issue below, which is read somewhere other than
-    # a pane and is the durable record this row is only a sighting of.
-    vet_tier_row "$2" "$prof" "$C_BAD" \
-      "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker declared in $pfile. gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
-    rc=2
-    [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" busy "\
+    if compaction_explains_paint "$1"; then
+      # THE SAME EXEMPTION THE READ PATH APPLIES, at the other moment and for the
+      # other reader: turn_vets_paint witnesses WHEN this happened, and vet
+      # answers what is true NOW. A rule that held on only one of them would let
+      # a postmortem and a report describe different systems.
+      #
+      # DIM AND NOT ABSENT, and rc is untouched so this neither moves the exit
+      # code nor files. This section's whole subject is what an operator cannot
+      # see from any other surface, so an agent that silently stops appearing in
+      # it is the failure the section exists to prevent. The row says the tiers
+      # disagree, says what accounts for it, and declines to call it rot — which
+      # is more than either a finding or a silence would say.
+      vet_tier_row "$2" "$prof" "$C_DIM" \
+        "the busy tiers disagree and a compaction explains it: @gl_compact_bracket is open and fresh ($COMPACT_TRIGGER), and a compaction paints the busy marker declared in $pfile while opening no turn. Not rot, and not filed as rot."
+    else
+      # THE FILE, NOT THE PATTERN, and the difference is a live failure rather than
+      # a preference. This row is printed by an ordinary `gang vet`, and the thing
+      # an operator most often runs `gang vet` from is an agent's own pane — so a
+      # row carrying the pattern verbatim paints claude-code's bar glyphs onto a
+      # pane gang scrapes, and busy_painted reads the WHOLE pane. That agent then
+      # reads BUSY for as long as the line stays on screen: every send refused,
+      # every wait timed out, on a harness that is perfectly idle. It is the same
+      # rule probe_note is written to obey and the same accident that once had
+      # compacting() true for three minutes off a reviewer's own grep output, and
+      # it was caught here by the suite's own baseline — gang printed a shipped
+      # profile's regex into the pane of a probe that was measuring exactly this.
+      #
+      # The stated reason for naming the scrape at all was to tell an operator
+      # WHICH FILE TO OPEN, and the path serves that better than the pattern does:
+      # the declaration is what they have to edit, and it arrives with the comment
+      # block that says what the pattern was verified against. The pattern itself
+      # still travels in the filed issue below, which is read somewhere other than
+      # a pane and is the durable record this row is only a sighting of.
+      vet_tier_row "$2" "$prof" "$C_BAD" \
+        "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker declared in $pfile. gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
+      rc=2
+      [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" busy "\
 - owned bracket (@gl_turn): the turn closed
 - scraped from the pane: still painting the busy marker \`$GANG_BUSY_REGEX\`"
+    fi
   fi
   return "$rc"
 }
