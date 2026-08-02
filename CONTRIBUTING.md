@@ -78,7 +78,8 @@ it at its own clone, and `GANGLINE_HOME` points it at yours — so on a contribu
 checkout an edit to `bin/gang` is deployed the moment it is saved: to every
 attached agent, to the patrol cron, and to whatever measurement is running, with
 no commit, no install step and no restart. That is the right behaviour for
-dogfooding, and it is the reason to keep checkpoints small. An uncommitted batch
+dogfooding — a word `docs/field-guide.md` notes lands literally here — and it
+is the reason to keep checkpoints small. An uncommitted batch
 is not a draft; it is the substrate the team is presently running on.
 
 A corollary for anything that records what the tool did: the epoch that matters is

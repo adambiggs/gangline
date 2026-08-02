@@ -33,6 +33,18 @@ every verb was chosen to read literally without it — hitch is attach, drop is
 release, vet is examine — and every rule already does. The generic aliases
 (`spawn`, `doctor`) answer regardless.
 
+One word travels the other direction. **Dogfooding** is software's term, not
+the trail's — run the thing you are building — and everywhere else it is a
+borrowed idiom. This repo is where it lands literally: gangline is developed by
+a gangline team, dogs hitched to the very line they are building. `gang` on a
+contributor's `PATH` is a symlink into the working tree, so a saved edit is
+under the team before it is committed — `CONTRIBUTING.md` explains why that is
+the right behaviour and what it demands of checkpoints. And the pun is
+load-bearing: a class of defect has a live team as its precondition, and no
+fixture summons one on schedule. The catch recorded in commit 6a08458 fired
+only because a real agent happened to be compacting while the suite ran. The
+team is the test rig.
+
 (And since you asked: real mushers say *hike*, almost never *mush*. Of the 1925
 serum run's lead dogs, Togo ran the long, dangerous leg while Balto got the
 statue — credit your working dogs.)
