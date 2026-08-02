@@ -6951,6 +6951,157 @@ check "with the context leg steady behind it" "steady (band 1)" "$(after_row "$n
 check "so the budget note is on that pane" "yes" "$(has tboth '[time-budget]')"
 check "and the context one is not" "no" "$(has tboth '[context-usage]')"
 
+# --- the same budget, in the turn -----------------------------------------------
+#
+# Patrol sweeps on the cadence an operator set. The hook fires on the agent's own
+# events, so a crossing can be heard in the turn it happens in rather than up to a
+# whole cadence later — and the two surfaces share @gl_tband, so whichever notices
+# a crossing first is the one that speaks about it.
+#
+# ONE REPLY, ONE SLOT is what most of this block is about. This command's stdout is
+# the whole answer and additionalContext is a single string inside it, so two axes
+# crossing on the same event have one place to go. Every note below is therefore
+# read back through a PARSE rather than a grep: a reply that printed a second JSON
+# object would carry both strings and grep exactly as well, while being a reply the
+# harness cannot read at all.
+probe tturn '10k/1000k 1%'   # far under its first context rung, so anything in a
+                             # reply here that is not the budget's note is the other
+                             # leg speaking
+tpane="$(tmux list-panes -t "$(id_of tturn)" -F '#{pane_id}')"
+hfire() { # $1 = the moment; the harness's own voice on tturn's pane, with a clock
+  printf '{"hook_event_name":"UserPromptSubmit"}' \
+    | GANG_NOW="$1" TMUX_PANE="$tpane" "$GANG" hook
+}
+hnote() { # $1 = a captured reply -> the one additionalContext in it
+  # json.load REFUSES a pair of concatenated objects, so a reply that printed twice
+  # lands on the marker below and fails every check that reads a note, instead of
+  # passing the ones that only ever wanted a substring.
+  [ -n "$1" ] || return 0
+  printf '%s' "$1" | python3 -c 'import json,sys
+try:
+    o = json.load(sys.stdin)
+except Exception:
+    print("NOT-ONE-JSON-OBJECT"); sys.exit(0)
+print(o["hookSpecificOutput"]["additionalContext"])'
+}
+tband_of() { tmux show-options -wqv -t "$tpane" "$1"; }  # $1 = @gl_tband or @gl_band
+
+check "a turn at the start of a budget is not spoken to" "" "$(hfire $TN_NOW)"
+check "and the memory is left as it was, unwritten" "" "$(tband_of @gl_tband)"
+hout="$(hfire $(( TN_NOW + 3000 )))"
+check "the first crossing is heard in the turn it happened in" "yes" \
+  "$(contains "$(hnote "$hout")" '[time-budget]')"
+check "carrying the rung's own ask, with what is left of the budget in it" "yes" \
+  "$(contains "$(hnote "$hout")" '1h10m of the declared budget is left')"
+check "and the band advances, so nothing says it a second time" "yes" \
+  "$(holds "$(tband_of @gl_tband)" '^1$')"
+check "which the very next tool call in that band is what proves" "" \
+  "$(hfire $(( TN_NOW + 3100 )))"
+
+# ONE CROSSING, ONE WARNING, WHICHEVER SURFACE NOTICES IT FIRST — the claim `two
+# memories, never one` makes about the axes, made here about the two legs on one
+# axis. Both directions, because a shared memory that only worked one way would
+# leave the other surface repeating what the agent has already been told.
+repaint tturn '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3200 )))" tturn)"
+# EVERY row, not the time one, and the difference is the whole check: the time row
+# is produced above the nudge and reads `steady (time band N — …)` whether or not a
+# note went, so a check reading it alone cannot tell the two worlds apart. What says
+# a sweep sent nothing is the row AFTER it being the context leg's — a sweep that
+# nudged puts its own verdict there, which `a sweep that crosses a rung first speaks
+# for both surfaces` is the same claim in the other direction.
+check "a sweep behind an in-turn note has nothing left to send" \
+  "$(printf 'steady (time band 1 — 1h6m of budget left)\nsteady (band 0)')" "$nrows"
+check "and typed nothing into the pane to say it again" "no" "$(has tturn '[time-budget]')"
+repaint tturn '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tturn)"
+check "a sweep that crosses a rung first speaks for both surfaces" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+check "and the agent's next action is not told the same thing over" "" \
+  "$(hfire $(( TN_NOW + 5200 )))"
+
+# BOTH AXES ON ONE EVENT, which is an ordinary state rather than bad input: a team
+# reaching its banking reserve says nothing about how full any agent's context is,
+# so the two crossings land together as often as chance puts them there. One slot
+# carries both. Dropping one silently is the degraded mode law 8 refuses, and
+# holding one back for the next event needs the two legs to agree about which of
+# them spoke — coordination machinery bought to delay a warning by one tool call.
+fact_set tturn @gl_tband 0
+fact_set tturn @gl_band 0
+repaint tturn '130k/1000k 13%'
+hboth="$(hnote "$(hfire $(( TN_NOW + 5300 )))")"
+check "one event can cross both axes and the budget's note is in the reply" "yes" \
+  "$(contains "$hboth" '[time-budget]')"
+check "with the context one beside it rather than in some later turn" "yes" \
+  "$(contains "$hboth" '[context-usage]')"
+# The parse is what makes the pair above a claim about the SLOT rather than about
+# the strings: two printed replies would carry both of them too.
+check "in one reply, because a second object is not a second note" "no" \
+  "$(contains "$hboth" 'NOT-ONE-JSON-OBJECT')"
+check "the budget leading, as it does across a sweep's two rows" "yes" \
+  "$(contains "${hboth%%$'\n'*}" '[time-budget]')"
+check "and each axis advancing the memory that belongs to it" "yes" \
+  "$(holds "$(tband_of @gl_tband)" '^3$')"
+check "in the option that is its own" "yes" "$(holds "$(tband_of @gl_band)" '^1$')"
+
+# NEITHER LEG MAY TAKE THE OTHER DOWN, and each is stopped a different way. A
+# profile that will not load is where the context leg gives up — and a budget is a
+# team's declaration, measured with no readout and no profile to read one, which is
+# why its leg runs above that guard. Same placement, same reason, as the sweep's:
+# `an agent whose profile cannot be found is told the same thing first`.
+fact_set tturn @gl_tband 0
+fact_set tturn @gl_profile bogus
+hout="$(hfire $(( TN_NOW + 5400 )) 2>/dev/null)"; hrc=$?
+check "an agent whose profile will not load still hears where the budget stands" \
+  "yes" "$(contains "$(hnote "$hout")" '30m of the declared budget is left')"
+# AND THE TURN SURVIVES THE LEG THAT GAVE UP, which is a heavier claim than the
+# note surviving and a separate one. This command's exit status is the harness's
+# permission to run the turn at all — a nonzero on UserPromptSubmit BLOCKS the
+# operator's prompt — so a warning leg that refuses may not hand its status back.
+# The reply is run inside a subshell that absorbs it for exactly this reason; the
+# dispatch says why, at length. This is the check that TAKES that way out instead
+# of trusting it, and it is what an armed reply without the absorption costs.
+check "and a profile it cannot load never blocks the turn it fired in" "0" "$hrc"
+fact_set tturn @gl_profile bash
+
+# The other direction, and it reads like a degraded mode until you notice what this
+# surface is. A hook has nowhere to complain — its stdout is the reply, and a `die`
+# in a note leg is swallowed by the subshell that leg runs in — so a budget ladder
+# gang cannot read leaves the time leg with nothing it can honestly say. It says
+# nothing, keeps the axis it could settle, and leaves the band un-advanced for the
+# surface that DOES report: `an absolute rung on the time axis refuses the sweep`
+# dies on this same input. Silence here is not a health claim, because this is not
+# a reporting surface.
+fact_set tturn @gl_tband 0
+fact_set tturn @gl_band 0
+repaint tturn '130k/1000k 13%'
+hout="$(printf '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_NOW=$(( TN_NOW + 5500 )) GANG_TIME_BANDS=1800 TMUX_PANE="$tpane" "$GANG" hook 2>/dev/null)"; hrc=$?
+check "a budget ladder that will not read does not cost the agent its context note" \
+  "yes" "$(contains "$(hnote "$hout")" '[context-usage]')"
+# The same way out as `and a profile it cannot load never blocks the turn it fired
+# in`, taken from the other axis: the ladder is what refuses here rather than the
+# profile, and the turn is owed the same immunity.
+check "and a ladder it cannot read never blocks it either" "0" "$hrc"
+check "and the axis it could not settle says nothing rather than guessing" "no" \
+  "$(contains "$(hnote "$hout")" '[time-budget]')"
+check "leaving the band for the surface that can complain about it" "yes" \
+  "$(holds "$(tband_of @gl_tband)" '^0$')"
+
+# THE TEAM IS THE PANE'S SESSION, and it has to be READ rather than inherited. A
+# cutoff is a session option, and this command runs inside the agent's own pane —
+# whose environment came from the tmux server, not from the shell gang was launched
+# in, so GANG_SESSION does not reach it. An environment naming a session that is
+# not there is what absence looks like from in here: a leg reading it finds no
+# cutoff and goes quiet, which for any team not on the default name is a silence
+# that reads exactly like `no budget declared`.
+fact_set tturn @gl_tband 0
+hout="$(printf '{"hook_event_name":"UserPromptSubmit"}' \
+  | GANG_NOW=$(( TN_NOW + 5600 )) GANG_SESSION="${GANG_SESSION}-nope" \
+    TMUX_PANE="$tpane" "$GANG" hook 2>/dev/null)"
+check "the budget read is the team the pane is on, not the one the environment names" \
+  "yes" "$(contains "$(hnote "$hout")" '26m of the declared budget is left')"
+
 # Total silence with nothing declared, which is the state most teams run in. The
 # warning leg has no band to have crossed, so it consults no memory and says nothing
 # — not a phrase saying there is nothing to say.
@@ -6959,6 +7110,12 @@ repaint tnag '10k/1000k 1%'
 check "with the cutoff cleared the warning leg has nothing to warn about" \
   "steady (band 0)" "$(rows_of "$(nsweep $(( TN_NOW + 6480 )))" tnag)"
 check "and types nothing into anybody" "no" "$(has tnag '[time-budget]')"
+# The same silence on the surface that answers in the turn, and it is armed to
+# speak: the band is re-set to zero, and this moment is past the top rung of the
+# budget that was declared a moment ago. What it is missing is the declaration.
+fact_set tturn @gl_tband 0
+check "and the turn is told nothing about a budget nobody declared" "" \
+  "$(hfire $(( TN_NOW + 6480 )))"
 
 # What the record keeps is what a postmortem asks for. A note that went out is a
 # crossing, so it is worded away from `steady` and survives the filter patrol_log
@@ -6976,6 +7133,7 @@ check "a note that went out is written down under the agent it went to" "yes" \
 "$GANG" drop tvoid >/dev/null 2>&1
 "$GANG" drop tmute >/dev/null 2>&1
 "$GANG" drop tboth >/dev/null 2>&1
+"$GANG" drop tturn >/dev/null 2>&1
 "$GANG" cutoff clear >/dev/null
 
 # --- file-based context (codex) ----------------------------------------------

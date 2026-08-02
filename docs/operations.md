@@ -312,6 +312,11 @@ into the launch line at hitch, so a hitched agent carries this leg with nothing
 to configure; the same verb ingests the turn-bracket facts the reference
 describes.
 
+It warns on both axes, sharing each one's last-warned window option with patrol,
+so a crossing is spoken about once however it is noticed first. The reply has a
+single `additionalContext` slot, so two crossings on one event travel joined in
+it rather than one of them waiting for the next event.
+
 The hook is deliberately silent on missing or malformed input so context
 telemetry cannot block work. Patrol remains the harness-independent warning leg.
 
@@ -383,7 +388,10 @@ an input box before it writes to it. The gap between them is the point: an agent
 whose beacon has gone missing is reported as not patrolled *and* told how much of
 the day is left, in the same sweep. Context is the axis that only moves when an
 agent works; time is the axis that advances while it sits idle, which is why the
-budget's primary leg is the ambient sweep rather than the in-turn hook. The one
+sweep is the budget's primary leg — it is the one that reports, that repeats the
+top rung, and that restates a cutoff already passed. The in-turn hook carries the
+crossings, so one is heard in the turn it happens in rather than up to a cadence
+later, and it does no repeating at all. The one
 case that gets the row and no note is a profile gang cannot resolve or load at
 all, and that is correct — there is no typing into a pane whose profile is
 unknown.

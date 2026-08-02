@@ -5155,11 +5155,35 @@ cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pan
   # the two events whose reply channel is additionalContext, and every other
   # event, wired today or wired later, writes its fact in silence.
   #
-  # Run in a subshell so that a refusal inside the note — an unloadable profile,
-  # an unwritable option — ends the note and never this command: the fact above is
-  # already written, and a warning leg may not take a turn down with it.
+  # THE BRACKET BELOW HAS TO DO TWO THINGS THAT PULL AGAINST EACH OTHER, and the
+  # obvious spelling does only one of them. A refusal inside the reply — an
+  # unloadable profile, an unwritable option — must end the reply and never this
+  # command: the fact above is already written, and a warning leg may not take a
+  # turn down with it. But a leg whose own read failed must still LOSE its note
+  # rather than walk on and hand back half of one, which is what each leg's
+  # `|| …=""` inside hook_notes is written to catch.
+  #
+  # `( hook_notes … ) || true` does the first and silently defeats the second. A
+  # compound command that is the LEFT OPERAND of `||` runs with errexit IGNORED,
+  # and the suspension covers everything inside it — every line of hook_notes and
+  # of both producers, however deep. Re-arming with `set -e` inside that subshell
+  # changes nothing, because the taint is syntactic and follows the `||` rather
+  # than the flag; both spellings were rendered before this line was written. Under
+  # that spelling the producers' guards were inert, and a red world built to break
+  # one came back green, which is how this was found.
+  #
+  # So the subshell is taken OUT of tested context instead: errexit off, the reply
+  # runs as a PLAIN statement so its own `set -e` is genuinely live, its refusal
+  # lands harmlessly, and the disarm is scoped to a subshell rather than to this
+  # function so that no line added here later can end up inside it.
+  #
+  # THE TRAILING `exit 0` IS A SAFETY BOUNDARY of the same class as the event
+  # allowlist above, not tidiness. On UserPromptSubmit a nonzero from this command
+  # BLOCKS the operator's prompt, so no status from a warning leg may ever reach
+  # the harness — and an armed subshell without this absorption leaks one, rendered.
   case "$event" in
-    UserPromptSubmit|PostToolUse) ( hook_band_note "$event" "$prof" ) || true ;;
+    UserPromptSubmit|PostToolUse)
+      ( set +e; ( set -e; hook_notes "$event" "$prof" ); exit 0 ) ;;
   esac
   exit 0
 }
@@ -5186,15 +5210,132 @@ v = json.load(sys.stdin).get("trigger", "")
 print(v if isinstance(v, str) else "")' 2>/dev/null || true
 }
 
-hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in a subshell
+hook_notes() { # $1 = event name, $2 = profile; the in-turn warning legs and their one reply
+  # ONE REPLY, ONE SLOT. This command's stdout IS the answer and additionalContext
+  # is a single string inside it, so two axes that cross on the same event cannot
+  # each print: a second JSON object on stdout is not a second note, it is a reply
+  # the harness cannot parse. The legs below are therefore note PRODUCERS, this is
+  # the only thing here that prints, and whichever notes exist are joined and
+  # encoded once.
+  #
+  # DELIVERING ONE AND HOLDING THE OTHER BACK WOULD BE WORSE THAN LATE. Both legs
+  # share their band memory with patrol, so a leg that noticed a crossing and lost
+  # the slot must either advance anyway — which eats the warning, because patrol
+  # reads the same memory and would then stay silent about a rung nobody was ever
+  # told about — or not advance, which needs the two legs to agree about which of
+  # them spoke. That is coordination machinery between two legs that are otherwise
+  # independent, bought to delay one note by one tool call. Both axes crossing on
+  # one event is also an ordinary state rather than bad input, so there is nothing
+  # here to refuse.
+  #
+  # EACH PRODUCER RUNS IN ITS OWN COMMAND SUBSTITUTION, and that is the whole
+  # isolation: a refusal or a silent give-up inside one ends that producer and
+  # nothing else. A budget declaration gang cannot read may not cost an agent its
+  # context note, and a profile that will not load may not cost it the budget one
+  # — the axes are independent everywhere else in this file and they stay so here.
+  local event="$1" prof="$2" tnote cnote joined
+  # The budget leg first, and ABOVE the profile — the placement patrol_one argues
+  # at length, for the reason it gives there: the team's budget advances while an
+  # agent sits idle, and it is measured from a declaration that needs no readout
+  # and no profile to read it. Speaking first also puts it ahead of the context
+  # note in the joined reply, which is the order patrol's two legs already speak in.
+  tnote="$(hook_time_note)" || tnote=""
+  cnote="$(hook_band_note "$prof")" || cnote=""
+  if [ -n "$tnote" ] && [ -n "$cnote" ]; then
+    # A blank line between them. They are two instructions about two unrelated
+    # things, and run together they read as one.
+    joined="$tnote"$'\n\n'"$cnote"
+  elif [ -n "$tnote" ]; then
+    joined="$tnote"
+  else
+    joined="$cnote"
+  fi
+  # NO NOTE IS NOT AN EMPTY NOTE. A reply carrying an empty additionalContext is
+  # this command speaking on every turn of every agent that has nothing to be told
+  # — a new utterance rather than the silence it keeps today.
+  [ -n "$joined" ] || exit 0
+  # Encoded, not interpolated. The note carries an agent name and a context
+  # readout, and a printf template that assumes neither ever holds a quote or a
+  # backslash emits invalid JSON the moment one does — silently, because the bands
+  # were advanced in the producers and nothing retries a warning the harness could
+  # not parse. python3 is a hard dependency of this command already.
+  python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
+    "$event" "$joined"
+  exit 0
+}
+
+hook_time_note() { # -> the budget's in-turn note for this agent, or nothing at all
+  # The budget axis in-turn, beside patrol's time_nudge and sharing its @gl_tband
+  # memory, so one crossing is spoken once however it is noticed first. What it does
+  # not share is the context leg's memory, for the reason band_state_read states:
+  # an agent told the day is nearly spent has been told nothing about how full its
+  # context is.
+  #
+  # CROSSINGS ONLY. patrol repeats the top rung on every safe sweep and restates a
+  # passed cutoff on every one (ADR-0009), and neither repeat transfers here: a
+  # sweep happens on the cadence an operator set, while this fires on every tool
+  # call an agent makes, so a note that repeats per sweep there repeats per ACTION
+  # here. This leg speaks when a band is crossed and is otherwise silent, which is
+  # the shape the context leg below already has.
+  #
+  # THE TEAM IS THE PANE'S SESSION, read rather than inherited. A cutoff is a
+  # session option, and this command runs inside the agent's own pane, whose
+  # environment came from the tmux server rather than from the shell gang was
+  # launched in — so GANG_SESSION does not reach here (rendered: a variable
+  # exported around `tmux new-window` is absent from the window it creates), and a
+  # team on any name but the default would have its budget read off a session it is
+  # not on. The binding this command already has is $TMUX_PANE, and a pane names
+  # its own session.
+  local sess prev state_rc
+  sess="$(tmux display-message -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null)" \
+    || exit 0
+  [ -n "$sess" ] || exit 0
+  SESSION="$sess"
+  time_sweep
+  # No band settled covers every reason there is not to speak, in one guard: no
+  # cutoff declared, which ADR-0009 answers with total silence; a stored pair that
+  # will not parse; and the moment past the cutoff, where there is no rung left to
+  # cross. Patrol reports all three in a row it was going to print anyway. This leg
+  # has no row, and inventing a sentence for any of them would be a note about a
+  # hazard nobody declared.
+  [ -n "$TIME_BAND" ] || exit 0
+  if band_state_read "$TMUX_PANE" @gl_tband; then state_rc=0; else state_rc=$?; fi
+  if [ "$state_rc" -ne 0 ]; then
+    # Rebuilt, never refused — the argument time_nudge makes at length about what
+    # this option IS. Silent here for the reason the header gives, and the write
+    # heals patrol's read of it too, because the memory is one.
+    band_state_write "$TMUX_PANE" @gl_tband "$TIME_BAND"
+    exit 0
+  fi
+  prev="$BAND_STATE_BAND"
+  if [ "$TIME_BAND" -lt "$prev" ]; then
+    # Re-armed, and it states no cause for the same reason time_nudge's re-arm
+    # does: a longer cutoff and a larger reserve both land here and gang cannot
+    # tell them apart from inside a hook.
+    band_state_write "$TMUX_PANE" @gl_tband "$TIME_BAND"
+    exit 0
+  fi
+  [ "$TIME_BAND" -gt "$prev" ] || exit 0
+  # The advance lands BEFORE the note is handed back, which is the order the
+  # context leg keeps and the reason it keeps it: the composer prints once, and a
+  # band advanced by a note that was never printed is a warning eaten, while a note
+  # printed without the advance is the same warning again on the next tool call.
+  band_state_write "$TMUX_PANE" @gl_tband "$TIME_BAND"
+  time_note "$TIME_BAND" "$TIME_LEFT" "$TIME_RUNGS"
+}
+
+hook_band_note() { # $1 = profile; the context axis's note producer, in its own subshell
   # Measures with the same profile readout patrol uses and shares patrol's
   # @gl_band memory, so this leg and patrol's context leg cannot both warn about
-  # one crossing. It is the context axis only: patrol's budget leg has no counterpart
-  # here, so nothing below reads @gl_tband and nothing below writes it. Emits
-  # one additionalContext note per band. Anything it cannot determine is a silent
-  # exit 0 — this leg's stdout is the hook's JSON reply, so it has nowhere to say
-  # so, and patrol's leg is the one that does the talking.
-  local event="$1" prof="$2"
+  # one crossing. It is the context axis only, and the budget's leg is the SIBLING
+  # above rather than a branch in here — the two keep separate memories, @gl_band
+  # and @gl_tband, because a crossing on one axis says nothing about the other.
+  # Produces one note per band and prints nothing else; the composer above turns
+  # whatever the two legs produced into the single reply. Anything it cannot
+  # determine is a silent exit 0 — this leg's stdout is the note itself, so a
+  # complaint here would reach the agent AS the warning, and patrol's leg is the
+  # one that does the talking.
+  local prof="$1"
   local agent ctx tw tokens window band crossed thresholds prev rung now
   local state_rc
   agent="$(agent_name_of "$TMUX_PANE")"
@@ -5211,7 +5352,7 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   # fallback path only — see the same guard, and the same reason, in patrol_one.
   # This leg shares patrol's @gl_band memory, so believing it here would
   # re-arm the agent's ladder to the bottom just as surely, and silently: this
-  # command's stdout is the hook's JSON reply, so it has nowhere to say so.
+  # leg's stdout is the note itself, so it has nowhere to say so.
   [ "$tokens" -gt 0 ] || exit 0
   # ladder's refusal has to be CARRIED. `die` inside a command substitution ends
   # THAT subshell, not this one, so its message reaches stderr while the caller
@@ -5226,8 +5367,8 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   if [ "$state_rc" -ne 0 ]; then
     # Rebuilt, not refused, for the reason patrol's leg gives at length: this
     # value is a cache, and an unreadable cache that switches the leg off for the
-    # window's whole life is the expensive way to be careful. Silent because a
-    # hook's stdout is JSON the harness parses and there is nowhere here to say
+    # window's whole life is the expensive way to be careful. Silent because this
+    # leg's stdout is the note the agent reads and there is nowhere here to say
     # it — so the write carries the recovery and patrol's leg does the talking.
     # Both legs share this memory, so healing in either one heals both.
     band_state_write "$TMUX_PANE" @gl_band "$band"
@@ -5244,13 +5385,7 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
     band_state_write "$TMUX_PANE" @gl_band "$band"
   fi
   if [ "$band" -gt "$prev" ]; then
-    # Encoded, not interpolated. The note carries an agent name and a context
-    # readout, and a printf template that assumes neither ever holds a quote or
-    # a backslash emits invalid JSON the moment one does — silently, because the
-    # band was advanced above and nothing retries a warning the harness could
-    # not parse. python3 is a hard dependency of this command already.
-    python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
-      "$event" "$(band_note "$(ctx_carried "$ctx")" "$crossed" "$agent" "$band" "$thresholds")"
+    band_note "$(ctx_carried "$ctx")" "$crossed" "$agent" "$band" "$thresholds"
   fi
   exit 0
 }

@@ -370,9 +370,15 @@ nothing witnessed. The pane is only consulted this way on a harness declaring
 `GANG_QUIET_AT_REST`, where output at rest is not expected; elsewhere the closed
 bracket stands however old.
 
-On `UserPromptSubmit` and `PostToolUse` it also applies the same band ladder
-and window option as patrol and emits a JSON `additionalContext` reply when a
-higher band is crossed; on every other event it emits nothing. On
+On `UserPromptSubmit` and `PostToolUse` it also applies the same band ladders
+and window options as patrol — the agent's context band from its own readout,
+and the team's budget band from the cutoff declared on the session its pane is
+in — and emits a JSON `additionalContext` reply when a higher band is crossed on
+either. Both crossing on one event give one reply carrying both notes, because
+the reply has one slot for them; a crossing on neither gives no reply at all.
+Patrol's repeats do not transfer: this leg speaks on a crossing and is otherwise
+silent, since here every sweep would be every tool call. On every other event it
+emits nothing. On
 `PermissionRequest` that silence is the safety boundary, not a convention: the
 harness reads this hook's stdout as the answer to the open permission dialog,
 so a hook whose output the harness treats as a decision can never be steered by
