@@ -506,12 +506,11 @@ crontab. `GANG_PATROL_LOG` moves the file, or writes none when set empty;
 `GANG_PATROL_LOG_MAX` (1 MiB) is the size at which it rolls to a single `.1`.
 
 At a clean checkpoint, an agent whose harness accepts compaction during an active
-task can compact itself in one command:
+task can compact itself in one command, feeding back the handoff it has been
+keeping:
 
 ```sh
-gang compact lead --from lead --resume-stdin <<'RESUME'
-tests pass; next verify the packaging path
-RESUME
+gang compact lead --from lead --resume-stdin < <path to the handoff>
 ```
 
 Self-compaction may queue behind the caller's current turn. Codex is a known
