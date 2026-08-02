@@ -467,6 +467,56 @@ paint() { # $1 = window name, $2 = beacon line the profile reads back
   wait_for "$1" "the beacon [$2] painted on $1's screen" yes pane_lists "$1" "$2" || exit 1
 }
 
+# probe and repaint sit HERE, beside paint, rather than beside the checks that
+# first needed them. A helper defined below a section is a helper that section
+# cannot call, and a section that cannot call one writes its own copy instead —
+# which is how the reasoning repaint replaces came to be in this file twice, and
+# how the wrong half of it survived being disproved in one of the two. Placement
+# is the whole of that guard: from here every section below can reach them.
+probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
+# probe's BOUNDED twin, for a pane something is going to WRITE to between reads.
+# paint only ever ADDS a line, so a beacon with an injected note and the shell's
+# answer to it stacked underneath walks off the top of a capture that reads the
+# visible pane — and a screen nobody bounds accumulates every note a section sent,
+# until `has` can no longer say which sweep put one there. `clear` is the whole of
+# the difference.
+#
+# IT TAKES THE FIGURE probe TOOK, not the beacon paint took, and that is the guard
+# rather than a convenience. A repaint states the beacon shape a second time, and a
+# fixture is repainted from the literal it was probed with — so the two spellings
+# sat side by side and disagreed, silently. What that cost: a repaint that dropped
+# the `ctx` word cleared a good beacon away and painted a line the profile's scrape
+# does not match, and every check reading a CONTEXT verdict after one went red
+# while every check that read only a row passed. One argument shape means the pair
+# cannot part.
+#
+# THE WAIT IS ON A MARK THIS CALL INVENTED, which is the second half. The obvious
+# evidence is the beacon back on screen, or the screen back to one prompt, and both
+# are states the pane is ALREADY IN on entry — whatever ran last left it there.
+# Measured, not supposed: a wait on the prompt count was satisfied on its FIRST
+# poll at every call site, so it bounded nothing and could not have caught the
+# above. Evidence unique to this call cannot be satisfied by the state the call is
+# trying to leave. The echoed command line cannot satisfy it either, for paint's
+# own whole-line reason, and the mark is split across two quoted words so it is not
+# on that line to be found at all.
+REPAINT_N=0
+repaint() { # $1 = agent, $2 = the context figure it was probed with -> a bounded screen
+  local id mark
+  REPAINT_N=$(( REPAINT_N + 1 ))
+  mark="repaint-$REPAINT_N"
+  id="$(target_of "$1")" || exit 1
+  # The kill first, for paint's reason: a delivered note can be sitting in the box
+  # unsubmitted, and a command typed in behind it is the tail of one, not a line.
+  tmux send-keys -t "$id" C-u
+  tmux send-keys -t "$id" "clear; printf 'ctx %s\\n%s\\n' '$2' 'repaint'-$REPAINT_N" Enter
+  # Fatal, like paint's wait: a screen that never came back is a precondition that
+  # was not met, and every assertion about that pane after it is meaningless.
+  # Reaching the mark means the clear ran and the beacon went down ahead of it,
+  # because one printf wrote them both.
+  wait_for "$1" "$1's screen repainted under [ctx $2], marked $mark" yes \
+    pane_lists "$1" "$mark" || exit 1
+}
+
 # --- facts, and the epoch every one of them carries -----------------------------
 
 # Written through target_of rather than with a raw `tmux set-option -t`, for the
@@ -4079,10 +4129,8 @@ check "and a 400k agent gets the identical rung, both ladders clamped to the cap
 # it, so final-band exposure was permanently COULD-NOT-DETERMINE for a whole
 # harness. Both agents here top out — the big one at the cap, the small one at 90%
 # of its own window — and neither is warned past its ceiling.
-"$GANG" hitch topbig -p bash -d /tmp >/dev/null
-"$GANG" hitch topsmall -p bash -d /tmp >/dev/null
-paint topbig   'ctx 900k/1000k 90%'
-paint topsmall 'ctx 240k/258k 93%'
+probe topbig   '900k/1000k 90%'
+probe topsmall '240k/258k 93%'
 topout="$("$GANG" patrol)"
 check "a 1M agent far past the cap is warned AT the cap, not above it" \
   "NUDGED (crossed the 350000-token band)" "$(printf '%s\n' "$topout" | verdict topbig)"
@@ -4109,14 +4157,11 @@ check "and says how long repeats continue" "yes" \
 # The former steady branch sat above every injection guard. These cases start
 # with band memory already at the top, so each would inject only if the repeat
 # were sent from that old branch instead of reaching the ordinary guard chain.
-# Clear the pane before each one so the repeat phrase itself is a positive wire
-# witness: if a guard is bypassed, it appears in the pane under test.
-# The cleared screen is counted rather than matched: the beacon this repaints was
-# already on it, so its presence proves nothing about whether THIS clear has run.
-# One prompt line does — every command before it left one behind.
-tmux send-keys -t "$(target_of topbig)" \
-  "clear; printf 'ctx 900k/1000k 90%%\\n'" Enter
-wait_for topbig "topbig's screen to come back to one prompt" 1 pane_count topbig '❯'
+# Repaint the pane before each one so the repeat phrase itself is a positive wire
+# witness: if a guard is bypassed, it appears in the pane under test. repaint is
+# what bounds it, and it argues at its own site why the beacon is spelled once and
+# why the wait it pays is the only kind that can catch anything.
+repaint topbig '900k/1000k 90%'
 tmux send-keys -t "$(target_of topbig)" TOP_REPEAT_DRAFT
 wait_for topbig "the draft to be sitting in topbig's box" yes has topbig TOP_REPEAT_DRAFT
 check "a steady top-band repeat still holds on a non-empty composer" \
@@ -4134,9 +4179,7 @@ wait_for topbig "the draft to leave topbig's box" no has topbig TOP_REPEAT_DRAFT
 # in cannot paint a churning transcript above a live composer the way a real TUI
 # does, and neither could pane_stable tell those two apart. Re-adding it flips
 # this verdict back to the churn phrase and fails here.
-tmux send-keys -t "$(target_of topbig)" \
-  "clear; printf 'ctx 900k/1000k 90%%\\n'" Enter
-wait_for topbig "topbig's screen to come back to one prompt" 1 pane_count topbig '❯'
+repaint topbig '900k/1000k 90%'
 tmux send-keys -t "$(target_of topbig)" \
   "i=0; while [ \$i -lt 30 ]; do printf '\\rTOPCHURN%02d' \"\$i\"; i=\$((i+1)); sleep 0.1; done; printf '\\n'" Enter
 wait_for topbig "the churn loop to start moving topbig's screen" yes has topbig TOPCHURN
@@ -5875,49 +5918,6 @@ check "and both the patrol hold and the resume proof read it" "2" \
 # outright rather than leaving it to be inferred: at the SAME tokens the small
 # window is near the end of its ladder and the big one is barely started, because
 # up there the hazard is running out of room and not rot.
-probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
-# probe's BOUNDED twin, for a pane something is going to WRITE to between reads.
-# paint only ever ADDS a line, so a beacon with an injected note and the shell's
-# answer to it stacked underneath walks off the top of a capture that reads the
-# visible pane — and a screen nobody bounds accumulates every note a section sent,
-# until `has` can no longer say which sweep put one there. `clear` is the whole of
-# the difference.
-#
-# IT TAKES THE FIGURE probe TOOK, not the beacon paint took, and that is the guard
-# rather than a convenience. A repaint states the beacon shape a second time, and a
-# fixture is repainted from the literal it was probed with — so the two spellings
-# sat side by side and disagreed, silently. What that cost: a repaint that dropped
-# the `ctx` word cleared a good beacon away and painted a line the profile's scrape
-# does not match, and every check reading a CONTEXT verdict after one went red
-# while every check that read only a row passed. One argument shape means the pair
-# cannot part.
-#
-# THE WAIT IS ON A MARK THIS CALL INVENTED, which is the second half. The obvious
-# evidence is the beacon back on screen, or the screen back to one prompt, and both
-# are states the pane is ALREADY IN on entry — whatever ran last left it there.
-# Measured, not supposed: a wait on the prompt count was satisfied on its FIRST
-# poll at every call site, so it bounded nothing and could not have caught the
-# above. Evidence unique to this call cannot be satisfied by the state the call is
-# trying to leave. The echoed command line cannot satisfy it either, for paint's
-# own whole-line reason, and the mark is split across two quoted words so it is not
-# on that line to be found at all.
-REPAINT_N=0
-repaint() { # $1 = agent, $2 = the context figure it was probed with -> a bounded screen
-  local id mark
-  REPAINT_N=$(( REPAINT_N + 1 ))
-  mark="repaint-$REPAINT_N"
-  id="$(target_of "$1")" || exit 1
-  # The kill first, for paint's reason: a delivered note can be sitting in the box
-  # unsubmitted, and a command typed in behind it is the tail of one, not a line.
-  tmux send-keys -t "$id" C-u
-  tmux send-keys -t "$id" "clear; printf 'ctx %s\\n%s\\n' '$2' 'repaint'-$REPAINT_N" Enter
-  # Fatal, like paint's wait: a screen that never came back is a precondition that
-  # was not met, and every assertion about that pane after it is meaningless.
-  # Reaching the mark means the clear ran and the beacon went down ahead of it,
-  # because one printf wrote them both.
-  wait_for "$1" "$1's screen repainted under [ctx $2], marked $mark" yes \
-    pane_lists "$1" "$mark" || exit 1
-}
 probe rung200a '119k/200k 60%'    # a hair under the first rung, 120000
 probe rung200b '120k/200k 60%'    # exactly on it
 probe rung200c '160k/200k 80%'    # a middle rung of the 200k ladder
