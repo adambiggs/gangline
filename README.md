@@ -614,6 +614,7 @@ shaped this way.
 - [ADR-0009](docs/adr/0009-time-bands-are-relative.md) — time bands are relative to a declared cutoff
 - [ADR-0010](docs/adr/0010-a-benchmark-is-a-consumer-not-a-design-input.md) — a benchmark is a consumer, not a design input
 - [ADR-0011](docs/adr/0011-a-rename-before-publication-is-total-and-retroactive.md) — a rename before publication is total and retroactive
+- [ADR-0012](docs/adr/0012-instale-data-is-refused-from-documentation.md) — instale data is refused from documentation
 
 ## Project guide
 
