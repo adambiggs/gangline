@@ -167,21 +167,55 @@ You cannot feel how full your context is, so the substrate measures it for you.
 A note like `[context-usage] 180k/1000k (18%) — crossed the 180000-token band`
 means you are approaching the point where you lose the thread.
 
-When you get one:
+**Keep a handoff continuously, not at the band.** Open one file when you start
+a task and update it at every checkpoint — the same checkpoints that already
+end an arc, below. Each update supersedes the last in place: one file for the
+whole run, not a fresh one per band. That turns the band moment from "now
+write a handoff" into "check the one you have, then compact" — composing it
+while you still have the context to get it right beats composing it at the
+moment you are about to lose that context, which is the worst moment
+available for the job. If you reach a band and no handoff exists yet, write
+one then: the file existing is not a precondition for crossing a band safely,
+it is what makes crossing one cheap when you kept it current.
+
+Keep it off `/tmp`. `/tmp` is delivery, never a store: a handoff that points
+into it is asserting something it cannot check, because nothing there is
+guaranteed to still be there when it is read. Put the handoff itself at one
+stable path that lasts your whole run, and put any deliverable it points at
+somewhere that will still exist after you compact — your task or role brief
+says where the team keeps those; if it does not say, ask rather than guessing.
+
+Every claim in it carries how you know it, because an unlabelled claim reads
+as settled fact to whoever inherits the file, and that is the failure this
+rule exists to stop:
+
+- **Verified** — you checked it yourself; name the command or file that did.
+- **Claimed by a teammate** — name them and their receipt; you are relaying,
+  not vouching.
+- **Unverified** — asserted, not checked; say so rather than let silence read
+  as verification.
+- **Refuted** — and why. A refuted claim is the most valuable line in the
+  file: without it, the next reader re-derives the dead end at full cost.
+
+Point rather than restate: a path, a commit hash, an ADR id. A pointer at a
+document resolves only as far as it names — give the section, not just the
+file, or the pointer stands in for several decisions and none of them is
+reachable from it. Carry no counts, versions, or tallies —
+[ADR-0012](../docs/adr/0012-instale-data-is-refused-from-documentation.md)
+already argues why documentation refuses them; a handoff is that same rot,
+aimed at your own future self instead of a reader.
+
+When you get a band note:
 
 1. **Finish the arc you are in.** An arc ends at a checkpoint — tests green,
    a commit made, a question answered. Never mid-edit.
-2. **Write down what you would not want to re-derive**: what you were doing, what
-   you learned, what is left. Somewhere durable — a file in the repo, or a
-   message to whoever gave you the task. Not just in your head, which is the
-   thing about to be compacted.
-3. **Compact yourself, and say what to pick back up** — one command does both:
+2. **Check your handoff is current.** Refresh anything the arc you just
+   finished changed. If none exists yet, write it now, per above.
+3. **Compact yourself, feeding the resume straight from that file** — one
+   command does both:
 
    ```
-   cat > /tmp/gang-resume <<'RESUME'
-   where you were, what is next
-   RESUME
-   gang compact <your own name> --from <your own name> --resume-stdin < /tmp/gang-resume
+   gang compact <your own name> --from <your own name> --resume-stdin < <path to your handoff>
    ```
 
    It queues behind the turn you are in, so you never have to be idle to run it,
