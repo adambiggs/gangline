@@ -120,7 +120,17 @@ A busy target is handled by profile declaration:
 - a profile without that declaration is refused unless `--wait` was given.
 
 Occupied targets are always refused. Delivery also serialises Gangline writers for
-the pane and refuses a composer that is changing while a person types.
+the pane, and a composer that is changing while a person types is waited out
+rather than refused: what was in the box first leaves first, so the paste never
+jumps a half-written line. The sender is told it is queued behind operator typing
+while it waits, and the delivery line says how long the send was held. The wait is
+bounded by `GANG_SEND_HOLD`; when the bound runs out, nothing was delivered and
+the body is still the sender's to send again. Ordering is promised between the
+operator's text and the held send, and nowhere else — concurrent senders are not a
+queue. A target found occupied *during* a hold is refused there and then, in the
+same words and with the same status as one found occupied before it: waiting ends
+no occupancy, and the record it leaves on that agent is what tells an operator
+their dialog is stalling traffic.
 
 ### `gang compact <name> [--from sender] [--resume-stdin]`
 
@@ -529,6 +539,7 @@ These are useful when the corresponding path is in use:
 |---|---|---|
 | `GANG_LOCK_DIR` | shared directory for per-pane delivery locks; created `0700`, and refused if it is a symlink, not a directory, or not owned by you | `/tmp/gangline-<uid>` |
 | `GANG_LOCK_WAIT` | lock acquisition polls at 0.2 seconds | `150` (30 seconds) |
+| `GANG_SEND_HOLD` | how long a send waits out a composer somebody is typing into before handing the body back to its sender; whole seconds, and a non-numeric value is refused | `120` seconds |
 | `GANG_CHURN_WAIT` | interval between pane-change samples | `0.5` seconds |
 | `GANG_ACTIVITY_LIMIT` | how long pty activity **alone** may hold the busy verdict before the state becomes `expired`; whole seconds, and a non-numeric value is refused | `300` |
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
@@ -562,7 +573,10 @@ These are useful when the corresponding path is in use:
 and that is a coincidence rather than a shared constant. Each bounds a
 different thing, each fact bound's comment in bin/gang argues its own error
 direction, and changing any one of them must not move the others — do not fold
-them into a single value.
+them into a single value. `GANG_SEND_HOLD` is deliberately not one of that family:
+a foreground sender blocked on its own send and a background waiter holding a
+resume sit at opposite ends of the same trade, and the different number is the
+point of it.
 
 Changing compaction timing requires care, and the two readers part company at
 expiry. On the resume leg, when a context baseline was captured, a missing drop

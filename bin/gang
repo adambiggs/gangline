@@ -46,12 +46,14 @@ die() { fail 1 "$@"; }
 #
 # The implication runs ONE WAY and the asymmetry is deliberate. 3 always means
 # nothing was typed; 1 does not mean something was. Plenty of refusals that never
-# reach a pane still exit 1 — cmd_send tests occupancy itself and never calls
-# inject, so an ordinary send to an occupied agent is a 1 for a keystroke that was
-# never sent. Converting those would make the converse true and buys nothing: the
-# only consumer is resume_after_compaction, which calls inject directly, and a
-# retry rule needs "safe to repeat" to be provable, not exhaustive. Reading 1 as
-# proof that something was typed is the mistake this paragraph exists to prevent.
+# reach a pane still exit 1 — cmd_send refuses an occupied target itself rather
+# than leaving it to a delivery, so an ordinary send to an occupied agent is a 1
+# for a keystroke that was never sent, whether that occupancy was found before the
+# delivery or handed back by one. Converting those would make the converse true
+# and buys nothing: the consumers are the delivery waiters, which call inject
+# directly, and a retry rule needs "safe to repeat" to be provable, not
+# exhaustive. Reading 1 as proof that something was typed is the mistake this
+# paragraph exists to prevent.
 refuse() { fail 3 "$@"; }
 
 fail() { # $1 = exit status, rest = message
@@ -2656,6 +2658,99 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   lock_release
 }
 
+deliver_held() { # $1 = window id, $2 = text, $3 = the target's name; hold a send
+                 # behind a hand at the keyboard instead of handing it back
+  # The failure: an operator is typing into an agent's box, a teammate's send
+  # reaches inject, composer_settled refuses, and the sender is left holding the
+  # body. Every sender here is a CLI agent and an agent reads a refusal as
+  # terminal, so nobody sends it again — the message is simply lost, and lost
+  # BECAUSE somebody was at the keyboard, which is the moment a team most wants
+  # its traffic to arrive. resume_after_compaction already argues this for its own
+  # path and names the same asymmetry: the likeliest failure there was the one
+  # spent as fatal. Ordinary send never got that fix, and this is it.
+  #
+  # The ordering promised is between the OPERATOR'S TEXT and this send, and it is
+  # the whole of what a hold buys: what was in the box first leaves first, and the
+  # paste does not jump a half-written line. Ordering between SENDERS is not
+  # promised, here or anywhere else in gang — concurrent sends race for the pane
+  # lock and land in whichever order they take it, and nothing reads them as a
+  # queue.
+  #
+  # The hold is send's alone. patrol's nudge is ambient and skipping one is
+  # correct; hitch and compact have their own shapes; a resume has its own waiter.
+  local bound="${GANG_SEND_HOLD:-120}" started="$SECONDS" told=0 rc=0 err=""
+  # Its own knob rather than another 300. A foreground send with an agent blocked
+  # on it and a background resume waiter sit at opposite ends of one trade, and the
+  # reference already warns that the values which coincide at 300 do so by accident
+  # and must not be folded together. Checked at the read like every bound in this
+  # file: a profile sourced after the default was taken can export it, and an
+  # unusable value makes every elapsed-against-bound test here fail rather than
+  # fire, which would leave a send that never holds wearing a knob that says it
+  # does.
+  require_whole GANG_SEND_HOLD "$bound" seconds
+  HELD_SECONDS=0
+  HELD_OCCUPIED=0
+  # Asked before typing rather than read back out of a refusal: the sender learns
+  # it is waiting before it stalls instead of afterwards, and what the hold turns
+  # on is this predicate rather than a string matched out of an error message.
+  # Nothing is locked here — inject takes the pane lock and asks the same question
+  # again underneath it, which is what makes this an announcement and not a
+  # guarantee. Budget first, so a bound of zero costs not even the look and behaves
+  # exactly as this path did before there was a hold.
+  while [ $(( SECONDS - started )) -lt "$bound" ] && ! composer_settled "$1"; do
+    if [ "$told" -eq 0 ]; then
+      told=1
+      printf 'gang: queued behind operator typing: somebody is typing into %s, so this send is held for up to %ss rather than handed back to you\n' \
+        "$3" "$bound" >&2
+    fi
+    sleep 2
+  done
+  while :; do
+    rc=0
+    # In a subshell so inject's exit does not end this process, and so the pane lock
+    # it takes is released with that subshell rather than held across a sleep.
+    err="$(inject "$1" "$2" 2>&1)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      [ "$told" -eq 0 ] || HELD_SECONDS=$(( SECONDS - started ))
+      return 0
+    fi
+    # EVERY refusal that typed nothing is held for, not only the typing one. 3 is a
+    # property of the code path — inject never reached a keystroke — while "this
+    # wording sounds transient" is a guess about prose, and the failure being fixed
+    # is a body handed back to a sender that will drop it. 1 stops, because 1 can
+    # mean the paste landed.
+    [ "$rc" -eq 3 ] || break
+    # The one state no amount of waiting ends. It stops the hold rather than riding
+    # it out for a second reason: blocked_record's TIMELINESS is a promise of its
+    # own — an occupied routing point stalls everyone aimed at it, and delaying the
+    # signal that says so by the length of the hold would fix one regression by
+    # installing another. The caller records and refuses exactly as it does for an
+    # occupancy it finds itself, so the two are one outcome with one status.
+    if occupied "$1"; then HELD_OCCUPIED=1; break; fi
+    [ $(( SECONDS - started )) -lt "$bound" ] || break
+    if [ "$told" -eq 0 ]; then
+      told=1
+      printf 'gang: holding this send for up to %ss and retrying — nothing has been typed into %s\n' \
+        "$bound" "$3" >&2
+    fi
+    sleep 2
+  done
+  # Said only where there WAS a hold: a send that never waited reports exactly what
+  # it reported before this function existed. What the refusal underneath cannot
+  # say is that the waiting is over, how long it ran, and that the body never left
+  # the sender.
+  [ "$told" -eq 0 ] \
+    || printf 'gang: held %ss for %s and gave up — NOTHING was delivered, and the message is still yours to send again\n' \
+         "$(( SECONDS - started ))" "$3" >&2
+  # The last refusal is the state the pane was actually left in, so it goes out
+  # whole rather than summarised — except for occupancy, which the caller is about
+  # to state in the words an operator already knows from every other occupied send.
+  [ -z "$err" ] || [ "$HELD_OCCUPIED" -eq 1 ] || printf '%s\n' "$err" >&2
+  # inject's own status, so "3 means nothing was typed" stays true for whatever
+  # wraps send.
+  return "$rc"
+}
+
 resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot overtake
   # A resume cannot ride the input queue behind its own compaction. Both are typed
   # from inside a live turn, and a harness does not treat the two alike: a queued
@@ -3548,6 +3643,20 @@ cmd_up() { # bare `gang up` is the whole setup: a briefed lead, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
+send_occupied_die() { # $1 = window id, $2 = the target's name, $3 = the sender
+  # The refusal is right and is unchanged. What was missing sat on the TARGET's
+  # side: an occupied routing point stalls the agents trying to reach it, and
+  # nothing on its own surfaces said so, so the cost of leaving the modal up was
+  # invisible to whoever could clear it.
+  #
+  # One function because a send now meets this state at two moments — before the
+  # hold, and inside it when a dialog paints on an agent that was reachable when
+  # the send arrived. They are the same condition found at different times, and an
+  # operator gets one wording and one status for it either way.
+  blocked_record "$1" "$3"
+  die "'$2' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it; a send would act on that UI instead of landing (gang attach)"
+}
+
 cmd_send() {
   local name="" from="${GANG_FROM:-}" wait=0 timeout=300 use_stdin=0 body=""
   name="${1:-}"; [ -n "$name" ] || usage_die; shift
@@ -3575,12 +3684,7 @@ cmd_send() {
   # Occupancy beats busy: a UI paints mid-turn, and the mid-turn refusal below
   # would point at --wait, which cannot end a state no amount of waiting ends.
   if occupied "$AGENT_ID"; then
-    # The refusal is right and is unchanged. What was missing sat on the TARGET's
-    # side: an occupied routing point stalls the agents trying to reach it, and
-    # nothing on its own surfaces said so, so the cost of leaving the modal up was
-    # invisible to whoever could clear it.
-    blocked_record "$AGENT_ID" "$from"
-    die "'$name' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it; a send would act on that UI instead of landing (gang attach)"
+    send_occupied_die "$AGENT_ID" "$name" "$from"
   fi
 
   # Busy is not, by itself, a reason to refuse. The question a send has to answer
@@ -3630,22 +3734,38 @@ cmd_send() {
     midturn=1
   fi
   envelope "$from" "$body"
-  inject "$AGENT_ID" "$ENVELOPE"
+  local send_rc=0 qualifier=""
+  deliver_held "$AGENT_ID" "$ENVELOPE" "$name" || send_rc=$?
+  if [ "$send_rc" -ne 0 ]; then
+    # An occupancy found INSIDE the hold, on an agent that was reachable when the
+    # send arrived. Same record and same wording as the one found up front, since
+    # it is the same condition. Every other failure has already said what it needed
+    # to on the way out, and restating it here would only bury it.
+    [ "$HELD_OCCUPIED" -eq 0 ] || send_occupied_die "$AGENT_ID" "$name" "$from"
+    exit "$send_rc"
+  fi
   # The deletion path law 6 asks for, and the only one here that is evidence
   # rather than a timer: traffic moved through this agent again, so whatever its
-  # occupancy was blocking is over. inject verifies or dies, so reaching this line
-  # is a delivery and not an attempt.
+  # occupancy was blocking is over. A delivery verifies or fails, so reaching this
+  # line is a delivery and not an attempt.
   blocked_forget "$AGENT_ID"
   if [ "$activity_expired" -eq 1 ]; then
-    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane; $BUSY_EXPIRED_WHAT, accepted as potentially mid-turn)")"
+    qualifier="verified in pane; $BUSY_EXPIRED_WHAT, accepted as potentially mid-turn"
   elif [ "$midturn" -eq 1 ]; then
     # "accepted", not "queued": the box shows a queued-message hint either way,
     # but what the harness does next is its own call — Claude Code hands queued
     # text to the turn already running as often as it holds it for the boundary.
-    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane, accepted mid-turn)")"
+    qualifier="verified in pane, accepted mid-turn"
   else
-    echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    qualifier="verified in pane, submitted"
   fi
+  # Appended rather than made a fourth branch: a send can be held AND land
+  # mid-turn, and both facts are worth having. It says how long and not what for —
+  # the reason went to stderr the moment the hold began, which is where it was
+  # useful, and a hold can begin for any refusal that typed nothing.
+  [ "$HELD_SECONDS" -eq 0 ] \
+    || qualifier="$qualifier; held ${HELD_SECONDS}s before it could land"
+  echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "($qualifier)")"
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command

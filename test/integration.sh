@@ -1237,17 +1237,37 @@ GANG_VERIFIED_VERSIONS="any"
 profile_input() { printf 'being-typed-%s' "$RANDOM"; }
 SH
 GANG_PROFILES="$SHIM/custom-profiles" "$GANG" hitch typist -p jitter -d /tmp >/dev/null 2>&1
-out="$(GANG_PROFILES="$SHIM/custom-profiles" \
+# A bound of five, not the shipped one. This box never settles by construction, so
+# the send spends the whole bound and the suite pays for every second of it; what
+# is under test is that a hold ENDS and what it says when it does, which the
+# shipped value would assert no better and much slower.
+t0="$(date +%s)"
+out="$(GANG_PROFILES="$SHIM/custom-profiles" GANG_SEND_HOLD=5 \
   send_text typist tester "MARK_INTERLEAVED" 2>&1)"; rc=$?
+t1="$(date +%s)"
 check "a send into a box being typed in is refused" "3" "$rc"
 check "and says whose keyboard it would have landed in" "yes" \
   "$(contains "$out" "typing into")"
 check "with nothing typed over the draft" "no" "$(has typist MARK_INTERLEAVED)"
+# Those three are what this case has always asserted and they are unchanged. What
+# moved is everything BEFORE them: the send no longer bounces off the first look,
+# it holds — and the end of a hold has to be as loud as the refusal it replaced,
+# because a sender that reads "held" and nothing else will believe the message
+# eventually went.
+check "a send that meets a hand at the keyboard is held, not handed back" "yes" \
+  "$(contains "$out" "queued behind operator typing")"
+check "and a hold that never clears says the body never left the sender" "yes" \
+  "$(contains "$out" "NOTHING was delivered")"
+# The elapsed time is the check, not the sentence. Announcing a hold costs one
+# printf whether or not any waiting follows it, so the wording above is satisfied
+# by a send that still bounces on the first look — this is what separates the two.
+check "and it spent the bound waiting rather than only saying so" "yes" \
+  "$([ $(( t1 - t0 )) -ge 4 ] && echo yes || echo no)"
 # 3 rather than 1, and the status is load-bearing rather than decorative: it is
 # the only thing separating a refusal that typed NOTHING from a failure that may
-# have left a paste in the box. resume_after_compaction retries on 3 and stops on
-# 1, so collapsing the two either abandons a resume that would have landed a
-# second later or re-sends a message already in the transcript. The failures that
+# have left a paste in the box. The delivery waiters retry on 3 and stop on
+# 1, so collapsing the two either abandons a message that would have landed a
+# second later or re-sends one already in the transcript. The failures that
 # get 1 are asserted where they happen — the vanisher cases above, which fail
 # after the paste has gone in.
 
@@ -5599,6 +5619,12 @@ GANG_BUSY_REGEX="WORKING\\\\.\\\\.\\\\."
 GANG_COMPACT_CMD="#compact"
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
+  # A dialog, switched on from outside, and a faithful one: occupied()'s own
+  # reasoning is that every gate anybody has watched live takes the composer away
+  # with it while it is up, which is why an undeclared gate reads idle at all. A
+  # box that cannot be read is what that looks like from here, and it is what puts
+  # an occupancy in front of a send that is already holding.
+  [ ! -e "$SHIM/modal-up" ] || return 1
   local line n
   # The operator's hands, switched on from outside: while this file exists the box
   # reads differently on every look, which is exactly what composer_settled refuses.
@@ -5674,6 +5700,90 @@ check "and the agent carries which variable stopped it" "yes" \
   "$(contains "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_resume_failed)" \
      "GANG_RESUME_TIMEOUT")"
 tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
+
+# --- a send held behind the operator's hands ----------------------------------
+
+# The same fix as the resume waiter's, on the path that never got it. An
+# ordinary send that met a moving composer was spent as terminal, and every sender
+# in this system is a CLI agent: an agent reads a refusal as final and does not
+# send again, so the message is simply lost — lost BECAUSE somebody was at the
+# keyboard, which is the moment a team most wants its traffic to arrive. The hold
+# is bounded and announced; what it must never do is report a delivery it did not
+# make, which is why the status and the mark are asserted beside the wording.
+touch "$SHIM/hands-on-keyboard"
+( GANG_SEND_HOLD=60 send_text retrier tester "MARK_HELD" \
+    >"$SHIM/held.out" 2>&1; echo $? > "$SHIM/held.rc" ) &
+absence_window 6 "a send refused by a moving composer must not be spent, well past
+                  the single attempt it used to get"
+check "a send into a box being typed in is not spent on the first look" "no" \
+  "$(has retrier MARK_HELD)"
+rm -f "$SHIM/hands-on-keyboard"        # hands off the keyboard
+WAIT_TIMEOUT=60 wait_for retrier 'the held send to land once the box settles' \
+  yes has retrier MARK_HELD
+wait
+check "and the same send lands once the hands come off" "yes" \
+  "$(has retrier MARK_HELD)"
+check "the sender is told it is queued behind the operator rather than left guessing" "yes" \
+  "$(contains "$(cat "$SHIM/held.out")" "queued behind operator typing")"
+check "and a send that was held still reports the delivery it made" "0" \
+  "$(cat "$SHIM/held.rc")"
+# What the delivery line owes an operator is that this one was not instant. It
+# says how long and not what for: a hold can begin for any refusal that typed
+# nothing, and the reason went to stderr the moment it began, which is where it
+# was useful.
+check "and the line that reports it says the send was held first" "yes" \
+  "$(contains "$(cat "$SHIM/held.out")" "before it could land")"
+
+# The other half of that claim, and the reason it is a separate send: a qualifier
+# that shows up on every delivery reports nothing. A send into a settled box has
+# to read exactly as it read before there was a hold at all.
+out="$(send_text retrier tester "MARK_UNHELD" 2>&1)"; rc=$?
+check "a send that never waited is the delivery it always was" "0" "$rc"
+check "and says nothing about having been held" "no" \
+  "$(contains "$out" "before it could land")"
+check "and announced no queue that never formed" "no" \
+  "$(contains "$out" "queued behind operator typing")"
+
+# GANG_SEND_HOLD is checked at the read, and its unchecked failure is the silent
+# one: an unusable value makes every elapsed-against-bound comparison fail rather
+# than fire — `[` exits 2, and a failing loop condition trips no errexit — so the
+# wait is skipped, the retry breaks after a single attempt, and the send goes out
+# with no hold whatever. A knob that says a send will wait, on a send that does
+# not, is
+# worse than no knob at all. Asserted on BEHAVIOUR: with the box settled, falling
+# through is a delivery, so the mark is what tells the two apart.
+out="$(GANG_SEND_HOLD=not-a-number send_text retrier tester "MARK_BADHOLD" 2>&1)"; rc=$?
+check "an unusable hold bound refuses instead of falling through" "1" "$rc"
+check "and sends nothing at all" "no" "$(has retrier MARK_BADHOLD)"
+check "and names the variable that stopped it" "yes" \
+  "$(contains "$out" "GANG_SEND_HOLD")"
+
+# A dialog that paints on an agent that WAS reachable when the send arrived. The
+# hold ends there rather than riding out its bound, for two reasons that point the
+# same way: occupancy is the one state no amount of waiting ends, and the record
+# an occupied agent carries is a promise about TIMELINESS — an occupied routing
+# point stalls everyone aimed at it, and delaying the signal that says so by the
+# length of the hold would fix one regression by installing another. Found before
+# the hold or found inside it, it is one condition, and an operator gets one
+# wording and one status for it.
+rm -f "$SHIM/modal-up"
+touch "$SHIM/hands-on-keyboard"
+( GANG_SEND_HOLD=30 send_text retrier tester "MARK_MIDHOLD" \
+    >"$SHIM/midhold.out" 2>&1; echo $? > "$SHIM/midhold.rc" ) &
+absence_window 4 "the send must still be holding while the hands are on the keyboard"
+check "a send is still holding, with nothing typed yet" "no" \
+  "$(has retrier MARK_MIDHOLD)"
+touch "$SHIM/modal-up"                 # a gate takes the screen while the send waits
+wait
+rm -f "$SHIM/modal-up" "$SHIM/hands-on-keyboard"
+check "a dialog that paints mid-hold ends the hold instead of outlasting it" "1" \
+  "$(cat "$SHIM/midhold.rc")"
+check "in the words every other occupied send uses" "yes" \
+  "$(contains "$(cat "$SHIM/midhold.out")" "is occupied (authority unknown)")"
+check "and the occupied agent carries the inbound it refused" "yes" \
+  "$(contains "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_blocked)" "tester")"
+check "with nothing typed behind the dialog" "no" "$(has retrier MARK_MIDHOLD)"
+tmux set-option -uw -t "$(target_of retrier)" @gl_blocked
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on
