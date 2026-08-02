@@ -404,13 +404,30 @@ merely running leaves no record behind while the reserve and the overrun both do
 
 ## Compaction and handoff
 
-The robust self-compaction form is:
+The robust self-compaction form redirects a file that already exists:
 
 ```sh
-gang compact <self> --from <self> --resume-stdin <<'RESUME'
-checkpoint and next action
+gang compact <self> --from <self> --resume-stdin < <path to the handoff>
+```
+
+`--resume-stdin` reads to EOF and has no opinion about where the bytes came
+from, so a caller composing a short resume for a *different* agent still writes
+one inline:
+
+```sh
+gang compact <name> --from <caller> --resume-stdin <<'RESUME'
+continue from your compacted summary and report the result
 RESUME
 ```
+
+The difference between the two is authorship, not transport. An agent compacting
+itself feeds back a handoff it has been keeping since the task started — where
+that file belongs and what has to be in it are
+[roles/_common.md](../roles/_common.md)'s to say, under "Your context window" —
+and the band note Gangline injects at a crossing sends an agent to that file
+rather than asking it to author one there and then. A caller writing a resume for
+someone else is doing a smaller thing: handing over an instruction, not the
+context an agent is about to lose, and inline is the right shape for it.
 
 Gangline allows the calling agent to be busy: its compaction command can queue
 behind the current turn. A different busy agent is refused because forced
