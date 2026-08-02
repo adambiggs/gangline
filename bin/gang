@@ -305,10 +305,14 @@ usage() {
   cat <<'EOF'
 gang — drive a team of CLI agents as tmux windows
 
-  gang up [name] [-p <prof>] [-r <role>] [-d <dir>] [-m <model>]
-                                              the whole setup, no arguments needed:
+  gang up [name] [<hitch's flags>]            the whole setup, no arguments needed:
                                               hitches "lead" here on GANG_PROFILE
-                                              with the lead role, and puts you in it
+                                              with the lead role, and puts you in it.
+                                              Every flag is handed to gang hitch
+                                              untouched, so whatever hitch takes, up
+                                              takes — and gang hitch is where they are
+                                              listed. A second list here would be one
+                                              release away from disagreeing with it
   gang hitch <name> [-p <prof>] [-r <role>] [-d <dir>] [-m <model>] [--resume]
                     [--cutoff <duration|clock>]
                                               hitch an agent into the team (window name =
@@ -3027,17 +3031,27 @@ ctx_carried() { # $1 = profile readout -> the figure an agent is told it is carr
   printf '%s' "${s%%/*}"
 }
 
-# Permille of the span between floor and ceiling. Fixed, so the ladder has the same
-# shape on every harness, and compressing upward so the warnings get closer together
-# as the situation gets worse. The widest gap belongs at the bottom, where there is
-# still time to act on it.
-LADDER_FRACTIONS="0 308 555 783 1000"
+# Permille of the span a ladder divides. Fixed, so the ladder has the same shape on
+# every harness, and compressing upward so the warnings get closer together as the
+# situation gets worse. The widest gap belongs at the bottom, where there is still
+# time to act on it.
+#
+# The interior is what carries that shape. The opening rung is separate because it is
+# not part of the shape at all — it is a claim that the start of the span is already
+# a hazard, and only an axis whose span starts at an onset has earned it. Context has:
+# a context that has reached the floor is rotting, which is the whole reason the floor
+# is where it is. Split, so an axis states that claim by taking the opening rung
+# rather than by inheriting it from a list that was written for something else.
+LADDER_INTERIOR="308 555 783 1000"
+LADDER_FRACTIONS="0 $LADDER_INTERIOR"
 
+# Written by an axis's deriver rather than printed, and the rule binds the deriver
+# rather than the caller: `die` inside a command substitution ends only that subshell,
+# so a deriver that printed its ladder would hand a caller reading it through `$(...)`
+# an empty string where a refusal was meant — and an empty ladder reads as a valid one.
 LADDER_AUTO=""
-auto_rungs() { # $1 = window; sets LADDER_AUTO to the derived CSV. Dies on a bad bound.
-  # Sets a global rather than printing: `die` inside a command substitution ends only
-  # that subshell, so a caller reading this through `$(...)` would take an empty
-  # ladder for a valid one.
+
+context_rungs() { # $1 = window; sets LADDER_AUTO to the derived CSV. Dies on a bad bound.
   # Both bounds are read HERE rather than resolved once at startup, because that is
   # what lets a profile set them for its own harness: load_profile runs before the
   # ladder in both nudge legs, and a value fixed at load time would be read before
@@ -3077,19 +3091,43 @@ auto_rungs() { # $1 = window; sets LADDER_AUTO to the derived CSV. Dies on a bad
   LADDER_AUTO="$rungs"
 }
 
-ladder() { # $1 = tokens, $2 = window -> "<bands crossed> <highest> <resolved CSV>"
-  # One evaluator for both warning legs. Two copies of a ladder is two ladders.
+auto_rungs() { # $1 = axis, $2 = the extent its rungs are derived across -> LADDER_AUTO
+  # The axis names which derivation the word `auto` stands for. One name, one deriver,
+  # and an axis nobody wrote one for is a mistake in this file rather than a ladder to
+  # be guessed at — the caller has already decided what it is measuring by the time it
+  # gets here, so there is no sensible fallback to pick.
+  case "$1" in
+    context) context_rungs "$2" ;;
+    *)       die "internal: no band ladder is derived for the '$1' axis" ;;
+  esac
+}
+
+ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are placed across
+           #  -> "<bands crossed> <highest> <resolved CSV>"
+  # One evaluator, however many legs ask it and whatever they are measuring. Two
+  # copies of a ladder is two ladders.
   #
-  # Both ends of the DEFAULT ladder are absolute and that is load-bearing (ADR-0006).
-  # An explicit CSV is read as written, and the % suffix remains in that syntax as an
-  # escape hatch for an unusual window — the one place a fraction is the operator's
-  # intent rather than a mistake. It is not a default and must not become one.
+  # The axis decides two things and nothing else: which explicit ladder overrides the
+  # derivation, and which derivation is meant by `auto`. Everything past that point is
+  # one shape — rung syntax, the placement refusal, and the count of rungs a position
+  # is past — because a rung is a rung whatever it measures.
+  #
+  # For the CONTEXT axis specifically: both ends of its default ladder are absolute and
+  # that is load-bearing (ADR-0006). Its explicit CSV is read as written, and the %
+  # suffix remains in that syntax as an escape hatch for an unusual window — the one
+  # place a fraction is the operator's intent rather than a mistake. It is not a
+  # default and must not become one. Every refusal this function can reach is that
+  # axis's own and names its hatch outright, because it is the only explicit ladder
+  # there is to name.
+  local axis="$1" position="$2" extent="$3"
   local band=0 crossed=0 part n t resolved="" list
-  if [ "$BANDS" = auto ]; then
-    auto_rungs "$2"
+  case "$axis" in
+    context) list="$BANDS" ;;
+    *)       die "internal: no band ladder is defined for the '$axis' axis" ;;
+  esac
+  if [ "$list" = auto ]; then
+    auto_rungs "$axis" "$extent"
     list="$LADDER_AUTO"
-  else
-    list="$BANDS"
   fi
   for part in ${list//,/ }; do
     case "$part" in
@@ -3097,20 +3135,20 @@ ladder() { # $1 = tokens, $2 = window -> "<bands crossed> <highest> <resolved CS
           [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
           # A rung that cannot be PLACED is not a rung set wrong. Checked before
           # the arithmetic, because an unknown window floors t to zero and the
-          # guard below would then report a broken ladder — sending an operator to
-          # edit a setting that is correct, about a figure the profile failed to
+          # zero-rung guard would then report a broken ladder — sending an operator
+          # to edit a setting that is correct, about a figure the profile failed to
           # report. The refusal has to name what actually could not be determined.
-          [[ "$2" =~ ^[0-9]+$ ]] && [ "$2" -gt 0 ] \
-            || die "cannot place the '$part' band: no context-window size for this agent (got '$2') — a % rung needs the window figure the profile reports, so fix the readout, not GANG_CONTEXT_BANDS"
+          [[ "$extent" =~ ^[0-9]+$ ]] && [ "$extent" -gt 0 ] \
+            || die "cannot place the '$part' band: no context-window size for this agent (got '$extent') — a % rung needs the window figure the profile reports, so fix the readout, not GANG_CONTEXT_BANDS"
           # Floored to 1k, the resolution every context readout reports in.
-          t=$(( n * $2 / 100000 * 1000 )) ;;
+          t=$(( n * extent / 100000 * 1000 )) ;;
       *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
           t="$part" ;;
     esac
     [ "$t" -gt 0 ] \
       || die "invalid GANG_CONTEXT_BANDS '$BANDS': the '$part' rung lands at 0 tokens, which every context is already past — fix the ladder"
     resolved="${resolved:+$resolved,}$t"
-    if [ "$1" -ge "$t" ]; then
+    if [ "$position" -ge "$t" ]; then
       band=$((band + 1))
       [ "$t" -gt "$crossed" ] && crossed="$t"
     fi
@@ -3316,7 +3354,7 @@ cutoff_refuse() { # $1 = what the operator typed
   die "cannot read '$1' as a cutoff — give a duration (90m, 2h, 1h30m) or a clock time (17:30)"
 }
 
-# Sets a global rather than printing, for auto_rungs' reason: the refusal has to
+# Sets a global rather than printing, for LADDER_AUTO's reason: the refusal has to
 # be heard. `die` inside a command substitution ends only that subshell, so a
 # caller reading a REJECTED duration through `$(...)` would take the empty string
 # for a parsed one and go on to store it — turning the loud death this function
@@ -4108,7 +4146,7 @@ cmd_patrol() { # ambient warning leg: nudge any agent past a context band
   # compaction timing is the agent's judgment (gang compact exists to force it).
   session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
-  ladder 0 200000 >/dev/null   # one loud complaint about a bad ladder, not one per agent
+  ladder context 0 200000 >/dev/null  # one loud complaint about a bad ladder, not one per agent
   local id name
   while read -r id name; do
     ( patrol_one "$id" "$name" ) || true
@@ -4197,7 +4235,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
   # does not refuse, reported as a shell error rather than as the thing it found.
-  if rung="$(ladder "$tokens" "$window")"; then
+  if rung="$(ladder context "$tokens" "$window")"; then
     read -r band crossed thresholds <<<"$rung"
   else
     return
@@ -4681,7 +4719,7 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   # THAT subshell, not this one, so its message reaches stderr while the caller
   # reads an empty band and walks on into an integer comparison — a refusal that
   # does not refuse, reported as a shell error rather than as the thing it found.
-  if rung="$(ladder "$tokens" "$window")"; then
+  if rung="$(ladder context "$tokens" "$window")"; then
     read -r band crossed thresholds <<<"$rung"
   else
     exit 0

@@ -5,16 +5,19 @@ This reference follows `bin/gang`'s command parser. Run `gang` with no arguments
 
 ## Team lifecycle
 
-### `gang up [name] [-p profile] [-r role] [-d dir] [-m model]`
+### `gang up [name] [hitch's flags]`
 
 The zero-setup entry point. The default name is `lead`, profile is
 `GANG_PROFILE` or `claude-code`, directory is the caller's current directory,
 and role is `GANG_ROLE` or `lead`.
 
-`up` runs the same hitch path described below, then attaches to the team and
-selects the new window. When called from inside tmux, it switches the current
-client instead of nesting an attachment. An explicit `-r` overrides
-`GANG_ROLE`, including when a different name is supplied.
+`up` runs the same hitch path, then attaches to the team and selects the new
+window. Every flag it is given is handed to `gang hitch` untouched, so whatever
+`hitch` takes, `up` takes — see `gang hitch` for the list, which is not repeated
+here because a second copy of it is one release away from disagreeing with the
+first. When called from inside tmux, it switches the current client instead of
+nesting an attachment. An explicit `-r` overrides `GANG_ROLE`, including when a
+different name is supplied.
 
 ### `gang hitch <name> [-p profile] [-r role] [-d dir] [-m model] [--resume] [--cutoff duration|clock]`
 
