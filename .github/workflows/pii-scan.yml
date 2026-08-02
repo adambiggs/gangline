@@ -1,0 +1,54 @@
+name: pii-scan
+
+on: [push, pull_request]
+
+# Catches what the pre-push hook would have caught if a clone never ran
+# `git config core.hooksPath .githooks` — AGENTS.md documents that gap, and
+# this is the backstop for it. Same scanner, same patterns, no drift by
+# construction: both cells run tools/pii-scan, never a copy of its logic.
+#
+# Both cells, not just ubuntu, for the same reason shell.yml runs both: the
+# scanner's own portability claim (bash 3.2, BSD grep, POSIX ERE only) is a
+# claim about a userland, and only running it there tests that claim.
+
+jobs:
+  scan:
+    strategy:
+      fail-fast: false   # a macOS flake must not hide a real linux finding
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tools/pii-scan needs real history to git-rev-list
+
+      - name: Scan the pushed range
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          zero="0000000000000000000000000000000000000000"
+          after="${{ github.event.after }}"
+          if [ "$after" = "$zero" ]; then
+            echo "pii-scan: ref deleted, nothing to scan"
+            exit 0
+          fi
+          before="${{ github.event.before }}"
+          if [ "$before" = "$zero" ]; then
+            # New ref: before carries no prior state to diff against, and by
+            # the time this runs the push has already landed, so the pushed
+            # commits are now themselves on a remote-tracking ref — unlike
+            # the pre-push hook's own --not --remotes fallback, that would
+            # exclude exactly what needs scanning here. The push event's own
+            # commit list is the reliable bound instead.
+            count="$(jq '.commits | length' "$GITHUB_EVENT_PATH")"
+            tools/pii-scan --range -n "$count" "$after"
+          else
+            tools/pii-scan --range "$before..$after"
+          fi
+
+      - name: Scan the pull request range
+        if: github.event_name == 'pull_request'
+        run: >-
+          tools/pii-scan --range
+          ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
