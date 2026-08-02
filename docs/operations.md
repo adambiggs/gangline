@@ -315,6 +315,93 @@ describes.
 The hook is deliberately silent on missing or malformed input so context
 telemetry cannot block work. Patrol remains the harness-independent warning leg.
 
+## The team's budget
+
+`gang cutoff` declares when the work has to be done:
+
+```sh
+gang cutoff 2h        # a duration from now
+gang cutoff 17:30     # a clock time today
+gang cutoff           # what is declared, and what is left of it
+gang cutoff clear     # remove it
+```
+
+One team, one cutoff. It is a declaration and never a measurement: gang does not
+estimate how long anything takes, and nothing here is enforced. What gets stored
+is the pair — the cutoff, and the moment it was declared — because the span a
+ladder divides has to be the span you declared, not whatever happened to be left
+when a sweep looked at it. `gang hitch --cutoff` is the same declaration reached
+by a different verb, so hitching one more dog moves everybody's.
+
+The rungs are fractions of that span, and this is where the time ladder parts
+company with the context one. A context rung is an absolute number of tokens
+because rot tracks how long a context is. A time rung cannot be, because the same
+elapsed hour is most of a two-hour budget and the start of a six-hour one, and
+what an agent has to pace against is how much of the declared work is left rather
+than what the clock says ([ADR-0009](adr/0009-time-bands-are-relative.md)).
+
+`GANG_TIME_RESERVE` (`10%`) is banking room held back from the end, so the ladder
+spans from the declaration to the cutoff minus the reserve and the last rung fires
+where banking has to start rather than where the budget stops. It also takes a
+duration (`15m`), and that form is an operator's to reach for rather than a
+convenience: writing results out costs about the same however much budget is left,
+so a proportional reserve shrinks below the cost of banking exactly when the
+budget is shortest. A reserve gang cannot read, or one that leaves no span to
+divide, refuses the whole sweep and says which knob was wrong — a ladder guessed
+at would put every agent on a rung nobody declared.
+
+There is no rung at zero: the start of a budget is not news. Above it the ask
+tightens rather than getting louder, because a louder note carrying the same
+deferrable instruction defers exactly as well. The first asks whether the current
+approach lands inside what is left, and to change it now if it does not, while
+there is still budget to change it in. The next closes the door on widening the
+work. The next asks for durability — write results out, commit what works, record
+where you got to — because work that exists only in a pane dies with the budget.
+The last is the reserve itself, and it leads with the instruction and then with
+the licence: bank now, then keep going, because improving what is already banked
+is the best use of what remains. The loudest rung of the ladder reading as *stop*
+would take a decision that belongs to you.
+
+Past the cutoff the note goes terminal and is restated fresh on every sweep. Going
+quiet there would fabricate an all-clear at the moment it is least earned. It
+names *the operator* rather than telling the agent to clear the cutoff, because
+one team declared one budget and ending it is not one agent's call — and it keeps
+the licence explicit, since gang enforces nothing and a note that read as an order
+to stop would be gang taking that decision instead.
+
+Every rung states the remaining budget, and that is a deliberate inversion of the
+context note, which withholds its figure so headroom cannot read as an allowance.
+Remaining budget is not headroom: it is the pacing input itself. An agent told
+only that time is short can neither rebalance what it is doing nor decide what to
+drop, and the two axes differ in what the number is *for*.
+
+Where these two legs sit in a sweep is the other half of the design. The budget
+row is produced above every early return that turns on a profile or a readout,
+because reporting a budget needs neither. The note that acts on it sits lower,
+because typing into a pane does need one — gang has to know that profile's idea of
+an input box before it writes to it. The gap between them is the point: an agent
+whose beacon has gone missing is reported as not patrolled *and* told how much of
+the day is left, in the same sweep. Context is the axis that only moves when an
+agent works; time is the axis that advances while it sits idle, which is why the
+budget's primary leg is the ambient sweep rather than the in-turn hook. The one
+case that gets the row and no note is a profile gang cannot resolve or load at
+all, and that is correct — there is no typing into a pane whose profile is
+unknown.
+
+The two legs keep their last-warned bands in separate window options, so a context
+crossing never silences a budget note and the reverse never happens either. An
+agent that has just compacted is no earlier in the team's day for it. Crossings
+are one-shot below the top, the reserve rung repeats on every safe sweep, and a
+gang-issued compaction does not hold a budget note the way it holds a context one:
+that hold exists because the agent was already told to do the thing a second note
+would repeat, and banking work before a cutoff is a different instruction.
+
+With no cutoff declared there is no row, no note, and no log line — not a row
+saying nothing is declared, which would be one line per agent per sweep for the
+whole life of a team that never asked for a budget. And because the routine
+verdict is worded `steady`, which the patrol log drops by name, a budget that is
+merely running leaves no record behind while the reserve and the overrun both do.
+
 ## Compaction and handoff
 
 The robust self-compaction form is:
@@ -535,3 +622,10 @@ tmux -L my-probe new-session -d -s test bash
 tmux -L my-probe kill-server
 rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/my-probe"
 ```
+
+The same care applies one level up, on a socket you share with other people. A
+bare `kill-server` there ends every session on it, and sessions you did not start
+are not yours to end even by name — a test run stands sessions up for as long as
+it needs them, and one killed out from under it fails as though the code under
+test were broken. Kill by the explicit `-S` or `-L` naming a server you minted,
+and leave everything else alone.

@@ -5876,6 +5876,48 @@ check "and both the patrol hold and the resume proof read it" "2" \
 # window is near the end of its ladder and the big one is barely started, because
 # up there the hazard is running out of room and not rot.
 probe() { "$GANG" hitch "$1" -p bash -d /tmp >/dev/null; paint "$1" "ctx $2"; }
+# probe's BOUNDED twin, for a pane something is going to WRITE to between reads.
+# paint only ever ADDS a line, so a beacon with an injected note and the shell's
+# answer to it stacked underneath walks off the top of a capture that reads the
+# visible pane — and a screen nobody bounds accumulates every note a section sent,
+# until `has` can no longer say which sweep put one there. `clear` is the whole of
+# the difference.
+#
+# IT TAKES THE FIGURE probe TOOK, not the beacon paint took, and that is the guard
+# rather than a convenience. A repaint states the beacon shape a second time, and a
+# fixture is repainted from the literal it was probed with — so the two spellings
+# sat side by side and disagreed, silently. What that cost: a repaint that dropped
+# the `ctx` word cleared a good beacon away and painted a line the profile's scrape
+# does not match, and every check reading a CONTEXT verdict after one went red
+# while every check that read only a row passed. One argument shape means the pair
+# cannot part.
+#
+# THE WAIT IS ON A MARK THIS CALL INVENTED, which is the second half. The obvious
+# evidence is the beacon back on screen, or the screen back to one prompt, and both
+# are states the pane is ALREADY IN on entry — whatever ran last left it there.
+# Measured, not supposed: a wait on the prompt count was satisfied on its FIRST
+# poll at every call site, so it bounded nothing and could not have caught the
+# above. Evidence unique to this call cannot be satisfied by the state the call is
+# trying to leave. The echoed command line cannot satisfy it either, for paint's
+# own whole-line reason, and the mark is split across two quoted words so it is not
+# on that line to be found at all.
+REPAINT_N=0
+repaint() { # $1 = agent, $2 = the context figure it was probed with -> a bounded screen
+  local id mark
+  REPAINT_N=$(( REPAINT_N + 1 ))
+  mark="repaint-$REPAINT_N"
+  id="$(target_of "$1")" || exit 1
+  # The kill first, for paint's reason: a delivered note can be sitting in the box
+  # unsubmitted, and a command typed in behind it is the tail of one, not a line.
+  tmux send-keys -t "$id" C-u
+  tmux send-keys -t "$id" "clear; printf 'ctx %s\\n%s\\n' '$2' 'repaint'-$REPAINT_N" Enter
+  # Fatal, like paint's wait: a screen that never came back is a precondition that
+  # was not met, and every assertion about that pane after it is meaningless.
+  # Reaching the mark means the clear ran and the beacon went down ahead of it,
+  # because one printf wrote them both.
+  wait_for "$1" "$1's screen repainted under [ctx $2], marked $mark" yes \
+    pane_lists "$1" "$mark" || exit 1
+}
 probe rung200a '119k/200k 60%'    # a hair under the first rung, 120000
 probe rung200b '120k/200k 60%'    # exactly on it
 probe rung200c '160k/200k 80%'    # a middle rung of the 200k ladder
@@ -6091,9 +6133,11 @@ for _cd in cutdog cutdog2 cutbad; do "$GANG" drop "$_cd" >/dev/null 2>&1; done
 #
 # Every case here pins its own clock through GANG_NOW, for the reason the stored
 # pair's cases give: a case about a two-hour budget must not cost two hours, or any
-# minutes at all. Patrol is the only surface this leg reaches and it REPORTS —
-# nothing is injected and no band is remembered — so every row below states a
-# POSITION in the budget and never a crossing.
+# minutes at all. What every case below reads is the time ROW, which states a
+# POSITION in the budget and is printed whether or not a note goes out with it. The
+# notes themselves — which crossings send one, the memory that stops one being sent
+# twice, and the guards that hold one back — are what `the budget speaks` covers,
+# and they are read off a pane rather than off a row.
 TB_NOW=$(( CUT_NOW + 200000 ))   # a fresh moment; no span the cutoff cases declared is reused
 TB_LOG="$SHIM/time-patrol.log"
 # Far under the first rung of its own context ladder, so this agent's context row
@@ -6103,6 +6147,17 @@ probe tdog '10k/1000k 1%'
 # Captured whole and then read row by row, never piped into a reader that can stop
 # early: this suite runs pipefail, and `holds` sets out at length what that costs.
 tsweep() { # $1 = the moment to sweep at, $2 = a GANG_TIME_RESERVE for that sweep alone
+  # tdog's screen is repainted before every sweep, because this leg INJECTS: tdog's
+  # pane is a shell, so it runs what it is handed and answers on the screen, and a
+  # beacon with lines only ever added under it walks off the top of a capture that
+  # reads the visible pane. What the repaint restores is the standing readout gang
+  # is written against — a harness paints its status line again on every turn — so a
+  # beacon that survives being written to is the condition, not a favour to the
+  # fixture. What failed without it was `and the context leg is untouched by the
+  # other axis's broken declaration` and `and the way out that report names returns
+  # the sweep to silence` — the rows that read tdog's CONTEXT verdict. The time rows
+  # never needed a readout at all.
+  repaint tdog '10k/1000k 1%'    # the literal tdog was probed with, exactly
   if [ $# -ge 2 ]
   then GANG_NOW="$1" GANG_TIME_RESERVE="$2" "$GANG" patrol
   else GANG_NOW="$1" "$GANG" patrol
@@ -6304,6 +6359,318 @@ check "while a budget that is merely running is not" "no" \
   "$(holds "$(cat "$TB_LOG")" 'steady \(time band')"
 
 "$GANG" drop tdog >/dev/null 2>&1
+"$GANG" cutoff clear >/dev/null
+
+# --- the budget speaks ----------------------------------------------------------
+
+# `the time ladder, cut from the declared budget` reads ROWS: where the team stands
+# in its budget, reported. This section reads PANES, because the leg it is about
+# types. Every positive case here is a literal off the agent's own screen, which is
+# the only place that can tell a note that was composed from a note that was
+# delivered.
+#
+# The clock is pinned per sweep exactly as it is there, and for the same reason. The
+# screen is REPAINTED per sweep for a reason that is new: this leg injects into a
+# pane whose shell runs what it is handed and answers on the screen, so a screen
+# nobody bounded accumulates every note of the section and `has` stops being able to
+# say which sweep put one there. repaint is what bounds it, and it says at its own
+# site why the wait it pays is the only kind that can.
+TN_NOW=$(( CUT_NOW + 400000 ))
+TN_LOG="$SHIM/time-nudge.log"
+probe tnag '10k/1000k 1%'   # far under its own first context rung, so anything in
+                            # tnag's rows that is not the context row is this leg
+GANG_NOW=$TN_NOW "$GANG" cutoff 2h >/dev/null
+
+nsweep() { GANG_NOW="$1" "$GANG" patrol; }
+nudge_row() { # $1 = an agent's rows -> the second, which is where this leg's verdict
+              # lands: the time ROW is always first and the context leg's is always
+              # last, so a sweep that sent no note hands back the context row here and
+              # the check reports which row it actually got
+  local rest="${1#*$'\n'}"; printf '%s' "${rest%%$'\n'*}"
+}
+
+# NO RUNG AT ZERO is a claim about the NOTE as much as about the row: the start of a
+# budget is the one moment nothing has been spent, and an agent nudged there has been
+# handed an instruction about a hazard that does not exist yet.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $TN_NOW)" tnag)"
+check "the start of the budget is reported and not spoken about" \
+  "steady (time band 0 — 2h of budget left)" "$(time_row "$nrows")"
+check "and nothing is typed into the pane at band zero" "no" "$(has tnag '[time-budget]')"
+
+# THE FOUR ASKS, one per rung, and what makes them a ladder is that each is a
+# TIGHTER instruction than the one below it rather than a louder copy of it. Every
+# rung is read off the pane, because the row only says a note went — it cannot say
+# which one.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3000 )))" tnag)"
+check "the first rung crossed is spoken rather than reported" \
+  "NUDGED (crossed into time band 1)" "$(nudge_row "$nrows")"
+check "and the gentlest ask is to check the approach against what is left" "yes" \
+  "$(has tnag 'Check whether your current approach lands inside that')"
+# THE INVERSION. band_note drops its denominator so headroom cannot read as an
+# allowance; this note states its figure on every rung, because remaining budget is
+# the pacing input an agent rebalances against and there is no rebalancing against
+# "not much" (ADR-0009). The figure being ON THE PANE is the executable half.
+check "and the note states the remaining budget, which the context note refuses to do" \
+  "yes" "$(has tnag '1h10m of the declared budget is left')"
+
+# ONE NOTE PER BAND, and the silence under the top rung is not an omission: the time
+# row this same sweep printed already carries the steady verdict for this axis, so a
+# second row would double every routine sweep to say it twice. Same moment, same
+# band, so the only thing that can differ is the memory.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3000 )))" tnag)"
+check "a second sweep in the same band adds no row of its own" \
+  "$(printf 'steady (time band 1 — 1h10m of budget left)\nsteady (band 0)')" "$nrows"
+check "and types nothing into a pane it has already nudged" "no" \
+  "$(has tnag '[time-budget]')"
+
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3600 )))" tnag)"
+check "the rung above it is nudged, because the band moved" \
+  "NUDGED (crossed into time band 2)" "$(nudge_row "$nrows")"
+check "and the ask has tightened to closing what is already open" "yes" \
+  "$(has tnag 'Stop widening the work')"
+# What escalates is the ASK and not the volume, so the rung below has to be GONE
+# rather than repeated underneath. The screen was cleared a sweep ago, so its
+# absence is a fact about this note rather than about what was never on the pane.
+check "with the gentler ask retired rather than restated under it" "no" \
+  "$(has tnag 'Check whether your current approach lands inside that')"
+
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tnag)"
+check "the rung under the reserve is nudged" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+check "and asks for durability, with the reason attached to it" "yes" \
+  "$(has tnag 'Work that exists only in this pane dies with the budget')"
+check "against the figure that rung is about" "yes" \
+  "$(has tnag '35m of the declared budget is left')"
+
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 6480 )))" tnag)"
+check "the reserve rung is a crossing like any other the first time it is reached" \
+  "NUDGED (crossed into time band 4)" "$(nudge_row "$nrows")"
+# The loudest rung LEADS with the instruction and CLOSES with the licence. A rung
+# that led with the clock and closed with the ask reads as an alarm, and the top of
+# this ladder reading as `stop` would take a decision ADR-0009 leaves to the musher.
+check "and the loudest rung leads with the instruction" "yes" \
+  "$(has tnag '[time-budget] Bank your work now — write results out')"
+check "and closes by saying nothing here is telling you to stop" "yes" \
+  "$(has tnag 'nothing here is telling you to stop')"
+
+# THE TOP RUNG REPEATS, and what makes the repeat worth sending is that it cannot be
+# the same sentence: the figure it is built around shrinks on every sweep. That is
+# why this note has no separate `repeat` wording where band_note needs one — there,
+# the figure barely moves and the same note twice IS the same sentence.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 6600 )))" tnag)"
+check "inside the reserve the note comes again on the next safe sweep" \
+  "NOTED (inside the banking reserve; repeats every safe patrol)" "$(nudge_row "$nrows")"
+check "and it is not the sentence before it, because the figure it states has moved" \
+  "yes" "$(has tnag '10m of the declared budget is left')"
+
+# PAST THE CUTOFF the sentence CHANGES rather than repeating the top rung: pacing
+# advice about a budget that no longer exists is noise and is also false, and going
+# quiet would fabricate an all-clear at the moment it is least earned.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 7200 )))" tnag)"
+check "past the cutoff the note goes terminal and says it will keep coming" \
+  "NOTED (past the cutoff; repeats every safe patrol until the cutoff moves)" \
+  "$(nudge_row "$nrows")"
+# One team declared one budget, so ending it is not one agent's call. The note names
+# the OPERATOR, and the check that it does is worth little without the check that it
+# withholds the command — an agent handed `gang cutoff clear` has been handed the
+# team's decision as its own.
+check "and it names the operator as the one who ends the team's budget" "yes" \
+  "$(has tnag 'until the operator clears or moves the cutoff')"
+check "rather than handing this agent the command that would end it" "no" \
+  "$(has tnag 'gang cutoff clear')"
+check "and the licence to keep working survives into the terminal note" "yes" \
+  "$(has tnag 'keep going if there is more worth doing')"
+
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 8100 )))" tnag)"
+check "and it is restated on the next sweep rather than settling into silence" \
+  "NOTED (past the cutoff; repeats every safe patrol until the cutoff moves)" \
+  "$(nudge_row "$nrows")"
+check "carrying the overrun it has grown to, which is what the restatement is for" \
+  "yes" "$(has tnag 'the declared cutoff passed 15m ago')"
+# Past the cutoff there is no rung to cross, so this note consults no memory and
+# leaves none behind — which is what lets a cutoff the operator moves FORWARD resume
+# the ladder from the rung this agent last heard instead of from the bottom.
+check "and the rung the agent last heard is left exactly where it was" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(target_of tnag)" @gl_tband)" '^4$')"
+
+# A band that FELL states the observation and claims no cause, because two things
+# reach it and gang cannot tell them apart from here: a longer cutoff re-declared,
+# and a larger reserve moving every rung without moving the clock.
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3000 )))" tnag)"
+check "a band that fell re-arms the ladder and names no reason for the fall" \
+  "re-armed (time band fell)" "$(nudge_row "$nrows")"
+check "and re-arming types nothing" "no" "$(has tnag '[time-budget]')"
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 3600 )))" tnag)"
+check "so the next crossing is nudged rather than swallowed by a memory left high" \
+  "NUDGED (crossed into time band 2)" "$(nudge_row "$nrows")"
+
+# The composer guard, and the way out it names. Holding writes no band, so the rung
+# it held on is still AHEAD of the agent rather than spent — which is the whole
+# difference between a hold and a miss.
+repaint tnag '10k/1000k 1%'
+tmux send-keys -t "$(target_of tnag)" TIME_NOTE_DRAFT
+wait_for tnag "the draft to be sitting in tnag's box" yes has tnag TIME_NOTE_DRAFT
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tnag)"
+check "a note holds on a box with somebody's unsent text in it" \
+  "time band 3 — input box has content, holding note" "$(nudge_row "$nrows")"
+check "and nothing is pasted into that draft" "no" "$(has tnag '[time-budget]')"
+check "and the rung it held on is still ahead of the agent, not spent" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(target_of tnag)" @gl_tband)" '^2$')"
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tnag)"
+check "so emptying the box is the way out that hold named, and the next sweep takes it" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+
+# An unreadable memory is grounds to REBUILD it, never to stop nudging the agent:
+# nothing below the refusal would ever rewrite the value, so refusing would disable
+# this leg for the whole life of the window. One sweep is what it costs.
+fact_set tnag @gl_tband banana
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tnag)"
+check "a time-band memory gang cannot read is rebuilt rather than refused" \
+  "time-band memory was unreadable — re-established at time band 3, notes resume next sweep" \
+  "$(nudge_row "$nrows")"
+check "and that one sweep is what the repair costs" "no" "$(has tnag '[time-budget]')"
+repaint tnag '10k/1000k 1%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 6480 )))" tnag)"
+check "and the sweep after it is the one that row promised" \
+  "NUDGED (crossed into time band 4)" "$(nudge_row "$nrows")"
+
+# THE PLACEMENT, FROM BOTH SIDES. The note sits BELOW every early return that needs a
+# pane safe to type into, and ABOVE the one that needs a readout. tbusy and tvoid are
+# the cases it sits below — each gets the budget row and no note — and tmute is the
+# case it sits above, which gets the row and the note both.
+#
+# tbusy is an occupied pane. Gang cannot establish who owns that input box, so it
+# reports and returns, and the budget row is already out because it was printed
+# higher than the return.
+#
+# THE BOX IS TAKEN AWAY, and a raise fact is not what does it — that is worth
+# saying because a raise is the obvious thing to reach for and it cannot work on
+# this profile. `the occupancy bracket` covers the raise; every tier it feeds asks
+# whether the composer is back on screen, and a shell that is painting its prompt
+# answers yes, so the raise is CLEARED and the pane reads idle. What is left is the
+# tier that needs no declaration at all: no box gang can find, and no busy marker to
+# explain the absence, is a UI gang was never taught to recognise. tbusy needs no
+# beacon either, because the return it is about comes before anything reads one.
+"$GANG" hitch tbusy -p bash -d /tmp >/dev/null
+tmux send-keys -t "$(target_of tbusy)" "clear; PS1=''; printf '%s\\n' 'A-UI-OWNS-THIS'" Enter
+# Waited on the OUTPUT line, which the echoed command cannot satisfy: that line
+# always carries the printf around it. Reaching it means the clear has run and the
+# empty PS1 is already in force, so the composer went with it.
+wait_for tbusy "the box to be gone from tbusy's screen" yes pane_lists tbusy 'A-UI-OWNS-THIS' \
+  || exit 1
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tbusy)"
+check "an occupied agent is still told where the team's budget stands" \
+  "steady (time band 3 — 35m of budget left)" "$(time_row "$nrows")"
+check "and the sweep stops there rather than typing into a pane a UI owns" \
+  "OCCUPIED (authority unknown) — a UI owns the input box and gang cannot establish who may clear it (gang attach)" \
+  "$(after_row "$nrows")"
+check "so no note reached that pane" "no" "$(has tbusy '[time-budget]')"
+
+# tvoid's profile cannot be resolved. It gets the row for the reason tbusy does, and
+# no note for a different one — there is no typing into a pane whose profile will not
+# load, because the profile is what says who owns the box and what counts as content
+# in it.
+probe tvoid '10k/1000k 1%'
+fact_set tvoid @gl_profile bogus
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tvoid)"
+check "an agent whose profile cannot be found is told the same thing first" \
+  "steady (time band 3 — 35m of budget left)" "$(time_row "$nrows")"
+check "before the sweep gives up on it over the profile" \
+  "profile 'bogus' not found (GANG_PROFILES?) — not patrolled" "$(after_row "$nrows")"
+check "and no note goes into a pane whose profile will not load" "no" \
+  "$(has tvoid '[time-budget]')"
+
+# THE HEART OF THE PLACEMENT: one agent, one sweep, both halves. Time is the axis
+# that advances while an agent sits idle, so a sweep that gives up on an agent's
+# context still has to tell it how much of the day is left. tmute is hitched and
+# never painted, so the leg that needs a readout is the leg that reports it missing
+# — and this row goes red the moment the note is moved down beside it.
+"$GANG" hitch tmute -p bash -d /tmp >/dev/null
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tmute)"
+check "an agent whose beacon is missing is nudged about the budget anyway" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+check "and the note really reached the pane that had no readout to give" "yes" \
+  "$(has tmute '35m of the declared budget is left')"
+check "while the same sweep gives up on its context" \
+  "no context readout — not patrolled (beacon missing?)" "$(after_row "$nrows")"
+
+# TWO MEMORIES, NEVER ONE. A crossing on one axis says nothing about the other, so a
+# shared option would let either nudge answer for both — silently, and in whichever
+# direction the sweep happened to reach first. tboth is over its first context rung
+# and inside the budget's, so one sweep crosses both.
+probe tboth '130k/1000k 13%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tboth)"
+check "one sweep can cross both axes, with the budget's note ahead of the context one" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+check "and the context nudge behind it in that same sweep" \
+  "NUDGED (crossed the 120000-token band)" "$(after_row "$nrows")"
+check "with the budget note on the pane" "yes" "$(has tboth '[time-budget]')"
+check "and the context note on it too" "yes" "$(has tboth '[context-usage]')"
+check "each axis remembering its own band" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(target_of tboth)" @gl_tband)" '^3$')"
+check "in the option that belongs to it" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$(target_of tboth)" @gl_band)" '^1$')"
+
+# Re-arm ONE memory and sweep at the SAME moment: whatever speaks is the axis whose
+# band moved, and whatever stays quiet is the axis a shared memory would have made
+# speak. Both directions, because a shared option fails in both.
+fact_set tboth @gl_band 0
+repaint tboth '130k/1000k 13%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tboth)"
+check "a context crossing does not re-open a budget rung already spent" \
+  "steady (time band 3 — 35m of budget left)" "$(time_row "$nrows")"
+check "and the context leg nudges with the budget silent behind it" \
+  "NUDGED (crossed the 120000-token band)" "$(after_row "$nrows")"
+check "so the budget note is not on that pane" "no" "$(has tboth '[time-budget]')"
+check "and the context one is" "yes" "$(has tboth '[context-usage]')"
+
+fact_set tboth @gl_tband 0
+repaint tboth '130k/1000k 13%'
+nrows="$(rows_of "$(nsweep $(( TN_NOW + 5100 )))" tboth)"
+check "and a budget crossing does not re-open a context band already spent" \
+  "NUDGED (crossed into time band 3)" "$(nudge_row "$nrows")"
+check "with the context leg steady behind it" "steady (band 1)" "$(after_row "$nrows")"
+check "so the budget note is on that pane" "yes" "$(has tboth '[time-budget]')"
+check "and the context one is not" "no" "$(has tboth '[context-usage]')"
+
+# Total silence with nothing declared, which is the state most teams run in. The
+# warning leg has no band to have crossed, so it consults no memory and says nothing
+# — not a phrase saying there is nothing to say.
+"$GANG" cutoff clear >/dev/null
+repaint tnag '10k/1000k 1%'
+check "with the cutoff cleared the warning leg has nothing to warn about" \
+  "steady (band 0)" "$(rows_of "$(nsweep $(( TN_NOW + 6480 )))" tnag)"
+check "and types nothing into anybody" "no" "$(has tnag '[time-budget]')"
+
+# What the record keeps is what a postmortem asks for. A note that went out is a
+# crossing, so it is worded away from `steady` and survives the filter patrol_log
+# applies by name.
+GANG_NOW=$TN_NOW "$GANG" cutoff 2h >/dev/null
+fact_set tnag @gl_tband 0
+rm -f "$TN_LOG"
+repaint tnag '10k/1000k 1%'
+GANG_NOW=$(( TN_NOW + 5100 )) GANG_PATROL_LOG="$TN_LOG" "$GANG" patrol >/dev/null
+check "a note that went out is written down under the agent it went to" "yes" \
+  "$(holds "$(cat "$TN_LOG")" 'tnag .*NUDGED \(crossed into time band 3\)')"
+
+"$GANG" drop tnag  >/dev/null 2>&1
+"$GANG" drop tbusy >/dev/null 2>&1
+"$GANG" drop tvoid >/dev/null 2>&1
+"$GANG" drop tmute >/dev/null 2>&1
+"$GANG" drop tboth >/dev/null 2>&1
 "$GANG" cutoff clear >/dev/null
 
 # --- file-based context (codex) ----------------------------------------------

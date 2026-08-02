@@ -282,16 +282,28 @@ Performs one roster sweep. For each adopted agent it:
    under different budgets ([ADR-0009](adr/0009-time-bands-are-relative.md)). It
    needs no profile and no readout, which is why it is reported ahead of everything
    that needs one, and why an agent gang cannot otherwise patrol still carries it;
-   with no cutoff declared there is no row and no log line. Nothing is injected —
-   this leg reports;
+   with no cutoff declared there is no row and no log line. This row reports; the
+   note that acts on it comes lower, because typing into a pane needs a profile
+   and reporting a budget does not;
 3. reports a recorded undelivered paste, and clears it where it can;
 4. reports and stops on an occupied input box;
-5. reads and parses context usage;
-6. evaluates the band ladder against the window's last warned band;
-7. re-arms warning state when usage falls;
-8. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
+5. injects one `[gang:patrol]` budget note when the team crosses a time rung and
+   the pane is safe, repeats it on every safe sweep once inside the banking
+   reserve, and restates it on every safe sweep past the cutoff. It is placed
+   above everything that needs a readout because time is the axis that advances
+   while an agent sits idle, so a sweep that gives up on an agent's context still
+   tells it how much of the day is left. The note states the remaining budget,
+   where the context warning below withholds its own figure — remaining budget is
+   what an agent paces against, and remaining context is not
+   ([ADR-0009](adr/0009-time-bands-are-relative.md)). The two legs remember their
+   bands separately, so a context crossing never silences a budget note or the
+   reverse;
+6. reads and parses context usage;
+7. evaluates the band ladder against the window's last warned band;
+8. re-arms warning state when usage falls;
+9. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
    safe;
-9. while usage remains in the final band, repeats a distinctly worded reminder on
+10. while usage remains in the final band, repeats a distinctly worded reminder on
    every safe sweep. The repeat states that the agent has not compacted, and that
    the note arrives again every turn until it does.
 
@@ -300,8 +312,19 @@ crossing warning and a final-band repeat without advancing state, so a later
 patrol retries. A busy agent is delivered to, not held: the warning is prose and
 queues behind the turn it lands in. Lower steady bands remain quiet: only the
 last rung is a permanently open question.
+
+The budget note is held by an occupied UI and by a non-empty input box, on the
+same terms. It is not held by a gang-issued compaction: that hold exists because
+the agent was already told to do the very thing a second note would repeat, and
+banking work before a cutoff is a different instruction — an agent mid-compaction
+is if anything the likeliest to lose what it has not written down.
+
 Unadopted windows and agents with missing profiles or readouts are reported as
-not patrolled. With no team, patrol prints a no-team line and succeeds.
+not patrolled. A missing readout stops the context leg only: such an agent is
+still inside the team's budget, so it is reported as not patrolled and carries
+the budget note in the same sweep. A profile that will not resolve or load stops
+both, because there is no typing into a pane whose profile is unknown. With no
+team, patrol prints a no-team line and succeeds.
 
 ### `gang cron [--install|--refresh]`
 

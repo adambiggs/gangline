@@ -354,10 +354,11 @@ gang — drive a team of CLI agents as tmux windows
                                               one cutoff: declaring again re-spans it from
                                               now. No argument shows it; clear ends it
   gang patrol                                 sweep the roster; nudge any agent past a
-                                              context band (GANG_CONTEXT_BANDS ladder);
-                                              holds if the agent's input box has content;
-                                              reports occupied boxes, refused inbound, and
-                                              the team's budget once a cutoff is declared
+                                              context band (GANG_CONTEXT_BANDS ladder),
+                                              and again past a rung of the team's budget
+                                              once a cutoff is declared; holds either
+                                              nudge if the input box has content; reports
+                                              occupied boxes and refused inbound
   gang cron [--install|--refresh]             print the crontab entry that runs patrol for
                                               this install: this gang's path, and the GANG_*
                                               overrides exported here so a sweep agrees with
@@ -1554,8 +1555,10 @@ compacting() { # $1 = window id, profile loaded; exit 0 if the harness is visibl
 # and rot is the whole disease here: three declared markers went dead in one
 # session, each a different way, and every one of them passed `gang vet`.
 #
-# It answers exactly ONE question: may patrol inject into this pane. It is
-# deliberately NOT wired into compacting(), which answers a different one.
+# It answers exactly ONE question: may patrol's context nudge inject into this
+# pane. It is deliberately NOT wired into compacting(), which answers a different
+# one. patrol's budget nudge does not ask it and says at its own site why the
+# argument for asking does not reach that axis.
 # resume_after_compaction breaks the instant compacting() is true and needs that
 # to mean "the turn that could have eaten this resume is OVER"; this mark is set
 # while the compaction is still QUEUED BEHIND that very turn, so handing it to
@@ -3206,20 +3209,30 @@ ladder_at_top() { # $1 = current band, $2 = resolved CSV; true at or beyond its 
 }
 
 # The band an agent was last seen in, so a crossing warns once rather than on every
-# sweep. A value that is not a plain integer is a THIRD answer, not band zero:
-# neither warning leg may read an unparseable memory as "never warned" and nudge
-# an agent that has already been told.
+# sweep. A value that is not a plain integer is a THIRD answer, not band zero: no
+# warning leg may read an unparseable memory as "never warned" and nudge an agent
+# that has already been told.
+#
+# The option is the CALLER's to name because the memory is per AXIS — @gl_band for
+# context, @gl_tband for the team's budget. One memory shared between them would let
+# a nudge on either axis answer for a crossing on the other, and the two crossings
+# are unrelated: an agent that just compacted is no earlier in the team's day for
+# it, and an agent told the budget is nearly spent has been told nothing about how
+# full it is. What the axes DO share is this discipline, which is the whole content
+# of band_state_read and band_state_write and the reason there is one pair of them
+# rather than one pair per axis.
 BAND_STATE_BAND=0
-band_state_read() { # $1 = window id; populate BAND_STATE_BAND; 2 = malformed
+band_state_read() { # $1 = window id, $2 = the option that axis keeps its band in;
+                    # populate BAND_STATE_BAND; 2 = malformed
   local raw
-  raw="$(tmux show-options -wqv -t "$1" @gl_band 2>/dev/null)" || raw=""
+  raw="$(tmux show-options -wqv -t "$1" "$2" 2>/dev/null)" || raw=""
   if [ -z "$raw" ]; then BAND_STATE_BAND=0; return 0; fi
   [[ "$raw" =~ ^[0-9]+$ ]] || return 2
   BAND_STATE_BAND="$raw"
 }
 
-band_state_write() { # $1 target, $2 band
-  tmux set-option -w -t "$1" @gl_band "$2"
+band_state_write() { # $1 target, $2 the option that axis keeps its band in, $3 band
+  tmux set-option -w -t "$1" "$2" "$3"
 }
 
 band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optional repeat
@@ -3286,6 +3299,88 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   else
     printf '[context-usage] %s in context — past the %s-token band. Finish the task you are on, then compact. Do not start a new task first. Your recall of earlier turns degrades as this context grows, and you cannot see what you have lost from inside it. %s' \
       "$1" "$2" "$tail"
+  fi
+}
+
+time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the ladder
+  # ADR-0009 says band_note grows a time voice. This is that voice, and it is a
+  # SIBLING rather than a branch inside band_note, which is a decision about what
+  # band_note's header argues rather than about line count. Every paragraph of it
+  # reasons from a context that degrades AS IT GROWS and from the compaction that
+  # fixes it: recall dropping out, a figure that reads as an allowance, a handoff
+  # that IS the boundary. A budget running out degrades nothing, and there is no
+  # command that gives any of it back. Folding the two would widen all of that
+  # reasoning onto an axis it was never made about, which is the class of defect
+  # that has to be caught where the claim is written rather than downstream of it.
+  # time_rungs sits beside context_rungs for the same reason; this is that shape
+  # one layer up.
+  #
+  # No agent name, and the missing parameter is the difference. band_note takes one
+  # because it builds a `gang compact` line the agent is told to RUN, and a name in
+  # a command has to be quoted for the shell that will read it. Nothing here is a
+  # command: what an agent does about a budget is its own work, in its own words.
+  #
+  # WHAT CARRIES ACROSS from band_note, unchanged: the ask tightens rung by rung
+  # rather than getting louder, because a louder note carrying the same deferrable
+  # instruction defers exactly as well; every rung says WHY in terms of what is
+  # true NOW, because an instruction with its reason attached can be weighed
+  # against the work in front of it and a bare one loses that comparison every
+  # time; no rung refers to any other; and every rung is an instruction rather
+  # than prose about time.
+  #
+  # WHAT INVERTS: THE NUMBER IS STATED, on every rung. Context drops its
+  # denominator on purpose, so headroom cannot read as an allowance — there is
+  # nothing an agent does with "180k left" that it should not have done anyway.
+  # Remaining budget is not that: it IS the pacing input, and an agent told only
+  # that time is short can neither rebalance what it is doing nor decide what to
+  # drop. Do not "fix" this back into symmetry with band_note. The asymmetry is
+  # the argument (ADR-0009), and the two axes differ in what the figure is FOR.
+  #
+  # WHAT IS ABSENT: there is no `repeat` wording for the rung that repeats, and the
+  # absence is the argument rather than an omission. band_note needs a second
+  # phrasing because its figure barely moves between turns, so the same note twice
+  # IS the same sentence, and a sentence that arrives again unchanged is the
+  # unchanging nag ADR-0009 refuses to send. Every rung here is built around a
+  # number that SHRINKS on every sweep, so a repeat says something the previous one
+  # could not have said, without a word of it being written twice. Adding a repeat
+  # variant later would be phrasing a distinction the note already makes.
+  #
+  # The rungs are counted DOWN FROM THE TOP, not matched by number, so an operator
+  # ladder with more rungs in it maps onto the same four asks instead of falling
+  # off the end of a case statement.
+  local total remaining
+  local -a rungs
+  if [ "$1" = past ]; then
+    # Terminal, and it names the OPERATOR rather than telling the agent to clear
+    # the cutoff: one team declared one budget, and ending it is not one agent's
+    # call. It also keeps the licence to continue explicit, because gang enforces
+    # nothing here and a note that reads as `stop` would take a decision this tool
+    # does not get to take (ADR-0009).
+    printf '[time-budget] Bank your work now — the declared cutoff passed %s ago. Anything that exists only in this pane is already past the moment it was meant to survive. Nothing is enforced and nothing is stopping you: keep going if there is more worth doing. This note repeats on every sweep until the operator clears or moves the cutoff.' \
+      "$2"
+    return
+  fi
+  IFS=',' read -r -a rungs <<<"$3"
+  total="${#rungs[@]}"
+  remaining=$(( total - $1 ))
+  if [ "$remaining" -le 0 ]; then
+    # LEADS WITH THE IMPERATIVE, and then with the licence to keep working. This
+    # is the reserve, so the instruction is durability and the reason it is safe
+    # to spend a moment on it is that the reserve was held back for exactly this.
+    # A rung that led with the time and closed with the ask would be read as an
+    # alarm, and the loudest rung of the ladder reading as `stop` is the decision
+    # ADR-0009 reserves for the musher.
+    printf '[time-budget] Bank your work now — write results out, commit what works, record where you got to. %s of the declared budget is left, which is the reserve held back for exactly this. Then keep going: improving what is already banked is the best use of what remains, and nothing here is telling you to stop.' \
+      "$2"
+  elif [ "$remaining" -eq 1 ]; then
+    printf '[time-budget] %s of the declared budget is left. Make what you have durable now — write results out, commit what works, record the state. Work that exists only in this pane dies with the budget, and work on disk does not.' \
+      "$2"
+  elif [ "$remaining" -eq 2 ]; then
+    printf '[time-budget] %s of the declared budget is left. Stop widening the work. Close what is open and drive it to something that runs. New investigation now is spent out of what is left to finish with.' \
+      "$2"
+  else
+    printf '[time-budget] %s of the declared budget is left. Check whether your current approach lands inside that, and change it now if it does not. A plan that does not fit is cheapest to change while there is still budget to change it in.' \
+      "$2"
   fi
 }
 
@@ -3558,9 +3653,22 @@ time_reserve() { # $1 = the declared budget in seconds -> TIME_RESERVE. Dies on 
 # context ladder is warmed up in the same place.
 TIME_SAY=""      # what to report; empty is the whole of "nothing to report"
 TIME_COLOUR=""
-time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOUR
+# What the warning leg reads, and it reads STRUCTURE rather than the sentence beside
+# it. Each of these is set in exactly one branch below and left empty everywhere
+# else, so the leg asks which of them is set instead of recovering the situation
+# from TIME_SAY's wording — a note keyed off that sentence would be a parser for
+# gang's own English, kept correct by nobody, and the case it would get wrong is the
+# unreadable declaration: a sentence with no ladder behind it, which owes a row and
+# must never produce a note.
+TIME_BAND=""     # the rung this sweep placed the team on; empty when there is no ladder
+TIME_RUNGS=""    # the resolved ladder, so the leg can ask ladder_at_top for itself
+TIME_LEFT=""     # what is left of the budget, already in the units an operator types
+TIME_OVER=""     # how far past the cutoff the run is; empty until it is passed
+time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOUR,
+               # TIME_BAND, TIME_RUNGS, TIME_LEFT, TIME_OVER
   local rc=0 now budget span elapsed rung band rungs
   TIME_SAY=""; TIME_COLOUR=""
+  TIME_BAND=""; TIME_RUNGS=""; TIME_LEFT=""; TIME_OVER=""
   cutoff_read || rc=$?
   # An undeclared budget produces silence, and the silence is total: no row, no log
   # line, no phrase of its own (ADR-0009). A phrase of its own would be one line per
@@ -3586,7 +3694,8 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   # that no longer exists is noise and is also false, while going quiet would
   # fabricate an all-clear at the moment it is least earned (ADR-0009).
   if [ "$now" -ge "$CUTOFF_AT" ]; then
-    TIME_SAY="PAST THE CUTOFF — $(human_span $(( now - CUTOFF_AT ))) past the declared budget"
+    TIME_OVER="$(human_span $(( now - CUTOFF_AT )))"
+    TIME_SAY="PAST THE CUTOFF — $TIME_OVER past the declared budget"
     TIME_COLOUR="$C_BAD"
     return 0
   fi
@@ -3608,15 +3717,96 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   # figure an operator paces against (ADR-0009).
   rung="$(ladder time "$elapsed" "$span")"
   band="${rung%% *}"; rungs="${rung##* }"
+  TIME_BAND="$band"; TIME_RUNGS="$rungs"
+  TIME_LEFT="$(human_span $(( CUTOFF_AT - now )))"
   if ladder_at_top "$band" "$rungs"; then
-    TIME_SAY="INSIDE THE BANKING RESERVE (time band $band) — $(human_span $(( CUTOFF_AT - now ))) of budget left"
+    TIME_SAY="INSIDE THE BANKING RESERVE (time band $band) — $TIME_LEFT of budget left"
     TIME_COLOUR="$C_WORK"
   else
     # `steady` is not a mood, it is the word patrol_log drops by name, and a budget
     # that is merely running is the routine a sweep is mostly made of. What the log
     # keeps is what a postmortem asks for: when the run reached its banking reserve,
     # when it went past the cutoff, and when its declaration stopped being readable.
-    TIME_SAY="steady (time band $band — $(human_span $(( CUTOFF_AT - now ))) of budget left)"
+    TIME_SAY="steady (time band $band — $TIME_LEFT of budget left)"
+  fi
+}
+
+time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note per rung
+  # Reads the globals time_sweep settled for the whole sweep, so every agent is
+  # nudged against ONE budget. Its memory is @gl_tband, beside the context leg's
+  # @gl_band and never shared with it: one axis crossing a rung says nothing about
+  # the other, and a shared memory would let either nudge answer for both.
+  local prev state_rc top_repeat=0
+  if [ -n "$TIME_OVER" ]; then
+    # Past the cutoff there is no rung to cross, so this note is the one that
+    # carries no band and consults no memory. It is restated fresh on every sweep
+    # by design (ADR-0009) — going quiet would fabricate an all-clear at the moment
+    # it is least earned — and the memory is left exactly as it was, so a cutoff the
+    # operator moves forward resumes the ladder from the rung the agent last heard.
+    if ! input_clear "$1"; then
+      say "$2" "-" "past the cutoff — input box has content, holding note" "$C_WORK"
+      return
+    fi
+    envelope patrol "$(time_note past "$TIME_OVER")"
+    inject "$1" "$ENVELOPE"
+    say "$2" "-" "NOTED (past the cutoff; repeats every safe patrol until the cutoff moves)" "$C_OK"
+    return
+  fi
+  # Silence when nothing is declared, and silence when the declaration will not
+  # parse. The row above has already reported the unreadable case; a note cannot be
+  # built on a band that was never computed, and guessing one would be the confident
+  # wrong fact the row exists to avoid.
+  [ -n "$TIME_BAND" ] || return
+  if band_state_read "$1" @gl_tband; then state_rc=0; else state_rc=$?; fi
+  if [ "$state_rc" -ne 0 ]; then
+    # Rebuilt, never refused — the argument the context leg makes at length about
+    # @gl_band, and it is about what this option IS rather than about which axis
+    # holds it: a cache of which band an agent was last warned in. Refusing on it
+    # spends one uncertainty as a decision to disable this leg for the whole life of
+    # the window, because nothing below would ever rewrite the value.
+    band_state_write "$1" @gl_tband "$TIME_BAND"
+    say "$2" "-" "time-band memory was unreadable — re-established at time band $TIME_BAND, notes resume next sweep" "$C_BAD"
+    return
+  fi
+  prev="$BAND_STATE_BAND"
+  # An agent at the top of its own ladder has no crossing left above it to re-arm
+  # the warning, so it stays an open question and reaches the same guards below as a
+  # fresh crossing. Deciding it here rather than injecting out of the steady branch
+  # is what keeps composer safety in force on every repeat.
+  if [ "$TIME_BAND" -eq "$prev" ] && ladder_at_top "$TIME_BAND" "$TIME_RUNGS"; then
+    top_repeat=1
+  fi
+  if [ "$TIME_BAND" -lt "$prev" ]; then
+    # States the OBSERVATION and claims no cause, exactly as the context leg's
+    # re-arm does. Two things reach it and gang cannot tell them apart from here: a
+    # longer cutoff re-declared, which re-spans the ladder from the moment it was
+    # declared, and a larger GANG_TIME_RESERVE, which moves every rung without
+    # moving the clock. Naming either would be a guess.
+    band_state_write "$1" @gl_tband "$TIME_BAND"
+    say "$2" "-" "re-armed (time band fell)"
+    return
+  fi
+  # Steady below the top rung says nothing, and the silence is not an omission: the
+  # time row this sweep already printed for this agent carries the steady verdict for
+  # this axis. A second row would double every routine sweep to say it twice.
+  [ "$TIME_BAND" -ne "$prev" ] || [ "$top_repeat" -eq 1 ] || return
+  # compaction_pending is deliberately NOT asked. That hold is a REDUNDANCY guard
+  # and its whole argument is that the agent was already told to do THIS thing —
+  # gang typed the compaction and a second note repeats an instruction already in
+  # flight. Banking work before a cutoff is a different instruction, so the argument
+  # does not transfer, and an agent mid-compaction is if anything the one most
+  # likely to lose what it has not written down.
+  if ! input_clear "$1"; then
+    say "$2" "-" "time band $TIME_BAND — input box has content, holding note" "$C_WORK"
+    return
+  fi
+  envelope patrol "$(time_note "$TIME_BAND" "$TIME_LEFT" "$TIME_RUNGS")"
+  inject "$1" "$ENVELOPE"
+  if [ "$top_repeat" -eq 1 ]; then
+    say "$2" "-" "NOTED (inside the banking reserve; repeats every safe patrol)" "$C_OK"
+  else
+    band_state_write "$1" @gl_tband "$TIME_BAND"
+    say "$2" "-" "NUDGED (crossed into time band $TIME_BAND)" "$C_OK"
   fi
 }
 
@@ -4287,12 +4477,16 @@ cmd_cutoff() { # declare, show, or clear the team's wall-clock cutoff
   esac
 }
 
-cmd_patrol() { # ambient warning leg: nudge any agent past a context band
+cmd_patrol() { # ambient warning leg: nudge past a context band, and past a budget rung
   # gang hook covers harnesses whose hook system can call gang in-turn;
   # patrol covers the rest (Pi's model never sees its own status bar). Both
-  # read the same profile readout, run the same ladder, and share the same
-  # @gl_band memory, so whichever notices a crossing first advances the band
-  # and the other reports steady — one note per band, never two.
+  # read the same profile readout, run the same context ladder, and share the
+  # same @gl_band memory, so whichever notices a crossing first advances the
+  # band and the other reports steady — one note per band, never two.
+  #
+  # That pairing is about the context axis by itself. The budget's warning leg
+  # is time_nudge, which patrol carries and gang hook does not, so it keeps its
+  # own memory in @gl_tband and answers to nothing the hook does.
   #
   # Band memory is a window option: exactly as long-lived as the agent, so a
   # re-hitched name starts clean and tmux is the one that deletes it (Law 1,
@@ -4370,6 +4564,29 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
       "$C_BAD"
     return
   fi
+  # THE NOTE SITS LOWER THAN THE ROW, and the gap between them is the placement.
+  # Reporting a budget needs neither a profile nor a readout, so the row is hoisted
+  # over every early return that turns on one. TYPING needs both halves of a profile
+  # — occupied() reads the profile's own regex to decide who owns the input box, and
+  # input_clear() asks profile_input what counts as content — so the note can come no
+  # higher than here, the first point at which the pane is known safe to write to.
+  # It stops short of the context leg, which starts at the profile_context check and
+  # is about the READOUT the whole way down; the budget is gang's own arithmetic.
+  #
+  # That gap is the whole point rather than a leftover. An agent whose beacon has
+  # gone missing is still inside the team's budget, and time is the axis that
+  # advances while an agent sits idle — which is why patrol is this axis's primary
+  # leg (ADR-0009). So the sweep that gives up on an agent's context still tells it
+  # how much of the day is left. What gets the row and no note is a pane gang cannot
+  # type into at all — a profile it cannot resolve or load, and an input box a
+  # harness UI owns — and that is correct: the row is arithmetic and the note is
+  # keystrokes.
+  #
+  # The note also STATES ITS NUMBER where the context note refuses to. That is
+  # deliberate and argued in time_note — remaining budget is the pacing input, while
+  # remaining context is an allowance nobody should spend — so do not straighten the
+  # two into agreement.
+  time_nudge "$1" "$2"
   declare -F profile_context >/dev/null \
     || { say "$2" "" "profile declares no context readout — not patrolled"; return; }
   ctx="$(context_now "$1" 2>/dev/null)" \
@@ -4403,13 +4620,13 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   else
     return
   fi
-  if band_state_read "$1"; then state_rc=0; else state_rc=$?; fi
+  if band_state_read "$1" @gl_band; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
     # An unreadable memory is grounds to REBUILD the memory, never to stop
     # patrolling the agent. This option is a cache and nothing else — which band
     # an agent was last warned in — and refusing on it spends that one uncertainty
-    # as a decision to disable the warning leg for the whole life of the window,
-    # because a `return` here reaches nothing that would ever rewrite the value.
+    # as a decision to disable the context warning leg for the whole life of the
+    # window, because a `return` here reaches nothing that would rewrite the value.
     # Permanent, and silent: the verdict below is the only trace, and it names no
     # band, so it does not match a log filter written around band phrases.
     #
@@ -4428,7 +4645,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     # agent re-established at its ladder's top is nudged again on the next sweep
     # regardless (ladder_at_top), rather than waiting for a crossing that cannot
     # come.
-    band_state_write "$1" "$band"
+    band_state_write "$1" @gl_band "$band"
     say "$2" "$ctx" "context-band memory was unreadable — re-established at band $band, warnings resume next sweep" "$C_BAD"
     return
   fi
@@ -4458,7 +4675,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     top_repeat=1
   fi
   if [ "$band" -lt "$prev" ]; then
-    band_state_write "$1" "$band"
+    band_state_write "$1" @gl_band "$band"
     say "$2" "$ctx" "re-armed (usage dropped)"
   elif [ "$band" -eq "$prev" ] && [ "$top_repeat" -eq 0 ]; then
     say "$2" "$ctx" "steady (band $band)"
@@ -4542,7 +4759,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     if [ "$top_repeat" -eq 1 ]; then
       say "$2" "$ctx" "NUDGED (past the last band; repeats every safe patrol until usage drops)" "$C_OK"
     else
-      band_state_write "$1" "$band"
+      band_state_write "$1" @gl_band "$band"
       say "$2" "$ctx" "NUDGED (crossed the ${crossed}-token band)" "$C_OK"
     fi
   fi
@@ -4855,7 +5072,9 @@ print(v if isinstance(v, str) else "")' 2>/dev/null || true
 
 hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in a subshell
   # Measures with the same profile readout patrol uses and shares patrol's
-  # @gl_band memory, so the two legs cannot both warn about one crossing. Emits
+  # @gl_band memory, so this leg and patrol's context leg cannot both warn about
+  # one crossing. It is the context axis only: patrol's budget leg has no counterpart
+  # here, so nothing below reads @gl_tband and nothing below writes it. Emits
   # one additionalContext note per band. Anything it cannot determine is a silent
   # exit 0 — this leg's stdout is the hook's JSON reply, so it has nowhere to say
   # so, and patrol's leg is the one that does the talking.
@@ -4874,7 +5093,7 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   read -r tokens window <<<"$tw"
   # Zero is the beacon between paints, not a reading, and so it is a guard on the
   # fallback path only — see the same guard, and the same reason, in patrol_one.
-  # This leg shares patrol's band memory, so believing it here would
+  # This leg shares patrol's @gl_band memory, so believing it here would
   # re-arm the agent's ladder to the bottom just as surely, and silently: this
   # command's stdout is the hook's JSON reply, so it has nowhere to say so.
   [ "$tokens" -gt 0 ] || exit 0
@@ -4887,7 +5106,7 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
   else
     exit 0
   fi
-  if band_state_read "$TMUX_PANE"; then state_rc=0; else state_rc=$?; fi
+  if band_state_read "$TMUX_PANE" @gl_band; then state_rc=0; else state_rc=$?; fi
   if [ "$state_rc" -ne 0 ]; then
     # Rebuilt, not refused, for the reason patrol's leg gives at length: this
     # value is a cache, and an unreadable cache that switches the leg off for the
@@ -4895,18 +5114,18 @@ hook_band_note() { # $1 = event name, $2 = profile; the in-turn warning leg, in 
     # hook's stdout is JSON the harness parses and there is nowhere here to say
     # it — so the write carries the recovery and patrol's leg does the talking.
     # Both legs share this memory, so healing in either one heals both.
-    band_state_write "$TMUX_PANE" "$band"
+    band_state_write "$TMUX_PANE" @gl_band "$band"
     exit 0
   fi
   prev="$BAND_STATE_BAND"
   now="$(date +%s)"
   if [ "$band" -lt "$prev" ]; then
-    band_state_write "$TMUX_PANE" "$band"
+    band_state_write "$TMUX_PANE" @gl_band "$band"
   elif [ "$band" -gt "$prev" ]; then
     # Preserve the hook's existing dedupe order: state advances before the JSON
     # is printed. The event row itself is appended only after Python actually
     # emitted the reply, so a decision is never logged as a delivery.
-    band_state_write "$TMUX_PANE" "$band"
+    band_state_write "$TMUX_PANE" @gl_band "$band"
   fi
   if [ "$band" -gt "$prev" ]; then
     # Encoded, not interpolated. The note carries an agent name and a context
