@@ -19,9 +19,12 @@ cd "$(dirname "$0")/.."
 # not also need an edit here to be read.
 files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh .githooks/* site/demo/record.sh .github/workflows/*.sh"
 
-# A gate that cannot run must not report that it passed.
-command -v shellcheck >/dev/null 2>&1 || {
-  echo "lint: shellcheck is not installed, so the lint CI runs cannot run here" >&2
+# A gate that cannot run must not report that it passed. And resolving on PATH
+# is not the ability to run: a version-manager shim resolves and then refuses
+# ("No version is set"), which read as a code problem the first time it blocked
+# a push here. Ask the tool to execute, not its name to exist.
+shellcheck --version >/dev/null 2>&1 || {
+  echo "lint: shellcheck cannot run here (not installed, or a shim with nothing behind it), so the lint CI runs cannot run" >&2
   exit 1
 }
 
