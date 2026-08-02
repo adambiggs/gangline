@@ -145,6 +145,22 @@ unset _d
 # the derivation entirely and is read exactly as written.
 BANDS="${GANG_CONTEXT_BANDS:-auto}"
 
+# The budget's ladder, captured here beside the context one because it is the same
+# kind of thing: POLICY, settled before any profile is sourced, so a profile cannot
+# reach it. GANG_CONTEXT_FLOOR and GANG_CONTEXT_CAP are the other kind — harness
+# facts a profile is meant to state for its own harness — which is exactly why they
+# are read at ladder time and this is not. Where each value is captured is the whole
+# of that enforcement; nothing else checks it.
+#
+# What this ladder accepts inverts the one above: a rung is a percentage of the
+# span the ladder is cut from — the declared budget less its reserve, which is the
+# same extent the derivation divides — and an absolute duration is refused. It has
+# to be relative: a rung written in minutes means a different fraction of every
+# budget it is used under. docs/adr/0009-time-bands-
+# are-relative.md carries the argument under "The escape hatch inverts", and
+# `ladder` is where it is enforced.
+TIME_BANDS="${GANG_TIME_BANDS:-auto}"
+
 # One wait with two users: pane_stable asks it of a single pane and churn_batch
 # asks it of a whole team, and the suite asserts the two agree about the same
 # pane. Tuned in one place only, because tuning one and not the other would make
@@ -401,6 +417,9 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      GANG_TIME_RESERVE (banking room held back from the end of a declared cutoff,
        so the last time rung fires where banking has to start; a whole percentage
        below 100, or a duration like 15m; default 10%),
+     GANG_TIME_BANDS (explicit ladder for the budget, bypassing that derivation;
+       every rung is a % of what the reserve leaves, and an absolute duration is
+       refused — the escape hatch inverts: ADR-0009),
      GANG_LOCK_DIR (delivery locks; default /tmp/gangline-<uid>, created 0700 and
        reachable from a sandbox — they die at reboot, not at logout),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
@@ -3148,9 +3167,10 @@ time_rungs() { # $1 = the usable span in seconds; sets LADDER_AUTO to the derive
     t=$(( span * f / 1000 ))
     # Whole seconds, so a span short enough to floor a fraction to zero has no
     # ladder rather than a broken one. Refused here, where the span is known, so
-    # that every rung this deriver hands out is a positive whole number and the
-    # placement refusals inside `ladder` stay out of this axis's reach — they name
-    # the context hatch, which is not this axis's to name.
+    # that every rung this deriver hands out is a positive whole number: `ladder`
+    # quotes the ladder an operator SET when it refuses a rung, and a derived ladder
+    # tripping one of those would answer a cutoff that is too short by naming
+    # GANG_TIME_BANDS at an operator who never set it.
     [ "$t" -gt 0 ] \
       || die "cannot derive the time ladder: a ${span}-second span is too short to place a rung above zero — declare a longer cutoff, or lower GANG_TIME_RESERVE"
     rungs="${rungs:+$rungs,}$t"
@@ -3175,27 +3195,40 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
   # One evaluator, however many legs ask it and whatever they are measuring. Two
   # copies of a ladder is two ladders.
   #
-  # The axis decides two things and nothing else: which explicit ladder overrides the
-  # derivation, and which derivation is meant by `auto`. Everything past that point is
-  # one shape — rung syntax, the placement refusal, and the count of rungs a position
-  # is past — because a rung is a rung whatever it measures.
+  # The axis decides what it is measuring and nothing more: which explicit ladder
+  # overrides the derivation, which derivation is meant by `auto`, and the words a
+  # rung is counted and complained about in. Everything past that point is one shape
+  # — rung syntax, the refusals, and the count of rungs a position is past — because
+  # a rung is a rung whatever it measures.
   #
-  # For the CONTEXT axis specifically: both ends of its default ladder are absolute and
-  # that is load-bearing (ADR-0006). Its explicit CSV is read as written, and the %
-  # suffix remains in that syntax as an escape hatch for an unusual window — the one
-  # place a fraction is the operator's intent rather than a mistake. It is not a
-  # default and must not become one. Every refusal written into this function belongs
-  # to that axis and names its hatch outright, because it is the only explicit ladder
-  # there is to name; the time axis cannot reach any of them, because a derivation is
-  # the whole of its ladder and time_rungs refuses before it hands out a rung that
-  # would trip one.
+  # Each axis has its own explicit ladder, and their two opinions about how a rung
+  # may be spelled are opposite. CONTEXT: both ends of its default ladder are
+  # absolute and that is load-bearing (ADR-0006), so its CSV is read as written and
+  # the % suffix is an escape hatch for an unusual window — the one place a fraction
+  # is the operator's intent rather than a mistake. TIME inverts it exactly: a
+  # percentage of the span the ladder is cut from is the design and an absolute
+  # duration is refused (ADR-0009, "The escape hatch inverts"), because a rung
+  # written in minutes means a different fraction of every budget it is used under.
+  # On either axis the hatch is a
+  # hatch, not a default, and must not become one.
+  #
+  # One refusal below stays the context axis's alone, and it is the placement one:
+  # that extent is a window scraped off another program's screen, which is the thing
+  # that arrives missing, while the time axis's extent is a span this file subtracted
+  # itself. The rest name whichever ladder the axis actually reads, because a refusal
+  # naming the other one sends an operator to edit a setting that is correct.
   local axis="$1" position="$2" extent="$3"
-  local band=0 crossed=0 part n t resolved="" list
+  local band=0 crossed=0 part n t resolved="" spec list var unit subject res
+  # `res` is the resolution a rung is floored to: the 1k every context readout
+  # reports in, and whole seconds for a span. `spec` is what the operator SET, kept
+  # separate from `list` because `auto` is replaced in place and a refusal has to
+  # quote the ladder as it was written rather than as it was derived.
   case "$axis" in
-    context) list="$BANDS" ;;
-    time)    list=auto ;;
+    context) spec="$BANDS"      var=GANG_CONTEXT_BANDS unit=tokens  subject=context res=1000 ;;
+    time)    spec="$TIME_BANDS" var=GANG_TIME_BANDS    unit=seconds subject=budget  res=1 ;;
     *)       die "internal: no band ladder is defined for the '$axis' axis" ;;
   esac
+  list="$spec"
   if [ "$list" = auto ]; then
     auto_rungs "$axis" "$extent"
     list="$LADDER_AUTO"
@@ -3203,21 +3236,46 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
   for part in ${list//,/ }; do
     case "$part" in
       *%) n="${part%\%}"
-          [[ "$n" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
-          # A rung that cannot be PLACED is not a rung set wrong. Checked before
-          # the arithmetic, because an unknown window floors t to zero and the
-          # zero-rung guard would then report a broken ladder — sending an operator
-          # to edit a setting that is correct, about a figure the profile failed to
-          # report. The refusal has to name what actually could not be determined.
-          [[ "$extent" =~ ^[0-9]+$ ]] && [ "$extent" -gt 0 ] \
-            || die "cannot place the '$part' band: no context-window size for this agent (got '$extent') — a % rung needs the window figure the profile reports, so fix the readout, not GANG_CONTEXT_BANDS"
-          # Floored to 1k, the resolution every context readout reports in.
-          t=$(( n * extent / 100000 * 1000 )) ;;
-      *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid GANG_CONTEXT_BANDS '$BANDS' — fix the ladder"
+          [[ "$n" =~ ^[0-9]+$ ]] || die "invalid $var '$spec' — fix the ladder"
+          if [ "$axis" = context ]; then
+            # A rung that cannot be PLACED is not a rung set wrong. Checked before
+            # the arithmetic, because an unknown window floors t to zero and the
+            # zero-rung guard would then report a broken ladder — sending an operator
+            # to edit a setting that is correct, about a figure the profile failed to
+            # report. The refusal has to name what actually could not be determined.
+            #
+            # Context only, and not for want of generalising. This extent is a window
+            # read off another program's screen and is the figure that goes missing;
+            # the time axis's is a span gang subtracted itself, and time_sweep refuses
+            # one it cannot divide before the ladder is ever reached. A guard here
+            # could only fire on a bug in this file, and a guard that cannot fire is
+            # one more thing to keep true.
+            [[ "$extent" =~ ^[0-9]+$ ]] && [ "$extent" -gt 0 ] \
+              || die "cannot place the '$part' band: no context-window size for this agent (got '$extent') — a % rung needs the window figure the profile reports, so fix the readout, not GANG_CONTEXT_BANDS"
+          fi
+          # Floored to the resolution this axis is measured in.
+          t=$(( n * extent / (100 * res) * res )) ;;
+      # Numeric first, so a rung that is not a number is answered as the typo it is
+      # on either axis, and only a well-formed absolute rung reaches the question of
+      # whether this axis takes one. An operator who wrote a bare number on the time
+      # axis almost certainly meant the proportion, so the refusal hands back what
+      # they should have typed rather than only the rule.
+      #
+      # How a rung may be SPELLED is a rule about what an operator wrote, so a
+      # derived ladder is exempt: `auto` is replaced above by this file's own output,
+      # already resolved, and the time deriver's rungs are seconds. Drop the `$spec`
+      # clause and gang refuses its own default ladder on every sweep with a cutoff
+      # declared — which is what it did the first time this refusal was written, and
+      # what `a derived ladder is not re-litigated as though it were typed` is here
+      # to catch.
+      *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid $var '$spec' — fix the ladder"
+          if [ "$axis" = time ] && [ "$spec" != auto ]; then
+            die "invalid GANG_TIME_BANDS '$spec': the '$part' rung is an absolute duration, and a time rung is a proportion of the budget a team declared, less its reserve (ADR-0009) — write it as '$part%'"
+          fi
           t="$part" ;;
     esac
     [ "$t" -gt 0 ] \
-      || die "invalid GANG_CONTEXT_BANDS '$BANDS': the '$part' rung lands at 0 tokens, which every context is already past — fix the ladder"
+      || die "invalid $var '$spec': the '$part' rung lands at 0 $unit, which every $subject is already past — fix the ladder"
     resolved="${resolved:+$resolved,}$t"
     if [ "$position" -ge "$t" ]; then
       band=$((band + 1))
@@ -3756,13 +3814,20 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   span=$(( budget - TIME_RESERVE ))
   [ "$span" -gt 0 ] \
     || die "GANG_TIME_RESERVE holds back $(human_span "$TIME_RESERVE") of a $(human_span "$budget") budget, which leaves no span to divide — reserve less than the budget, or declare a longer cutoff"
-  # Asked for at statement level before the ladder is read through a command
-  # substitution, because `die` inside one ends only that subshell and the caller
-  # would read an empty band where a refusal was meant. The context ladder is warmed
-  # up for the same reason; it warms up through `ladder` because an explicit CSV puts
-  # refusals in there too, while the time axis has no explicit ladder and the whole
-  # of its refusal surface is this derivation.
-  auto_rungs time "$span"
+  # Asked for at statement level rather than left to the read below, so that a
+  # refusal is heard: `die` inside a command substitution ends only that subshell,
+  # and while the assignment below is bare enough for `set -e` to catch what it
+  # leaves behind, the context leg's readers wrap theirs in `if` and swallow it
+  # outright (grep: one loud complaint about a bad ladder). One shape for both.
+  #
+  # Warmed through `ladder` and not through the deriver, because the deriver is not
+  # what this sweep necessarily uses. An explicit ladder bypasses it, and warming
+  # `auto_rungs` refuses over a derivation nobody asked for: a span too short to
+  # divide five ways, with a `50%` ladder set that places on it perfectly well, died
+  # naming a longer cutoff and a smaller reserve — neither of which is the setting in
+  # play. Same misattribution the placement refusals are written to avoid, one axis
+  # over. `ladder` refuses the ladder actually being read, and only that one.
+  ladder time 0 "$span" >/dev/null
   # The band and the resolved ladder. The rung's own position is the third field and
   # this leg has no use for it: what a row states is what is LEFT, which is the
   # figure an operator paces against (ADR-0009).

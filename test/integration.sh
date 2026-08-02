@@ -6444,13 +6444,13 @@ tmux kill-window -t "$(target_of tplain)"
 # per agent, which is what comes free from settling the budget once at the top of
 # it. Routed through a file so a single run answers for all three halves: what it
 # printed, what it refused with, and the status it left.
-treject() { # $1 = a GANG_TIME_RESERVE the sweep must refuse -> TB_OUT, TB_RC, TB_ERR
-  TB_OUT="$(GANG_NOW=$TB_NOW GANG_TIME_RESERVE="$1" "$GANG" patrol 2>"$SHIM/tb-refusal")"
+treject() { # $@ = the environment a sweep must be refused under -> TB_OUT, TB_RC, TB_ERR
+  TB_OUT="$(env GANG_NOW=$TB_NOW "$@" "$GANG" patrol 2>"$SHIM/tb-refusal")"
   TB_RC=$?
   TB_ERR="$(cat "$SHIM/tb-refusal")"
 }
 
-treject lots
+treject GANG_TIME_RESERVE=lots
 check "a reserve that is neither a percentage nor a duration refuses the sweep" "1" "$TB_RC"
 check "and a refused sweep reports on no agent at all" "" "$TB_OUT"
 check "and the refusal names both forms that would have worked" "yes" \
@@ -6459,7 +6459,7 @@ check "and the refusal names both forms that would have worked" "yes" \
 # A reserve of the whole budget is refused alongside the malformed ones, because
 # what it asks for is not a high reserve but a ladder with nothing left to divide.
 # The case under it is not refused, and is what says where the line falls.
-treject 100%
+treject GANG_TIME_RESERVE=100%
 check "a reserve of the entire budget is refused" "1" "$TB_RC"
 check "and the refusal says which side of a hundred a percentage lives on" "yes" \
   "$(holds "$TB_ERR" 'a whole percentage below 100')"
@@ -6469,7 +6469,7 @@ check "while a reserve of very nearly all of it puts an hour past the last rung"
 
 # An absolute reserve can exceed the budget in a way a percentage cannot, which is
 # the price of the form and the reason this refusal names two ways out of it.
-treject 3h
+treject GANG_TIME_RESERVE=3h
 check "a reserve longer than the budget is refused" "1" "$TB_RC"
 check "and the refusal states the two spans it could not subtract" "yes" \
   "$(holds "$TB_ERR" 'holds back 3h of a 2h budget')"
@@ -6483,7 +6483,7 @@ check "and a longer cutoff is the other way out of a reserve past the budget" \
 # no ladder rather than a broken one, and it is refused where the span is known
 # rather than left to the placement refusals, which name the context hatch.
 GANG_NOW=$TB_NOW "$GANG" cutoff 10s >/dev/null
-treject 9s
+treject GANG_TIME_RESERVE=9s
 check "a span too short to place a rung above zero refuses the sweep" "1" "$TB_RC"
 check "and the refusal names the span it could not divide" "yes" \
   "$(holds "$TB_ERR" 'a 1-second span is too short')"
@@ -6492,6 +6492,85 @@ check "lowering the reserve is one way out of that" \
 GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
 check "and a longer cutoff is the other way out of a span too short to divide" \
   "steady (time band 0 — 1h59m of budget left)" "$(tverdict $(( TB_NOW + 60 )) '9s')"
+
+# --- the budget's own ladder, and how a rung may be spelled on it ---------------
+#
+# GANG_TIME_BANDS bypasses that derivation, and what it accepts INVERTS its context
+# sibling: a rung is a proportion of whatever budget was declared, and an absolute
+# duration is refused. ADR-0009 carries the argument under "The escape hatch
+# inverts"; these cases read what the file does with it.
+#
+# The environment goes in as assignments rather than as more positionals, because
+# the cases below vary the ladder, the reserve, or both, and a positional that is
+# sometimes skipped is how a case ends up silently reading a different sweep.
+tbands() { # $1 = the moment, $2.. = the environment for that sweep alone -> tdog's time row
+  local now="$1"; shift
+  repaint tdog '10k/1000k 1%'   # the literal tdog was probed with, for tsweep's reason
+  time_row "$(rows_of "$(env GANG_NOW="$now" "$@" "$GANG" patrol)" tdog)"
+}
+
+treject GANG_TIME_BANDS=1800
+check "an absolute rung on the time axis refuses the sweep" "1" "$TB_RC"
+check "and that refusal reports on no agent either" "" "$TB_OUT"
+check "and it quotes the axis's own setting rather than the context one" "yes" \
+  "$(holds "$TB_ERR" "invalid GANG_TIME_BANDS '1800'")"
+check "and hands back the rung that would have worked" "yes" \
+  "$(holds "$TB_ERR" "write it as '1800%'")"
+check "and taking that way out is accepted" \
+  "steady (time band 0 — 1h10m of budget left)" \
+  "$(tbands $(( TB_NOW + 3000 )) GANG_TIME_BANDS=1800%)"
+
+# The ladder that is READ is the one placed, and both moments below land where only
+# the setting explains: this moment sits in band 1 of the derived ladder, which the
+# case above and `a rung is crossed once` both pin. A check agreeing with the
+# derivation would pass on a gang that ignored the setting entirely.
+check "an explicit ladder places the band rather than the derivation" \
+  "steady (time band 0 — 1h10m of budget left)" \
+  "$(tbands $(( TB_NOW + 3000 )) GANG_TIME_BANDS=50%)"
+check "and a ladder of several rungs is walked to the last one the moment is past" \
+  "INSIDE THE BANKING RESERVE (time band 3) — 1h10m of budget left" \
+  "$(tbands $(( TB_NOW + 3000 )) GANG_TIME_BANDS=10%,20%,30%)"
+
+# A rung that is not a number is a typo on either axis, and is answered as one
+# before the question of what this axis takes is ever reached.
+treject GANG_TIME_BANDS=abc
+check "a rung that is not a number is answered as the typo it is" "yes" \
+  "$(holds "$TB_ERR" "invalid GANG_TIME_BANDS 'abc' — fix the ladder")"
+treject GANG_TIME_BANDS=0%
+check "and a rung landing at zero is refused on this axis as on the other" "yes" \
+  "$(holds "$TB_ERR" "the '0%' rung lands at 0 seconds")"
+
+# HOW A RUNG MAY BE SPELLED is a rule about what an OPERATOR WROTE, so a derived
+# ladder is exempt from it: `auto` is replaced in place by this file's own output,
+# whose time rungs are whole seconds and would every one of them be refused as
+# absolute. `auto` spelled out and `auto` by default are different inputs to that
+# line, so it is spelled out here. The first version of the refusal keyed on the
+# axis alone and killed every sweep with a cutoff declared; this check is a guard
+# against that returning rather than evidence the setting works, and it passes on
+# the code before this leg as well as after.
+check "a derived ladder is not re-litigated as though it were typed" \
+  "steady (time band 0 — 2h of budget left)" "$(tbands "$TB_NOW" GANG_TIME_BANDS=auto)"
+
+# THE WARM-UP REFUSES THE LADDER BEING READ, AND ONLY THAT ONE. A sweep settles its
+# ladder once at the top so a bad one is one loud complaint rather than one per
+# agent — and warming the DERIVATION there refuses over a ladder the sweep never
+# consults. This span is under the smallest fraction the derivation can place while
+# `50%` places on it perfectly well, so the refusal it would raise names a longer
+# cutoff and a smaller reserve: two settings that are not the one in play. That is
+# the misattribution `the derived ladder is refused as a window problem` was written
+# against, one axis over, and the two cases that sweep here are what fail without it.
+GANG_NOW=$TB_NOW "$GANG" cutoff 10s >/dev/null
+treject GANG_TIME_RESERVE=7s
+check "a span the derivation cannot divide refuses the sweep that reads it" "1" "$TB_RC"
+check "and names the derivation, because the derivation is what was read" "yes" \
+  "$(holds "$TB_ERR" 'a 3-second span is too short')"
+check "while a ladder that places on that span is read instead, and sweeps" \
+  "steady (time band 0 — 10s of budget left)" \
+  "$(tbands "$TB_NOW" GANG_TIME_RESERVE=7s GANG_TIME_BANDS=50%)"
+check "and the rung it placed is reached by spending the span" \
+  "INSIDE THE BANKING RESERVE (time band 1) — 8s of budget left" \
+  "$(tbands $(( TB_NOW + 2 )) GANG_TIME_RESERVE=7s GANG_TIME_BANDS=50%)"
+GANG_NOW=$TB_NOW "$GANG" cutoff 2h >/dev/null
 
 # A stored pair gang cannot read is a THIRD answer rather than absence, and the
 # time leg reports it instead of skipping: reading it as "no budget declared" would

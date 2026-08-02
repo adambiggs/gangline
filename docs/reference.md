@@ -561,13 +561,14 @@ fragments and are not listed as roles.
 | `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)) | `350000` |
 | `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `auto` |
 | `GANG_TIME_RESERVE` | banking room held back from the end of a declared cutoff, so the last time rung fires where banking has to start rather than where the budget stops. A whole percentage below 100, or a duration (`15m`). The absolute form is an operator's to pick rather than a convenience: writing results out costs roughly the same however much budget is left, so a proportional reserve shrinks below the cost of banking exactly when the budget is short ([ADR-0009](adr/0009-time-bands-are-relative.md)) | `10%` |
+| `GANG_TIME_BANDS` | explicit comma-separated ladder for the budget, bypassing that derivation; every rung is a `%` of what the reserve leaves — the same span the derivation divides — and an absolute duration is refused, naming the rung it should have been. The escape hatch inverts here: on the context axis absolute is the design and `%` is the hatch ([ADR-0009](adr/0009-time-bands-are-relative.md)) | `auto` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |
 | `NO_COLOR` | any non-empty value disables colour | unset |
 
 Every process that addresses one team must agree on `GANG_SESSION`. Cron must
-also receive `GANG_PROFILES`, any of the three ladder settings and `GANG_LOCK_DIR`
+also receive `GANG_PROFILES`, any of the ladder settings and `GANG_LOCK_DIR`
 when the team overrides them — a patrol that disagrees about the lock directory
 stops serialising with the other writers.
 
