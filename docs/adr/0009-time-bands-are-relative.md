@@ -140,9 +140,10 @@ rungs, and there is no ladder without a declaration.**
 
 ## History
 
-- **2026-08-01** — operator direction: enter the Long-Horizon Terminal-Bench
-  (46 tasks, 90-minute wall-clock budgets, artifact-graded), with the explicit
-  constraint recorded the same day that the design stay general — nothing that
+- **2026-08-01** — operator direction: enter the Long-Horizon Terminal-Bench, an
+  artifact-graded suite whose tasks each carry a declared wall-clock budget,
+  which is the property this ladder answers to. Recorded the same day, the
+  explicit constraint that the design stay general — nothing that
   would look like gaming the benchmark. The "not benchmark machinery" bullet is
   that constraint made standing, and ADR-0010 is where it became repo-wide.
 

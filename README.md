@@ -600,9 +600,9 @@ Gangline is built to a written constitution and a set of architecture decisions,
 and they are the most useful thing in the repository if you want to know why it is
 shaped this way.
 
-- [Constitution](CONSTITUTION.md) — nine laws, including the ones that forbid
-  building authentication into this repo and require a deletion path for
-  everything
+- [Constitution](CONSTITUTION.md) — the laws this repo is built under, including
+  the ones that forbid building authentication into this repo and require a
+  deletion path for everything
 - [ADR-0001](docs/adr/0001-tmux-is-the-substrate.md) — tmux is the substrate
 - [ADR-0002](docs/adr/0002-mcp-is-a-face-not-a-transport.md) — MCP is a face, not a transport
 - [ADR-0003](docs/adr/0003-self-compaction-is-a-pillar-not-a-product.md) — self-compaction is a pillar, not a product

@@ -143,8 +143,8 @@ into a design, which is why the test is aimed there and not at the diff.
 ## History
 
 - **2026-08-01** — operator direction, given the day the long-horizon benchmark
-  entry (Long-Horizon Terminal-Bench: 46 tasks, wall-clock budgets,
-  artifact-graded) became a goal: nothing built here may be benchmark-specific
+  entry (Long-Horizon Terminal-Bench, an artifact-graded suite run against
+  declared wall-clock budgets) became a goal: nothing built here may be benchmark-specific
   in a way that could be misconstrued as gaming the benchmark. The test, the
   named failure modes and the named-consumer discipline above are that direction
   recorded as standing rules rather than as a briefing that expires with the
