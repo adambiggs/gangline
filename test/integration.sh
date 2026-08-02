@@ -5681,6 +5681,103 @@ check "and a large one tops out at the cap, on the same final band" "5" "$(band_
 check "while the same tokens on the large window are nowhere near its end" "2" \
   "$(band_of rung1md)"
 
+# --- the cutoff, declared and stored ------------------------------------------
+
+# The team's wall-clock budget enters as operator intent and is kept as the PAIR
+# (cutoff, declared-at) — ADR-0009. What these checks are about is the pair being
+# exactly what was declared: a reader handed the wrong span puts every rung of a
+# time ladder somewhere nobody asked for, and no later check can tell that it did.
+#
+# Every case here pins its own clock through GANG_NOW rather than waiting for one,
+# which is the whole reason that seam exists — a case about a ninety-minute budget
+# must not cost ninety minutes, or any minutes at all.
+CUT_NOW=1700000000                 # one fixed moment; every span below is against it
+cutoff_pair() { tmux show-options -qv -t "=$GANG_SESSION:" @gl_cutoff; }
+
+check "with nothing declared the query answers rather than going quiet" \
+  "no cutoff declared" "$("$GANG" cutoff)"
+check "and clearing nothing says so rather than reporting a removal" \
+  "no cutoff declared" "$("$GANG" cutoff clear)"
+
+GANG_NOW=$CUT_NOW "$GANG" cutoff 90m >/dev/null
+check "a duration is stored as the pair it was declared from" \
+  "$(( CUT_NOW + 5400 )) $CUT_NOW" "$(cutoff_pair)"
+check "the show states what is left of it" "yes" \
+  "$(holds "$(GANG_NOW=$(( CUT_NOW + 600 )) "$GANG" cutoff)" '1h20m remaining')"
+check "and how long ago it was declared, which is the pair's other half" "yes" \
+  "$(holds "$(GANG_NOW=$(( CUT_NOW + 600 )) "$GANG" cutoff)" 'declared 10m ago')"
+
+GANG_NOW=$CUT_NOW "$GANG" cutoff 1h30m >/dev/null
+check "a compound duration is the same span as its single-unit spelling" \
+  "$(( CUT_NOW + 5400 )) $CUT_NOW" "$(cutoff_pair)"
+# 08 is an ordinary way to write a time and a broken octal literal in bash. The
+# arithmetic reads base ten explicitly, and this is the case that says so.
+GANG_NOW=$CUT_NOW "$GANG" cutoff 08m >/dev/null
+check "a leading zero is read as a decimal rather than refused as octal" \
+  "$(( CUT_NOW + 480 )) $CUT_NOW" "$(cutoff_pair)"
+
+# The mid-flight re-declaration. Last wins, and it re-spans from NOW rather than
+# extending what was already running — declared-at moving is the point, because
+# fractions of what remains are the only budget there is.
+GANG_NOW=$(( CUT_NOW + 1800 )) "$GANG" cutoff 2h >/dev/null
+check "a second declaration re-spans from now" \
+  "$(( CUT_NOW + 9000 )) $(( CUT_NOW + 1800 ))" "$(cutoff_pair)"
+check "past the cutoff the show reports the overrun, not a remainder" "yes" \
+  "$(holds "$(GANG_NOW=$(( CUT_NOW + 9900 )) "$GANG" cutoff)" '15m past')"
+
+check "clear removes the declaration" "cutoff cleared" "$("$GANG" cutoff clear)"
+check "and the stored pair goes with it" "" "$(cutoff_pair)"
+
+# A malformed word dies LOUDLY rather than defaulting to a budget nobody declared.
+# The bare number is the one that matters: it is the plausible typo, and whichever
+# unit gang picked for it would be a fabricated intent that then rings real bands.
+for bad in 90 2x 2h2h h 25:00 17:70 17:30:00; do
+  cut_out="$(GANG_NOW=$CUT_NOW "$GANG" cutoff "$bad" 2>&1)"; cut_rc=$?
+  check "a cutoff of '$bad' is refused"        "1" "$cut_rc"
+  check "and refusing '$bad' declares nothing" ""  "$(cutoff_pair)"
+done
+check "a refusal names the forms that would have worked" "yes" \
+  "$(holds "$(GANG_NOW=$CUT_NOW "$GANG" cutoff 90 2>&1)" 'duration .*or a clock time')"
+
+# GANG_NOW is gang's own seam and is held to gang's own rule for a numeric knob: a
+# value that is not a number is refused rather than read as zero, which would put
+# every cutoff computed under it in 1970 and every span wildly past.
+cut_out="$(GANG_NOW=nonsense "$GANG" cutoff 2>&1)"; cut_rc=$?
+check "a non-numeric GANG_NOW is refused"      "1"   "$cut_rc"
+check "and the refusal names the variable"     "yes" "$(holds "$cut_out" 'GANG_NOW must be a whole number')"
+
+# A stored value gang did not write is a THIRD answer, not "none declared" — the
+# discipline the band memory keeps. Reading it as absence would answer a direct
+# question with a confident wrong fact.
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "not-a-pair"
+cut_out="$("$GANG" cutoff 2>&1)"; cut_rc=$?
+check "a corrupt stored cutoff is refused rather than read as none" "1"   "$cut_rc"
+check "and the refusal names the way out of it"                     "yes" "$(holds "$cut_out" 'gang cutoff clear')"
+check "and that way out works on the value it names" "cutoff cleared" "$("$GANG" cutoff clear)"
+check "leaving nothing stored behind it"             ""               "$(cutoff_pair)"
+
+# Law 6: the pair is SESSION state, so the deletion path is the session ending and
+# there is nothing else for anyone to remember to run. Proved on a session this
+# case stands up and takes down itself.
+#
+# The second session's name deliberately EXTENDS this run's, so the two checks
+# below also state the isolation in the shape most likely to be got wrong: one
+# team's budget is not the other's, even when one name contains the other. They
+# do not prove the `=` anchor in gang's own target — tmux resolves an exact name
+# before it prefix-matches, so both sessions here would be found either way. The
+# anchor is argued where it is written; this is the isolation it protects.
+CUT_S="$GANG_SESSION-gone"
+tmux new-session -d -s "$CUT_S" -n hold 'sleep 600'
+GANG_SESSION="$CUT_S" GANG_NOW=$CUT_NOW "$GANG" cutoff 45m >/dev/null
+check "a cutoff declared on another session lands there" \
+  "$(( CUT_NOW + 2700 )) $CUT_NOW" "$(tmux show-options -qv -t "=$CUT_S:" @gl_cutoff)"
+check "and not on the session whose name is its prefix" "" "$(cutoff_pair)"
+tmux kill-session -t "=$CUT_S" 2>/dev/null
+tmux new-session -d -s "$CUT_S" -n hold 'sleep 600'
+check "the pair dies with the session that carried it" \
+  "" "$(tmux show-options -qv -t "=$CUT_S:" @gl_cutoff)"
+tmux kill-session -t "=$CUT_S" 2>/dev/null
+
 # --- file-based context (codex) ----------------------------------------------
 
 # Codex paints no readout a passive observer can reach; its profile reads the

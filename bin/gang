@@ -339,6 +339,11 @@ gang — drive a team of CLI agents as tmux windows
                                               expired also end it, so read what it printed
   gang capture <name> [lines]                 tail of the agent's pane (default 40)
   gang roster                                 all agents with profile, state, context
+  gang cutoff [<duration|clock>|clear]        declare the team's wall-clock cutoff — a
+                                              duration (90m, 2h, 1h30m) or the next
+                                              occurrence of a clock time (17:30). One team,
+                                              one cutoff: declaring again re-spans it from
+                                              now. No argument shows it; clear ends it
   gang patrol                                 sweep the roster; nudge any agent past a
                                               context band (GANG_CONTEXT_BANDS ladder);
                                               holds if the agent's input box has content;
@@ -3108,6 +3113,195 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   fi
 }
 
+# --- the cutoff -------------------------------------------------------------
+#
+# Operator intent about wall-clock time: one team, one cutoff, declared and never
+# measured (ADR-0009). Stored as the PAIR cutoff-epoch and declared-at-epoch,
+# because the span a ladder divides is the span that was DECLARED. Keeping only
+# the cutoff would leave every reader dividing whatever happened to be left when
+# it looked, so a rung would sit at a different moment on every sweep and the
+# fractions would describe nothing an operator declared.
+
+# GANG_NOW is a TEST-ONLY clock seam, and this is the only place it is read.
+# Without it a case about a band boundary can only reach that boundary by waiting
+# for it, so the suite's runtime would scale with the SIZE of the budgets it
+# covers rather than with how many of them it covers. Unset — which is every
+# production run — now_epoch is `date +%s` and nothing else.
+#
+# The other `date +%s` reads in this file are deliberately left alone. They stamp
+# evidence at the moment it is recorded, while this one computes against a
+# declared budget: routing them through here would put a test seam into paths
+# that never needed one, and a fixed GANG_NOW would freeze the evidence ages that
+# exist precisely in order to advance.
+#
+# Validated HERE, at the top level, rather than at each read — the deliberate
+# exception to the rule the numeric knobs above state for themselves. That rule
+# exists because a profile is sourced after startup and can export those; GANG_NOW
+# is not a profile's to set, and nothing sources it later. The read itself sits
+# inside a command substitution, where `die` ends only that subshell and would
+# hand the caller an empty clock to mistake for a valid one.
+[ -z "${GANG_NOW:-}" ] || require_whole GANG_NOW "$GANG_NOW" "seconds since the epoch"
+now_epoch() {
+  if [ -n "${GANG_NOW:-}" ]; then printf '%s' "$GANG_NOW"; else date +%s; fi
+}
+
+# Rendering an epoch as a local wall-clock time needs the host's own timezone
+# rules, and the two `date` dialects spell that request differently: GNU takes
+# `-d @<epoch>`, BSD takes `-r <epoch>`. Probed rather than assumed, and GNU
+# FIRST — because on GNU `-r` means "this file's modification time", so a
+# BSD-first probe run in a directory holding a file named like an epoch would
+# succeed and answer with a plausible wrong time. Asking GNU its own way first
+# puts that out of reach: a GNU date answers the GNU probe and never reaches the
+# other branch.
+DATE_DIALECT=""
+date_dialect() { # settle which date this host speaks; dies if it speaks neither
+  [ -z "$DATE_DIALECT" ] || return 0
+  # 1970-01-02 UTC. Every timezone on earth still calls that moment 1970, so the
+  # probe cannot be thrown by the host's own offset.
+  if [ "$(date -d '@86400' '+%Y' 2>/dev/null)" = 1970 ]; then DATE_DIALECT=gnu
+  elif [ "$(date -r 86400 '+%Y' 2>/dev/null)" = 1970 ]; then DATE_DIALECT=bsd
+  else die "cannot render local times on this host: date understands neither -d '@<epoch>' nor -r <epoch>"
+  fi
+}
+date_at() { # $1 = epoch, $2 = strftime format -> that moment, in local time
+  # Settles the dialect on its own so a caller cannot reach a wrong answer by
+  # forgetting to, but the refusal that matters is the one raised at statement
+  # level: this runs inside command substitutions, where `die` ends the subshell
+  # and the caller reads an empty string.
+  date_dialect
+  case "$DATE_DIALECT" in
+    gnu) date -d "@$1" "+$2" ;;
+    bsd) date -r "$1" "+$2" ;;
+  esac
+}
+
+# The team's cutoff is the first piece of SESSION-scoped state gang keeps — every
+# other @gl_* option is per-window, because everything else gang tracks is a fact
+# about one agent. Both halves of the target spelling are load-bearing:
+#
+#   the `:` is what makes it a session target at all. `set-option -t` takes a
+#   TARGET-PANE, and a bare `=name` is not one — tmux answers "no such session".
+#
+#   the `=` anchors the name, because an unanchored tmux target is a PREFIX
+#   match. On a server also running `gangline-staging`, a `gangline` that is not
+#   itself running resolves to it, and gang would declare one team's cutoff onto
+#   another team's session and read it back as its own.
+#
+# Law 6 comes free: the pair is session state, so it dies with the session and
+# there is no separate deletion path for anyone to forget to run.
+cutoff_write() { # $1 = cutoff epoch, $2 = declared-at epoch
+  tmux set-option -t "=$SESSION:" @gl_cutoff "$1 $2"
+}
+cutoff_forget() { tmux set-option -u -t "=$SESSION:" @gl_cutoff 2>/dev/null || true; }
+
+# A stored pair that does not parse is a THIRD answer, not "none declared" — the
+# discipline band_state_read keeps, for the same reason. Reading a corrupt value
+# as absence answers a direct question with a confident wrong fact, and gang only
+# ever writes this option itself, so a value that does not parse is evidence that
+# something else has been at it rather than a shape to accommodate.
+CUTOFF_AT=0
+CUTOFF_DECLARED=0
+cutoff_read() { # populate CUTOFF_AT and CUTOFF_DECLARED; 1 = none declared, 2 = malformed
+  local raw at declared
+  raw="$(tmux show-options -qv -t "=$SESSION:" @gl_cutoff 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  case "$raw" in *' '*) ;; *) return 2 ;; esac
+  at="${raw%% *}"; declared="${raw#* }"
+  [[ "$at" =~ ^[0-9]+$ ]] || return 2
+  [[ "$declared" =~ ^[0-9]+$ ]] || return 2
+  CUTOFF_AT="$at"; CUTOFF_DECLARED="$declared"
+}
+
+cutoff_refuse() { # $1 = what the operator typed
+  # One wording for every way the word can be wrong. The message names the forms
+  # that work, because a refusal an operator cannot act on costs another attempt.
+  die "cannot read '$1' as a cutoff — give a duration (90m, 2h, 1h30m) or a clock time (17:30)"
+}
+
+# Sets a global rather than printing, for auto_rungs' reason: the refusal has to
+# be heard. `die` inside a command substitution ends only that subshell, so a
+# caller reading a REJECTED duration through `$(...)` would take the empty string
+# for a parsed one and go on to store it — turning the loud death this function
+# exists to produce into a silently corrupt declaration.
+CUTOFF_PARSED=0
+cutoff_parse() { # $1 = the operator's word, $2 = now; sets CUTOFF_PARSED, or dies
+  local spec="$1" now="$2" rest digits unit total=0 hh mm hms nowh nowm nows midnight
+  local seen_h=0 seen_m=0 seen_s=0
+  case "$spec" in
+    *:*)
+      # A clock time is the NEXT occurrence of HH:MM. An operator who types a
+      # time already gone today means tomorrow — nobody declares a cutoff in the
+      # past — and resolving it backwards would declare a budget that was over
+      # before it was announced.
+      hh="${spec%%:*}"; mm="${spec#*:}"
+      # A third field lands in mm complete with its colon, so HH:MM:SS is refused
+      # by the same test that refuses letters rather than needing its own.
+      case "$hh" in ''|*[!0-9]*) cutoff_refuse "$spec" ;; esac
+      case "$mm" in ''|*[!0-9]*) cutoff_refuse "$spec" ;; esac
+      [ "$((10#$hh))" -le 23 ] && [ "$((10#$mm))" -le 59 ] \
+        || die "cutoff '$spec' is not a time of day — a clock cutoff is HH:MM on a 24-hour clock"
+      hms="$(date_at "$now" '%H %M %S')"
+      [ -n "$hms" ] || die "cannot read the local time on this host"
+      nowh="${hms%% *}"; hms="${hms#* }"
+      nowm="${hms%% *}"; nows="${hms#* }"
+      # Midnight is derived from the host's OWN rendering of now, so the offset
+      # and its daylight-saving rules are already in it. The rollover below adds
+      # a flat day, which is an hour out across a change — a bound worth stating
+      # rather than a calendar library worth carrying, since nothing here is
+      # enforced and the note it feeds says the time it means.
+      midnight=$(( now - (10#$nowh * 3600 + 10#$nowm * 60 + 10#$nows) ))
+      CUTOFF_PARSED=$(( midnight + 10#$hh * 3600 + 10#$mm * 60 ))
+      [ "$CUTOFF_PARSED" -gt "$now" ] || CUTOFF_PARSED=$(( CUTOFF_PARSED + 86400 ))
+      ;;
+    *)
+      # A duration is one or more <whole><unit> groups, units h/m/s, each used at
+      # most once. Order is not policed because it cannot be ambiguous: 30m2h and
+      # 2h30m name the same span, and a rule that only rejects spellings buys an
+      # operator nothing.
+      rest="$spec"
+      while [ -n "$rest" ]; do
+        digits="${rest%%[hms]*}"
+        # Nothing left to cut on means no unit at all. A bare number is refused
+        # rather than guessed at: "gang cutoff 90" is ninety of something, and
+        # choosing which for the operator fabricates the intent law 8 refuses.
+        [ "$digits" != "$rest" ] || cutoff_refuse "$spec"
+        case "$digits" in ''|*[!0-9]*) cutoff_refuse "$spec" ;; esac
+        rest="${rest#"$digits"}"
+        unit="${rest%"${rest#?}"}"
+        rest="${rest#?}"
+        # 10# on every read, because a leading zero is an ordinary way to write a
+        # time and bash reads 08 as a broken octal literal rather than eight.
+        case "$unit" in
+          h) [ "$seen_h" -eq 0 ] || cutoff_refuse "$spec"; seen_h=1; total=$(( total + 10#$digits * 3600 )) ;;
+          m) [ "$seen_m" -eq 0 ] || cutoff_refuse "$spec"; seen_m=1; total=$(( total + 10#$digits * 60 )) ;;
+          s) [ "$seen_s" -eq 0 ] || cutoff_refuse "$spec"; seen_s=1; total=$(( total + 10#$digits )) ;;
+        esac
+      done
+      CUTOFF_PARSED=$(( now + total ))
+      ;;
+  esac
+}
+
+human_span() { # $1 = whole seconds -> the same span in the units an operator types
+  local s="$1" h m
+  h=$(( s / 3600 )); m=$(( s % 3600 / 60 ))
+  if   [ "$h" -gt 0 ] && [ "$m" -gt 0 ]; then printf '%dh%dm' "$h" "$m"
+  elif [ "$h" -gt 0 ];                   then printf '%dh' "$h"
+  elif [ "$m" -gt 0 ];                   then printf '%dm' "$m"
+  else                                        printf '%ds' "$s"
+  fi
+}
+
+cutoff_line() { # $1 = now -> "cutoff <local time> — <span> remaining|past"
+  local when left
+  when="$(date_at "$CUTOFF_AT" '%Y-%m-%d %H:%M')"
+  left=$(( CUTOFF_AT - $1 ))
+  if [ "$left" -ge 0 ]
+  then printf 'cutoff %s — %s remaining' "$when" "$(human_span "$left")"
+  else printf 'cutoff %s — %s past' "$when" "$(human_span $(( 0 - left )))"
+  fi
+}
+
 # --- colour -----------------------------------------------------------------
 #
 # Colour marks state and outcome, never decoration. A roster is scanned rather
@@ -3688,6 +3882,55 @@ patrol_log() { # $1 = name, $2 = readout, $3 = verdict; the record a sweep leave
   # work, so a full disk or an unwritable path costs the line and nothing else.
   printf '%s %-16s %-18s %s\n' "$(date +%Y-%m-%dT%H:%M:%S%z)" "$1" "$2" "$3" \
     >> "$GANG_PATROL_LOG" 2>/dev/null || true
+}
+
+cmd_cutoff() { # declare, show, or clear the team's wall-clock cutoff
+  local sub="${1:-}" now rc ago
+  [ $# -le 1 ] || usage_die
+  case "$sub" in -*) usage_die ;; esac
+  session_live || die "no session '$SESSION' running"
+  # Settled here, at statement level, because this is where its refusal can be
+  # heard: every other route to it runs inside a command substitution.
+  date_dialect
+  now="$(now_epoch)"
+  if cutoff_read; then rc=0; else rc=$?; fi
+  # A stored value gang cannot read is a third answer rather than absence — but
+  # `clear` is the remedy this very refusal names, so it runs in spite of it. A
+  # remedy that dies on the state it exists to remove is not one, and refusing it
+  # here would leave an unreadable pair with nothing short of the session's end
+  # to get rid of it.
+  [ "$rc" -ne 2 ] || [ "$sub" = clear ] \
+    || die "the stored cutoff for session '$SESSION' is not a pair of epochs — 'gang cutoff clear' removes it"
+  case "$sub" in
+    "")
+      # An explicit query is answered, always. "An undeclared budget produces
+      # silence" governs the NOTES a ladder does or does not inject; a question
+      # answered with nothing is the fabricated status law 8 refuses, and the
+      # operator cannot tell it from a cutoff that failed to store.
+      [ "$rc" -eq 0 ] || { printf 'no cutoff declared\n'; return 0; }
+      ago=$(( now - CUTOFF_DECLARED ))
+      # Only a clock that moved backwards produces a negative age, which is a
+      # test moving GANG_NOW rather than anything an operator can do. Reported as
+      # fresh rather than as a negative span, since the pair is intact either way.
+      [ "$ago" -ge 0 ] || ago=0
+      printf '%s (declared %s ago)\n' "$(cutoff_line "$now")" "$(human_span "$ago")"
+      ;;
+    clear)
+      # Only a genuinely absent cutoff is nothing to clear. An unreadable one is
+      # something stored, and taking it away is the whole reason to come here.
+      [ "$rc" -ne 1 ] || { printf 'no cutoff declared\n'; return 0; }
+      cutoff_forget
+      printf 'cutoff cleared\n'
+      ;;
+    *)
+      cutoff_parse "$sub" "$now"
+      cutoff_write "$CUTOFF_PARSED" "$now"
+      # Declaring again re-spans from NOW: last declaration wins, and the pair it
+      # writes is the whole of the team's budget from this moment (ADR-0009).
+      CUTOFF_AT="$CUTOFF_PARSED"; CUTOFF_DECLARED="$now"
+      printf '%s\n' "$(cutoff_line "$now")"
+      ;;
+  esac
 }
 
 cmd_patrol() { # ambient warning leg: nudge any agent past a context band
@@ -5775,6 +6018,7 @@ case "$cmd" in
             case "$WAIT_STATE" in expired*) exit 2 ;; esac ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
+  cutoff)   cmd_cutoff "$@" ;;
   patrol)   cmd_patrol ;;
   cron)     cmd_cron "$@" ;;
   vet|doctor) cmd_vet "$@" ;;

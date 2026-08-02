@@ -220,6 +220,27 @@ context value is `-`. A recorded stranded paste adds `undelivered paste`.
 The state sampling wait is batched across the team, so roster does not add one
 churn delay per window.
 
+## The cutoff
+
+### `gang cutoff [<duration|clock>|clear]`
+
+Declares the team's wall-clock budget, shows it, or ends it. A duration is one or
+more whole `<n>h`, `<n>m`, `<n>s` groups — `90m`, `2h`, `1h30m`. A clock time is
+`HH:MM` on a 24-hour clock, resolved to its next occurrence in the host's own
+timezone. Anything else is refused, a bare number included: gang does not pick a
+unit on the operator's behalf.
+
+The cutoff is session-scoped — one team, one cutoff
+([ADR-0009](adr/0009-time-bands-are-relative.md)). Declaring again replaces the
+previous declaration and re-spans the budget from now, so what is stored is
+always the cutoff together with the moment it was declared. With no argument the
+command prints the declaration, or `no cutoff declared`; an explicit query is
+answered rather than met with silence. `clear` removes it, and apart from the
+session ending it is the only thing that does.
+
+Nothing is enforced. Declaring a cutoff records operator intent and changes no
+behaviour on its own.
+
 ## Context warnings
 
 ### `gang patrol`
@@ -523,6 +544,7 @@ These are useful when the corresponding path is in use:
 | `GANG_BRIEF_GATE_WAIT` | post-brief delay before hitch's early gate check | `3` seconds |
 | `GANG_CLEAR_PRESSES` | maximum verified `Ctrl-u` attempts when reclaiming a staged paste | `40` |
 | `GANG_TEST_PROFILES=1` | expose the Bash stand-in used by Gangline's own suite | unset |
+| `GANG_NOW` | test-only clock seam: the epoch cutoff arithmetic is measured against, so a case about a time boundary reaches it without waiting for it. Whole seconds, and a non-numeric value is refused | unset (the system clock) |
 
 `GANG_ACTIVITY_LIMIT`, `GANG_COMPACT_GRACE`, `GANG_TURN_LIMIT`,
 `GANG_COMPACTION_LIMIT` and `gang wait`'s timeout all default to 300 seconds,
