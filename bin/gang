@@ -2557,17 +2557,41 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   # compaction_mark records a compaction that will never happen and patrol then
   # holds its nudge on an agent at full context. Observed live.
   #
-  # So a head-position payload asks the question patrol already asks before it
-  # nudges (input_clear), which is the profile's own answer about what counts as
-  # content rather than this function's. Note which way the asymmetry ran: the
-  # strict bar was on the nag, and the weak one on the thing that actually types.
+  # So the bar is EMPTINESS, asked of the profile rather than answered here —
+  # input_clear, the same question patrol asks before it nudges.
   #
-  # Whether ordinary `send` should also require an empty box is a separate call
-  # with a real cost — it would refuse every agent with a draft parked in its box,
-  # which on some claude-code profiles includes ghost text — and it wants deciding
-  # on its own evidence rather than being folded in here.
-  [ "${3:-}" != head ] || input_clear "$1" \
-    || refuse "refusing to deliver '$frag' to $1: its input box is not provably empty, and this text is only a command at the head of an empty one — appended to a draft it would be literal text and would submit that draft with it (try again in a moment; gang capture $1)"
+  # It is asked of every payload, and that was once parked here as a separate call
+  # with a real cost: requiring it of ordinary sends would refuse every agent with
+  # a draft parked in its box, which on some claude-code profiles included ghost
+  # text. The dim-attribute readers retired that cost. A box holding only what the
+  # harness suggested now reads EMPTY through profile_input, asserted for both
+  # harnesses that paint one — grep 'reads empty' in the suite for the two checks —
+  # so what is left to refuse is a draft a human actually typed.
+  #
+  # The other half of the parked cost was that prose is recoverable, and it was
+  # measuring the wrong thing: "mangled but present" describes the MESSAGE, while
+  # what the Enter destroys is the operator's line. Measured on the fixed side
+  # too — a parked draft survives the refusal intact and unsent, and deliver_held
+  # then lands that same send the moment the operator's own line goes, so the
+  # refusal costs a wait rather than a message.
+  #
+  # The refusal says the body was not delivered instead of leaving that to
+  # deliver_held's hand-back, which prints only where there WAS a hold: under
+  # GANG_SEND_HOLD=0 that line is skipped and this wording is all a sender gets.
+  if ! input_clear "$1"; then
+    # The agent's NAME, not the window id this function is handed. `gang capture
+    # @0` is not a runnable command — win_id matches on the window's name — so the
+    # id spent an operator an attempt to find that out. Looked up here rather than
+    # beside the other locals so an ordinary delivery does not pay for a string it
+    # will never print.
+    local tname onlyhead=""
+    tname="$(agent_name_of "$1")"
+    # Position adds a second failure rather than changing the first: prose loses
+    # the operator's line, a slash command loses that AND silently never runs.
+    [ "${3:-}" != head ] \
+      || onlyhead=", and this text is only a command at the head of an empty one, so appended to a draft it would be literal text and would never run"
+    refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty, so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear (gang capture $tname to see it)"
+  fi
   # Verified = the paste changed the input box, which is where a paste lands.
   # Reading the box asks the profile (Law 4) instead of teaching gang how each
   # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
@@ -2741,7 +2765,14 @@ deliver_held() { # $1 = window id, $2 = text, $3 = the target's name; hold a sen
     [ $(( SECONDS - started )) -lt "$bound" ] || break
     if [ "$told" -eq 0 ]; then
       told=1
-      printf 'gang: holding this send for up to %ss and retrying — nothing has been typed into %s\n' \
+      # "nothing OF IT", not "nothing". The sentence was written when the only way
+      # to reach this loop was a refusal about a box gang had not touched, and it
+      # means "no part of this message landed". Once an empty-box bar refuses a
+      # PARKED DRAFT, the commonest reader of this line is an operator looking
+      # straight at their own half-written thought sitting in that box, and
+      # "nothing has been typed into retrier" reads to them as a claim about the
+      # box rather than about the send — gang contradicting what they can see.
+      printf 'gang: holding this send for up to %ss and retrying — nothing of it has been typed into %s\n' \
         "$bound" "$3" >&2
     fi
     sleep 2

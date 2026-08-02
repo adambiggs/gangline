@@ -5900,6 +5900,69 @@ check "the same box empties again" "" "$(retrier_box)"
 send_text retrier tester "MARK_INTOEMPTY" >/dev/null 2>&1; rc=$?
 check "and a delivery into it, empty, is one this fixture takes" "0" "$rc"
 check "with the payload on the agent's screen" "yes" "$(has retrier MARK_INTOEMPTY)"
+
+# --- and now the bar that refuses a draft -------------------------------------
+#
+# Everything above this line is true on both sides of the change, which is what
+# let it land first. These are the ones that FAIL on the behaviour that shipped:
+# today the paste goes in, the Enter fires, and the operator's half-written line
+# is submitted with the message glued to its tail — reported as a verified,
+# submitted delivery. Measured that way on the shipped bash profile from a
+# private socket before any of this was written.
+park_draft 'MARK_C2_DRAFT half written thought'
+# The hold is switched OFF deliberately, and that is the point of this send rather
+# than a way to keep the suite quick. deliver_held's hand-back line prints only
+# where there WAS a hold, so at a bound of zero the refusal's own wording is every
+# word the sender gets — which is exactly where a promise carried by the hold
+# alone would evaporate, and the operator who set the bound to zero is the one who
+# asked for no patience, not for no answer.
+out="$(GANG_SEND_HOLD=0 send_text retrier tester "MARK_C2_REFUSED" 2>&1)"; rc=$?
+check "a send into a box holding a paused draft is refused" "3" "$rc"
+check "with the operator's draft left exactly where it was" \
+  "MARK_C2_DRAFT half written thought" "$(retrier_box)"
+check "and no part of the message on the agent's screen" "no" \
+  "$(has retrier MARK_C2_REFUSED)"
+# The pair below is what makes either half worth writing. A send that printed
+# nothing at all satisfies the second on its own — an absent line is absent — and
+# fails the first, so neither can pass by the output having gone missing.
+check "the refusal itself says the body was never delivered" "yes" \
+  "$(contains "$out" "still the sender's")"
+check "which it must, because no hand-back line printed to say it" "no" \
+  "$(contains "$out" "still yours to send again")"
+# The class rule, on a way out that did NOT work when this was written: the
+# refusal named `gang capture @0`, and win_id matches a window's NAME, so an id
+# resolves to nothing and the operator spends an attempt finding that out.
+# Naming the target is half of it; the other half runs the command.
+check "the refusal names the agent an operator would go and look at" "yes" \
+  "$(contains "$out" "gang capture retrier")"
+check "and that is a command which runs" "0" \
+  "$("$GANG" capture retrier >/dev/null 2>&1; echo $?)"
+
+# The way out TAKEN, end to end — and the reason this refusal is a wait rather
+# than a message lost. The operator's line goes, and the send refused for it lands
+# by itself with nobody sending it again.
+park_draft 'MARK_C2_WAYOUT half written thought'
+( GANG_SEND_HOLD=60 send_text retrier tester "MARK_C2_LANDS" \
+    >"$SHIM/c2held.out" 2>&1; echo $? > "$SHIM/c2held.rc" ) &
+absence_window 4 "a send refused for a parked draft must be held rather than spent,
+                  well past the single attempt a refusal used to get"
+check "a send meeting a parked draft is not spent on the first look" "no" \
+  "$(has retrier MARK_C2_LANDS)"
+check "and the draft is still the operator's while it waits" \
+  "MARK_C2_WAYOUT half written thought" "$(retrier_box)"
+tmux send-keys -t "$(target_of retrier)" C-u       # the operator clears their line
+WAIT_TIMEOUT=60 wait_for retrier 'the held send to land once the draft is gone' yes \
+  has retrier MARK_C2_LANDS
+wait
+check "and the same send lands once that box is clear" "yes" \
+  "$(has retrier MARK_C2_LANDS)"
+check "reporting the delivery it actually made" "0" "$(cat "$SHIM/c2held.rc")"
+# Said about the MESSAGE, not about the box. The commonest reader of that line is
+# now an operator looking straight at the draft it is holding for, and a sentence
+# they read as "nothing has been typed into retrier" is gang contradicting what is
+# on their screen.
+check "the hold line says no part of the message landed, not that the box is empty" "yes" \
+  "$(contains "$(cat "$SHIM/c2held.out")" "nothing of it has been typed")"
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on
