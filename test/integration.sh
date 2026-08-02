@@ -1981,12 +1981,128 @@ check "while the same bracket inside that bound is still the busy it witnessed" 
 # makes it a rule rather than a timeout on everything. An OPEN bracket claims a
 # turn is running, and turns end, so that claim decays with nothing to renew it.
 # A CLOSED bracket claims no turn is open, and on this harness only an event can
-# open one — so age adds no doubt to it at all. Bounding this side would report
-# every genuinely idle agent as could-not-determine within minutes of its last
-# turn: not the tool being careful, the tool not working.
+# open one — so AGE ALONE adds no doubt to it. Bounding this side on age alone
+# would report every genuinely idle agent as could-not-determine within minutes of
+# its last turn: not the tool being careful, the tool not working.
+#
+# Age alone is the whole of the claim, and the section below is the other half of
+# it: past that age a closed bracket can still be unseated by the pane being
+# written to under it. This fixture never declares quiet-at-rest, so there is no
+# signal to unseat it with and "however old" holds here unconditionally.
 fact_set bracket @gl_turn "closed $(ago 99999)"
 check "a closed bracket is idle however old, because only an event can reopen one" \
   "idle (slack tug)" "$("$GANG" status bracket | head -1)"
+
+# --- the closed bracket whose writer died --------------------------------------
+#
+# THE ONE FAILURE IN THIS TIER THAT NOTHING ELSE CATCHES. Every other way the
+# bracket can be wrong ends in a fact that goes stale, and staleness is a thing a
+# bound can see. This one is the absence of a fact: the hooks stop firing while
+# the bracket reads `closed`, so the value that would have expired is the one that
+# never arrived, and the tier witnesses idle over a working agent for as long as
+# the window lives. Silent, permanent, and in the direction that lets a send land
+# in a live turn.
+#
+# What unseats it is age PLUS live contradiction — never age alone, and never a
+# blend of the two tiers. Past the bound an OPEN bracket gets, a pane still being
+# written to is evidence the closed bracket cannot explain, so the bracket stops
+# being the witness and the tiers below answer on their own merits.
+#
+# The pty carries that evidence and the paint does not, which is why the
+# disagreement case further down still only records. A painted marker has no
+# timestamp, so a rotted regex over static transcript text would pin an idle agent
+# at the wrong answer with nothing to age it out; tmux stamps the pty, so this
+# heals the moment the writing stops.
+cat > "$SHIM/custom-profiles/deadwriter.sh" <<'SH'
+GANG_LAUNCH="PS1='> ' bash --norc"
+GANG_BUSY_REGEX="FORCE_BUSY"
+GANG_COMPACT_CMD="#compact"
+GANG_VERIFIED_VERSIONS="any"
+GANG_QUIET_AT_REST=1
+profile_input() { printf ''; }
+SH
+# Identical but for the declaration, because the gate is per harness and has no
+# safe default: on a TUI that repaints at rest the pty says nothing about whether
+# a turn is running, so letting it unseat a bracket there would expire every idle
+# agent on that harness forever.
+sed 's/^GANG_QUIET_AT_REST=1$//' "$SHIM/custom-profiles/deadwriter.sh" \
+  > "$SHIM/custom-profiles/deadwriter-noisy.sh"
+"$GANG" hitch deadhook  -p deadwriter       -d /tmp >/dev/null
+"$GANG" hitch livehook  -p deadwriter       -d /tmp >/dev/null
+"$GANG" hitch noisyhook -p deadwriter-noisy -d /tmp >/dev/null
+# Save-cursor then restore-cursor, the quietchurn writer again: real bytes down
+# the pty and not one cell touched, so the marker is absent and churn reads the
+# screen as still. The pty is the only tier under the bracket that can answer,
+# which is what makes the verdict below attributable to it.
+dwriter="while :; do printf '\033[s\033[u'; sleep 0.2; done"
+tmux send-keys -t "$(target_of deadhook)"  "$dwriter" Enter
+tmux send-keys -t "$(target_of noisyhook)" "$dwriter" Enter
+
+fact_set deadhook @gl_turn "closed $(ago 400)"
+check "a closed bracket the pane keeps writing under is not the idle it never witnessed" \
+  "busy (tight tug)" "$("$GANG" status deadhook | head -1)"
+# Attribution, not decoration: with the marker on screen the paint tier would have
+# answered busy and the case above would have proved nothing about the bracket.
+check "and the marker really is absent, so it was not paint that answered" "no" \
+  "$(has deadhook FORCE_BUSY)"
+# The bracket loses the power to say idle without gaining the power to say busy.
+# What answered is the pty tier on its own merits — the same answer it gives any
+# harness with no event tier at all — so an activity-only episode is now open and
+# bounded like every other. Spend that bound and the verdict falls to the third
+# answer rather than back to the idle this section is about.
+#
+# And it falls under the BRACKET's qualifier rather than the pty's, which is the
+# one an operator can act on: two spent bounds are both true here, and the
+# actionable one names the anomaly that started it — a bracket contradicted by its
+# own pane, which is what a dead hook writer looks like from outside — rather than
+# the generic bound that every quiet agent on every harness also reaches.
+check "and it is the pty answering on its own bound, which spends like any other" \
+  "expired (turn-bracket closed while the pane kept being written to)" \
+  "$(GANG_ACTIVITY_LIMIT=0 "$GANG" status deadhook | head -1)"
+
+# THE GRACE, and why it is the bound an open bracket already gets rather than a
+# number of its own. Stop fires while the harness is still drawing its last frame,
+# so a freshly closed bracket sits over a pane that is genuinely still settling. A
+# grace shorter than that tail reports every agent expired seconds after every
+# turn it finishes, which is the orchestrator-facing outage this fix must not buy.
+fact_set deadhook @gl_turn "closed $(ago 10)"
+check "and a freshly closed bracket outranks the pane still settling under it" \
+  "idle (slack tug)" "$("$GANG" status deadhook | head -1)"
+
+# THE HALF THAT KEEPS IT A RULE RATHER THAN A TIMEOUT. Same fact, same age, a pane
+# nobody is writing to: still idle. The fixture is SETTLED rather than assumed,
+# because this agent's own boot wrote to its pane and a pane written to seconds ago
+# is not the quiet one this case is about — without the assertion a pass here
+# could be the fixture's freshness rather than the rule.
+#
+# Waited for rather than slept off, and the difference is what a slow host does to
+# it: a fixed toll long enough for this box is a coin flip on a loaded one, and the
+# failure it buys reads as the rule breaking rather than the fixture never settling.
+# The evidence is an absence, so the poll asks the same question the code does —
+# how long since anything was written here — and ends the moment the answer is old
+# enough. The check below then reads it a second time, so what the wait believed is
+# also what the section is standing on.
+pane_settled() { # $1 = agent; yes once nothing has written to its pane for the window
+  [ "$(( $(date +%s) - $(tmux display-message -p -t "$(target_of "$1")" \
+      '#{window_activity}') ))" -ge "${GANG_ACTIVITY_WINDOW:-5}" ] && echo yes || echo no
+}
+wait_for livehook "livehook's pane to fall quiet for a whole activity window" \
+  yes pane_settled livehook || exit 1
+check "the quiet fixture really has gone quiet, so the rule is what is on trial" "yes" \
+  "$(pane_settled livehook)"
+fact_set livehook @gl_turn "closed $(ago 400)"
+check "a closed bracket over a pane nobody is writing to is idle however old" \
+  "idle (slack tug)" "$("$GANG" status livehook | head -1)"
+
+# AND THE GATE. The same live pty, the same spent age, on a harness that never
+# declared itself quiet at rest — where pty bytes are the TUI breathing rather
+# than evidence of a turn, so they may not unseat anything.
+fact_set noisyhook @gl_turn "closed $(ago 400)"
+check "and a harness that never declared quiet-at-rest keeps its closed bracket" \
+  "idle (slack tug)" "$("$GANG" status noisyhook | head -1)"
+"$GANG" drop deadhook >/dev/null 2>&1
+"$GANG" drop livehook >/dev/null 2>&1
+"$GANG" drop noisyhook >/dev/null 2>&1
 
 # A value gang wrote and gang cannot read back. @gl_band's precedent says rebuild
 # rather than refuse, and there is nothing here to rebuild — whether a turn is

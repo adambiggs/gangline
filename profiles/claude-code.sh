@@ -238,6 +238,18 @@ GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰
 # as it keeps writing, so gang bounds activity-only busy globally; the declaration
 # still stays unset until somebody has watched a finished agent sit still, because
 # a wrong declaration costs that entire bound on every false episode.
+#
+# CONFIRMED AGAINST THE TURN BRACKET, on a live four-agent team rather than a
+# controlled rest, because turn_witness now leans on this declaration for a second
+# thing: past GANG_TURN_LIMIT a CLOSED bracket stops outranking a pane still being
+# written to, which is the only cover for hook delivery dying silently. 40 samples
+# at 2s across 172s — an idle agent's #{window_activity} held exactly ONE distinct
+# value, equal to the second its own Stop hook closed the bracket, while two
+# working agents in the same session ticked on nearly every sample. So the freeze
+# is not merely quiet, it is quiet FROM the close: the harness writes nothing at
+# all between Stop and the next turn, which is what lets a write after that age be
+# read as evidence the bracket cannot explain. If a release ever repaints at rest,
+# this declaration goes first and that rule stands down with it.
 GANG_QUIET_AT_REST=1
 # Every scraped marker in this file (busy regex, ctx beacon shape, input-box
 # shape) was live-verified against these harness versions. New release =

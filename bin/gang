@@ -1111,6 +1111,34 @@ turn_mark() { # $1 = window id, $2 = open|closed; write the fact, log the transi
   patrol_log "$(agent_name_of "$1")" turn-bracket "bracket $2"
 }
 
+turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to now
+  # NOT recently_active, and the difference is what each is FOR. That one asks
+  # whether pty activity may carry a busy verdict on its own, so it owns the
+  # activity-only episode bound that stops it carrying one forever. This asks a
+  # narrower question with no verdict attached — is something writing to this
+  # pane right now — and starting an episode bound from a path that claims
+  # nothing would put a fact somewhere its consumer is not (law 5).
+  #
+  # The same declaration gates both, for the same reason. A harness that repaints
+  # at rest writes bytes on a pane where nothing is happening, so there this
+  # question has no answer rather than a false one, and the caller keeps the
+  # bracket it already had.
+  [ "${GANG_QUIET_AT_REST:-}" = 1 ] || return 1
+  require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
+  local stamped now
+  # Refuses rather than guesses, the way busy_painted already does on this same
+  # path — consuming an unreadable stamp as "nothing is writing" is exactly the
+  # silent inversion the caller below exists to stop making.
+  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
+    || die "cannot read pty activity for pane $1 — refusing to consume unknown as a quiet pane"
+  case "$stamped" in
+    ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
+  esac
+  now="$(date +%s)"
+  [ "$stamped" -le "$now" ] || die "tmux returned a future activity stamp for pane $1: $stamped > $now"
+  [ $(( now - stamped )) -lt "$GANG_ACTIVITY_WINDOW" ]
+}
+
 turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no event tier
   local rc=0 now
   turn_state_read "$1" || rc=$?
@@ -1129,23 +1157,64 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
        return 2 ;;
     *) die "internal: turn_state_read returned unknown verdict $rc" ;;
   esac
-  # A closed bracket does not expire, and the asymmetry is the point rather than
-  # an oversight. An OPEN bracket claims a turn is running, and turns end, so the
-  # claim decays with nothing to renew it. A CLOSED bracket claims no turn is
-  # open, and on this harness only an event can open one — so age adds no doubt
-  # to it, and bounding it would report every genuinely idle agent as
-  # could-not-determine within minutes, which is the tool not working.
-  #
-  # The residual is named rather than argued away: if the hooks stop firing
-  # altogether while the bracket reads closed, this witnesses idle over a working
-  # agent and no expiry can catch it, because the fact that would have expired is
-  # the one that never arrived. What catches it is the disagreement check below —
-  # the pane painting a busy marker under a closed bracket — and that is a
-  # partial cover on this harness by measurement (8.6% of changing frames carry
-  # any marker), not a complete one.
-  [ "$TURN_STATE" = open ] || return 1
   require_whole GANG_TURN_LIMIT "$GANG_TURN_LIMIT" seconds
   now="$(date +%s)"
+  # A closed bracket does not expire ON AGE, and the asymmetry is the point rather
+  # than an oversight. An OPEN bracket claims a turn is running, and turns end, so
+  # the claim decays with nothing to renew it. A CLOSED bracket claims no turn is
+  # open, and on this harness only an event can open one — so age alone adds no
+  # doubt to it, and bounding it on age alone would report every genuinely idle
+  # agent as could-not-determine within minutes, which is the tool not working.
+  #
+  # What age buys is the right to LOOK. The residual this used to name and leave
+  # standing: if the hooks stop firing altogether while the bracket reads closed,
+  # the fact that would have expired is the one that never arrived, so the bracket
+  # witnesses idle over a working agent forever — silent, permanent, and in the
+  # one direction that lets a send land in a live turn.
+  #
+  # So the bracket keeps the verdict until it is older than the bound an OPEN one
+  # gets, and past that it keeps the verdict only while nothing contradicts it.
+  # GANG_TURN_LIMIT rather than a number of this branch's own, because it is the
+  # same question asked of the other state word — how long is this bracket's claim
+  # good for without renewal — and a second bound is a second thing to tune wrong.
+  # It also has to clear the tail of the turn that just ended: Stop fires while the
+  # harness is still drawing its last frame, and a grace shorter than that would
+  # report an agent expired seconds after every turn it finished.
+  #
+  # THE PTY AND NOT THE PAINT, which is why turn_vets_paint below still only
+  # records. A painted marker carries no timestamp, so a rotted regex matching
+  # static transcript text would pin an idle agent at the wrong answer with
+  # nothing to age it out. The pty signal carries tmux's own stamp, so a
+  # disagreement built on it is bounded by construction and heals the moment the
+  # writing stops. Measured rather than assumed: an idle claude-code pane wrote
+  # nothing at all after Stop — one distinct window_activity stamp across 40
+  # samples spanning 172 seconds, equal to the second the bracket closed — while
+  # two working agents in the same session ticked on nearly every sample.
+  #
+  # The bracket loses the power to say idle without gaining the power to say busy.
+  # This returns the third answer and the tiers below answer on their own merits,
+  # exactly as they already do for an expired OPEN bracket — so a pane genuinely
+  # working reads busy off the pty, and one merely touched falls through to churn
+  # like any other. The pty usually answering next is a lower tier winning on its
+  # own evidence, not this branch voting with it.
+  #
+  # WHAT IS LEFT, named rather than argued away. The exposure is bounded, not
+  # closed: for the first GANG_TURN_LIMIT after a close, a working agent whose
+  # hooks have died still reads idle. Closing that means bounding a closed bracket
+  # on age alone, which is the paragraph above. And a harness that does not declare
+  # quiet-at-rest offers no signal to look at, so there the residual stands in
+  # full — every harness carrying an event tier today declares it.
+  #
+  # One benign firing, kept deliberately: an operator typing into the composer of
+  # an agent idle longer than the bound reads could-not-determine until they stop.
+  # That is close enough to true to leave standing — a send landing there would
+  # interleave with what they are typing — and it heals in GANG_ACTIVITY_WINDOW.
+  if [ "$TURN_STATE" != open ]; then
+    [ $(( now - TURN_AT )) -ge "$GANG_TURN_LIMIT" ] || return 1
+    turn_pane_still_writing "$1" || return 1
+    BUSY_EXPIRED_WHAT="turn-bracket closed while the pane kept being written to"
+    return 2
+  fi
   # A stamp from the future has no freshness left to test, so it reads the same
   # could-not-determine an unparseable one does — but it is NOT discarded the way
   # that one is, and the asymmetry is the point. A malformed value can never be

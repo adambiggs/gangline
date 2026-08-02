@@ -280,6 +280,15 @@ compacting on its own threshold. One raises occupancy: `PermissionRequest`
 records that a permission dialog owns the input box — and because nothing fires
 when a dialog is dismissed, only the pane retires that raise.
 
+If hook delivery stops altogether, the last fact written stands. An **open**
+bracket expires on its own bound, but a **closed** one has nothing to go stale —
+the value that would have expired is the one that never arrived — so past
+`GANG_TURN_LIMIT` a closed bracket no longer outranks a pane still being written
+to, and the verdict falls to the scrape tiers rather than reporting an idle
+nothing witnessed. The pane is only consulted this way on a harness declaring
+`GANG_QUIET_AT_REST`, where output at rest is not expected; elsewhere the closed
+bracket stands however old.
+
 On `UserPromptSubmit` and `PostToolUse` it also applies the same band ladder
 and window option as patrol and emits a JSON `additionalContext` reply when a
 higher band is crossed; on every other event it emits nothing. On
@@ -487,7 +496,7 @@ These are useful when the corresponding path is in use:
 | `GANG_ACTIVITY_LIMIT` | how long pty activity **alone** may hold the busy verdict before the state becomes `expired`; whole seconds, and a non-numeric value is refused | `300` |
 | `GANG_ACTIVITY_WINDOW` | how recently declared-quiet harness output counts busy | `5` seconds |
 | `GANG_COMPACT_GRACE` | maximum wait for gang-issued compaction proof | `300` seconds |
-| `GANG_TURN_LIMIT` | how long an open turn bracket holds busy without a heartbeat; expiry is could-not-determine, and busy falls to the scrape tiers | `300` seconds |
+| `GANG_TURN_LIMIT` | how long a turn bracket's claim holds without renewal — an **open** one holds busy without a heartbeat, and past the same age a **closed** one stops outranking a pane that is still being written to; expiry is could-not-determine, and the verdict falls to the scrape tiers | `300` seconds |
 | `GANG_COMPACTION_LIMIT` | how long an open compaction bracket holds the compacting verdict; undershooting drops a live compaction to a tier that reads it idle, so the error direction is chosen long | `300` seconds |
 | `GANG_OCCUPIED_LIMIT` | how long a raised occupancy stays credible; the pane retires the raise by proving the dialog gone, and expiry stops believing it without clearing it | `900` seconds |
 | `GANG_CONTEXT_FACT_LIMIT` | how long a written context figure is preferred over the beacon scrape; a stale figure reads low across a band edge, so the bound is short and the scrape does the work in any doubt | `60` seconds |
