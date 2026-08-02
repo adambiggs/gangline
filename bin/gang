@@ -485,6 +485,32 @@ profile_file() { # $1 = profile name -> path on stdout; yours wins over the ship
   return 1
 }
 
+marker_named() { # $1 = profile name -> WHERE its busy marker is declared, never the pattern
+  # THE FILE, NOT THE PATTERN, decided in one place because every row that names a
+  # busy marker has the same problem. gang's own output lands in the panes gang
+  # scrapes, and busy_painted() reads the WHOLE pane — so a row reproducing a
+  # profile's busy regex verbatim leaves whoever ran the command reading BUSY while
+  # perfectly idle: every send refused, every wait timed out, for as long as the
+  # line stays on screen. This repo has already had compacting() true for three
+  # minutes off a reviewer's own grep output, and the suite once caught gang
+  # printing a shipped regex into the pane of a probe that was measuring exactly
+  # this.
+  #
+  # Rendering the pattern harmless instead was measured and abandoned. A busy regex
+  # is allowed to be a bare single character — two of claude-code's alternatives
+  # are exactly that — and any text that merely quotes one matches it, so no
+  # transform that preserves the characters can be general.
+  #
+  # The path is also the better answer to what naming the pattern was for. The
+  # declaration is the thing an operator has to edit, and it arrives with the
+  # comment block saying what that pattern was verified against; the pattern itself
+  # still travels in the issues vet files, which are read somewhere other than a
+  # pane.
+  local f
+  f="$(profile_file "$1" 2>/dev/null)" || f="the $1 profile"
+  printf 'the busy marker declared in %s' "$f"
+}
+
 load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f
   f="$(profile_file "$1")" \
@@ -4698,9 +4724,17 @@ probe_evidence() { # $1 = profile, $2 = the pane the verdict was reached on
   # outside the probe's own temp dir so it survives teardown, and named in the row
   # so the next question — "what did it actually look like?" — has an answer that
   # is not "run it again and hope".
+  #
+  # THE DUMP IS GANG QUOTING, NOT GANG SPEAKING, which is why it keeps the marker
+  # raw where the rows above deliberately do not. A capture with the marker taken
+  # out of it is no longer a capture, and in the MARKER STUCK case the marker's
+  # presence IS the finding — replacing it would hand the reader an assertion where
+  # they asked for the screen. So the file stays verbatim and the row says what the
+  # file is, which is the part an operator needs before they cat it into a pane
+  # gang scrapes and re-create the failure the rows are worded to avoid.
   local f="${TMPDIR:-/tmp}/gang-probe-$1-$$.txt"
   printf '%s\n' "$2" > "$f" 2>/dev/null || return 0
-  printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "pane it judged: $f")"
+  printf '%-12s %-26s %s\n' '' '' "$(colour "$C_DIM" "pane it judged, verbatim and still holding the marker — open the file, do not echo it into a pane gang scrapes: $f")"
 }
 
 probe_acts_expand() { # $1 = template, $2 = START, $3 = A, $4 = B
@@ -5106,7 +5140,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
       probe_evidence "$prof" "$pane"
       rc=2
     else
-      probe_row "$prof" "$installed" "$C_BAD" "MARKER DEAD — the pane was working and never painted it: $GANG_BUSY_REGEX"
+      probe_row "$prof" "$installed" "$C_BAD" "MARKER DEAD — the pane was working and never painted $(marker_named "$prof")"
       probe_evidence "$prof" "$pane"
       rc=1
     fi
@@ -5170,7 +5204,7 @@ probe_one() { # $1 = profile; 0 = marker confirmed, 1 = drift, 2 = not probed
   # false alarm on a healthy harness. The residual runs toward false alarm and
   # never toward false pass.
   if re_match GANG_BUSY_REGEX "$pane"; then
-    probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — painted, and still painted once the pane went quiet: $GANG_BUSY_REGEX"
+    probe_row "$prof" "$installed" "$C_BAD" "MARKER STUCK — $(marker_named "$prof") painted, and was still painted once the pane went quiet"
     probe_evidence "$prof" "$pane"
     tmux kill-window -t "$id" 2>/dev/null || true
     return 1
@@ -5276,14 +5310,15 @@ vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witn
   # agent" — every real finding turned into a dim row and a clean exit. Defaulted,
   # the same mistake costs the filing and leaves the finding standing. What proves
   # the wiring is a check that files, not this line.
-  local prof pfile rc=0 turn_rc=0 beacon used fact_k fissue="${3:-0}"
+  local prof rc=0 turn_rc=0 beacon used fact_k fissue="${3:-0}"
   prof="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || prof=""
   # An unadopted window is somebody's shell, not an agent, and it declares no
   # tiers at all. The roster is where an operator learns it is there.
   [ -n "$prof" ] || return 0
-  # Kept rather than discarded: the busy row below names this file instead of
-  # reproducing the pattern it holds, for the reason argued there.
-  pfile="$(profile_file "$prof" 2>/dev/null)" || {
+  # A gate rather than a value: the busy rows below name this path through
+  # marker_named instead of reproducing the pattern it holds, for the reason argued
+  # there. What is asked here is only whether there is a file to name at all.
+  profile_file "$prof" >/dev/null 2>&1 || {
     vet_tier_row "$2" "$prof" "$C_DIM" "profile not found (GANG_PROFILES?) — no second witness to hold the first against"
     return 0
   }
@@ -5352,28 +5387,17 @@ vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witn
       # disagree, says what accounts for it, and declines to call it rot — which
       # is more than either a finding or a silence would say.
       vet_tier_row "$2" "$prof" "$C_DIM" \
-        "the busy tiers disagree and a compaction explains it: @gl_compact_bracket is open and fresh ($COMPACT_TRIGGER), and a compaction paints the busy marker declared in $pfile while opening no turn. Not rot, and not filed as rot."
+        "the busy tiers disagree and a compaction explains it: @gl_compact_bracket is open and fresh ($COMPACT_TRIGGER), and a compaction paints $(marker_named "$prof") while opening no turn. Not rot, and not filed as rot."
     else
-      # THE FILE, NOT THE PATTERN, and the difference is a live failure rather than
-      # a preference. This row is printed by an ordinary `gang vet`, and the thing
-      # an operator most often runs `gang vet` from is an agent's own pane — so a
-      # row carrying the pattern verbatim paints claude-code's bar glyphs onto a
-      # pane gang scrapes, and busy_painted reads the WHOLE pane. That agent then
-      # reads BUSY for as long as the line stays on screen: every send refused,
-      # every wait timed out, on a harness that is perfectly idle. It is the same
-      # rule probe_note is written to obey and the same accident that once had
-      # compacting() true for three minutes off a reviewer's own grep output, and
-      # it was caught here by the suite's own baseline — gang printed a shipped
-      # profile's regex into the pane of a probe that was measuring exactly this.
-      #
-      # The stated reason for naming the scrape at all was to tell an operator
-      # WHICH FILE TO OPEN, and the path serves that better than the pattern does:
-      # the declaration is what they have to edit, and it arrives with the comment
-      # block that says what the pattern was verified against. The pattern itself
-      # still travels in the filed issue below, which is read somewhere other than
-      # a pane and is the durable record this row is only a sighting of.
+      # THE FILE, NOT THE PATTERN — the argument is at marker_named, and this row is
+      # the site where it stops being a preference and becomes a live failure. It is
+      # printed by an ordinary `gang vet`, and the thing an operator most often runs
+      # `gang vet` from is an agent's own pane, so the row lands on a screen gang
+      # scrapes with no step in between. The pattern still travels in the filed
+      # issue below, which is read somewhere other than a pane and is the durable
+      # record this row is only a sighting of.
       vet_tier_row "$2" "$prof" "$C_BAD" \
-        "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting the busy marker declared in $pfile. gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
+        "ROT RISK — the busy tiers disagree: the turn bracket on @gl_turn says the turn closed and the pane is still painting $(marker_named "$prof"). gang answers idle from the bracket; a marker painted under a closed bracket means the scrape regex has almost certainly rotted."
       rc=2
       [ "$fissue" -eq 1 ] && file_tier_issue "$2" "$prof" busy "\
 - owned bracket (@gl_turn): the turn closed

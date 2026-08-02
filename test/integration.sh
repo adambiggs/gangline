@@ -3268,12 +3268,36 @@ pout="$(probe_run deadmark)"; prc=$?
 # that cannot fail is decoration, and the pane here is demonstrably working.
 check "a probe fails a harness that is working and never paints its marker" "MARKER DEAD" \
   "$(probe_verdict "$pout" deadmark)"
-check "and names the marker it could not find, since that is what has to be fixed" "yes" \
-  "$(holds "$pout" 'PROBEBUSY_NEVER')"
+# WHERE IT IS DECLARED, NOT WHAT IT SAYS. This row used to carry the pattern
+# verbatim, and a verdict is printed to whoever ran the command — most often into
+# an agent's own pane, which gang then scrapes whole. A row reproducing a busy
+# regex leaves that agent reading BUSY while perfectly idle. Naming the file costs
+# the operator nothing, because the declaration is what they have to edit anyway,
+# and the pattern still reaches them by the two paths that are not a pane: the
+# issue vet files, and the dump asserted below.
+check "and names the file the marker is declared in, since that is what has to be fixed" "yes" \
+  "$(holds "$pout" 'the busy marker declared in .*/deadmark\.sh')"
+check "and does not reproduce the pattern it is reporting on" "no" \
+  "$(holds "$pout" 'PROBEBUSY')"
 check "and exits nonzero so a caller cannot read it as a clean bill" "1" "$prc"
 
+pout="$(probe_run stuckmark)"
 check "a marker that never clears fails too, rather than passing for having appeared" "MARKER STUCK" \
-  "$(probe_verdict "$(probe_run stuckmark)" stuckmark)"
+  "$(probe_verdict "$pout" stuckmark)"
+check "and that row names where the marker is declared too, not just the dead one" "yes" \
+  "$(holds "$pout" 'the busy marker declared in .*/stuckmark\.sh')"
+check "and a marker stuck on the screen is not re-emitted by the row reporting it" "no" \
+  "$(holds "$pout" 'PROBEBUSY')"
+# THE DUMP IS THE OTHER HALF OF THAT RULE, and it goes the opposite way on purpose.
+# The rows are gang speaking and must not paint a marker; the dump is gang quoting
+# a screen, and here the marker's presence IS the finding — a capture with it
+# edited out would be an assertion, not evidence. So the file stays verbatim and
+# the row says so, which is what an operator needs before they cat it anywhere.
+stuck_dump="$(printf '%s\n' "$pout" | sed -n 's/.*pane it judged[^:]*: //p' | tail -1)"
+check "and the row warns that its dump is verbatim before anyone echoes it" "yes" \
+  "$(holds "$pout" 'pane it judged, verbatim and still holding the marker')"
+check "and the dump it points at really did keep the marker, evidence intact" "yes" \
+  "$(holds "$(cat "$stuck_dump" 2>/dev/null)" 'PROBEBUSY')"
 check "a marker on screen before any work voids the probe instead of passing it" "VOID" \
   "$(probe_verdict "$(probe_run dirtymark)" dirtymark)"
 # Never a pass and never a marker verdict: with nothing moving, "the marker is
