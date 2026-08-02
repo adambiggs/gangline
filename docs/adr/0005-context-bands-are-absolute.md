@@ -19,6 +19,12 @@ look.
 
 This ADR exists so there is no fourth time.
 
+The rung figures used as illustration below are the 2026-07-30 ladder this ADR
+set — kept because the argument needs concrete numbers against a concrete
+window, not because they are current; ADR-0006 derives its own rungs from a
+floor and cap instead, and nothing in the argument turns on which set is in
+effect.
+
 ### Why absolute is the design, not a limitation
 
 Context rot tracks the absolute length of a context, not how full the window happens
