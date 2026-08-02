@@ -3,3 +3,4 @@ packaging/pypi/build/
 packaging/pypi/*.egg-info/
 *.tgz
 .gang-briefs/
+.claude/settings.local.json
