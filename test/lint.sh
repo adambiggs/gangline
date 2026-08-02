@@ -17,7 +17,7 @@ cd "$(dirname "$0")/.."
 # .githooks is globbed rather than listed: hooksPath points the whole directory
 # at git, so a hook added later is a shell file this repo runs, and it should
 # not also need an edit here to be read.
-files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh .githooks/* site/demo/record.sh .github/workflows/*.sh"
+files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh tools/pii-scan .githooks/* site/demo/record.sh .github/workflows/*.sh"
 
 # A gate that cannot run must not report that it passed. And resolving on PATH
 # is not the ability to run: a version-manager shim resolves and then refuses
