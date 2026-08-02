@@ -15,11 +15,12 @@ does the same job for extraction.
 The proposal is really three, and they have three answers.
 
 What the loop is made of matters to all three, so it is worth stating
-structurally, as measured on this page's date. The policy layer is the band ladder (`ladder`), the band state and
-the note it paints (`band_state_read`, `band_state_write`, `band_note`), the
-compact command (`cmd_compact`), the resume waiter (`resume_after_compaction`
-with `compaction_mark`, `compaction_clear`, `compaction_pending`), and the sweep
-that applies them (`cmd_patrol`, `patrol_one`) — 507 lines across 11 functions.
+structurally, as measured on this page's date. The policy layer is the band
+ladder (`ladder`), the band state and the note it paints (`band_state_read`,
+`band_state_write`, `band_note`), the compact command (`cmd_compact`), the
+resume waiter (`resume_after_compaction` with `compaction_mark`,
+`compaction_clear`, `compaction_pending`), and the sweep that applies them
+(`cmd_patrol`, `patrol_one`) — 507 lines across 11 functions.
 
 Under it, and not separable from it, is the delivery substrate: `inject`,
 `gated`, the pane locks (`lock_base`, `lock_pane`, `lock_release`),
