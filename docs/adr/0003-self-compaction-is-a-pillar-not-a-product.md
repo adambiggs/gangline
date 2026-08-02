@@ -15,7 +15,7 @@ does the same job for extraction.
 The proposal is really three, and they have three answers.
 
 What the loop is made of matters to all three, so it is worth stating
-structurally. The policy layer is the band ladder (`ladder`), the band state and
+structurally, as measured on this page's date. The policy layer is the band ladder (`ladder`), the band state and
 the note it paints (`band_state_read`, `band_state_write`, `band_note`), the
 compact command (`cmd_compact`), the resume waiter (`resume_after_compaction`
 with `compaction_mark`, `compaction_clear`, `compaction_pending`), and the sweep
@@ -27,8 +27,9 @@ Under it, and not separable from it, is the delivery substrate: `inject`,
 context-drop proof family (`context_*`, 317 lines), which is what makes a claim
 about a compaction having happened evidence rather than assertion.
 
-So the policy layer is not a small thing sitting on a large one. It is slightly
-larger than the substrate it stands on, and every line of it reaches down.
+So the policy layer is not a small thing sitting on a large one. It measured
+slightly larger than the substrate it stands on, and every line of it reaches
+down.
 
 ## Decision
 
