@@ -30,10 +30,28 @@ GANG_RESUME_LAUNCH="claude --continue"
 # the operator's own settings.json is untouched and there is no generated file to
 # owe law 6 a deletion path. Two things were driven against 2.1.220 before this
 # was called load-bearing. Hooks supplied this way face NO trust gate, which was
-# the ADR's open verification item. And the merge is ADDITIVE: the operator's own
-# statusLine survives alongside these hooks, which is the difference between a
-# working agent and a blind one, because that statusLine is the only thing
-# painting the ctx beacon profile_context reads below.
+# the ADR's open verification item. And the merge is BY KEY, measured in both
+# directions at one live launch with a statusLine wired on each side: a key this
+# payload does not name survives from the operator's file, and a key it does name
+# is overridden for that session — the inline one painted, and the operator's did
+# not paint in any form. Intended and actual agree, so nothing here has to force
+# a precedence the harness was not already going to give it.
+#
+# THE BEACON RIDES THE SAME PAYLOAD, which is the second key and the reason that
+# override direction had to be measured rather than assumed. profile_context below
+# reads a "ctx <used>k/<win>k <pct>%" line off the pane, nothing paints it
+# natively, and until this key was added the only thing that could was a statusLine
+# the operator had wired by hand — so an unwired host ran every agent blind, with
+# no roster context column, no bands and no compaction decision, while every
+# version row read OK. Wiring it here makes the context tier a property of being
+# hitched, the same way the turn bracket is.
+#
+# It stays session-scoped instrumentation of a window the substrate created:
+# nothing is written to disk, and the operator's own statusLine is what runs
+# everywhere else and afterwards. What it does not reach is a window gang did not
+# launch — `gang adopt` registers one that is already running, and no inline
+# settings ever reached it — so for that agent the operator's file is still the
+# only beacon source, which is the case profile_vet's findings now describe.
 #
 # EXACTLY SIX EVENTS, because the wiring names only what feeds a declared
 # predicate with a live consumer (law 5). Three carry the turn bracket:
@@ -119,6 +137,25 @@ GANG_RESUME_LAUNCH="claude --continue"
 # "~/Application Support" is ordinary, and a guard that refused one would be
 # inventing a fault to protect against a fault.
 #
+# EXCEPT FOR statusLine, WHICH HAS NO EXEC FORM. Its `command` is one string, so
+# for that key alone the third layer comes straight back: a shell reads it at fire
+# time. That is established rather than assumed — a statusLine naming its script
+# through $HOME paints, and only a shell expanding it can do that. Left bare, an
+# install under "~/Application Support" would build a payload that parses, launch
+# a window that lives, satisfy every check in profile_vet, and paint no beacon at
+# all, because the statusline would exec "~/Application" — the same silent nothing
+# exec form was adopted to delete.
+#
+# So the path goes into that string inside LITERAL DOUBLE QUOTES, and the only two
+# characters a double-quoted word still expands are escaped ahead of the shell
+# that will read them. The guard above has already refused ' " \ and control
+# characters, which leaves exactly the dollar sign and the backtick — the doubled
+# backslash in the shell source is the one backslash JSON needs in order to carry
+# one backslash through to that shell. Only the EMBEDDED copy is escaped; $ROOT
+# itself is what profile_vet compares against. The suite drives the whole chain,
+# sh then JSON then a real `sh -c` against a stub, from a plain path, a spaced one,
+# one holding a dollar sign and one holding a backtick.
+#
 # An install path that cannot be wired leaves both launch lines bare rather than
 # refusing to load. Degrading to the scrape tier is what ADR-0008 designs for,
 # while dying here would take `gang roster` and `gang status` down for every
@@ -130,15 +167,17 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *[\'\"\\]*|*[[:cntrl:]]*) ;;   # unwirable path — profile_vet says so, loudly
     *)
       _gl_cc_cmd="{\"type\":\"command\",\"command\":\"$ROOT/bin/gang\",\"args\":[\"hook\"]}"
+      _gl_cc_esc="${ROOT//\$/\\\\\$}"; _gl_cc_esc="${_gl_cc_esc//\`/\\\\\`}"
       _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]}}"
+      _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]}"
+      _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}"
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
-      unset _gl_cc_cmd _gl_cc_json
+      unset _gl_cc_cmd _gl_cc_esc _gl_cc_json
       ;;
   esac
 fi
@@ -333,19 +372,20 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 
 # THE FACTS THIS HARNESS'S WIRING WRITES, which is a claim about the wiring and
 # not about what a probe can reach. Every name here is written by something the
-# operator has to have wired: the first three by the --settings payload built
-# above, and ctx by the statusline in the operator's own settings.json. Naming a
-# fact no leg can drive is the point rather than an oversight — vet then says
-# which ones it could not drive, per harness, instead of leaving a clean bill to
-# imply it drove them all.
+# operator has to have wired: every one of them by the --settings payload built
+# above. Naming a fact no leg can drive is the point rather than an oversight —
+# vet then says which ones it could not drive, per harness, instead of leaving a
+# clean bill to imply it drove them all.
 #
 # The two halves are wired differently and rot differently, which is why both are
-# probed. --settings MERGES: it overrides the keys it names and leaves the rest of
-# settings.json standing, so a probe launched from this line inherits the
-# operator's statusLine and writes ctx exactly as a hitched agent does. That is
-# also the skew this catches — an absolute path in settings.json can point at a
-# different checkout of the statusline, and one that still paints the beacon but
-# no longer writes the record passes every scrape and fails here.
+# probed. The hooks reach gang through exec form with no shell in the way; the
+# beacon is a command string a shell reads, and it is a round trip rather than a
+# fact handed over — this install's statusline computes a figure, paints it, and
+# writes the record behind it. So a probe launched from this line carries this
+# checkout's own beacon, exactly as a hitched agent does, and what it proves is
+# that this checkout still paints a line gang can read AND still writes the record
+# behind it. A statusline that paints the beacon and has stopped writing the
+# record passes every scrape and fails here.
 GANG_PROBE_FACTS="turn ctx occupied compaction"
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
@@ -354,7 +394,7 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   # into the pane from the statusline payload's own context_window figures.
   local m
   m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
-    || die "no ctx beacon in pane — wire statusline/claude-code-context.sh into settings.json statusLine (see README)"
+    || die "no ctx beacon in pane — a window gang hitched carries the beacon in its own launch line, so this is either a window gang adopted rather than launched, which needs statusline/claude-code-context.sh wired into settings.json statusLine by hand, or a fault gang vet names"
   m="${m#ctx }"
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
@@ -402,10 +442,10 @@ profile_vet() { # setup gate: is anything actually painting the beacon read abov
   # the payload.
   wired="${GANG_LAUNCH#*--settings \'}"
   wired="${wired%%\'*}"
-  python3 - "$wired" "$ROOT/bin/gang" <<'PY' || return 1
+  python3 - "$wired" "$ROOT/bin/gang" "$ROOT/statusline/claude-code-context.sh" <<'PY' || return 1
 import json, sys
 
-raw, want = sys.argv[1], sys.argv[2]
+raw, want, beacon = sys.argv[1], sys.argv[2], sys.argv[3]
 try:
     d = json.loads(raw)
 except ValueError as e:
@@ -449,8 +489,35 @@ for ev in have:
               "loses every install path holding a space"
               % (ev, got or "nothing", want), file=sys.stderr)
         sys.exit(1)
+# The one key that is not a hook, and the one the exec-form argument above does
+# NOT cover: statusLine takes a single command string, so a shell reads it at fire
+# time. What is asserted is therefore the QUOTING and not merely the path — the
+# beacon inside literal double quotes, with the two characters a double-quoted
+# word still expands escaped ahead of that shell. Rebuilt here by the same rule
+# the profile builds it by and compared exactly, because the failure is total and
+# silent: an unquoted path holding a space leaves this payload parsing, the launch
+# succeeding and the pane carrying no beacon, which is every context reader on
+# this harness blind at once. The suite carries the proof end to end through a
+# real shell; this is what asks the question on an operator's own install.
+sl = d.get("statusLine")
+esc = '"%s"' % beacon.replace("$", "\\$").replace("`", "\\`")
+if not isinstance(sl, dict) or sl.get("type") != "command" or sl.get("command") != esc:
+    print("the --settings payload wires statusLine to %s, not to command %s, so the "
+          "\"ctx <used>k/<win>k <pct>%%\" beacon profile_context reads is not painted "
+          "in the windows gang launches and every context reader on this harness "
+          "goes blind" % (json.dumps(sl), json.dumps(esc)), file=sys.stderr)
+    sys.exit(1)
 PY
   beacon="$ROOT/statusline/claude-code-context.sh"
+  # The launch line above now points every hitched window at that path, so its
+  # absence is gang's own fault rather than the operator's, and it is invisible
+  # from the payload: a tree missing this file wires a statusLine that parses,
+  # launches and runs nothing. An install copied without statusline/, or one whose
+  # bin/gang is a link into a tree that has since moved, lands exactly here.
+  [ -r "$beacon" ] || {
+    echo "the launch line wires the context beacon as $beacon and this install has no readable file there, so every window gang hitches runs a statusline that paints nothing and gang has no context readout on this harness"
+    return 1
+  }
   # Lowest precedence first, so a later file wins the same way the harness
   # resolves them. CLAUDE_CONFIG_DIR relocates the user scope: in the installed
   # 2.1.220 binary the user settings path is `Kx.join(y3r("userSettings"),
@@ -513,19 +580,36 @@ PY
 )" || { echo "python3 could not read the settings files"; return 1; }
   IFS=$'\t' read -r status detail cmd src tok <<<"$out"
   [ "$status" = ok ] || { echo "$detail"; return 1; }
+  # Everything from here reports on the OPERATOR's file, and the launch line has
+  # changed what that file is for. Whether the beacon is injected is read off the
+  # line itself rather than off having reached this point: the two checks above
+  # already refuse a line that does not carry it, so this is a restatement — and a
+  # cheap one, because if either ever loosens these rows go on describing the line
+  # that exists instead of the one this branch assumed.
+  local injected=no
+  case "$GANG_LAUNCH" in *'"statusLine"'*) injected=yes ;; esac
+  # WHAT KEEPS THESE FINDINGS MEANINGFUL after injection is `gang adopt`, which
+  # registers a window that was already running. Gang did not launch it, so no
+  # inline settings ever reached it and the operator's file is that agent's only
+  # beacon source. So each finding below names what it COSTS instead of claiming
+  # the whole harness is blind, which after injection it is not.
   if [ -z "$cmd" ]; then
-    echo "no statusLine command in $detail, so nothing paints the \"ctx <used>k/<win>k <pct>%\" beacon and gang context, the roster context column and every patrol band are blind on this harness. Wire it: \"statusLine\": {\"type\": \"command\", \"command\": \"$beacon\"}. Project-scope .claude/settings.json is not read here — the directory an agent will be hitched in is not known at vet time"
+    if [ "$injected" = no ]; then
+      echo "no statusLine command in $detail and gang's own launch line carries none either, so nothing paints the \"ctx <used>k/<win>k <pct>%\" beacon and gang context, the roster context column and every patrol band are blind on this harness. Wire it: \"statusLine\": {\"type\": \"command\", \"command\": \"$beacon\"}. Project-scope .claude/settings.json is not read here — the directory an agent will be hitched in is not known at vet time"
+      return 1
+    fi
+  elif [ -z "$tok" ]; then
+    echo "$src points statusLine at \"$cmd\", which is not gangline's beacon script. Inside a window gang launches that costs nothing: the beacon rides gang's own --settings payload, which overrides the statusLine key for that session and leaves $src running everywhere else and afterwards. What it costs is gang adopt — an adopted window is one gang did not launch, so it carries no inline settings, and unless that command paints a \"ctx <used>k/<win>k <pct>%\" line itself an adopted agent has no context readout and its context tier is absent. This install's beacon is $beacon, and gang vet --probe settles it against a live pane"
+    return 1
+  elif [ "$tok" != "?" ] && [ ! -r "$tok" ]; then
+    echo "$src wires the beacon as $tok and that path is not readable, so the statusline it names runs nothing. Inside a window gang launches that costs nothing: the beacon rides gang's own --settings payload, which names this install's copy at $beacon. What it costs is gang adopt — an adopted window is one gang did not launch, so it carries no inline settings, it paints no beacon at all, and its context tier is absent"
     return 1
   fi
-  if [ -z "$tok" ]; then
-    echo "$src points statusLine at \"$cmd\", which is not gangline's beacon script. Unless that command paints a \"ctx <used>k/<win>k <pct>%\" line itself, gang has no context readout on this harness. This install's beacon is $beacon, and gang vet --probe settles it against a live pane"
-    return 1
+  if [ -n "$src" ]; then
+    echo "OK (context beacon injected at hitch and also wired in $src; turn hooks wired to $ROOT/bin/gang)"
+  else
+    echo "OK (context beacon injected at hitch, so no settings file has to wire it; a window gang adopts rather than launches carries no inline settings and paints none; turn hooks wired to $ROOT/bin/gang)"
   fi
-  if [ "$tok" != "?" ] && [ ! -r "$tok" ]; then
-    echo "$src wires the beacon as $tok and that path is not readable, so the statusline runs nothing and the pane carries no beacon. This install's copy is $beacon"
-    return 1
-  fi
-  echo "OK (context beacon wired in $src; turn hooks wired to $ROOT/bin/gang)"
 }
 
 profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box

@@ -337,14 +337,19 @@ pane.
 
 The profile-owned gate is also where harness-specific setup is checked, and a
 finding names the edit that fixes it. `codex` and `opencode` gate the file
-formats they parse. `claude-code` reports whether the context beacon
-`profile_context` reads is wired as a `statusLine` command, distinguishing an
-absent one, another statusline, and a beacon path that no longer exists; it reads
-the user and managed settings scopes and names which it read. Project-scope
-settings are not read — the directory an agent will be hitched in is not known at
-vet time — and a settings file that exists but does not parse is reported as
-undetermined, never as unconfigured. The gate is skipped where the harness is not
-installed.
+formats they parse. `claude-code` parses back the launch line it
+builds, asserting the six turn-hook events and the `statusLine` command that
+paints the context beacon, and reports a finding when this install has no readable
+beacon script for that line to point at. It then reads the operator's own
+`statusLine` setting, which after injection decides one thing: whether a window
+`gang adopt` registered — one gang did not launch, so no inline settings ever
+reached it — paints a beacon at all. Another statusline there and a beacon path
+that no longer exists stay distinct findings, and each says what it costs, which
+is that agent's context tier rather than the whole harness. It reads the user and
+managed settings scopes and names which it read. Project-scope settings are not
+read — the directory an agent will be hitched in is not known at vet time — and a
+settings file that exists but does not parse is reported as undetermined, never as
+unconfigured. The gate is skipped where the harness is not installed.
 
 The `patrol cron` row reports the entry sweeping this session as absent, current,
 or stale, and is omitted where there is no `crontab` command. Only stale counts as

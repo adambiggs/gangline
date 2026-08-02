@@ -2730,11 +2730,15 @@ rm -rf "$SHIM/vetonly"
 
 # --- vet: the claude-code beacon has to be wired for any reader to work --------
 
-# The shipped claude-code profile reads context from a statusline the OPERATOR
-# wires, so an unwired host has no context readout at all — no roster column, no
-# bands, no compaction decision — while every version row reads OK. That is the
-# shape of failure vet exists to catch, and it is a static fact about a file, so
-# it is answerable before a team exists.
+# The shipped claude-code profile reads context from a statusline, and gang now
+# injects that statusline into the launch line of every window it hitches — so an
+# unwired host is no longer blind, and this section's job is holding these
+# findings to what stays true. What injection does not reach is a window gang
+# ADOPTED rather than launched: `gang adopt` registers one that was already
+# running, which carries no inline settings at all, so the operator's file is that
+# agent's only beacon source. Every row below is a finding about that agent, and
+# the failure worth guarding is one going back to claiming the whole harness is
+# blind — an operator who acts on that edits a file that changes nothing.
 #
 # Driven against the real profiles/claude-code.sh, not a stand-in: the parsing,
 # the precedence order and the wording are the thing under test. `claude` is
@@ -2751,21 +2755,26 @@ ccwire() { printf '{"statusLine":{"type":"command","command":"%s"}}\n' "$1" > "$
 
 printf '{}\n' > "$CCFX/settings.json"
 vout="$(ccvet)"
-check "an unwired statusline is a finding, not a clean bill" "yes" \
-  "$(holds "$vout" 'harness files: DRIFT — no statusLine command in .*/settings[.]json')"
-# The operator asked for the edit, not just the complaint: an agent reading this
-# row has to be able to offer the change without going and looking it up.
-check "and the row carries the edit that fixes it" "yes" \
-  "$(holds "$vout" '"statusLine": [{]"type": "command", "command": ".*/statusline/claude-code-context[.]sh"[}]')"
-# What a script reads. A finding printed in dim text with a zero exit is a finding
-# nothing acts on.
-CLAUDE_CONFIG_DIR="$CCFX" PATH="$SHIM/haveclaude:$PATH" "$GANG" vet >/dev/null 2>&1
-check "an unwired statusline fails the command" "1" "$?"
+check "a host that wired no statusline of its own is no longer a finding" "yes" \
+  "$(holds "$vout" 'harness files: OK [(]context beacon injected at hitch')"
+# The row is what keeps that OK from reading as "everything paints". An operator
+# whose adopted agent shows no context has to find the reason on the very row that
+# told them they were fine, not by reading a profile.
+check "and the OK names the window injection does not reach" "yes" \
+  "$(holds "$vout" 'gang adopts rather than launches carries no inline settings')"
+# What a script reads. The verdict word is rendered from the gate's exit status —
+# bin/gang prints "DRIFT —" on a nonzero return and nothing else does — so a stray
+# finding standing beside that OK shows up here. Scoped to the beacon, because
+# codex and opencode print harness-files rows of their own into the same output.
+check "and reports no beacon drift beside it" "no" \
+  "$(holds "$vout" 'harness files: DRIFT — .*statusLine')"
 
-# The control. Without it a gate hard-wired to DRIFT passes every check above.
+# Both sources at once is its own row, because "injected" and "wired in the
+# operator's file" answer different questions and only the second one reaches an
+# adopted window. An operator reading a bare OK cannot tell which they have.
 ccwire "$CCBEACON"
-check "a wired one passes" "yes" \
-  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon wired in ')"
+check "an operator who also wired it by hand is told both are true" "yes" \
+  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon injected at hitch and also wired in ')"
 # The same row answers for the event tier, and it is the only thing that does. The
 # turn hooks are built into the launch line at profile load from $ROOT; nothing
 # else parses that string back, so a template typo would ship a launch line the
@@ -2779,16 +2788,22 @@ check "and the same row reports the turn hooks it wired" "yes" \
 # operator to stop reading the row.
 ccwire "bash $CCBEACON --quiet"
 check "so does one behind an interpreter with arguments" "yes" \
-  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon wired in ')"
+  "$(holds "$(ccvet)" 'harness files: OK [(]context beacon injected at hitch and also wired in ')"
 
-# Three ways to be unwired that need three different actions, and the failure
-# worth guarding is them collapsing into one another.
+# Three ways an adopted window ends up unwired that need three different actions,
+# and the failure worth guarding is them collapsing into one another.
 ccwire "/gone/statusline/claude-code-context.sh"
 check "a beacon path that no longer exists is its own finding" "yes" \
   "$(holds "$(ccvet)" 'harness files: DRIFT — .* wires the beacon as /gone/.* not readable')"
 ccwire "/opt/theme/my-statusline.sh"
 check "and a statusline that is simply somebody else's is another" "yes" \
   "$(holds "$(ccvet)" "harness files: DRIFT — .* points statusLine at .*my-statusline")"
+# The row has to say what it COSTS, not that the harness is blind, because after
+# injection it is not: the same operator's hitched agents all have a context tier.
+# A finding that overstates its scope sends them to change a file for a fault they
+# do not have, and teaches them to stop reading the row.
+check "and that finding is scoped to the cost, not to the whole harness" "yes" \
+  "$(holds "$(ccvet)" 'costs is gang adopt — an adopted window is one gang did not launch.*context tier is absent')"
 # The one that must never resolve toward "not configured": the file may well hold
 # the wiring, and vet cannot see it. Reporting that as absent would send an
 # operator to add a setting they already have, and would print a confident
@@ -2833,7 +2848,7 @@ ccsrc() { # $1 = the ROOT to build against, $2 = which launch variable to print
     'set -euo pipefail; . "$0/profiles/claude-code.sh"; printf %s "${!1}"' "$CCTREE" "$2"
 }
 ccpayload() { # the --settings JSON out of a built launch line, the way vet reads it
-  local l; l="$(ccsrc "$CCTREE" "$1")"; l="${l#*--settings \'}"; printf '%s' "${l%%\'*}"
+  local l; l="$(ccsrc "${2:-$CCTREE}" "$1")"; l="${l#*--settings \'}"; printf '%s' "${l%%\'*}"
 }
 
 check "the ordinary launch line carries a --settings payload" "yes" \
@@ -2909,6 +2924,85 @@ print(" ".join(sorted(a)))' "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
 # 8.6% of their frames.
 check "the resume form carries the identical payload, not a bare relaunch" "yes" \
   "$([ "$(ccpayload GANG_RESUME_LAUNCH)" = "$(ccpayload GANG_LAUNCH)" ] && echo yes || echo no)"
+
+# THE SEVENTH KEY, and the only one that is not a hook. Nothing paints a context
+# readout on this harness natively, so until this key was wired the context tier
+# existed only on hosts where an operator had set up the statusline by hand.
+# Asserted as an exact string rather than as a presence test, because the quoting
+# is the whole content of it.
+check "and it wires the context beacon beside the hooks, quoted for the shell that reads it" \
+  "\"$CCTREE/statusline/claude-code-context.sh\"" \
+  "$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["statusLine"]["command"])' \
+       "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+# Two keys, and which two is a measured decision rather than a tidy one. The merge
+# is BY KEY: a key this payload names is overridden for the session, and a key it
+# does not name survives from the operator's own file — both directions driven at a
+# live launch with a statusLine wired on each side. So a third key added here would
+# quietly take something of the operator's over for the whole run, and the set is
+# pinned the same way the six events are.
+check "and names exactly those two top-level keys, so nothing else is overridden" \
+  "hooks statusLine" \
+  "$(python3 -c 'import json,sys; print(" ".join(sorted(json.loads(sys.argv[1]))))' \
+       "$(ccpayload GANG_LAUNCH)" 2>/dev/null)"
+
+# THE LAYER exec form deleted for the hooks, which statusLine brings straight back:
+# its command is one string a shell reads at fire time and there is no exec form for
+# it. So the payload can parse, the launch can succeed and vet can read OK while the
+# beacon never paints once — an unquoted path holding a space execs its first token,
+# the same silent nothing the hooks were measured out of. That is not answerable by
+# inspecting the JSON, so the string is RUN: built by the profile against four
+# fixture trees, pulled back out the way vet pulls it, and handed to a real `sh -c`
+# against a stub that records having run. The plain path is the control — an
+# escaping change that broke the ordinary case takes that leg down with the others.
+CCSL="$SHIM/slshell"
+slran=""
+for slname in plain 'has space' 'we$ird' 'back`tick'; do
+  slroot="$CCSL/$slname"
+  mkdir -p "$slroot/bin" "$slroot/statusline"
+  printf '#!/bin/sh\nexit 0\n' > "$slroot/bin/gang"; chmod +x "$slroot/bin/gang"
+  printf '#!/bin/sh\n: > "$0.ran"\n' > "$slroot/statusline/claude-code-context.sh"
+  chmod +x "$slroot/statusline/claude-code-context.sh"
+  slcmd="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["statusLine"]["command"])' \
+             "$(ccpayload GANG_LAUNCH "$slroot")" 2>/dev/null)"
+  [ -n "$slcmd" ] && sh -c "$slcmd" </dev/null >/dev/null 2>&1
+  if [ -f "$slroot/statusline/claude-code-context.sh.ran" ]; then
+    slran="$slran${slran:+ | }$slname"
+  fi
+done
+check "the beacon command survives sh, then JSON, then the shell that reads it at fire time" \
+  'plain | has space | we$ird | back`tick' "$slran"
+
+# What the launch line points at has to EXIST, and nothing in the payload can say
+# whether it does: a tree with no statusline/ in it builds a statusLine that parses,
+# launches and runs nothing. An install copied without that directory, or a bin/gang
+# symlinked into a tree that has since moved, lands exactly there — and once the
+# beacon is injected that fault is gang's own rather than the operator's, so it
+# belongs on gang's row. profile_vet is called directly, because what is under test
+# is one gate against one $ROOT and `gang vet` only ever asks about its own tree.
+CCNOSL="$SHIM/nostatusline"
+mkdir -p "$CCNOSL/bin" "$CCNOSL/cfg" "$SHIM/slclaude"
+printf '#!/bin/sh\nexit 0\n' > "$CCNOSL/bin/gang"; chmod +x "$CCNOSL/bin/gang"
+printf '#!/bin/sh\necho "2.1.220 (Claude Code)"\n' > "$SHIM/slclaude/claude"
+chmod +x "$SHIM/slclaude/claude"
+printf '{}\n' > "$CCNOSL/cfg/settings.json"
+ccgate() { # $1 = the ROOT to gate ; profile_vet's row on stdout, its status as exit
+  CLAUDE_CONFIG_DIR="$CCNOSL/cfg" PATH="$SHIM/slclaude:$PATH" \
+    GANG_TEST_PROFILES='' ROOT="$1" bash -c \
+    'set -uo pipefail; . "$1/profiles/claude-code.sh"; profile_vet' _ "$CCTREE" 2>&1
+}
+check "an install whose own beacon script is missing is a finding, not an OK" "yes" \
+  "$(holds "$(ccgate "$CCNOSL")" 'no readable file there, so every window gang hitches runs a statusline that paints nothing')"
+# The control, on the same gate one file apart: without it a check that fires on
+# every tree would pass here and report nothing.
+check "while the same fixture with the script in place passes" "no" \
+  "$(holds "$(ccgate "$CCSL/plain")" 'no readable file there')"
+# And the operator's file being empty is no longer what makes that gate fail, which
+# is the inversion this key bought: the beacon rides the line, so a host that
+# configured nothing still has a context tier in every window gang hitches.
+check "and an empty settings file leaves that same gate passing" "yes" \
+  "$(holds "$(ccgate "$CCSL/plain")" 'OK [(]context beacon injected at hitch')"
+rm -rf "$CCSL" "$CCNOSL" "$SHIM/slclaude"
+unset -f ccgate
 
 # THE SKIP LEG. The launch line is handed to sh and then to a JSON parser, so an
 # install path holding a single quote, a double quote, a backslash or a control

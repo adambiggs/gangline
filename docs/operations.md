@@ -183,8 +183,11 @@ The shipped profiles obtain the value differently:
 - **Claude Code:** `statusline/claude-code-context.sh` formats the harness's own
   statusline payload into a `ctx <used>k/<window>k <percent>%` pane beacon and
   writes the same figures to the owned context fact in the same breath. A fresh
-  fact is the readout; the beacon is the scrape it falls back to. Wire the
-  script into `settings.json` as shown in the README.
+  fact is the readout; the beacon is the scrape it falls back to. Gang wires that
+  script into the launch line of every window it hitches, so nothing has to be set
+  up for a hitched agent. A window `gang adopt` registered was already running and
+  carries none of that, so it paints a beacon only where the operator wired the
+  script into `settings.json` themselves, as shown in the README.
 - **Codex:** a hitch-time random marker links the window to exactly one rollout
   JSONL file. The profile reads its last `token_count` event. An adopted Codex
   window has no marker and cannot provide context.

@@ -5546,9 +5546,10 @@ cmd_vet() { # strategy-rot check: installed harness version vs each profile's pi
     # tissues, in fact, which is why the label is the general one: files the
     # harness WRITES and a profile parses (codex rollouts, opencode's model
     # catalog), and files the operator OWNS that a reader needs to say the right
-    # thing (claude-code's context beacon is painted by a statusline wired in
-    # settings.json, and an unwired one leaves gang blind to that harness with
-    # every version row above reading OK). The profile owns the check (law 4);
+    # thing (claude-code's context beacon rides its launch line, so what the
+    # operator's settings.json still decides is whether an ADOPTED window — one
+    # gang did not launch, and which therefore carries no inline settings — paints
+    # a beacon at all). The profile owns the check (law 4);
     # vet just runs it and counts a failure as drift.
     # Unconditionally: the version probe and the file gate are independent
     # diagnostics, and a host without the harness binary can still hold session
