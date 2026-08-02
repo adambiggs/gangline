@@ -12,10 +12,10 @@ git config core.hooksPath .githooks
 Enables the `commit-msg` gate and the `pre-push` gate. Neither is installed
 automatically; a clone without this commits and pushes unchecked.
 
-`pre-push` runs the CI checks that take seconds — `test/lint.sh` over the tree
-being pushed, and the Conventional Commits regex over the range being pushed. It
-does not run the integration suite, so passing it is not a prediction that CI
-will pass. `git push --no-verify` skips it.
+`pre-push` runs the gates that take seconds; `.githooks/pre-push` itself is
+the authoritative list of what those are, and a gate added there needs no
+edit here to be announced. It does not run the integration suite, so passing
+it is not a prediction that CI will pass. `git push --no-verify` skips it.
 
 ## Public content
 
