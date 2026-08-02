@@ -18,9 +18,9 @@ disk with nothing in the tool able to ask for it, and the operator's only path
 was to leave Gangline and drive each harness by hand.
 
 This is not a hypothetical failure by the repo's own account. `roles/_common.md`
-spends twenty-seven lines warning agents about the accidental-`kill-server` path
-and says "This is not hypothetical." So the failure was considered likely enough
-to warn every agent about, while having no answer and no ADR admitting it.
+warns agents at length about the accidental-`kill-server` path and says "This is
+not hypothetical." So the failure was considered likely enough to warn every
+agent about, while having no answer and no ADR admitting it.
 
 Partial death was already handled well: `roster_row` and `patrol_one` are
 subshelled, so one sick agent costs one row. Total death was not handled at all.

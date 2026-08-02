@@ -20,13 +20,13 @@ ladder (`ladder`), the band state and the note it paints (`band_state_read`,
 `band_state_write`, `band_note`), the compact command (`cmd_compact`), the
 resume waiter (`resume_after_compaction` with `compaction_mark`,
 `compaction_clear`, `compaction_pending`), and the sweep that applies them
-(`cmd_patrol`, `patrol_one`) — 507 lines across 11 functions.
+(`cmd_patrol`, `patrol_one`).
 
 Under it, and not separable from it, is the delivery substrate: `inject`,
 `gated`, the pane locks (`lock_base`, `lock_pane`, `lock_release`),
-`busy_painted`, and `compacting` — 414 lines across 7 functions — plus the
-context-drop proof family (`context_*`, 317 lines), which is what makes a claim
-about a compaction having happened evidence rather than assertion.
+`busy_painted`, and `compacting` — plus the context-drop proof family
+(`context_*`), which is what makes a claim about a compaction having happened
+evidence rather than assertion.
 
 So the policy layer is not a small thing sitting on a large one. It measured
 slightly larger than the substrate it stands on, and every line of it reaches
@@ -70,8 +70,7 @@ hold current, and a reader who has to be told the two are the same program.
   tty, that becomes a profile transport under law 4, the same way ADR-0002 leaves
   the door for an external-control channel. Gangline's verbs would not move; only the
   delivery mechanism behind them. Still one tree.
-- Size is watched, not capped (law 9): the loop and the evidence it produces come to
-  824 of `bin/gang`'s 3305 function lines, which makes it the largest single concern
-  in the file — for comparison, every other `cmd_*` verb put together is 504. That is
-  a number to weigh at each addition to it, and it argues for keeping one copy of the
-  substrate rather than for splitting the loop out of it.
+- Size is watched, not capped (law 9): the loop and the evidence it produces are the
+  largest single concern in the file, outweighing every other `cmd_*` verb put
+  together. That is a weight to re-measure at each addition to it, and it argues for
+  keeping one copy of the substrate rather than for splitting the loop out of it.

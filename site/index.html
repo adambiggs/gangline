@@ -484,7 +484,7 @@ compaction settles.</code></pre>
   <p class="lede">
     Where the harness accepts compaction during an active task, the agent then
     compacts itself at the next clean seam &mdash; tests green, a commit made &mdash;
-    without being idle first and without anyone watching. Codex 0.145.0 rejects
+    without being idle first and without anyone watching. Codex rejects
     <code>/compact</code> during an active task, so another caller must compact it
     once it is idle, or Codex must reach its own automatic compaction. The
     <code>--resume-stdin</code> never rides the input queue directly behind its own
