@@ -341,9 +341,15 @@ pre-authorises those role directories and nothing else, for that one process,
 merged into your config rather than replacing it. It is not `--auto`, and no
 other posture changes.
 
-**Context reading.** Claude Code needs Gangline's statusline beacon before
-`gang context`, the roster context column, or context patrol can read its usage. Merge
-this into `~/.claude/settings.json` (adjust the path if `GANGLINE_HOME` differs):
+**Context reading.** A Claude Code window `gang hitch` launches carries
+Gangline's statusline beacon on its own launch line — no setup, and `gang
+context`, the roster context column, and context patrol read it from the first
+turn. Inside that session the beacon is what paints, even if you have wired
+your own statusline; your own settings file is untouched and your statusline
+runs everywhere else and afterwards. The manual merge below is needed for one
+case only — a window `gang adopt` attaches to, which gang did not launch and so
+could not carry the beacon in. Merge it into `~/.claude/settings.json` (adjust
+the path if `GANGLINE_HOME` differs):
 
 ```json
 {
@@ -354,8 +360,8 @@ this into `~/.claude/settings.json` (adjust the path if `GANGLINE_HOME` differs)
 }
 ```
 
-`gang vet` confirms it, and prints this edit with the right path for your install
-if it is missing.
+`gang vet` names an adopted window running without it, and names the cost: that
+agent's context tier is dark.
 
 ## The operating model
 
