@@ -5485,10 +5485,23 @@ GANG_BUSY_REGEX="WORKING\\\\.\\\\.\\\\."
 GANG_COMPACT_CMD="#compact"
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
-  local line
+  local line n
   # The operator's hands, switched on from outside: while this file exists the box
   # reads differently on every look, which is exactly what composer_settled refuses.
-  if [ -e "$SHIM/hands-on-keyboard" ]; then printf 'being-typed-%s' "\$RANDOM"; return 0; fi
+  # Differently by CONSTRUCTION — a counter file, not \$RANDOM. Bash 3.2 (macOS
+  # CI's bash) marks a process's RANDOM as seeded the first time it is expanded
+  # under subshell_environment, and mark and seed are both inherited: gang's
+  # occupied() reads this box in-process just before inject's command-substituted
+  # reads, so every later \$(...) read replays the same next value. The box
+  # froze, composer_settled called it still, and the paste read back
+  # "unchanged". A fixture premise must not depend on which bash is looking.
+  if [ -e "$SHIM/hands-on-keyboard" ]; then
+    n="\$(cat "$SHIM/keystrokes" 2>/dev/null)" || n=0
+    n="\$((n + 1))"
+    printf '%s' "\$n" > "$SHIM/keystrokes"
+    printf 'being-typed-%s' "\$n"
+    return 0
+  fi
   line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
   printf '%s' "\${line#❯}" | tr -d '\302\240'
 }
