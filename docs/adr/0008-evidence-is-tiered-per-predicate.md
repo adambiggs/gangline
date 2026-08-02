@@ -160,10 +160,59 @@ every shipped harness will be one.
   are absent or expired.
 - The zero-token beacon guards in bin/gang's context read path become
   fallback-path guards rather than the main line.
-- Open verification item: whether hooks supplied via `--settings` face a trust
-  gate is undocumented. It is probed before this wiring is called load-bearing;
-  either way the pre-hook trust dialog itself stays scrape-tier forever,
-  because it exists before hooks do.
+- Hooks supplied via `--settings` face no trust gate. A window gang hitched with
+  its own inline payload fired them with no prompt in the way, on a project whose
+  trust dialog had never been accepted. Two caveats travel with that, and neither
+  is decoration: it was established by watching a live launch, not by proving no
+  gate exists inside the harness; and this host had already completed onboarding,
+  so a fresh install, or an image that has never run the harness at all, is
+  untested. Either way the pre-hook trust dialog itself stays scrape-tier
+  forever, because it exists before hooks do.
+- The context beacon rides the same payload the hooks ride, so the context tier
+  no longer waits on an operator having wired a statusline by hand. The merge is
+  BY KEY: a key the payload does not name survives from the operator's settings
+  file, and a key it names is overridden for that session. Measured in both
+  directions at one launch with a statusLine wired on each side — the inline one
+  painted, and the operator's did not paint in any form. Intended and actual
+  agree, so nothing here leans on a precedence the harness was not already going
+  to give it. Scope stated plainly: one host, by observation, not proven from the
+  binary.
+- Exec form deletes the fire-time shell for the hooks and NOT for the beacon.
+  Hook commands are a command plus an argv, so nothing re-splits a path when they
+  fire; `statusLine` has no exec form at all, and its command is one string handed
+  to a shell every time the line paints. The third quoting layer comes back for
+  that one key, which is why the payload escapes what a double-quoted path still
+  leaves live rather than trusting the launch-line guard alone.
+- A window gang ADOPTED gets none of that. It was launched by somebody else, so
+  no inline payload ever reached it, and the operator's settings file is that
+  agent's only beacon source. That is what the remaining settings-file findings
+  are about, and why they now name what they cost — one agent's context tier —
+  instead of reporting the harness blind.
+- codex's turn predicate stays scrape-tier because there is no owned-event
+  channel to translate, not because nobody has got to it. Wiring one would mean
+  inventing the channel and then claiming the tier it implies, which is a
+  fabricated witness; an empty row is the honest reading and is how it is meant
+  to be read.
+- The tiers may disagree without rot when something accounts for it. A compaction
+  paints the busy marker while opening no turn, so a fresh compaction bracket
+  under a painted marker and a closed turn is explained rather than filed — and
+  both readers apply the exemption, the patrol log that witnesses when it happened
+  and the vet row that answers what is true now. A rule that held on only one of
+  them would let a postmortem and a report describe different systems.
+- The bottom tier is a surface gang also writes to, which makes gang's own output
+  part of the scrape contract. Nothing gang re-emits into a pane may read as a
+  marker or tag: the rows that report a busy marker name the file it is declared
+  in, and the pattern travels in the issues vet files, which are read somewhere
+  other than a pane. Escaping the pattern instead does not generalise — a busy
+  regex is allowed to be a bare single character, and any text quoting one matches
+  it. The one deliberate exception is the pane dump behind a failing probe
+  verdict, which stays verbatim because a capture with the marker edited out is an
+  assertion rather than evidence; the row naming it says so.
+- Residual, named rather than papered over: the suite's generic "nothing gang
+  paints while probing reads as a harness busy marker" sweep reads the pane of a
+  probe that PASSES, so any row only a FAILING probe prints is outside it. Those
+  rows carry checks of their own instead. Closing the general case needs a second
+  windowed probe driven to a failure, which is not free.
 - The profile contract in docs/reference.md grows the per-predicate tier
   declaration when the first portfolio lands, not before (law 5).
 
@@ -183,3 +232,9 @@ every shipped harness will be one.
   expiry already answers them; correlation was sharpened from fusion to
   conflict-surfacing (tiers pick witnesses), and the postmortem trail was fixed
   as log-shaped. The bullets above are that review made standing.
+- **2026-08-01, build** — the wiring above was built against the live harness
+  rather than reasoned from its docs, and three of these bullets are things the
+  plan did not have until something was measured: the by-key merge, statusLine's
+  missing exec form, and the trust gate's absence. Each is recorded with the
+  scope of its evidence, because "observed once here" and "cannot happen" are
+  different claims and this page's whole subject is which witness said what.
