@@ -183,6 +183,22 @@ check() { # $1 = what, $2 = expected, $3 = actual
   fi
 }
 
+# Every section below announces itself, because a log of bare ok and FAIL
+# lines cannot be attributed to the part of the suite that produced them.
+# The marker carries NO time in it: a stopwatch written into the permanent
+# artifact makes every run differ from every other, and a log that differs
+# every time cannot be diffed against the last one. Whatever reads the
+# stream stamps arrival, and that reader is a throwaway.
+#
+# On STDOUT, beside check's own output, and the placement is the whole
+# design rather than where it happened to land. Every diagnostic dump here
+# goes to stderr -- wait_for's pane capture and its timeout line, id_of's
+# refusal, the unevaluable-ERE complaint -- so a reader taking stdout alone
+# cannot mistake pane content for a section boundary, whatever a pane
+# happens to be holding. Choosing a prefix a pane is unlikely to contain
+# would be a conduct rule; a pane can hold anything. This one is structural.
+section() { printf '>>> %s\n' "$1"; }
+
 id_of() { # $1 = window NAME -> @id, so the test can address a window named "1"
   local id name
   while read -r id name; do
@@ -327,6 +343,7 @@ target_of() { # $1 = window name; a NON-EMPTY @id or the suite stops
 }
 
 # --- waiting on the evidence rather than on the clock ---------------------------
+section "waiting on the evidence rather than on the clock"
 
 # A fixed sleep pays its whole length whether the thing arrived in thirty
 # milliseconds or never arrived at all, and it is sized for the slowest machine
@@ -518,6 +535,7 @@ repaint() { # $1 = agent, $2 = the context figure it was probed with -> a bounde
 }
 
 # --- facts, and the epoch every one of them carries -----------------------------
+section "facts, and the epoch every one of them carries"
 
 # Written through target_of rather than with a raw `tmux set-option -t`, for the
 # reason id_of gives at length: an empty -t is not "no window", it is tmux's
@@ -559,6 +577,7 @@ SH
 }
 
 # --- the evaluator itself ------------------------------------------------------
+section "the evaluator itself"
 
 # First in the file, because every check below is scored by this: while holds()
 # spent grep's exit >=2 as a miss, any verdict it gave was only as trustworthy as
@@ -640,6 +659,7 @@ check "and says a producer refused rather than reporting a timeout" "yes" \
   "$(contains "$out" "producer that refused")"
 
 # --- the environment, held down rather than requested ---------------------------
+section "the environment, held down rather than requested"
 
 # The scrub at the top of this file is the first thing that runs; these are the
 # first checks that can see whether it held, and they are here rather than in a
@@ -692,6 +712,7 @@ check "and so is the half-scrub this whole section exists to make impossible" \
   "TMUX" "$(entry_scrub "$SHIM/scrub-halved")"
 
 # --- finding its own tree ------------------------------------------------------
+section "finding its own tree"
 
 # `readlink -f` is GNU-only; a stock macOS readlink rejects -f. gang is normally
 # invoked through ~/.local/bin/gang, a symlink into the install tree, so resolving
@@ -731,6 +752,7 @@ check "and names what is missing" "yes" \
   "$(contains "$out" "not a gangline tree")"
 
 # --- cold start ---------------------------------------------------------------
+section "cold start"
 
 # Every check below this point inherits a tmux server, so none of them can see a
 # cold start. On a machine with no tmux running — a fresh box, and CI —
@@ -761,6 +783,7 @@ tmux -S "$COLD/tmux-$(id -u)/default" kill-server 2>/dev/null || true
 rm -rf "$COLD"
 
 # --- lifecycle ---------------------------------------------------------------
+section "lifecycle"
 
 "$GANG" hitch alpha -p bash -d /tmp >/dev/null
 check "hitch registers an agent" "idle (slack tug)" "$("$GANG" status alpha)"
@@ -811,6 +834,7 @@ check "a wait that runs out dumps the screen it was reading" "yes" \
   "$(contains "$out" "roles/lead.md")"
 
 # --- model at hitch ------------------------------------------------------------
+section "model at hitch"
 
 # One concept, four spellings: `hitch -m` appends the model behind the flag the
 # PROFILE declares (GANG_MODEL_OPT). bash declares none — a shell has no model —
@@ -838,6 +862,7 @@ GANG_PROFILES="$SHIM/custom-profiles" \
 check "a model sh would need quoted is refused" "1" "$?"
 
 # --- delivery ----------------------------------------------------------------
+section "delivery"
 
 cat > "$SHIM/stdin-message" <<'EOF'
 MARK_STDIN_LITERAL
@@ -1137,6 +1162,7 @@ check "with the box emptied for real" "no" "$(has vanisher MARK_LOCKED)"
 unset GANG_PROFILES
 
 # --- attribution --------------------------------------------------------------
+section "attribution"
 
 # A prefix signs only the first line, and the role briefs read an unsigned line
 # as the OPERATOR — who outranks every peer. A second line in the body would
@@ -1259,6 +1285,7 @@ wait_for lead "the correctly signed message on lead's screen" yes has lead MARK_
 check "signing as yourself is the same send it always was" "yes" "$(has lead MARK_SIGNED)"
 
 # --- one pane, one writer -----------------------------------------------------
+section "one pane, one writer"
 
 # A delivery is read-the-box, paste, read-it-again, Enter. Two of those
 # interleaved put both messages in the box and submit them as one, and both
@@ -1322,6 +1349,7 @@ check "and it spent the bound waiting rather than only saying so" "yes" \
 # after the paste has gone in.
 
 # --- reaching an agent that is working ---------------------------------------
+section "reaching an agent that is working"
 
 # Busy was a refusal, and the refusal was the bug: a manager mid-turn was
 # unreachable, --wait burned the caller's whole turn waiting on one that never
@@ -1411,6 +1439,7 @@ check "and the stdin body lands after that wait" "yes" \
 paint busybee 'WORKING...'
 
 # --- parked in gang's own wait ------------------------------------------------
+section "parked in gang's own wait"
 
 # An agent blocked in `gang wait` is inside a harness turn, so it paints the same
 # busy marker as one doing work — while being the most available agent on the
@@ -1566,6 +1595,7 @@ WAIT_TIMEOUT=20 wait_for busybee "the resume to go straight in behind a visible 
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
 
 # --- occupancy: a UI owns the input box -----------------------------------------
+section "occupancy: a UI owns the input box"
 
 # A harness whose own UI has displaced the composer is neither working nor
 # reachable: keystrokes sent to it land IN that UI, where they act on it. Every
@@ -1767,6 +1797,7 @@ check "a profile with no input hook is not occupied by the fallback" "idle (slac
   "$("$GANG" status boxless | head -1)"
 
 # --- a turn with no marker on it ------------------------------------------------
+section "a turn with no marker on it"
 
 # claude-code marks THINKING and nothing else. Of 220 samples with the pane
 # demonstrably changing, 19 carried any branch of its busy regex, and the longest
@@ -1879,6 +1910,7 @@ check "and gets back to idle once the screen settles" "idle (slack tug)" \
   "$("$GANG" status churner | head -1)"
 
 # --- the activity arm, asserted on its own ------------------------------------
+section "the activity arm, asserted on its own"
 
 # busy() is busy_painted OR recently_active OR churn, and a disjunction is how a
 # test stops being able to fail. So this arm gets a pane where the other two do
@@ -2054,6 +2086,7 @@ check "and a painted marker still proves busy after activity has expired" \
 unset GANG_PROFILES
 
 # --- the turn bracket, the tier above every scrape below it --------------------
+section "the turn bracket, the tier above every scrape below it"
 #
 # ADR-0008: per predicate, evidence is tiered — owned event > owned file > pane
 # scrape — and the reader takes the highest tier that is still FRESH. For
@@ -2174,6 +2207,7 @@ check "a closed bracket is idle however old, because only an event can reopen on
   "idle (slack tug)" "$("$GANG" status bracket | head -1)"
 
 # --- the closed bracket whose writer died --------------------------------------
+section "the closed bracket whose writer died"
 #
 # THE ONE FAILURE IN THIS TIER THAT NOTHING ELSE CATCHES. Every other way the
 # bracket can be wrong ends in a fact that goes stale, and staleness is a thing a
@@ -2527,6 +2561,7 @@ unset -f bvet
 unset GANG_PROFILES
 
 # --- diagnostics that do not assert a cause gang never checked -----------------
+section "diagnostics that do not assert a cause gang never checked"
 
 # has-session fails identically for "there is no such session" and "the tmux
 # server cannot be reached at all", and its stderr was discarded. Inside a
@@ -2588,6 +2623,7 @@ check "and nothing was pasted into the agent it could not lock" "no" \
 rm -f "$lockfile"
 
 # --- the lock root -------------------------------------------------------------
+section "the lock root"
 #
 # #19. The default was ${XDG_RUNTIME_DIR:-/tmp}/gangline-<uid>, and XDG_RUNTIME_DIR
 # is set by the login session — so a pane, which inherits it, resolved
@@ -2659,6 +2695,7 @@ check "and does not report it as a symlink or somebody else's directory" "no" \
   "$(contains "$out" "is a symlink")"
 
 # --- addressing --------------------------------------------------------------
+section "addressing"
 
 # An unanchored tmux target is a PREFIX match, so GANG_SESSION=team resolved to a
 # running team-production when nothing was called team: hitching into somebody
@@ -2743,6 +2780,7 @@ check "an agent renamed outside gang is addressable by its new name" "idle (slac
   "$("$GANG" status gamma)"
 
 # --- roles -----------------------------------------------------------------
+section "roles"
 
 check "roles are listed" "lead reviewer worker" \
   "$("$GANG" roles | tr '\n' ' ' | sed 's/ $//')"
@@ -2768,6 +2806,7 @@ check "GANG_ROLES overrides the shipped brief" "yes" \
   "$(has custom "$SHIM/custom-roles/worker.md")"
 
 # --- readiness ---------------------------------------------------------------
+section "readiness"
 
 # An agent is not ready the moment its window exists. A real TUI paints nothing
 # for the first seconds, and an EMPTY pane is a perfectly STABLE pane — so a
@@ -2909,6 +2948,7 @@ check "and that 1 was the between row, not the tree around it" "0" "$?"
 rm -rf "$SHIM/vetonly"
 
 # --- vet: the claude-code beacon has to be wired for any reader to work --------
+section "vet: the claude-code beacon has to be wired for any reader to work"
 
 # The shipped claude-code profile reads context from a statusline, and gang now
 # injects that statusline into the launch line of every window it hitches — so an
@@ -3006,6 +3046,7 @@ rm -rf "$CCFX" "$SHIM/haveclaude"
 unset -f ccvet ccwire
 
 # --- the claude-code turn-hook wiring -----------------------------------------
+section "the claude-code turn-hook wiring"
 
 # The event tier is a JSON string built into a launch line (ADR-0008), and every
 # way it can be wrong is silent at the moment it happens. A malformed payload is
@@ -3224,6 +3265,7 @@ rm -rf "$CCQ" "$CCOK" "$CCSP"
 unset -f ccsrc ccpayload
 
 # --- vet --probe: the markers fired at a live pane -----------------------------
+section "vet --probe: the markers fired at a live pane"
 
 # The probe exists because comparing version strings answers "has this harness
 # moved" while vet is READ as answering "does gang still see this harness
@@ -3538,6 +3580,7 @@ check "and its refusal names that setting" "yes" \
   "$(holds "$badacts" "GANG_PROBE_ACTS_DELAY must be a non-negative number of seconds, got 'not-a-number'")"
 
 # --- vet --probe: the owned facts a profile declares ---------------------------
+section "vet --probe: the owned facts a profile declares"
 
 # A SECOND QUESTION AT THE SAME PANE, and the pair of stand-ins below is what
 # keeps it from collapsing into the first. The rows above ask whether the beacon
@@ -3835,6 +3878,7 @@ check "and that check can see one — the spinner shape it forbids does match" "
 unset -f busy_rx_of
 
 # --- a die inside a probe must not leak the server it stood up -----------------
+section "a die inside a probe must not leak the server it stood up"
 #
 # The exit code cannot see this bug. A leaked tmux server and a leaked temp tree
 # change no status, so a check that reads only the refusal passes just as
@@ -3993,6 +4037,7 @@ unset GANG_PROFILES GANG_TEST_GATE
 
 
 # --- context bands -------------------------------------------------------------
+section "context bands"
 
 # The bash profile reads the same beacon shape the claude-code statusline paints,
 # so one printed line exercises the whole warn path with no harness installed.
@@ -4126,6 +4171,7 @@ check "and the rung that stops asking still points at the handoff" "yes" \
   "$(like "$note_only" "*refresh what this arc changed*")"
 
 # --- one ladder, absolute at both ends (ADR-0006) ------------------------------
+section "one ladder, absolute at both ends (ADR-0006)"
 #
 # The FLOOR is the guard that goes red if the ladder is ever made proportional
 # again. Rot onset is a property of context LENGTH, so the first rung is the same
@@ -4241,6 +4287,7 @@ WAIT_TIMEOUT=30 wait_for topbig "the churn loop to run itself out" yes \
 "$GANG" drop topsmall >/dev/null 2>&1 || true
 
 # --- an unreadable band memory heals, and never silences the leg ---------------
+section "an unreadable band memory heals, and never silences the leg"
 #
 # The regression these assert against ran for five hours on a live agent. @gl_band
 # was widened to three fields, then narrowed back to a plain integer, and the
@@ -4317,6 +4364,7 @@ check "and leaves the shared memory at the band both legs read from" "yes" \
 
 
 # --- the context fact, the tier above the beacon -------------------------------
+section "the context fact, the tier above the beacon"
 #
 # The beacon is a round trip: gangline's own statusline computes a figure, paints
 # it into the pane, and gang captures the pane to read it back. The owned tier
@@ -4599,6 +4647,7 @@ check "and the third is the comparison, inside the function that holds them apar
 
 
 # --- what a sweep leaves behind ------------------------------------------------
+section "what a sweep leaves behind"
 #
 # gang writes this log itself. What it replaces was a shell pipeline pasted into a
 # crontab line, filtering by an ALLOWLIST of verdict phrases — and the verdict that
@@ -4656,6 +4705,7 @@ check "an empty destination writes nothing at all" "no" \
 "$GANG" drop logagent >/dev/null 2>&1 || true
 
 # --- the crontab entry that runs the sweep -------------------------------------
+section "the crontab entry that runs the sweep"
 #
 # The entry existed only as a README paragraph somebody pasted once. Nothing in an
 # update ever touched it afterwards, so it went on running flags the tool had
@@ -4841,6 +4891,7 @@ unset -f gcron cron_cmd vetcron
 unset FAKE_CRONTAB
 
 # --- the python3 every owned fact is translated through ------------------------
+section "the python3 every owned fact is translated through"
 #
 # install.sh gates on python3 and says why, but it says it ONCE. Every way a host
 # stops having one happens afterwards: an OS upgrade that renames the binary, a
@@ -5043,6 +5094,7 @@ check "and never as a broken ladder either" "no" \
 "$GANG" drop nowin >/dev/null 2>&1 || true
 
 # --- a marker gang cannot evaluate is not a marker that is absent --------------
+section "a marker gang cannot evaluate is not a marker that is absent"
 #
 # grep answers three things and every caller here was consuming two: 0 matched,
 # 1 did not match, >=2 could not tell. A malformed ERE is the reachable third —
@@ -5098,6 +5150,7 @@ badprofile 'WORKING\.\.\.'
 "$GANG" drop badagent >/dev/null 2>&1 || true
 
 # --- a compaction gang issued itself -------------------------------------------
+section "a compaction gang issued itself"
 
 # patrol nudges at a high context band, and a compacting pane is exactly a pane
 # at a high context band. Every scraped guard waves the nudge through: a
@@ -5246,6 +5299,7 @@ check "and the drop below the first rung still cleared the mark" "" \
   "$(tmux show-options -wqv -t "$(id_of lowdrop)" @gl_compacting)"
 
 # --- the compaction bracket, the tier above that mark --------------------------
+section "the compaction bracket, the tier above that mark"
 #
 # ADR-0008 again, on the compaction predicate this time: owned event beats owned
 # file beats pane scrape. Everything above is the owned FILE — gang's own record
@@ -5437,6 +5491,7 @@ check "and the mark it could not answer for is still there" "yes" \
 for a in cbracket cbauto cbover cbclose cbstale; do "$GANG" drop "$a" >/dev/null 2>&1; done
 
 # --- the occupied bracket, the tier above both scrapes -------------------------
+section "the occupied bracket, the tier above both scrapes"
 #
 # ADR-0008 on the third predicate: owned event beats owned file beats pane scrape.
 # occupied() has had two scrapes and no event tier — one matching declared modal
@@ -5792,6 +5847,7 @@ check "and the agent carries which variable stopped it" "yes" \
 tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
 
 # --- a send held behind the operator's hands ----------------------------------
+section "a send held behind the operator's hands"
 
 # The same fix as the resume waiter's, on the path that never got it. An
 # ordinary send that met a moving composer was spent as terminal, and every sender
@@ -5949,6 +6005,7 @@ check "and a delivery into it, empty, is one this fixture takes" "0" "$rc"
 check "with the payload on the agent's screen" "yes" "$(has retrier MARK_INTOEMPTY)"
 
 # --- and now the bar that refuses a draft -------------------------------------
+section "and now the bar that refuses a draft"
 #
 # Everything above this line is true on both sides of the change, which is what
 # let it land first. These are the ones that FAIL on the behaviour that shipped:
@@ -6085,6 +6142,7 @@ check "and both the patrol hold and the resume proof read it" "2" \
 # believed. -F says what was meant anyway: none of them wants a pattern.
 
 # --- the band ladder ---------------------------------------------------------
+section "the band ladder"
 
 # The FLOOR is an absolute token count (ADR-0006), and these checks are the
 # executable form of that decision. The property under test is that the first rung
@@ -6131,6 +6189,7 @@ check "while the same tokens on the large window are nowhere near its end" "2" \
   "$(band_of rung1md)"
 
 # --- the cutoff, declared and stored ------------------------------------------
+section "the cutoff, declared and stored"
 
 # The team's wall-clock budget enters as operator intent and is kept as the PAIR
 # (cutoff, declared-at) — ADR-0009. What these checks are about is the pair being
@@ -6228,6 +6287,7 @@ check "the pair dies with the session that carried it" \
 tmux kill-session -t "=$CUT_S" 2>/dev/null
 
 # --- the cutoff at hitch -------------------------------------------------------
+section "the cutoff at hitch"
 
 # One storage, two surfaces. `hitch --cutoff` is not a second kind of cutoff: it
 # writes the same pair through the same two functions the verb writes it with,
@@ -6302,6 +6362,7 @@ for _cd in cutdog cutdog2 cutbad; do "$GANG" drop "$_cd" >/dev/null 2>&1; done
 "$GANG" cutoff clear >/dev/null
 
 # --- the time ladder, cut from the declared budget -----------------------------
+section "the time ladder, cut from the declared budget"
 
 # The cutoff is the declaration; this is the ladder cut from it (ADR-0009). What
 # makes these rungs a different kind of thing from the context ladder's is that
@@ -6511,6 +6572,7 @@ check "and a longer cutoff is the other way out of a span too short to divide" \
   "steady (time band 0 — 1h59m of budget left)" "$(tverdict $(( TB_NOW + 60 )) '9s')"
 
 # --- the budget's own ladder, and how a rung may be spelled on it ---------------
+section "the budget's own ladder, and how a rung may be spelled on it"
 #
 # GANG_TIME_BANDS bypasses that derivation, and what it accepts INVERTS its context
 # sibling: a rung is a proportion of whatever budget was declared, and an absolute
@@ -6621,6 +6683,7 @@ check "while a budget that is merely running is not" "no" \
   "$(holds "$(cat "$TB_LOG")" 'steady \(time band')"
 
 # --- the roster reports state; patrol enforces policy ---------------------------
+section "the roster reports state; patrol enforces policy"
 #
 # A ladder is POLICY, and a typo in one is patrol's to refuse — loudly, and before
 # it reports on any agent, which `an absolute rung on the time axis refuses the
@@ -6684,6 +6747,7 @@ check "and names the setting it could not read" "yes" \
 "$GANG" cutoff clear >/dev/null
 
 # --- the budget speaks ----------------------------------------------------------
+section "the budget speaks"
 
 # `the time ladder, cut from the declared budget` reads ROWS: where the team stands
 # in its budget, reported. This section reads PANES, because the leg it is about
@@ -6969,6 +7033,7 @@ check "so the budget note is on that pane" "yes" "$(has tboth '[time-budget]')"
 check "and the context one is not" "no" "$(has tboth '[context-usage]')"
 
 # --- the same budget, in the turn -----------------------------------------------
+section "the same budget, in the turn"
 #
 # Patrol sweeps on the cadence an operator set. The hook fires on the agent's own
 # events, so a crossing can be heard in the turn it happens in rather than up to a
@@ -7154,6 +7219,7 @@ check "a note that went out is written down under the agent it went to" "yes" \
 "$GANG" cutoff clear >/dev/null
 
 # --- file-based context (codex) ----------------------------------------------
+section "file-based context (codex)"
 
 # Codex paints no readout a passive observer can reach; its profile reads the
 # session rollout on disk instead. The stand-in here swaps only the launch
@@ -7239,6 +7305,7 @@ rm "$DAYDIR/rollout-2026-07-27T00-00-09-gangtest-drift.jsonl"
 unset GANG_PROFILES
 
 # --- scraped context with a joined window (opencode) --------------------------
+section "scraped context with a joined window (opencode)"
 
 # opencode paints used tokens and a rounded percent into its hint row but never
 # the window; its profile joins the window from opencode's own models catalog,
@@ -7330,6 +7397,7 @@ oc_catalog
 unset GANG_PROFILES
 
 # --- colour ------------------------------------------------------------------
+section "colour"
 
 # Every check in this file reads gang through a pipe, where colour is off — so a
 # change that emitted no colour anywhere would pass all of them. tmux is the pty:
@@ -7392,6 +7460,7 @@ check "and it does not move a column" "$row" \
      | awk -v n="${row%% *}" '$1==n{sub(/ +$/, ""); print}')"
 
 # --- refusals ----------------------------------------------------------------
+section "refusals"
 
 printf '%s' "no identity here" | "$GANG" send alpha --stdin >/dev/null 2>&1
 check "send without --from is refused" "1" "$?"
@@ -7426,6 +7495,7 @@ check "but one that is not a number is not" "1" "$rc"
 check "and it says which one" "yes" "$(contains "$out" "GANG_CHURN_WAIT")"
 
 # --- verbs -------------------------------------------------------------------
+section "verbs"
 
 # hitch and vet carry aliases (spawn, doctor) so old hands and old scripts keep
 # working; kill carries none — no dogs are killed here, and a verb that is gone
@@ -7443,6 +7513,7 @@ check "and the dog it aimed at is untouched" "aliased" \
 "$GANG" drop aliased >/dev/null
 
 # --- rebuilding a team the tmux server took with it ---------------------------
+section "rebuilding a team the tmux server took with it"
 
 # All gang state is window options and dies with the window by design (law 6).
 # The harness CONVERSATIONS outlast it — they are on disk and a dead server does
@@ -7507,6 +7578,7 @@ check "and pi declares none, because nobody has measured its scoping" "" \
   "$(GANG_TEST_PROFILES='' bash -c '. profiles/pi.sh; printf %s "${GANG_RESUME_LAUNCH:-}"')"
 
 # --- the retired occupancy declaration ---------------------------------------
+section "the retired occupancy declaration"
 
 # ADR-0004 retired `gated` as a state name, and the profile contract was the last
 # place the word survived. Renaming it is only safe BECAUSE the old name is
@@ -7546,6 +7618,7 @@ check "the current name loads exactly as it always did" "renamed" \
 unset GANG_PROFILES
 
 # --- a box's contents versus who put them there ------------------------------
+section "a box's contents versus who put them there"
 #
 # Claude Code renders suggestion text dim and typed text plain, and `capture-pane
 # -p` drops the attribute — so ghost text and a human's draft arrive as the same
@@ -7795,6 +7868,35 @@ check "no busy verdict is consumed directly as a shell boolean" "0" \
 # announcing it — and each one had to stop spelling it out separately.
 check "no file is edited in place by sed" "0" \
   "$(grep -h 'sed -[i]' "$0" "$GANG" | grep -cv '^[[:space:]]*#')"
+# Two spellings of "a section starts here" is one more than this file can
+# keep straight by hand, and the banner is the one every reader greps for.
+# So the marker is not a list anyone maintains: every banner below the
+# helper must have one, in the same order, spelled the same way. The whole
+# ordered set is compared at once, so a section added without a marker, a
+# marker left behind by a section that was renamed, and a pair that drifted
+# apart are one red rather than three rules.
+#
+# Both sides return a sentinel NAMING THIS FILE rather than an empty string
+# when they cannot find what they read for, this file's own rule about
+# checks that read text: empty compares equal to the next empty, so a
+# rewrite that defeated both patterns would agree on nothing and report
+# agreement.
+suite_sections() { # $1 = this file -> every section banner below the marker helper
+  local from out
+  from="$(grep -n '^section() {' "$1" | head -1 | cut -d: -f1)"
+  [ -n "$from" ] || { printf 'NO-MARKER-HELPER-IN-%s' "${1##*/}"; return 0; }
+  out="$(awk -v n="$from" 'NR > n && /^# --- / { sub(/^# --- /, ""); sub(/[ -]+$/, ""); print }' "$1")"
+  [ -n "$out" ] || { printf 'NO-SECTIONS-BELOW-HELPER-IN-%s' "${1##*/}"; return 0; }
+  printf '%s\n' "$out"
+}
+suite_markers() { # $1 = this file -> the name every section marker announces
+  local out
+  out="$(awk '/^section "/ { sub(/^section "/, ""); sub(/"$/, ""); print }' "$1")"
+  [ -n "$out" ] || { printf 'NO-MARKERS-IN-%s' "${1##*/}"; return 0; }
+  printf '%s\n' "$out"
+}
+check "every section below the marker helper announces itself, in order" \
+  "$(suite_sections "$SUITE")" "$(suite_markers "$SUITE")"
 # The rules above guard SHAPES in one file. This one guards a FACT stated in three,
 # which is the other way a source-level check earns its place. install.sh refuses to
 # install below a tmux version; README and the site promise a reader what the
@@ -7868,6 +7970,7 @@ check "and a line carrying both keeps the typed half and drops the offer" "commi
 "$GANG" drop ccbox >/dev/null
 
 # --- the same distinction on codex, whose composer is NEVER empty -------------
+section "the same distinction on codex, whose composer is NEVER empty"
 #
 # Codex paints rotating ghost text into an idle composer, so "is there a draft in
 # this box" is only answerable through the attribute a plain capture discards —
@@ -7923,6 +8026,7 @@ check "and a numbered codex dialog row is still refused, not read as a draft" "N
 tmux kill-window -t "$cxt"
 
 # --- teardown ----------------------------------------------------------------
+section "teardown"
 
 "$GANG" drop gamma >/dev/null
 check "drop removes the agent" "" "$("$GANG" roster | awk '$1=="gamma"{print $1}')"
@@ -7931,6 +8035,7 @@ check "down ends the session" "no team (session '$GANG_SESSION' not running)" \
   "$("$GANG" roster)"
 
 # --- the verdict ---------------------------------------------------------------
+section "the verdict"
 
 # Scored last and read first: a run whose inputs moved has no verdict to give, so
 # this comes before either outcome line rather than beside it. `$fails` is not
