@@ -47,11 +47,16 @@ to track degradation, and degradation is not symmetric across window sizes.
 
 ## Decision
 
-**The default ladder is `120000,180000,250000,350000`, in absolute tokens.**
+This section is what ADR-0005 fixed on 2026-07-30 and is now history, not the
+ladder `gang patrol` runs: [ADR-0006](0006-the-band-ladder-spans-absolute-bounds.md)
+replaced it with a ladder derived from an absolute floor and cap. Read ADR-0006 for
+the ladder actually in effect.
 
-It stops at four rungs because past four ignored warnings another is noise rather
-than advice, and it reaches into the region where rot actually bites rather than
-stopping short of it.
+The default ladder was `120000,180000,250000,350000`, in absolute tokens. It
+stopped at four rungs because past four ignored warnings another is noise rather
+than advice, and it reached into the region where rot actually bites rather than
+stopping short of it. ADR-0006 keeps neither number: its ladder derives five rungs
+from the floor and cap instead of naming four as a literal CSV.
 
 **The `%` suffix stays in the syntax as an escape hatch** for an unusual window,
 where a fraction is the operator's intent rather than a mistake. It is not a default
