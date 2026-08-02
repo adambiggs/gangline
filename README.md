@@ -57,6 +57,158 @@ gang wait worker                              # idle — or parked, or expired; 
 gang drop worker                              # release it once its arc is done
 ```
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
+```
+
+The installer clones Gangline to `~/.local/share/gangline`, links `gang` into
+`~/.local/bin`, and fast-forwards the clone when run again. Set `GANGLINE_HOME`
+or `GANGLINE_BIN` to choose other locations. The npm and PyPI packaging stubs are
+not published packages; `install.sh` is the supported install path today.
+
+Prefer not to pipe into a shell? Read [`install.sh`](install.sh), then clone and
+link it yourself:
+
+```sh
+git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
+ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
+```
+
+Requirements: Bash, git, tmux 2.6 or newer, Python 3, and at least one supported
+CLI harness. `gang profiles` lists the harnesses currently offered.
+
+<details>
+<summary>Why the tmux floor is 2.6, and how to lower it</summary>
+
+The floor is bounded by evidence rather than by a feature. Every tmux subcommand,
+flag and format `gang` calls can be dated in tmux's own source, and the newest of
+them is 2.1 — the exact-match `=` target and `#{window_activity}`. But one thing
+`gang` depends on cannot be dated from source at all: that a `paste-buffer -p`
+arrives at the harness as a *paste* rather than being interpreted keystroke by
+keystroke. 2.6 is the oldest version the whole call set has been executed on, that
+property included, so 2.6 is what the installer promises.
+
+That makes the floor lowerable on purpose. Run the call set and the paste property
+against something older and the number can follow the evidence down; [issue
+#31](https://github.com/adambiggs/gangline/issues/31) has the inventory and both
+probes. What will not lower it is reading a changelog — tmux was still correcting
+how pasted input is interpreted [in
+3.6](https://github.com/tmux/tmux/blob/master/CHANGES).
+
+Requirement is not the same as coverage. CI exercises the floor itself and one
+version below it on every change to the installer, and runs the full suite on the
+newer versions its workflow pins — so the range between the floor and those meets
+the enforced floor without the suite ever running on it.
+
+</details>
+
+## Your first team
+
+Start in the repository the team will work on:
+
+```sh
+cd ~/my-project
+gang up
+```
+
+With no arguments, `gang up` hitches a Claude Code agent named `lead`, briefs it
+with the `lead` role, and attaches your terminal to the team. Detach with
+<kbd>Ctrl-b</kbd>, then <kbd>d</kbd>; reconnect with `gang attach`.
+
+Leave that terminal attached and use a second shell for the walkthrough below (or
+ask the lead to run the same commands). The sender label is required. Inside the
+team it must match the calling window's name; from an outside operator shell you
+choose the label.
+
+```sh
+# Add a Codex teammate in the current project and give it the worker brief.
+gang hitch worker -p codex -r worker -d "$PWD"
+
+# Send a task. A quoted heredoc keeps shell syntax in prose literal.
+gang send worker --from operator --stdin <<'MESSAGE'
+inspect the failing tests and propose a fix
+MESSAGE
+
+# Observe it without taking over its pane.
+gang status worker
+gang capture worker 80
+gang roster
+
+# Wait for it to settle, then compact and resume unattended.
+gang wait worker
+gang compact worker --from operator --resume-stdin <<'RESUME'
+continue from your compacted summary and report the result
+RESUME
+
+# Release one teammate and its tmux-owned state.
+gang drop worker
+```
+
+`gang down` ends the entire team session, including every agent. Use `gang drop`
+for the routine case of releasing one finished teammate. On the trail a dropped
+dog is one the musher leaves at a checkpoint to be cared for and flown home — done
+[for the dog's sake](https://iditarod.com/edu/dropped-dogs-are/), not as a
+discard. Same here: dropping an agent whose arc is finished is the healthy
+outcome, not a punishment — an agent kept running past its work is a dog riding in
+the basket instead of pulling.
+
+### A team of one
+
+A team can have one dog in it. `gang up` with nobody else hitched gives you the
+context loop by itself: Gangline measures the window, notes each band as you cross it,
+and near the end compacts you and hands back the thread you asked it to keep —
+measure, warn, act, instead of you watching a meter and remembering to act on it.
+
+Solo needs no permissions decision, because you are attached and watching the
+pane: your harness's interactive defaults are the right ones. The team verbs are
+all still there and none of them are required — adding a teammate later is
+`gang hitch`, and nothing you already set up changes.
+
+## Before you leave one unattended
+
+Two things are worth setting up once, and neither is needed to run `gang up`.
+
+**Permissions.** Gangline launches a harness with your existing harness
+configuration. It does not approve permission prompts for you; a modal makes the
+agent `occupied`, and Gangline refuses sends into it until the modal is cleared.
+Configure unattended agents with the permission posture you want before hitching
+them. See [Operating a team](docs/operations.md#permission-prompts) for the
+relevant settings and the Codex sandbox caveat.
+
+The shipped opencode profile carries one narrow exception, and Gangline creates
+the need for it itself. `gang hitch -r <role>` points an agent at a brief by
+path, and briefs live in Gangline's own tree — outside the directory opencode
+started in, which is the only place opencode reads without asking. So every
+role-briefed opencode agent stopped on `Access external directory`, for the file
+it had just been told to read, with nobody there to answer. The profile
+pre-authorises those role directories and nothing else, for that one process,
+merged into your config rather than replacing it. It is not `--auto`, and no
+other posture changes.
+
+**Context reading.** A Claude Code window `gang hitch` launches carries
+Gangline's statusline beacon on its own launch line — no setup, and `gang
+context`, the roster context column, and context patrol read it from the first
+turn. Inside that session the beacon is what paints, even if you have wired
+your own statusline; your own settings file is untouched and your statusline
+runs everywhere else and afterwards. The manual merge below is needed for one
+case only — a window `gang adopt` attaches to, which gang did not launch and so
+could not carry the beacon in. Merge it into `~/.claude/settings.json` (adjust
+the path if `GANGLINE_HOME` differs):
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/home/YOU/.local/share/gangline/statusline/claude-code-context.sh"
+  }
+}
+```
+
+`gang vet` names an adopted window running without it, and names the cost: that
+agent's context tier is dark.
+
 ## Where this sits
 
 **Gangline is a substrate, not an orchestration framework.** The orchestration —
@@ -210,158 +362,6 @@ editor-to-agent communication over JSON-RPC much as LSP did for language tooling
 — is the closest thing to the surface that would make the scraping unnecessary. If
 the harnesses converge on it, the reading half of this design should be replaced
 by it, and that would be a good outcome rather than an embarrassing one.
-
-## Install
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
-```
-
-The installer clones Gangline to `~/.local/share/gangline`, links `gang` into
-`~/.local/bin`, and fast-forwards the clone when run again. Set `GANGLINE_HOME`
-or `GANGLINE_BIN` to choose other locations. The npm and PyPI packaging stubs are
-not published packages; `install.sh` is the supported install path today.
-
-Prefer not to pipe into a shell? Read [`install.sh`](install.sh), then clone and
-link it yourself:
-
-```sh
-git clone https://github.com/adambiggs/gangline.git ~/.local/share/gangline
-ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
-```
-
-Requirements: Bash, git, tmux 2.6 or newer, Python 3, and at least one supported
-CLI harness. `gang profiles` lists the harnesses currently offered.
-
-<details>
-<summary>Why the tmux floor is 2.6, and how to lower it</summary>
-
-The floor is bounded by evidence rather than by a feature. Every tmux subcommand,
-flag and format `gang` calls can be dated in tmux's own source, and the newest of
-them is 2.1 — the exact-match `=` target and `#{window_activity}`. But one thing
-`gang` depends on cannot be dated from source at all: that a `paste-buffer -p`
-arrives at the harness as a *paste* rather than being interpreted keystroke by
-keystroke. 2.6 is the oldest version the whole call set has been executed on, that
-property included, so 2.6 is what the installer promises.
-
-That makes the floor lowerable on purpose. Run the call set and the paste property
-against something older and the number can follow the evidence down; [issue
-#31](https://github.com/adambiggs/gangline/issues/31) has the inventory and both
-probes. What will not lower it is reading a changelog — tmux was still correcting
-how pasted input is interpreted [in
-3.6](https://github.com/tmux/tmux/blob/master/CHANGES).
-
-Requirement is not the same as coverage. CI exercises the floor itself and one
-version below it on every change to the installer, and runs the full suite on the
-newer versions its workflow pins — so the range between the floor and those meets
-the enforced floor without the suite ever running on it.
-
-</details>
-
-## Your first team
-
-Start in the repository the team will work on:
-
-```sh
-cd ~/my-project
-gang up
-```
-
-With no arguments, `gang up` hitches a Claude Code agent named `lead`, briefs it
-with the `lead` role, and attaches your terminal to the team. Detach with
-<kbd>Ctrl-b</kbd>, then <kbd>d</kbd>; reconnect with `gang attach`.
-
-Leave that terminal attached and use a second shell for the walkthrough below (or
-ask the lead to run the same commands). The sender label is required. Inside the
-team it must match the calling window's name; from an outside operator shell you
-choose the label.
-
-```sh
-# Add a Codex teammate in the current project and give it the worker brief.
-gang hitch worker -p codex -r worker -d "$PWD"
-
-# Send a task. A quoted heredoc keeps shell syntax in prose literal.
-gang send worker --from operator --stdin <<'MESSAGE'
-inspect the failing tests and propose a fix
-MESSAGE
-
-# Observe it without taking over its pane.
-gang status worker
-gang capture worker 80
-gang roster
-
-# Wait for it to settle, then compact and resume unattended.
-gang wait worker
-gang compact worker --from operator --resume-stdin <<'RESUME'
-continue from your compacted summary and report the result
-RESUME
-
-# Release one teammate and its tmux-owned state.
-gang drop worker
-```
-
-`gang down` ends the entire team session, including every agent. Use `gang drop`
-for the routine case of releasing one finished teammate. On the trail a dropped
-dog is one the musher leaves at a checkpoint to be cared for and flown home — done
-[for the dog's sake](https://iditarod.com/edu/dropped-dogs-are/), not as a
-discard. Same here: dropping an agent whose arc is finished is the healthy
-outcome, not a punishment — an agent kept running past its work is a dog riding in
-the basket instead of pulling.
-
-### A team of one
-
-A team can have one dog in it. `gang up` with nobody else hitched gives you the
-context loop by itself: Gangline measures the window, notes each band as you cross it,
-and near the end compacts you and hands back the thread you asked it to keep —
-measure, warn, act, instead of you watching a meter and remembering to act on it.
-
-Solo needs no permissions decision, because you are attached and watching the
-pane: your harness's interactive defaults are the right ones. The team verbs are
-all still there and none of them are required — adding a teammate later is
-`gang hitch`, and nothing you already set up changes.
-
-## Before you leave one unattended
-
-Two things are worth setting up once, and neither is needed to run `gang up`.
-
-**Permissions.** Gangline launches a harness with your existing harness
-configuration. It does not approve permission prompts for you; a modal makes the
-agent `occupied`, and Gangline refuses sends into it until the modal is cleared.
-Configure unattended agents with the permission posture you want before hitching
-them. See [Operating a team](docs/operations.md#permission-prompts) for the
-relevant settings and the Codex sandbox caveat.
-
-The shipped opencode profile carries one narrow exception, and Gangline creates
-the need for it itself. `gang hitch -r <role>` points an agent at a brief by
-path, and briefs live in Gangline's own tree — outside the directory opencode
-started in, which is the only place opencode reads without asking. So every
-role-briefed opencode agent stopped on `Access external directory`, for the file
-it had just been told to read, with nobody there to answer. The profile
-pre-authorises those role directories and nothing else, for that one process,
-merged into your config rather than replacing it. It is not `--auto`, and no
-other posture changes.
-
-**Context reading.** A Claude Code window `gang hitch` launches carries
-Gangline's statusline beacon on its own launch line — no setup, and `gang
-context`, the roster context column, and context patrol read it from the first
-turn. Inside that session the beacon is what paints, even if you have wired
-your own statusline; your own settings file is untouched and your statusline
-runs everywhere else and afterwards. The manual merge below is needed for one
-case only — a window `gang adopt` attaches to, which gang did not launch and so
-could not carry the beacon in. Merge it into `~/.claude/settings.json` (adjust
-the path if `GANGLINE_HOME` differs):
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "/home/YOU/.local/share/gangline/statusline/claude-code-context.sh"
-  }
-}
-```
-
-`gang vet` names an adopted window running without it, and names the cost: that
-agent's context tier is dark.
 
 ## The operating model
 
