@@ -23,8 +23,35 @@ jobs:
         with:
           fetch-depth: 0   # tools/pii-scan needs real history to git-rev-list
 
+      - name: Resolve bash
+        id: bash
+        run: |
+          set -euo pipefail
+
+          # tools/pii-scan runs under its shebang's bash (env bash), not this
+          # step's shell, so resolve that one specifically — same hazard and
+          # same guard as shell.yml:87-91, mirrored rather than reimplemented.
+          # Printing a version and moving on would let a Homebrew bash ahead
+          # of /bin/bash on PATH render this cell green while never running
+          # the 3.2 parse the tool's own header claims to support.
+          interp="$(command -v bash)"
+          echo "interpreter: $interp"
+          "$interp" --version | head -1
+
+          if [ "${{ runner.os }}" = macOS ]; then
+            bv="$("$interp" -c 'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"')"
+            [ "$bv" = 3.2 ] || {
+              echo "this cell resolves bash $bv, so tools/pii-scan's 3.2 parse is not happening" >&2
+              exit 1
+            }
+          fi
+
+          echo "interp=$interp" >> "$GITHUB_OUTPUT"
+
       - name: Scan the pushed range
         if: github.event_name == 'push'
+        env:
+          BASH_INTERP: ${{ steps.bash.outputs.interp }}
         run: |
           set -euo pipefail
           zero="0000000000000000000000000000000000000000"
@@ -42,13 +69,15 @@ jobs:
             # exclude exactly what needs scanning here. The push event's own
             # commit list is the reliable bound instead.
             count="$(jq '.commits | length' "$GITHUB_EVENT_PATH")"
-            tools/pii-scan --range -n "$count" "$after"
+            "$BASH_INTERP" tools/pii-scan --range -n "$count" "$after"
           else
-            tools/pii-scan --range "$before..$after"
+            "$BASH_INTERP" tools/pii-scan --range "$before..$after"
           fi
 
       - name: Scan the pull request range
         if: github.event_name == 'pull_request'
+        env:
+          BASH_INTERP: ${{ steps.bash.outputs.interp }}
         run: >-
-          tools/pii-scan --range
+          "$BASH_INTERP" tools/pii-scan --range
           ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
