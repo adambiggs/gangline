@@ -5827,6 +5827,79 @@ check "and the occupied agent carries the inbound it refused" "yes" \
   "$(contains "$(tmux show-options -wqv -t "$(target_of retrier)" @gl_blocked)" "tester")"
 check "with nothing typed behind the dialog" "no" "$(has retrier MARK_MIDHOLD)"
 tmux set-option -uw -t "$(target_of retrier)" @gl_blocked
+
+# The THIRD state of that input box, and the one no fixture in this file has ever
+# held. `hands-on-keyboard` above is a hand IN MOTION, which composer_settled
+# refuses by construction; a box nobody has touched is empty, which every guard
+# lets through. A draft the operator has PAUSED on is neither — perfectly still
+# and not empty — and bin/gang:2544-2568 already argues what gang does with one:
+# stillness passes, the paste appends, and the Enter submits their half-written
+# line with gang's text glued to the end of it.
+#
+# Nothing here asserts that verdict, and the omission is the point. Both checks
+# below are true TODAY and stay true when the verdict changes, because they are
+# about the FIXTURE rather than about gang — they are what stops the checks that
+# DO assert it from passing for the wrong reason. "The draft is still there,
+# still unsent" is satisfied perfectly by a fixture that could not take a
+# delivery at all, and by one whose box never held the draft in the first place.
+# So this pair proves those two halves separately: that a parked draft is a state
+# this box can hold and keep, and that this same box, empty, is one a delivery
+# does reach.
+retrier_box() { # -> what the profile hands gang as retrier's input box
+  # Read THROUGH the profile the fixture runs, never a second copy of its scrape
+  # written out here: the box is whatever profile_input says it is (Law 4), and a
+  # reader that agreed with the profile on the day it was written is a reader
+  # that will disagree with it silently later.
+  #
+  # NO BOX rather than silence when the profile refuses, for cc_box's reason: one
+  # of the checks below expects an EMPTY box, and a profile_input that failed
+  # outright prints nothing either — so without a sentinel the one assertion here
+  # about an absence would pass hardest exactly when the box could not be read.
+  local b
+  b="$(bash -c '. "$1"
+                b="$(profile_input "$2")" || { printf "NO BOX"; exit 0; }
+                printf "%s" "$b"' _ "$SHIM/custom-profiles/retryable.sh" \
+       "$(target_of retrier)")"
+  # The padding is the PANE's and not the box's: -J preserves every row out to
+  # the pane width, which is the same reason pane_lists strips before it matches.
+  # An assertion about box CONTENT that also asserted a column count would go red
+  # on a resize, having found nothing wrong.
+  b="${b#"${b%%[![:space:]]*}"}"
+  printf '%s' "${b%"${b##*[![:space:]]}"}"
+}
+park_draft() { # $1 = keystrokes to leave in retrier's box, UNSUBMITTED
+  local id; id="$(target_of retrier)" || exit 1
+  # The kill first, for paint's reason: a delivery already sitting in that box
+  # unsent would make these keystrokes the tail of somebody else's line rather
+  # than a draft of their own.
+  tmux send-keys -t "$id" C-u
+  # Keystrokes and NO Enter. That is the whole fixture: the operator's hand, on
+  # the keyboard, stopped.
+  tmux send-keys -t "$id" "$1"
+  # Fatal, like paint's wait, and for a sharper reason than an unmet precondition:
+  # "the draft survived" is trivially true of a box that never held one, so a park
+  # that quietly parked nothing is the single failure that would turn every
+  # assertion after it green.
+  wait_for retrier "the draft [$1] parked unsubmitted in retrier's box" "$1" \
+    retrier_box || exit 1
+}
+park_draft 'MARK_PARKED half written thought'
+absence_window 2 "a parked draft is measured across the interval a send would have
+                  had to interleave with, not in the instant it was typed"
+check "a draft parked in the box is still in it when nothing was sent" \
+  "MARK_PARKED half written thought" "$(retrier_box)"
+# The control. It is not the MARK_UNHELD check above wearing another name: that
+# one asserts an exit status and nothing about a box. This asserts the box was
+# PROVABLY empty first and that the payload reached the agent after — so a
+# refusal, when one is asserted here, is attributable to what is in the box
+# rather than to a fixture nothing can be delivered into.
+tmux send-keys -t "$(target_of retrier)" C-u
+wait_for retrier "retrier's box back to empty for the control send" "" \
+  retrier_box || exit 1
+check "the same box empties again" "" "$(retrier_box)"
+send_text retrier tester "MARK_INTOEMPTY" >/dev/null 2>&1; rc=$?
+check "and a delivery into it, empty, is one this fixture takes" "0" "$rc"
+check "with the payload on the agent's screen" "yes" "$(has retrier MARK_INTOEMPTY)"
 unset GANG_PROFILES
 
 # An owned flag beats a scraped marker only while something checks it is SET on
