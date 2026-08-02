@@ -6603,6 +6603,66 @@ GANG_NOW=$(( TB_NOW + 3600 )) GANG_PATROL_LOG="$TB_LOG" "$GANG" patrol >/dev/nul
 check "while a budget that is merely running is not" "no" \
   "$(holds "$(cat "$TB_LOG")" 'steady \(time band')"
 
+# --- the roster reports state; patrol enforces policy ---------------------------
+#
+# A ladder is POLICY, and a typo in one is patrol's to refuse — loudly, and before
+# it reports on any agent, which `an absolute rung on the time axis refuses the
+# sweep` pins one axis of. The roster answers a different question: what is on this
+# team right now. It is what an operator reads BEFORE `gang drop` or `gang down`,
+# and an agent missing from it reads as no agent at all — the reason roster_row
+# reports a profile it cannot resolve instead of dropping the row, and the reason a
+# sick agent costs one row rather than the whole roster. A ladder mistyped once and
+# frozen into a crontab must not be able to blank the surface read first.
+#
+# That the roster evaluates neither ladder is true by OMISSION today, and one line
+# on either axis ends it: a `time_sweep` in cmd_roster to carry the budget, or
+# patrol's own `one loud complaint about a bad ladder` warm-up to carry a band.
+# Both were built in a throwaway tree and both answer rc 1 with no rows at all —
+# not even the unadopted placeholder. These cases are that line saying itself, and
+# each pair below goes red on the leg that would cross it.
+#
+# THE CLOCK IS WHAT WOULD HAVE MADE THE TIME CASE VACUOUS. time_sweep returns
+# before it places a ladder both when no cutoff is declared and when the moment is
+# past one, so a roster sweeping the time axis reads the setting under neither.
+# Rendered both ways rather than reasoned: inside the budget that leg blanks the
+# roster, past it the roster prints every row and GANG_TIME_BANDS is never looked
+# at. So the cases here sweep INSIDE the budget declared above, at the moment the
+# sweep just above ran clean, and the context cases share that clock so that one
+# moment explains the block.
+#
+# The context COLUMN is deliberately not compared. roster_row catches a failed
+# readout with a dash by design and which of the two a fixture shows is not the
+# invariant here; what is asserted is the row a lead scans — the agent, the profile
+# it was hitched on, and the state it is in.
+RG_NOW=$(( TB_NOW + 3600 ))
+rg_row() { # $1 = a captured roster -> tdog's row, less the context column
+  awk '$1=="tdog"{print $1, $2, $3}' <<<"$1"
+}
+rg_out="$(GANG_NOW=$RG_NOW "$GANG" roster 2>&1)"; rg_rc=$?
+check "the roster answers with neither ladder touched" "0" "$rg_rc"
+rg_base="$(rg_row "$rg_out")"
+check "and prints a row for the agent to compare the rest against" "yes" \
+  "$(holds "$rg_base" '^tdog ')"
+rg_out="$(GANG_NOW=$RG_NOW GANG_CONTEXT_BANDS=abc "$GANG" roster 2>&1)"; rg_rc=$?
+check "a context rung that is not a number does not refuse the roster" "0" "$rg_rc"
+check "and the row is reported under it unchanged" "$rg_base" "$(rg_row "$rg_out")"
+rg_out="$(GANG_NOW=$RG_NOW GANG_CONTEXT_BANDS=0 "$GANG" roster 2>&1)"; rg_rc=$?
+check "a context rung landing at zero does not refuse it either" "0" "$rg_rc"
+check "and that row is reported unchanged as well" "$rg_base" "$(rg_row "$rg_out")"
+rg_out="$(GANG_NOW=$RG_NOW GANG_TIME_BANDS=1800 "$GANG" roster 2>&1)"; rg_rc=$?
+check "an absolute rung on the time axis does not refuse the roster" "0" "$rg_rc"
+check "and the row is reported with a budget declared and unspent" \
+  "$rg_base" "$(rg_row "$rg_out")"
+
+# The other half of the line, on the axis nothing pinned it for: the same setting,
+# the same clock, the surface whose job the ladder IS — and it refuses. Without a
+# case here the roster's would keep passing on a gang that had quietly stopped
+# reading the setting anywhere at all, which is agreement rather than a contrast.
+rg_out="$(GANG_NOW=$RG_NOW GANG_CONTEXT_BANDS=abc "$GANG" patrol 2>&1)"; rg_rc=$?
+check "while the surface that enforces policy refuses that same ladder" "1" "$rg_rc"
+check "and names the setting it could not read" "yes" \
+  "$(holds "$rg_out" "invalid GANG_CONTEXT_BANDS 'abc' — fix the ladder")"
+
 "$GANG" drop tdog >/dev/null 2>&1
 "$GANG" cutoff clear >/dev/null
 
