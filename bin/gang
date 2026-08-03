@@ -4075,15 +4075,28 @@ model_pastable() { # $1 = the verb naming itself in the refusal, $2 = model
 }
 
 LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
+
+# THE FACTS, DECLARED ONCE, because a writer naming them and a reader naming them
+# again are two lists that can disagree with nothing failing to say so: the write
+# succeeds, the vouch goes on, the record LOOKS complete, and the renewed agent
+# comes back on the default for whatever the reader was never taught — a silent
+# revert arriving through the mechanism that exists to prevent it. Both halves
+# below derive from this line, and so does the initialisation beside launch_read,
+# which is a third place the same drift could start. Adding a fact is editing it.
+LAUNCH_FACTS="profile role dir model"
+
+launch_fact() { # $1 = a name; 0 if this is one of the declared facts
+  case " $LAUNCH_FACTS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
 launch_write() { # $1 = window id, then NAME VALUE pairs; the vouch goes on last
   local id="$1"; shift
   [ $(( $# % 2 )) -eq 0 ] \
     || die "launch_write: the name/value arguments do not pair up, so every fact after the gap would be recorded under the name of another one. Nothing was written"
   while [ "$#" -gt 0 ]; do
-    case "$1" in
-      profile|role|dir|model) ;;
-      *) die "launch_write: '$1' is not a launch fact, so either a name and its value are transposed or a fact was added to the writer without teaching launch_read to read it. The vouch has not been written, so this window has no record rather than a partial one" ;;
-    esac
+    launch_fact "$1" \
+      || die "launch_write: '$1' is not a launch fact, so either a name and its value are transposed or a caller invented a fact gang does not record. The vouch has not been written, so this window has no record rather than a partial one"
     tmux set-option -w -t "$id" "@gl_$1" "$2"
     shift 2
   done
@@ -4096,16 +4109,28 @@ launch_write() { # $1 = window id, then NAME VALUE pairs; the vouch goes on last
 # recorded read identically — and only one of them may be cycled. That population
 # is not hypothetical. `gang adopt` registers a window gang did not launch, so it
 # has a profile and no launch facts by construction.
-LAUNCH_PROFILE="" LAUNCH_ROLE="" LAUNCH_DIR="" LAUNCH_MODEL=""
+#
+# Initialised from the same declaration rather than by hand: a list of names here
+# would be a THIRD place the drift above could start, one line from the fix for it.
+# The case conversion is `tr` with character classes and not `${f^^}`, which is
+# bash 4.0+ — macOS ships 3.2 as /bin/bash, so that expansion would die on the one
+# cell that can witness it. The classes are also the spelling shellcheck asks for
+# in place of an a-z range (SC2018/SC2019), so the portable form and the linted
+# form are the same form; a "tidy-up" back to a range would fail the lint gate.
+for _lf in $LAUNCH_FACTS; do
+  printf -v "LAUNCH_$(printf '%s' "$_lf" | tr '[:lower:]' '[:upper:]')" '%s' ''
+done
+unset _lf
+
 launch_read() { # $1 = window id; populate LAUNCH_*; 1 = no record, 2 = unreadable
-  local raw
+  local raw f
   raw="$(tmux show-options -wqv -t "$1" @gl_launch 2>/dev/null)" || raw=""
   [ -n "$raw" ] || return 1
   [ "$raw" = "$LAUNCH_RECORD" ] || return 2
-  LAUNCH_PROFILE="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || LAUNCH_PROFILE=""
-  LAUNCH_ROLE="$(tmux show-options -wqv -t "$1" @gl_role 2>/dev/null)" || LAUNCH_ROLE=""
-  LAUNCH_DIR="$(tmux show-options -wqv -t "$1" @gl_dir 2>/dev/null)" || LAUNCH_DIR=""
-  LAUNCH_MODEL="$(tmux show-options -wqv -t "$1" @gl_model 2>/dev/null)" || LAUNCH_MODEL=""
+  for f in $LAUNCH_FACTS; do
+    printf -v "LAUNCH_$(printf '%s' "$f" | tr '[:lower:]' '[:upper:]')" '%s' \
+      "$(tmux show-options -wqv -t "$1" "@gl_$f" 2>/dev/null)"
+  done
 }
 
 # --- commands ---------------------------------------------------------------
