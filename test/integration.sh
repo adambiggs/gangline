@@ -564,14 +564,20 @@ ago() { printf '%s' "$(( $(date +%s) - $1 ))"; }  # $1 = seconds -> that epoch, 
 
 mkdir -p "$SHIM/custom-profiles"
 fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
+  # The reader is the one profiles/bash.sh carries, for the reason given there:
+  # the box is the last non-empty row and the box is what follows the first
+  # marker in it, so a joined overflow row cannot present a stale prompt row as
+  # an empty box. A generated harness gets the same reader as the real one or
+  # it stops standing in for it.
   cat > "$SHIM/custom-profiles/$1.sh" <<SH
 GANG_LAUNCH="$2"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
   local line
-  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
-  printf '%s' "\${line#❯}" | tr -d '\302\240'
+  line="\$(tmux capture-pane -pJ -t "\$1" | awk 'NF { line = \$0 } END { print line }')" || return 1
+  case "\$line" in *❯*) ;; *) return 1 ;; esac
+  printf '%s' "\${line#*❯}" | tr -d '\302\240'
 }
 SH
 }
