@@ -98,11 +98,11 @@ Kills the named window and prints `dropped <name>`. Window-owned state disappear
 with it. This command resolves any named window in the team, including an
 unadopted one.
 
-### `gang cycle <name> [--from <sender>] [--resume-stdin]`
+### `gang cycle <name> [-m <model>] [--from <sender>] [--resume-stdin]`
 
 Replaces the named agent: its context ends, and a fresh agent is hitched in its
-place on the facts hitch recorded at its window — the same profile, role,
-directory and model. What ends is the context, not the window. A context is
+place on the facts hitch recorded at its window — the same profile, role and
+directory, and the same model unless `-m` below says otherwise. What ends is the context, not the window. A context is
 renewed by being replaced rather than summarised —
 [ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md).
 
@@ -121,6 +121,21 @@ nothing was typed and nothing was dropped. Each delivery records its size on the
 window that receives it and reports the growth since the last one delivered to
 that seat, so a handoff that is climbing says so a renewal before it reaches the
 wall rather than at it.
+
+`-m` names the model the replacement launches on, instead of the one its
+predecessor ran. It is the only launch fact this verb takes, because it is the
+one an operator changes without changing what the job is: the role, the
+directory and the handoff written for them all still apply. The fresh window
+records the model it actually launched with, so the record keeps describing the
+agent rather than its predecessor.
+
+What can be settled without launching is settled before the drop: a model
+carrying characters Gangline will not paste into a launch line is refused there,
+with the agent still running and nothing dropped. What cannot is the harness's
+to answer — whether it has that model at all — so a well-formed model that does
+not exist dies after the drop, loudly, with the window gone and the work on disk
+untouched. A profile that declares no model spelling refuses `-m` at the hitch
+below, for the reason given under `gang hitch`.
 
 Two things it does not do, and it says both on the surface that acts. The
 conversation does not come back: the relaunch is the profile's plain launch line

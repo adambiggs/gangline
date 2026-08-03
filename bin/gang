@@ -362,7 +362,8 @@ gang — drive a team of CLI agents as tmux windows
                                               tmux server died; --cutoff declares the
                                               whole team's cutoff and re-spans it from
                                               now, as gang cutoff does; alias: spawn
-  gang cycle <name> [--resume-stdin]          renew an agent's context by replacing the
+  gang cycle <name> [-m <model>] [--resume-stdin]
+                                              renew an agent's context by replacing the
                                               agent: retire it and hitch a fresh one on the
                                               facts it was launched with (profile, role,
                                               directory, model). The conversation does NOT
@@ -4058,6 +4059,21 @@ time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note p
 # Law 6 is answered by where they live rather than by a sweep: these are window
 # options, so tmux deletes them with the window, and the record dies with the
 # agent it describes.
+# The charset a model may use, in one place because a model now arrives by two
+# verbs. GANG_LAUNCH is handed to sh by tmux; anything outside this would need
+# quoting there, and a model id never does — so refuse rather than escape.
+#
+# Two placements, one rule. Hitch checks what an operator typed, and cycle must
+# reach the SAME verdict before its drop: a model refused after that point has
+# cost a context for a typo gang could already see. Called at statement level in
+# both, never through a command substitution — `die` inside `$(...)` ends only
+# that subshell, and the caller would read the empty string as a pass.
+model_pastable() { # $1 = the verb naming itself in the refusal, $2 = model
+  case "$2" in
+    *[!A-Za-z0-9._:/@-]*) die "$1: model '$2' has characters gang will not paste into a launch line" ;;
+  esac
+}
+
 LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
 launch_write() { # $1 = window id, then NAME VALUE pairs; the vouch goes on last
   local id="$1"; shift
@@ -4150,9 +4166,7 @@ cmd_hitch() {
   # no spelling refuses rather than guessing a flag the harness may not have.
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
-    # GANG_LAUNCH is handed to sh by tmux; anything outside this charset would
-    # need quoting there, and a model id never does — refuse instead.
-    case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
+    model_pastable hitch "$model"
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
 
@@ -7052,7 +7066,7 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # all. The handoff is still the agent's own authored act — gang carries it, and
   # writes none of it.
   local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0 resume_bytes=0
-  local prev_bytes="" id rc=0 waited=0
+  local prev_bytes="" id rc=0 waited=0 model=""
   name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   # Parsed rather than ignored, and that is a fix rather than an addition: the
   # dispatcher used to hand this function the name alone, so every word after it
@@ -7063,6 +7077,7 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
     --resume-stdin) [ "$resume_stdin" -eq 0 ] || die "cycle: --resume-stdin may be passed only once"
                     resume_stdin=1; shift ;;
     --from)   [ $# -ge 2 ] || die "cycle: $1 needs a value"; from="$2"; shift 2 ;;
+    -m|--model) [ $# -ge 2 ] || die "cycle: $1 needs a value"; model="$2"; shift 2 ;;
     *) die "cycle: unknown argument '$1'" ;;
   esac; done
   id="$(win_id "$name")" || die "no agent '$name'"
@@ -7089,6 +7104,14 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
     || die "cycle: '$name' runs on '$LAUNCH_PROFILE', a stand-in for gangline's own suite rather than a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   [ -z "$LAUNCH_ROLE" ] || role_file "$LAUNCH_ROLE" >/dev/null \
     || die "cycle: '$name' was briefed as '$LAUNCH_ROLE' and gang cannot find that role now (have: $(list_roles | tr '\n' ' '))"
+  # -m IS argument checking, and it belongs here for the reason the paragraph
+  # above gives for excluding the rest of it: hitch's copy has nothing left to
+  # catch on RECORDED facts, but a model typed at THIS verb has been checked by
+  # nobody yet. What gang can settle without launching, it settles before the
+  # drop. What it cannot — whether the harness has this model at all — is the
+  # harness's to answer, so a well-formed model that does not exist still dies
+  # after the drop, loudly, with the window gone and the work untouched.
+  [ -z "$model" ] || model_pastable cycle "$model"
   # The resume is settled with the other pre-drop refusals and LAST among them,
   # and both halves of that placement are load-bearing. Before the drop, because
   # a body refused after it is a context destroyed for something gang could have
@@ -7174,7 +7197,15 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   local -a flags
   flags=(-p "$LAUNCH_PROFILE" -d "$LAUNCH_DIR")
   [ -z "$LAUNCH_ROLE" ]  || flags+=(-r "$LAUNCH_ROLE")
-  [ -z "$LAUNCH_MODEL" ] || flags+=(-m "$LAUNCH_MODEL")
+  # A model named at this verb wins over the recorded one, and the fresh window
+  # then records what it ACTUALLY launched with rather than what its predecessor
+  # ran. A record replaying a model the agent is not on is the fabricated status
+  # the record exists to refuse.
+  if [ -n "$model" ]; then
+    flags+=(-m "$model")
+  elif [ -n "$LAUNCH_MODEL" ]; then
+    flags+=(-m "$LAUNCH_MODEL")
+  fi
   # Neither --resume nor --cutoff, and both absences are the design rather than an
   # omission. --resume replaces the launch line with the profile's resume form,
   # and on a harness that declares one that hands back the very conversation the
