@@ -1273,8 +1273,34 @@ wait_for alpha "the first of two concurrent deliveries" yes has alpha MARK_RACE_
 wait_for alpha "the second of two concurrent deliveries" yes has alpha MARK_RACE_B
 check "concurrent deliveries both arrive" "yes yes" \
   "$(has alpha MARK_RACE_A) $(has alpha MARK_RACE_B)"
-check "and neither was merged into the other's submission" "0" \
-  "$(pane_of alpha | grep -c 'MARK_RACE_A.*MARK_RACE_B')"
+# --- PROBE CAPTURE. Branch-only, and it never merges. -------------------------
+# The else branch below is upstream's line, byte-for-byte: with PROBE_SUITE_OUT
+# unset this file behaves exactly as main does. With it set, the SAME capture is
+# written to a file first and the assertion reads that file, so the bytes the
+# check evaluates are the bytes archived — no second read sits between deciding
+# and recording, which is the whole reason a green here can be believed.
+# The reverse-direction grep is logged on EVERY run, red or green. Upstream's
+# pattern is directional, so a merge that submitted B first matches neither it
+# nor this probe; the reverse count is the denominator that absence has never
+# had. It reads the archived file, so it too is the verdict's own bytes.
+# -p, -pN and the geometry are taken AFTER the check, so they cannot move it.
+if [ -n "${PROBE_SUITE_OUT:-}" ]; then
+  mkdir -p "$PROBE_SUITE_OUT"
+  pane_of alpha > "$PROBE_SUITE_OUT/cluster1.joined"
+  probe_fwd="$(grep -c 'MARK_RACE_A.*MARK_RACE_B' "$PROBE_SUITE_OUT/cluster1.joined")"
+  check "and neither was merged into the other's submission" "0" "$probe_fwd"
+  probe_win="$(id_of alpha)"
+  tmux capture-pane -p  -t "$probe_win" > "$PROBE_SUITE_OUT/cluster1.raw"
+  tmux capture-pane -pN -t "$probe_win" > "$PROBE_SUITE_OUT/cluster1.rawN"
+  probe_rev="$(grep -c 'MARK_RACE_B.*MARK_RACE_A' "$PROBE_SUITE_OUT/cluster1.joined")"
+  printf 'probe: forward=%s reverse=%s geometry=%s\n' \
+    "$probe_fwd" "$probe_rev" \
+    "$(tmux display-message -p -t "$probe_win" '#{pane_width}x#{pane_height}')" \
+    | tee "$PROBE_SUITE_OUT/cluster1.counts"
+else
+  check "and neither was merged into the other's submission" "0" \
+    "$(pane_of alpha | grep -c 'MARK_RACE_A.*MARK_RACE_B')"
+fi
 
 # The other writer is the operator's hands. A box whose contents are MOVING is
 # somebody typing, and a paste into it interleaves mid-word — so gang holds

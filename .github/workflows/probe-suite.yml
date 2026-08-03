@@ -1,0 +1,185 @@
+name: probe-suite
+
+# This file exists ONLY on probe/** branches and never lands on main.
+#
+# The previous instrument isolated the concurrent-delivery unit out of the suite
+# and ran it 120 times per cell. It reproduced nothing, on either cell, while the
+# real suite reds on the same check at roughly one run in four — a mismatch at
+# Fisher p=0.00059. That result indicts the ISOLATION, not gang: whatever makes
+# the check fail is something the suite has and the isolated render does not.
+#
+# So this one does not isolate. Each job runs test/integration.sh exactly as
+# shell.yml runs it, and the only change to the suite is a capture at the
+# cluster-1 assertion that writes down the bytes the check evaluated. The steps
+# below are shell.yml's job, step for step and in its order, because the process
+# under measurement is that job — a leaner one would be a different process and
+# would put us back where the last run left off.
+#
+# Reds here are the DATA. A job whose suite fails shows failed, deliberately:
+# nothing is wrapped in continue-on-error, because an instrument that reports
+# healthy while the thing it measures fails is the defect this repo exists to
+# refuse. An expected-red measurement run is not a red landing.
+on:
+  push:
+    branches: ['probe/**']
+
+jobs:
+  suite:
+    strategy:
+      # Every replicate's outcome is wanted. Cancelling siblings on the first red
+      # would throw away the denominator that the rate is computed against.
+      fail-fast: false
+      matrix:
+        # Enumerated rather than generated, so N is auditable by reading. macOS
+        # is the cell that reds; ubuntu is the control, and its count is small on
+        # purpose — it costs no wall (a separate runner pool from the macOS five)
+        # and it buys the one thing the macOS cell cannot give: whether the
+        # reverse-direction merge, which upstream's directional grep cannot see,
+        # happens on a platform where the forward one never fires.
+        include:
+          - { os: macos-latest,  rep: '01' }
+          - { os: macos-latest,  rep: '02' }
+          - { os: macos-latest,  rep: '03' }
+          - { os: macos-latest,  rep: '04' }
+          - { os: macos-latest,  rep: '05' }
+          - { os: macos-latest,  rep: '06' }
+          - { os: macos-latest,  rep: '07' }
+          - { os: macos-latest,  rep: '08' }
+          - { os: macos-latest,  rep: '09' }
+          - { os: macos-latest,  rep: '10' }
+          - { os: macos-latest,  rep: '11' }
+          - { os: macos-latest,  rep: '12' }
+          - { os: macos-latest,  rep: '13' }
+          - { os: macos-latest,  rep: '14' }
+          - { os: macos-latest,  rep: '15' }
+          - { os: macos-latest,  rep: '16' }
+          - { os: macos-latest,  rep: '17' }
+          - { os: macos-latest,  rep: '18' }
+          - { os: macos-latest,  rep: '19' }
+          - { os: macos-latest,  rep: '20' }
+          - { os: ubuntu-latest, rep: '01' }
+          - { os: ubuntu-latest, rep: '02' }
+          - { os: ubuntu-latest, rep: '03' }
+          - { os: ubuntu-latest, rep: '04' }
+          - { os: ubuntu-latest, rep: '05' }
+    runs-on: ${{ matrix.os }}
+    env:
+      # Outside the workspace, and that is load-bearing rather than tidy: the
+      # suite ends by diffing the tree against a snapshot it took at the start
+      # and voids its own run if anything moved. Captures written under the
+      # checkout would trip that guard and every job would report a mix of two
+      # versions instead of a result.
+      PROBE_SUITE_OUT: ${{ runner.temp }}/probe-suite-out
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # install.sh clones from this checkout
+
+      - name: Dependencies
+        run: |
+          set -eu
+          have_all=yes
+          for t in tmux shellcheck; do
+            command -v "$t" >/dev/null || have_all=no
+          done
+          [ "$have_all" = no ] || exit 0
+          case "${{ runner.os }}" in
+            Linux) sudo apt-get install -y tmux shellcheck ;;
+            # No coreutils, for shell.yml's reason: brew's gnubin on PATH would
+            # hide the BSD userland this cell exists to run against.
+            macOS) brew install tmux shellcheck ;;
+            *) echo "no dependency recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
+          esac
+
+      - name: Fingerprint
+        # Written BEFORE the suite, so a job that dies mid-run still says which
+        # machine it died on. The image version is the point: three reds in
+        # twelve runs is a rate only if the runs are independent trials, and
+        # clustering by image is the way that assumption fails. Recording it is
+        # what makes that testable afterwards instead of assumed now.
+        run: |
+          set -euo pipefail
+          mkdir -p "$PROBE_SUITE_OUT"
+          {
+            printf 'os:            %s\n' "${{ matrix.os }}"
+            printf 'rep:           %s\n' "${{ matrix.rep }}"
+            printf 'sha:           %s\n' "${{ github.sha }}"
+            printf 'run_id:        %s\n' "${{ github.run_id }}"
+            printf 'runner_arch:   %s\n' "${{ runner.arch }}"
+            printf 'ImageOS:       %s\n' "${ImageOS:-unset}"
+            printf 'ImageVersion:  %s\n' "${ImageVersion:-unset}"
+            printf 'started:       %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'uname:         %s\n' "$(uname -a)"
+            printf 'interpreter:   %s\n' "$(command -v bash)"
+            printf 'bash:          %s\n' "$(bash --version | head -1)"
+            printf 'tmux:          %s\n' "$(tmux -V)"
+            printf 'awk:           %s\n' "$(awk --version 2>&1 | head -1 || true)"
+          } | tee "$PROBE_SUITE_OUT/fingerprint.txt"
+
+          # shell.yml asserts this and the assertion is why its macOS cell means
+          # anything. A newer bash here would keep every step green while parsing
+          # nothing old, and this run would be measuring a userland main never runs.
+          if [ "${{ runner.os }}" = macOS ]; then
+            bv="$(bash -c 'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"')"
+            [ "$bv" = 3.2 ] || {
+              echo "this cell resolves bash $bv, so it is not the cell main reds on" >&2
+              exit 1
+            }
+          fi
+
+      - name: Syntax and lint
+        run: test/lint.sh
+
+      - name: Installer
+        run: |
+          GANGLINE_REPO="$PWD" GANGLINE_HOME="$RUNNER_TEMP/gangline" \
+            GANGLINE_BIN="$RUNNER_TEMP/bin" sh install.sh
+          "$RUNNER_TEMP/bin/gang" roles
+
+      - name: Integration test
+        # No pipe. `suite | tee` would hand the step tee's exit status and report
+        # a red suite as a green job unless pipefail is set — the masking that
+        # pin 5 forbids, one missing option away. Redirect, echo, exit with the
+        # status the suite actually returned, and there is nothing to get wrong.
+        #
+        # `|| rc=$?` rather than a bare call followed by `rc=$?`: this step runs
+        # under the default `bash -e`, where an unhandled failure aborts on the
+        # spot — so the bare form would leave the cat and the exit unreached on
+        # exactly the red runs this instrument exists to read. Handling the
+        # failure is what keeps errexit's hands off it.
+        run: |
+          rc=0
+          test/integration.sh > "$PROBE_SUITE_OUT/suite.log" 2>&1 || rc=$?
+          cat "$PROBE_SUITE_OUT/suite.log"
+          exit "$rc"
+
+      - name: The capture must have fired
+        # A guard against the failure mode this whole investigation is about: a
+        # negative result that is really an unevaluated one. If PROBE_SUITE_OUT
+        # never reached the suite, the upstream branch ran instead, the job goes
+        # green, and "forward=0" would be recorded for a check that was never
+        # captured. The suite reaches cluster 1 early, so a missing file here
+        # means the instrument failed — not that the merge did not happen.
+        if: always()
+        run: |
+          set -eu
+          [ -s "$PROBE_SUITE_OUT/cluster1.joined" ] || {
+            echo "cluster1.joined is missing or empty: the capture never fired," >&2
+            echo "so this job has no cluster-1 datum and its zero means nothing." >&2
+            exit 1
+          }
+          cat "$PROBE_SUITE_OUT/cluster1.counts"
+
+      - name: Artifacts
+        # always(), because a red job's captures are the entire point of it.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-suite-${{ matrix.os }}-${{ matrix.rep }}
+          path: ${{ runner.temp }}/probe-suite-out/
+          # error, not warn: fingerprint.txt is written before the suite starts,
+          # so an empty directory can only mean the path is misconfigured. That
+          # is worth failing every job in the first two minutes over, rather
+          # than discovering it after the whole allocation has been spent.
+          if-no-files-found: error
