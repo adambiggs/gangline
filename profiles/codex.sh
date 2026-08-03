@@ -128,8 +128,8 @@ GANG_COMPACT_CMD="/compact"
 # reads "Press Tab to queue a message when a task is running; otherwise it sends
 # immediately". Watched end to end anyway — the paste lands in the composer,
 # Enter moves it into the transcript under "Messages to be submitted after next
-# tool call", the running turn is not disturbed, and the message is answered
-# when that turn finishes.
+# tool call", and the message is consumed inside that same logical turn at the
+# next tool-result boundary.
 GANG_MIDTURN_INPUT=1
 # GANG_COMPACTING_REGEX is deliberately unset, and this one is not a gap in the
 # observation — it is what the observation found. Codex draws compaction as an
