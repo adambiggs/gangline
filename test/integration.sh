@@ -1324,7 +1324,14 @@ esac
 cyc hitch cycself -p cycler -d /tmp >/dev/null 2>&1
 tmux send-keys -t "$(id_of cycself)" \
   "GANG_PROFILES='$SHIM/custom-profiles' '$GANG' cycle cycself --from cycself --resume-stdin <<< 'CYCSELF-RESUME'" Enter
-wait_for '' "the self-issued cycle to retire its own caller" yes win_there 'cycself~spent'
+# NAMED, so a timeout brings its own cause with it. wait_for prints the agent's
+# screen only when it is told whose screen to print, and this is the wait whose
+# failure needs it: the pane it dumps is the one the cycle was typed into, where a
+# refusal would have printed and where silence is itself the finding. Left unnamed,
+# a timeout here reports `expected: [yes] actual: [no]`, which is true and no help
+# at all — and the run that produced exactly that cost a second run to get further.
+wait_for cycself "the self-issued cycle to retire its own caller" yes \
+  win_there 'cycself~spent'
 wait_for '' "a fresh agent to take the name back" yes win_there cycself
 check "the caller's window survives its own renewal" "yes" "$(win_there 'cycself~spent')"
 # Alive, not merely present. A window can outlast the process that was running in
