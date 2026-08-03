@@ -63,18 +63,26 @@ jobs:
           - { os: ubuntu-latest, rep: '04' }
           - { os: ubuntu-latest, rep: '05' }
     runs-on: ${{ matrix.os }}
-    env:
-      # Outside the workspace, and that is load-bearing rather than tidy: the
-      # suite ends by diffing the tree against a snapshot it took at the start
-      # and voids its own run if anything moved. Captures written under the
-      # checkout would trip that guard and every job would report a mix of two
-      # versions instead of a result.
-      PROBE_SUITE_OUT: ${{ runner.temp }}/probe-suite-out
 
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0   # install.sh clones from this checkout
+
+      - name: Where the captures go
+        # Outside the workspace, and that is load-bearing rather than tidy: the
+        # suite ends by diffing the tree against a snapshot it took at the start
+        # and voids its own run if anything moved. Captures written under the
+        # checkout would trip that guard and every job would report a mix of two
+        # versions instead of a result.
+        #
+        # Exported here rather than in a job-level `env:`, because a job-level
+        # env cannot see the `runner` context — only github, needs, strategy,
+        # matrix, vars, secrets and inputs — and naming it there fails the whole
+        # workflow at startup with no jobs and no message worth reading. The
+        # step-level env var is the same path by another route; steps may read
+        # `runner.temp` directly, which is why the artifact path below still does.
+        run: echo "PROBE_SUITE_OUT=$RUNNER_TEMP/probe-suite-out" >> "$GITHUB_ENV"
 
       - name: Dependencies
         run: |
