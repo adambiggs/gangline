@@ -1106,8 +1106,84 @@ check "a second renewal carrying a bigger handoff succeeds" "0" "$rc"
 check "and the growth survives the renewal that would otherwise take it away" "yes" \
   "$(contains "$out" "up $grew since the last one delivered to this seat")"
 
+# RETIREMENT. The predecessor is not killed: an operator asked to go on reading a
+# predecessor's closing remarks after its replacement was already up, and a
+# renewal that closes the pane answers that with nothing.
+#
+# id_of exits rather than returning empty, deliberately, so absence needs its own
+# reader here.
+win_there() { tmux list-windows -t "$GANG_SESSION" -F '#W' | grep -qx "$1" && echo yes || echo no; }
+check "the predecessor is kept under a spent name" "yes" "$(win_there 'cycled~spent')"
+check "and cycle names it, since the operator has to be able to find it" "yes" \
+  "$(contains "$out" 'cycled~spent')"
+# The pane, not a window wearing its name: what the operator wants back is the
+# scrollback, so the check is that the CONTENT survived rather than that a window
+# by that name exists.
+check "carrying the predecessor's own pane, scrollback and all" "yes" \
+  "$(has 'cycled~spent' CYCRESUME-PAYLOAD)"
+
+# Out of the agent namespace, through refusals that already existed. Agent-ness
+# is marked by @gl_profile, so unsetting it is a REMOVAL rather than a rule
+# somewhere that has to remember to skip this window.
+check "the mark is gone" "" \
+  "$(tmux show-options -wqv -t "$(id_of 'cycled~spent')" @gl_profile)"
+out="$(printf 'hello\n' | cyc send 'cycled~spent' --from cycnorole --stdin 2>&1)"; rc=$?
+check "a send to a retired window is refused" "1" "$rc"
+check "as not being a gang agent" "yes" "$(contains "$out" "not a gang agent")"
+# It is still ON the roster, and that is the honest report rather than a leak:
+# roster_row branches on the missing mark and prints the row unadopted, with no
+# profile and no state. The requirement was that it must not look LIVE.
+check "the roster reports it unadopted rather than as an agent" "yes" \
+  "$("$GANG" roster | awk '$1=="cycled~spent"{print ($2=="-" && $NF=="unadopted") ? "yes" : "no"}')"
+check "with no state word that could be read as available for work" "no" \
+  "$("$GANG" roster | awk '$1=="cycled~spent"' | grep -qE 'idle|busy' && echo yes || echo no)"
+
+# The other half of the requirement, and checking only the first would have
+# passed on a window nobody could ever get rid of. cmd_drop resolves through
+# win_id rather than resolve, and consults neither the mark nor valid_name.
+out="$(cyc drop 'cycled~spent' 2>&1)"; rc=$?
+check "and gang drop still closes it, so the operator keeps their close-out" "0" "$rc"
+check "leaving nothing behind" "no" "$(win_there 'cycled~spent')"
+
+# EXACTLY ONE spent window per agent, closed by the next renewal rather than by
+# anything that has to come back for it later (law 7).
+cyc cycle cycled >/dev/null 2>&1
+firstspent="$(id_of 'cycled~spent')"
+cyc cycle cycled >/dev/null 2>&1
+check "a second renewal leaves one spent window, not a pile of them" "1" \
+  "$(tmux list-windows -t "$GANG_SESSION" -F '#W' | grep -c '^cycled~spent$')"
+check "and it is a different window: the previous one was closed" "no" \
+  "$([ "$firstspent" = "$(id_of 'cycled~spent')" ] && echo yes || echo no)"
+
+# THE ONE THE REST OF IT RESTS ON: an agent renewing ITSELF. Under retirement
+# there is no drop, so the caller — a process inside the window being retired —
+# is unmarked and renamed rather than killed, and lives through its own renewal.
+# That is what makes renewal a thing a dog can do unattended, and the brief every
+# agent reads instructs them to do it, so it is guarded here rather than trusted.
+# Typed into the agent's own pane, because that is the only place the claim
+# exists to be tested.
+cyc hitch cycself -p cycler -d /tmp >/dev/null 2>&1
+tmux send-keys -t "$(id_of cycself)" \
+  "GANG_PROFILES='$SHIM/custom-profiles' '$GANG' cycle cycself --from cycself --resume-stdin <<< 'CYCSELF-RESUME'" Enter
+wait_for '' "the self-issued cycle to retire its own caller" yes win_there 'cycself~spent'
+wait_for '' "a fresh agent to take the name back" yes win_there cycself
+check "the caller's window survives its own renewal" "yes" "$(win_there 'cycself~spent')"
+# Alive, not merely present. A window can outlast the process that was running in
+# it, and a retired window with a dead shell in it would pass every check above.
+tmux send-keys -t "$(id_of 'cycself~spent')" "echo CYCSELF-STILL-ANSWERING" Enter
+wait_for 'cycself~spent' "the caller to answer after retiring itself" yes \
+  has 'cycself~spent' CYCSELF-STILL-ANSWERING
+check "AND IS STILL RUNNING IN IT: it answered after the act" "yes" \
+  "$(has 'cycself~spent' CYCSELF-STILL-ANSWERING)"
+wait_for cycself "the self-issued resume to arrive" yes has cycself CYCSELF-RESUME
+check "and its own handoff reached the replacement" "yes" "$(has cycself CYCSELF-RESUME)"
+
 "$GANG" drop cycled >/dev/null 2>&1 || true
+"$GANG" drop 'cycled~spent' >/dev/null 2>&1 || true
 "$GANG" drop cycnorole >/dev/null 2>&1 || true
+"$GANG" drop 'cycnorole~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycself >/dev/null 2>&1 || true
+"$GANG" drop 'cycself~spent' >/dev/null 2>&1 || true
 "$GANG" drop cycadopted >/dev/null 2>&1 || true
 "$GANG" drop cycstray >/dev/null 2>&1 || true
 

@@ -128,8 +128,22 @@ the act being asked for. And the team's cutoff is untouched: the cutoff is
 session state, so it survives the drop with nothing to restore, and re-declaring
 it would re-span the whole team's budget from one agent's renewal.
 
+The predecessor is retired rather than dropped. Its window is kept, renamed
+`<name>~spent`, with its pane and scrollback intact — so a closing report can
+still be read after its replacement is already working. Retiring is the removal
+of the `@gl_profile` mark that made the window an agent, so it leaves the agent
+namespace through refusals that already exist: `gang send`, `gang status` and
+`gang capture` refuse it, and `gang roster` reports the row `unadopted` rather
+than as an agent standing by. `gang drop` still closes it, because drop resolves
+a window by name without consulting that mark. Each agent keeps exactly one spent
+window; the next renewal closes the previous one.
+
+Because nothing is killed, the caller survives its own renewal — an agent can run
+`gang cycle <itself> --from <itself> --resume-stdin < handoff`, keep running as
+`<name>~spent`, and hand its state to its own replacement.
+
 The wrap is not Gangline's to perform. An agent's handoff is its own authored
-act, and a verb that dropped the window to write one would be writing it after
+act, and a verb that retired the window to write one would be writing it after
 the writer was gone — so wrap first, then cycle.
 
 It refuses rather than reconstructing from a guess. Without a readable launch

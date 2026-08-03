@@ -363,15 +363,17 @@ gang — drive a team of CLI agents as tmux windows
                                               whole team's cutoff and re-spans it from
                                               now, as gang cutoff does; alias: spawn
   gang cycle <name> [--resume-stdin]          renew an agent's context by replacing the
-                                              agent: drop it and hitch a fresh one on the
+                                              agent: retire it and hitch a fresh one on the
                                               facts it was launched with (profile, role,
                                               directory, model). The conversation does NOT
                                               come back and the team's cutoff is untouched.
+                                              The old window is KEPT as <name>~spent, out of
+                                              the agent namespace but still readable; the
+                                              next cycle closes it, or 'gang drop' does.
                                               Wrap first — the handoff is the agent's own to
-                                              write, and gang cannot write it for a window
-                                              it is about to drop. --resume-stdin reads that
-                                              handoff from stdin and delivers it to the fresh
-                                              agent once it is briefed; needs --from
+                                              write. --resume-stdin reads that handoff from
+                                              stdin and delivers it to the fresh agent once
+                                              it is briefed; needs --from
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
@@ -7091,14 +7093,52 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # Both exclusions said on the surface that acts on them, because the assumption
   # an operator arrives with is that a renewal restores what it renewed.
   printf '%s\n' "$(colour "$C_WORK" "cycling $name") $(colour "$C_DIM" "— a fresh $LAUNCH_PROFILE on the same facts: the conversation does not come back, and the team's cutoff is untouched")"
-  tmux kill-window -t "$id"
-  # The drop is made a fact rather than assumed, because the failure it hides is
-  # not its own: hitch refuses a name that already exists, so a window still
-  # standing here surfaces as a collision that says nothing about the kill it came
-  # from. Bounded, because a window that has not gone in two seconds is not going.
+  # EXACTLY ONE spent window per agent, and the previous one is closed HERE — by
+  # the next renewal, the act that knows there is about to be another. Nothing
+  # sweeps it later and nothing is scheduled to come back for it (law 7). Killed
+  # before the current window is retired, so the name it is about to take is free.
+  local spent="$name~spent" old=""
+  if old="$(win_id "$spent")"; then tmux kill-window -t "$old"; fi
+  # RETIREMENT. The window is not dropped: an operator asked to keep reading a
+  # predecessor's closing remarks after its replacement was already up, and a
+  # renewal that kills the pane answers that with nothing.
+  #
+  # BOTH HALVES ARE REMOVALS OF SOMETHING GANG ITSELF WROTE, which is what makes
+  # this declarative rather than a rule somebody has to remember. Agent-ness is
+  # already marked by @gl_profile — the roster enumerates by it, `resolve` dies
+  # without it, `cmd_hook` exits without it — so unsetting the mark takes the
+  # window out of the addressable namespace through refusals that already exist.
+  # `gang send` to it is refused, it is not on the roster, patrol does not see it.
+  # cmd_drop is deliberately NOT among those: it resolves through win_id rather
+  # than resolve, and consults neither the mark nor valid_name, so the operator
+  # can still close the pane out when they have finished reading it. That split
+  # is the whole requirement — out of the agent namespace, still reachable by a
+  # verb — and it needed no new exclusion to get it.
+  #
+  # `spent` and never `idle`: idle is a LIVE state word meaning available for
+  # work, and the briefs match state words by prefix, so a retired window reading
+  # idle would be reported as an agent standing by to take a task.
+  tmux set-option -uw -t "$id" @gl_profile
+  tmux rename-window -t "$id" "$spent"
+  # The rename is made a fact rather than assumed, and THIS CHECK'S CLAIM HAS
+  # CHANGED with the act above it. It used to assert the window had VANISHED;
+  # it now asserts the NAME has been given up, which is a weaker fact about a
+  # window that is still there. The downstream reason is unchanged and is why
+  # the check stays: hitch refuses a name that already exists, so a window still
+  # answering to this one surfaces as a collision that says nothing about the act
+  # it came from. Bounded, because a rename that has not taken in two seconds is
+  # not going to.
   while exists "$name" && [ "$waited" -lt 20 ]; do sleep 0.1; waited=$(( waited + 1 )); done
   ! exists "$name" \
-    || die "cycle: dropped '$name' and tmux still lists a window by that name, so gang will not hitch a second one over it"
+    || die "cycle: retired '$name' and tmux still lists a window by that name, so gang will not hitch a second one over it"
+  # Said at the moment of the act, because that is where the operator is looking
+  # and because the window is about to stop being addressable. The roster does
+  # still show it — roster_row branches on the missing mark and prints the row as
+  # `unadopted`, with no profile and no state — which is the honest report and
+  # not a second place it looks live: nothing in that row can be mistaken for an
+  # agent standing by. What the roster cannot say is which agent it used to be
+  # and that closing it is optional, so this line says both.
+  printf '%s\n' "$(colour "$C_DIM" "kept $spent — no longer an agent, so sends and status are refused and the roster shows it unadopted; read it with 'gang attach', close it with 'gang drop $spent', or leave it for the next cycle to close")"
   local -a flags
   flags=(-p "$LAUNCH_PROFILE" -d "$LAUNCH_DIR")
   [ -z "$LAUNCH_ROLE" ]  || flags+=(-r "$LAUNCH_ROLE")
