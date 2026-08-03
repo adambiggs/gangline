@@ -900,6 +900,98 @@ GANG_PROFILES="$SHIM/custom-profiles" \
   "$GANG" hitch quoted -p modeled -m 'pwn; touch /tmp/x' -d /tmp >/dev/null 2>&1
 check "a model sh would need quoted is refused" "1" "$?"
 
+# --- effort at hitch, and the renewal that replays it --------------------------
+section "effort at hitch, and the renewal that replays it"
+
+# The same shape as the model above, with one difference the worlds have to pin:
+# an effort's separator belongs to the harness's own spelling, so the profile
+# declares the WHOLE thing and the join carries no space. The vocabulary is the
+# profile's too — codex's depends on the model — so a profile declaring the flag
+# and no way to check a level cannot take the flag at all.
+"$GANG" hitch noeffort -p bash --effort low -d /tmp >/dev/null 2>&1
+check "a profile with no effort spelling refuses --effort" "1" "$?"
+
+cat > "$SHIM/custom-profiles/noverify.sh" <<'SH'
+GANG_LAUNCH="sh -c 'echo launched:\$*; printf \"❯ \"; sleep 300' probe"
+GANG_EFFORT_OPT="--effort="
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+SH
+out="$(GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" hitch noverify -p noverify --effort low -d /tmp 2>&1)"; rc=$?
+check "a profile that cannot check a level may not take one" "1" "$rc"
+check "and names the declaration it is missing" "yes" \
+  "$(contains "$out" "GANG_EFFORT_CMD")"
+
+# A declared checker that answers nothing is NOT a bad value, and saying so is the
+# whole point of printing a vocabulary rather than judging one level: an exit
+# status would merge could-not-determine into not-a-level and accuse the operator
+# of a typo when the harness is simply absent.
+cat > "$SHIM/custom-profiles/silent.sh" <<'SH'
+GANG_LAUNCH="sh -c 'echo launched:\$*; printf \"❯ \"; sleep 300' probe"
+GANG_EFFORT_OPT="--effort="
+GANG_EFFORT_CMD="true"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+SH
+out="$(GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" hitch silent -p silent --effort low -d /tmp 2>&1)"; rc=$?
+check "a checker that produces no levels is refused" "1" "$rc"
+check "as a broken declaration rather than a bad value" "yes" \
+  "$(contains "$out" "produced no levels")"
+
+cat > "$SHIM/custom-profiles/efforted.sh" <<'SH'
+GANG_LAUNCH="sh -c 'echo launched:\$*; printf \"❯ \"; sleep 300' probe"
+GANG_RESUME_LAUNCH="sh -c 'echo RESUMEDFORM:\$*; printf \"❯ \"; sleep 300' probe"
+GANG_EFFORT_OPT="--effort="
+GANG_EFFORT_CMD="printf 'low\nmedium\nxhigh\n'"
+GANG_BUSY_REGEX=""
+GANG_VERIFIED_VERSIONS="any"
+SH
+eff() { GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
+out="$(eff hitch effbad -p efforted --effort bogus -d /tmp 2>&1)"; rc=$?
+check "a level the harness does not take is refused" "1" "$rc"
+check "naming the levels it does" "yes" "$(contains "$out" "low medium xhigh")"
+# The neighbour that makes a substring test look like it works. `high` is not a
+# level here and `xhigh` is, so a match that is not anchored on both sides passes
+# a level this harness never declared.
+out="$(eff hitch effsub -p efforted --effort high -d /tmp 2>&1)"; rc=$?
+check "a level that is only PART of a declared one is refused too" "1" "$rc"
+
+eff hitch effok -p efforted --effort xhigh -d /tmp >/dev/null 2>&1
+check "the declared spelling carries the effort into the launch, with no space" "yes" \
+  "$(has effok 'launched:--effort=xhigh')"
+check "and the launch record keeps it" "xhigh" \
+  "$(tmux show-options -wqv -t "$(id_of effok)" @gl_effort)"
+
+# THE OTHER LAUNCH FORM, and position is why it works rather than a second branch:
+# the resume swap happens ABOVE the append, so both forms carry the flag by
+# construction. Asserted anyway — construction is a reason to believe, not a
+# receipt, and a flag surviving hitch and lost on the other form would be a
+# renewal that quietly changes the agent.
+eff hitch effres -p efforted --resume --effort low -d /tmp >/dev/null 2>&1
+check "the resume launch form carries it too" "yes" \
+  "$(has effres 'RESUMEDFORM:--effort=low')"
+
+eff cycle effok >/dev/null 2>&1
+check "a renewal naming nothing replays the recorded effort" "xhigh" \
+  "$(tmux show-options -wqv -t "$(id_of effok)" @gl_effort)"
+check "and it reaches the fresh agent's launch line" "yes" \
+  "$(has effok 'launched:--effort=xhigh')"
+# The control for every check above it: an agent recorded with no effort must
+# still cycle, because absence is the record's default rather than a gap in it.
+eff hitch effnone -p efforted -d /tmp >/dev/null 2>&1
+out="$(eff cycle effnone 2>&1)"; rc=$?
+check "an agent hitched without one still cycles" "0" "$rc"
+check "coming back with no effort rather than a guessed level" "" \
+  "$(tmux show-options -wqv -t "$(id_of effnone)" @gl_effort)"
+
+for a in noverify silent effok effnone; do
+  "$GANG" drop "$a" >/dev/null 2>&1 || true
+  "$GANG" drop "$a~spent" >/dev/null 2>&1 || true
+done
+"$GANG" drop effres >/dev/null 2>&1 || true
+
 # --- the launch record, and the renewal that reads it --------------------------
 section "the launch record, and the renewal that reads it"
 
