@@ -70,6 +70,17 @@ cannot be delivered makes hitch fail. With no brief, a running window may still
 be reported as hitched with a warning when it is occupied or never settles.
 Profiles that require a session marker receive it even without a role.
 
+What hitch was told is kept on the window it describes: the profile, role,
+directory and model, one window option per fact, beside a record naming the
+format they are written in. `gang cycle` is what reads them. `--resume` and
+`--cutoff` are deliberately not among them — replaying a resume form would
+restore the conversation a cycle exists to discard, and the cutoff is the whole
+team's, held on the session rather than on any window. The format record is
+written last, after every fact it vouches for, so a hitch that died partway
+cannot read as a complete one. All of it is window options, so tmux deletes it
+along with the window: the record dies with the agent it describes, and nothing
+sweeps it (law 6).
+
 ### `gang adopt <name> -p <profile>`
 
 Registers an existing window in the current team by setting its profile and
@@ -86,6 +97,34 @@ Executes `tmux attach` for `GANG_SESSION`.
 Kills the named window and prints `dropped <name>`. Window-owned state disappears
 with it. This command resolves any named window in the team, including an
 unadopted one.
+
+### `gang cycle <name>`
+
+Drops the named agent and hitches a fresh one in its place, on the facts hitch
+recorded at its window: the same profile, role, directory and model. A context is
+renewed by being replaced rather than summarised —
+[ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md).
+
+Two things it does not do, and it says both on the surface that acts. The
+conversation does not come back: the relaunch is the profile's plain launch line
+and never its resume form, because restoring the conversation is the opposite of
+the act being asked for. And the team's cutoff is untouched: the cutoff is
+session state, so it survives the drop with nothing to restore, and re-declaring
+it would re-span the whole team's budget from one agent's renewal.
+
+The wrap is not Gangline's to perform. An agent's handoff is its own authored
+act, and a verb that dropped the window to write one would be writing it after
+the writer was gone — so wrap first, then cycle.
+
+It refuses rather than reconstructing from a guess. Without a readable launch
+record it names what it cannot rebuild and stops: a window registered with `gang
+adopt` has none by construction, and a value Gangline did not write is a record
+it cannot read rather than an absent one. It also refuses *before* the drop when
+a recorded fact no longer holds — the directory has been removed, the profile
+withdrawn, the role renamed — and when the named agent is the only window in its
+session, since dropping it would end the session and take the team's cutoff with
+it. Hitch another agent first, or use `gang drop` if ending the team is what you
+mean.
 
 ### `gang down`
 

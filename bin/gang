@@ -342,6 +342,14 @@ gang — drive a team of CLI agents as tmux windows
                                               tmux server died; --cutoff declares the
                                               whole team's cutoff and re-spans it from
                                               now, as gang cutoff does; alias: spawn
+  gang cycle <name>                           renew an agent's context by replacing the
+                                              agent: drop it and hitch a fresh one on the
+                                              facts it was launched with (profile, role,
+                                              directory, model). The conversation does NOT
+                                              come back and the team's cutoff is untouched.
+                                              Wrap first — the handoff is the agent's own to
+                                              write, and gang cannot write it for a window
+                                              it is about to drop
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
@@ -3963,6 +3971,59 @@ time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note p
   fi
 }
 
+# --- the launch facts, and the record that vouches for them ------------------
+#
+# What hitch was told, kept on the window it describes. Nothing else in gang
+# knows it: the profile aside, every flag hitch takes is consumed and stored
+# nowhere, so "hitch one like this again" is a question only the operator could
+# answer. A renewal reconstructed from memory comes back subtly different from
+# the agent that was running, and nothing on any surface says which facts moved.
+#
+# ONE OPTION PER FACT, and that is the encoding rather than a convenience. Any
+# record packing them into a single value needs a separator, and a working
+# directory may contain whichever separator is picked — a dir with a space in it
+# truncates in a space-split record, and what comes back is a live agent running
+# somewhere other than where it was, reported as the same agent.
+#
+# @gl_launch is written LAST, after every fact it vouches for. A hitch that died
+# partway leaves facts with no record, and an absent record is refused; written
+# first, that same partial write would read as a complete one, which is the
+# fabricated status law 8 forbids. It carries the FORMAT and not a timestamp:
+# what a reader needs is whether the facts beside it are ones it knows how to
+# read. A value gang does not recognise is a THIRD answer rather than absence —
+# cutoff_read's discipline, for cutoff_read's reason, since gang only ever writes
+# this option itself.
+#
+# Law 6 is answered by where they live rather than by a sweep: these are window
+# options, so tmux deletes them with the window, and the record dies with the
+# agent it describes.
+LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
+launch_write() { # $1 = window id, $2 = profile, $3 = role, $4 = dir, $5 = model
+  tmux set-option -w -t "$1" @gl_profile "$2"
+  tmux set-option -w -t "$1" @gl_role "$3"
+  tmux set-option -w -t "$1" @gl_dir "$4"
+  tmux set-option -w -t "$1" @gl_model "$5"
+  tmux set-option -w -t "$1" @gl_launch "$LAUNCH_RECORD"
+}
+
+# The record is what makes the facts readable, because the facts cannot speak for
+# themselves: show-options answers the empty string both for an option set to ""
+# and for one never set, so an agent hitched with no role and an agent gang never
+# recorded read identically — and only one of them may be cycled. That population
+# is not hypothetical. `gang adopt` registers a window gang did not launch, so it
+# has a profile and no launch facts by construction.
+LAUNCH_PROFILE="" LAUNCH_ROLE="" LAUNCH_DIR="" LAUNCH_MODEL=""
+launch_read() { # $1 = window id; populate LAUNCH_*; 1 = no record, 2 = unreadable
+  local raw
+  raw="$(tmux show-options -wqv -t "$1" @gl_launch 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  [ "$raw" = "$LAUNCH_RECORD" ] || return 2
+  LAUNCH_PROFILE="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || LAUNCH_PROFILE=""
+  LAUNCH_ROLE="$(tmux show-options -wqv -t "$1" @gl_role 2>/dev/null)" || LAUNCH_ROLE=""
+  LAUNCH_DIR="$(tmux show-options -wqv -t "$1" @gl_dir 2>/dev/null)" || LAUNCH_DIR=""
+  LAUNCH_MODEL="$(tmux show-options -wqv -t "$1" @gl_model 2>/dev/null)" || LAUNCH_MODEL=""
+}
+
 # --- commands ---------------------------------------------------------------
 
 cmd_hitch() {
@@ -4044,7 +4105,11 @@ cmd_hitch() {
   # Window name IS the identity — the app must not rename it out from under us.
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
-  tmux set-option -w -t "$id" @gl_profile "$prof"
+  # Recorded here rather than at the end, because the paths below that stop short
+  # of a brief leave the window ALIVE — an agent showing a first-run dialog is
+  # hitched, registered, and a thing gang can still be asked to cycle. The ones
+  # that die from here on take the window with them, and the record with it.
+  launch_write "$id" "$prof" "$role" "$dir" "$model"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   # A keyed profile gets its marker on EVERY hitch, role or not: the marker is
@@ -6857,6 +6922,78 @@ cmd_drop() {
   printf '%s\n' "$(colour "$C_OK" "dropped $1")"
 }
 
+cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched with
+  # A context is renewed by being replaced, not by being summarised (ADR-0015),
+  # and the replacement is this: the same harness, the same brief, the same
+  # directory, none of the conversation. The WRAP is not here and cannot be — an
+  # agent's handoff is its own authored act, and a verb that dropped the window
+  # to write one would be writing it after the writer was gone. What gang owes
+  # this act is that the agent comes back the same, or that it refuses.
+  local name="$1" id rc=0 windows waited=0
+  id="$(win_id "$name")" || die "no agent '$name'"
+  launch_read "$id" || rc=$?
+  case "$rc" in
+    1) die "cycle: gang has no launch record for '$name', so it cannot hitch one like it — the role, directory and model it was launched with are recorded nowhere else. A window registered with 'gang adopt' has none by construction, since gang did not launch it; nor has one hitched before gang kept the record. Use 'gang drop $name' and hitch it yourself with the flags you want" ;;
+    2) die "cycle: '$name' carries a launch record gang cannot read, so it will not act on the facts beside it. Gang only ever writes that option itself, which makes a value it does not recognise evidence that something else has been at this window rather than a shape to accommodate. Use 'gang drop $name' and hitch it yourself with the flags you want" ;;
+  esac
+  # Everything the drop below cannot be taken back from is refused before it. The
+  # facts were valid when they were recorded and the world moves underneath them:
+  # a directory is removed, a profile is withdrawn, a role file is renamed. Found
+  # afterwards, each of those is hitch dying with the window already gone, which
+  # leaves the operator neither the agent they had nor the one they asked for.
+  #
+  # These are the refusals hitch raises that RECORDED facts can still fail — not a
+  # copy of its argument checking, which validated what an operator typed and has
+  # nothing left to catch. Hitch stays the authority; one it grows later fires
+  # after the drop, loudly, which is the direction that can be recovered from.
+  [ -d "$LAUNCH_DIR" ] \
+    || die "cycle: '$name' was hitched in '$LAUNCH_DIR' and there is no such directory now, so gang cannot start a fresh one where the old one ran"
+  profile_file "$LAUNCH_PROFILE" >/dev/null \
+    || die "cycle: '$name' runs on profile '$LAUNCH_PROFILE' and gang cannot find that profile now (have: $(list_profiles | tr '\n' ' '))"
+  ! test_only_profile "$LAUNCH_PROFILE" \
+    || die "cycle: '$name' runs on '$LAUNCH_PROFILE', a stand-in for gangline's own suite rather than a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
+  [ -z "$LAUNCH_ROLE" ] || role_file "$LAUNCH_ROLE" >/dev/null \
+    || die "cycle: '$name' was briefed as '$LAUNCH_ROLE' and gang cannot find that role now (have: $(list_roles | tr '\n' ' '))"
+  # tmux ends a session when its last window closes, and the team's cutoff is
+  # SESSION state — cutoff_write targets the session deliberately, so that one
+  # budget covers one team. Cycling the only agent would therefore take the whole
+  # team's declared cutoff out with it and hand back an agent reporting a renewal.
+  # Refused rather than restored: re-declaring a cutoff re-spans it from now for
+  # everyone, which is a different act wearing a renewal's name.
+  windows="$(tmux display-message -p -t "=$SESSION:" '#{session_windows}' 2>/dev/null)" || windows=""
+  case "$windows" in ''|*[!0-9]*)
+    die "cycle: tmux did not say how many windows session '$SESSION' has, so gang cannot tell whether dropping '$name' would end the session" ;;
+  esac
+  [ "$windows" -gt 1 ] \
+    || die "cycle: '$name' is the only window in session '$SESSION', and dropping it ends the session — the team's cutoff is session state and would go with it. Hitch another agent first, or use 'gang drop $name' and hitch it again yourself if you mean to end the team"
+  # Both exclusions said on the surface that acts on them, because the assumption
+  # an operator arrives with is that a renewal restores what it renewed.
+  printf '%s\n' "$(colour "$C_WORK" "cycling $name") $(colour "$C_DIM" "— a fresh $LAUNCH_PROFILE on the same facts: the conversation does not come back, and the team's cutoff is untouched")"
+  tmux kill-window -t "$id"
+  # The drop is made a fact rather than assumed, because the failure it hides is
+  # not its own: hitch refuses a name that already exists, so a window still
+  # standing here surfaces as a collision that says nothing about the kill it came
+  # from. Bounded, because a window that has not gone in two seconds is not going.
+  while exists "$name" && [ "$waited" -lt 20 ]; do sleep 0.1; waited=$(( waited + 1 )); done
+  ! exists "$name" \
+    || die "cycle: dropped '$name' and tmux still lists a window by that name, so gang will not hitch a second one over it"
+  local -a flags
+  flags=(-p "$LAUNCH_PROFILE" -d "$LAUNCH_DIR")
+  [ -z "$LAUNCH_ROLE" ]  || flags+=(-r "$LAUNCH_ROLE")
+  [ -z "$LAUNCH_MODEL" ] || flags+=(-m "$LAUNCH_MODEL")
+  # Neither --resume nor --cutoff, and both absences are the design rather than an
+  # omission. --resume replaces the launch line with the profile's resume form,
+  # and on a harness that declares one that hands back the very conversation the
+  # cycle exists to discard: a renewal reporting success while restoring what it
+  # renewed, which is ADR-0007's silent downgrade seen from the other side.
+  # --cutoff writes SESSION state, so it survived the drop above and there is
+  # nothing to restore — re-declaring it would re-span the whole team's budget
+  # from one agent's renewal, which is why hitch announces it in those words.
+  # Neither is recorded either: a fact gang records is a fact some later reader
+  # replays.
+  cmd_hitch "$name" "${flags[@]}"
+}
+
 cmd_down() { # inverse of up: end the whole team's session
   # Every piece of gang's state is a window option, so tmux deletes all of it with
   # the windows it belongs to and there is nothing here to sweep (law 6).
@@ -6875,6 +7012,7 @@ cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
   up)       cmd_up "$@" ;;
   hitch|spawn) cmd_hitch "$@" ;;
+  cycle)    [ $# -ge 1 ] || usage_die; cmd_cycle "$1" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;

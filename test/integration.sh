@@ -874,6 +874,180 @@ GANG_PROFILES="$SHIM/custom-profiles" \
   "$GANG" hitch quoted -p modeled -m 'pwn; touch /tmp/x' -d /tmp >/dev/null 2>&1
 check "a model sh would need quoted is refused" "1" "$?"
 
+# --- the launch record, and the renewal that reads it --------------------------
+section "the launch record, and the renewal that reads it"
+
+# A context is renewed by being replaced rather than summarised (ADR-0015), and
+# `gang cycle` is that replacement: drop the window, hitch a fresh agent on the
+# facts the old one was launched with. Those facts have to be RECORDED at hitch,
+# because the profile aside every flag hitch takes is consumed and stored
+# nowhere — so the worlds below are about the record as much as about the verb,
+# including the two flags it deliberately does not keep.
+#
+# The harness is a script rather than an inline launch line, and for a reason
+# worth writing down: the model spelling appends to whatever GANG_LAUNCH is, and
+# the pane has to be able to CONSUME what gang sends it. A launcher that paints a
+# prompt it can never read from makes every verb that delivers a brief look
+# broken, which is a failure pointing at the wrong half.
+cat > "$SHIM/cyc-harness" <<'SH'
+#!/usr/bin/env bash
+echo "launched:$*"
+PS1='❯ ' exec bash --norc
+SH
+# Derived rather than written twice, so the resume form differs from the launch
+# form in the one thing the exclusion below reads and in nothing else.
+sed 's/^echo "launched:/echo "RESUMEDFORM:/' "$SHIM/cyc-harness" > "$SHIM/cyc-resumed"
+chmod +x "$SHIM/cyc-harness" "$SHIM/cyc-resumed"
+fake_harness cycler "$SHIM/cyc-harness"
+cat >> "$SHIM/custom-profiles/cycler.sh" <<SH
+GANG_RESUME_LAUNCH="$SHIM/cyc-resumed"
+GANG_MODEL_OPT="--model"
+SH
+cyc() { GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
+
+# A directory whose name carries a space, because that is the world a record
+# packing its facts into one value gets wrong: whatever separator it picks, a
+# path may contain it, and what comes back is a live agent running somewhere
+# other than where it was, reported as the same agent.
+WSP="$SHIM/work space"; mkdir -p "$WSP"
+cyc hitch cycled -p cycler -r worker -d "$WSP" -m test-model >/dev/null
+cid="$(id_of cycled)"
+check "hitch leaves a launch record on the window it describes" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$cid" @gl_launch)" '^[0-9]+$')"
+check "the role it was briefed as" "worker" \
+  "$(tmux show-options -wqv -t "$cid" @gl_role)"
+check "the directory it was started in, space and all" "$WSP" \
+  "$(tmux show-options -wqv -t "$cid" @gl_dir)"
+check "the model it was launched on" "test-model" \
+  "$(tmux show-options -wqv -t "$cid" @gl_model)"
+check "and the profile, which gang kept before any of them" "cycler" \
+  "$(tmux show-options -wqv -t "$cid" @gl_profile)"
+
+wait_for cycled "the first agent's brief" yes has cycled roles/worker.md
+out="$(cyc cycle cycled 2>&1)"; rc=$?
+check "cycle drops the agent and hitches a fresh one" "0" "$rc"
+check "and says on the surface that acts what does not come back" "yes" \
+  "$(contains "$out" "the conversation does not come back")"
+check "it is a NEW window, not the old one renewed in place" "no" \
+  "$([ "$cid" = "$(id_of cycled)" ] && echo yes || echo no)"
+nid="$(id_of cycled)"
+check "the role is replayed" "worker" \
+  "$(tmux show-options -wqv -t "$nid" @gl_role)"
+check "the directory whole" "$WSP" \
+  "$(tmux show-options -wqv -t "$nid" @gl_dir)"
+check "the model" "test-model" \
+  "$(tmux show-options -wqv -t "$nid" @gl_model)"
+check "and the fresh agent is running where the old one ran" "$WSP" \
+  "$(tmux display-message -p -t "$nid" '#{pane_current_path}')"
+wait_for cycled "the fresh agent's brief" yes has cycled roles/worker.md
+check "briefed again, because a fresh context has not read one" "yes" \
+  "$(has cycled roles/worker.md)"
+
+# The first exclusion, and the happy path cannot show it: this profile declares a
+# resume form, and a cycle that replayed --resume would hand back the very
+# conversation the cycle exists to discard — a renewal reporting success while
+# undoing itself.
+check "the relaunch is the plain launch line" "yes" \
+  "$(has cycled 'launched:--model test-model')"
+check "and NOT the resume form this profile declares" "no" \
+  "$(has cycled RESUMEDFORM)"
+
+# show-options answers the empty string for an option set to "" and for one never
+# set, so the record is what tells those two apart — and only one of them may be
+# cycled. An agent hitched with no role is the first.
+cyc hitch cycnorole -p cycler -d /tmp >/dev/null
+check "an agent hitched with no role records an empty one" "" \
+  "$(tmux show-options -wqv -t "$(id_of cycnorole)" @gl_role)"
+out="$(cyc cycle cycnorole 2>&1)"; rc=$?
+check "and empty is not absent — it cycles" "0" "$rc"
+check "coming back with no role rather than a guessed one" "" \
+  "$(tmux show-options -wqv -t "$(id_of cycnorole)" @gl_role)"
+
+# The second is a value gang did not write. Gang only ever writes that option
+# itself, which makes a shape it does not recognise evidence that something else
+# has been at this window rather than a shape to accommodate — and reporting it
+# as an absent record would blame the wrong thing.
+tmux set-option -w -t "$(id_of cycnorole)" @gl_launch 'from-a-later-gang'
+out="$(cyc cycle cycnorole 2>&1)"; rc=$?
+check "a launch record gang cannot read is refused" "1" "$rc"
+check "and NOT reported as having no record at all" "no" \
+  "$(contains "$out" "no launch record")"
+check "it says the record is there and unreadable" "yes" \
+  "$(contains "$out" "cannot read")"
+check "with the agent still running, because a refusal drops nothing" "yes" \
+  "$(holds "$("$GANG" roster)" '^cycnorole ')"
+
+# The third is the population that exists in the shipped binary today: adopt
+# registers a window gang did not launch, so it has a profile and no launch facts
+# by construction.
+tmux new-window -d -t "$GANG_SESSION" -n cycadopted 'exec sleep 300'
+cyc adopt cycadopted -p cycler >/dev/null
+check "adopt records the profile it was told" "cycler" \
+  "$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_profile)"
+check "and no launch facts, because gang did not launch it" "" \
+  "$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_launch)"
+out="$(cyc cycle cycadopted 2>&1)"; rc=$?
+check "cycling an adopted window is refused" "1" "$rc"
+check "naming the agent it will not act on" "yes" \
+  "$(contains "$out" "'cycadopted'")"
+check "and naming adopt as the population it is in" "yes" \
+  "$(contains "$out" "gang adopt")"
+check "the window is untouched" "yes" \
+  "$(holds "$("$GANG" roster)" '^cycadopted ')"
+
+# Recorded facts stay valid only while the world under them holds still. Each of
+# these is hitch's own refusal arriving too late to be recovered from, so it is
+# raised while there is still an agent to keep.
+mkdir -p "$SHIM/cyc-gone"
+cyc hitch cycstray -p cycler -d "$SHIM/cyc-gone" >/dev/null
+rmdir "$SHIM/cyc-gone"
+out="$(cyc cycle cycstray 2>&1)"; rc=$?
+check "a directory that has gone since the hitch is refused" "1" "$rc"
+check "before the drop, with the agent still running" "yes" \
+  "$(holds "$("$GANG" roster)" '^cycstray ')"
+
+"$GANG" drop cycled >/dev/null 2>&1 || true
+"$GANG" drop cycnorole >/dev/null 2>&1 || true
+"$GANG" drop cycadopted >/dev/null 2>&1 || true
+"$GANG" drop cycstray >/dev/null 2>&1 || true
+
+# --- a renewal that would end the team it renews --------------------------------
+section "a renewal that would end the team it renews"
+
+# tmux ends a session when its last window closes, and the cutoff is SESSION
+# state — one budget, one team. So cycling the only agent would take the whole
+# team's declared cutoff out with it and hand back an agent reporting a renewal.
+# Both worlds here are about that session, which is why they get a server of
+# their own rather than this run's: the refusal is refused because the session
+# would end, and the check beside it declares a cutoff to have something at risk.
+CYC="$(mktemp -d /tmp/gangcyc.XXXXXX)"; CYCS="gangcyc-$$"
+cycs() { env TMUX_TMPDIR="$CYC" GANG_SESSION="$CYCS" \
+             GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
+cycs hitch cycsolo -p cycler -d /tmp >/dev/null
+out="$(cycs cycle cycsolo 2>&1)"; rc=$?
+check "cycling the only agent in a session is refused" "1" "$rc"
+check "naming the cutoff as what would go with it" "yes" \
+  "$(contains "$out" "cutoff")"
+check "and the agent is untouched" "yes" \
+  "$(holds "$(cycs roster)" '^cycsolo ')"
+
+# LEAD'S CLASS RULE: a refusal that names a way out gets a check that TAKES it.
+cycs hitch cyccompany -p cycler -d /tmp >/dev/null
+cycs cutoff 90m >/dev/null
+cbefore="$(env TMUX_TMPDIR="$CYC" tmux show-options -qv -t "=$CYCS:" @gl_cutoff)"
+check "the team has a cutoff to lose" "yes" "$(holds "$cbefore" '[0-9]')"
+out="$(cycs cycle cycsolo 2>&1)"; rc=$?
+check "hitching another agent first is the way out, and it works" "0" "$rc"
+# The second exclusion. --cutoff is session state, so it survived the drop and
+# there is nothing to restore; re-declaring it would re-span the whole team's
+# budget from one agent's renewal, which is a different act wearing a renewal's
+# name. Compared as bytes against a value asserted non-empty above, because two
+# empties agree just as well.
+check "and the team's cutoff is byte-identical across a cycle" "$cbefore" \
+  "$(env TMUX_TMPDIR="$CYC" tmux show-options -qv -t "=$CYCS:" @gl_cutoff)"
+tmux -S "$CYC/tmux-$(id -u)/default" kill-server 2>/dev/null || true
+rm -rf "$CYC"
+
 # --- delivery ----------------------------------------------------------------
 section "delivery"
 
