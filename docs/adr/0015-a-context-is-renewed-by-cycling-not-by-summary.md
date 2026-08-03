@@ -89,15 +89,25 @@ cycle instead of a summary.
   renewal must come from outside its dying context.
 - The handoff contract in `roles/_common.md` gains the state bound, the
   livelock conduct line, and the exclusion of the handoff's own arrival.
-- Whether a cycle worked is a two-sided datum and neither side can produce it
-  alone. The successor certifies the OUTCOME — a context that is new, recorded
-  facts that came back correct, a handoff that was the only channel — and it
-  certifies that by reading the substrate at its own hand, because a handoff is
-  written before the act that delivers it and cannot carry the manner of its own
-  delivery. What a successor cannot see is the VERB: a drop and a re-hitch mint
-  the same pane, write the same record and deliver the same brief, so the
-  mechanism is attested only by whoever called it. A report from one side that
-  claims both is the fabricated positive this decision's own measurement is most
-  exposed to, and it is the reason the check is a check.
+- Whether a cycle worked is certified by the successor: a context that is new,
+  recorded facts that came back correct, a handoff that was the only channel,
+  and the verb that delivered it. It certifies by reading the substrate at its
+  own hand rather than by believing its handoff — a handoff is written before
+  the act that delivers it, so it can predict its own arrival but never witness
+  it, and a prediction taken for a datum is the fabricated positive this
+  decision's own measurement is most exposed to. A receipt from the caller
+  corroborates and is welcome, but it is not required: such a receipt needs a
+  caller still able to write one, and in a self-cycle the caller is the thing
+  being retired, which would leave the renewal least attestable exactly where it
+  is most autonomous.
+- The successor can read the verb, and not only the outcome, because retirement
+  leaves marks a drop does not, and the attestation depends on them by name: a
+  predecessor kept as a `<name>~spent` window with `@gl_profile` unset, and
+  `@gl_resume_bytes` set on a window that did not exist before the act.
+  `cmd_cycle` is the only writer of either — `cmd_compact` records the same
+  measurement on the window its agent is already in, and a drop leaves nothing
+  behind to read at all. Naming them here is the point: a later change to
+  retirement then breaks the attestation visibly, where an unnamed dependency
+  would let it go on reporting a verb it could no longer see.
 - The day-one consumer (law 5) is the lead's own next renewal — the first
   cycle runs on the team that decided this.
