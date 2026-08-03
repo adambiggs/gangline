@@ -30,14 +30,30 @@ profile_input() { # $1 = tmux target; same shape as a real TUI's input box
   # paste unreadable — which is not a read that says empty, but a read that
   # says nothing, and the caller then cannot tell a full box from a broken one.
   #
+  # Not every marker on the screen is a prompt, and the column-0 anchor this
+  # replaces was the only thing saying so. A first-run dialog draws a marker of
+  # its own as a menu cursor, INDENTED — and a brief pasted into a security
+  # prompt answers it. What separates the two is what precedes the marker: a
+  # prompt is drawn at the start of a row and is displaced only by output that
+  # ran off the row above, which leaves non-whitespace in front of it. Nothing
+  # but whitespace in front of a marker means something drew it there
+  # deliberately, and that is not this box. A pane holding only such a row reads
+  # as no box at all, which is what the caller needs to hear: a settled screen
+  # with no input box is a dialog, and the report that one is up is the only
+  # surface saying why nothing is moving.
+  #
   # Within the row, what follows the FIRST marker is the box, because a body
-  # ending in the marker would empty out the suffix of the last one. Both
-  # choices fail towards over-reporting content: empty is the answer that
-  # authorises a keystroke, so a read that cannot vouch for itself must not be
-  # able to give it. A pane with no marker on any row is not showing this box,
-  # and rc 1 says so rather than handing back whatever was sitting there.
+  # ending in the marker would empty out the suffix of the last one. Every one
+  # of these choices fails towards over-reporting content or towards refusing:
+  # empty is the answer that authorises a keystroke, so a read that cannot vouch
+  # for itself must not be able to give it. A pane with no qualifying marker on
+  # any row is not showing this box, and rc 1 says so rather than handing back
+  # whatever was sitting there.
   local line
-  line="$(tmux capture-pane -pJ -t "$1" | awk '/❯/ { line = $0 } END { print line }')" || return 1
+  line="$(tmux capture-pane -pJ -t "$1" |
+    awk '{ i = index($0, "❯")
+           if (i > 0 && (i == 1 || substr($0, 1, i - 1) ~ /[^ \t]/)) line = $0 }
+         END { print line }')" || return 1
   case "$line" in *❯*) ;; *) return 1 ;; esac
   printf '%s' "${line#*❯}" | tr -d '\302\240'
 }

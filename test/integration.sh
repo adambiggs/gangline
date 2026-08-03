@@ -565,18 +565,24 @@ ago() { printf '%s' "$(( $(date +%s) - $1 ))"; }  # $1 = seconds -> that epoch, 
 mkdir -p "$SHIM/custom-profiles"
 fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
   # The reader is the one profiles/bash.sh carries, for the reason given there:
-  # the box is the last row carrying the marker anywhere in it, and the box is
-  # what follows the first marker in that row, so a joined overflow row cannot
-  # present a stale prompt row as an empty box and a body wrapping below the
-  # prompt cannot make the box unreadable. A generated harness gets the same
-  # reader as the real one or it stops standing in for it.
+  # the box is the last row whose marker is either at the start of the row or
+  # displaced by non-whitespace, and the box is what follows the first marker in
+  # that row. So a joined overflow row cannot present a stale prompt row as an
+  # empty box, a body wrapping below the prompt cannot make the box unreadable,
+  # and an INDENTED marker — a dialog's menu cursor — is not read as a box at
+  # all. That last one is why this generated reader has to move with the real
+  # one: the modal fixture below is generated here, and a harness that reads a
+  # menu cursor as an input box stops standing in for anything.
   cat > "$SHIM/custom-profiles/$1.sh" <<SH
 GANG_LAUNCH="$2"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
   local line
-  line="\$(tmux capture-pane -pJ -t "\$1" | awk '/❯/ { line = \$0 } END { print line }')" || return 1
+  line="\$(tmux capture-pane -pJ -t "\$1" |
+    awk '{ i = index(\$0, "❯")
+           if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \t]/)) line = \$0 }
+         END { print line }')" || return 1
   case "\$line" in *❯*) ;; *) return 1 ;; esac
   printf '%s' "\${line#*❯}" | tr -d '\302\240'
 }
