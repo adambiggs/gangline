@@ -2643,8 +2643,20 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     stage_record "$1" "'$frag' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent" ""
     die "cannot read the input box of $1 after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $1)"
   }
-  [ "$after" != "$before" ] \
-    || die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted"
+  # Two readings agreeing is not one fact here: either the paste never landed, or
+  # it landed in a box these reads cannot see. Gang put the bytes on the wire
+  # itself, so "nothing landed" is the confident half of an ambiguity it cannot
+  # resolve — and the half it cannot rule out leaves text in somebody's box. This
+  # was the one exit between the paste and the Enter that only SAID so; the two
+  # either side of it record it. No rendering to match against, because the
+  # reading that would be the baseline is the one in doubt — which gives this
+  # record the same life as the unreadable-after one above: the first sweep that
+  # finds the box provably empty drops it, so it costs nothing when the paste
+  # really never landed and it survives when the paste is really sitting there.
+  if [ "$after" = "$before" ]; then
+    stage_record "$1" "'$frag' was pasted into this box and it read back unchanged — either nothing landed or this box cannot be read reliably, so it may be sitting there unsent" ""
+    die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $(agent_name_of "$1"))"
+  fi
   # Enter goes as its own keystroke, and then gets checked, because the failure
   # it guards against is silent and reads exactly like success. Batch the text
   # and the Enter into one send-keys and Claude Code takes the burst for a paste
