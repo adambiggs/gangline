@@ -42,13 +42,16 @@ demand. A complete cold backstop outranks a lossy warm one.
 
 **The renewal act is a cycle: reset the agent's context without touching its
 files or its work in flight, then deliver the role brief re-read from disk
-and the handoff.** The universal spelling is wrap → drop → re-hitch with the
-same flags; every ingredient is an existing verb, and it is already how a
-model swap is defined. A profile may declare a cheaper in-process spelling
-where its harness has one — an in-place context clear, a fork at the first
-message — because which renewal verb a harness offers is a harness fact, and
-harness facts live in profiles (law 4). The contract does not move with the
-spelling.
+and the handoff.** The universal spelling is wrap → retire → re-hitch with the
+same flags; wrap and re-hitch are verbs that already existed, and the shape is
+already how a model swap is defined. The middle step retires rather than drops
+— the predecessor's window is kept and marked spent, so its closing remarks
+outlive the context that wrote them, and that mark is also what lets a
+successor read which verb renewed it. A profile may declare a cheaper
+in-process spelling where its harness has one — an in-place context clear, a
+fork at the first message — because which renewal verb a harness offers is a
+harness fact, and harness facts live in profiles (law 4). The contract does
+not move with the spelling.
 
 **The channel is guarded at the verb.** A resume payload over a declared
 budget is refused, loudly, with the remedy named: fold superseded state out;

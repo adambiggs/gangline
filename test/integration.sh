@@ -904,11 +904,11 @@ check "a model sh would need quoted is refused" "1" "$?"
 section "the launch record, and the renewal that reads it"
 
 # A context is renewed by being replaced rather than summarised (ADR-0015), and
-# `gang cycle` is that replacement: drop the window, hitch a fresh agent on the
-# facts the old one was launched with. Those facts have to be RECORDED at hitch,
-# because the profile aside every flag hitch takes is consumed and stored
-# nowhere — so the worlds below are about the record as much as about the verb,
-# including the two flags it deliberately does not keep.
+# `gang cycle` is that replacement: retire the window, hitch a fresh agent on
+# the facts the old one was launched with. Those facts have to be RECORDED at
+# hitch, because the profile aside every flag hitch takes is consumed and
+# stored nowhere — so the worlds below are about the record as much as about
+# the verb, including the two flags it deliberately does not keep.
 #
 # The harness is a script rather than an inline launch line, and for a reason
 # worth writing down: the model spelling appends to whatever GANG_LAUNCH is, and
