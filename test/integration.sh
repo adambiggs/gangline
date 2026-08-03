@@ -1844,12 +1844,15 @@ check "and goes in the moment the compaction itself is running" "yes" "$(has bus
 # may hand forward is bounded where the verb takes it. The refusal names two ways
 # out and BOTH are taken below, because a way out nothing exercises is a sentence
 # rather than a remedy.
-over="$(mktemp)"; under="$(mktemp)"; grown="$(mktemp)"
+over="$(mktemp)"; under="$(mktemp)"; override="$(mktemp)"; grown="$(mktemp)"
 # One byte past the shipped default, which is the edge worth pinning: a guard
 # built three times the size would pass on an off-by-one comparison.
 tr '\0' 'x' < /dev/zero | head -c 65537 > "$over"
-printf 'folded to what the successor must act on\n' > "$under"
-printf 'folded to what the successor must act on, plus one arc\n' > "$grown"
+# Three DISTINCT bodies, because each delivery below has to be provably drained
+# before this block ends and a shared marker cannot tell one arrival from another.
+printf 'MARK_FOLDA folded to what the successor must act on\n' > "$under"
+printf 'MARK_FOLDB folded, and this one is the override body\n' > "$override"
+printf 'MARK_FOLDC folded, plus one more arc than the body before it\n' > "$grown"
 mark_before="$(tmux show-options -wqv -t "$(target_of busybee)" @gl_compacting)"
 out="$(TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin < "$over" 2>&1)"; rc=$?
 check "a resume past the budget is refused" "3" "$rc"
@@ -1876,21 +1879,25 @@ out="$(GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
 check "a folded resume is delivered" "0" "$rc"
 check "and the delivery states the size it took" "yes" \
   "$(contains "$out" "$(wc -c < "$under" | tr -d '[:space:]') bytes of 65536")"
+check "and the body it accepted actually arrives" "yes" \
+  "$(WAIT_TIMEOUT=60 wait_for busybee "the folded resume to land" yes has busybee MARK_FOLDA >/dev/null 2>&1 && echo yes || echo no)"
 # WAY OUT TWO — the override, taken on ONE body across two budgets so the raise is
 # what changes the answer and nothing else. Driven small deliberately: proving the
 # raise admits a body it had refused does not need that body to be a large one, and
 # a 65k paste would put inject's own verification in the way of the thing under
 # test.
-small_bytes="$(wc -c < "$under" | tr -d '[:space:]')"
+small_bytes="$(wc -c < "$override" | tr -d '[:space:]')"
 out="$(GANG_RESUME_MAX=$(( small_bytes - 1 )) TMUX_PANE="$selfpane" \
-  "$GANG" compact busybee --from busybee --resume-stdin < "$under" 2>&1)"; rc=$?
+  "$GANG" compact busybee --from busybee --resume-stdin < "$override" 2>&1)"; rc=$?
 check "a lowered budget refuses a body the default admits" "3" "$rc"
 check "and the refusal quotes the budget in force, not the shipped one" "yes" \
   "$(contains "$out" "GANG_RESUME_MAX is $(( small_bytes - 1 ))")"
 paint busybee 'READY'
 out="$(GANG_RESUME_MAX="$small_bytes" GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
-  "$GANG" compact busybee --from busybee --resume-stdin < "$under" 2>&1)"; rc=$?
+  "$GANG" compact busybee --from busybee --resume-stdin < "$override" 2>&1)"; rc=$?
 check "and raising it admits that same body" "0" "$rc"
+check "and that same body arrives once the budget admits it" "yes" \
+  "$(WAIT_TIMEOUT=60 wait_for busybee "the admitted resume to land" yes has busybee MARK_FOLDB >/dev/null 2>&1 && echo yes || echo no)"
 # A budget that cannot be compared to is not a budget, and the failure direction
 # matters: a non-numeric value must refuse rather than silently admit everything.
 GANG_RESUME_MAX=lots TMUX_PANE="$selfpane" \
@@ -1904,8 +1911,20 @@ paint busybee 'READY'
 out="$(GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
   "$GANG" compact busybee --from busybee --resume-stdin < "$grown" 2>&1)"
 check "a resume that grew since the last one says how far" "yes" \
-  "$(contains "$out" "up $(( $(wc -c < "$grown") - $(wc -c < "$under") )) since the last one delivered here")"
-rm -f "$over" "$under" "$grown"
+  "$(contains "$out" "up $(( $(wc -c < "$grown") - $(wc -c < "$override") )) since the last one delivered here")"
+# EVERY delivery above queues its resume in a DISOWNED waiter that pastes only
+# once the pane settles — up to GANG_RESUME_TIMEOUT later, which is well inside
+# the section below. A paste landing there makes busybee non-idle in a check that
+# has nothing to do with budgets, and it did: this block went green locally while
+# `an answered prompt reads idle again` went red on CI. So the queue is drained
+# HERE, where it belongs to the block that created it, and the drain is FATAL —
+# one that can be stepped over leaves exactly the race it was added to remove.
+wait_for busybee "the last queued resume to land before the next section" \
+  yes has busybee MARK_FOLDC || exit 1
+# and the box emptied behind it, so the section below inherits a settled fixture
+# rather than an unsubmitted paste.
+paint busybee 'READY'
+rm -f "$over" "$under" "$override" "$grown"
 
 # --- occupancy: a UI owns the input box -----------------------------------------
 section "occupancy: a UI owns the input box"
