@@ -92,7 +92,33 @@ export GANG_CHURN_WAIT=0.3
 export GANG_BOOT_TIMEOUT=8
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null' EXIT
 
-SHIM="$(mktemp -d)"
+# mktemp hands back the path it was asked for, not the path the kernel will
+# report. On macOS both /tmp and /var are symlinks, so a fixture directory and
+# that same directory as tmux reports it are two spellings of one place — and a
+# check comparing a path this suite declared against one it observed comes apart
+# on that platform alone, while reading green everywhere it was written. The
+# resolution belongs at creation rather than at each comparison: a rule that
+# every future check must remember is the kind this repo refuses.
+#
+# The refusal is load-bearing, not defensive noise. What comes back from here is
+# rm -rf'd at exit, and `cd` to an empty operand is unspecified by POSIX — so a
+# construction that resolved an empty value would name the working directory on
+# any shell that let it through. This one never asks: it stops instead.
+tmpdir_p() {
+  _d="$(mktemp -d "$@")" || _d=""
+  if [ -z "$_d" ] || [ ! -d "$_d" ]; then
+    printf 'fixture: mktemp -d made no directory\n' >&2
+    exit 1
+  fi
+  _p="$(cd -P "$_d" && pwd)"
+  if [ -z "$_p" ]; then
+    printf 'fixture: could not resolve %s\n' "$_d" >&2
+    exit 1
+  fi
+  printf '%s\n' "$_p"
+}
+
+SHIM="$(tmpdir_p)" || exit 1
 trap 'tmux kill-session -t "$GANG_SESSION" 2>/dev/null; rm -rf "$SHIM"' EXIT
 # A tmux that silently swallows paste-buffer and passes everything else through.
 # Delivery failing loudly is the one claim worth a fault injector: the failure
@@ -781,7 +807,7 @@ section "cold start"
 # The lines below carried `env -u TMUX` of their own until the entry scrub took
 # over the job. Kept, they would be worse than redundant: a half-scrub sitting at
 # a call site is the shape a reader copies, and it is the shape that fails.
-COLD="$(mktemp -d /tmp/gangcold.XXXXXX)"; COLDS="gangcold-$$"
+COLD="$(tmpdir_p /tmp/gangcold.XXXXXX)" || exit 1; COLDS="gangcold-$$"
 env TMUX_TMPDIR="$COLD" GANG_SESSION="$COLDS" "$GANG" \
   hitch coldstart -p bash -d /tmp >/dev/null 2>&1; crc=$?
 check "gang starts a team with no tmux server running at all" "0" "$crc"
@@ -1020,7 +1046,7 @@ section "a renewal that would end the team it renews"
 # Both worlds here are about that session, which is why they get a server of
 # their own rather than this run's: the refusal is refused because the session
 # would end, and the check beside it declares a cutoff to have something at risk.
-CYC="$(mktemp -d /tmp/gangcyc.XXXXXX)"; CYCS="gangcyc-$$"
+CYC="$(tmpdir_p /tmp/gangcyc.XXXXXX)" || exit 1; CYCS="gangcyc-$$"
 cycs() { env TMUX_TMPDIR="$CYC" GANG_SESSION="$CYCS" \
              GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
 cycs hitch cycsolo -p cycler -d /tmp >/dev/null
@@ -4126,7 +4152,7 @@ section "a die inside a probe must not leak the server it stood up"
 # leak one, so the socket assertion was passing VACUOUSLY on that cell while the
 # temp-tree assertion beside it was real. Asserting WHICH refusal was reached is
 # what stops a leak check from being satisfied by never having leaked.
-LEAKD="$(mktemp -d /tmp/gangleak.XXXXXX)"
+LEAKD="$(tmpdir_p /tmp/gangleak.XXXXXX)" || exit 1
 mkdir -p "$LEAKD/tmux" "$LEAKD/tmp" "$LEAKD/prof"
 cat > "$LEAKD/prof/leakmark.sh" <<SH
 GANG_LAUNCH="bash --rcfile $SHIM/probedir/live.rc -i"
