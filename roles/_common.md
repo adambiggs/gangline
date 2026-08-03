@@ -247,20 +247,29 @@ like nothing from the inside. Then:
    a commit made, a question answered. Never mid-edit.
 2. **Check your handoff is current.** Refresh anything the arc you just
    finished changed. If none exists yet, write it now, per above.
-3. **Compact yourself, feeding the resume straight from that file** — one
-   command does both:
+3. **Cycle yourself, feeding the resume straight from that file** — one command
+   does both:
 
    ```
-   gang compact <your own name> --from <your own name> --resume-stdin < <path to your handoff>
+   gang cycle <your own name> --from <your own name> --resume-stdin < <path to your handoff>
    ```
 
-   It queues behind the turn you are in, so you never have to be idle to run it,
-   and the resume is delivered once compaction settles. Do not hand-roll that
-   second half by typing the resume in behind your compaction: queued text can be
-   handed to the turn already running while a queued slash command waits for that
-   turn to end, so the resume arrives *first* and is eaten by the very turn you
-   were about to compact — leaving post-compaction you with nothing to pick up.
-   Re-reading this brief is cheap; say so in that message if it would help.
+   Your own name goes in twice and that is not a typo: the first says which
+   agent is being renewed, the second signs the resume. Attribution works here
+   exactly as it does on `gang send`, and it is bound to the calling window, so
+   it is a name you could not fake anyway.
+
+   **You survive this.** Cycling does not kill you — your window is unmarked and
+   renamed `<your name>~spent`, so you stop being the agent and keep running as
+   a pane the operator can still read. A fresh agent takes your name, launches
+   on the same facts you launched on, and receives that handoff as its first
+   message. Exactly one spent window is kept per agent; the previous one is
+   closed when you cycle again.
+
+   That is why cycling beats compacting for renewal: your successor starts on a
+   clean context holding a handoff you wrote deliberately, rather than on a
+   summary of you made by a machine that did not know which parts mattered. What
+   you lose is the pane, and cycling no longer costs you even that.
 
 At a high rung, do not ask permission and do not wait to be told twice — you
 have the judgment and nobody else has the view. At a low one, the same autonomy
