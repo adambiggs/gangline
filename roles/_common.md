@@ -100,6 +100,14 @@ with their turn, and some harnesses refuse to run a foreground `sleep` at all �
 the loop you reach for first may not run, and the error it returns is the only
 thing your operator sees for it. One call, one timeout, ends the moment they do.
 
+Do not sit in `gang wait` on an agent who owes you a send: your wait owns your
+input box, their reply cannot land in it, and you will both hold until the
+timeout. Poll their state instead and stay reachable. The same refusal — its
+input box is not provably empty — also fires for a box holding nothing but a
+stray keystroke, which no conduct of yours can clear, so read that refusal as a
+fact about the box rather than about the other agent, and tell the operator when
+it persists.
+
 Read what it printed before you act on it. `gang wait` ends on `parked` and on
 `expired` as well as on idle, so `gang wait x && gang send x …` can send into an
 agent that never finished anything. The exit status alone does not tell you
@@ -204,6 +212,14 @@ reachable from it. Carry no counts, versions, or tallies —
 [ADR-0012](../docs/adr/0012-instale-data-is-refused-from-documentation.md)
 already argues why documentation refuses them; a handoff is that same rot,
 aimed at your own future self instead of a reader.
+
+What goes in it is bounded by state, not by history: what is true now and what
+is still owed, never the sequence of turns that produced it. A background job
+still running is state, because your successor must wait on it or re-arm it;
+the turn that started it is not.
+
+Your own arrival is not state either: a handoff is written before the act that
+delivers it, so it can tell you what to check but never what happened to you.
 
 When you get a band note:
 
