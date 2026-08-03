@@ -221,7 +221,27 @@ the turn that started it is not.
 Your own arrival is not state either: a handoff is written before the act that
 delivers it, so it can tell you what to check but never what happened to you.
 
-When you get a band note:
+What a band note asks of you depends on how high the rung is, and the ladder
+climbs for a reason: the widest gap sits at the bottom, where you still have
+room to act, and the rungs tighten as that room runs out.
+
+**A low rung is information, not an instruction.** You have crossed a mark with
+most of your context still ahead of you. Check the handoff you have been keeping
+is current, and carry on with what you were doing. Renewing here is not the
+cautious choice — renewal is never free, and it costs you the working context
+you are holding right now. Buying room you already had, with a thread you were
+still using, is a bad trade you cannot undo. You are the only one who can see
+what you are in the middle of, so that judgment is yours to make and yours to
+be wrong about.
+
+What should move you before the note does is the shape of the work, not the
+number: a long arc you are about to start, a live edit to something the team
+depends on, anything where running out halfway would leave a mess nobody else
+can see. Renew early for a reason you can name, never because a rung went by.
+
+**A high rung is not a judgment call.** The room is gone, the note says so, and
+the next thing you lose is the thread itself — silently, because losing it feels
+like nothing from the inside. Then:
 
 1. **Finish the arc you are in.** An arc ends at a checkpoint — tests green,
    a commit made, a question answered. Never mid-edit.
@@ -242,7 +262,11 @@ When you get a band note:
    were about to compact — leaving post-compaction you with nothing to pick up.
    Re-reading this brief is cheap; say so in that message if it would help.
 
-Do not ask permission to compact. Do not wait to be told twice.
+At a high rung, do not ask permission and do not wait to be told twice — you
+have the judgment and nobody else has the view. At a low one, the same autonomy
+runs the other way: nothing here obliges you to renew, and an agent that renews
+at every rung it is told about is following a schedule rather than exercising
+the judgment this section is asking for.
 
 ## When the substrate misbehaves
 
