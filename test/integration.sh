@@ -1260,19 +1260,34 @@ chmod +x "$SHIM/wire/tmux"
 # The evidence here is a FILE the shim writes, not a screen, so the wait says so
 # by naming no agent: there would be nothing useful to dump if it ran out.
 wire_holds() { contains "$(cat "$SHIM/wire.bytes" 2>/dev/null)" "$1"; }
+# This shim is a TEE, not a stub: it captures the bytes and hands them to the
+# real tmux, so these are real pastes into alpha's live pane and each one has an
+# outcome. The status is kept for the same reason as the race below — a send
+# that fails after the paste leaves its text in that box, and the next thing
+# pasted there lands behind it. The waits here read the FILE, which is written
+# at load-buffer, before the paste and before anything could go wrong: they
+# cannot see a delivery fail, and they are not asked to.
 printf 'MARK_TAIL\n\n\n' | PATH="$SHIM/wire:$PATH" "$GANG" send alpha --from tester --stdin \
-  >/dev/null 2>&1
+  >/dev/null 2>&1; tailrc=$?
+check "the send whose wire this is also delivered" "0" "$tailrc"
 wait_for '' "the wire capture of the body with trailing newlines" yes wire_holds MARK_TAIL
 # The envelope itself contributes no newline, so every one on the wire is the
 # body's. Counted rather than pattern-matched: three is the number sent.
 check "a body's trailing newlines survive to the wire" "3" \
   "$(tr -dc '\n' < "$SHIM/wire.bytes" | wc -c | tr -d ' ')"
-# And they are interior to the paste, which is why keeping them is safe: the
-# closing tag is still the last thing on the wire, so nothing ends on a bare
-# newline that a composer would read as submit.
+# And they are interior to the paste. That is what the wire can say, and it is
+# the whole of what it can say: the closing tag is the last thing on it, so the
+# body does not END on a bare newline. It does not follow that the interior ones
+# are inert. A composer without bracketed-paste support reads each newline as it
+# arrives, submits the prefix, and strands the remainder in the box — rendered
+# on both sides of that setting, and the archived macOS capture is the stranding
+# itself, prefix submitted alone and closing tag left on screen. So this check
+# asserts the shape of the wire and claims nothing about what a composer does
+# with it.
 check "and the wire still ends on the closing tag" "]" "$(tail -c 1 "$SHIM/wire.bytes")"
 printf 'MARK_FLAT' | PATH="$SHIM/wire:$PATH" "$GANG" send alpha --from tester --stdin \
-  >/dev/null 2>&1
+  >/dev/null 2>&1; flatrc=$?
+check "and the send behind that wire delivered too" "0" "$flatrc"
 wait_for '' "the wire capture of the body with none" yes wire_holds MARK_FLAT
 check "a body with none is not given any" "0" \
   "$(tr -dc '\n' < "$SHIM/wire.bytes" | wc -c | tr -d ' ')"
@@ -1297,17 +1312,35 @@ section "one pane, one writer"
 # interleaved put both messages in the box and submit them as one, and both
 # senders are told they succeeded. Lived it: a patrol nudge merged with a lead's
 # send, and an inbound send merged mid-word with the operator's own typing.
+#
+# Each sender's status is kept, and that is the half a bare `wait` throws away.
+# The refusal a merged delivery raises goes to the SENDER — both of these run in
+# the background with their output discarded, so nothing but the status says it
+# happened. Gang exits 0 here only after reading its own text back out of the
+# box and watching the box change again, so these two statuses are submission
+# evidence, and the screen below cannot give any.
 send_text alpha tester "MARK_RACE_A" >/dev/null 2>&1 &
+racea=$!
 send_text alpha tester "MARK_RACE_B" >/dev/null 2>&1 &
-wait
+raceb=$!
+wait "$racea"; arc=$?
+wait "$raceb"; brc=$?
+check "both concurrent senders were told the delivery verified" "0 0" "$arc $brc"
 # One wait per mark rather than one for the pair: they are independent arrivals,
 # and waiting for them in series costs whichever is slower, not their sum.
 wait_for alpha "the first of two concurrent deliveries" yes has alpha MARK_RACE_A
 wait_for alpha "the second of two concurrent deliveries" yes has alpha MARK_RACE_B
-check "concurrent deliveries both arrive" "yes yes" \
+# On screen, and named for what that is: a bound, not a delivery. A merged line
+# holds both payloads' text, so this passes just as readily when NEITHER message
+# was submitted — which is what it did on the specimens that carried the merge.
+# The status check above is the one that discriminates.
+check "both payloads are on alpha's screen" "yes yes" \
   "$(has alpha MARK_RACE_A) $(has alpha MARK_RACE_B)"
+# Both orderings, because whichever send takes the pane lock first is "first" and
+# the merged bytes look the same either way. A grep in one direction is blind to
+# half the mechanism, and half the archived specimens are the half it missed.
 check "and neither was merged into the other's submission" "0" \
-  "$(pane_of alpha | grep -c 'MARK_RACE_A.*MARK_RACE_B')"
+  "$(pane_of alpha | grep -cE 'MARK_RACE_A.*MARK_RACE_B|MARK_RACE_B.*MARK_RACE_A')"
 
 # The other writer is the operator's hands. A box whose contents are MOVING is
 # somebody typing, and a paste into it interleaves mid-word — so gang holds
@@ -5784,9 +5817,12 @@ profile_input() {
   # CI's bash) marks a process's RANDOM as seeded the first time it is expanded
   # under subshell_environment, and mark and seed are both inherited: gang's
   # occupied() reads this box in-process just before inject's command-substituted
-  # reads, so every later \$(...) read replays the same next value. The box
-  # froze, composer_settled called it still, and the paste read back
-  # "unchanged". A fixture premise must not depend on which bash is looking.
+  # reads, so a later \$(...) read can replay a value an earlier one already had.
+  # Measured on that bash the reads REPEAT rather than freeze, and repeating is
+  # all it takes: two consecutive looks agreeing is what composer_settled calls
+  # still. Not offered as the cause of any failure on record — it is a premise
+  # that reads differently depending on which bash is looking, and a fixture
+  # premise must not do that.
   if [ -e "$SHIM/hands-on-keyboard" ]; then
     n="\$(cat "$SHIM/keystrokes" 2>/dev/null)" || n=0
     n="\$((n + 1))"
