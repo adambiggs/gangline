@@ -2454,7 +2454,8 @@ blocked_brief() { # $1 = window id -> the roster's three words, or nothing
   printf 'inbound refused ×%s' "${raw%% *}"
 }
 
-clear_box() { # $1 = window id; erase the input box, and prove it is erased
+clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
+              # opinion); erase the input box, and prove it is erased
   # C-u is the line kill every readline-shaped composer honours, and a hardcoded
   # default whose outcome is verified beats an extension point no profile sets.
   # Sent only where the composer is provably live — into a modal this keystroke
@@ -2479,6 +2480,21 @@ clear_box() { # $1 = window id; erase the input box, and prove it is erased
   declare -F profile_input >/dev/null || return 1
   local before after n=0 presses="${GANG_CLEAR_PRESSES:-40}"
   require_whole GANG_CLEAR_PRESSES "$presses" presses
+  # Reporting a clear having pressed nothing rests entirely on the read below
+  # agreeing that the box is empty, and a caller that has just read text there is
+  # a second opinion on exactly that. Where one is handed in and the two
+  # disagree, this is the first look and no key has been sent, so "cleared" would
+  # be a report about a keystroke that never happened, made on the reading that
+  # is in doubt. Entry only: after a press the caller's reading is stale by
+  # construction, and an empty box then is this function's own work.
+  #
+  # Refusing here is the recoverable direction. A caller told the box would not
+  # clear keeps its record, and a later sweep whose two readings agree still
+  # drops it; a caller told the box was cleared drops the record, and nothing an
+  # operator can run puts one back.
+  if [ -n "${2:-}" ] && grep -q '[^[:space:]]' <<<"$2" && input_clear "$1"; then
+    return 1
+  fi
   while [ "$n" -lt "$presses" ]; do
     input_clear "$1" && return 0
     before="$(profile_input "$1")" || return 1
@@ -2507,7 +2523,12 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   # than the one being fixed. A path that never read the box records no rendering
   # and is therefore reported until a human deals with it.
   [ -n "$want" ] && [ "$box" = "$want" ] || return 0
-  clear_box "$1" || return 0
+  # The box read above goes with it: this is the destructive branch — what it
+  # forgets is the only surface saying somebody's text is sitting in that box,
+  # and there is no verb that writes one back. So a clear reported by a reading
+  # that disagrees with the one this branch was entered on is refused rather than
+  # acted on, and the record waits for a sweep whose readings agree.
+  clear_box "$1" "$box" || return 0
   stage_forget "$1"
 }
 
