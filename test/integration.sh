@@ -4571,10 +4571,23 @@ check "the hook warns on a fresh band" "yes" \
 # attached can be weighed against the work in front of the agent; a bare one
 # loses that comparison every time, because the work is concrete and the price of
 # deferring was never named.
-check "the lowest rung asks for the end of the task in hand" "yes" \
-  "$(like "$note_low" "*Finish the task you are on, then compact*")"
+check "the lowest rung reports rather than instructs" "yes" \
+  "$(like "$note_low" "*information, not an instruction*")"
+# THE DECISION THIS PROTECTS, stated as a guard rather than left to the wording
+# above it. The first rung used to share an arm with every rung below the top
+# two, so an agent that had just crossed the floor was told to stop starting work
+# — the same thing said to one most of the way up. Two seats were told that
+# mid-arc and were right to keep going, and a note an agent is right to disobey
+# teaches it to weigh every later rung the same way. This is the negative that
+# says so: whatever the first rung is reworded to, it may not stop the work.
+check "and does not tell an agent at the onset to stop taking work" "no" \
+  "$(like "$note_low" "*Do not start a new task first*")"
+check "nor to stop what it is doing now" "no" \
+  "$(like "$note_low" "*Start no new work*")"
 check "and says what deferring costs, not just what to do" "yes" \
   "$(like "$note_low" "*degrades*")"
+check "while still naming a moment to renew at" "yes" \
+  "$(like "$note_low" "*next checkpoint*")"
 # A count of what is left is arithmetic about the ladder rather than about this
 # context, and it reads as an allowance — three bands left licenses spending two.
 # Nothing the agent does with the number changes what it should do next.
@@ -4613,7 +4626,7 @@ check "and minting no path of its own to compete with the brief's" "no" \
 # halves. "Compact soon" would leave the resume to be got wrong, and the resume is
 # the part that gets got wrong.
 check "the note still carries the command it tells the agent to run" "yes" \
-  "$(like "$note_low" "*gang compact ctxagent --from ctxagent --resume-stdin <*")"
+  "$(like "$note_low" "*gang cycle ctxagent --from ctxagent --resume-stdin <*")"
 check "and advances rich shared band memory" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$p" @gl_band)" '^1$')"
 
@@ -4650,21 +4663,21 @@ check "while the same band on a speaking event still warns" "yes" \
 # A window too small for a five-rung ladder collapses to one rung, and that rung is
 # simultaneously the first crossing and the top. It must land on the terminal
 # instruction rather than the gentlest: there is nothing above it to escalate to,
-# so a "finish this task, then compact" note there is a deferral with no deadline
+# so a "finish this task, then cycle" note there is a deferral with no deadline
 # behind it.
 tmux set-option -w -t "$p" @gl_band 0
 note_only="$(printf '{"hook_event_name":"UserPromptSubmit"}' \
   | GANG_CONTEXT_BANDS=100000 TMUX_PANE="$p" "$GANG" hook)"
 check "a one-rung ladder stops asking and instructs" "yes" \
-  "$(like "$note_only" "*Stop and compact now*")"
+  "$(like "$note_only" "*Stop and cycle now*")"
 check "and says the choice of moment is gone" "yes" \
   "$(like "$note_only" "*no better moment to wait for*")"
 # #51 in the wording: the repeat is what makes the top rung binding, and an agent
 # that does not know the note is coming back can read one refusal as the end of it.
 check "and promises the note comes back until it is done" "yes" \
-  "$(like "$note_only" "*on every turn until you compact*")"
+  "$(like "$note_only" "*on every turn until you cycle*")"
 check "and does not offer a later boundary that does not exist" "no" \
-  "$(like "$note_only" "*then compact*")"
+  "$(like "$note_only" "*then cycle*")"
 # One tail, every rung. The rung that has stopped asking is the one an agent is
 # most likely to act on without reading twice, so it is the one that can least
 # afford to hand back a bare command and let the handoff be improvised.
@@ -4744,9 +4757,9 @@ check "a steady agent past the final rung is nudged again" \
   "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$(printf '%s\n' "$toprepeat" | verdict topbig)"
 check "the repeated note says it is not a fresh crossing" "yes" \
-  "$(has topbig 'You have not compacted')"
+  "$(has topbig 'You have not renewed')"
 check "and says how long repeats continue" "yes" \
-  "$(has topbig 'on every turn until you compact')"
+  "$(has topbig 'on every turn until you cycle')"
 
 # The former steady branch sat above every injection guard. These cases start
 # with band memory already at the top, so each would inject only if the repeat
@@ -4762,7 +4775,7 @@ check "a steady top-band repeat still holds on a non-empty composer" \
   "past the 350000-token band — input box has content, holding nudge" \
   "$("$GANG" patrol | verdict topbig)"
 check "and no repeated note was pasted into that draft" "no" \
-  "$(has topbig 'You have not compacted')"
+  "$(has topbig 'You have not renewed')"
 tmux send-keys -t "$(target_of topbig)" C-u
 wait_for topbig "the draft to leave topbig's box" no has topbig TOP_REPEAT_DRAFT
 
@@ -5510,7 +5523,7 @@ check "a busy agent past the last band is nudged, because the nag queues" \
   "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$("$GANG" patrol | verdict topbusy)"
 check "and the note reaches the busy pane" "yes" \
-  "$(has topbusy 'You have not compacted')"
+  "$(has topbusy 'You have not renewed')"
 "$GANG" drop topbusy >/dev/null 2>&1 || true
 
 "$GANG" hitch topmodal -p topguards -d /tmp >/dev/null
@@ -5523,7 +5536,7 @@ check "a steady top-band repeat still stops at occupancy" \
   "OCCUPIED (authority unknown) — a UI owns the input box and gang cannot establish who may clear it (gang attach)" \
   "$("$GANG" patrol | verdict topmodal)"
 check "and no repeat was typed into the modal" "no" \
-  "$(has topmodal 'You have not compacted')"
+  "$(has topmodal 'You have not renewed')"
 "$GANG" drop topmodal >/dev/null 2>&1 || true
 
 # A window too small to reach rot onset at all. It cannot be warned about rot, so
@@ -5756,7 +5769,7 @@ check "a pending compaction still holds a steady top-band repeat" \
   "past the 350000-token band — compaction gang issued, unconfirmed, holding nudge" \
   "$("$GANG" patrol | verdict graceagent)"
 check "and no repeat was injected while that proof is pending" "no" \
-  "$(has graceagent 'You have not compacted')"
+  "$(has graceagent 'You have not renewed')"
 # Expiry on a pane where the nudge WOULD land is the case that mattered: the
 # permanent version of this hold silenced exactly these agents, the ones with
 # somewhere for the note to go.
@@ -5767,7 +5780,7 @@ check "and the sweep after it delivers the repeat that was being held" \
   "NUDGED (past the last band; repeats every safe patrol until usage drops)" \
   "$("$GANG" patrol | verdict graceagent)"
 check "so the note reaches the pane at last" "yes" \
-  "$(has graceagent 'You have not compacted')"
+  "$(has graceagent 'You have not renewed')"
 
 # The other way out, and the one that does not wait: a compaction that HAPPENED
 # says so in the readout. The drop is monotone — the context stays low — unlike

@@ -3460,22 +3460,45 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # that passed valid_name byte-identical, so the suggestion an agent actually
   # reads is unchanged in every case that is not already broken.
   printf -v qname '%q' "$3"
-  tail="Check the handoff you have been keeping and refresh what this arc changed — if you have none yet, write one now; your role brief says where. Then run: gang compact $qname --from $qname --resume-stdin < your-handoff — this queues behind the turn you are in, and the resume is delivered once compaction settles."
+  tail="Check the handoff you have been keeping and refresh what this arc changed — if you have none yet, write one now; your role brief says where. Then run: gang cycle $qname --from $qname --resume-stdin < your-handoff — a fresh agent replaces you on the same facts and picks up that file, and your window stays open as $qname~spent so your closing remarks can still be read."
   if [ "${6:-}" = repeat ]; then
-    printf '[context-usage] %s in context — still past the %s-token band. You have not compacted. Do it now, before your next action. Each turn you take instead adds to this context and degrades your recall of it. Anything you have not written down is lost when the context is cut. You will get this note on every turn until you compact. %s' \
+    printf '[context-usage] %s in context — still past the %s-token band. You have not renewed. Do it now, before your next action. Each turn you take instead adds to this context and degrades your recall of it. Anything you have not written down is lost when the context is replaced. You will get this note on every turn until you cycle. %s' \
       "$1" "$2" "$tail"
     return
   fi
   if [ "$remaining" -le 0 ]; then
     # At or past the top rung — one condition, because a band above the ladder's
     # last is the same situation as its last and wants the same instruction.
-    printf '[context-usage] %s in context — past the %s-token band. Stop and compact now, before your next action. This is not optional, and there is no better moment to wait for. Your recall of this conversation is already unreliable, and anything you have not written down is lost when the context is cut. You will get this note on every turn until you compact. %s' \
+    # Checked FIRST so a ladder collapsed to a single rung lands here rather than
+    # on the first-rung wording below: with nothing above it to escalate to, the
+    # gentlest note would be a deferral with no deadline behind it.
+    printf '[context-usage] %s in context — past the %s-token band. Stop and cycle now, before your next action. This is not optional, and there is no better moment to wait for. Your recall of this conversation is already unreliable, and anything you have not written down is lost when the context is replaced. You will get this note on every turn until you cycle. %s' \
       "$1" "$2" "$tail"
   elif [ "$remaining" -eq 1 ]; then
-    printf '[context-usage] %s in context — past the %s-token band. Start no new work. Close what is open, then compact. Your recall is already degrading: instructions given once earlier in this conversation are dropping out, and you cannot tell which ones. %s' \
+    printf '[context-usage] %s in context — past the %s-token band. Start no new work. Close what is open, then cycle. Your recall is already degrading: instructions given once earlier in this conversation are dropping out, and you cannot tell which ones. %s' \
+      "$1" "$2" "$tail"
+  elif [ "$4" -eq 1 ]; then
+    # THE FIRST RUNG IS AN ONSET, NOT AN URGENCY, and it used to share its arm
+    # with every rung below the top two — so an agent that had just crossed the
+    # floor was told the same thing as one most of the way up. That contradicts
+    # the ladder's own argument: the rungs compress upward because the widest gap
+    # belongs at the bottom, where there is still time to act on it, while the
+    # prose was flat across the bottom and then jumped.
+    #
+    # It cost real work twice. Two seats were told to stop taking work at their
+    # first band — one mid-arc with a suite running and CI reads owed, where
+    # renewing would have dropped a run nobody else was waiting for. Both were
+    # right to keep going, and a note an agent is right to disobey teaches it to
+    # weigh every later rung the same way.
+    #
+    # So this rung reports and does not instruct. It still carries the cost,
+    # because a fact without one is not actionable either — but the action it
+    # names is a checkpoint the agent is already heading for, not an interruption
+    # of the work in front of it.
+    printf '[context-usage] %s in context — past the %s-token band. This is the first band: information, not an instruction. Nothing needs to stop, and there is no reason to renew mid-task. Renew at your next checkpoint, when there is something coherent to write down. Your recall of earlier turns degrades as this context grows, and you cannot see what you have lost from inside it. %s' \
       "$1" "$2" "$tail"
   else
-    printf '[context-usage] %s in context — past the %s-token band. Finish the task you are on, then compact. Do not start a new task first. Your recall of earlier turns degrades as this context grows, and you cannot see what you have lost from inside it. %s' \
+    printf '[context-usage] %s in context — past the %s-token band. Finish the task you are on, then cycle. Do not start a new task first. Your recall of earlier turns degrades as this context grows, and you cannot see what you have lost from inside it. %s' \
       "$1" "$2" "$tail"
   fi
 }

@@ -266,10 +266,13 @@ toward the top, so the warnings arrive faster as the situation gets worse
 ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
 
 The note escalates with the rung, and what escalates is the ask rather than the
-volume. The lowest rung asks the agent to finish the task in hand and then compact;
-the rung below the top closes the door on starting anything new; the top rung stops
-asking and instructs the agent to compact now, before its next action. That is not a
-request to compact mid-thought: a boundary is only ever wanted because it is a moment
+volume. The lowest rung asks for nothing: it reports the crossing, says a renewal
+belongs at the next checkpoint, and leaves the work in front of the agent alone —
+an onset is not an urgency, and a note an agent is right to disobey teaches it to
+weigh the later rungs the same way. Above it the ask begins: finish the task in
+hand and then cycle; then close the door on starting anything new; and the top rung
+stops asking and instructs the agent to cycle now, before its next action. That is
+not a request to renew mid-thought: a boundary is only ever wanted because it is a moment
 with something coherent to write down, so writing the handoff is what makes this
 moment that boundary, and waiting for a better one spends the last of the window on
 the work whose handoff was the thing at risk.
@@ -418,6 +421,13 @@ verdict is worded `steady`, which the patrol log drops by name, a budget that is
 merely running leaves no record behind while the reserve and the overrun both do.
 
 ## Compaction and handoff
+
+Renewal is `gang cycle` now, and that is what the band note escalates toward: it
+replaces the agent rather than summarising its context, carries the handoff in on
+the same `--resume-stdin` channel, and works self-issued on every profile because
+the caller is retired rather than dropped and lives through it. `gang cycle` in
+[the reference](reference.md) is the page for it. What follows is compaction,
+which remains a verb and remains driveable — everything below still holds for it.
 
 The robust self-compaction form redirects a file that already exists:
 
