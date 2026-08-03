@@ -39,6 +39,34 @@ set -uo pipefail   # deliberately not -e: a failed assertion reports, not aborts
 # the live team's own. The checks below hold both halves of that down.
 unset TMUX TMUX_PANE
 
+# THE OTHER HALF OF THAT PAIR, WHICH UNTIL NOW WAS NOBODY'S. The comment above
+# delegates the socket to the caller, and the checks below prove the scrub does not
+# eat their instruction — but nothing established that an instruction was ever
+# given. Unsetting the two above drops tmux to its DEFAULT socket, which on a
+# developer's box is the live team's own: a run launched without TMUX_TMPDIR builds
+# its sessions beside the operator's agents, and every fixture that loses its target
+# resolves against that server. It does not fail there. It PASSES — the degraded
+# mode that reports healthy, wearing the coat of the instrument this repo measures
+# itself with. A precondition documented at one site and enforced nowhere holds only
+# until somebody does the ordinary thing, and somebody did: a run made exactly this
+# way produced a timing-sensitive red on a server carrying four live agents.
+#
+# ASKED OF THE SERVER, NOT OF THE VARIABLE, which is why nothing here branches on
+# TMUX_TMPDIR. What decides the hazard is not which instruction the caller gave but
+# whether this run is about to share a server with anybody: a bare CI runner has no
+# tmux server at all and passes silently; a developer's box with anything running
+# refuses; and a sandbox still holding the leaked session of a killed earlier run
+# refuses too, which is right, because that corpse's windows are indistinguishable
+# from this run's to anything that does not name its target.
+suite_foreign="$(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')"
+if [ -n "$suite_foreign" ]; then
+  printf 'refusing to run: this suite would share a tmux server with sessions it did not create (%s)\n' "$suite_foreign" >&2
+  printf 'It builds and destroys sessions and windows, and a fixture that loses its target addresses the CURRENT pane of whatever server it is speaking to.\n' >&2
+  printf 'Give it a server of its own:  TMUX_TMPDIR="$(mktemp -d)" test/integration.sh\n' >&2
+  exit 1
+fi
+unset suite_foreign
+
 # The same pure-shell resolution bin/gang uses, and for the same reason: the
 # suite shims a BSD readlink below to prove gang survives one, but resolved its
 # own path with GNU-only `readlink -f` first — so on the stock macOS that test
