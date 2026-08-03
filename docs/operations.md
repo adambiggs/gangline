@@ -65,11 +65,18 @@ answer Gangline could give: the modal is not intercepted, it is never raised.
   the routing you wanted.
 - **Codex:** the equivalent tool is `request_user_input`, carried in the installed
   binary as `ToolRequestUserInputQuestion` — "one request_user_input question and
-  its required options", the same header/options/other shape. It is behind
-  `experimental_request_user_input` in the `[tools]` table of
-  `~/.codex/config.toml`; set it `false` to be sure of it, since whether the
-  build defaults it on is not established here. MCP servers can raise their own
-  elicitation modals on Codex, and no tool setting reaches those.
+  its required options", the same header/options/other shape. Configure it as a
+  nested table in `~/.codex/config.toml`:
+
+  ```toml
+  [tools.experimental_request_user_input]
+  enabled = false
+  ```
+
+  A bare `experimental_request_user_input = false` under `[tools]` is not an
+  equivalent spelling: Codex expects a structured value there and refuses to
+  start. MCP servers can raise their own elicitation modals on Codex, and no tool
+  setting reaches those.
 - **opencode, Pi:** their modals are approval-shaped rather than a distinct
   question tool, so the permission posture above is the whole setting. Verify
   before assuming a harness has a separate question surface — Codex was assumed
