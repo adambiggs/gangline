@@ -100,8 +100,9 @@ unadopted one.
 
 ### `gang cycle <name> [--from <sender>] [--resume-stdin]`
 
-Drops the named agent and hitches a fresh one in its place, on the facts hitch
-recorded at its window: the same profile, role, directory and model. A context is
+Replaces the named agent: its context ends, and a fresh agent is hitched in its
+place on the facts hitch recorded at its window — the same profile, role,
+directory and model. What ends is the context, not the window. A context is
 renewed by being replaced rather than summarised —
 [ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md).
 
