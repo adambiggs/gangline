@@ -362,14 +362,16 @@ gang — drive a team of CLI agents as tmux windows
                                               tmux server died; --cutoff declares the
                                               whole team's cutoff and re-spans it from
                                               now, as gang cutoff does; alias: spawn
-  gang cycle <name>                           renew an agent's context by replacing the
+  gang cycle <name> [--resume-stdin]          renew an agent's context by replacing the
                                               agent: drop it and hitch a fresh one on the
                                               facts it was launched with (profile, role,
                                               directory, model). The conversation does NOT
                                               come back and the team's cutoff is untouched.
                                               Wrap first — the handoff is the agent's own to
                                               write, and gang cannot write it for a window
-                                              it is about to drop
+                                              it is about to drop. --resume-stdin reads that
+                                              handoff from stdin and delivers it to the fresh
+                                              agent once it is briefed; needs --from
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
@@ -4501,8 +4503,11 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     # precisely what takes the figure away.
     #
     # A window option, so it dies at kill-window with the agent it describes
-    # (law 6). A cycled seat inherits no slope, which is the honest scope: the
-    # window that grew a file is gone and the successor has not moved it yet.
+    # (law 6). `cycle --resume-stdin` reads it off the old window before the drop
+    # and writes it onto the fresh one, which is the honest scope rather than an
+    # exception to that: the slope belongs to the FILE and the seat that keeps
+    # growing it, and a team renewing by cycle alone is exactly where dropping
+    # the previous reading would silence the instrument for good.
     # Nothing watches it and nothing schedules it — written by one delivery,
     # read by the next (law 7) — and gang still never learns where any handoff
     # lives, only what it was handed.
@@ -6992,7 +6997,28 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # agent's handoff is its own authored act, and a verb that dropped the window
   # to write one would be writing it after the writer was gone. What gang owes
   # this act is that the agent comes back the same, or that it refuses.
-  local name="$1" id rc=0 windows waited=0
+  #
+  # What it also owes is a way for the replacement to come back HOLDING
+  # something. A renewal whose payload channel is another agent is not one an
+  # unattended team can use: with no --resume-stdin the verb empties a context
+  # and delivers nothing into the one it opened, so every renewal needed a second
+  # agent standing by to hand the state over, and no agent could renew itself at
+  # all. The handoff is still the agent's own authored act — gang carries it, and
+  # writes none of it.
+  local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0 resume_bytes=0
+  local prev_bytes="" id rc=0 windows waited=0
+  name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
+  # Parsed rather than ignored, and that is a fix rather than an addition: the
+  # dispatcher used to hand this function the name alone, so every word after it
+  # was dropped in silence. An operator following a brief that names
+  # --resume-stdin got a renewal with an empty context and a line reporting
+  # success — the failure this whole flag exists to end, wearing its own spelling.
+  while [ $# -gt 0 ]; do case "$1" in
+    --resume-stdin) [ "$resume_stdin" -eq 0 ] || die "cycle: --resume-stdin may be passed only once"
+                    resume_stdin=1; shift ;;
+    --from)   [ $# -ge 2 ] || die "cycle: $1 needs a value"; from="$2"; shift 2 ;;
+    *) die "cycle: unknown argument '$1'" ;;
+  esac; done
   id="$(win_id "$name")" || die "no agent '$name'"
   launch_read "$id" || rc=$?
   case "$rc" in
@@ -7029,6 +7055,39 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   esac
   [ "$windows" -gt 1 ] \
     || die "cycle: '$name' is the only window in session '$SESSION', and dropping it ends the session — the team's cutoff is session state and would go with it. Hitch another agent first, or use 'gang drop $name' and hitch it again yourself if you mean to end the team"
+  # The resume is settled with the other pre-drop refusals and LAST among them,
+  # and both halves of that placement are load-bearing. Before the drop, because
+  # a body refused after it is a context destroyed for something gang could have
+  # measured while it still had one. Last, because everything above is checkable
+  # without touching the caller's handoff — a cycle refused for a profile that
+  # has been withdrawn should not also consume the file it was handed.
+  if [ "$resume_stdin" -eq 1 ]; then
+    [ -n "$from" ] \
+      || die "cycle: --resume-stdin needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
+    check_sender "$from"
+    stdin_body "cycle: --resume-stdin"; resume="$STDIN_BODY"
+    # The same budget as compact's, off the same global, because the two are the
+    # same act seen through different verbs: a body charged to a context emptied
+    # to make room for it. Measuring one policy a second time under its own name
+    # is how the two readings start disagreeing, and only one of them can be the
+    # one an agent was refused by.
+    require_whole GANG_RESUME_MAX "$RESUME_MAX" bytes
+    resume_bytes="$(printf '%s' "$resume" | wc -c | tr -d '[:space:]')"
+    # `wc -c` and never ${#resume}: under a UTF-8 locale that counts CHARACTERS,
+    # so a budget declared in bytes and measured that way admits a multibyte
+    # handoff at several times its stated size.
+    #
+    # refuse rather than die, because exit 3 is a claim this path can actually
+    # make: nothing was typed, and here nothing was dropped either.
+    [ "$resume_bytes" -le "$RESUME_MAX" ] \
+      || refuse "cycle: this resume is $resume_bytes bytes and GANG_RESUME_MAX is $RESUME_MAX, so it is refused rather than delivered. A resume is charged to a context emptied to make room for it, and it grows by additions each window judged reasonable one at a time. Fold it: supersede sections in place, cut finished work to a pointer at the receipts it is archived under, keep only what the successor must act on. Gangline will not trim it for you — a resume cut by a tool is one nobody wrote. Nothing has been dropped, '$name' is still running with the context it had, and the file on disk is untouched. Raise GANG_RESUME_MAX if this handoff is genuinely this size."
+    # Read off the OLD window while there still is one. The slope is a property
+    # of the FILE and the seat that keeps growing it, not of any single window,
+    # and a renewal that dropped the previous reading would take the instrument
+    # away at exactly the moment a team renewing by cycle alone is the only
+    # place it could still speak.
+    prev_bytes="$(tmux show-options -wqv -t "$id" @gl_resume_bytes 2>/dev/null)" || prev_bytes=""
+  fi
   # Both exclusions said on the surface that acts on them, because the assumption
   # an operator arrives with is that a renewal restores what it renewed.
   printf '%s\n' "$(colour "$C_WORK" "cycling $name") $(colour "$C_DIM" "— a fresh $LAUNCH_PROFILE on the same facts: the conversation does not come back, and the team's cutoff is untouched")"
@@ -7054,7 +7113,49 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # from one agent's renewal, which is why hitch announces it in those words.
   # Neither is recorded either: a fact gang records is a fact some later reader
   # replays.
-  cmd_hitch "$name" "${flags[@]}"
+  local hitch_rc=0
+  cmd_hitch "$name" "${flags[@]}" || hitch_rc=$?
+  [ "$resume_stdin" -eq 1 ] || return "$hitch_rc"
+  # The fresh window is looked up rather than assumed: cmd_hitch owns the id it
+  # created, and it has paths that report and RETURN rather than die — a dialog
+  # owning the screen of a role-less agent is one. So "hitch said something" is
+  # not proof there is a window here to paste into.
+  local fresh
+  fresh="$(win_id "$name")" \
+    || die "cycle: hitched '$name' and tmux lists no window by that name, so its resume was not delivered and the file on disk is untouched"
+  # ONE attempt, and the difference from the compaction path is what licenses it.
+  # There the resume goes in from a disowned subshell minutes later, into a pane
+  # gang has not touched since, with both streams closed — a transient refusal
+  # was invisible and terminal, which is why that path retries. This one is
+  # synchronous: cmd_hitch injected the brief into this same pane seconds ago and
+  # found its input box clear afterwards, and whoever ran this command is looking
+  # at the refusal. A failure here is loud, and the handoff it names is still on
+  # disk, which is the whole of what a retry would have been protecting.
+  #
+  # In a command substitution so inject's own `die` ends that subshell rather
+  # than this process, which would take the report below with it. The envelope is
+  # minted OUTSIDE it for the same reason cmd_compact mints it outside its fork:
+  # an envelope that refused in there would take the resume down without a word.
+  envelope "$from" "$resume"
+  local irc=0 ierr=""
+  ierr="$(inject "$fresh" "$ENVELOPE" 2>&1)" || irc=$?
+  if [ "$irc" -ne 0 ]; then
+    [ -z "$ierr" ] || printf '%s\n' "$ierr" >&2
+    die "cycle: '$name' was renewed and its resume was NOT delivered, so it is running with an empty context and does not know it. The handoff on disk is untouched — deliver it with: gang send $name --from $from --stdin < the-file"
+  fi
+  # Recorded on the window that now holds the body, so it dies with that window
+  # (law 6) and the next delivery here has a figure to measure against. Written
+  # by one delivery, read by the next: nothing watches it and nothing schedules
+  # it (law 7).
+  local grew=""
+  case "$prev_bytes" in
+    ''|*[!0-9]*) ;;
+    *) [ "$resume_bytes" -gt "$prev_bytes" ] \
+         && grew=", up $(( resume_bytes - prev_bytes )) since the last one delivered to this seat" ;;
+  esac
+  tmux set-option -w -t "$fresh" @gl_resume_bytes "$resume_bytes" 2>/dev/null || true
+  printf '%s\n' "$(colour "$C_OK" "resumed $name") $(colour "$C_DIM" "as [gang:$from] — the resume is $resume_bytes bytes of $RESUME_MAX$grew")"
+  return "$hitch_rc"
 }
 
 cmd_down() { # inverse of up: end the whole team's session
@@ -7075,7 +7176,7 @@ cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
   up)       cmd_up "$@" ;;
   hitch|spawn) cmd_hitch "$@" ;;
-  cycle)    [ $# -ge 1 ] || usage_die; cmd_cycle "$1" ;;
+  cycle)    [ $# -ge 1 ] || usage_die; cmd_cycle "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;

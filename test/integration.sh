@@ -1032,6 +1032,80 @@ check "a directory that has gone since the hitch is refused" "1" "$rc"
 check "before the drop, with the agent still running" "yes" \
   "$(holds "$("$GANG" roster)" '^cycstray ')"
 
+# --resume-stdin, which is what makes the verb usable by a team with nobody
+# watching. Without it cycle empties a context and delivers nothing into the one
+# it opens, so every renewal needed a second agent standing by to hand the state
+# over and no agent could renew itself at all.
+#
+# Every refusal below is checked TWICE — that it fires, and that the agent is
+# still there when it does. The second is the load-bearing one: a body refused
+# after the drop is a context destroyed for something gang could have measured
+# while it still had one, and a refusal that reads correct while costing the
+# operator the window it was protecting is the worse of the two failures.
+cycid="$(id_of cycled)"
+out="$(printf 'body\n' | cyc cycle cycled --resume-stdin 2>&1)"; rc=$?
+check "a resume with no identity is refused" "1" "$rc"
+check "naming the way to attribute it" "yes" "$(contains "$out" "--from <sender>")"
+check "and the agent is untouched" "$cycid" "$(id_of cycled)"
+
+# The dispatcher used to hand cmd_cycle the name alone, so every word after it
+# was dropped in silence — an operator following a brief that names
+# --resume-stdin got a renewal with an empty context and a line reporting
+# success. A misspelling is the cheapest world that can tell parsed from ignored.
+out="$(cyc cycle cycled --resuem-stdin 2>&1)"; rc=$?
+check "an argument cycle does not know is refused rather than ignored" "1" "$rc"
+check "and named, so a typo is not read as a flag that worked" "yes" \
+  "$(contains "$out" "--resuem-stdin")"
+check "and the agent is untouched" "$cycid" "$(id_of cycled)"
+
+out="$(printf '' | cyc cycle cycled --from cycled --resume-stdin 2>&1)"; rc=$?
+check "an empty resume is refused" "1" "$rc"
+check "and the agent is untouched" "$cycid" "$(id_of cycled)"
+
+# One budget, read from the global compact reads, because the two are the same
+# act through different verbs. A second reading under its own name is how the
+# two start disagreeing, and only one of them can be the one an agent was
+# refused by.
+big="$(head -c 400 /dev/zero | tr '\0' 'x')"
+out="$(printf '%s' "$big" | GANG_RESUME_MAX=100 cyc cycle cycled --from cycled --resume-stdin 2>&1)"; rc=$?
+check "an oversized resume is refused, and with the code that means nothing was typed" "3" "$rc"
+check "saying what it measured against what it was allowed" "yes" \
+  "$(contains "$out" "400 bytes and GANG_RESUME_MAX is 100")"
+check "and claiming only what this path can claim: the agent still has its context" "yes" \
+  "$(contains "$out" "is still running with the context it had")"
+check "and the agent is untouched" "$cycid" "$(id_of cycled)"
+
+# The happy world, and the CONTROL for every "untouched" above it: unless the
+# window really does change here, none of those assertions were saying anything.
+printf 'CYCRESUME-PAYLOAD carried across the renewal\n' > "$SHIM/cyc-handoff"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-handoff" 2>&1)"; rc=$?
+check "a cycle carrying a resume succeeds" "0" "$rc"
+check "THE CONTROL: the window did change, so the refusals above were checking something" "no" \
+  "$([ "$cycid" = "$(id_of cycled)" ] && echo yes || echo no)"
+check "the delivery is attributed to its sender" "yes" "$(contains "$out" "as [gang:cycled]")"
+wait_for cycled "the resume to reach the fresh agent" yes has cycled CYCRESUME-PAYLOAD
+check "the resume reaches the agent that was renewed" "yes" \
+  "$(has cycled CYCRESUME-PAYLOAD)"
+check "and it is still a fresh launch, not the resume form this profile declares" "no" \
+  "$(has cycled RESUMEDFORM)"
+# Measured off the file rather than written here: a count retyped into a test is
+# wrong by exactly a trailing newline, and it accuses correct code of an
+# off-by-one (ADR-0012 refuses them from documentation for the same reason).
+check "the size is recorded on the window that now holds the body" \
+  "$(wc -c < "$SHIM/cyc-handoff" | tr -d ' ')" \
+  "$(tmux show-options -wqv -t "$(id_of cycled)" @gl_resume_bytes)"
+
+# The slope, which is the whole instrument: a size is a point, and every addition
+# to a handoff is defensible one at a time. A renewal that dropped the previous
+# reading would silence it for good on a team that renews by cycle alone.
+printf 'CYCRESUME-PAYLOAD carried across the renewal, and then a further line\n' \
+  > "$SHIM/cyc-handoff2"
+grew=$(( $(wc -c < "$SHIM/cyc-handoff2") - $(wc -c < "$SHIM/cyc-handoff") ))
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-handoff2" 2>&1)"; rc=$?
+check "a second renewal carrying a bigger handoff succeeds" "0" "$rc"
+check "and the growth survives the renewal that would otherwise take it away" "yes" \
+  "$(contains "$out" "up $grew since the last one delivered to this seat")"
+
 "$GANG" drop cycled >/dev/null 2>&1 || true
 "$GANG" drop cycnorole >/dev/null 2>&1 || true
 "$GANG" drop cycadopted >/dev/null 2>&1 || true

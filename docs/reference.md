@@ -98,12 +98,28 @@ Kills the named window and prints `dropped <name>`. Window-owned state disappear
 with it. This command resolves any named window in the team, including an
 unadopted one.
 
-### `gang cycle <name>`
+### `gang cycle <name> [--from <sender>] [--resume-stdin]`
 
 Drops the named agent and hitches a fresh one in its place, on the facts hitch
 recorded at its window: the same profile, role, directory and model. A context is
 renewed by being replaced rather than summarised —
 [ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md).
+
+`--resume-stdin` reads a handoff from stdin and delivers it to the fresh agent
+once it has been briefed, attributed to `--from` (or `GANG_FROM`) exactly as
+`gang send` and `gang compact` are. Without it the verb empties a context and
+delivers nothing into the one it opens, so the state has to arrive by some other
+hand — which is why a renewal used to need a second agent standing by, and why an
+agent could not renew itself.
+
+The handoff is measured against `GANG_RESUME_MAX`, the same budget `gang compact`
+applies and for the same reason: a resume is charged to a context that has just
+been emptied to make room for it. An oversized one is refused *before* the drop,
+with the agent still holding the context it had, and the refusal exits 3 —
+nothing was typed and nothing was dropped. Each delivery records its size on the
+window that receives it and reports the growth since the last one delivered to
+that seat, so a handoff that is climbing says so a renewal before it reaches the
+wall rather than at it.
 
 Two things it does not do, and it says both on the surface that acts. The
 conversation does not come back: the relaunch is the profile's plain launch line
