@@ -25,6 +25,19 @@ GANG_LAUNCH="claude"
 # anywhere on the machine. Directory and recency are the whole of the selection;
 # no agent name reaches it, so "its own" holds only where one agent worked there.
 GANG_RESUME_LAUNCH="claude --continue"
+# THE FIRST RUNG, raised for this harness's windows. The bands are absolute
+# rather than proportional and ADR-0005 argues why, so the shipped floor has to
+# suit the smallest window any harness reports — and on the windows this one
+# reports, it fires while the agent still holds most of its context. That is not
+# a cosmetic complaint: `context_rungs` deliberately compresses the ladder
+# upward, so the first rung is the widest gap and the one an agent has time to
+# act on, while bin/gang gives every rung below the top two the same near-top
+# urgency. An agent that renews there renews on a schedule nothing chose,
+# repeatedly, and loses the thread it was keeping rather than protecting it.
+# Raising the floor here and not globally is the whole point of the knob being
+# per-profile: a harness reporting a small window keeps the shipped ladder, and
+# nothing about it changes because this one moved.
+GANG_CONTEXT_FLOOR=250000
 # THE EVENT TIER, wired at hitch with nothing on disk (ADR-0008). Claude Code
 # fires hooks from its settings, and --settings takes an inline JSON string — so
 # the operator's own settings.json is untouched and there is no generated file to
