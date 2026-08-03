@@ -7031,7 +7031,7 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # all. The handoff is still the agent's own authored act — gang carries it, and
   # writes none of it.
   local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0 resume_bytes=0
-  local prev_bytes="" id rc=0 windows waited=0
+  local prev_bytes="" id rc=0 waited=0
   name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   # Parsed rather than ignored, and that is a fix rather than an addition: the
   # dispatcher used to hand this function the name alone, so every word after it
@@ -7068,18 +7068,6 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
     || die "cycle: '$name' runs on '$LAUNCH_PROFILE', a stand-in for gangline's own suite rather than a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   [ -z "$LAUNCH_ROLE" ] || role_file "$LAUNCH_ROLE" >/dev/null \
     || die "cycle: '$name' was briefed as '$LAUNCH_ROLE' and gang cannot find that role now (have: $(list_roles | tr '\n' ' '))"
-  # tmux ends a session when its last window closes, and the team's cutoff is
-  # SESSION state — cutoff_write targets the session deliberately, so that one
-  # budget covers one team. Cycling the only agent would therefore take the whole
-  # team's declared cutoff out with it and hand back an agent reporting a renewal.
-  # Refused rather than restored: re-declaring a cutoff re-spans it from now for
-  # everyone, which is a different act wearing a renewal's name.
-  windows="$(tmux display-message -p -t "=$SESSION:" '#{session_windows}' 2>/dev/null)" || windows=""
-  case "$windows" in ''|*[!0-9]*)
-    die "cycle: tmux did not say how many windows session '$SESSION' has, so gang cannot tell whether dropping '$name' would end the session" ;;
-  esac
-  [ "$windows" -gt 1 ] \
-    || die "cycle: '$name' is the only window in session '$SESSION', and dropping it ends the session — the team's cutoff is session state and would go with it. Hitch another agent first, or use 'gang drop $name' and hitch it again yourself if you mean to end the team"
   # The resume is settled with the other pre-drop refusals and LAST among them,
   # and both halves of that placement are load-bearing. Before the drop, because
   # a body refused after it is a context destroyed for something gang could have

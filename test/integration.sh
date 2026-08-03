@@ -1206,34 +1206,48 @@ check "and its own handoff reached the replacement" "yes" "$(has cycself CYCSELF
 "$GANG" drop cycadopted >/dev/null 2>&1 || true
 "$GANG" drop cycstray >/dev/null 2>&1 || true
 
-# --- a renewal that would end the team it renews --------------------------------
-section "a renewal that would end the team it renews"
+# --- a renewal in the session's only window, and the cutoff it leaves alone -----
+section "a renewal in the session's only window, and the cutoff it leaves alone"
 
-# tmux ends a session when its last window closes, and the cutoff is SESSION
-# state — one budget, one team. So cycling the only agent would take the whole
-# team's declared cutoff out with it and hand back an agent reporting a renewal.
-# Both worlds here are about that session, which is why they get a server of
-# their own rather than this run's: the refusal is refused because the session
-# would end, and the check beside it declares a cutoff to have something at risk.
+# RETIREMENT OBSOLETED A REFUSAL HERE, and the world it refused is checked rather
+# than left blank. This section used to assert that cycling the only agent in a
+# session was REFUSED: tmux ends a session when its last window closes, the
+# cutoff is SESSION state, and such a renewal would have taken the whole team's
+# budget out with it. A predecessor is no longer dropped — it is RETIRED in place
+# — so the session never reaches zero windows and the premise is gone. Nor does a
+# failed hitch reopen it: what is left then is one `~spent` window with the
+# session and its cutoff intact, which is the recoverable direction.
+#
+# The checks that stood here TAKE the world that used to be refused rather than
+# vanishing with it, because a deletion leaves an absence nobody can read while a
+# passing check leaves the decision on the page.
+#
+# Both worlds still get a server of their own rather than this run's, because the
+# second declares a cutoff to have something at risk.
 CYC="$(tmpdir_p /tmp/gangcyc.XXXXXX)" || exit 1; CYCS="gangcyc-$$"
 cycs() { env TMUX_TMPDIR="$CYC" GANG_SESSION="$CYCS" \
              GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
 cycs hitch cycsolo -p cycler -d /tmp >/dev/null
 out="$(cycs cycle cycsolo 2>&1)"; rc=$?
-check "cycling the only agent in a session is refused" "1" "$rc"
-check "naming the cutoff as what would go with it" "yes" \
-  "$(contains "$out" "cutoff")"
-check "and the agent is untouched" "yes" \
+check "cycling the session's only agent is no longer refused" "0" "$rc"
+# The middle one is load-bearing: it asserts that the exact hazard the refusal
+# named — the session ending under the renewal — does not happen. Retirement's
+# OWN properties are checked where retirement is, and are not duplicated here.
+check "and the session it would have ended is still there" "yes" \
+  "$(env TMUX_TMPDIR="$CYC" tmux has-session -t "=$CYCS" 2>/dev/null && echo yes || echo no)"
+check "with the renewed agent still on it" "yes" \
   "$(holds "$(cycs roster)" '^cycsolo ')"
 
-# LEAD'S CLASS RULE: a refusal that names a way out gets a check that TAKES it.
+# A SECOND AGENT IN THE SESSION, which is now an ordinary world rather than the
+# way out of a refusal. This block's subject is the CUTOFF, not the company: what
+# is being set up is a declared budget with something to lose across a renewal.
 cycs hitch cyccompany -p cycler -d /tmp >/dev/null
 cycs cutoff 90m >/dev/null
 cbefore="$(env TMUX_TMPDIR="$CYC" tmux show-options -qv -t "=$CYCS:" @gl_cutoff)"
 check "the team has a cutoff to lose" "yes" "$(holds "$cbefore" '[0-9]')"
 out="$(cycs cycle cycsolo 2>&1)"; rc=$?
-check "hitching another agent first is the way out, and it works" "0" "$rc"
-# The second exclusion. --cutoff is session state, so it survived the drop and
+check "a renewal with another agent in the session works too" "0" "$rc"
+# The second exclusion. --cutoff is session state, so it survived the renewal and
 # there is nothing to restore; re-declaring it would re-span the whole team's
 # budget from one agent's renewal, which is a different act wearing a renewal's
 # name. Compared as bytes against a value asserted non-empty above, because two

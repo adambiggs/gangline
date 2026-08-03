@@ -158,10 +158,7 @@ record it names what it cannot rebuild and stops: a window registered with `gang
 adopt` has none by construction, and a value Gangline did not write is a record
 it cannot read rather than an absent one. It also refuses *before* the drop when
 a recorded fact no longer holds — the directory has been removed, the profile
-withdrawn, the role renamed — and when the named agent is the only window in its
-session, since dropping it would end the session and take the team's cutoff with
-it. Hitch another agent first, or use `gang drop` if ending the team is what you
-mean.
+withdrawn, the role renamed.
 
 ### `gang down`
 
