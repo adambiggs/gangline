@@ -84,7 +84,17 @@ cycle instead of a summary.
   whether a harness's background task handles survive its in-process clear,
   and who cycles the lead — a worker is cycled by the lead; the lead's own
   renewal must come from outside its dying context.
-- The handoff contract in `roles/_common.md` gains one sentence: the handoff
-  is bounded by state, not by history.
+- The handoff contract in `roles/_common.md` gains the state bound, the
+  livelock conduct line, and the exclusion of the handoff's own arrival.
+- Whether a cycle worked is a two-sided datum and neither side can produce it
+  alone. The successor certifies the OUTCOME — a context that is new, recorded
+  facts that came back correct, a handoff that was the only channel — and it
+  certifies that by reading the substrate at its own hand, because a handoff is
+  written before the act that delivers it and cannot carry the manner of its own
+  delivery. What a successor cannot see is the VERB: a drop and a re-hitch mint
+  the same pane, write the same record and deliver the same brief, so the
+  mechanism is attested only by whoever called it. A report from one side that
+  claims both is the fabricated positive this decision's own measurement is most
+  exposed to, and it is the reason the check is a check.
 - The day-one consumer (law 5) is the lead's own next renewal — the first
   cycle runs on the team that decided this.
