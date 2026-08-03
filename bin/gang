@@ -4032,6 +4032,20 @@ time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note p
 # truncates in a space-split record, and what comes back is a live agent running
 # somewhere other than where it was, reported as the same agent.
 #
+# The writer takes NAME VALUE pairs rather than a fixed argument order. The
+# facts are strings of the same shape, so a positional list of them cannot tell a
+# transposition from an intention: swap two and gang records a model as a role and
+# reports nothing wrong. A name beside each value moves the fact and its name
+# together, and a name that is not a fact is refused — which is what makes a
+# transposed pair loud, since the name slot then holds a value.
+#
+# Every fact is written HERE, and before the vouch below. A writer standing beside
+# this one would run after @gl_launch was already set, so a hitch dying between the
+# two would leave a partial record reading as a complete one — and a fact absent
+# for that reason is indistinguishable from a fact nobody asked for. That is why a
+# refusal in the loop below is the safe direction: it leaves facts with no vouch,
+# which is refused, rather than a vouch covering facts that were never written.
+#
 # @gl_launch is written LAST, after every fact it vouches for. A hitch that died
 # partway leaves facts with no record, and an absent record is refused; written
 # first, that same partial write would read as a complete one, which is the
@@ -4045,12 +4059,19 @@ time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note p
 # options, so tmux deletes them with the window, and the record dies with the
 # agent it describes.
 LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
-launch_write() { # $1 = window id, $2 = profile, $3 = role, $4 = dir, $5 = model
-  tmux set-option -w -t "$1" @gl_profile "$2"
-  tmux set-option -w -t "$1" @gl_role "$3"
-  tmux set-option -w -t "$1" @gl_dir "$4"
-  tmux set-option -w -t "$1" @gl_model "$5"
-  tmux set-option -w -t "$1" @gl_launch "$LAUNCH_RECORD"
+launch_write() { # $1 = window id, then NAME VALUE pairs; the vouch goes on last
+  local id="$1"; shift
+  [ $(( $# % 2 )) -eq 0 ] \
+    || die "launch_write: the name/value arguments do not pair up, so every fact after the gap would be recorded under the name of another one. Nothing was written"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      profile|role|dir|model) ;;
+      *) die "launch_write: '$1' is not a launch fact, so either a name and its value are transposed or a fact was added to the writer without teaching launch_read to read it. The vouch has not been written, so this window has no record rather than a partial one" ;;
+    esac
+    tmux set-option -w -t "$id" "@gl_$1" "$2"
+    shift 2
+  done
+  tmux set-option -w -t "$id" @gl_launch "$LAUNCH_RECORD"
 }
 
 # The record is what makes the facts readable, because the facts cannot speak for
@@ -4156,7 +4177,7 @@ cmd_hitch() {
   # of a brief leave the window ALIVE — an agent showing a first-run dialog is
   # hitched, registered, and a thing gang can still be asked to cycle. The ones
   # that die from here on take the window with them, and the record with it.
-  launch_write "$id" "$prof" "$role" "$dir" "$model"
+  launch_write "$id" profile "$prof" role "$role" dir "$dir" model "$model"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   # A keyed profile gets its marker on EVERY hitch, role or not: the marker is
