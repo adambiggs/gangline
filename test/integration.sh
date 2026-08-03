@@ -2016,7 +2016,16 @@ check "and goes in the moment the compaction itself is running" "yes" "$(has bus
 over="$(mktemp)"; under="$(mktemp)"; override="$(mktemp)"; grown="$(mktemp)"
 # One byte past the shipped default, which is the edge worth pinning: a guard
 # built three times the size would pass on an off-by-one comparison.
-tr '\0' 'x' < /dev/zero | head -c 65537 > "$over"
+# BOUNDED AT THE SOURCE, and the order is the whole of it. Written the other way
+# round — an endless `tr` piped into a `head` that takes its bytes and leaves —
+# the producer stops only when the reader closes the pipe, which needs SIGPIPE to
+# be delivered AND acted on. That is platform behaviour, not shell semantics: on
+# Linux `tr` died and the pipeline finished; on the macOS runner it did not, bash
+# waited for it as it waits for every process in a pipeline, and the suite stopped
+# here for the rest of the job's life. Twice, at the same check, and both jobs
+# terminated `tr` as an orphan at cleanup. head reads a bounded count and exits,
+# tr sees EOF and exits: nothing in this pipeline needs a signal to stop.
+head -c 65537 /dev/zero | tr '\0' 'x' > "$over"
 # Three DISTINCT bodies, because each delivery below has to be provably drained
 # before this block ends and a shared marker cannot tell one arrival from another.
 printf 'MARK_FOLDA folded to what the successor must act on\n' > "$under"
@@ -8313,6 +8322,25 @@ check "no text in gang is sized with cut -c" "0" \
 # number, and then it has to be argued for in the diff rather than absorbed.
 suite_sleeps() { grep -cE '^[[:space:]]*sleep ' "$1"; }
 check "the suite pays the clock only where it says so" "6" "$(suite_sleeps "$SUITE")"
+# A PRODUCER THAT STOPS ONLY WHEN A READER CLOSES THE PIPE IS NOT BOUNDED — it is
+# waiting for SIGPIPE to be delivered and acted on, and that is the platform's
+# behaviour rather than the shell's. This suite hung a macOS cell for the whole
+# remaining life of the job on exactly that, twice, at the same check, and each
+# job terminated the endless process as an orphan at cleanup. Nothing reported a
+# failure, because nothing failed: bash waits for every process in a pipeline and
+# the run simply stopped, which a reader then meets as a green-looking partial
+# tally with zero FAILs in it.
+#
+# So the rule is structural rather than remembered: an endless source is bounded
+# WHERE IT IS READ, never downstream. The needle is assembled at runtime so this
+# guard does not match itself — a check that counts its own text is a check that
+# can never reach zero, and would have to be weakened to ship.
+endless_src="$(printf '/dev/%s' zero)"
+unbounded_streams() { # $1 = file; lines drawing from an endless source without bounding it
+  grep -n "$endless_src" "$1" | grep -v "head -c [0-9][0-9]* $endless_src" || true
+}
+check "an endless source is bounded where it is read, not by a downstream reader" "" \
+  "$(unbounded_streams "$SUITE")"
 # The fourth member, and the one with a rule rather than a shape: a predicate
 # must tell DETERMINED FALSE from COULD NOT DETERMINE, and only the first may be
 # spent as false. Five sites each handed a profile ERE straight to grep, where
