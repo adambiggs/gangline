@@ -593,6 +593,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # next one look like it declared the retired name.
   GANG_GATED_REGEX=""
   GANG_VERSION_CMD="" GANG_VERIFIED_VERSIONS="" GANG_MODEL_OPT=""
+  GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   # Kept, not discarded with the rest of the local, so that a failure reading
   # anything this file declares can name the file to go and open. GANG_PROFILES
   # points wherever the operator said — which can be a directory nobody
@@ -4074,6 +4075,35 @@ model_pastable() { # $1 = the verb naming itself in the refusal, $2 = model
   esac
 }
 
+# A reasoning effort is one concept every harness spells differently and values
+# differently, so the profile owns BOTH: the flag, and the command that says which
+# levels exist. Core holds neither vocabulary, because codex's is model-specific
+# and claude-code's may not be, and neither harness can be right about the other.
+#
+# WHY A COMMAND THAT PRINTS THE LEVELS RATHER THAN ONE THAT JUDGES ONE. A checker
+# answering by exit status has two outcomes for three states, and the state it
+# cannot distinguish is the one that matters: "this level is not a level" and "the
+# check could not run at all" arrive as the same non-zero, so a harness that is
+# merely absent refuses every level while claiming the operator typed a bad one.
+# Printing the vocabulary separates them — nothing printed is could-not-determine,
+# and it is refused UNDER ITS OWN NAME rather than borrowed from the other.
+#
+# Validation must run at STATEMENT LEVEL, never inside $(...): die in a command
+# substitution ends only that subshell, and the caller reads the empty string as a
+# pass. That is why this returns levels and the refusals live at the call site.
+effort_levels() { # print the levels the profile says this harness takes
+  [ -n "$GANG_EFFORT_CMD" ] || return 0
+  # The model reaches the command because a vocabulary can depend on it; the
+  # profile decides whether to use it. Exported for the child only.
+  GANG_MODEL="$1" sh -c "$GANG_EFFORT_CMD" 2>/dev/null
+}
+
+effort_pastable() { # $1 = the verb naming itself in the refusal, $2 = effort
+  case "$2" in
+    *[!A-Za-z0-9._:/@-]*) die "$1: effort '$2' has characters gang will not paste into a launch line" ;;
+  esac
+}
+
 LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
 
 # THE FACTS, DECLARED ONCE, because a writer naming them and a reader naming them
@@ -4083,7 +4113,7 @@ LAUNCH_RECORD=1   # the format @gl_launch declares; anything else is unreadable
 # revert arriving through the mechanism that exists to prevent it. Both halves
 # below derive from this line, and so does the initialisation beside launch_read,
 # which is a third place the same drift could start. Adding a fact is editing it.
-LAUNCH_FACTS="profile role dir model"
+LAUNCH_FACTS="profile role dir model effort"
 
 launch_fact() { # $1 = a name; 0 if this is one of the declared facts
   case " $LAUNCH_FACTS " in *" $1 "*) return 0 ;; esac
@@ -4138,7 +4168,7 @@ launch_read() { # $1 = window id; populate LAUNCH_*; 1 = no record, 2 = unreadab
 cmd_hitch() {
   # Profile defaults so the common case needs no flags; GANG_PROFILE moves it.
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
-  local cutoff="" cut_now=0
+  local cutoff="" cut_now=0 effort=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not a usable agent name — patrol and hitch are reserved for gang's substrate; other names use letters, digits, dot, dash and underscore only, not starting with a dash or dot. A name is also a tmux target, a JSON string in gang hook's reply, and a word in the compaction command gang suggests"
@@ -4147,6 +4177,7 @@ cmd_hitch() {
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
+    --effort)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
     --resume)     resume=1; shift ;;
     --cutoff)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; cutoff="$2"; shift 2 ;;
     *) die "hitch: unknown argument '$1'" ;;
@@ -4194,6 +4225,40 @@ cmd_hitch() {
     model_pastable hitch "$model"
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
+  # Effort rides the same path, and the POSITION is the argument rather than the
+  # append: the resume swap above has already chosen which launch line this is, so
+  # both forms carry the flag by construction instead of by a second branch that
+  # has to be kept in step with this one. A flag surviving hitch and lost at cycle
+  # is a renewal that quietly changes the agent.
+  #
+  # No space in the join. Where a model's flag and value are separate words, an
+  # effort's separator belongs to the harness's own spelling — `--effort=` and
+  # `-c model_reasoning_effort=` are both one word — so the profile declares the
+  # whole thing and word-splitting does the rest.
+  if [ -n "$effort" ]; then
+    [ -n "$GANG_EFFORT_OPT" ] || die "hitch: profile '$prof' declares no GANG_EFFORT_OPT, so it cannot take --effort"
+    effort_pastable hitch "$effort"
+    # REFUSED WHERE NO VALIDATION IS DECLARED, rather than accepted unchecked. The
+    # harness will not catch it: claude-code warns about an unknown level, exits 0
+    # and runs at its default, and codex opens a window whose first turn the
+    # PROVIDER refuses — so the operator gets a live agent at an effort nobody
+    # chose, or one that dies as soon as it is briefed. Hitch is the last place
+    # this is cheap.
+    [ -n "$GANG_EFFORT_CMD" ] \
+      || die "hitch: profile '$prof' declares GANG_EFFORT_OPT but no GANG_EFFORT_CMD, so gang cannot tell whether '$effort' is a level this harness has. An unchecked effort is not refused by the harness either — it runs at a level nobody chose — so it is refused here"
+    local levels="" flat=""
+    levels="$(effort_levels "$model")"
+    [ -n "$levels" ] \
+      || die "hitch: profile '$prof' declares GANG_EFFORT_CMD and running it produced no levels, so gang could not determine whether '$effort' is one. That is a broken declaration rather than a bad value, and it is refused under its own name rather than blamed on what you typed"
+    # Padded on both sides and matched whole, so a level cannot be satisfied by
+    # sitting inside another one — `high` must not be answered by `xhigh`.
+    flat=" $(printf '%s' "$levels" | tr '[:space:]' ' ') "
+    case "$flat" in
+      *" $effort "*) ;;
+      *) die "hitch: '$effort' is not an effort profile '$prof' takes (have:$flat)" ;;
+    esac
+    GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
+  fi
 
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
@@ -4216,7 +4281,7 @@ cmd_hitch() {
   # of a brief leave the window ALIVE — an agent showing a first-run dialog is
   # hitched, registered, and a thing gang can still be asked to cycle. The ones
   # that die from here on take the window with them, and the record with it.
-  launch_write "$id" profile "$prof" role "$role" dir "$dir" model "$model"
+  launch_write "$id" profile "$prof" role "$role" dir "$dir" model "$model" effort "$effort"
   sleep 0.5
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   # A keyed profile gets its marker on EVERY hitch, role or not: the marker is
@@ -7231,6 +7296,12 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   elif [ -n "$LAUNCH_MODEL" ]; then
     flags+=(-m "$LAUNCH_MODEL")
   fi
+  # Replayed for the reason every recorded fact is: a renewed agent that came back
+  # at a level nobody chose would be the silent revert the record exists to stop,
+  # and it would arrive looking like a successful renewal. This verb takes no
+  # --effort of its own — nothing asks for one yet, and a flag with no caller the
+  # day it merges is the speculative generality law 5 refuses.
+  [ -z "$LAUNCH_EFFORT" ] || flags+=(--effort "$LAUNCH_EFFORT")
   # Neither --resume nor --cutoff, and both absences are the design rather than an
   # omission. --resume replaces the launch line with the profile's resume form,
   # and on a harness that declares one that hands back the very conversation the
