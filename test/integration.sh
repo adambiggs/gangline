@@ -1217,8 +1217,53 @@ check "AND IS STILL RUNNING IN IT: it answered after the act" "yes" \
 wait_for cycself "the self-issued resume to arrive" yes has cycself CYCSELF-RESUME
 check "and its own handoff reached the replacement" "yes" "$(has cycself CYCSELF-RESUME)"
 
+# `-m` AT CYCLE. The model is the one launch fact an operator may want CHANGED
+# across a renewal rather than replayed, and no verb moves a running agent to
+# another model — so without this the swap costs a hand-built re-hitch and gives
+# up the handoff already written for the old one. The flag has to reach two
+# places, and a world reading only one of them passes on half a feature: the
+# launch line the harness is started on, and the record the NEXT renewal replays.
+cyc hitch cycm -p cycler -d /tmp -m first-model >/dev/null 2>&1
+cycmid="$(id_of cycm)"
+
+# The refusal first, and WHERE it fires is the claim rather than THAT it fires. A
+# model sh would need quoted is already refused at hitch; on cycle the same rule
+# has to reach its verdict before the window is destroyed, because a refusal
+# arriving after the drop has spent the context it was protecting to report a
+# typo gang could see without spending anything.
+out="$(cyc cycle cycm -m "pwn; touch $SHIM/cycm-pwned" 2>&1)"; rc=$?
+check "a model sh would need quoted is refused at cycle too" "1" "$rc"
+check "with the agent still running" "yes" "$(holds "$("$GANG" roster)" '^cycm ')"
+# Retirement is the drop's only trace, and it is what pins the ORDER: a spent
+# window here would mean the guard ran after the act it exists to prevent, and
+# the agent left standing would be a replacement rather than the one refused for.
+check "and NO spent window, so the guard ran before the retirement" "no" \
+  "$(win_there 'cycm~spent')"
+check "the record the renewal would have replayed is untouched" "first-model" \
+  "$(tmux show-options -wqv -t "$cycmid" @gl_model)"
+check "and the fragment never ran, which is what the charset rule is for" "no" \
+  "$([ -e "$SHIM/cycm-pwned" ] && echo yes || echo no)"
+
+out="$(cyc cycle cycm -m second-model 2>&1)"; rc=$?
+check "cycle takes a model to renew onto" "0" "$rc"
+wait_for cycm "the renewed agent's launch line" yes \
+  has cycm 'launched:--model second-model'
+check "the named model reaches the launch of the fresh agent" "yes" \
+  "$(has cycm 'launched:--model second-model')"
+check "and the record now carries what was named, not what it replaced" "second-model" \
+  "$(tmux show-options -wqv -t "$(id_of cycm)" @gl_model)"
+# The record is the half a launch-line check cannot see. An -m that reached the
+# harness and not the record would renew correctly ONCE and put the dog silently
+# back on its old model at the renewal after it — a fabricated status arriving a
+# whole cycle late, which is the direction nobody goes looking in.
+cyc cycle cycm >/dev/null 2>&1
+check "so a later renewal naming nothing replays the model last chosen" "second-model" \
+  "$(tmux show-options -wqv -t "$(id_of cycm)" @gl_model)"
+
 "$GANG" drop cycled >/dev/null 2>&1 || true
 "$GANG" drop 'cycled~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycm >/dev/null 2>&1 || true
+"$GANG" drop 'cycm~spent' >/dev/null 2>&1 || true
 "$GANG" drop cycafter >/dev/null 2>&1 || true
 "$GANG" drop cycnorole >/dev/null 2>&1 || true
 "$GANG" drop 'cycnorole~spent' >/dev/null 2>&1 || true
