@@ -5700,9 +5700,10 @@ check "a turn bracket spent under a live dialog is reported as the occupancy it 
 for a in obracket oscreen; do "$GANG" drop "$a" >/dev/null 2>&1; done
 
 # The settle path is a one-time FLOOR, not sustained quiet: its streak resets on
-# busy_painted, which is false for most of a turn, so after about sixteen seconds
-# it fires at the first still frame. Streaming is not the exposure — streaming
-# moves the screen — SILENCE is, and a test run or a large read is exactly that.
+# busy_painted, which is false for most of a turn, so past a ten second floor in
+# 2s steps the first still frame takes it. Streaming is not the exposure —
+# streaming moves the screen — SILENCE is, and a test run or a large read is
+# exactly that.
 # The resume then rides ahead of the queued compaction and is eaten by the turn
 # it was meant to follow. Where gang issued the compaction it waits for the
 # context to DROP instead, which a merely quiet turn cannot fake.

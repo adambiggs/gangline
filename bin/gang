@@ -2842,9 +2842,13 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   #
   # The settle path alone is weaker than it reads. Its streak resets on
   # busy_painted, which is false for most of a turn, so it is a one-time FLOOR
-  # rather than sustained quiet: after about sixteen seconds it fires at the
-  # first still frame. Streaming is not the exposure, because streaming moves the
-  # screen — SILENCE is, and a test run, a fetch or a large read is exactly that.
+  # rather than sustained quiet: 2s steps against a ten second floor, and then
+  # the first still frame takes it. The constants are named rather than summed
+  # because the sum that stood here was a poll too long — the poll that opens
+  # the floor is itself the first quiet one, so counting three whole polls past
+  # the gate overstates it. Streaming is not the exposure, because streaming
+  # moves the screen — SILENCE is, and a test run, a fetch or a large read is
+  # exactly that.
   # The resume then rides ahead of the queued compaction and is eaten by the turn
   # it was supposed to follow.
   #
