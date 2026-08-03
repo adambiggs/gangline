@@ -12,9 +12,14 @@ name: probe
 # would buy nothing and spend the whole allocation's wall-clock on one cell.
 # Split, each cell's wall is bounded by the LARGEST single arm — which trims
 # elapsed time without trimming a single iteration. Nothing here is capped.
+# Trigger retired, file kept. This arm instrument has reported: it reproduced
+# nothing in 120 iterations per cell while the real suite reds at roughly one run
+# in four, which is the finding that sent the work to probe-suite.yml. Left on
+# push it would put six more macOS jobs into a five-slot pool and double that
+# run's wall for numbers already collected. Dispatch it by hand if an arm is
+# ever wanted again.
 on:
-  push:
-    branches: ['probe/**']
+  workflow_dispatch:
 
 jobs:
   probe:
