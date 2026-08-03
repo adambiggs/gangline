@@ -179,7 +179,7 @@ means you are approaching the point where you lose the thread.
 a task and update it at every checkpoint — the same checkpoints that already
 end an arc, below. Each update supersedes the last in place: one file for the
 whole run, not a fresh one per band. That turns the band moment from "now
-write a handoff" into "check the one you have, then compact" — composing it
+write a handoff" into "check the one you have, then cycle" — composing it
 while you still have the context to get it right beats composing it at the
 moment you are about to lose that context, which is the worst moment
 available for the job. If you reach a band and no handoff exists yet, write
@@ -190,7 +190,7 @@ Keep it off `/tmp`. `/tmp` is delivery, never a store: a handoff that points
 into it is asserting something it cannot check, because nothing there is
 guaranteed to still be there when it is read. Put the handoff itself at one
 stable path that lasts your whole run, and put any deliverable it points at
-somewhere that will still exist after you compact — your task or role brief
+somewhere that will still exist after you renew — your task or role brief
 says where the team keeps those; if it does not say, ask rather than guessing.
 
 Every claim in it carries how you know it, because an unlabelled claim reads
