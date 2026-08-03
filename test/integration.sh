@@ -1840,6 +1840,73 @@ WAIT_TIMEOUT=20 wait_for busybee "the resume to go straight in behind a visible 
   yes has busybee MARK_FAST
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
 
+# A resume is charged to a context emptied to make room for it, so what a renewal
+# may hand forward is bounded where the verb takes it. The refusal names two ways
+# out and BOTH are taken below, because a way out nothing exercises is a sentence
+# rather than a remedy.
+over="$(mktemp)"; under="$(mktemp)"; grown="$(mktemp)"
+# One byte past the shipped default, which is the edge worth pinning: a guard
+# built three times the size would pass on an off-by-one comparison.
+tr '\0' 'x' < /dev/zero | head -c 65537 > "$over"
+printf 'folded to what the successor must act on\n' > "$under"
+printf 'folded to what the successor must act on, plus one arc\n' > "$grown"
+mark_before="$(tmux show-options -wqv -t "$(target_of busybee)" @gl_compacting)"
+out="$(TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin < "$over" 2>&1)"; rc=$?
+check "a resume past the budget is refused" "3" "$rc"
+check "and the refusal reports the bytes it measured" "yes" \
+  "$(contains "$out" "$(wc -c < "$over" | tr -d '[:space:]') bytes")"
+check "and names the variable that would admit it" "yes" "$(contains "$out" "GANG_RESUME_MAX is 65536")"
+check "and refuses to trim it rather than offering to" "yes" "$(contains "$out" "will not trim it for you")"
+# The refusal claims nothing was typed. Exit 3 is the codebase's word for that and
+# this is the evidence behind it: the mark cmd_compact writes after the command
+# verifies in the pane has not moved.
+check "and no compaction was issued behind it" "$mark_before" \
+  "$(tmux show-options -wqv -t "$(target_of busybee)" @gl_compacting)"
+# Every delivery below is preceded by a repaint, and the reason is the fixture
+# rather than the budget: a delivered resume sits in this box UNSUBMITTED, because
+# gang pastes and a harness submits and a bash fixture has no submit. inject
+# refuses a box it cannot prove empty, and THAT refusal exits 3 as well — so an
+# occupancy refusal left standing here would answer for a budget one and these
+# checks would pass on the wrong reason entirely. paint's C-u empties the box
+# under either reader and its own wait is fatal, which a bare timeout is not.
+# WAY OUT ONE — the fold. The same command, the same agent, a body folded under.
+paint busybee 'READY'
+out="$(GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin < "$under" 2>&1)"; rc=$?
+check "a folded resume is delivered" "0" "$rc"
+check "and the delivery states the size it took" "yes" \
+  "$(contains "$out" "$(wc -c < "$under" | tr -d '[:space:]') bytes of 65536")"
+# WAY OUT TWO — the override, taken on ONE body across two budgets so the raise is
+# what changes the answer and nothing else. Driven small deliberately: proving the
+# raise admits a body it had refused does not need that body to be a large one, and
+# a 65k paste would put inject's own verification in the way of the thing under
+# test.
+small_bytes="$(wc -c < "$under" | tr -d '[:space:]')"
+out="$(GANG_RESUME_MAX=$(( small_bytes - 1 )) TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin < "$under" 2>&1)"; rc=$?
+check "a lowered budget refuses a body the default admits" "3" "$rc"
+check "and the refusal quotes the budget in force, not the shipped one" "yes" \
+  "$(contains "$out" "GANG_RESUME_MAX is $(( small_bytes - 1 ))")"
+paint busybee 'READY'
+out="$(GANG_RESUME_MAX="$small_bytes" GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin < "$under" 2>&1)"; rc=$?
+check "and raising it admits that same body" "0" "$rc"
+# A budget that cannot be compared to is not a budget, and the failure direction
+# matters: a non-numeric value must refuse rather than silently admit everything.
+GANG_RESUME_MAX=lots TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin < "$under" >/dev/null 2>&1
+check "a budget that is not a whole number of bytes is refused" "1" "$?"
+# THE SLOPE, which is the part a size on its own cannot say. Every window's
+# additions are defensible one at a time; what nothing reported was the total. Two
+# readings a renewal apart are what make growth sayable, and gang is what carries
+# the earlier one across the compaction that would have taken it from the agent.
+paint busybee 'READY'
+out="$(GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin < "$grown" 2>&1)"
+check "a resume that grew since the last one says how far" "yes" \
+  "$(contains "$out" "up $(( $(wc -c < "$grown") - $(wc -c < "$under") )) since the last one delivered here")"
+rm -f "$over" "$under" "$grown"
+
 # --- occupancy: a UI owns the input box -----------------------------------------
 section "occupancy: a UI owns the input box"
 

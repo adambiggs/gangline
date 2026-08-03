@@ -161,6 +161,26 @@ BANDS="${GANG_CONTEXT_BANDS:-auto}"
 # `ladder` is where it is enforced.
 TIME_BANDS="${GANG_TIME_BANDS:-auto}"
 
+# What a renewal may hand forward, in bytes. Captured here for the same reason
+# the two ladders above are: POLICY, settled before any profile is sourced, so a
+# profile cannot reach it — and captured under a DIFFERENT name than the variable
+# an operator sets, because that is the whole of the enforcement. A harness fact
+# would be the other kind, and this is not one: rot is absolute (ADR-0005), so a
+# harness with a bigger window is not a harness whose successors may inherit a
+# longer transcript. The successor's window is empty at exactly one moment and
+# this is what gets spent first out of it.
+#
+# Bytes rather than tokens because bytes are what gang can measure without
+# inventing an estimate it cannot verify — the argument is ADR-0015's, under
+# "The channel is guarded at the verb", and the code here implements that
+# paragraph rather than deciding anything on its own.
+#
+# The default sits above every handoff this team has actually delivered and
+# below the append-only form that produced them, so it fires on the ratchet and
+# not on the practice. `wc -c` over the handoffs in play re-derives it; the
+# figures rot and the relationship does not (ADR-0012).
+RESUME_MAX="${GANG_RESUME_MAX:-65536}"
+
 # One wait with two users: pane_stable asks it of a single pane and churn_batch
 # asks it of a whole team, and the suite asserts the two agree about the same
 # pane. Tuned in one place only, because tuning one and not the other would make
@@ -4369,7 +4389,7 @@ cmd_send() {
 }
 
 cmd_compact() { # trigger the harness's own compaction, via its own command
-  local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0
+  local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0 resume_bytes=0
   name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   while [ $# -gt 0 ]; do case "$1" in
     --resume-stdin) [ "$resume_stdin" -eq 0 ] || die "compact: --resume-stdin may be passed only once"
@@ -4396,6 +4416,25 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   [ "$resume_stdin" -eq 0 ] || check_sender "$from"
   if [ "$resume_stdin" -eq 1 ]; then
     stdin_body "compact: --resume-stdin"; resume="$STDIN_BODY"
+    # Bytes off `wc -c`, never off ${#resume}: that counts CHARACTERS under a
+    # UTF-8 locale, so a budget declared in bytes and measured that way admits a
+    # multibyte handoff at several times its stated size — measured here, a
+    # two-word line of accented and CJK text reads seven one way and twelve the
+    # other. It also has to be the figure `wc -c` gives on the file the agent is
+    # about to fold, or the refusal names a number nobody can reproduce.
+    require_whole GANG_RESUME_MAX "$RESUME_MAX" bytes
+    resume_bytes="$(printf '%s' "$resume" | wc -c | tr -d '[:space:]')"
+    # The refusal is here rather than on `send` because the two are not the same
+    # bytes twice. A report is read inside a context that already exists; a
+    # resume is charged to one just emptied to make room for it, so an oversized
+    # one spends the renewal it was supposed to pay for. Nothing above this line
+    # moves: an unresolvable name and an unattributed body still die before
+    # stdin is consumed.
+    # refuse rather than die, because the claim in the wording is a claim about
+    # this code path: the budget is read before the first keystroke, so a caller
+    # can tell this apart from a failure that may have left a paste behind.
+    [ "$resume_bytes" -le "$RESUME_MAX" ] \
+      || refuse "compact: this resume is $resume_bytes bytes and GANG_RESUME_MAX is $RESUME_MAX, so it is refused rather than delivered. A resume is charged to a context emptied to make room for it, and it grows by additions each window judged reasonable one at a time. Fold it: supersede sections in place, cut finished work to a pointer at the receipts it is archived under, keep only what the successor must act on. Gangline will not trim it for you — a resume cut by a tool is one nobody wrote. Nothing has been typed, no compaction was issued, and the file on disk is untouched. Raise GANG_RESUME_MAX if this handoff is genuinely this size."
   fi
   ! occupied "$AGENT_ID" \
     || die "'$name' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it (gang attach)"
@@ -4451,6 +4490,30 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     # way — an agent woke with nothing to pick up and nothing said why. The
     # verdict is recorded on the window, where status and patrol read it out.
     tmux set-option -uw -t "$AGENT_ID" @gl_resume_failed 2>/dev/null || true
+    # What the last resume into this window measured, read before this one
+    # overwrites it. A size is a point and the defect is a slope: every window's
+    # additions are defensible one at a time, which is why nothing in the loop
+    # was reporting the total, and why a refusal that only ever speaks at the
+    # wall would move the surprise rather than remove it. Two readings a renewal
+    # apart are what make the growth sayable, and GANG is what remembers them —
+    # an agent asked to carry its own last figure across a compaction has been
+    # handed a conduct rule in place of an instrument, and the compaction is
+    # precisely what takes the figure away.
+    #
+    # A window option, so it dies at kill-window with the agent it describes
+    # (law 6). A cycled seat inherits no slope, which is the honest scope: the
+    # window that grew a file is gone and the successor has not moved it yet.
+    # Nothing watches it and nothing schedules it — written by one delivery,
+    # read by the next (law 7) — and gang still never learns where any handoff
+    # lives, only what it was handed.
+    local grew="" prev_bytes=""
+    prev_bytes="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_bytes 2>/dev/null)" || prev_bytes=""
+    case "$prev_bytes" in
+      ''|*[!0-9]*) ;;
+      *) [ "$resume_bytes" -gt "$prev_bytes" ] \
+           && grew=", up $(( resume_bytes - prev_bytes )) since the last one delivered here" ;;
+    esac
+    tmux set-option -w -t "$AGENT_ID" @gl_resume_bytes "$resume_bytes" 2>/dev/null || true
     # Wrapped before the fork rather than inside it: every stream in that subshell
     # is closed, so an envelope that refused in there would take the resume down
     # without a word reaching any terminal.
@@ -4460,7 +4523,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
         || tmux set-option -w -t "$AGENT_ID" @gl_resume_failed "${err##*$'\n'}"
     ) </dev/null >/dev/null 2>&1 &
     disown
-    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD submitted; execution unconfirmed); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands")"
+    echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD submitted; execution unconfirmed); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands; the resume is $resume_bytes bytes of $RESUME_MAX$grew")"
   else
     # Where the check is offered it has to exist: cmd_context dies on a profile
     # with no introspection, so naming it there would answer an unconfirmed

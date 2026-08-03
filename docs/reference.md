@@ -635,6 +635,7 @@ These are useful when the corresponding path is in use:
 | `GANG_OCCUPIED_LIMIT` | how long a raised occupancy stays credible; the pane retires the raise by proving the dialog gone, and expiry stops believing it without clearing it | `900` seconds |
 | `GANG_CONTEXT_FACT_LIMIT` | how long a written context figure is preferred over the beacon scrape; a stale figure reads low across a band edge, so the bound is short and the scrape does the work in any doubt | `60` seconds |
 | `GANG_RESUME_TIMEOUT` | detached resume wait ceiling | `900` seconds |
+| `GANG_RESUME_MAX` | largest resume `compact --resume-stdin` will carry; whole bytes, and a non-numeric value is refused. Over it the command refuses before typing anything and names the fold — gang never trims a body it was handed. Under it, the delivery states the size, and how far it grew since the last resume into that window | `65536` |
 | `GANG_PATROL_LOG` | where a non-interactive sweep records itself; empty writes no file | `$XDG_STATE_HOME/gangline/patrol.log` |
 | `GANG_PATROL_LOG_MAX` | size at which that log rolls to a single `.1`; whole bytes, and a non-numeric value is refused | `1048576` |
 | `GANG_PROBE_DIR` | clean, already-trusted working directory for probes | private temporary directory |
