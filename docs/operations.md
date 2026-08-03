@@ -135,6 +135,89 @@ more permissive is tightened instead of refused, so an upgrade needs no
 intervention. Every refusal names what is wrong with the path, and none of them
 quietly picks a different one.
 
+## Codex hooks need a one-time trust decision
+
+The Codex profile declares Gangline's hook commands at launch. The first time a
+Codex dog is hitched after those commands are new or have changed, Codex stops the
+hitch on its own trust gate before the agent can be briefed:
+
+```
+Hooks need review
+<n> hooks are new or changed.
+Hooks can run outside the sandbox after you trust them.
+
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+```
+
+Answer **2, "Trust all and continue."** Gangline never ships a flag that skips this
+check, so persisting trust by hand is the step — once, by you, rather than by a
+profile that lowers your posture on your behalf. What the dialog counts is whatever
+`profiles/codex.sh` currently wires; that file is the list of record and this page
+deliberately does not restate it.
+
+`gang hitch` cannot answer the gate for you and does not try. It refuses to paste a
+brief past a screen that is not an input box, and says so:
+
+```
+'<name>' is up but is showing something other than its input box, so its hitch
+message was not delivered — most likely a first-run prompt waiting on you. Answer
+it with 'gang attach', then 'gang drop <name>' and hitch again.
+```
+
+That message is the tool working. Attach with `gang attach`, or aim at the window
+directly with `tmux attach -t <session>:<name>`, answer the gate, detach, then drop
+the stuck window and hitch again.
+
+Trust is keyed to the hook command set rather than to the seat, which is what makes
+this setup rather than a tax: a second hitch under a name never used before comes up
+with no gate at all. Answer it once per machine per command set. Change what the
+profile wires and the gate returns for the new set, exactly as it did the first
+time.
+
+Declining is honest and survivable. Option 3 says outright that the hooks will not
+run, and Gangline declares no fact from them today, so nothing reports as working
+that is not — the profile's own `GANG_PROBE_FACTS` note explains why that is
+deliberate. What you lose is whatever is later built on those hooks, until trust is
+granted. What happens if trust is revoked afterwards, or if a Codex release changes
+how it stores or checks the hash, has not been established here and is not assumed
+in either direction.
+
+Gangline's hooks are additive. They are declared at launch rather than written to a
+file, so an existing `~/.codex/hooks.json` — yours, or another tool's — is never
+rewritten and keeps firing alongside them.
+
+One gate is easy to mistake for this one. A working directory Codex has not seen
+before raises its own directory-trust prompt, and it raises it first, before the
+hook gate can appear. Same shape, same answer, different gate: expect it once per
+new directory, separately from the once-per-machine hook step.
+
+## A Codex seat needs explicit writable roots
+
+Under `workspace-write`, a Codex agent that can edit a repository still cannot
+commit in it. Git writes through `.git`, which the sandbox protects even when the
+working tree around it is writable, so `git add` fails on a read-only
+`.git/index.lock` rather than on anything the agent did wrong.
+
+Name the paths in `~/.codex/config.toml`:
+
+```toml
+[sandbox_workspace_write]
+writable_roots = [
+  "<path to your repo>/.git",
+  "<your home>/.local/state/gangline",
+]
+```
+
+`writable_roots` takes a sequence; a boolean there is refused. The entries are
+literal paths — nothing expands `~` or a variable for you, so write them out. The `.git` grant is
+per repository and does not inherit — granting a parent directory that contains
+several checkouts leaves each protected `.git` beneath it read-only, so every
+repository a Codex dog must commit in needs its own entry. Gangline's own state
+directory belongs in the list for the same reason: without it a Codex seat runs
+commands that appear to succeed while failing to record anything.
+
 ## Shell-safe messages
 
 `gang send` accepts message bodies only on stdin. Inline prose in argv is
