@@ -7155,13 +7155,39 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # replays.
   local hitch_rc=0
   cmd_hitch "$name" "${flags[@]}" || hitch_rc=$?
-  [ "$resume_stdin" -eq 1 ] || return "$hitch_rc"
   # The fresh window is looked up rather than assumed: cmd_hitch owns the id it
   # created, and it has paths that report and RETURN rather than die — a dialog
   # owning the screen of a role-less agent is one. So "hitch said something" is
-  # not proof there is a window here to paste into.
-  local fresh
-  fresh="$(win_id "$name")" \
+  # not proof there is a window here to act on.
+  local fresh=""
+  fresh="$(win_id "$name")" || fresh=""
+  # POSITION. A renewed agent belongs where the one it replaced was, and it does
+  # not land there on its own: `new-window` APPENDS and never reuses a freed
+  # index, even when the predecessor was killed outright (measured). Under the
+  # renumber-windows this repo runs with, an index is a POSITION rather than an
+  # identity, so "reuse the index" can only mean "appear where the predecessor
+  # appeared".
+  #
+  # ONE SWAP, and it is deliberately not the arithmetic this looks like it wants.
+  # Recording an index, killing the old spent window, re-reading the index
+  # because that kill may have shifted it, then moving two windows, is four
+  # chances to compute a stale number — and the retired window is still sitting
+  # in the position the fresh one has to take, so it has to vacate first anyway.
+  # Swapping the two says the whole of that in one act, against window IDS rather
+  # than indices, so nothing renumber does underneath can invalidate it: the
+  # fresh agent takes its predecessor's exact position and the spent window goes
+  # where the fresh one had landed, at the end.
+  #
+  # Reported rather than silent when it fails. The renewal itself succeeded, so
+  # dying here would throw away a working agent over a cosmetic placement — but a
+  # promised position quietly not happening is the fabricated status law 8
+  # refuses, so it says which window ended up where instead.
+  if [ -n "$fresh" ]; then
+    tmux swap-window -d -s "$fresh" -t "$id" 2>/dev/null \
+      || printf '%s\n' "$(colour "$C_BAD" "renewed $name, but tmux would not move it to its predecessor's position — it is where a new window lands, and $spent is where the old one was")" >&2
+  fi
+  [ "$resume_stdin" -eq 1 ] || return "$hitch_rc"
+  [ -n "$fresh" ] \
     || die "cycle: hitched '$name' and tmux lists no window by that name, so its resume was not delivered and the file on disk is untouched"
   # ONE attempt, and the difference from the compaction path is what licenses it.
   # There the resume goes in from a disowned subshell minutes later, into a pane

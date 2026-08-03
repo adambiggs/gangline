@@ -138,6 +138,13 @@ than as an agent standing by. `gang drop` still closes it, because drop resolves
 a window by name without consulting that mark. Each agent keeps exactly one spent
 window; the next renewal closes the previous one.
 
+The fresh agent takes the window position its predecessor held, and the spent
+window moves to the end. A new tmux window always appends and never reuses a
+freed index, so this is an explicit act rather than something that falls out —
+one swap between the two windows, against window ids rather than indices, so
+nothing `renumber-windows` does underneath can invalidate it. If tmux refuses the
+move the renewal still stands and Gangline says where each window ended up.
+
 Because nothing is killed, the caller survives its own renewal — an agent can run
 `gang cycle <itself> --from <itself> --resume-stdin < handoff`, keep running as
 `<name>~spent`, and hand its state to its own replacement.

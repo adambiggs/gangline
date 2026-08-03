@@ -1155,6 +1155,24 @@ check "a second renewal leaves one spent window, not a pile of them" "1" \
 check "and it is a different window: the previous one was closed" "no" \
   "$([ "$firstspent" = "$(id_of 'cycled~spent')" ] && echo yes || echo no)"
 
+# POSITION. A renewed agent belongs where the one it replaced was, and it does
+# not land there on its own: new-window appends and never reuses a freed index,
+# even when the predecessor was killed outright.
+idx_of() { tmux list-windows -t "$GANG_SESSION" -F '#I #W' | awk -v n="$1" '$2==n{print $1}'; }
+last_idx() { tmux list-windows -t "$GANG_SESSION" -F '#I' | tail -1; }
+cyc hitch cycafter -p cycler -d /tmp >/dev/null 2>&1
+beforeidx="$(idx_of cycled)"
+# Without a window after it, "kept its index" is satisfied by appending, and the
+# check below would pass on the behaviour it exists to refuse.
+check "THE CONTROL: there is a window after the one being renewed" "no" \
+  "$([ "$beforeidx" = "$(last_idx)" ] && echo yes || echo no)"
+cyc cycle cycled >/dev/null 2>&1
+check "the fresh agent takes the position its predecessor held" "$beforeidx" "$(idx_of cycled)"
+check "and the spent window is the one that moved, to the end" "$(last_idx)" \
+  "$(idx_of 'cycled~spent')"
+check "the agent that sat after it is undisturbed" "yes" \
+  "$([ -n "$(idx_of cycafter)" ] && echo yes || echo no)"
+
 # THE ONE THE REST OF IT RESTS ON: an agent renewing ITSELF. Under retirement
 # there is no drop, so the caller — a process inside the window being retired —
 # is unmarked and renamed rather than killed, and lives through its own renewal.
@@ -1180,6 +1198,7 @@ check "and its own handoff reached the replacement" "yes" "$(has cycself CYCSELF
 
 "$GANG" drop cycled >/dev/null 2>&1 || true
 "$GANG" drop 'cycled~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycafter >/dev/null 2>&1 || true
 "$GANG" drop cycnorole >/dev/null 2>&1 || true
 "$GANG" drop 'cycnorole~spent' >/dev/null 2>&1 || true
 "$GANG" drop cycself >/dev/null 2>&1 || true
