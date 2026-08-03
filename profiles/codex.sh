@@ -104,6 +104,63 @@ GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false$_gl
 unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
+# REASONING EFFORT IS MODEL-SCOPED. The option includes its separator because
+# bin/gang joins it to the level with no space. Unquoted `high` reached
+# turn_context.payload.effort as "high"; an unquoted invented value reached the
+# provider and was refused there, so the raw-string fallback documented by
+# `codex --help` is observed rather than inferred.
+GANG_EFFORT_OPT="-c model_reasoning_effort="
+# `codex debug models` is the harness's own live vocabulary. GANG_MODEL is the
+# exact model hitch is about to pass with -m; an empty model, an alias the catalog
+# cannot bind, a failed command, malformed JSON, a missing field, a duplicate, or
+# whitespace inside a level all produce NOTHING. The reader names that as a
+# broken GANG_EFFORT_CMD rather than blaming the operator's level. Validate the
+# whole catalog row before printing so a plausible prefix can never escape from
+# an answer the parser could not finish. The final `|| true` is part of that
+# protocol: bin/gang distinguishes failure from a bad level by EMPTY OUTPUT, and
+# its `set -e` would otherwise exit before it could name the broken declaration.
+GANG_EFFORT_CMD="python3 -c '
+import json, os, subprocess
+
+result = subprocess.run(
+    [\"codex\", \"debug\", \"models\"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.DEVNULL,
+    text=True,
+)
+if result.returncode:
+    raise SystemExit(result.returncode)
+
+catalog = json.loads(result.stdout)
+models = catalog.get(\"models\") if isinstance(catalog, dict) else None
+model = os.environ.get(\"GANG_MODEL\", \"\")
+if not model or not isinstance(models, list):
+    raise SystemExit(1)
+
+matches = [
+    item for item in models
+    if isinstance(item, dict) and item.get(\"slug\") == model
+]
+if len(matches) != 1:
+    raise SystemExit(1)
+
+rows = matches[0].get(\"supported_reasoning_levels\")
+if not isinstance(rows, list) or not rows:
+    raise SystemExit(1)
+if any(
+    not isinstance(row, dict)
+    or not isinstance(row.get(\"effort\"), str)
+    or not row[\"effort\"]
+    or any(char.isspace() for char in row[\"effort\"])
+    for row in rows
+):
+    raise SystemExit(1)
+
+levels = [row[\"effort\"] for row in rows]
+if len(levels) != len(set(levels)):
+    raise SystemExit(1)
+print(*levels, sep=\"\\n\")
+' || true"
 # One busy form that covers more than it looks like it does. A running turn
 # paints "• Working (12s • esc to interrupt)"; the leading glyph pulses between
 # • and ◦, the timer counts, and the tail grows segments when there is
