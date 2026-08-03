@@ -5150,6 +5150,12 @@ cfbad=(
   "ctx 44000 0 $(ago 5)"                 # zero window: a denominator nobody can divide by
   "ctx 44000 200000 $(( cfnow + 600 ))"  # stamped in a future no clock reached yet
 )
+# The rows above carry a wall-clock stamp, and interpolating one into a check NAME
+# is the only place in this suite where a name differs between two runs of the same
+# code. That matters to anything comparing check names rather than counting them —
+# diffing the names two CI cells emitted is what proves both ran the same set,
+# since equal totals are consistent with different sets of the same size. Normalise
+# the stamp before that diff, or read a difference that means nothing.
 for cfrow in "${cfbad[@]}"; do
   cfset "$cfrow"
   check "a record gang will not believe falls through to the beacon: $cfrow" \
