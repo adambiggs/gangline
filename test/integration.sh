@@ -1156,22 +1156,43 @@ check "and it is a different window: the previous one was closed" "no" \
   "$([ "$firstspent" = "$(id_of 'cycled~spent')" ] && echo yes || echo no)"
 
 # POSITION. A renewed agent belongs where the one it replaced was, and it does
-# not land there on its own: new-window appends and never reuses a freed index,
-# even when the predecessor was killed outright.
+# not land there on its own, because new-window does not take a position.
+#
+# THE WORLD IS FORCED HERE RATHER THAN INHERITED, and that is the whole point of
+# this block. Where tmux puts a new window depends on renumber-windows, a session
+# option gangline does not set: with it OFF the previous spent window's kill
+# leaves a gap and new-window FILLS it, with it ON the kill renumbers and
+# new-window appends. This suite used to inherit whatever the developer's own
+# ~/.tmux.conf said, so on a box setting it ON these checks ran only the friendly
+# world and could not fail — while CI, which has no such file, ran the other one
+# and did. A world that cannot fail for the reason the hazard fails is not a
+# control. Both are run; OFF is first because that is where the property is
+# non-trivial.
 idx_of() { tmux list-windows -t "$GANG_SESSION" -F '#I #W' | awk -v n="$1" '$2==n{print $1}'; }
 last_idx() { tmux list-windows -t "$GANG_SESSION" -F '#I' | tail -1; }
 cyc hitch cycafter -p cycler -d /tmp >/dev/null 2>&1
-beforeidx="$(idx_of cycled)"
-# Without a window after it, "kept its index" is satisfied by appending, and the
-# check below would pass on the behaviour it exists to refuse.
-check "THE CONTROL: there is a window after the one being renewed" "no" \
-  "$([ "$beforeidx" = "$(last_idx)" ] && echo yes || echo no)"
-cyc cycle cycled >/dev/null 2>&1
-check "the fresh agent takes the position its predecessor held" "$beforeidx" "$(idx_of cycled)"
-check "and the spent window is the one that moved, to the end" "$(last_idx)" \
-  "$(idx_of 'cycled~spent')"
-check "the agent that sat after it is undisturbed" "yes" \
-  "$([ -n "$(idx_of cycafter)" ] && echo yes || echo no)"
+rnw_before="$(tmux show-options -t "=$GANG_SESSION:" -qv renumber-windows)"
+for rnw in off on; do
+  tmux set-option -t "=$GANG_SESSION:" renumber-windows "$rnw"
+  beforeidx="$(idx_of cycled)"
+  # Without a window after it, "kept its index" is satisfied by appending, and the
+  # check below would pass on the behaviour it exists to refuse.
+  check "THE CONTROL ($rnw): there is a window after the one being renewed" "no" \
+    "$([ "$beforeidx" = "$(last_idx)" ] && echo yes || echo no)"
+  cyc cycle cycled >/dev/null 2>&1
+  check "the fresh agent takes the position its predecessor held ($rnw)" \
+    "$beforeidx" "$(idx_of cycled)"
+  check "and the spent window is the one that moved, to the end ($rnw)" \
+    "$(last_idx)" "$(idx_of 'cycled~spent')"
+  check "the agent that sat after it is undisturbed ($rnw)" "yes" \
+    "$([ -n "$(idx_of cycafter)" ] && echo yes || echo no)"
+done
+# Put the session back the way it was found, so no section below inherits a
+# setting this one forced for its own purposes.
+case "$rnw_before" in
+  '') tmux set-option -u -t "=$GANG_SESSION:" renumber-windows ;;
+  *)  tmux set-option -t "=$GANG_SESSION:" renumber-windows "$rnw_before" ;;
+esac
 
 # THE ONE THE REST OF IT RESTS ON: an agent renewing ITSELF. Under retirement
 # there is no drop, so the caller — a process inside the window being retired —

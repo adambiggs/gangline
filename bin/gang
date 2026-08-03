@@ -7173,29 +7173,50 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   local fresh=""
   fresh="$(win_id "$name")" || fresh=""
   # POSITION. A renewed agent belongs where the one it replaced was, and it does
-  # not land there on its own: `new-window` APPENDS and never reuses a freed
-  # index, even when the predecessor was killed outright (measured). Under the
-  # renumber-windows this repo runs with, an index is a POSITION rather than an
-  # identity, so "reuse the index" can only mean "appear where the predecessor
-  # appeared".
+  # not land there on its own, because `new-window` does not take a position and
+  # the fresh agent arrives wherever tmux decided to put it.
   #
-  # ONE SWAP, and it is deliberately not the arithmetic this looks like it wants.
-  # Recording an index, killing the old spent window, re-reading the index
-  # because that kill may have shifted it, then moving two windows, is four
-  # chances to compute a stale number — and the retired window is still sitting
-  # in the position the fresh one has to take, so it has to vacate first anyway.
-  # Swapping the two says the whole of that in one act, against window IDS rather
-  # than indices, so nothing renumber does underneath can invalidate it: the
-  # fresh agent takes its predecessor's exact position and the spent window goes
-  # where the fresh one had landed, at the end.
+  # WHERE THAT IS DEPENDS ON A SETTING GANGLINE DOES NOT OWN. `renumber-windows`
+  # is the operator's session option: with it OFF, the previous spent window
+  # killed moments ago leaves a GAP and `new-window` FILLS that gap; with it ON,
+  # the kill renumbers, no gap can exist, and `new-window` appends. Both measured.
+  # An earlier form of this comment claimed new-window never reuses a freed index
+  # — that was measured where the option was on, so a freed index could not exist
+  # and the claim could not have failed. It read as true for the wrong reason.
   #
-  # Reported rather than silent when it fails. The renewal itself succeeded, so
-  # dying here would throw away a working agent over a cosmetic placement — but a
-  # promised position quietly not happening is the fabricated status law 8
-  # refuses, so it says which window ended up where instead.
+  # ONE SWAP places the fresh agent, and it is deliberately not the arithmetic
+  # this looks like it wants. Recording an index, killing the old spent window,
+  # re-reading the index because that kill may have shifted it, then moving two
+  # windows, is four chances to compute a stale number — and the retired window
+  # is still sitting in the position the fresh one has to take, so it has to
+  # vacate first anyway. Swapping says the whole of that in one act, against
+  # window IDS rather than indices, so nothing renumber does underneath can
+  # invalidate it.
+  #
+  # THEN THE RETIRED WINDOW IS MOVED TO THE END EXPLICITLY, because the swap only
+  # sends it wherever the fresh one happened to land. A position gangline
+  # promises is one gangline establishes: inheriting it from an option belonging
+  # to the operator makes the promise true on some boxes and false on others,
+  # and gangline setting that option itself would be altering the operator's
+  # environment to suit its own convenience. Skipped when the window is already
+  # last, so the ordinary case costs nothing and opens no gap behind it.
+  #
+  # Reported rather than silent when either step fails. The renewal itself
+  # succeeded, so dying here would throw away a working agent over a cosmetic
+  # placement — but a promised position quietly not happening is the fabricated
+  # status law 8 refuses, so it says which window ended up where instead.
   if [ -n "$fresh" ]; then
     tmux swap-window -d -s "$fresh" -t "$id" 2>/dev/null \
       || printf '%s\n' "$(colour "$C_BAD" "renewed $name, but tmux would not move it to its predecessor's position — it is where a new window lands, and $spent is where the old one was")" >&2
+    local lastidx="" spentidx=""
+    lastidx="$(tmux list-windows -t "=$SESSION" -F '#{window_index}' 2>/dev/null | tail -1)"
+    spentidx="$(tmux display-message -p -t "$id" '#{window_index}' 2>/dev/null)" || spentidx=""
+    case "$lastidx" in ''|*[!0-9]*) lastidx="" ;; esac
+    case "$spentidx" in ''|*[!0-9]*) spentidx="" ;; esac
+    if [ -n "$lastidx" ] && [ -n "$spentidx" ] && [ "$spentidx" != "$lastidx" ]; then
+      tmux move-window -d -s "$id" -t "=$SESSION:$(( lastidx + 1 ))" 2>/dev/null \
+        || printf '%s\n' "$(colour "$C_BAD" "renewed $name, but tmux would not move $spent to the end — it is at index $spentidx")" >&2
+    fi
   fi
   [ "$resume_stdin" -eq 1 ] || return "$hitch_rc"
   [ -n "$fresh" ] \
