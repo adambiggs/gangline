@@ -1322,7 +1322,40 @@ esac
 # Typed into the agent's own pane, because that is the only place the claim
 # exists to be tested.
 cyc hitch cycself -p cycler -d /tmp >/dev/null 2>&1
-tmux send-keys -t "$(id_of cycself)" \
+# RESOLVED IN THE MAIN SHELL, for the reason target_of exists at all: its refusal,
+# and id_of's underneath it, only leaves the command substitution it runs in. A
+# target interpolated straight into `-t` is therefore not guarded by the guard it
+# went through — the caller reads back the empty string, and an empty -t is not
+# "no window", it is tmux's CURRENT pane. This fixture types, so that fall-through
+# does not fail: it types into whichever pane happens to be on screen, and then the
+# checks below read that pane and find their own keystrokes waiting for them.
+cycselfid="$(target_of cycself)" || exit 1
+# THE WINDOW BEHIND THE NAME IS WHAT CHANGES, so that is what gets asked. The name
+# is occupied before the cycle and again after it, by two different windows, so
+# `win_there cycself` is true throughout and cannot witness the swap at all.
+# Absence is a legitimate intermediate state here — the predecessor is renamed
+# before the replacement exists — so id_of's refusal is spent as "not yet" rather
+# than allowed to end the run. Nothing this returns is ever used as a target.
+cycself_replaced() {
+  local now
+  now="$(id_of cycself 2>/dev/null)" || now=''
+  case "$now" in
+    ''|"$cycselfid") echo no ;;
+    *)               echo yes ;;
+  esac
+}
+# WAITED FOR, NOT INHERITED FROM hitch. hitch does wait for this pane to paint an
+# input box — but a wait_ready that runs out does not fail the hitch. With no brief
+# pending it reports the boot it could not confirm and returns 0, onto a caller here
+# that discards both streams, so the one surface that would say the pane is not
+# ready is the surface this line silences. Keys typed into that gap are not refused,
+# they are never run, and what that produces is the worst shape available: no error
+# text anywhere, the window never renamed, and every check below quietly satisfied
+# by the world that was already there. Asking the pane costs nothing when it is
+# ready, names the precondition when it is not, and keeps the question off an exit
+# status that is not answering it.
+wait_for cycself "the caller's own shell to be ready for keys" yes has cycself '❯'
+tmux send-keys -t "$cycselfid" \
   "GANG_PROFILES='$SHIM/custom-profiles' '$GANG' cycle cycself --from cycself --resume-stdin <<< 'CYCSELF-RESUME'" Enter
 # NAMED, so a timeout brings its own cause with it. wait_for prints the agent's
 # screen only when it is told whose screen to print, and this is the wait whose
@@ -1332,17 +1365,33 @@ tmux send-keys -t "$(id_of cycself)" \
 # at all — and the run that produced exactly that cost a second run to get further.
 wait_for cycself "the self-issued cycle to retire its own caller" yes \
   win_there 'cycself~spent'
-wait_for '' "a fresh agent to take the name back" yes win_there cycself
+wait_for cycself "a fresh agent to take the name back" yes cycself_replaced
 check "the caller's window survives its own renewal" "yes" "$(win_there 'cycself~spent')"
 # Alive, not merely present. A window can outlast the process that was running in
 # it, and a retired window with a dead shell in it would pass every check above.
-tmux send-keys -t "$(id_of 'cycself~spent')" "echo CYCSELF-STILL-ANSWERING" Enter
-wait_for 'cycself~spent' "the caller to answer after retiring itself" yes \
-  has 'cycself~spent' CYCSELF-STILL-ANSWERING
+#
+# REPORTED HERE, REFUSED ABOVE, and the asymmetry is the whole point. At the
+# caller's own window there is nowhere safe to type, so the run stops. Here the
+# check above has already recorded that the window is missing, and the two checks
+# below have to be able to say what they found — a refusal would bury the finding
+# in the artifact trusted most. What must not happen is those two passing anyway,
+# which is what an unguarded empty target buys: it types into the current pane and
+# then reads the echo back as its own evidence.
+spentid="$(target_of 'cycself~spent')" || spentid=''
+if [ -n "$spentid" ]; then
+  tmux send-keys -t "$spentid" "echo CYCSELF-STILL-ANSWERING" Enter
+  wait_for 'cycself~spent' "the caller to answer after retiring itself" yes \
+    has 'cycself~spent' CYCSELF-STILL-ANSWERING
+fi
 check "AND IS STILL RUNNING IN IT: it answered after the act" "yes" \
-  "$(has 'cycself~spent' CYCSELF-STILL-ANSWERING)"
+  "$([ -n "$spentid" ] && has 'cycself~spent' CYCSELF-STILL-ANSWERING || echo no)"
+# ASSERTED AGAINST A REPLACEMENT THAT DEMONSTRABLY HAPPENED. The resume marker is
+# part of the command text typed into the predecessor's pane, so that pane echoes
+# it — and with no replacement the name still resolves to that same pane, where
+# this reads its own input back and calls it delivery.
 wait_for cycself "the self-issued resume to arrive" yes has cycself CYCSELF-RESUME
-check "and its own handoff reached the replacement" "yes" "$(has cycself CYCSELF-RESUME)"
+check "and its own handoff reached the replacement" "yes" \
+  "$([ "$(cycself_replaced)" = yes ] && has cycself CYCSELF-RESUME || echo no)"
 
 # `-m` AT CYCLE. The model is the one launch fact an operator may want CHANGED
 # across a renewal rather than replayed, and no verb moves a running agent to
