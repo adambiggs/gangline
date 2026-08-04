@@ -18,17 +18,17 @@ profile_input() { # $1 = tmux target; same shape as a real TUI's input box
   # modal to hide it, so the frame-finding a real TUI needs would have nothing
   # here to find.
   #
-  # The box is the LAST ROW CARRYING THE PROMPT MARKER — anywhere in the row,
-  # not anchored at column 0. -J joins an overflowing row onto the row below
-  # it, so output that wrapped can carry the composer's prompt off column 0,
-  # and an anchored match then lands on a stale empty prompt row further up,
-  # saying the box is empty while this one holds text.
+  # The box starts at the LAST ROW CARRYING THE PROMPT MARKER — anywhere in the
+  # row, not anchored at column 0 — and includes every row after it. -J joins an
+  # overflowing row onto the row below it, while -S - keeps the start of a large
+  # multiline draft after that prompt has scrolled out of the visible pane.
+  # Reading only the marker row loses the rest of that box; reading only the
+  # visible pane makes the same live box disappear once it is tall enough.
   #
-  # The marker is what picks the row, and the last non-empty row is not: a body
-  # pasted into the box wraps onto rows BELOW the prompt, and the last of those
-  # carries no marker at all. Reading the box as that row makes a multi-line
-  # paste unreadable — which is not a read that says empty, but a read that
-  # says nothing, and the caller then cannot tell a full box from a broken one.
+  # The marker is what starts the box, and the last non-empty row is not: a body
+  # pasted into the box occupies rows BELOW the prompt, and the last of those
+  # carries no marker at all. Every later row belongs to that rendering until a
+  # newer prompt or an indented marker replaces it.
   #
   # Not every marker on the screen is a prompt, and the column-0 anchor this
   # replaces was the only thing saying so. A first-run dialog draws a marker of
@@ -37,25 +37,35 @@ profile_input() { # $1 = tmux target; same shape as a real TUI's input box
   # prompt is drawn at the start of a row and is displaced only by output that
   # ran off the row above, which leaves non-whitespace in front of it. Nothing
   # but whitespace in front of a marker means something drew it there
-  # deliberately, and that is not this box. A pane holding only such a row reads
-  # as no box at all, which is what the caller needs to hear: a settled screen
-  # with no input box is a dialog, and the report that one is up is the only
-  # surface saying why nothing is moving.
+  # deliberately, and that is not this box. It also CANCELS an older prompt
+  # found in history; otherwise widening the capture would resurrect a stale
+  # composer underneath the dialog now owning the visible pane.
   #
-  # Within the row, what follows the FIRST marker is the box, because a body
-  # ending in the marker would empty out the suffix of the last one. Every one
-  # of these choices fails towards over-reporting content or towards refusing:
-  # empty is the answer that authorises a keystroke, so a read that cannot vouch
-  # for itself must not be able to give it. A pane with no qualifying marker on
-  # any row is not showing this box, and rc 1 says so rather than handing back
-  # whatever was sitting there.
-  local line
-  line="$(tmux capture-pane -pJ -t "$1" |
-    awk '{ i = index($0, "❯")
-           if (i > 0 && (i == 1 || substr($0, 1, i - 1) ~ /[^ \t]/)) line = $0 }
-         END { print line }')" || return 1
-  case "$line" in *❯*) ;; *) return 1 ;; esac
-  printf '%s' "${line#*❯}" | tr -d '\302\240'
+  # Within the start row, what follows the FIRST marker begins the box, because
+  # a body ending in the marker would empty out the suffix of the last one.
+  # Every choice fails towards over-reporting content or refusing: empty is the
+  # answer that authorises a keystroke, so a read that cannot vouch for itself
+  # must not be able to give it.
+  local box
+  box="$(tmux capture-pane -pJS - -t "$1" |
+    awk 'BEGIN { marker = "❯" }
+         {
+           i = index($0, marker)
+           if (i > 0) {
+             before = substr($0, 1, i - 1)
+             if (i == 1 || before ~ /[^ \t]/) {
+               active = 1
+               box = substr($0, i + length(marker))
+               next
+             }
+             active = 0
+             box = ""
+             next
+           }
+           if (active) box = box ORS $0
+         }
+         END { if (active) printf "%s", box; else exit 1 }')" || return 1
+  printf '%s' "$box" | tr -d '\302\240'
 }
 
 profile_context() { # $1 = tmux target; reads a beacon the pane was told to print

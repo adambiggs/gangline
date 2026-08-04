@@ -618,27 +618,38 @@ ago() { printf '%s' "$(( $(date +%s) - $1 ))"; }  # $1 = seconds -> that epoch, 
 
 mkdir -p "$SHIM/custom-profiles"
 fake_harness() { # $1 = profile name, $2 = launch command; input box shaped like a TUI's
-  # The reader is the one profiles/bash.sh carries, for the reason given there:
-  # the box is the last row whose marker is either at the start of the row or
-  # displaced by non-whitespace, and the box is what follows the first marker in
-  # that row. So a joined overflow row cannot present a stale prompt row as an
-  # empty box, a body wrapping below the prompt cannot make the box unreadable,
-  # and an INDENTED marker — a dialog's menu cursor — is not read as a box at
-  # all. That last one is why this generated reader has to move with the real
-  # one: the modal fixture below is generated here, and a harness that reads a
-  # menu cursor as an input box stops standing in for anything.
+  # The reader is the one profiles/bash.sh carries, for the reason given there.
+  # It reads joined history from the last qualifying prompt through the whole
+  # rendered box, so a large multiline draft remains readable after its prompt
+  # scrolls off screen. An INDENTED marker — a dialog's menu cursor — cancels an
+  # older prompt instead of resurrecting that stale composer from history. This
+  # generated reader has to move with the real one: the fixtures below exercise
+  # both properties through profiles created here.
   cat > "$SHIM/custom-profiles/$1.sh" <<SH
 GANG_LAUNCH="$2"
 GANG_BUSY_REGEX=""
 GANG_VERIFIED_VERSIONS="any"
 profile_input() {
-  local line
-  line="\$(tmux capture-pane -pJ -t "\$1" |
-    awk '{ i = index(\$0, "❯")
-           if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \t]/)) line = \$0 }
-         END { print line }')" || return 1
-  case "\$line" in *❯*) ;; *) return 1 ;; esac
-  printf '%s' "\${line#*❯}" | tr -d '\302\240'
+  local box
+  box="\$(tmux capture-pane -pJS - -t "\$1" |
+    awk 'BEGIN { marker = "❯" }
+         {
+           i = index(\$0, marker)
+           if (i > 0) {
+             before = substr(\$0, 1, i - 1)
+             if (i == 1 || before ~ /[^ \t]/) {
+               active = 1
+               box = substr(\$0, i + length(marker))
+               next
+             }
+             active = 0
+             box = ""
+             next
+           }
+           if (active) box = box ORS \$0
+         }
+         END { if (active) printf "%s", box; else exit 1 }')" || return 1
+  printf '%s' "\$box" | tr -d '\302\240'
 }
 SH
 }
@@ -1051,6 +1062,642 @@ GANG_MODEL_OPT="--model"
 SH
 cyc() { GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
 
+# The Bash reader is both a shipped test stand-in and the source copied into
+# fake_harness above. A structured envelope can be taller than a pane even when
+# it is well under the renewal budget, so the positive world forces a multiline
+# readline box whose prompt row has really left the visible capture. Both readers
+# must return the rendering from its first through final visible authored row.
+fixture_profile_input() { # $1 profile file, $2 pane id
+  bash -c 'source "$1"; profile_input "$2"' fixture "$1" "$2"
+}
+tmux new-window -d -t "$GANG_SESSION" -n readerbox "PS1='❯ ' exec bash --norc"
+readerbox_id="$(id_of readerbox)"
+tmux resize-window -t "$readerbox_id" -x 30 -y 6
+wait_for readerbox "the scrolling-reader shell prompt" yes has readerbox '❯'
+for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+  printf 'reader-line-%s-abcdefghijkl\n' "$n"
+done > "$SHIM/readerbox-payload"
+tmux load-buffer -b readerbox-body - < "$SHIM/readerbox-payload"
+tmux paste-buffer -p -d -b readerbox-body -t "$readerbox_id"
+wait_for readerbox "the final row of the multiline composer" yes \
+  has readerbox reader-line-12
+reader_visible="$(tmux capture-pane -p -t "$readerbox_id")"
+check "THE CONTROL: the live multiline box has scrolled its prompt out of the visible pane" \
+  "no" "$(contains "$reader_visible" '❯')"
+reader_source="$(fixture_profile_input "$ROOT/profiles/bash.sh" "$readerbox_id")"; reader_source_rc=$?
+reader_twin="$(fixture_profile_input "$SHIM/custom-profiles/cycler.sh" "$readerbox_id")"; reader_twin_rc=$?
+check "the source Bash reader reaches a composer whose prompt is only in history" "0" "$reader_source_rc"
+check "and its generated twin reaches the same composer" "0" "$reader_twin_rc"
+check "the history-enabled reader returns the whole non-empty rendered box" "yes" \
+  "$([ -n "$reader_source" ] \
+      && [ "$(contains "$reader_source" reader-line-01)" = yes ] \
+      && [ "$(contains "$reader_source" reader-line-12)" = yes ] \
+      && echo yes || echo no)"
+check "and the generated reader returns that same whole box" "$reader_source" "$reader_twin"
+
+# History must not turn an old prompt into authority after a dialog takes the
+# screen. The stale qualifying prompt is planted and observed first; the current
+# indented marker then cancels it in both readers rather than becoming a box.
+tmux new-window -d -t "$GANG_SESSION" -n readerdialog "PS1='❯ ' exec bash --norc"
+readerdialog_id="$(id_of readerdialog)"
+tmux resize-window -t "$readerdialog_id" -x 40 -y 6
+wait_for readerdialog "the dialog fixture's stale shell prompt" yes has readerdialog '❯'
+tmux send-keys -t "$readerdialog_id" \
+  "for n in 1 2 3 4 5 6 7 8; do echo dialog-filler-\$n; done; printf ' ❯ 1. Yes, I trust this folder\\n   2. No, exit\\n'; sleep 300" Enter
+wait_for readerdialog "the indented dialog marker" yes has readerdialog '❯ 1. Yes'
+check "THE CONTROL: joined history still contains the stale qualifying prompt" "yes" \
+  "$(contains "$(tmux capture-pane -pJS - -t "$readerdialog_id")" "❯ for n in")"
+reader_dialog_source="$(fixture_profile_input "$ROOT/profiles/bash.sh" "$readerdialog_id" 2>/dev/null)"; reader_dialog_source_rc=$?
+reader_dialog_twin="$(fixture_profile_input "$SHIM/custom-profiles/cycler.sh" "$readerdialog_id" 2>/dev/null)"; reader_dialog_twin_rc=$?
+check "the source reader does not resurrect that stale prompt beneath a dialog" "1" "$reader_dialog_source_rc"
+check "and neither does its generated twin" "1" "$reader_dialog_twin_rc"
+check "neither no-box verdict fabricates composer text" "" "$reader_dialog_source$reader_dialog_twin"
+tmux kill-window -t "$readerbox_id"
+tmux kill-window -t "$readerdialog_id"
+
+# Structured renewal fixtures share one authored ledger because ADR-0018 makes
+# that path and writer session-scoped continuity facts. A different throwaway
+# ledger per check would test path churn rather than the package condition named
+# by the assertion. Each dog has one live task, while package candidates replace
+# their one prior note explicitly so the fixture exercises synthesis instead of
+# accumulating until the pressure policy becomes the accidental verdict.
+CONTINUATION_LEDGER="$SHIM/continuation-ledger"
+cat > "$CONTINUATION_LEDGER" <<'LEDGER'
+GANGLINE-TASK-LEDGER 1
+Revision: 1
+Reviews: first
+Writer: lead
+Note-Pressure: 1
+
+## Tasks
+
+### task.resume-cycled.00000000-0000-0000-0000-000000000001
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Carry the cycle fixture state through a structured renewal.
+Owner: cycled
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-cycself.00000000-0000-0000-0000-000000000002
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Carry the self-cycle fixture state through a structured renewal.
+Owner: cycself
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-busybee.00000000-0000-0000-0000-000000000003
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Carry the compact fixture state after its delayed delivery.
+Owner: busybee
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-resumer.00000000-0000-0000-0000-000000000004
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Carry the context-drop fixture state after compaction.
+Owner: resumer
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-retrier.00000000-0000-0000-0000-000000000005
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Carry the retry fixture state after verified delivery.
+Owner: retrier
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-cycacceptfail.00000000-0000-0000-0000-000000000006
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Preserve complete pending state when final acceptance cannot be stored.
+Owner: cycacceptfail
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-cyccarryfail.00000000-0000-0000-0000-000000000007
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Refuse a replacement whose carried continuation state cannot be installed.
+Owner: cyccarryfail
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-cycfloorfail.00000000-0000-0000-0000-000000000008
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Leave no adoptable empty replacement when carried floor initialization fails.
+Owner: cycfloorfail
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-markerclear.00000000-0000-0000-0000-000000000009
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Refuse compaction when the prior detached-delivery failure cannot be cleared.
+Owner: markerclear
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+### task.resume-markerpersist.00000000-0000-0000-0000-000000000010
+Reviewed-In: 1
+Remove: acceptance-met-and-receipted
+Outcome: Preserve a visible alert when detached-delivery failure detail cannot be stored.
+Owner: markerpersist
+State: active
+Depends-On: none
+Acceptance: command:test/integration.sh
+Receipt: none
+Blocker: none
+Source: adr:0018
+
+END GANGLINE-TASK-LEDGER
+LEDGER
+
+continuation_fixture_task() { # $1 dog -> its one live task reference
+  case "$1" in
+    cycled)  printf 'task.resume-cycled.00000000-0000-0000-0000-000000000001' ;;
+    cycself) printf 'task.resume-cycself.00000000-0000-0000-0000-000000000002' ;;
+    busybee) printf 'task.resume-busybee.00000000-0000-0000-0000-000000000003' ;;
+    resumer) printf 'task.resume-resumer.00000000-0000-0000-0000-000000000004' ;;
+    retrier) printf 'task.resume-retrier.00000000-0000-0000-0000-000000000005' ;;
+    cycacceptfail) printf 'task.resume-cycacceptfail.00000000-0000-0000-0000-000000000006' ;;
+    cyccarryfail) printf 'task.resume-cyccarryfail.00000000-0000-0000-0000-000000000007' ;;
+    cycfloorfail) printf 'task.resume-cycfloorfail.00000000-0000-0000-0000-000000000008' ;;
+    markerclear) printf 'task.resume-markerclear.00000000-0000-0000-0000-000000000009' ;;
+    markerpersist) printf 'task.resume-markerpersist.00000000-0000-0000-0000-000000000010' ;;
+    *) printf 'BUG: no structured continuation task for %s\n' "$1" >&2; return 1 ;;
+  esac
+}
+
+continuation_fixture_base() { # $1 dog -> disjoint deterministic UUID tail range
+  case "$1" in
+    cycled) echo 1000 ;; cycself) echo 2000 ;; busybee) echo 3000 ;;
+    resumer) echo 4000 ;; retrier) echo 5000 ;; cycacceptfail) echo 6000 ;;
+    cyccarryfail) echo 7000 ;; cycfloorfail) echo 8000 ;; markerclear) echo 9000 ;;
+    markerpersist) echo 10000 ;;
+    *) return 1 ;;
+  esac
+}
+
+continuation_fixture_package() { # $1 dog, $2 visible marker/text, $3 destination
+  local dog="$1" marker="$2" dst="$3" task state accepted_review=0
+  local accepted_note=none accepted_serial=0 serial base tail note floor now
+  task="$(continuation_fixture_task "$dog")" || return 1
+  base="$(continuation_fixture_base "$dog")" || return 1
+  state="$SHIM/continuation-state-$dog"
+  if [ -f "$state" ]; then
+    IFS=$'\t' read -r accepted_review accepted_note accepted_serial < "$state"
+  fi
+  serial=$(( accepted_serial + 1 ))
+  printf -v tail '%012d' "$(( base + serial ))"
+  note="note.resume-$dog.00000000-0000-0000-0000-$tail"
+  floor="$(tmux show-options -wqv -t "$(target_of "$dog")" @gl_resume_review_floor)"
+  # Whole seconds are the authored ordering boundary. Wait here in the fixture,
+  # not in gang: a delivery implementation that sleeps until stale data becomes
+  # admissible would be weakening the contract this test is meant to hold.
+  while :; do
+    now="$(date +%s)"
+    [ "$now" -gt "$floor" ] && [ "$now" -gt "$accepted_review" ] && break
+    sleep 1
+  done
+  cat > "$dst" <<PACKAGE
+GANGLINE-CONTINUATION 1
+Writer: $dog
+Reviewed-At: $now
+Ledger: $CONTINUATION_LEDGER
+
+## Task References
+
+### $task
+
+## Active Work
+
+## Next Actions
+
+### $note
+Task: $task
+Supersedes: $accepted_note
+Remove: done-or-superseded
+Evidence: verified
+Provenance: command:test/integration.sh
+Text: $marker
+
+## Local Blockers
+
+## Binding Bounds
+
+## Dangerous Refutations
+
+END GANGLINE-CONTINUATION
+PACKAGE
+  printf '%s\t%s\t%s\n' "$now" "$note" "$serial" > "$dst.fixture-candidate"
+}
+
+continuation_fixture_accepted() { # $1 dog, $2 candidate file -> yes|no
+  local review note serial target header
+  IFS=$'\t' read -r review note serial < "$2.fixture-candidate"
+  target="$(target_of "$1")" || { echo no; return; }
+  header="$(tmux show-options -wqv -t "$target" @gl_resume_transition)"
+  case "$header" in
+    "1|accepted|$review|bank-a"|"1|accepted|$review|bank-b") echo yes ;;
+    *) echo no ;;
+  esac
+}
+
+continuation_fixture_commit() { # $1 dog, $2 candidate accepted above
+  [ "$(continuation_fixture_accepted "$1" "$2")" = yes ] || {
+    printf 'BUG: structured candidate for %s was not accepted\n' "$1" >&2
+    return 1
+  }
+  cp "$2.fixture-candidate" "$SHIM/continuation-state-$1"
+}
+
+continuation_fixture_bank_hex() { # $1 target, $2 bank -> complete stored manifest
+  local target="$1" bank="$2" meta version count length option chunk hex="" i
+  meta="$(tmux show-options -wqv -t "$target" "@gl_resume_manifest_$bank")" || return 1
+  IFS='|' read -r version count length <<< "$meta"
+  [ "$version" = 1 ] && [[ "$count" =~ ^[1-9][0-9]*$ ]] \
+    && [[ "$length" =~ ^[1-9][0-9]*$ ]] || return 1
+  for (( i=0; i<count; i++ )); do
+    printf -v option '@gl_resume_manifest_%s_%06d' "$bank" "$i"
+    chunk="$(tmux show-options -wqv -t "$target" "$option")" || return 1
+    hex+="$chunk"
+  done
+  [ "${#hex}" -eq "$length" ] || return 1
+  printf '%s' "$hex"
+}
+
+continuation_fixture_manifest() { # $1 note, $2 task, $3 evidence, $4 provenance, $5 text
+  local provenance_hex text_hex row
+  provenance_hex="$(printf '%s' "$4" | od -An -v -tx1 | tr -d ' \n')"
+  text_hex="$(printf '%s' "$5" | od -An -v -tx1 | tr -d ' \n')"
+  row="$1"$'\t''Active Work'$'\t'"$2"$'\t''none'$'\t''checkpointed-or-no-longer-live'
+  row+=$'\t'"$3"$'\t'"$provenance_hex"$'\t'"$text_hex"
+  printf '%s' "$row" | od -An -v -tx1 | tr -d ' \n'
+}
+
+# A selective tmux fault injector for state writes and reads that cannot fail on
+# demand against a healthy server. Every mode records the exact branch it took;
+# the paired checks below refuse to treat an unused injector as failure evidence.
+CONTINUATION_FAULT="$SHIM/continuation-fault"
+mkdir -p "$CONTINUATION_FAULT"
+cat > "$CONTINUATION_FAULT/tmux" <<SH
+#!/usr/bin/env bash
+mode="\${CONTINUATION_TMUX_FAULT:-}"
+state="\${CONTINUATION_TMUX_FAULT_STATE:-}"
+if [ "\$mode" = accept-header ] && [ "\${1:-}" = set-option ] \
+   && [ "\${5:-}" = @gl_resume_transition ]; then
+  case "\${6:-}" in
+    1'|'accepted'|'*'|'bank-*)
+      if [ ! -e "\$state.accepted" ]; then : > "\$state.accepted"; exit 1; fi ;;
+  esac
+fi
+if [ "\$mode" = carry-transition ] && [ "\${1:-}" = set-option ] \
+   && [ "\${5:-}" = @gl_resume_transition ]; then
+  case "\${6:-}" in
+    1'|'pending'|'*)
+      n=0; [ ! -r "\$state.count" ] || read -r n < "\$state.count"
+      n=\$(( n + 1 )); printf '%s\n' "\$n" > "\$state.count"
+      if [ "\$n" -eq 2 ]; then : > "\$state.carried"; exit 1; fi ;;
+  esac
+fi
+if [ "\$mode" = carry-floor-readback ]; then
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    "$(command -v tmux)" "\$@" || exit \$?
+    : > "\$state.floor-stored"
+    exit 0
+  fi
+  if [ -e "\$state.floor-stored" ] && [ "\${1:-}" = show-options ] \
+     && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    : > "\$state.floor-readback"
+    exit 1
+  fi
+fi
+if [ "\$mode" = carry-bank-store ]; then
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    "$(command -v tmux)" "\$@" || exit \$?
+    : > "\$state.floor-stored"
+    exit 0
+  fi
+  if [ -e "\$state.floor-stored" ] && [ "\${1:-}" = set-option ]; then
+    case "\${5:-}" in
+      @gl_resume_manifest_[ab]_*) : > "\$state.bank-store"; exit 1 ;;
+    esac
+  fi
+fi
+if [ "\$mode" = carry-bank-readback ]; then
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    "$(command -v tmux)" "\$@" || exit \$?
+    : > "\$state.floor-stored"
+    exit 0
+  fi
+  if [ -e "\$state.floor-stored" ] && [ "\${1:-}" = set-option ]; then
+    case "\${5:-}" in
+      @gl_resume_manifest_[ab]_*)
+        "$(command -v tmux)" "\$@" || exit \$?
+        : > "\$state.bank-stored"
+        exit 0 ;;
+    esac
+  fi
+  if [ -e "\$state.floor-stored" ] && [ -e "\$state.bank-stored" ] \
+     && [ "\${1:-}" = show-options ]; then
+    case "\${5:-}" in
+      @gl_resume_manifest_[ab]_*) : > "\$state.bank-readback"; exit 1 ;;
+    esac
+  fi
+fi
+if [ "\$mode" = carry-transition-readback ]; then
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    "$(command -v tmux)" "\$@" || exit \$?
+    : > "\$state.floor-stored"
+    exit 0
+  fi
+  if [ -e "\$state.floor-stored" ] && [ "\${1:-}" = set-option ] \
+     && [ "\${5:-}" = @gl_resume_transition ]; then
+    case "\${6:-}" in
+      1'|'pending'|'*)
+        "$(command -v tmux)" "\$@" || exit \$?
+        : > "\$state.transition-stored"
+        exit 0 ;;
+    esac
+  fi
+  if [ -e "\$state.transition-stored" ] && [ ! -e "\$state.transition-readback" ] \
+     && [ "\${1:-}" = show-options ] \
+     && [ "\${5:-}" = @gl_resume_transition ]; then
+    : > "\$state.transition-readback"
+    exit 1
+  fi
+fi
+if [ "\$mode" = carry-floor-poison ] && [ "\${1:-}" = set-option ]; then
+  if [ "\${5:-}" = @gl_resume_review_floor ]; then
+    : > "\$state.floor"
+    exit 1
+  fi
+  if [ "\${5:-}" = @gl_resume_transition ] \
+     && [ "\${6:-}" = '1|carried-install-failed' ]; then
+    : > "\$state.poison"
+    exit 0
+  fi
+fi
+if [ "\$mode" = carry-floor-poison ] && [ -e "\$state.poison" ] \
+   && [ "\${1:-}" = list-windows ]; then
+  : > "\$state.inventory"
+fi
+if [ "\$mode" = carry-floor-unverifiable ]; then
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+    : > "\$state.floor"
+    exit 1
+  fi
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_transition ] \
+     && [ "\${6:-}" = '1|carried-install-failed' ]; then
+    : > "\$state.poison"
+    exit 0
+  fi
+  if [ -e "\$state.poison" ] && [ "\${1:-}" = kill-window ]; then
+    : > "\$state.kill"
+    exit 0
+  fi
+  if [ -e "\$state.kill" ] \
+     && { [ "\${1:-}" = display-message ] || [ "\${1:-}" = list-windows ]; }; then
+    : > "\$state.identity"
+    exit 1
+  fi
+  if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_quarantine ]; then
+    : > "\$state.quarantine"
+  fi
+fi
+case "\$mode" in
+  carry-floor-present|carry-floor-inventory-incomplete|carry-floor-quarantine-retry)
+    if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_review_floor ]; then
+      : > "\$state.floor"
+      exit 1
+    fi
+    if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_transition ] \
+       && [ "\${6:-}" = '1|carried-install-failed' ]; then
+      : > "\$state.poison"
+      exit 0
+    fi
+    if [ -e "\$state.poison" ] && [ "\${1:-}" = kill-window ]; then
+      : > "\$state.kill"
+      exit 0
+    fi
+    if [ -e "\$state.kill" ] && [ "\${1:-}" = list-windows ]; then
+      : > "\$state.inventory"
+      if [ "\$mode" = carry-floor-inventory-incomplete ]; then
+        printf '%s|2\n' "\$CONTINUATION_TMUX_FAULT_CONTROL"
+        exit 0
+      fi
+    fi
+    if [ "\${1:-}" = set-option ] && [ "\${5:-}" = @gl_resume_quarantine ]; then
+      if [ "\$mode" = carry-floor-quarantine-retry ] \
+         && [ ! -e "\$state.quarantine-failed" ]; then
+        : > "\$state.quarantine-failed"
+        exit 1
+      fi
+      : > "\$state.quarantine-stored"
+    fi
+    ;;
+esac
+if [ "\$mode" = resume-clear ] && [ "\${1:-}" = set-option ] \
+   && [ "\${2:-}" = -uw ] && [ "\${5:-}" = @gl_resume_failed ]; then
+  : > "\$state.clear"
+  exit 0
+fi
+if [ "\$mode" = resume-failure-write ] && [ "\${1:-}" = set-option ] \
+   && [ "\${2:-}" = -w ] && [ "\${5:-}" = @gl_resume_failed ]; then
+  case "\${6:-}" in
+    *GANG_RESUME_TIMEOUT*) : > "\$state.failure-write"; exit 0 ;;
+    'structured resume was not delivered; its detached worker could not store the detailed failure byte-identically')
+      printf '%s\n' "\$PPID" > "\$state.worker-pid"
+      : > "\$state.fallback-write" ;;
+  esac
+fi
+if [ "\$mode" = resume-failure-write-all ] && [ "\${1:-}" = set-option ] \
+   && [ "\${2:-}" = -w ] && [ "\${5:-}" = @gl_resume_failed ]; then
+  case "\${6:-}" in
+    'structured resume delivery has no verified detached outcome yet') ;;
+    *GANG_RESUME_TIMEOUT*) : > "\$state.failure-write"; exit 0 ;;
+    *) printf '%s\n' "\$PPID" > "\$state.worker-pid"
+       : > "\$state.fallback-write"; exit 0 ;;
+  esac
+fi
+if [ "\$mode" = resume-worker-hold ] && [ "\${1:-}" = set-option ] \
+   && [ "\${2:-}" = -w ] && [ "\${5:-}" = @gl_resume_outcome ] \
+   && [ "\${6:-}" = 'structured resume delivery is still in flight' ]; then
+  "$(command -v tmux)" "\$@" || exit \$?
+  printf '%s\n' "\$PPID" > "\$state.worker-pid"
+  : > "\$state.worker-started"
+  while [ ! -e "\$state.release" ]; do sleep 0.05; done
+  exit 0
+fi
+if [ "\$mode" = ledger-read ] && [ "\${1:-}" = show-options ] \
+   && [ "\${2:-}" = -qv ] && [ "\${5:-}" = @gl_resume_ledger ]; then
+  : > "\$state.ledger-read"
+  exit 1
+fi
+exec "$(command -v tmux)" "\$@"
+SH
+chmod +x "$CONTINUATION_FAULT/tmux"
+
+cat > "$CONTINUATION_FAULT/mktemp" <<SH
+#!/usr/bin/env bash
+if [ "\${CONTINUATION_MKTEMP_FAULT:-}" = return-path-then-fail ]; then
+  mkdir -p -- "\$CONTINUATION_MKTEMP_FAULT_STATE.dir"
+  printf '%s\n' "\$CONTINUATION_MKTEMP_FAULT_STATE.dir"
+  : > "\$CONTINUATION_MKTEMP_FAULT_STATE.hit"
+  exit 1
+fi
+if [ "\${CONTINUATION_MKTEMP_FAULT:-}" = create-then-term ]; then
+  mkdir -p -- "\$CONTINUATION_MKTEMP_FAULT_STATE.dir"
+  printf '%s\n' "\$CONTINUATION_MKTEMP_FAULT_STATE.dir"
+  : > "\$CONTINUATION_MKTEMP_FAULT_STATE.hit"
+  kill -TERM "\$PPID"
+  exit 0
+fi
+if [ "\${CONTINUATION_MKTEMP_FAULT:-}" = return-hidden-path-then-fail ]; then
+  mkdir -p -- "\$CONTINUATION_MKTEMP_FAULT_STATE.parent/dir"
+  printf '%s\n' "\$CONTINUATION_MKTEMP_FAULT_STATE.parent/dir"
+  : > "\$CONTINUATION_MKTEMP_FAULT_STATE.hit"
+  exit 1
+fi
+if [ "\${CONTINUATION_MKTEMP_FAULT:-}" = record-path ]; then
+  path="\$("$(command -v mktemp)" "\$@")" || exit \$?
+  printf '%s\n' "\$path" > "\$CONTINUATION_MKTEMP_FAULT_STATE.path"
+  printf '%s\n' "\$path"
+  exit 0
+fi
+exec "$(command -v mktemp)" "\$@"
+SH
+chmod +x "$CONTINUATION_FAULT/mktemp"
+
+cat > "$CONTINUATION_FAULT/rm" <<SH
+#!/usr/bin/env bash
+if [ "\${CONTINUATION_RM_FAULT:-}" = staging-cleanup ]; then
+  for arg in "\$@"; do
+    if [ "\$arg" = "\$CONTINUATION_RM_FAULT_STATE.dir" ]; then
+      : > "\$CONTINUATION_RM_FAULT_STATE.cleanup"
+      exit 1
+    fi
+  done
+fi
+if [ "\${CONTINUATION_RM_FAULT:-}" = staging-predicate-unavailable ]; then
+  for arg in "\$@"; do
+    if [ "\$arg" = "\$CONTINUATION_RM_FAULT_STATE.parent/dir" ]; then
+      : > "\$CONTINUATION_RM_FAULT_STATE.cleanup"
+      chmod 000 -- "\$CONTINUATION_RM_FAULT_STATE.parent"
+      exit 0
+    fi
+  done
+fi
+if [ "\${CONTINUATION_RM_FAULT:-}" = continuation-lock-fail ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      */continuation-*.lock.claim.*)
+        : > "\$CONTINUATION_RM_FAULT_STATE.cleanup"
+        exit 1 ;;
+    esac
+  done
+fi
+if [ "\${CONTINUATION_RM_FAULT:-}" = continuation-lock-predicate-unavailable ]; then
+  for arg in "\$@"; do
+    if [ "\$arg" = "\$CONTINUATION_RM_FAULT_PATH" ]; then
+      : > "\$CONTINUATION_RM_FAULT_STATE.cleanup"
+      chmod 000 -- "\${arg%/*}"
+      exit 0
+    fi
+  done
+fi
+exec "$(command -v rm)" "\$@"
+SH
+chmod +x "$CONTINUATION_FAULT/rm"
+
+cat > "$CONTINUATION_FAULT/mkdir" <<SH
+#!/usr/bin/env bash
+if [ "\${CONTINUATION_MKDIR_FAULT:-}" = interrupt-before-create ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      */continuation-*.lock)
+        printf '%s\n' "\$arg" > "\$CONTINUATION_MKDIR_FAULT_STATE.path"
+        : > "\$CONTINUATION_MKDIR_FAULT_STATE.hit"
+        kill -TERM "\$PPID"
+        exit 1 ;;
+    esac
+  done
+fi
+if [ "\${CONTINUATION_MKDIR_FAULT:-}" = interrupt-after-create ]; then
+  for arg in "\$@"; do
+    case "\$arg" in
+      */continuation-*.lock)
+        "$(command -v mkdir)" "\$@" || exit \$?
+        printf '%s\n' "\$arg" > "\$CONTINUATION_MKDIR_FAULT_STATE.path"
+        : > "\$CONTINUATION_MKDIR_FAULT_STATE.hit"
+        kill -TERM "\$PPID"
+        exit 0 ;;
+    esac
+  done
+fi
+exec "$(command -v mkdir)" "\$@"
+SH
+chmod +x "$CONTINUATION_FAULT/mkdir"
+
+cat > "$CONTINUATION_FAULT/cat" <<SH
+#!/usr/bin/env bash
+if [ "\${CONTINUATION_CAT_FAULT:-}" = watch-claim ] && [ "\$#" -eq 1 ]; then
+  case "\${1:-}" in
+    "\$CONTINUATION_CAT_FAULT_PATH".claim.*)
+      printf '%s\n' "\$1" > "\$CONTINUATION_CAT_FAULT_STATE.claim-path"
+      : > "\$CONTINUATION_CAT_FAULT_STATE.claim-read"
+      if [ -n "\${CONTINUATION_CAT_FAULT_EXACT:-}" ] \
+         && [ "\$1" = "\$CONTINUATION_CAT_FAULT_EXACT" ]; then
+        : > "\$CONTINUATION_CAT_FAULT_STATE.exact-read"
+      fi ;;
+  esac
+fi
+exec "$(command -v cat)" "\$@"
+SH
+chmod +x "$CONTINUATION_FAULT/cat"
+
 # A directory whose name carries a space, because that is the world a record
 # packing its facts into one value gets wrong: whatever separator it picks, a
 # path may contain it, and what comes back is a live agent running somewhere
@@ -1058,6 +1705,26 @@ cyc() { GANG_PROFILES="$SHIM/custom-profiles" "$GANG" "$@"; }
 WSP="$SHIM/work space"; mkdir -p "$WSP"
 cyc hitch cycled -p cycler -r worker -d "$WSP" -m test-model >/dev/null
 cid="$(id_of cycled)"
+# ADR-0018 makes these two facts the closed start of every new agent lineage.
+# Assert their exact relationship at the first hitch that the cycle block already
+# owns: an assertion written only after the implementation would be liable to
+# mirror whatever spelling the implementation happened to choose.
+continuation_floor="$(tmux show-options -wqv -t "$cid" @gl_resume_review_floor)"
+check "hitch establishes a canonical continuation review floor" "yes" \
+  "$(holds "$continuation_floor" '^[1-9][0-9]*$')"
+check "and initializes the same lineage as known empty" "1|empty" \
+  "$(tmux show-options -wqv -t "$cid" @gl_resume_transition)"
+
+# One fact without the other is corruption, never a legacy window to initialize
+# and never an empty lineage to carry. A no-payload cycle is the cheapest boundary
+# that can distinguish refusal-before-retirement from a rebaseline after the old
+# context is gone.
+tmux set-option -uw -t "$cid" @gl_resume_review_floor
+half_state_id="$cid"
+out="$(cyc cycle cycled 2>&1)"; rc=$?
+check "a continuation transition without its review floor is refused" "1" "$rc"
+check "and the old context survives that refusal" "$half_state_id" "$(id_of cycled)"
+tmux set-option -w -t "$cid" @gl_resume_review_floor "$continuation_floor"
 check "hitch leaves a launch record on the window it describes" "yes" \
   "$(holds "$(tmux show-options -wqv -t "$cid" @gl_launch)" '^[0-9]+$')"
 check "the role it was briefed as" "worker" \
@@ -1132,6 +1799,202 @@ check "adopt records the profile it was told" "cycler" \
   "$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_profile)"
 check "and no launch facts, because gang did not launch it" "" \
   "$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_launch)"
+cycadopted_floor="$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_resume_review_floor)"
+check "a genuine adoption establishes a canonical continuation review floor" "yes" \
+  "$(holds "$cycadopted_floor" '^[1-9][0-9]*$')"
+check "and initializes the absent lineage as known empty" "1|empty" \
+  "$(tmux show-options -wqv -t "$(id_of cycadopted)" @gl_resume_transition)"
+
+# Adoption is the explicit start of a genuinely new lineage only when the window
+# is unregistered and both continuation facts are absent. It must not double as a
+# reset for a registered agent or for an unregistered window carrying partial,
+# malformed or previously carried lineage state.
+pending_provenance_hex="$(printf '%s' 'command:test/integration.sh' | od -An -v -tx1 | tr -d ' \n')"
+pending_text_hex="$(printf '%s' 'planted pending adoption state' | od -An -v -tx1 | tr -d ' \n')"
+pending_row='note.adopt-reset.00000000-0000-0000-0000-000000000001'
+pending_row+=$'\t''Active Work'
+pending_row+=$'\t''task.adopt-reset.00000000-0000-0000-0000-000000000002'
+pending_row+=$'\t''none'
+pending_row+=$'\t''checkpointed-or-no-longer-live'
+pending_row+=$'\t''verified'
+pending_row+=$'\t'"$pending_provenance_hex"
+pending_row+=$'\t'"$pending_text_hex"
+pending_manifest="$(printf '%s' "$pending_row" | od -An -v -tx1 | tr -d ' \n')"
+pending_state="1|pending|empty|-|-|2|$pending_manifest"
+
+plant_continuation_bank() { # $1 window id, $2 a|b, $3 complete manifest hex
+  local target="$1" bank="$2" manifest="$3"
+  tmux set-option -w -t "$target" "@gl_resume_manifest_$bank" \
+    "1|1|${#manifest}"
+  tmux set-option -w -t "$target" "@gl_resume_manifest_${bank}_000000" \
+    "$manifest"
+}
+
+# Stored manifests are comparison state, not trusted parser output forever. A
+# no-package cycle has no candidate document to mask the question: it must decode
+# the carried rows again, bind claimed provenance to the target writer, and
+# refuse before retirement when either stored relationship is invalid.
+manifest_valid="$(continuation_fixture_manifest \
+  note.stored-valid.00000000-0000-0000-0000-000000000001 \
+  task.stored-valid.00000000-0000-0000-0000-000000000002 \
+  claimed message:reviewer/receipt 'planted valid stored manifest')"
+cyc hitch cycmanifestok -p cycler -d /tmp >/dev/null
+cycmanifestok_id="$(id_of cycmanifestok)"
+tmux set-option -w -t "$cycmanifestok_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycmanifestok_id" @gl_resume_transition '1|accepted|2|bank-a'
+plant_continuation_bank "$cycmanifestok_id" a "$manifest_valid"
+out="$(cyc cycle cycmanifestok 2>&1)"; rc=$?
+check "a stored manifest with a Task id and another writer's claimed receipt carries" "0" "$rc"
+check "THE CONTROL: the valid stored-manifest cycle really replaced its window" "no" \
+  "$([ "$cycmanifestok_id" = "$(id_of cycmanifestok)" ] && echo yes || echo no)"
+check "and carries the validated manifest byte-identically" "$manifest_valid" \
+  "$(continuation_fixture_bank_hex "$(id_of cycmanifestok)" a)"
+
+manifest_bad_task="$(continuation_fixture_manifest \
+  note.stored-task.00000000-0000-0000-0000-000000000003 all \
+  claimed message:reviewer/receipt 'planted invalid stored Task relation')"
+cyc hitch cycmanifesttask -p cycler -d /tmp >/dev/null
+cycmanifesttask_id="$(id_of cycmanifesttask)"
+tmux set-option -w -t "$cycmanifesttask_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycmanifesttask_id" @gl_resume_transition '1|accepted|2|bank-a'
+plant_continuation_bank "$cycmanifesttask_id" a "$manifest_bad_task"
+out="$(cyc cycle cycmanifesttask 2>&1)"; rc=$?
+check "a stored working note whose Task is not a task identifier is refused" "1" "$rc"
+check "and the invalid stored Task cannot retire its lineage" "$cycmanifesttask_id" \
+  "$(id_of cycmanifesttask)"
+
+manifest_bad_claim="$(continuation_fixture_manifest \
+  note.stored-claim.00000000-0000-0000-0000-000000000004 \
+  task.stored-claim.00000000-0000-0000-0000-000000000005 \
+  claimed message:cycmanifestclaim/receipt 'planted self-attributed claimed receipt')"
+cyc hitch cycmanifestclaim -p cycler -d /tmp >/dev/null
+cycmanifestclaim_id="$(id_of cycmanifestclaim)"
+tmux set-option -w -t "$cycmanifestclaim_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycmanifestclaim_id" @gl_resume_transition '1|accepted|2|bank-a'
+plant_continuation_bank "$cycmanifestclaim_id" a "$manifest_bad_claim"
+out="$(cyc cycle cycmanifestclaim 2>&1)"; rc=$?
+check "claimed provenance stored under its own package writer is refused" "1" "$rc"
+check "and the writer-bound claimed failure leaves the planted window intact" \
+  "$cycmanifestclaim_id" "$(id_of cycmanifestclaim)"
+
+# Bank inventory and transition shape are one relational fact. Each planted
+# lineage below has a real launch record and therefore reaches that reader before
+# cycle can retire anything; adoption controls alone cannot prove this boundary,
+# because an adopted window is refused for having no launch record first.
+cyc hitch cycshardmissing -p cycler -d /tmp >/dev/null
+cycshardmissing_id="$(id_of cycshardmissing)"
+tmux set-option -w -t "$cycshardmissing_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycshardmissing_id" @gl_resume_transition '1|accepted|2|bank-a'
+tmux set-option -w -t "$cycshardmissing_id" @gl_resume_manifest_a \
+  "1|1|${#pending_manifest}"
+out="$(cyc cycle cycshardmissing 2>&1)"; rc=$?
+check "an accepted transition whose bank is missing its declared shard is refused" "1" "$rc"
+check "and the shard failure is reported as inconsistent continuation state" "yes" \
+  "$(contains "$out" "malformed, or relationally inconsistent continuation state")"
+check "and a missing shard cannot retire the planted lineage" "$cycshardmissing_id" \
+  "$(id_of cycshardmissing)"
+check "or rewrite the metadata that exposed it" "1|1|${#pending_manifest}" \
+  "$(tmux show-options -wqv -t "$cycshardmissing_id" @gl_resume_manifest_a)"
+
+cyc hitch cycshardextra -p cycler -d /tmp >/dev/null
+cycshardextra_id="$(id_of cycshardextra)"
+tmux set-option -w -t "$cycshardextra_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycshardextra_id" @gl_resume_transition '1|accepted|2|bank-a'
+plant_continuation_bank "$cycshardextra_id" a "$pending_manifest"
+tmux set-option -w -t "$cycshardextra_id" @gl_resume_manifest_a_000001 aa
+out="$(cyc cycle cycshardextra 2>&1)"; rc=$?
+check "an undeclared extra shard is refused rather than ignored" "1" "$rc"
+check "and the extra-shard lineage is still the same window" "$cycshardextra_id" \
+  "$(id_of cycshardextra)"
+check "and the planted extra shard remains inspectable after refusal" "aa" \
+  "$(tmux show-options -wqv -t "$cycshardextra_id" @gl_resume_manifest_a_000001)"
+
+cyc hitch cycshardcase -p cycler -d /tmp >/dev/null
+cycshardcase_id="$(id_of cycshardcase)"
+tmux set-option -w -t "$cycshardcase_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycshardcase_id" @gl_resume_transition '1|accepted|2|bank-a'
+plant_continuation_bank "$cycshardcase_id" a \
+  "A${pending_manifest#?}"
+out="$(cyc cycle cycshardcase 2>&1)"; rc=$?
+check "a shard outside canonical lowercase hex is refused" "1" "$rc"
+check "and noncanonical shard bytes cannot retire the agent" "$cycshardcase_id" \
+  "$(id_of cycshardcase)"
+
+cyc hitch cycpendingstate -p cycler -d /tmp >/dev/null
+cycpendingstate_id="$(id_of cycpendingstate)"
+tmux set-option -w -t "$cycpendingstate_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycpendingstate_id" @gl_resume_transition \
+  '1|pending|empty|-|-|2|bank-a'
+plant_continuation_bank "$cycpendingstate_id" a "$pending_manifest"
+out="$(cyc cycle cycpendingstate 2>&1)"; rc=$?
+check "a complete leftover pending transition refuses a later cycle" "1" "$rc"
+check "and gives the explicit new-lineage recovery instead of rebaselining" "yes" \
+  "$(contains "$out" "establish a genuinely new lineage")"
+check "and leaves the valid pending header byte-identical" \
+  '1|pending|empty|-|-|2|bank-a' \
+  "$(tmux show-options -wqv -t "$cycpendingstate_id" @gl_resume_transition)"
+check "and does not retire the pending lineage" "$cycpendingstate_id" \
+  "$(id_of cycpendingstate)"
+
+cyc hitch cycsamebank -p cycler -d /tmp >/dev/null
+cycsamebank_id="$(id_of cycsamebank)"
+tmux set-option -w -t "$cycsamebank_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycsamebank_id" @gl_resume_transition \
+  '1|pending|accepted|1|bank-a|2|bank-a'
+plant_continuation_bank "$cycsamebank_id" a "$pending_manifest"
+out="$(cyc cycle cycsamebank 2>&1)"; rc=$?
+check "a pending transition cannot name one bank as both prior and candidate" "1" "$rc"
+check "and relational transition corruption cannot retire the agent" "$cycsamebank_id" \
+  "$(id_of cycsamebank)"
+
+cycadopted_id="$(id_of cycadopted)"
+tmux set-option -w -t "$cycadopted_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cycadopted_id" @gl_resume_transition "$pending_state"
+out="$(cyc adopt cycadopted -p cycler 2>&1)"; rc=$?
+check "re-adopting a registered lineage is refused" "1" "$rc"
+check "and cannot cure its planted pending state" "$pending_state" \
+  "$(tmux show-options -wqv -t "$cycadopted_id" @gl_resume_transition)"
+check "or replace its existing review floor" "1" \
+  "$(tmux show-options -wqv -t "$cycadopted_id" @gl_resume_review_floor)"
+
+tmux new-window -d -t "$GANG_SESSION" -n cycpartialfloor 'exec sleep 300'
+cycpartialfloor_id="$(id_of cycpartialfloor)"
+tmux set-option -w -t "$cycpartialfloor_id" @gl_resume_review_floor 1
+out="$(cyc adopt cycpartialfloor -p cycler 2>&1)"; rc=$?
+check "adopt refuses an unregistered window carrying only a review floor" "1" "$rc"
+check "without registering that partial lineage" "" \
+  "$(tmux show-options -wqv -t "$cycpartialfloor_id" @gl_profile)"
+check "or overwriting its planted floor" "1" \
+  "$(tmux show-options -wqv -t "$cycpartialfloor_id" @gl_resume_review_floor)"
+
+tmux new-window -d -t "$GANG_SESSION" -n cycpartialstate 'exec sleep 300'
+cycpartialstate_id="$(id_of cycpartialstate)"
+tmux set-option -w -t "$cycpartialstate_id" @gl_resume_transition '1|empty'
+out="$(cyc adopt cycpartialstate -p cycler 2>&1)"; rc=$?
+check "adopt refuses an unregistered window carrying only transition state" "1" "$rc"
+check "without registering the second partial-lineage spelling" "" \
+  "$(tmux show-options -wqv -t "$cycpartialstate_id" @gl_profile)"
+check "or overwriting its planted transition" "1|empty" \
+  "$(tmux show-options -wqv -t "$cycpartialstate_id" @gl_resume_transition)"
+
+tmux new-window -d -t "$GANG_SESSION" -n cycmalformedstate 'exec sleep 300'
+cycmalformedstate_id="$(id_of cycmalformedstate)"
+tmux set-option -w -t "$cycmalformedstate_id" @gl_resume_review_floor not-an-epoch
+tmux set-option -w -t "$cycmalformedstate_id" @gl_resume_transition '1|empty'
+out="$(cyc adopt cycmalformedstate -p cycler 2>&1)"; rc=$?
+check "adopt refuses a malformed continuation pair on an unregistered window" "1" "$rc"
+check "without normalizing its malformed floor" "not-an-epoch" \
+  "$(tmux show-options -wqv -t "$cycmalformedstate_id" @gl_resume_review_floor)"
+
+tmux new-window -d -t "$GANG_SESSION" -n cyccarriedstate 'exec sleep 300'
+cyccarriedstate_id="$(id_of cyccarriedstate)"
+tmux set-option -w -t "$cyccarriedstate_id" @gl_resume_review_floor 1
+tmux set-option -w -t "$cyccarriedstate_id" @gl_resume_transition "$pending_state"
+out="$(cyc adopt cyccarriedstate -p cycler 2>&1)"; rc=$?
+check "adopt refuses a complete carried lineage on an unregistered window" "1" "$rc"
+check "and leaves that pending state byte-identical" "$pending_state" \
+  "$(tmux show-options -wqv -t "$cyccarriedstate_id" @gl_resume_transition)"
+
 out="$(cyc cycle cycadopted 2>&1)"; rc=$?
 check "cycling an adopted window is refused" "1" "$rc"
 check "naming the agent it will not act on" "yes" \
@@ -1195,9 +2058,64 @@ check "and claiming only what this path can claim: the agent still has its conte
   "$(contains "$out" "is still running with the context it had")"
 check "and the agent is untouched" "$cycid" "$(id_of cycled)"
 
+# A structurally valid candidate is also the positive control for the parser and
+# ledger refusals below. Each bad copy changes one predicate while keeping the
+# same authored review and live task reference, and every refusal is paired with
+# the old window id so a parser verdict cannot arrive after retirement.
+cycle_fill="$(head -c 2500 /dev/zero | tr '\0' x)"
+continuation_fixture_package cycled \
+  "$cycle_fill CYCRESUME-PAYLOAD carried across the renewal" \
+  "$SHIM/cyc-handoff"
+
+cp "$SHIM/cyc-handoff" "$SHIM/cyc-bad-section"
+sed -i.bak 's/^## Local Blockers$/## Unknown Section/' "$SHIM/cyc-bad-section"
+rm -f "$SHIM/cyc-bad-section.bak"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-bad-section" 2>&1)"; rc=$?
+check "a continuation package with an unknown section is refused" "1" "$rc"
+check "and the closed-grammar refusal names what failed" "yes" \
+  "$(contains "$out" "required closed grammar")"
+check "and malformed package structure cannot retire the agent" "$cycid" "$(id_of cycled)"
+
+{ cat "$SHIM/cyc-handoff"; printf '\0'; } > "$SHIM/cyc-nul"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-nul" 2>&1)"; rc=$?
+check "a continuation package carrying a raw NUL is refused" "1" "$rc"
+check "and the raw-byte verdict names the byte it saw" "yes" \
+  "$(contains "$out" "contains a NUL byte")"
+check "and raw-byte refusal leaves the old context intact" "$cycid" "$(id_of cycled)"
+
+cp "$CONTINUATION_LEDGER" "$SHIM/continuation-ledger-malformed"
+sed -i.bak 's/^Reviews: first$/Reviews: not-first/' "$SHIM/continuation-ledger-malformed"
+rm -f "$SHIM/continuation-ledger-malformed.bak"
+sed "s|^Ledger: .*|Ledger: $SHIM/continuation-ledger-malformed|" \
+  "$SHIM/cyc-handoff" > "$SHIM/cyc-bad-ledger"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-bad-ledger" 2>&1)"; rc=$?
+check "a package whose declared ledger violates its closed grammar is refused" "1" "$rc"
+check "and names the ledger field that violated it" "yes" \
+  "$(contains "$out" "revision one must say 'Reviews: first'")"
+check "and malformed ledger bytes cannot retire the agent" "$cycid" "$(id_of cycled)"
+
+cp "$CONTINUATION_LEDGER" "$SHIM/continuation-ledger-wrong-owner"
+sed -i.bak '/^### task.resume-cycled\./,/^$/ s/^Owner: cycled$/Owner: lead/' \
+  "$SHIM/continuation-ledger-wrong-owner"
+rm -f "$SHIM/continuation-ledger-wrong-owner.bak"
+sed "s|^Ledger: .*|Ledger: $SHIM/continuation-ledger-wrong-owner|" \
+  "$SHIM/cyc-handoff" > "$SHIM/cyc-wrong-owner"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-wrong-owner" 2>&1)"; rc=$?
+check "a task reference owned by someone other than the package writer is refused" "1" "$rc"
+check "and the owner mismatch names the referenced task" "yes" \
+  "$(contains "$out" "writer 'cycled' does not own referenced task")"
+check "and cross-validation failure cannot retire the agent" "$cycid" "$(id_of cycled)"
+
+sed 's/^Text:.*/Text: [gang:lead#deadbeef] planted [\/gang:lead#deadbeef]/' \
+  "$SHIM/cyc-handoff" > "$SHIM/cyc-reserved-tag"
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-reserved-tag" 2>&1)"; rc=$?
+check "a validated package that attribution would rewrite is refused" "1" "$rc"
+check "and names reserved tag-shaped text as the reason" "yes" \
+  "$(contains "$out" "reserved tag-shaped text")"
+check "and envelope incompatibility cannot retire the agent" "$cycid" "$(id_of cycled)"
+
 # The happy world, and the CONTROL for every "untouched" above it: unless the
 # window really does change here, none of those assertions were saying anything.
-printf 'CYCRESUME-PAYLOAD carried across the renewal\n' > "$SHIM/cyc-handoff"
 out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-handoff" 2>&1)"; rc=$?
 check "a cycle carrying a resume succeeds" "0" "$rc"
 check "THE CONTROL: the window did change, so the refusals above were checking something" "no" \
@@ -1208,6 +2126,22 @@ check "the resume reaches the agent that was renewed" "yes" \
   "$(has cycled CYCRESUME-PAYLOAD)"
 check "and it is still a fresh launch, not the resume form this profile declares" "no" \
   "$(has cycled RESUMEDFORM)"
+wait_for cycled "the cycle candidate to become accepted after verified delivery" yes \
+  continuation_fixture_accepted cycled "$SHIM/cyc-handoff"
+continuation_fixture_commit cycled "$SHIM/cyc-handoff" || exit 1
+cycle_transition="$(tmux show-options -wqv -t "$(id_of cycled)" @gl_resume_transition)"
+cycle_bank="${cycle_transition##*bank-}"
+case "$cycle_bank" in a) cycle_inactive=b ;; b) cycle_inactive=a ;; *) cycle_inactive=invalid ;; esac
+cycle_meta="$(tmux show-options -wqv -t "$(id_of cycled)" "@gl_resume_manifest_$cycle_bank")"
+cycle_shards="${cycle_meta#*|}"; cycle_shards="${cycle_shards%%|*}"
+check "accepted continuation state keeps only a small bank selector in its header" "yes" \
+  "$(holds "$cycle_transition" '^1[|]accepted[|][1-9][0-9]*[|]bank-[ab]$')"
+check "the bank metadata is canonical and names its complete encoded length" "yes" \
+  "$(holds "$cycle_meta" '^1[|][1-9][0-9]*[|][1-9][0-9]*$')"
+check "the oversized manifest actually crosses a shard boundary" "yes" \
+  "$([ "$cycle_shards" -gt 1 ] && echo yes || echo no)"
+check "and acceptance removes every option from the inactive bank" "0" \
+  "$(tmux show-options -w -t "$(id_of cycled)" | awk -v b="$cycle_inactive" '$1 ~ ("^@gl_resume_manifest_" b "($|_)"){n++} END{print n+0}')"
 # Measured off the file rather than written here: a count retyped into a test is
 # wrong by exactly a trailing newline, and it accuses correct code of an
 # off-by-one (ADR-0012 refuses them from documentation for the same reason).
@@ -1215,16 +2149,423 @@ check "the size is recorded on the window that now holds the body" \
   "$(wc -c < "$SHIM/cyc-handoff" | tr -d ' ')" \
   "$(tmux show-options -wqv -t "$(id_of cycled)" @gl_resume_bytes)"
 
+# Final acceptance is the first state write after verified delivery. Force that
+# write to fail on a lineage which already has an accepted prior manifest: the
+# only safe failure receipt is a reconstructed pending relation containing BOTH
+# complete banks. A later no-package cycle is the reader-side control — it must
+# recognize the restored state as valid pending, then refuse it as leftover.
+cyc hitch cycacceptfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycacceptfail \
+  "ACCEPTFAIL-FIRST establishes the accepted prior manifest" \
+  "$SHIM/cycacceptfail-first"
+out="$(cyc cycle cycacceptfail --from cycacceptfail --resume-stdin \
+  < "$SHIM/cycacceptfail-first" 2>&1)"; rc=$?
+check "the acceptance-restoration fixture first establishes accepted state" "0" "$rc"
+wait_for cycacceptfail "the acceptance-restoration prior candidate to become accepted" yes \
+  continuation_fixture_accepted cycacceptfail "$SHIM/cycacceptfail-first"
+continuation_fixture_commit cycacceptfail "$SHIM/cycacceptfail-first" || exit 1
+acceptfail_prior_header="$(tmux show-options -wqv -t "$(id_of cycacceptfail)" @gl_resume_transition)"
+acceptfail_prior_bank="${acceptfail_prior_header##*bank-}"
+acceptfail_prior_hex="$(continuation_fixture_bank_hex \
+  "$(id_of cycacceptfail)" "$acceptfail_prior_bank")"
+
+continuation_fixture_package cycacceptfail \
+  "ACCEPTFAIL-SECOND was delivered before the accepted-header write failed" \
+  "$SHIM/cycacceptfail-second"
+acceptfail_before="$(id_of cycacceptfail)"
+acceptfail_fault="$SHIM/cycacceptfail-fault"
+out="$(CONTINUATION_TMUX_FAULT=accept-header \
+  CONTINUATION_TMUX_FAULT_STATE="$acceptfail_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycacceptfail --from cycacceptfail --resume-stdin \
+  < "$SHIM/cycacceptfail-second" 2>&1)"; rc=$?
+check "a planted final acceptance write failure is loud" "1" "$rc"
+check "THE CONTROL: the acceptance fault injector reached the accepted-header write" "yes" \
+  "$([ -e "$acceptfail_fault.accepted" ] && echo yes || echo no)"
+check "and reports complete pending restoration rather than ambiguous state" "yes" \
+  "$(contains "$out" "complete pending state was restored and verified")"
+check "the candidate really was delivered before that post-delivery failure" "yes" \
+  "$(has cycacceptfail ACCEPTFAIL-SECOND)"
+check "and the admitted cycle retired its predecessor before delivery" "no" \
+  "$([ "$acceptfail_before" = "$(id_of cycacceptfail)" ] && echo yes || echo no)"
+acceptfail_id="$(id_of cycacceptfail)"
+acceptfail_pending="$(tmux show-options -wqv -t "$acceptfail_id" @gl_resume_transition)"
+IFS='|' read -r acceptfail_version acceptfail_status acceptfail_prior_status \
+  acceptfail_prior_review acceptfail_prior_selector acceptfail_candidate_review \
+  acceptfail_candidate_selector <<< "$acceptfail_pending"
+check "the restored header names a prior accepted state and candidate pending state" \
+  "1 pending accepted" \
+  "$acceptfail_version $acceptfail_status $acceptfail_prior_status"
+check "and the restored candidate review advances the accepted prior review" "yes" \
+  "$([ "$acceptfail_candidate_review" -gt "$acceptfail_prior_review" ] \
+      && echo yes || echo no)"
+check "the restored relation keeps prior and candidate in distinct banks" "yes" \
+  "$([ "$acceptfail_prior_selector" != "$acceptfail_candidate_selector" ] \
+      && [[ "$acceptfail_prior_selector" == bank-* ]] \
+      && [[ "$acceptfail_candidate_selector" == bank-* ]] \
+      && echo yes || echo no)"
+check "the restored prior bank is byte-identical to the accepted manifest" \
+  "$acceptfail_prior_hex" \
+  "$(continuation_fixture_bank_hex "$acceptfail_id" \
+      "${acceptfail_prior_selector#bank-}")"
+acceptfail_candidate_hex="$(continuation_fixture_bank_hex "$acceptfail_id" \
+  "${acceptfail_candidate_selector#bank-}")"
+check "and a complete distinct candidate bank survived beside it" "yes" \
+  "$([ -n "$acceptfail_candidate_hex" ] \
+      && [ "$acceptfail_candidate_hex" != "$acceptfail_prior_hex" ] \
+      && echo yes || echo no)"
+out="$(cyc cycle cycacceptfail 2>&1)"; rc=$?
+check "the complete planted pending state is readable and refused as leftover" "1" "$rc"
+check "and is named pending rather than malformed or empty" "yes" \
+  "$(contains "$out" "pending a prior continuation delivery")"
+check "and the later refusal leaves that pending replacement intact" "$acceptfail_id" \
+  "$(id_of cycacceptfail)"
+
+# The related failure before delivery is carried-state installation on the fresh
+# cycle window. Fail only the second pending-header write (the first is the old
+# lineage becoming pending). The replacement must retain non-pristine evidence,
+# remain unregistered, and refuse adoption as a new empty lineage.
+cyc hitch cyccarryfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cyccarryfail \
+  "CARRYFAIL candidate whose replacement cannot install carried state" \
+  "$SHIM/cyccarryfail-package"
+cyccarryfail_before="$(id_of cyccarryfail)"
+cyccarryfail_fault="$SHIM/cyccarryfail-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-transition \
+  CONTINUATION_TMUX_FAULT_STATE="$cyccarryfail_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cyccarryfail --from cyccarryfail --resume-stdin \
+  < "$SHIM/cyccarryfail-package" 2>&1)"; rc=$?
+check "a planted carried-state initialization failure refuses the cycle" "1" "$rc"
+check "THE CONTROL: the injector saw both old and replacement pending writes" "2" \
+  "$(cat "$cyccarryfail_fault.count" 2>/dev/null)"
+check "and records that the carried replacement write was the one refused" "yes" \
+  "$([ -e "$cyccarryfail_fault.carried" ] && echo yes || echo no)"
+check "the failed installation happened only after the predecessor retired" "no" \
+  "$([ "$cyccarryfail_before" = "$(id_of cyccarryfail)" ] && echo yes || echo no)"
+cyccarryfail_id="$(id_of cyccarryfail)"
+check "the replacement is not exposed as an addressable agent" "" \
+  "$(tmux show-options -wqv -t "$cyccarryfail_id" @gl_profile)"
+check "and retains a continuation floor as non-pristine failure evidence" "yes" \
+  "$(holds "$(tmux show-options -wqv -t "$cyccarryfail_id" @gl_resume_review_floor)" \
+      '^[1-9][0-9]*$')"
+check "and retains the carried manifest bank rather than an empty baseline" "yes" \
+  "$([ "$(tmux show-options -w -t "$cyccarryfail_id" \
+          | awk '$1 ~ /^@gl_resume_manifest_[ab]($|_)/ {n++} END {print n+0}')" -gt 0 ] \
+      && echo yes || echo no)"
+check "and byte-verifies quarantine after the transition installation failure" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cyccarryfail_id" @gl_resume_transition)"
+out="$(cyc adopt cyccarryfail -p cycler 2>&1)"; rc=$?
+check "adopt refuses to reinterpret that carried-installation failure as empty" "1" "$rc"
+check "and names the non-pristine continuation evidence" "yes" \
+  "$(contains "$out" "already carries a continuation review floor, transition, or manifest bank")"
+cyc drop cyccarryfail >/dev/null 2>&1 || true
+
+# A store status is not its readback. Plant each later carried-state lifecycle at
+# the exact unavailable store/read boundary and require the common quarantine
+# relation, even where earlier floor or bank facts happen to survive.
+cyc hitch cyccarryfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cyccarryfail \
+  "FLOOR-READBACK candidate whose carried floor cannot be read back" \
+  "$SHIM/cyccarry-floor-readback-package"
+cyccarry_floor_read_fault="$SHIM/cyccarry-floor-readback-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-readback \
+  CONTINUATION_TMUX_FAULT_STATE="$cyccarry_floor_read_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cyccarryfail --from cyccarryfail --resume-stdin \
+  < "$SHIM/cyccarry-floor-readback-package" 2>&1)"; rc=$?
+check "an unavailable carried-floor readback refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried floor was stored before its readback failed" "yes" \
+  "$([ -e "$cyccarry_floor_read_fault.floor-stored" ] \
+      && [ -e "$cyccarry_floor_read_fault.floor-readback" ] && echo yes || echo no)"
+cyccarryprobe_id="$(id_of cyccarryfail 2>/dev/null)" || cyccarryprobe_id=""
+check "and the floor-readback survivor has exact byte-verified quarantine" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cyccarryprobe_id" @gl_resume_transition 2>/dev/null)"
+out="$(cyc adopt cyccarryfail -p cycler 2>&1)"; rc=$?
+check "the floor-readback survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cyccarryfail >/dev/null 2>&1 || true
+
+cyc hitch cyccarryfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cyccarryfail \
+  "BANK-STORE candidate whose carried bank installation is unavailable" \
+  "$SHIM/cyccarry-bank-store-package"
+cyccarry_bank_store_fault="$SHIM/cyccarry-bank-store-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-bank-store \
+  CONTINUATION_TMUX_FAULT_STATE="$cyccarry_bank_store_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cyccarryfail --from cyccarryfail --resume-stdin \
+  < "$SHIM/cyccarry-bank-store-package" 2>&1)"; rc=$?
+check "an unavailable carried-bank installation refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried bank store failure was reached" "yes" \
+  "$([ -e "$cyccarry_bank_store_fault.bank-store" ] && echo yes || echo no)"
+cyccarryprobe_id="$(id_of cyccarryfail 2>/dev/null)" || cyccarryprobe_id=""
+check "and the bank-store survivor has exact byte-verified quarantine" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cyccarryprobe_id" @gl_resume_transition 2>/dev/null)"
+out="$(cyc adopt cyccarryfail -p cycler 2>&1)"; rc=$?
+check "the bank-store survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cyccarryfail >/dev/null 2>&1 || true
+
+cyc hitch cyccarryfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cyccarryfail \
+  "BANK-READBACK candidate whose carried bank cannot be read back" \
+  "$SHIM/cyccarry-bank-readback-package"
+cyccarry_bank_read_fault="$SHIM/cyccarry-bank-readback-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-bank-readback \
+  CONTINUATION_TMUX_FAULT_STATE="$cyccarry_bank_read_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cyccarryfail --from cyccarryfail --resume-stdin \
+  < "$SHIM/cyccarry-bank-readback-package" 2>&1)"; rc=$?
+check "an unavailable carried-bank readback refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried bank was stored before its readback failed" "yes" \
+  "$([ -e "$cyccarry_bank_read_fault.bank-stored" ] \
+      && [ -e "$cyccarry_bank_read_fault.bank-readback" ] && echo yes || echo no)"
+cyccarryprobe_id="$(id_of cyccarryfail 2>/dev/null)" || cyccarryprobe_id=""
+check "and the bank-readback survivor has exact byte-verified quarantine" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cyccarryprobe_id" @gl_resume_transition 2>/dev/null)"
+out="$(cyc adopt cyccarryfail -p cycler 2>&1)"; rc=$?
+check "the bank-readback survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cyccarryfail >/dev/null 2>&1 || true
+
+cyc hitch cyccarryfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cyccarryfail \
+  "TRANSITION-READBACK candidate whose carried header cannot be read back" \
+  "$SHIM/cyccarry-transition-readback-package"
+cyccarry_transition_read_fault="$SHIM/cyccarry-transition-readback-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-transition-readback \
+  CONTINUATION_TMUX_FAULT_STATE="$cyccarry_transition_read_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cyccarryfail --from cyccarryfail --resume-stdin \
+  < "$SHIM/cyccarry-transition-readback-package" 2>&1)"; rc=$?
+check "an unavailable carried-transition readback refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried transition was stored before its readback failed" "yes" \
+  "$([ -e "$cyccarry_transition_read_fault.transition-stored" ] \
+      && [ -e "$cyccarry_transition_read_fault.transition-readback" ] \
+      && echo yes || echo no)"
+cyccarryprobe_id="$(id_of cyccarryfail 2>/dev/null)" || cyccarryprobe_id=""
+check "and the transition-readback survivor has exact byte-verified quarantine" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cyccarryprobe_id" @gl_resume_transition 2>/dev/null)"
+out="$(cyc adopt cyccarryfail -p cycler 2>&1)"; rc=$?
+check "the transition-readback survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cyccarryfail >/dev/null 2>&1 || true
+
+# The earliest carried-state failure has neither floor nor manifest bank to make
+# the replacement non-pristine. Its emergency transition is therefore the whole
+# boundary against a later adopt treating that window as a fresh empty lineage.
+# Swallow the write while reporting success: an unchecked poison is no poison.
+cyc hitch cycfloorfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycfloorfail \
+  "FLOORFAIL candidate whose replacement cannot record its carried floor" \
+  "$SHIM/cycfloorfail-package"
+cycfloorfail_before="$(id_of cycfloorfail)"
+cycfloorfail_fault="$SHIM/cycfloorfail-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-poison \
+  CONTINUATION_TMUX_FAULT_STATE="$cycfloorfail_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycfloorfail --from cycfloorfail --resume-stdin \
+  < "$SHIM/cycfloorfail-package" 2>&1)"; rc=$?
+check "a planted carried-floor initialization failure refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried-floor injector reached the replacement" "yes" \
+  "$([ -e "$cycfloorfail_fault.floor" ] && echo yes || echo no)"
+check "THE CONTROL: the poison write was swallowed after reporting success" "yes" \
+  "$([ -e "$cycfloorfail_fault.poison" ] && echo yes || echo no)"
+check "THE CONTROL: retirement used a readable session inventory" "yes" \
+  "$([ -e "$cycfloorfail_fault.inventory" ] && echo yes || echo no)"
+check "and that inventory's known spent-window control survives" "yes" \
+  "$([ -n "$(tmux display-message -p -t "$cycfloorfail_before" '#{window_id}' 2>/dev/null)" ] \
+      && echo yes || echo no)"
+cycfloorfail_after="$(id_of cycfloorfail 2>/dev/null)" || cycfloorfail_after=""
+check "and the failure happened after predecessor retirement" "no" \
+  "$([ "$cycfloorfail_before" = "$cycfloorfail_after" ] \
+      && echo yes || echo no)"
+out="$(cyc adopt cycfloorfail -p cycler 2>&1)"; rc=$?
+check "a swallowed carried-floor poison leaves no replacement adoptable as empty" "1" "$rc"
+
+# A successful kill status is not proof that the replacement disappeared, and a
+# failed identity read is not an empty identity. Swallow the poison and kill,
+# then make both the old single-target read and the positively evaluated session
+# inventory unavailable. The surviving fresh window must carry verified
+# non-pristine quarantine state so a later ordinary adopt still refuses it.
+cyc hitch cycfloorfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycfloorfail \
+  "FLOOR-UNKNOWN candidate whose replacement cannot prove quarantine or retirement" \
+  "$SHIM/cycfloorfail-unverifiable-package"
+cycfloorunknown_fault="$SHIM/cycfloorunknown-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-unverifiable \
+  CONTINUATION_TMUX_FAULT_STATE="$cycfloorunknown_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycfloorfail --from cycfloorfail --resume-stdin \
+  < "$SHIM/cycfloorfail-unverifiable-package" 2>&1)"; rc=$?
+check "an unverifiable carried-floor quarantine refuses the cycle" "1" "$rc"
+check "THE CONTROL: the carried-floor write was refused" "yes" \
+  "$([ -e "$cycfloorunknown_fault.floor" ] && echo yes || echo no)"
+check "THE CONTROL: the emergency poison write was swallowed" "yes" \
+  "$([ -e "$cycfloorunknown_fault.poison" ] && echo yes || echo no)"
+check "THE CONTROL: replacement retirement falsely reported success" "yes" \
+  "$([ -e "$cycfloorunknown_fault.kill" ] && echo yes || echo no)"
+check "THE CONTROL: replacement identity could not be evaluated" "yes" \
+  "$([ -e "$cycfloorunknown_fault.identity" ] && echo yes || echo no)"
+check "THE CONTROL: unreadable retirement fell back to the quarantine store" "yes" \
+  "$([ -e "$cycfloorunknown_fault.quarantine" ] && echo yes || echo no)"
+cycfloorunknown_id="$(id_of cycfloorfail 2>/dev/null)" || cycfloorunknown_id=""
+check "the unreadable retirement predicate really left the replacement present" "yes" \
+  "$([ -n "$cycfloorunknown_id" ] && echo yes || echo no)"
+check "and the survivor carries verified non-pristine quarantine state" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cycfloorunknown_id" @gl_resume_quarantine 2>/dev/null)"
+out="$(cyc adopt cycfloorfail -p cycler 2>&1)"; rc=$?
+check "an unretired carried-floor replacement cannot be adopted as empty" "1" "$rc"
+cyc drop cycfloorfail >/dev/null 2>&1 || true
+
+# A successful inventory that still names the replacement is a positive
+# surviving-id result, not a failed absence lookup. The exact quarantine fact is
+# what makes that unregistered survivor non-pristine.
+cyc hitch cycfloorfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycfloorfail \
+  "FLOOR-PRESENT candidate whose fake retirement leaves the replacement listed" \
+  "$SHIM/cycfloorfail-present-package"
+cycfloorpresent_fault="$SHIM/cycfloorpresent-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-present \
+  CONTINUATION_TMUX_FAULT_STATE="$cycfloorpresent_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycfloorfail --from cycfloorfail --resume-stdin \
+  < "$SHIM/cycfloorfail-present-package" 2>&1)"; rc=$?
+check "a positively listed carried-floor survivor refuses the cycle" "1" "$rc"
+check "THE CONTROL: fake retirement reached a readable inventory" "yes" \
+  "$([ -e "$cycfloorpresent_fault.kill" ] \
+      && [ -e "$cycfloorpresent_fault.inventory" ] && echo yes || echo no)"
+cycfloorpresent_id="$(id_of cycfloorfail 2>/dev/null)" || cycfloorpresent_id=""
+check "the positive inventory really leaves the replacement present" "yes" \
+  "$([ -n "$cycfloorpresent_id" ] && echo yes || echo no)"
+check "and the surviving replacement has a byte-verified quarantine fact" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cycfloorpresent_id" @gl_resume_quarantine 2>/dev/null)"
+out="$(cyc adopt cycfloorfail -p cycler 2>&1)"; rc=$?
+check "the positively listed survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cycfloorfail >/dev/null 2>&1 || true
+
+# A successful but incomplete inventory can carry the known control and omit the
+# replacement. Its declared cardinality proves it is not a disappearance receipt.
+cyc hitch cycfloorfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycfloorfail \
+  "FLOOR-INCOMPLETE candidate whose retirement inventory is partial" \
+  "$SHIM/cycfloorfail-incomplete-package"
+cycfloorincomplete_control="$(id_of cycfloorfail)"
+cycfloorincomplete_fault="$SHIM/cycfloorincomplete-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-inventory-incomplete \
+  CONTINUATION_TMUX_FAULT_STATE="$cycfloorincomplete_fault" \
+  CONTINUATION_TMUX_FAULT_CONTROL="$cycfloorincomplete_control" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycfloorfail --from cycfloorfail --resume-stdin \
+  < "$SHIM/cycfloorfail-incomplete-package" 2>&1)"; rc=$?
+check "an incomplete carried-floor retirement inventory refuses the cycle" "1" "$rc"
+check "THE CONTROL: the partial inventory path was reached" "yes" \
+  "$([ -e "$cycfloorincomplete_fault.inventory" ] && echo yes || echo no)"
+cycfloorincomplete_id="$(id_of cycfloorfail 2>/dev/null)" || cycfloorincomplete_id=""
+check "the incomplete predicate leaves a quarantined replacement" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cycfloorincomplete_id" @gl_resume_quarantine 2>/dev/null)"
+out="$(cyc adopt cycfloorfail -p cycler 2>&1)"; rc=$?
+check "the incompletely inventoried survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cycfloorfail >/dev/null 2>&1 || true
+
+# Failure of the first quarantine store is another predicate, not permission to
+# leave the unregistered replacement pristine. Only the repeated exact readback
+# turns this survivor into a verified quarantine.
+cyc hitch cycfloorfail -p cycler -d /tmp >/dev/null
+continuation_fixture_package cycfloorfail \
+  "FLOOR-QUARANTINE-RETRY candidate whose first quarantine store fails" \
+  "$SHIM/cycfloorfail-quarantine-retry-package"
+cycfloorretry_fault="$SHIM/cycfloorretry-fault"
+out="$(CONTINUATION_TMUX_FAULT=carry-floor-quarantine-retry \
+  CONTINUATION_TMUX_FAULT_STATE="$cycfloorretry_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycfloorfail --from cycfloorfail --resume-stdin \
+  < "$SHIM/cycfloorfail-quarantine-retry-package" 2>&1)"; rc=$?
+check "a failed quarantine store still refuses the carried-floor cycle" "1" "$rc"
+check "THE CONTROL: the first quarantine store really failed" "yes" \
+  "$([ -e "$cycfloorretry_fault.quarantine-failed" ] && echo yes || echo no)"
+check "THE CONTROL: a later quarantine store reached real tmux" "yes" \
+  "$([ -e "$cycfloorretry_fault.quarantine-stored" ] && echo yes || echo no)"
+cycfloorretry_id="$(id_of cycfloorfail 2>/dev/null)" || cycfloorretry_id=""
+check "the store-failure survivor has the exact verified quarantine fact" \
+  "1|carried-install-failed" \
+  "$(tmux show-options -wqv -t "$cycfloorretry_id" @gl_resume_quarantine 2>/dev/null)"
+out="$(cyc adopt cycfloorfail -p cycler 2>&1)"; rc=$?
+check "the store-failure survivor cannot be adopted as empty" "1" "$rc"
+cyc drop cycfloorfail >/dev/null 2>&1 || true
+
 # The slope, which is the whole instrument: a size is a point, and every addition
 # to a handoff is defensible one at a time. A renewal that dropped the previous
 # reading would silence it for good on a team that renews by cycle alone.
-printf 'CYCRESUME-PAYLOAD carried across the renewal, and then a further line\n' \
-  > "$SHIM/cyc-handoff2"
+cycle_fill2="$(head -c 2800 /dev/zero | tr '\0' y)"
+continuation_fixture_package cycled \
+  "$cycle_fill2 CYCRESUME-PAYLOAD carried across the renewal, and then a further line" \
+  "$SHIM/cyc-handoff2"
 grew=$(( $(wc -c < "$SHIM/cyc-handoff2") - $(wc -c < "$SHIM/cyc-handoff") ))
+
+# The session compound is an observed relation, not six independently trusted
+# fields. First make its known-present value unreadable, then make its redundant
+# revision disagree with the stored ledger bytes. Both must refuse; restoring
+# the exact prior compound then supplies the positive control for same-path reuse.
+ledger_state="$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_resume_ledger)"
+check "THE CONTROL: a complete ledger continuity compound is present" "yes" \
+  "$(holds "$ledger_state" '^1[|][0-9a-f]+[|][0-9a-f]+[|][1-9][0-9]*[|][0-9a-f]+[|](-|[0-9a-f]+)$')"
+cycle_second_id="$(id_of cycled)"
+ledger_fault="$SHIM/ledger-read-fault"
+out="$(CONTINUATION_TMUX_FAULT=ledger-read \
+  CONTINUATION_TMUX_FAULT_STATE="$ledger_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" cycle cycled --from cycled --resume-stdin \
+  < "$SHIM/cyc-handoff2" 2>&1)"; rc=$?
+check "a known-present ledger compound that cannot be read is could-not-determine" "1" "$rc"
+check "THE CONTROL: the ledger-read injector reached the known-present value" "yes" \
+  "$([ -e "$ledger_fault.ledger-read" ] && echo yes || echo no)"
+check "and the failed read is named rather than spent as an absent baseline" "yes" \
+  "$(contains "$out" "could not read the ledger continuity state known to exist")"
+check "and a failed compound read cannot retire the agent" "$cycle_second_id" \
+  "$(id_of cycled)"
+
+IFS='|' read -r ledger_version ledger_path_hex ledger_writer_hex ledger_revision \
+  ledger_bytes_hex ledger_rows_hex <<< "$ledger_state"
+ledger_bad_revision=$(( ledger_revision + 1 ))
+tmux set-option -t "=$GANG_SESSION:" @gl_resume_ledger \
+  "$ledger_version|$ledger_path_hex|$ledger_writer_hex|$ledger_bad_revision|$ledger_bytes_hex|$ledger_rows_hex"
 out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-handoff2" 2>&1)"; rc=$?
-check "a second renewal carrying a bigger handoff succeeds" "0" "$rc"
+check "a compound revision inconsistent with its stored ledger bytes is refused" "1" "$rc"
+check "and names the stored relation that disagrees" "yes" \
+  "$(contains "$out" "stored task ledger Revision disagrees with its pinned compound state")"
+check "and relational compound corruption cannot retire the agent" "$cycle_second_id" \
+  "$(id_of cycled)"
+tmux set-option -t "=$GANG_SESSION:" @gl_resume_ledger "$ledger_state"
+check "THE CONTROL: the exact known-good compound is restored" "$ledger_state" \
+  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_resume_ledger)"
+
+# Byte-identical ledger contents reached through a different path are still a
+# second authority. Refuse the alias, then accept the unchanged candidate through
+# the pinned spelling so path continuity has both worlds in one fixture.
+ln -s "$CONTINUATION_LEDGER" "$SHIM/continuation-ledger-alias"
+sed "s|^Ledger: .*|Ledger: $SHIM/continuation-ledger-alias|" \
+  "$SHIM/cyc-handoff2" > "$SHIM/cyc-handoff2-alias"
+out="$(cyc cycle cycled --from cycled --resume-stdin \
+  < "$SHIM/cyc-handoff2-alias" 2>&1)"; rc=$?
+check "byte-identical ledger bytes through a different path are refused" "1" "$rc"
+check "and the refusal names the session-pinned path relation" "yes" \
+  "$(contains "$out" "declared Ledger path differs from the path pinned")"
+check "and a second ledger spelling cannot retire the agent" "$cycle_second_id" \
+  "$(id_of cycled)"
+
+out="$(cyc cycle cycled --from cycled --resume-stdin < "$SHIM/cyc-handoff2" 2>&1)"; rc=$?
+check "THE CONTROL: the pinned Ledger path accepts the same structured candidate" "0" "$rc"
 check "and the growth survives the renewal that would otherwise take it away" "yes" \
   "$(contains "$out" "up $grew since the last one delivered to this seat")"
+wait_for cycled "the replacement note synthesis to become accepted" yes \
+  continuation_fixture_accepted cycled "$SHIM/cyc-handoff2"
+continuation_fixture_commit cycled "$SHIM/cyc-handoff2" || exit 1
 
 # RETIREMENT. The predecessor is not killed: an operator asked to go on reading a
 # predecessor's closing remarks after its replacement was already up, and a
@@ -1322,6 +2663,9 @@ esac
 # Typed into the agent's own pane, because that is the only place the claim
 # exists to be tested.
 cyc hitch cycself -p cycler -d /tmp >/dev/null 2>&1
+continuation_fixture_package cycself \
+  "CYCSELF-RESUME carried by the self-issued structured package" \
+  "$SHIM/cycself-handoff"
 # RESOLVED IN THE MAIN SHELL, for the reason target_of exists at all: its refusal,
 # and id_of's underneath it, only leaves the command substitution it runs in. A
 # target interpolated straight into `-t` is therefore not guarded by the guard it
@@ -1356,7 +2700,7 @@ cycself_replaced() {
 # status that is not answering it.
 wait_for cycself "the caller's own shell to be ready for keys" yes has cycself '❯'
 tmux send-keys -t "$cycselfid" \
-  "GANG_PROFILES='$SHIM/custom-profiles' '$GANG' cycle cycself --from cycself --resume-stdin <<< 'CYCSELF-RESUME'" Enter
+  "GANG_PROFILES='$SHIM/custom-profiles' '$GANG' cycle cycself --from cycself --resume-stdin < '$SHIM/cycself-handoff'" Enter
 # NAMED, so a timeout brings its own cause with it. wait_for prints the agent's
 # screen only when it is told whose screen to print, and this is the wait whose
 # failure needs it: the pane it dumps is the one the cycle was typed into, where a
@@ -1392,6 +2736,9 @@ check "AND IS STILL RUNNING IN IT: it answered after the act" "yes" \
 wait_for cycself "the self-issued resume to arrive" yes has cycself CYCSELF-RESUME
 check "and its own handoff reached the replacement" "yes" \
   "$([ "$(cycself_replaced)" = yes ] && has cycself CYCSELF-RESUME || echo no)"
+wait_for cycself "the self-issued candidate to become accepted" yes \
+  continuation_fixture_accepted cycself "$SHIM/cycself-handoff"
+continuation_fixture_commit cycself "$SHIM/cycself-handoff" || exit 1
 
 # `-m` AT CYCLE. The model is the one launch fact an operator may want CHANGED
 # across a renewal rather than replayed, and no verb moves a running agent to
@@ -1445,8 +2792,27 @@ check "so a later renewal naming nothing replays the model last chosen" "second-
 "$GANG" drop 'cycnorole~spent' >/dev/null 2>&1 || true
 "$GANG" drop cycself >/dev/null 2>&1 || true
 "$GANG" drop 'cycself~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycacceptfail >/dev/null 2>&1 || true
+"$GANG" drop 'cycacceptfail~spent' >/dev/null 2>&1 || true
+"$GANG" drop cyccarryfail >/dev/null 2>&1 || true
+"$GANG" drop 'cyccarryfail~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycfloorfail >/dev/null 2>&1 || true
+"$GANG" drop 'cycfloorfail~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycmanifestok >/dev/null 2>&1 || true
+"$GANG" drop 'cycmanifestok~spent' >/dev/null 2>&1 || true
+"$GANG" drop cycmanifesttask >/dev/null 2>&1 || true
+"$GANG" drop cycmanifestclaim >/dev/null 2>&1 || true
 "$GANG" drop cycadopted >/dev/null 2>&1 || true
+"$GANG" drop cycpartialfloor >/dev/null 2>&1 || true
+"$GANG" drop cycpartialstate >/dev/null 2>&1 || true
+"$GANG" drop cycmalformedstate >/dev/null 2>&1 || true
+"$GANG" drop cyccarriedstate >/dev/null 2>&1 || true
 "$GANG" drop cycstray >/dev/null 2>&1 || true
+"$GANG" drop cycshardmissing >/dev/null 2>&1 || true
+"$GANG" drop cycshardextra >/dev/null 2>&1 || true
+"$GANG" drop cycshardcase >/dev/null 2>&1 || true
+"$GANG" drop cycpendingstate >/dev/null 2>&1 || true
+"$GANG" drop cycsamebank >/dev/null 2>&1 || true
 
 # --- a renewal in the session's only window, and the cutoff it leaves alone -----
 section "a renewal in the session's only window, and the cutoff it leaves alone"
@@ -2028,20 +3394,14 @@ section "reaching an agent that is working"
 # could not drive its own compaction. Busy does not decide whether a message can
 # be delivered; gang measures that in the pane, before and after. What it decides
 # is where the keystrokes LAND, and that is the harness's property to declare.
-cat > "$SHIM/custom-profiles/working.sh" <<SH
-GANG_LAUNCH="PS1='❯ ' bash --norc"
+fake_harness working "PS1='❯ ' bash --norc"
+cat >> "$SHIM/custom-profiles/working.sh" <<SH
 GANG_BUSY_REGEX="WORKING\\.\\.\\.|COMPACTING\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
 GANG_COMPACTING_REGEX="COMPACTING\\.\\.\\."
 GANG_OCCUPIED_REGEX="Do you want to proceed\\?"
 GANG_MIDTURN_INPUT="\${FAKE_QUEUES:-}"
 GANG_MIDTURN_ACTS="\${FAKE_ACTS:-}"
-GANG_VERIFIED_VERSIONS="any"
-profile_input() {
-  local line
-  line="\$(tmux capture-pane -pJ -t "\$1" | grep '^❯' | tail -1)" || return 1
-  printf '%s' "\${line#❯}" | tr -d '\302\240'
-}
 SH
 export GANG_PROFILES="$SHIM/custom-profiles"
 "$GANG" hitch busybee -p working -d /tmp >/dev/null 2>&1
@@ -2215,8 +3575,12 @@ check "and names the window doing the borrowing" "yes" \
 # very turn that was about to be compacted. It is delivered afterwards instead,
 # and not until the pane has been quiet long enough that it cannot be landing in
 # the gap between the turn ending and compaction starting to paint.
-printf '%s' MARK_RESUMED | GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
-  "$GANG" compact busybee --from busybee --resume-stdin >/dev/null 2>&1
+continuation_fixture_package busybee \
+  "MARK_RESUMED carried only after the queued compaction settles" \
+  "$SHIM/busybee-resumed"
+GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/busybee-resumed" >/dev/null 2>&1
 absence_window 2 "a resume must not overtake the turn it was queued behind"
 check "a resume waits while the agent is still busy" "no" "$(has busybee MARK_RESUMED)"
 tmux send-keys -t "$(target_of busybee)" clear Enter   # compaction "finishes"
@@ -2226,6 +3590,9 @@ tmux send-keys -t "$(target_of busybee)" clear Enter   # compaction "finishes"
 WAIT_TIMEOUT=60 wait_for busybee "the held resume to land once the pane settles" yes \
   has busybee MARK_RESUMED
 check "and lands once the pane settles" "yes" "$(has busybee "MARK_RESUMED")"
+wait_for busybee "the settled compact candidate to become accepted" yes \
+  continuation_fixture_accepted busybee "$SHIM/busybee-resumed"
+continuation_fixture_commit busybee "$SHIM/busybee-resumed" || exit 1
 
 # Waiting for quiet is the fallback, not the goal. A compaction that is visibly
 # running is already past the turn that would have eaten the resume, and reads no
@@ -2233,8 +3600,11 @@ check "and lands once the pane settles" "yes" "$(has busybee "MARK_RESUMED")"
 # out. Which of the waiter's exits delivered is ASSERTED below rather than inferred
 # from how fast the message arrived.
 paint busybee 'WORKING...'
-printf '%s' MARK_FAST | GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
-  "$GANG" compact busybee --from busybee --resume-stdin >/dev/null 2>&1
+continuation_fixture_package busybee \
+  "MARK_FAST carried behind a visible compaction" "$SHIM/busybee-fast"
+GANG_RESUME_TIMEOUT=60 TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/busybee-fast" >/dev/null 2>&1
 absence_window 2 "a resume must not go in while a turn that could eat it is running"
 check "a resume still holds while a turn that could eat it runs" "no" "$(has busybee MARK_FAST)"
 tmux send-keys -t "$(target_of busybee)" clear Enter   # that turn ends...
@@ -2264,6 +3634,9 @@ check "and nothing was recorded at issue for a context drop to be measured from"
 WAIT_TIMEOUT=20 wait_for busybee "the resume to go straight in behind a visible compaction" \
   yes has busybee MARK_FAST
 check "and goes in the moment the compaction itself is running" "yes" "$(has busybee "MARK_FAST")"
+wait_for busybee "the visible-compaction candidate to become accepted" yes \
+  continuation_fixture_accepted busybee "$SHIM/busybee-fast"
+continuation_fixture_commit busybee "$SHIM/busybee-fast" || exit 1
 
 # A resume is charged to a context emptied to make room for it, so what a renewal
 # may hand forward is bounded where the verb takes it. The refusal names two ways
@@ -2284,16 +3657,15 @@ over="$(mktemp)"; under="$(mktemp)"; override="$(mktemp)"; grown="$(mktemp)"
 head -c 65537 /dev/zero | tr '\0' 'x' > "$over"
 # Three DISTINCT bodies, because each delivery below has to be provably drained
 # before this block ends and a shared marker cannot tell one arrival from another.
-printf 'MARK_FOLDA folded to what the successor must act on\n' > "$under"
-printf 'MARK_FOLDB folded, and this one is the override body\n' > "$override"
-printf 'MARK_FOLDC folded, plus one more arc than the body before it\n' > "$grown"
+continuation_fixture_package busybee \
+  "MARK_FOLDA folded to what the successor must act on" "$under"
 mark_before="$(tmux show-options -wqv -t "$(target_of busybee)" @gl_compacting)"
 out="$(TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin < "$over" 2>&1)"; rc=$?
 check "a resume past the budget is refused" "3" "$rc"
 check "and the refusal reports the bytes it measured" "yes" \
   "$(contains "$out" "$(wc -c < "$over" | tr -d '[:space:]') bytes")"
 check "and names the variable that would admit it" "yes" "$(contains "$out" "GANG_RESUME_MAX is 65536")"
-check "and refuses to trim it rather than offering to" "yes" "$(contains "$out" "will not trim it for you")"
+check "and refuses to trim it rather than offering to" "yes" "$(contains "$out" "will not trim it")"
 # The refusal claims nothing was typed. Exit 3 is the codebase's word for that and
 # this is the evidence behind it: the mark cmd_compact writes after the command
 # verifies in the pane has not moved.
@@ -2315,11 +3687,16 @@ check "and the delivery states the size it took" "yes" \
   "$(contains "$out" "$(wc -c < "$under" | tr -d '[:space:]') bytes of 65536")"
 check "and the body it accepted actually arrives" "yes" \
   "$(WAIT_TIMEOUT=60 wait_for busybee "the folded resume to land" yes has busybee MARK_FOLDA >/dev/null 2>&1 && echo yes || echo no)"
+wait_for busybee "the folded compact candidate to become accepted" yes \
+  continuation_fixture_accepted busybee "$under"
+continuation_fixture_commit busybee "$under" || exit 1
 # WAY OUT TWO — the override, taken on ONE body across two budgets so the raise is
 # what changes the answer and nothing else. Driven small deliberately: proving the
 # raise admits a body it had refused does not need that body to be a large one, and
 # a 65k paste would put inject's own verification in the way of the thing under
 # test.
+continuation_fixture_package busybee \
+  "MARK_FOLDB folded, and this one is the override body" "$override"
 small_bytes="$(wc -c < "$override" | tr -d '[:space:]')"
 out="$(GANG_RESUME_MAX=$(( small_bytes - 1 )) TMUX_PANE="$selfpane" \
   "$GANG" compact busybee --from busybee --resume-stdin < "$override" 2>&1)"; rc=$?
@@ -2332,6 +3709,9 @@ out="$(GANG_RESUME_MAX="$small_bytes" GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane
 check "and raising it admits that same body" "0" "$rc"
 check "and that same body arrives once the budget admits it" "yes" \
   "$(WAIT_TIMEOUT=60 wait_for busybee "the admitted resume to land" yes has busybee MARK_FOLDB >/dev/null 2>&1 && echo yes || echo no)"
+wait_for busybee "the budget-override candidate to become accepted" yes \
+  continuation_fixture_accepted busybee "$override"
+continuation_fixture_commit busybee "$override" || exit 1
 # A budget that cannot be compared to is not a budget, and the failure direction
 # matters: a non-numeric value must refuse rather than silently admit everything.
 GANG_RESUME_MAX=lots TMUX_PANE="$selfpane" \
@@ -2342,6 +3722,8 @@ check "a budget that is not a whole number of bytes is refused" "1" "$?"
 # readings a renewal apart are what make growth sayable, and gang is what carries
 # the earlier one across the compaction that would have taken it from the agent.
 paint busybee 'READY'
+continuation_fixture_package busybee \
+  "MARK_FOLDC folded, plus one deliberately longer arc than the body before it" "$grown"
 out="$(GANG_RESUME_TIMEOUT=5 TMUX_PANE="$selfpane" \
   "$GANG" compact busybee --from busybee --resume-stdin < "$grown" 2>&1)"
 check "a resume that grew since the last one says how far" "yes" \
@@ -2355,10 +3737,613 @@ check "a resume that grew since the last one says how far" "yes" \
 # one that can be stepped over leaves exactly the race it was added to remove.
 wait_for busybee "the last queued resume to land before the next section" \
   yes has busybee MARK_FOLDC || exit 1
+wait_for busybee "the grown compact candidate to become accepted" yes \
+  continuation_fixture_accepted busybee "$grown"
+continuation_fixture_commit busybee "$grown" || exit 1
 # and the box emptied behind it, so the section below inherits a settled fixture
 # rather than an unsubmitted paste.
 paint busybee 'READY'
 rm -f "$over" "$under" "$override" "$grown"
+
+# --- focused could-not-determine controls for continuation runtime resources ---
+
+file_there() { [ -e "$1" ] && echo yes || echo no; }
+resume_failure_is() { # $1 target, $2 exact stored alert -> yes|no
+  local value
+  value="$(tmux show-options -wqv -t "$1" @gl_resume_failed)" || return 1
+  [ "$value" = "$2" ] && echo yes || echo no
+}
+resume_outcome_is() { # $1 target, $2 exact stored outcome -> yes|no
+  local value
+  value="$(tmux show-options -wqv -t "$1" @gl_resume_outcome)" || return 1
+  [ "$value" = "$2" ] && echo yes || echo no
+}
+resume_outcome_absent() { # $1 target -> yes|no
+  local value
+  value="$(tmux show-options -wqv -t "$1" @gl_resume_outcome)" || return 1
+  [ -z "$value" ] && echo yes || echo no
+}
+pid_running() { # $1 pid -> yes|no
+  kill -0 "$1" 2>/dev/null && echo yes || echo no
+}
+fixture_path_state() { # $1 exact path -> absent|present|could-not-determine
+  local path="$1" parent="${1%/*}"
+  [ "$parent" != "$path" ] || { echo could-not-determine; return; }
+  [ -n "$parent" ] || parent=/
+  [ -d "$parent" ] && [ -x "$parent" ] \
+    || { echo could-not-determine; return; }
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    echo present
+  else
+    echo absent
+  fi
+}
+
+# mktemp can create the directory, print its path, and still return failure. The
+# printed path is the positive control that staging existed; cleanup must already
+# be armed when continuation_begin turns that failure into a refusal.
+continuation_fixture_package busybee \
+  "MKTEMP-FAIL must remain with its authored file" "$SHIM/mktemp-fail-package"
+mktemp_fault="$SHIM/mktemp-fault"
+out="$(CONTINUATION_MKTEMP_FAULT=return-path-then-fail \
+  CONTINUATION_MKTEMP_FAULT_STATE="$mktemp_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/mktemp-fail-package" 2>&1)"; rc=$?
+check "a staging creator that returns a path and failure refuses renewal" "1" "$rc"
+check "THE CONTROL: the failing staging creator made the named directory" "yes" \
+  "$([ -e "$mktemp_fault.hit" ] && echo yes || echo no)"
+check "and the failed staging path is removed despite mktemp's status" "no" \
+  "$([ -e "$mktemp_fault.dir" ] && echo yes || echo no)"
+
+# The same staging boundary under a catchable signal. The creator records the
+# directory before signalling the command-substitution parent, so the hit proves
+# a path existed and its later absence proves the pre-armed EXIT cleanup ran.
+continuation_fixture_package busybee \
+  "MKTEMP-TERM must remain with its authored file" "$SHIM/mktemp-term-package"
+mktemp_term_fault="$SHIM/mktemp-term-fault"
+out="$(CONTINUATION_MKTEMP_FAULT=create-then-term \
+  CONTINUATION_MKTEMP_FAULT_STATE="$mktemp_term_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/mktemp-term-package" 2>&1)"; rc=$?
+check "a signal after staging creation refuses renewal" "1" "$rc"
+check "THE CONTROL: the signalled staging creator made the named directory" "yes" \
+  "$([ -e "$mktemp_term_fault.hit" ] && echo yes || echo no)"
+check "and catchable-signal cleanup removes that staging path" "no" \
+  "$([ -e "$mktemp_term_fault.dir" ] && echo yes || echo no)"
+
+# A cleanup command can itself become unavailable after the path exists. That is
+# not verified absence: retain the exact path for inspection and make the
+# could-not-determine cleanup verdict audible on the caller's stderr.
+continuation_fixture_package busybee \
+  "MKTEMP-CLEANUP-UNKNOWN must remain with its authored file" \
+  "$SHIM/mktemp-cleanup-unknown-package"
+mktemp_cleanup_fault="$SHIM/mktemp-cleanup-fault"
+out="$(CONTINUATION_MKTEMP_FAULT=return-path-then-fail \
+  CONTINUATION_MKTEMP_FAULT_STATE="$mktemp_cleanup_fault" \
+  CONTINUATION_RM_FAULT=staging-cleanup \
+  CONTINUATION_RM_FAULT_STATE="$mktemp_cleanup_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/mktemp-cleanup-unknown-package" 2>&1)"; rc=$?
+check "an unverifiable staging cleanup refuses renewal" "1" "$rc"
+check "THE CONTROL: the planted cleanup failure was reached" "yes" \
+  "$([ -e "$mktemp_cleanup_fault.cleanup" ] && echo yes || echo no)"
+check "and the caller hears that staging absence could not be verified" "yes" \
+  "$(contains "$out" "could not remove and verify the private staging path")"
+check "the unverifiably removed path is retained for inspection" "yes" \
+  "$([ -e "$mktemp_cleanup_fault.dir" ] && echo yes || echo no)"
+rm -rf -- "$mktemp_cleanup_fault.dir"
+
+# A removal can report success while making the exact-name predicate
+# unevaluable. Hide the staging path behind an unsearchable parent at that edge;
+# runtime must name could-not-determine and retain the recorded path.
+continuation_fixture_package busybee \
+  "MKTEMP-PREDICATE-UNKNOWN must remain with its authored file" \
+  "$SHIM/mktemp-predicate-unknown-package"
+mktemp_predicate_fault="$SHIM/mktemp-predicate-fault"
+out="$(CONTINUATION_MKTEMP_FAULT=return-hidden-path-then-fail \
+  CONTINUATION_MKTEMP_FAULT_STATE="$mktemp_predicate_fault" \
+  CONTINUATION_RM_FAULT=staging-predicate-unavailable \
+  CONTINUATION_RM_FAULT_STATE="$mktemp_predicate_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" TMUX_PANE="$selfpane" \
+  "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/mktemp-predicate-unknown-package" 2>&1)"; rc=$?
+check "an unevaluable staging-disappearance predicate refuses renewal" "1" "$rc"
+check "THE CONTROL: staging removal reported success while hiding its parent" "yes" \
+  "$([ -e "$mktemp_predicate_fault.hit" ] \
+      && [ -e "$mktemp_predicate_fault.cleanup" ] && echo yes || echo no)"
+check "and unavailable staging disappearance is named could-not-determine" "yes" \
+  "$(contains "$out" "could not determine whether the private staging path")"
+chmod 700 -- "$mktemp_predicate_fault.parent"
+check "and the exact staging path is present once its evaluator is restored" \
+  "present" "$(fixture_path_state "$mktemp_predicate_fault.parent/dir")"
+rm -rf -- "$mktemp_predicate_fault.parent"
+
+# A signal can also arrive after the pre-ownership claim was published and read,
+# but before mkdir creates the lock. The path recorded by the cat shim is the
+# positive witness that this was a real claim lifecycle; EXIT must remove that
+# claim even though no ownership directory ever existed.
+continuation_fixture_package busybee \
+  "LOCK-PREINTERRUPT must not strand its ownership claim" \
+  "$SHIM/lock-preinterrupt-package"
+preinterrupt_root="$SHIM/continuation-preinterrupt-lockroot"
+mkdir -p "$preinterrupt_root"
+preinterrupt_hex="$(printf '%s' "$GANG_SESSION|target|busybee" \
+  | od -An -v -tx1 | tr -d ' \n')"
+preinterrupt_path="$preinterrupt_root/continuation-$preinterrupt_hex.lock"
+preinterrupt_fault="$SHIM/lock-preinterrupt-fault"
+out="$(CONTINUATION_MKDIR_FAULT=interrupt-before-create \
+  CONTINUATION_MKDIR_FAULT_STATE="$preinterrupt_fault" \
+  CONTINUATION_CAT_FAULT=watch-claim \
+  CONTINUATION_CAT_FAULT_STATE="$preinterrupt_fault" \
+  CONTINUATION_CAT_FAULT_PATH="$preinterrupt_path" \
+  GANG_LOCK_DIR="$preinterrupt_root" PATH="$CONTINUATION_FAULT:$PATH" \
+  TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/lock-preinterrupt-package" 2>&1)"; rc=$?
+check "a signal before continuation-lock creation refuses renewal" "1" "$rc"
+check "THE CONTROL: the pre-ownership claim was read before interruption" "yes" \
+  "$([ -e "$preinterrupt_fault.claim-read" ] && echo yes || echo no)"
+preinterrupt_claim="$(cat "$preinterrupt_fault.claim-path" 2>/dev/null)"
+check "THE CONTROL: the interruption happened before lock creation" "yes" \
+  "$([ -e "$preinterrupt_fault.hit" ] && [ ! -e "$preinterrupt_path" ] \
+      && echo yes || echo no)"
+check "and EXIT removes the signal-interrupted pre-ownership claim" "no" \
+  "$([ -n "$preinterrupt_claim" ] && [ -e "$preinterrupt_claim" ] \
+      && echo yes || echo no)"
+
+# A failed claim removal remains recorded through EXIT, which retries it and
+# reports the retained exact path rather than clearing its ownership record.
+claimfail_root="$SHIM/continuation-claimfail-lockroot"
+mkdir -p "$claimfail_root"
+claimfail_hex="$(printf '%s' "$GANG_SESSION|target|busybee" \
+  | od -An -v -tx1 | tr -d ' \n')"
+claimfail_path="$claimfail_root/continuation-$claimfail_hex.lock"
+claimfail_fault="$SHIM/continuation-claimfail-fault"
+out="$(CONTINUATION_MKDIR_FAULT=interrupt-before-create \
+  CONTINUATION_MKDIR_FAULT_STATE="$claimfail_fault" \
+  CONTINUATION_CAT_FAULT=watch-claim \
+  CONTINUATION_CAT_FAULT_STATE="$claimfail_fault" \
+  CONTINUATION_CAT_FAULT_PATH="$claimfail_path" \
+  CONTINUATION_RM_FAULT=continuation-lock-fail \
+  CONTINUATION_RM_FAULT_STATE="$claimfail_fault" \
+  GANG_LOCK_DIR="$claimfail_root" PATH="$CONTINUATION_FAULT:$PATH" \
+  TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/lock-preinterrupt-package" 2>&1)"; rc=$?
+check "a failed continuation-claim removal refuses renewal" "1" "$rc"
+check "THE CONTROL: the failed claim-removal branch was reached" "yes" \
+  "$([ -e "$claimfail_fault.claim-read" ] \
+      && [ -e "$claimfail_fault.cleanup" ] && echo yes || echo no)"
+claimfail_claim="$(cat "$claimfail_fault.claim-path" 2>/dev/null)"
+check "and EXIT reports that the exact claim record was retained" "yes" \
+  "$([ -n "$claimfail_claim" ] \
+      && [ "$(contains "$out" "$claimfail_claim")" = yes ] \
+      && [ "$(contains "$out" "recorded path was retained")" = yes ] \
+      && echo yes || echo no)"
+check "the failed-removal claim really remains present" "present" \
+  "$(fixture_path_state "$claimfail_claim")"
+rm -f -- "$claimfail_claim"
+rm -rf -- "$claimfail_root"
+
+# A signal can arrive after mkdir has created a continuation lock but before the
+# pid write and ordinary owner variable make it visible to EXIT cleanup. The shim
+# interrupts at exactly that edge and records the real directory it created.
+continuation_fixture_package busybee \
+  "LOCK-INTERRUPT must not strand a critical section" "$SHIM/lock-interrupt-package"
+interrupt_root="$SHIM/continuation-interrupt-lockroot"
+mkdir -p "$interrupt_root"
+interrupt_fault="$SHIM/lock-interrupt-fault"
+out="$(CONTINUATION_MKDIR_FAULT=interrupt-after-create \
+  CONTINUATION_MKDIR_FAULT_STATE="$interrupt_fault" \
+  GANG_LOCK_DIR="$interrupt_root" PATH="$CONTINUATION_FAULT:$PATH" \
+  TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/lock-interrupt-package" 2>&1)"; rc=$?
+check "an interrupt during continuation lock ownership refuses renewal" "1" "$rc"
+check "THE CONTROL: the interrupt arrived after the lock directory existed" "yes" \
+  "$([ -e "$interrupt_fault.hit" ] && echo yes || echo no)"
+interrupt_path="$(cat "$interrupt_fault.path" 2>/dev/null)"
+check "and EXIT cleanup removes the just-created continuation lock" "no" \
+  "$([ -n "$interrupt_path" ] && [ -e "$interrupt_path" ] && echo yes || echo no)"
+
+# The parallel lock-directory control makes rm return success while revoking the
+# parent search predicate. EXIT must retain and report the path, then fail the
+# command instead of spending that unevaluable negative test as disappearance.
+lockunknown_root="$SHIM/continuation-lockunknown-root"
+mkdir -p "$lockunknown_root"
+lockunknown_hex="$(printf '%s' "$GANG_SESSION|target|busybee" \
+  | od -An -v -tx1 | tr -d ' \n')"
+lockunknown_path="$lockunknown_root/continuation-$lockunknown_hex.lock"
+lockunknown_fault="$SHIM/continuation-lockunknown-fault"
+out="$(CONTINUATION_MKDIR_FAULT=interrupt-after-create \
+  CONTINUATION_MKDIR_FAULT_STATE="$lockunknown_fault" \
+  CONTINUATION_RM_FAULT=continuation-lock-predicate-unavailable \
+  CONTINUATION_RM_FAULT_STATE="$lockunknown_fault" \
+  CONTINUATION_RM_FAULT_PATH="$lockunknown_path" \
+  GANG_LOCK_DIR="$lockunknown_root" PATH="$CONTINUATION_FAULT:$PATH" \
+  TMUX_PANE="$selfpane" "$GANG" compact busybee --from busybee --resume-stdin \
+  < "$SHIM/lock-interrupt-package" 2>&1)"; rc=$?
+check "an unavailable continuation-lock disappearance refuses renewal" "1" "$rc"
+check "THE CONTROL: lock removal reported success while hiding its parent" "yes" \
+  "$([ -e "$lockunknown_fault.hit" ] \
+      && [ -e "$lockunknown_fault.cleanup" ] && echo yes || echo no)"
+check "and unavailable lock disappearance is named could-not-determine" "yes" \
+  "$(contains "$out" "could not determine whether the target continuation critical section")"
+check "and EXIT says its exact lock path record was retained" "yes" \
+  "$([ "$(contains "$out" "$lockunknown_path")" = yes ] \
+      && [ "$(contains "$out" "recorded path was retained")" = yes ] \
+      && echo yes || echo no)"
+chmod 700 -- "$lockunknown_root"
+check "the exact lock remains present once its evaluator is restored" "present" \
+  "$(fixture_path_state "$lockunknown_path")"
+rm -rf -- "$lockunknown_root"
+
+# A lock owner advertises its pid before creating the ownership directory. That
+# closes both sides of the otherwise indistinguishable PID-less state: no claim
+# is an orphan safe to retire, a live claim must never be stolen, and a claim
+# whose owner cannot be read is could-not-determine rather than stale.
+continuation_pidless_root="$SHIM/continuation-pidless-lockroot"
+mkdir -p "$continuation_pidless_root"
+chmod 700 "$continuation_pidless_root"
+continuation_pidless_hex="$(printf '%s' "$GANG_SESSION|target|markerpersist" \
+  | od -An -v -tx1 | tr -d ' \n')"
+continuation_pidless_path="$continuation_pidless_root/continuation-$continuation_pidless_hex.lock"
+
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_pane="$(tmux list-panes -t "$(target_of markerpersist)" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "PIDLESS-ORPHAN candidate must pass only after stale-lock retirement" \
+  "$SHIM/pidless-orphan-package"
+tmux send-keys -t "$(target_of markerpersist)" 'PIDLESS-DRAFT'
+wait_for markerpersist "the PID-less orphan fixture draft" yes has markerpersist PIDLESS-DRAFT
+mkdir -p "$continuation_pidless_path"
+pidless_orphan_fault="$SHIM/pidless-orphan-fault"
+out="$(CONTINUATION_CAT_FAULT=watch-claim \
+  CONTINUATION_CAT_FAULT_STATE="$pidless_orphan_fault" \
+  CONTINUATION_CAT_FAULT_PATH="$continuation_pidless_path" \
+  PATH="$CONTINUATION_FAULT:$PATH" \
+  GANG_LOCK_DIR="$continuation_pidless_root" GANG_LOCK_WAIT=1 \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/pidless-orphan-package" 2>&1)"; rc=$?
+check "a pre-existing PID-less continuation lock is retired" "3" "$rc"
+check "and the orphan path does not survive the completed critical section" "no" \
+  "$([ -e "$continuation_pidless_path" ] && echo yes || echo no)"
+check "THE CONTROL: ordinary target-lock acquisition read its published claim" "yes" \
+  "$([ -e "$pidless_orphan_fault.claim-read" ] && echo yes || echo no)"
+pidless_ordinary_claim="$(cat "$pidless_orphan_fault.claim-path" 2>/dev/null)"
+check "and ordinary acquisition removes its pre-ownership claim" "no" \
+  "$([ -n "$pidless_ordinary_claim" ] && [ -e "$pidless_ordinary_claim" ] \
+      && echo yes || echo no)"
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_pane="$(tmux list-panes -t "$(target_of markerpersist)" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "PIDLESS-DEAD candidate must retire its dead pre-ownership claimant" \
+  "$SHIM/pidless-dead-package"
+tmux send-keys -t "$(target_of markerpersist)" 'PIDLESS-DEAD-DRAFT'
+wait_for markerpersist "the dead-claim fixture draft" yes \
+  has markerpersist PIDLESS-DEAD-DRAFT
+mkdir -p "$continuation_pidless_path"
+pidless_dead_claim="$continuation_pidless_path.claim.planted-dead"
+printf '%s\n' 99999999 > "$pidless_dead_claim"
+pidless_dead_fault="$SHIM/pidless-dead-fault"
+out="$(CONTINUATION_CAT_FAULT=watch-claim \
+  CONTINUATION_CAT_FAULT_STATE="$pidless_dead_fault" \
+  CONTINUATION_CAT_FAULT_PATH="$continuation_pidless_path" \
+  CONTINUATION_CAT_FAULT_EXACT="$pidless_dead_claim" \
+  PATH="$CONTINUATION_FAULT:$PATH" \
+  GANG_LOCK_DIR="$continuation_pidless_root" GANG_LOCK_WAIT=1 \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/pidless-dead-package" 2>&1)"; rc=$?
+check "a PID-less lock with a dead pre-ownership claimant is retired" "3" "$rc"
+check "THE CONTROL: the planted dead claim was actually read" "yes" \
+  "$([ -e "$pidless_dead_fault.exact-read" ] && echo yes || echo no)"
+check "and the dead pre-ownership claim is removed" "no" \
+  "$([ -e "$pidless_dead_claim" ] && echo yes || echo no)"
+check "and its orphaned ownership directory is retired too" "no" \
+  "$([ -e "$continuation_pidless_path" ] && echo yes || echo no)"
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_pane="$(tmux list-panes -t "$(target_of markerpersist)" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "PIDLESS-LIVE candidate must stay behind its live owner" \
+  "$SHIM/pidless-live-package"
+mkdir -p "$continuation_pidless_path"
+pidless_live_claim="$continuation_pidless_path.claim.planted-live"
+printf '%s\n' "$$" > "$pidless_live_claim"
+pidless_live_fault="$SHIM/pidless-live-fault"
+out="$(CONTINUATION_CAT_FAULT=watch-claim \
+  CONTINUATION_CAT_FAULT_STATE="$pidless_live_fault" \
+  CONTINUATION_CAT_FAULT_PATH="$continuation_pidless_path" \
+  CONTINUATION_CAT_FAULT_EXACT="$pidless_live_claim" \
+  PATH="$CONTINUATION_FAULT:$PATH" \
+  GANG_LOCK_DIR="$continuation_pidless_root" GANG_LOCK_WAIT=1 \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/pidless-live-package" 2>&1)"; rc=$?
+check "a PID-less continuation lock with a live owner is refused" "1" "$rc"
+check "THE CONTROL: the planted live pre-ownership claim was actually read" "yes" \
+  "$([ -e "$pidless_live_fault.exact-read" ] && echo yes || echo no)"
+check "and the live owner's lock is not stolen" "yes" \
+  "$([ -d "$continuation_pidless_path" ] && echo yes || echo no)"
+rm -rf -- "$continuation_pidless_path" "$pidless_live_claim"
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_pane="$(tmux list-panes -t "$(target_of markerpersist)" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "PIDLESS-UNKNOWN candidate must stay behind ambiguous ownership" \
+  "$SHIM/pidless-unknown-package"
+mkdir -p "$continuation_pidless_path"
+mkdir -p "$continuation_pidless_path.claim.unreadable"
+out="$(GANG_LOCK_DIR="$continuation_pidless_root" GANG_LOCK_WAIT=1 \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/pidless-unknown-package" 2>&1)"; rc=$?
+check "an ambiguous PID-less continuation-lock owner is refused" "1" "$rc"
+check "and is named could-not-determine rather than stale or live" "yes" \
+  "$(contains "$out" "could not determine the owner")"
+check "and ambiguous ownership is never stolen" "yes" \
+  "$([ -d "$continuation_pidless_path" ] && echo yes || echo no)"
+rm -rf -- "$continuation_pidless_path" "$continuation_pidless_path.claim.unreadable"
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+
+# Clearing an earlier detached-delivery failure is part of establishing which
+# candidate the next alert describes. Swallow the unset while returning success:
+# the native compact command must remain unissued when absence is unverified.
+"$GANG" hitch markerclear -p working -d /tmp >/dev/null 2>&1
+paint markerclear 'READY'
+markerclear_id="$(target_of markerclear)"
+markerclear_pane="$(tmux list-panes -t "$markerclear_id" -F '#{pane_id}')"
+tmux set-option -w -t "$markerclear_id" @gl_resume_failed 'prior detached failure'
+continuation_fixture_package markerclear \
+  "MARKER-CLEAR candidate must stay behind a stale alert" "$SHIM/markerclear-package"
+markerclear_fault="$SHIM/markerclear-fault"
+markerclear_before="$(pane_count markerclear '/compact')"
+out="$(CONTINUATION_TMUX_FAULT=resume-clear \
+  CONTINUATION_TMUX_FAULT_STATE="$markerclear_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" TMUX_PANE="$markerclear_pane" \
+  "$GANG" compact markerclear --from markerclear --resume-stdin \
+  < "$SHIM/markerclear-package" 2>&1)"; rc=$?
+check "an unverifiable prior resume-failure cleanup refuses compaction" "1" "$rc"
+check "THE CONTROL: the failure-marker unset was swallowed" "yes" \
+  "$([ -e "$markerclear_fault.clear" ] && echo yes || echo no)"
+check "and no native compact command was issued past that refusal" "same" \
+  "$(grew_since markerclear '/compact' "$markerclear_before")"
+
+# A detached waiter has no stderr once the caller returns. Make its definitive
+# failure-detail write disappear: a pre-established alert must remain rather
+# than letting the agent look healthy after a resume that never ran.
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_id="$(target_of markerpersist)"
+markerpersist_pane="$(tmux list-panes -t "$markerpersist_id" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "MARKER-PERSIST candidate must leave a visible failure" "$SHIM/markerpersist-package"
+markerpersist_fault="$SHIM/markerpersist-fault"
+out="$(CONTINUATION_TMUX_FAULT=resume-failure-write \
+  CONTINUATION_TMUX_FAULT_STATE="$markerpersist_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_RESUME_TIMEOUT=not-a-number \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/markerpersist-package" 2>&1)"; rc=$?
+check "the compact command reports that its detached resume was queued" "0" "$rc"
+wait_for '' "the planted detached failure-detail write" yes \
+  file_there "$markerpersist_fault.failure-write"
+check "THE CONTROL: detached failure detail reached the swallowed write" "yes" \
+  "$([ -e "$markerpersist_fault.failure-write" ] && echo yes || echo no)"
+wait_for markerpersist "the verified fallback after detailed failure storage disappears" yes \
+  resume_failure_is "$markerpersist_id" \
+  "structured resume was not delivered; its detached worker could not store the detailed failure byte-identically"
+markerpersist_worker_pid="$(cat "$markerpersist_fault.worker-pid" 2>/dev/null)"
+check "THE CONTROL: detailed-loss recorded the detached worker PID" "yes" \
+  "$(holds "$markerpersist_worker_pid" '^[1-9][0-9]*$')"
+WAIT_TIMEOUT=60 wait_for '' "the detailed-loss detached worker to exit" no \
+  pid_running "$markerpersist_worker_pid"
+check "and a visible resume alert survives that lost detail" "yes" \
+  "$([ -n "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)" ] \
+      && echo yes || echo no)"
+check "the surviving alert is the verified fallback, not the swallowed detail" \
+  "structured resume was not delivered; its detached worker could not store the detailed failure byte-identically" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)"
+check "and the fallback is visible on the ordinary status surface" "yes" \
+  "$(contains "$("$GANG" status markerpersist)" "resume NOT delivered after compaction")"
+markerpersist_fallback_roster="$("$GANG" roster | awk '$1=="markerpersist"')"
+markerpersist_fallback_patrol="$("$GANG" patrol | verdict markerpersist)"
+check "and the definitive fallback is visible on the roster" "yes" \
+  "$(contains "$markerpersist_fallback_roster" "resume lost")"
+check "and the definitive fallback is visible on patrol" "yes" \
+  "$(contains "$markerpersist_fallback_patrol" \
+     "RESUME NOT DELIVERED after compaction")"
+
+# If both alert writes disappear, a guard stored in the alert slot collapses
+# back to silence because all ordinary readers suppress that exact value. Keep
+# the in-flight/outcome fact separate from definitive failure detail: after this
+# detached worker exits, the alert slot is empty but every ordinary surface must
+# still report an unconfirmed outcome without calling it already lost.
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_id="$(target_of markerpersist)"
+markerpersist_pane="$(tmux list-panes -t "$markerpersist_id" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "MARKER-UNKNOWN candidate must retain an honest detached outcome" \
+  "$SHIM/markerunknown-package"
+markerunknown_fault="$SHIM/markerunknown-fault"
+out="$(CONTINUATION_TMUX_FAULT=resume-failure-write-all \
+  CONTINUATION_TMUX_FAULT_STATE="$markerunknown_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_RESUME_TIMEOUT=not-a-number \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/markerunknown-package" 2>&1)"; rc=$?
+check "the compact command queues the worker whose alerts will disappear" "0" "$rc"
+wait_for '' "both planted detached failure-alert writes" yes \
+  file_there "$markerunknown_fault.fallback-write"
+check "THE CONTROL: detached failure detail storage was swallowed" "yes" \
+  "$([ -e "$markerunknown_fault.failure-write" ] && echo yes || echo no)"
+check "THE CONTROL: detached fallback storage was swallowed too" "yes" \
+  "$([ -e "$markerunknown_fault.fallback-write" ] && echo yes || echo no)"
+markerunknown_worker_pid="$(cat "$markerunknown_fault.worker-pid" 2>/dev/null)"
+check "THE CONTROL: both-writes-loss recorded the detached worker PID" "yes" \
+  "$(holds "$markerunknown_worker_pid" '^[1-9][0-9]*$')"
+WAIT_TIMEOUT=60 wait_for '' "the both-writes-loss detached worker to exit" no \
+  pid_running "$markerunknown_worker_pid"
+check "no definitive failure alert is fabricated when neither write verifies" "" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)"
+check "the independent detached-outcome guard remains" \
+  "structured resume delivery has no verified detached outcome yet" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_outcome)"
+markerunknown_status="$("$GANG" status markerpersist)"
+markerunknown_roster="$("$GANG" roster | awk '$1=="markerpersist"')"
+markerunknown_patrol="$("$GANG" patrol | verdict markerpersist)"
+check "status reports the unconfirmed detached outcome" "yes" \
+  "$(contains "$markerunknown_status" "resume outcome unconfirmed after compaction")"
+check "roster reports the unconfirmed detached outcome" "yes" \
+  "$(contains "$markerunknown_roster" "resume unconfirmed")"
+check "patrol reports the unconfirmed detached outcome" "yes" \
+  "$(contains "$markerunknown_patrol" "RESUME OUTCOME UNCONFIRMED after compaction")"
+check "none of those surfaces calls an unconfirmed outcome already lost" "no" \
+  "$([ "$(printf '%s\n%s\n%s' "$markerunknown_status" "$markerunknown_roster" "$markerunknown_patrol" \
+        | grep -c 'resume lost\|RESUME NOT DELIVERED')" -gt 0 ] && echo yes || echo no)"
+
+# The worker is born only after native compact submission verifies. A refusal at
+# that synchronous boundary leaves no worker able to refine the outcome, so the
+# pre-established independent guard must remain visible rather than being hidden
+# as an ordinary in-flight candidate.
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_id="$(target_of markerpersist)"
+markerpersist_pane="$(tmux list-panes -t "$markerpersist_id" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "MARKER-SUBMIT candidate must expose a synchronous compact refusal" \
+  "$SHIM/markersubmit-package"
+tmux send-keys -t "$markerpersist_id" 'MARKER-SUBMIT-DRAFT'
+wait_for markerpersist "the synchronous compact-refusal draft" yes \
+  has markerpersist MARKER-SUBMIT-DRAFT
+markersubmit_fault="$SHIM/markersubmit-worker-fault"
+out="$(CONTINUATION_TMUX_FAULT=resume-worker-hold \
+  CONTINUATION_TMUX_FAULT_STATE="$markersubmit_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" \
+  TMUX_PANE="$markerpersist_pane" "$GANG" compact markerpersist \
+  --from markerpersist --resume-stdin < "$SHIM/markersubmit-package" 2>&1)"; rc=$?
+check "a synchronous native compact refusal remains a refusal" "3" "$rc"
+check "THE CONTROL: synchronous refusal starts no detached worker" "no" \
+  "$([ -e "$markersubmit_fault.worker-started" ] && echo yes || echo no)"
+check "and starts no definitive detached-failure alert" "" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)"
+check "while its unrefined outcome guard remains independently visible" \
+  "structured resume delivery has no verified detached outcome yet" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_outcome)"
+check "status names the synchronous submission's unconfirmed outcome" "yes" \
+  "$(contains "$("$GANG" status markerpersist)" "resume outcome unconfirmed after compaction")"
+check "roster names the synchronous submission's unconfirmed outcome" "yes" \
+  "$(contains "$("$GANG" roster | awk '$1=="markerpersist"')" "resume unconfirmed")"
+check "patrol names the synchronous submission's unconfirmed outcome" "yes" \
+  "$(contains "$("$GANG" patrol | verdict markerpersist)" \
+     "RESUME OUTCOME UNCONFIRMED after compaction")"
+
+# The converse control holds the detached worker inside its first verified
+# action. That gives the three phases independent witnesses: the synchronous
+# refusal above never reached the hook; this candidate records a live worker PID
+# while the in-flight option is already real; after release, accepted transition
+# state, verified outcome absence and that same PID's exit establish completion.
+# The later transient-composer assertion keeps its original expectation.
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+"$GANG" hitch markerpersist -p working -d /tmp >/dev/null 2>&1
+paint markerpersist 'READY'
+markerpersist_id="$(target_of markerpersist)"
+markerpersist_pane="$(tmux list-panes -t "$markerpersist_id" -F '#{pane_id}')"
+continuation_fixture_package markerpersist \
+  "MARKER-INFLIGHT candidate must not be reported as already lost" \
+  "$SHIM/markerinflight-package"
+markerinflight_fault="$SHIM/markerinflight-worker-fault"
+markerinflight_stage="$SHIM/markerinflight-stage"
+out="$(CONTINUATION_MKTEMP_FAULT=record-path \
+  CONTINUATION_MKTEMP_FAULT_STATE="$markerinflight_stage" \
+  CONTINUATION_TMUX_FAULT=resume-worker-hold \
+  CONTINUATION_TMUX_FAULT_STATE="$markerinflight_fault" \
+  PATH="$CONTINUATION_FAULT:$PATH" GANG_RESUME_TIMEOUT=30 \
+  TMUX_PANE="$markerpersist_pane" \
+  "$GANG" compact markerpersist --from markerpersist --resume-stdin \
+  < "$SHIM/markerinflight-package" 2>&1)"; rc=$?
+check "an ordinary structured compact starts its detached worker" "0" "$rc"
+wait_for '' "the detached worker to enter its planted hold" yes \
+  file_there "$markerinflight_fault.worker-started"
+markerinflight_pid="$(cat "$markerinflight_fault.worker-pid" 2>/dev/null)"
+check "THE CONTROL: the held detached-worker PID is live" "yes" \
+  "$(pid_running "$markerinflight_pid")"
+check "an in-flight candidate has no definitive failure alert" "" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)"
+check "and carries only the independently phased in-flight outcome" \
+  "structured resume delivery is still in flight" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_outcome)"
+markerinflight_status="$("$GANG" status markerpersist)"
+markerinflight_roster="$("$GANG" roster | awk '$1=="markerpersist"')"
+markerinflight_patrol="$("$GANG" patrol | verdict markerpersist)"
+check "the in-flight status is not reported as already lost" "no" \
+  "$(contains "$markerinflight_status" "resume NOT delivered")"
+check "the in-flight roster is not reported as already lost" "no" \
+  "$(contains "$markerinflight_roster" "resume lost")"
+check "the in-flight patrol row is not reported as already lost" "no" \
+  "$(contains "$markerinflight_patrol" "RESUME NOT DELIVERED")"
+touch "$markerinflight_fault.release"
+WAIT_TIMEOUT=60 wait_for markerpersist \
+  "the released detached worker to accept its candidate" yes \
+  continuation_fixture_accepted markerpersist "$SHIM/markerinflight-package"
+continuation_fixture_commit markerpersist "$SHIM/markerinflight-package" || exit 1
+WAIT_TIMEOUT=60 wait_for markerpersist \
+  "the successful detached worker to clear its outcome" yes \
+  resume_outcome_absent "$markerpersist_id"
+WAIT_TIMEOUT=60 wait_for '' "the accepted detached worker to exit" no \
+  pid_running "$markerinflight_pid"
+markerinflight_stage_path="$(cat "$markerinflight_stage.path" 2>/dev/null)"
+check "THE CONTROL: ordinary successful staging recorded its exact path" "yes" \
+  "$([ -n "$markerinflight_stage_path" ] && echo yes || echo no)"
+check "and that exact staging path is absent after verified delivery" "absent" \
+  "$(fixture_path_state "$markerinflight_stage_path")"
+check "a finished successful worker leaves no failure alert" "" \
+  "$(tmux show-options -wqv -t "$markerpersist_id" @gl_resume_failed)"
+markerinflight_clear_status="$("$GANG" status markerpersist)"
+markerinflight_clear_roster="$("$GANG" roster | awk '$1=="markerpersist"')"
+markerinflight_clear_patrol="$("$GANG" patrol | verdict markerpersist)"
+check "THE CONTROL: cleared status, roster, and patrol were all evaluated" "yes" \
+  "$([ -n "$markerinflight_clear_status" ] \
+      && [ -n "$markerinflight_clear_roster" ] \
+      && [ -n "$markerinflight_clear_patrol" ] && echo yes || echo no)"
+check "cleared status reports neither detached failure nor unconfirmed outcome" "no" \
+  "$([ "$(contains "$markerinflight_clear_status" "resume NOT delivered")" = yes ] \
+      || [ "$(contains "$markerinflight_clear_status" "resume outcome unconfirmed")" = yes ] \
+      && echo yes || echo no)"
+check "cleared roster reports neither detached failure nor unconfirmed outcome" "no" \
+  "$([ "$(contains "$markerinflight_clear_roster" "resume lost")" = yes ] \
+      || [ "$(contains "$markerinflight_clear_roster" "resume unconfirmed")" = yes ] \
+      && echo yes || echo no)"
+check "cleared patrol reports neither detached failure nor unconfirmed outcome" "no" \
+  "$([ "$(contains "$markerinflight_clear_patrol" "RESUME NOT DELIVERED")" = yes ] \
+      || [ "$(contains "$markerinflight_clear_patrol" "RESUME OUTCOME UNCONFIRMED")" = yes ] \
+      && echo yes || echo no)"
+
+"$GANG" drop markerclear >/dev/null 2>&1 || true
+"$GANG" drop markerpersist >/dev/null 2>&1 || true
+
+if [ "${GANGLINE_FOCUSED_CONTINUATION:-}" = 1 ]; then
+  fingerprint "$SHIM/tree.at-focused-end"
+  moved="$(moved_since "$SHIM/tree.at-start" "$SHIM/tree.at-focused-end")"
+  if [ -n "$moved" ]; then
+    printf '\n'
+    while IFS= read -r moved_path; do
+      printf 'CHANGED: %s was modified while the suite was running\n' "${moved_path#"$ROOT"/}"
+    done <<< "$moved"
+    printf 'This run tested a mix of two versions and its result means nothing. Re-run.\n'
+    exit 1
+  fi
+  printf '\n%s\n' "$([ "$fails" -eq 0 ] && echo "focused continuation checks passed" || echo "$fails focused check(s) failed")"
+  [ "$fails" -eq 0 ]
+  exit $?
+fi
 
 # --- occupancy: a UI owns the input box -----------------------------------------
 section "occupancy: a UI owns the input box"
@@ -6512,8 +8497,10 @@ for a in obracket oscreen; do "$GANG" drop "$a" >/dev/null 2>&1; done
 "$GANG" hitch resumer -p compactable -d /tmp >/dev/null
 paint resumer 'ctx 900k/1000k 90%'
 absence_window 2 "the pane must stop moving before a compaction is issued against it"
-printf '%s' MARK_RESUME | \
-  "$GANG" compact resumer --from tester --resume-stdin >/dev/null 2>&1
+continuation_fixture_package resumer \
+  "MARK_RESUME held until the measured context drop" "$SHIM/resumer-handoff"
+"$GANG" compact resumer --from resumer --resume-stdin \
+  < "$SHIM/resumer-handoff" >/dev/null 2>&1
 absence_window 22 "a resume must not go out on quiet alone, past where gang's own
                    settle path — 2s steps against a ten second floor — would have fired"
 check "a resume is held while the context says no compaction has happened" "no" \
@@ -6522,6 +8509,9 @@ paint resumer 'ctx 250k/1000k 25%'
 WAIT_TIMEOUT=60 wait_for resumer 'the held resume to land after the drop' yes \
   has resumer MARK_RESUME
 check "and lands once the drop shows one has" "yes" "$(has resumer MARK_RESUME)"
+wait_for resumer "the context-drop candidate to become accepted" yes \
+  continuation_fixture_accepted resumer "$SHIM/resumer-handoff"
+continuation_fixture_commit resumer "$SHIM/resumer-handoff" || exit 1
 
 # A slash command is only a command at the HEAD of an empty box. composer_settled
 # asks whether the box is MOVING, which is the right question for prose — a paste
@@ -6607,8 +8597,11 @@ rm -f "$SHIM/hands-on-keyboard"
 "$GANG" hitch retrier -p retryable -d /tmp >/dev/null
 paint retrier 'ctx 900k/1000k 90%'
 absence_window 2 "the pane must stop moving before a compaction is issued against it"
-printf '%s' MARK_RETRIED | GANG_RESUME_TIMEOUT=120 \
-  "$GANG" compact retrier --from tester --resume-stdin >/dev/null 2>&1
+continuation_fixture_package retrier \
+  "MARK_RETRIED carried after a transient composer refusal" "$SHIM/retrier-handoff"
+GANG_RESUME_TIMEOUT=120 \
+  "$GANG" compact retrier --from retrier --resume-stdin \
+  < "$SHIM/retrier-handoff" >/dev/null 2>&1
 touch "$SHIM/hands-on-keyboard"        # they start typing while the waiter waits
 paint retrier 'ctx 250k/1000k 25%'     # the drop the waiter is holding out for
 absence_window 12 "a resume refused by a moving composer must not be spent, well past
@@ -6622,6 +8615,9 @@ WAIT_TIMEOUT=60 wait_for retrier 'the refused resume to be retried once the box 
   yes has retrier MARK_RETRIED
 check "and it lands on a later attempt once the box settles" "yes" \
   "$(has retrier MARK_RETRIED)"
+wait_for retrier "the retried candidate to become accepted" yes \
+  continuation_fixture_accepted retrier "$SHIM/retrier-handoff"
+continuation_fixture_commit retrier "$SHIM/retrier-handoff" || exit 1
 
 # The other half of #46: when a resume really is lost, the roster said nothing.
 # It read `lead  claude-code  busy (tight tug)  41k/1000k (4%)` with no hint, and
@@ -6643,8 +8639,12 @@ tmux set-option -uw -t "$(target_of retrier)" @gl_resume_failed
 # end of the function. The resume goes out instantly, into a turn that may still
 # be running, which is the overtaking the whole wait exists to prevent. Nothing
 # in the output said so, because falling through is what a satisfied loop does.
-printf '%s' MARK_BADBOUND | GANG_RESUME_TIMEOUT=not-a-number \
-  "$GANG" compact retrier --from tester --resume-stdin >/dev/null 2>&1
+continuation_fixture_package retrier \
+  "MARK_BADBOUND must never be delivered under an unusable timeout" \
+  "$SHIM/retrier-bad-bound"
+GANG_RESUME_TIMEOUT=not-a-number \
+  "$GANG" compact retrier --from retrier --resume-stdin \
+  < "$SHIM/retrier-bad-bound" >/dev/null 2>&1
 absence_window 3 "a resume under an unusable bound must not fall through and go out"
 check "an unusable resume bound sends nothing at all" "no" "$(has retrier MARK_BADBOUND)"
 check "and the agent carries which variable stopped it" "yes" \

@@ -98,83 +98,83 @@ Kills the named window and prints `dropped <name>`. Window-owned state disappear
 with it. This command resolves any named window in the team, including an
 unadopted one.
 
-### `gang cycle <name> [-m <model>] [--from <sender>] [--resume-stdin]`
+### `gang cycle <name> [-m|--model <model>] [--from <sender>] [--resume-stdin]`
 
-Replaces the named agent: its context ends, and a fresh agent is hitched in its
-place on the facts hitch recorded at its window — the same profile, role and
-directory, and the same model unless `-m` below says otherwise. What ends is the context, not the window. A context is
-renewed by being replaced rather than summarised —
-[ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md).
+Replaces the named agent with a plain launch on its recorded profile, role,
+directory, effort and model; `-m` overrides the recorded model. The harness
+conversation does not return, and the session-scoped cutoff is unchanged. See
+[ADR-0015](adr/0015-a-context-is-renewed-by-cycling-not-by-summary.md) for the
+renewal decision.
 
-`--resume-stdin` reads a handoff from stdin and delivers it to the fresh agent
-once it has been briefed, attributed to `--from` (or `GANG_FROM`) exactly as
-`gang send` and `gang compact` are. Without it the verb empties a context and
-delivers nothing into the one it opens, so the state has to arrive by some other
-hand — which is why a renewal used to need a second agent standing by, and why an
-agent could not renew itself.
+#### Structured continuation input
 
-The handoff is measured against `GANG_RESUME_MAX`, the same budget `gang compact`
-applies and for the same reason: a resume is charged to a context that has just
-been emptied to make room for it. An oversized one is refused *before* the drop,
-with the agent still holding the context it had, and the refusal exits 3 —
-nothing was typed and nothing was dropped. Each delivery records its size on the
-window that receives it and reports the growth since the last one delivered to
-that seat, so a handoff that is climbing says so a renewal before it reaches the
-wall rather than at it.
+`--resume-stdin` consumes one complete `GANGLINE-CONTINUATION 1` package through
+EOF. It requires `--from` or `GANG_FROM`; the target name, attributed sender and
+package `Writer` must be identical. Arbitrary prose is not continuation input.
 
-`-m` names the model the replacement launches on, instead of the one its
-predecessor ran. It is the only launch fact this verb takes, because it is the
-one an operator changes without changing what the job is: the role, the
-directory and the handoff written for them all still apply. The fresh window
-records the model it actually launched with, so the record keeps describing the
-agent rather than its predecessor.
+The package must satisfy all of these boundaries:
 
-What can be settled without launching is settled before the drop: a model
-carrying characters Gangline will not paste into a launch line is refused there,
-with the agent still running and nothing dropped. What cannot is the harness's
-to answer — whether it has that model at all — so a well-formed model that does
-not exist dies after the drop, loudly, with the window gone and the work on disk
-untouched. A profile that declares no model spelling refuses `-m` at the hitch
-below, for the reason given under `gang hitch`.
+| Boundary | Requirement |
+| --- | --- |
+| Raw file | Non-empty UTF-8 with the exact LF-only closed grammar; BOM, NUL, CR, unknown fields, reordered fields and trailing content are refused. |
+| Headers | Exact `Writer`, `Reviewed-At` and absolute `Ledger` fields. The review epoch is later than the target's floor and prior accepted review, and is not in the future. |
+| Task references | At least one heading-only task reference. Every referenced task exists live in the captured ledger and names the package writer as owner. Each reference has a Next Actions or Local Blockers note. |
+| Sections and notes | After `Task References`, the exact section order is `Active Work`, `Next Actions`, `Local Blockers`, `Binding Bounds`, `Dangerous Refutations`. A note's ordered fields are `Task`, `Supersedes`, `Remove`, `Evidence`, `Provenance`, `Text`; evidence is `verified`, `claimed`, `inferred`, `unverified` or `refuted`. Identity, immutable retained bodies, supersession, provenance, expiry and pressure transitions are checked against prior accepted state. |
+| Ledger | Exact `GANGLINE-TASK-LEDGER 1` grammar. Its absolute path and writer become session-pinned; later observations are byte-identical at the same revision or a valid monotonic transition. |
+| Outer guard | `GANG_RESUME_MAX` is checked before structure. Passing the byte guard does not bypass any structural, ledger, review or transition check. |
 
-Two things it does not do, and it says both on the surface that acts. The
-conversation does not come back: the relaunch is the profile's plain launch line
-and never its resume form, because restoring the conversation is the opposite of
-the act being asked for. And the team's cutoff is untouched: the cutoff is
-session state, so it survives the drop with nothing to restore, and re-declaring
-it would re-span the whole team's budget from one agent's renewal.
+[ADR-0018](adr/0018-continuation-state-is-a-closed-reviewed-set.md) is the
+normative grammar. The authoring workflow is in
+[Operating a team](operations.md#renewing-context).
 
-The predecessor is retired rather than dropped. Its window is kept, renamed
-`<name>~spent`, with its pane and scrollback intact — so a closing report can
-still be read after its replacement is already working. Retiring is the removal
-of the `@gl_profile` mark that made the window an agent, so it leaves the agent
-namespace through refusals that already exist: `gang send`, `gang status` and
-`gang capture` refuse it, and `gang roster` reports the row `unadopted` rather
-than as an agent standing by. `gang drop` still closes it, because drop resolves
-a window by name without consulting that mark. Each agent keeps exactly one spent
-window; the next renewal closes the previous one.
+Without `--resume-stdin`, no package is delivered. The replacement still carries
+the lineage's existing `empty` or `accepted` continuation state; a missing,
+malformed or `pending` state is refused before retirement.
 
-The fresh agent takes the window position its predecessor held, and the spent
-window moves to the end. A new tmux window always appends and never reuses a
-freed index, so this is an explicit act rather than something that falls out —
-one swap between the two windows, against window ids rather than indices, so
-nothing `renumber-windows` does underneath can invalidate it. If tmux refuses the
-move the renewal still stands and Gangline says where each window ended up.
+#### Preflight and first refusal
 
-Because nothing is killed, the caller survives its own renewal — an agent can run
-`gang cycle <itself> --from <itself> --resume-stdin < handoff`, keep running as
-`<name>~spent`, and hand its state to its own replacement.
+Before retiring the target, `cycle` checks the launch record, recorded directory,
+profile and role, the optional model spelling, and every applicable continuation
+boundary above. A window created before continuation state existed deliberately
+refuses its first structured attempt: Gangline records a review floor and a
+known-empty transition, leaves the context intact, and requires a newly reviewed
+package with a later `Reviewed-At`.
 
-The wrap is not Gangline's to perform. An agent's handoff is its own authored
-act, and a verb that retired the window to write one would be writing it after
-the writer was gone — so wrap first, then cycle.
+For an admitted package, `cycle` rechecks the candidate under the target and
+ledger critical sections and records `pending` before retirement. It consumes the
+package from stdin but never edits or deletes the authored file.
 
-It refuses rather than reconstructing from a guess. Without a readable launch
-record it names what it cannot rebuild and stops: a window registered with `gang
-adopt` has none by construction, and a value Gangline did not write is a record
-it cannot read rather than an absent one. It also refuses *before* the drop when
-a recorded fact no longer holds — the directory has been removed, the profile
-withdrawn, the role renamed.
+#### Success effects
+
+- The predecessor leaves the agent namespace and becomes `<name>~spent`, with its
+  pane and scrollback readable. `send` and `status` refuse it; `capture` can still
+  read the named window, roster shows it unadopted, and `gang drop <name>~spent`
+  closes it. The next cycle closes the previous spent window.
+- The replacement is hitched and briefed on the recorded launch facts. It takes
+  the predecessor's position when tmux permits, while the spent window moves to
+  the end.
+- With a package, the ledger and transition are revalidated at the delivery
+  event, the attributed envelope is pane-verified, and only then does `pending`
+  become `accepted`. The final `resumed <name>` line is the delivery receipt and
+  reports the package size and any observed growth.
+- Without a package, the carried continuation state is installed and nothing is
+  delivered into the new context.
+
+Self-cycle is supported because the predecessor remains alive as the spent
+window while its replacement takes the agent name.
+
+#### Failure effects
+
+- Any preflight refusal leaves the target running with its original context;
+  nothing is typed or retired and the authored files are untouched.
+- After retirement, a harness launch, briefing, positioning or delivery can still
+  fail loudly. A positioning failure does not undo a working replacement. A
+  launch or briefing failure leaves durable work untouched and the predecessor
+  readable if it was already retired.
+- A delivery failure after `pending` leaves the replacement lineage pending. A
+  direct `gang send`, another cycle, or another compact cannot accept or clear it.
+  Run `gang drop <name>`, establish a genuinely new lineage with ordinary `hitch`
+  or `adopt`, then review a new package after that window's floor.
 
 ### `gang down`
 
@@ -224,27 +224,55 @@ same words and with the same status as one found occupied before it: waiting end
 no occupancy, and the record it leaves on that agent is what tells an operator
 their dialog is stalling traffic.
 
-### `gang compact <name> [--from sender] [--resume-stdin]`
+### `gang compact <name> [--from <sender>] [--resume-stdin]`
 
-Submits the profile's compaction command through the same verified injection
-path. A profile with no compaction command is refused. Verification proves the
-command was delivered, not that the harness executed it successfully.
+Submits the profile's native compaction command through verified pane injection.
+A profile without a compact command is refused. A successful return proves the
+command was submitted, not that the harness executed it. Without
+`--resume-stdin`, no sender is required and continuation transition state is not
+initialized, reset or advanced.
 
-A busy peer cannot be compacted. Gangline permits an agent to compact its own
-busy window because the slash command can queue behind the turn that ends when
-its `gang compact` call returns. This is permission at the transport layer, not a
-promise that every harness accepts its slash command there: Codex rejects
-`/compact` while a task is active, and a self-issued Gangline call keeps that task
-active. Compact an idle Codex from another caller or let Codex auto-compact; do
-not attach a self-issued Codex resume to a native command Codex will reject.
+#### Required structured input
 
-`--resume-stdin` reads the complete handoff through EOF and requires `--from` or
-`GANG_FROM`, checked under the same identity rule as `send`. The old inline
-`--resume <message>` form is refused because the sender's shell can alter its
-prose before Gangline starts. Gangline starts a detached waiter that delivers
-the attributed resume at a boundary where it cannot overtake its own compaction
-command. Failure is stored on the window and printed by `status` and `patrol`.
-Without `--resume-stdin`, no sender is required.
+With `--resume-stdin`, the input is the same complete structured package required
+by `cycle`; the [closed boundary](#structured-continuation-input) applies in full.
+`--from` or `GANG_FROM` is required, and the target, sender and package `Writer`
+must be the same identity. The obsolete inline `--resume <message>` form is
+refused.
+
+#### Preflight
+
+Gangline stages the package, applies `GANG_RESUME_MAX`, validates the package and
+captured ledger, checks review and transition state, and rejects reserved
+tag-shaped content before submitting the native command. Occupancy is then
+refused. A busy peer is refused because compaction could cut its live turn; a
+self-issued command may queue behind the caller's turn. That transport permission
+does not make native execution self-safe: Codex rejects `/compact` while a task is
+active, so compact an idle Codex from another caller or allow Codex to compact
+automatically.
+
+#### Success effects
+
+- The native command is pane-verified and marked as issued. The command's success
+  line still labels execution unconfirmed.
+- With a package, a detached worker waits until a declared live marker, context
+  below half the issue-time baseline, bounded non-busy stable-screen evidence, or
+  the overall timeout makes a delivery attempt due. The immediate command output
+  says the structured resume is queued; it is not a delivery receipt.
+- At the delivery event the worker confirms the same active target, recaptures and
+  revalidates the ledger, repeats review and transition checks, records `pending`,
+  injects through the attributed verified path, and then records `accepted`.
+
+#### Failure effects
+
+- A package, ledger, review, transition, occupancy or peer-busy refusal before
+  submission issues no native command and leaves the authored files untouched.
+- Native-command delivery can succeed while native execution later fails; the
+  immediate caller cannot distinguish those outcomes.
+- A detached validation or delivery failure is stored on the window and reported
+  by `gang status` and patrol. If it occurs after `pending`, only explicit
+  `gang drop`, ordinary `hitch` or `adopt`, and a newly reviewed package establish
+  a usable new lineage; direct send and another renewal do not repair it.
 
 ## Observation and waiting
 
@@ -361,59 +389,23 @@ behaviour on its own.
 
 ### `gang patrol`
 
-Performs one roster sweep. For each adopted agent it:
+Performs one sweep in this order for each adopted agent:
 
-1. reports a failed resume, and inbound sends refused while it was blocked;
-2. reports where the team stands in a declared cutoff — which time band, and how
-   much budget is left — escalating to the banking reserve at the last rung and to
-   a distinct overrun line past the cutoff. The rungs are fractions of the declared
-   budget minus `GANG_TIME_RESERVE`, so the same elapsed minutes land differently
-   under different budgets ([ADR-0009](adr/0009-time-bands-are-relative.md)). It
-   needs no profile and no readout, which is why it is reported ahead of everything
-   that needs one, and why an agent gang cannot otherwise patrol still carries it;
-   with no cutoff declared there is no row and no log line. This row reports; the
-   note that acts on it comes lower, because typing into a pane needs a profile
-   and reporting a budget does not;
-3. reports a recorded undelivered paste, and clears it where it can;
-4. reports and stops on an occupied input box;
-5. injects one `[gang:patrol]` budget note when the team crosses a time rung and
-   the pane is safe, repeats it on every safe sweep once inside the banking
-   reserve, and restates it on every safe sweep past the cutoff. It is placed
-   above everything that needs a readout because time is the axis that advances
-   while an agent sits idle, so a sweep that gives up on an agent's context still
-   tells it how much of the day is left. The note states the remaining budget,
-   where the context warning below withholds its own figure — remaining budget is
-   what an agent paces against, and remaining context is not
-   ([ADR-0009](adr/0009-time-bands-are-relative.md)). The two legs remember their
-   bands separately, so a context crossing never silences a budget note or the
-   reverse;
-6. reads and parses context usage;
-7. evaluates the band ladder against the window's last warned band;
-8. re-arms warning state when usage falls;
-9. injects one `[gang:patrol]` warning when a new band is crossed and the pane is
-   safe;
-10. while usage remains in the final band, repeats a distinctly worded reminder on
-   every safe sweep. The repeat states that the agent has not compacted, and that
-   the note arrives again every turn until it does.
+| Stage | Observable result and control flow |
+| --- | --- |
+| Stored delivery diagnostics | Reports a failed structured resume, a detached resume whose outcome is still unknown, and inbound sends refused while occupancy blocked the agent. Then continues. |
+| Cutoff position | Reports the current time rung and remaining budget when a cutoff exists. This needs no profile or context readout, so later context failure does not erase the row. No cutoff produces no budget row or log line. |
+| Undelivered paste | Reports the record and clears it only when the composer can be proved empty. Then continues. |
+| Occupancy | Reports the occupied UI and stops processing that agent; Gangline does not answer or clear it. |
+| Budget injection | Sends one `[gang:patrol]` note on a new time rung, repeats it in the banking reserve, and restates an overrun. Occupancy or a non-empty composer holds it without advancing state. Gang-issued compaction does not hold a budget note. |
+| Profile and context | Resolves the profile and reads context. Unadopted windows and missing profiles or readouts are reported as not patrolled. A missing readout stops only the context leg because budget work already ran; an unresolved or unloadable profile prevents safe injection. |
+| Context ladder | Re-arms when usage falls, sends one warning on a new rung, and repeats the final-rung instruction on every safe sweep until usage falls. Gang-issued compaction, occupancy or a non-empty composer holds injection without advancing the rung. A busy pane may receive the prose mid-turn according to its profile. |
 
-A gang-issued compaction, an occupied UI, or a non-empty input box holds both a
-crossing warning and a final-band repeat without advancing state, so a later
-patrol retries. A busy agent is delivered to, not held: the warning is prose and
-queues behind the turn it lands in. Lower steady bands remain quiet: only the
-last rung is a permanently open question.
-
-The budget note is held by an occupied UI and by a non-empty input box, on the
-same terms. It is not held by a gang-issued compaction: that hold exists because
-the agent was already told to do the very thing a second note would repeat, and
-banking work before a cutoff is a different instruction — an agent mid-compaction
-is if anything the likeliest to lose what it has not written down.
-
-Unadopted windows and agents with missing profiles or readouts are reported as
-not patrolled. A missing readout stops the context leg only: such an agent is
-still inside the team's budget, so it is reported as not patrolled and carries
-the budget note in the same sweep. A profile that will not resolve or load stops
-both, because there is no typing into a pane whose profile is unknown. With no
-team, patrol prints a no-team line and succeeds.
+Time and context keep separate last-warned state. Crossings below their repeating
+terminal conditions remain quiet after the first delivery. With no team, patrol
+prints the no-team result and succeeds. Ladder policy belongs to
+[ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md) and
+[ADR-0009](adr/0009-time-bands-are-relative.md).
 
 ### `gang cron [--install|--refresh]`
 
@@ -439,152 +431,83 @@ command, where `--install` fails loudly instead.
 
 ### `gang hook`
 
-Ingestion verb for harness hook events (ADR-0008). It reads a JSON hook payload
-from stdin, identifies the current agent through `TMUX_PANE`, branches on the
-native `hook_event_name`, and writes the mapped fact to that agent's own window
-options. Three events carry the turn bracket: `UserPromptSubmit` opens it,
-`PostToolUse` refreshes it, `Stop` closes it. Two carry the compaction bracket:
-`PreCompact` opens it and `PostCompact` closes it, each recording the payload's
-trigger, which is how gang's own `/compact` is told apart from the harness
-compacting on its own threshold. One raises occupancy: `PermissionRequest`
-records that a permission dialog owns the input box — and because nothing fires
-when a dialog is dismissed, only the pane retires that raise.
+Reads one native JSON hook event from stdin, identifies the window through
+`TMUX_PANE`, and applies this mapping:
 
-If hook delivery stops altogether, the last fact written stands. An **open**
-bracket expires on its own bound, but a **closed** one has nothing to go stale —
-the value that would have expired is the one that never arrived — so past
-`GANG_TURN_LIMIT` a closed bracket no longer outranks a pane still being written
-to, and the verdict falls to the scrape tiers rather than reporting an idle
-nothing witnessed. The pane is only consulted this way on a harness declaring
-`GANG_QUIET_AT_REST`, where output at rest is not expected; elsewhere the closed
-bracket stands however old.
+| `hook_event_name` | Window fact | Output |
+| --- | --- | --- |
+| `UserPromptSubmit` | Open the turn bracket. | Emit JSON `additionalContext` only when a context or time rung is newly crossed. |
+| `PostToolUse` | Refresh the open turn bracket. | Same crossing-only `additionalContext` behavior. |
+| `Stop` | Close the turn bracket. | Silent. |
+| `PreCompact` | Open the compaction bracket and record its trigger. | Silent. |
+| `PostCompact` | Close the compaction bracket and record its trigger. | Silent. |
+| `PermissionRequest` | Raise occupancy until the pane proves the dialog gone. | Always silent; stdout must never answer the permission decision. |
 
-On `UserPromptSubmit` and `PostToolUse` it also applies the same band ladders
-and window options as patrol — the agent's context band from its own readout,
-and the team's budget band from the cutoff declared on the session its pane is
-in — and emits a JSON `additionalContext` reply when a higher band is crossed on
-either. Both crossing on one event give one reply carrying both notes, because
-the reply has one slot for them; a crossing on neither gives no reply at all.
-Patrol's repeats do not transfer: this leg speaks on a crossing and is otherwise
-silent, since here every sweep would be every tool call. On every other event it
-emits nothing. On
-`PermissionRequest` that silence is the safety boundary, not a convention: the
-harness reads this hook's stdout as the answer to the open permission dialog,
-so a hook whose output the harness treats as a decision can never be steered by
-gang's reply.
+Interface rules:
 
-It exits 0 on every path: malformed JSON, an unknown event name, a missing
-`TMUX_PANE` or profile binding, and an unavailable context readout are silent
-successes, so fact ingestion can never block the work it observes. Once a
-profile is resolved, profile-loading and band-configuration errors remain loud.
-The claude-code profile wires all six mapped events to this verb at hitch, on
-both launch forms, so nothing is configured by the operator. Context is the one
-predicate this verb does not carry: no hook payload holds a token count, so the
-shipped statusline script writes that fact directly as it paints the beacon.
+- When both ladders cross on one eligible event, their notes share the single
+  `additionalContext` field. With no crossing there is no reply. Patrol's repeats
+  do not run on the hook leg.
+- Malformed JSON, an unknown event, missing `TMUX_PANE`, missing profile binding,
+  or unavailable context is a silent success so telemetry cannot block the work
+  it observes. After a profile resolves, profile-loading and band-configuration
+  errors remain loud.
+- Open brackets expire at their configured bounds. A closed turn bracket that is
+  not followed by a later event stops outranking continued pane output after
+  `GANG_TURN_LIMIT` on profiles declared quiet at rest; the reader falls through
+  to its scrape tiers instead of inventing idle.
+- The event payload carries no context count. Profiles that own a context fact
+  write it through their own declared surface.
+
+The evidence-tier rationale is in
+[ADR-0008](adr/0008-evidence-is-tiered-per-predicate.md) and the rule for a
+declared fact that never arrives is in
+[ADR-0017](adr/0017-a-declared-fact-that-never-arrives-is-not-a-missing-tier.md).
 
 ## Diagnostics and discovery
 
 ### `gang vet [--file-issue] [--probe [profile]]`
 
-Plain vet visits every installed profile, including custom and test-only files.
-It compares the harness's installed version with the profile's verified version
-words, runs an optional profile-owned gate over the harness's files, checks
-that a UTF-8 locale is available, reports the patrol crontab entry, and exits
-nonzero on drift. For an unpinned dotted-numeric version it reports whether the
-installed build is newer than all pins, older than all pins, or between pins
-when that ordering is unambiguous; otherwise the `ROT RISK` remains
-deliberately unranked.
+Options:
 
-Where a team is up, plain vet also holds each live agent's two witnesses for
-the same predicate against each other. Tiers pick witnesses rather than vote,
-so this changes no answer `gang` gives; what it catches is the one rot no
-version pin can see, because no version moved — a writer that stopped keeping
-up while the tier above it answers alone. Both witnesses fresh and apart is
-`ROT RISK`, naming both witnesses and both figures. A witness that is stale,
-spent, or absent is the tier order doing its job, never a finding; busy is
-compared in one direction only — a closed turn bracket under a still-painted
-busy marker — and context at the beacon's own granularity, so rounding is
-never drift. An agent whose witnesses could not be read is reported exactly so
-rather than counted as read and found wrong, and a run with no team up names
-the session it could not find instead of skipping the section. The closing
-scope line states both halves: version strings were compared and the live
-team's own witnesses read against each other, but no marker was fired at any
-pane.
+| Form | Behavior |
+| --- | --- |
+| `gang vet` | Visits installed shipped, custom and test profiles; compares installed version words with profile pins; runs profile-owned file/configuration gates; checks for a UTF-8 locale; reports the patrol cron entry; and compares fresh live evidence tiers where a team exists. It does not drive a marker. |
+| `gang vet --file-issue` | Performs plain vet, then uses authenticated `gh` to file deduplicated issues for version-pin and live tier-conflict `ROT RISK` findings. It lists open issues before filing. Filing failure never retracts the printed finding; a version-pin filing failure is fatal rather than risking a duplicate. |
+| `gang vet --probe` | Performs plain vet, then launches each installed harness on a private `tmux -L` socket, drives a real turn, checks the declared busy marker and context reader, reads back declared owned facts, and attempts the mid-turn ordering probe where declared. |
+| `gang vet --probe <profile>` | Restricts both ordinary checks and the live probe to one installed profile. An unknown profile is an error. |
 
-The profile-owned gate is also where harness-specific setup is checked, and a
-finding names the edit that fixes it. `codex` and `opencode` gate the file
-formats they parse. `claude-code` parses back the launch line it
-builds, asserting the six turn-hook events and the `statusLine` command that
-paints the context beacon, and reports a finding when this install has no readable
-beacon script for that line to point at. It then reads the operator's own
-`statusLine` setting, which after injection decides one thing: whether a window
-`gang adopt` registered — one gang did not launch, so no inline settings ever
-reached it — paints a beacon at all. Another statusline there and a beacon path
-that no longer exists stay distinct findings, and each says what it costs, which
-is that agent's context tier rather than the whole harness. It reads the user and
-managed settings scopes and names which it read. Project-scope settings are not
-read — the directory an agent will be hitched in is not known at vet time — and a
-settings file that exists but does not parse is reported as undetermined, never as
-unconfigured. The gate is skipped where the harness is not installed.
+Verdicts:
 
-The `patrol cron` row reports the entry sweeping this session as absent, current,
-or stale, and is omitted where there is no `crontab` command. Only stale counts as
-drift, and the row prints the entry in force beside the one `gang cron` would
-write. Absence is a choice an install is entitled to make, and a diagnostic that
-goes red for a choice can never go green again.
+| Output | Meaning |
+| --- | --- |
+| `ROT RISK` | Version pins, a profile-owned gate, or two fresh witnesses disagree. The run exits nonzero. An unpinned dotted version is ranked as newer, older or between pins only when that ordering is unambiguous. |
+| `fact '<name>' CONFIRMED` | The harness's declared wiring wrote that fact during the driven turn and the live reader found it. |
+| `fact '<name>' DECLARED AND MISSING` | A leg that drove the declared fact completed but its owned record was absent. This is drift and exits nonzero. |
+| `not probed` / `NOT PROBED` | The probe could not honestly exercise or determine the predicate. This is not a pass and cannot refute the declaration. |
+| `mid-turn acts CONFIRMED` | File B was observed while boundary file A was absent, followed by A. Only that B-before-A ordering confirms action inside the running turn. |
+| patrol cron `absent` | No entry for this session; a permitted operator choice, not drift. |
+| patrol cron `current` | The installed entry matches what `gang cron` derives now. |
+| patrol cron `stale` | The current and derived entries differ; both are printed and vet exits nonzero. |
 
-- `--file-issue`: for each version-pin and each tier-conflict `ROT RISK`, use
-  `gh` to create a deduplicated GitHub issue in this repository. The title is
-  the dedup key, so everything that varies between two sightings of one fault —
-  the version ordering, the agent, the figures — rides the body, and one
-  unfixed fault stays one issue however many sweeps see it. No issue is created
-  without a successful listing of what is already open. A gh failure on a
-  version-pin finding is fatal rather than risking a duplicate; on a tier
-  conflict, filing is the optional half — the finding is printed and its exit
-  code raised before gh is reached, so the failure leaves a row saying the
-  finding stands unfiled and changes nothing else.
-- `--probe`: after the version and format checks, launch each installed harness
-  on a private `tmux -L` socket, give it a real turn, require its declared busy
-  marker to be absent at rest, present while working, and absent after settling,
-  then read its declared context value. For each fact the profile declares in
-  `GANG_PROBE_FACTS`, the probe then reads back what the harness's own wiring
-  wrote across that same turn, through the readers the live team uses — never a
-  new scrape. A declared fact confirmed is a row; a declared fact missing after
-  a driven turn is `DECLARED AND MISSING`, which is drift, because the record
-  is on the window or it is not. A fact no leg can drive honestly is
-  `not probed` with the reason — occupancy needs a real permission dialog,
-  which `gang` never answers, and compaction needs a context window filled past
-  the harness's own threshold. The fact rows close with an
-  `Owned facts: N confirmed, M not probed` summary, and a not-probed fact is
-  not a pass. Where a profile declares `GANG_MIDTURN_ACTS=1`, a second turn
-  also attempts the asymmetric filesystem ordering probe described below.
-- `--probe <profile>`: narrow both the ordinary vet report and probe to one
-  installed profile. An unknown name is an error.
+Coverage limits:
 
-While probing, each phase it is about to wait in — input box, busy marker, pane
-settling — is named on stderr with the bound it will give up at, so a long wait is
-distinguishable from a hang. Those notes appear only when stderr is a terminal;
-captured output and cron logs carry the rows alone. They are deliberately plain
-sentences, because Gangline's output lands in the panes Gangline scrapes and a
-spinner-shaped frame matches a shipped busy marker.
-
-A probe spends harness tokens. Not installed, no declared busy marker, first-run
-dialog, launch failure, or a turn that never starts or settles is reported as
-**not probed**, not as success. Zero means every marker that was actually fired
-and every fact that was actually read back passed; it says nothing about
-skipped profiles or not-probed rows. Gates, compacting markers, alternate
-busy-regex branches an ordinary turn did not paint, and the facts no probe leg
-can drive honestly remain outside the probe's coverage.
-
-The mid-turn probe does not derive a verdict from pane text. Turn 1 creates a
-start file, performs a slow action, and creates boundary file A as its last
-action; while the start file exists and A does not, ordinary text asks the
-running agent to create B immediately. B observed alone before A, followed by A,
-prints `CONFIRMED`. Every other outcome prints `NOT PROBED` with a
-could-not-determine reason. In particular, A-before-B and A plus B first seen in
-the same filesystem poll cannot refute the declaration: a next turn may have
-begun between observations. Profiles without the declaration never receive this
-second turn.
+- Plain vet checks version strings, file/configuration gates and live witness
+  agreement. It never fires a marker, so a clean result does not prove current
+  TUI chrome.
+- A live probe spends harness tokens. A missing install or marker declaration,
+  first-run dialog, launch failure, missing input box, turn that never starts, or
+  pane that never settles is `not probed`. Interactive stderr names the phase and
+  its bound; captured output contains the verdict rows.
+- A zero probe exit covers only markers and facts actually exercised. Occupancy,
+  compaction that needs a naturally full context, alternate regex branches and
+  every `not probed` row remain outside that claim.
+- Mid-turn A-before-B or both files first observed together is
+  could-not-determine, not a refutation: another turn may have begun between
+  observations.
+- Profile gates name the configuration source they could read. Missing,
+  malformed and out-of-scope settings remain distinct; an unreadable predicate
+  is never reported as clean absence.
 
 `doctor` is an alias for `vet`.
 
@@ -651,7 +574,7 @@ fragments and are not listed as roles.
 | `GANG_SESSION` | tmux session addressed by team commands | `gangline` |
 | `GANG_PROFILE` | default profile for `up` and `hitch` | `claude-code` |
 | `GANG_ROLE` | role used by `up` when `-r` is absent | `lead` |
-| `GANG_FROM` | sender identity for `send` and compact resumes | none |
+| `GANG_FROM` | sender identity for `send` and structured `cycle` or `compact` resumes | none |
 | `GANG_CONTEXT_FLOOR` | first rung, in absolute tokens — the same number on every harness | `120000` |
 | `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)) | `350000` |
 | `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `auto` |
@@ -685,7 +608,7 @@ These are useful when the corresponding path is in use:
 | `GANG_OCCUPIED_LIMIT` | how long a raised occupancy stays credible; the pane retires the raise by proving the dialog gone, and expiry stops believing it without clearing it | `900` seconds |
 | `GANG_CONTEXT_FACT_LIMIT` | how long a written context figure is preferred over the beacon scrape; a stale figure reads low across a band edge, so the bound is short and the scrape does the work in any doubt | `60` seconds |
 | `GANG_RESUME_TIMEOUT` | detached resume wait ceiling | `900` seconds |
-| `GANG_RESUME_MAX` | largest resume `compact --resume-stdin` will carry; whole bytes, and a non-numeric value is refused. Over it the command refuses before typing anything and names the fold — gang never trims a body it was handed. Under it, the delivery states the size, and how far it grew since the last resume into that window | `65536` |
+| `GANG_RESUME_MAX` | outer byte guard for a structured package passed to `cycle --resume-stdin` or `compact --resume-stdin`; whole bytes, and a non-numeric value is refused. Over it, cycle refuses before retirement and compact refuses before issuing the native command. Under it, the full structural, ledger, review and transition checks still apply. Gangline never trims a body; verified delivery reports its size and observed growth | `65536` |
 | `GANG_PATROL_LOG` | where a non-interactive sweep records itself; empty writes no file | `$XDG_STATE_HOME/gangline/patrol.log` |
 | `GANG_PATROL_LOG_MAX` | size at which that log rolls to a single `.1`; whole bytes, and a non-numeric value is refused | `1048576` |
 | `GANG_PROBE_DIR` | clean, already-trusted working directory for probes | private temporary directory |

@@ -4,6 +4,28 @@
 - **Date:** 2026-08-03
 - **Amends:** [ADR-0015](0015-a-context-is-renewed-by-cycling-not-by-summary.md)
 
+## Operator impact
+
+Renewal input is no longer arbitrary prose. The lead owns the live task ledger;
+each dog owns a structured package that references only its assigned live tasks.
+The practical workflow is in
+[Operating a team](../operations.md#renewing-context), and the command-facing
+boundary is in the
+[reference](../reference.md#structured-continuation-input).
+
+A legacy window's first structured attempt establishes a review floor and
+refuses before destructive action. A later reviewed package may proceed, but
+validation is still not delivery: only pane verification completes acceptance.
+A leftover `pending` lineage requires explicit drop and ordinary hitch or adopt;
+direct send and another renewal do not repair it.
+
+Navigate to the [decision](#decision),
+[task-ledger grammar](#the-task-ledger-wire-format),
+[per-dog grammar](#the-per-dog-continuation-wire-format),
+[review and transition rules](#review-freshness-and-transition-state),
+[validation boundary](#what-validation-establishes), or
+[acceptance criteria](#acceptance-criteria).
+
 ## Context
 
 ADR-0015 made an authored handoff the trustworthy renewal channel and put an

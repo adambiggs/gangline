@@ -5,10 +5,10 @@
 
 ## Context
 
-Every predicate gangline answers is tiered
+Every predicate Gangline answers is tiered
 ([ADR-0008](0008-evidence-is-tiered-per-predicate.md)). The strongest tier is
 facts the harness itself writes through its own events; below it sit marks
-gangline wrote, and below those the pane scrapes. A reader takes the best tier
+Gangline wrote, and below those the pane scrapes. A reader takes the best tier
 that can answer and falls through when one cannot.
 
 A profile already declares which of those facts its harness supplies. One
@@ -128,7 +128,7 @@ is present, where this concerns one that is absent. Nothing here touches it, and
 it is named so the next reader does not have to re-derive that it was considered.
 
 **Two neighbouring findings look like this same shape and are deliberately not
-decided here.** One is that the set of hook events gangline may write on is
+decided here.** One is that the set of hook events Gangline may write on is
 per-harness knowledge held in core rather than declared by the profile; the other
 is that the probe reports no row when the harness it launched exits underneath
 it. Both were reported by other agents and neither has been measured by this

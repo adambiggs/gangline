@@ -101,7 +101,7 @@ Gangline's control path is the tmux Unix socket. Under Codex's
 `workspace-write` sandbox, network denial also denies `connect()` to Unix
 sockets. Incoming messages can still arrive because an outside Gangline process
 writes into the pane, but the Codex agent cannot run `gang send`, `roster`,
-`status`, or self-compaction back through that socket.
+`status`, or a self-issued `gang compact` back through that socket.
 
 Keep the filesystem sandbox while allowing the socket by choosing this in
 `~/.codex/config.toml`:
@@ -338,72 +338,36 @@ the shell that team runs in, which is where `gang cron` reads the overrides it
 carries. A patrol that disagrees about the lock directory stops serialising with
 the other writers.
 
-The ladder is derived, and both of its ends are absolute token counts. It starts at
-`GANG_CONTEXT_FLOOR` (120000) on every harness, because context rot tracks how long
-a context is rather than how full its window is — the same token count earns the
-same warning everywhere. It ends at `min(90% of the window, GANG_CONTEXT_CAP)`, so
-no agent goes unwarned past 350000 however large its window, and the last rung
-always sits below the window with enough room left to issue a compaction and have it
-land. Five rungs are placed across that span at fixed fractions, closer together
-toward the top, so the warnings arrive faster as the situation gets worse
-([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
+The automatic ladder starts at `GANG_CONTEXT_FLOOR` and ends at
+`min(90% of the window, GANG_CONTEXT_CAP)`. Both bounds are absolute token
+counts; only the spacing between them is fitted to the window. See
+[ADR-0005](adr/0005-context-bands-are-absolute.md) and
+[ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md) for the rationale.
 
-The note escalates with the rung, and what escalates is the ask rather than the
-volume. The lowest rung asks for nothing: it reports the crossing, says a renewal
-belongs at the next checkpoint, and leaves the work in front of the agent alone —
-an onset is not an urgency, and a note an agent is right to disobey teaches it to
-weigh the later rungs the same way. Above it the ask begins: finish the task in
-hand and then cycle; then close the door on starting anything new; and the top rung
-stops asking and instructs the agent to cycle now, before its next action. That is
-not a request to renew mid-thought: a boundary is only ever wanted because it is a moment
-with something coherent to write down, so writing the handoff is what makes this
-moment that boundary, and waiting for a better one spends the last of the window on
-the work whose handoff was the thing at risk.
+| Condition | Agent and operator behavior |
+| --- | --- |
+| No rung crossed | No warning. |
+| Lowest rung crossed | Information only: keep the continuation package current and continue the work already in hand. Renew at an appropriate checkpoint, not merely because this rung appeared. |
+| A higher non-final rung crossed | Finish the current arc, update the package, then cycle. Later warnings close the door on starting more work before renewal. |
+| Final rung reached | Update the package and cycle before the next action. Patrol repeats this instruction on every safe sweep until usage drops below the rung. |
+| Window cannot reach the configured floor | Its ceiling becomes the sole rung and uses the final-rung instruction. |
+| UI occupied, composer non-empty, or compaction pending/unproved | Injection is held without advancing warning state, then retried when the pane is safe. |
 
-Every rung states its reason in terms of what is happening to that context now —
-recall degrading, instructions dropping out, unwritten work lost at the cut —
-because an instruction carrying its cost can be weighed against the work in front of
-the agent, and a bare one loses that comparison every time. Each is written as an
-instruction rather than as prose about context: action first, one clause per
-sentence, literal consequences, no metaphor. These notes arrive in a context that is
-already degrading, so a sentence the agent has to unpack before it can act is charged
-against the thing the note is trying to save.
-
-No rung refers to any other, and none counts what is left. A tally of remaining
-bands is arithmetic about the ladder rather than about the context, it reads as an
-allowance to spend, and nothing an agent does with the number changes what it should
-do next. For the same reason the figure an agent is handed is what it is carrying
-and nothing else: a window beside it reads as headroom, and headroom is the belief
-the absolute bands exist to correct. Operator-facing surfaces keep the window,
-because an operator is diagnosing and it says which profile spoke.
-
-Crossings remain one-shot below the top. Once the final band has been recorded,
-patrol sends a separately worded repeat on every safe sweep until usage drops out
-of that band, and the top rung says so — an agent that does not know the note is
-coming back can read one deferral as the end of it. Pending or unproved compaction,
-an occupied UI, and a non-empty composer retain the same precedence and hold the
-repeat; the top-band exception reaches those guards before any injection.
-
-A window too small to reach the floor keeps a single rung at its ceiling: it cannot
-be warned about rot it has no room to suffer, so the one hazard left is exhaustion.
-That rung is both the first crossing and the top of the ladder, so it carries the
-top rung's instruction — there is nothing above it to escalate to.
-
-Setting `GANG_CONTEXT_BANDS` to a comma-separated ladder replaces the derivation
-entirely. Bare entries are absolute tokens; `%` entries are a percentage of that
-agent's window — an escape hatch for an unusual one, never a default
-([ADR-0005](adr/0005-context-bands-are-absolute.md)). A profile may export the floor
-or the cap to set it for its own harness. The last warned band is a tmux window
-option, shared with `gang hook`, and re-arms when usage falls after compaction.
+Crossings below the final rung are one-shot. `gang hook` and patrol share the
+last-warned window option, and usage falling after compaction re-arms it.
+`GANG_CONTEXT_BANDS` replaces the automatic ladder: bare entries are absolute
+tokens and `%` entries are percentages of that agent's window. A profile may
+override the floor or cap for its harness. Exact defaults are in the
+[environment reference](reference.md#user-facing-settings).
 
 ### In-turn hook
 
-`gang hook` consumes a harness hook event on stdin and, on Claude Code's
+`gang hook` consumes a harness hook event on stdin and, on the mapped
 `UserPromptSubmit` and `PostToolUse` events, can return an `additionalContext`
-warning during the agent's own turn. The claude-code profile wires those events
-into the launch line at hitch, so a hitched agent carries this leg with nothing
-to configure; the same verb ingests the turn-bracket facts the reference
-describes.
+warning during the agent's own turn. The Claude Code and Codex profiles wire
+those events into the launch line at hitch, so a hitched agent carries this leg
+with nothing to configure; the same verb ingests the turn-bracket facts the
+reference describes.
 
 It warns on both axes, sharing each one's last-warned window option with patrol,
 so a crossing is spoken about once however it is noticed first. The reply has a
@@ -424,154 +388,122 @@ gang cutoff           # what is declared, and what is left of it
 gang cutoff clear     # remove it
 ```
 
-One team, one cutoff. It is a declaration and never a measurement: gang does not
-estimate how long anything takes, and nothing here is enforced. What gets stored
-is the pair — the cutoff, and the moment it was declared — because the span a
-ladder divides has to be the span you declared, not whatever happened to be left
-when a sweep looked at it. `gang hitch --cutoff` is the same declaration reached
-by a different verb, so hitching one more dog moves everybody's.
+One team has one cutoff. It is a declaration, not an estimate or an enforcement
+mechanism. Gangline stores both the cutoff and when it was declared; declaring it
+again, including through `gang hitch --cutoff`, replaces the team-wide budget and
+restarts its span. The time ladder is relative to that declared span; see
+[ADR-0009](adr/0009-time-bands-are-relative.md).
 
-The rungs are fractions of that span, and this is where the time ladder parts
-company with the context one. A context rung is an absolute number of tokens
-because rot tracks how long a context is. A time rung cannot be, because the same
-elapsed hour is most of a two-hour budget and the start of a six-hour one, and
-what an agent has to pace against is how much of the declared work is left rather
-than what the clock says ([ADR-0009](adr/0009-time-bands-are-relative.md)).
+| Condition | Report and action |
+| --- | --- |
+| No cutoff declared | No budget row, note, or patrol log line. |
+| Before the reserve | Each crossing is reported once with the remaining budget. The notes progress from checking the approach, to refusing scope growth, to banking durable results. |
+| Inside `GANG_TIME_RESERVE` | Every safe patrol repeats the instruction to bank work, then permits continued improvement of what is already durable. |
+| Past the cutoff | Every safe patrol restates the overrun, names the operator as the authority over the team-wide declaration, and still does not stop the agent. |
+| Context or profile readout missing | The budget row still appears because it needs neither. A note is injected only when Gangline can resolve the profile and safely type into the pane. |
 
-`GANG_TIME_RESERVE` (`10%`) is banking room held back from the end, so the ladder
-spans from the declaration to the cutoff minus the reserve and the last rung fires
-where banking has to start rather than where the budget stops. It also takes a
-duration (`15m`), and that form is an operator's to reach for rather than a
-convenience: writing results out costs about the same however much budget is left,
-so a proportional reserve shrinks below the cost of banking exactly when the
-budget is shortest. A reserve gang cannot read, or one that leaves no span to
-divide, refuses the whole sweep and says which knob was wrong — a ladder guessed
-at would put every agent on a rung nobody declared.
+`GANG_TIME_RESERVE` accepts a percentage or a duration. It is removed from the
+declared span before the ladder is derived; an unreadable reserve or one leaving
+no usable span refuses the sweep. `GANG_TIME_BANDS` replaces the derivation with
+comma-separated percentages of that usable span. Exact forms and defaults are in
+the [environment reference](reference.md#user-facing-settings).
 
-There is no rung at zero: the start of a budget is not news. Above it the ask
-tightens rather than getting louder, because a louder note carrying the same
-deferrable instruction defers exactly as well. The first asks whether the current
-approach lands inside what is left, and to change it now if it does not, while
-there is still budget to change it in. The next closes the door on widening the
-work. The next asks for durability — write results out, commit what works, record
-where you got to — because work that exists only in a pane dies with the budget.
-The last is the reserve itself, and it leads with the instruction and then with
-the licence: bank now, then keep going, because improving what is already banked
-is the best use of what remains. The loudest rung of the ladder reading as *stop*
-would take a decision that belongs to you.
+Patrol is the primary budget leg: it reports remaining time, repeats the reserve,
+and restates overruns. The in-turn hook carries crossings only. Context and time
+use separate last-warned options, and compaction changes neither elapsed time nor
+the budget state. Routine `steady` rows are omitted from the patrol log; reserve
+and overrun rows remain.
 
-Past the cutoff the note goes terminal and is restated fresh on every sweep. Going
-quiet there would fabricate an all-clear at the moment it is least earned. It
-names *the operator* rather than telling the agent to clear the cutoff, because
-one team declared one budget and ending it is not one agent's call — and it keeps
-the licence explicit, since gang enforces nothing and a note that read as an order
-to stop would be gang taking that decision instead.
+## Renewing context
 
-Every rung states the remaining budget, and that is a deliberate inversion of the
-context note, which withholds its figure so headroom cannot read as an allowance.
-Remaining budget is not headroom: it is the pacing input itself. An agent told
-only that time is short can neither rebalance what it is doing nor decide what to
-drop, and the two axes differ in what the number is *for*.
+Renewal is a cycle: a fresh agent replaces the old context and receives authored
+current state. Native harness compaction is a separate operation described below.
+Continuation state is split by ownership:
 
-Where these two legs sit in a sweep is the other half of the design. The budget
-row is produced above every early return that turns on a profile or a readout,
-because reporting a budget needs neither. The note that acts on it sits lower,
-because typing into a pane does need one — gang has to know that profile's idea of
-an input box before it writes to it. The gap between them is the point: an agent
-whose beacon has gone missing is reported as not patrolled *and* told how much of
-the day is left, in the same sweep. Context is the axis that only moves when an
-agent works; time is the axis that advances while it sits idle, which is why the
-sweep is the budget's primary leg — it is the one that reports, that repeats the
-top rung, and that restates a cutoff already passed. The in-turn hook carries the
-crossings, so one is heard in the turn it happens in rather than up to a cadence
-later, and it does no repeating at all. The one
-case that gets the row and no note is a profile gang cannot resolve or load at
-all, and that is correct — there is no typing into a pane whose profile is
-unknown.
+- The current lead alone maintains a durable `GANGLINE-TASK-LEDGER 1`. It holds
+  only live team tasks, their owners and acceptance state, plus the private-note
+  pressure policy. Every edit advances and reviews the ledger according to the
+  closed grammar.
+- Each dog maintains its own durable `GANGLINE-CONTINUATION 1` package. It names
+  the ledger by absolute path, references only live tasks owned by that dog, and
+  carries only that dog's active work, next actions, local blockers, binding
+  references and dangerous refutations. It never copies task outcome, state,
+  dependencies or other ledger fields.
 
-The two legs keep their last-warned bands in separate window options, so a context
-crossing never silences a budget note and the reverse never happens either. An
-agent that has just compacted is no earlier in the team's day for it. Crossings
-are one-shot below the top, the reserve rung repeats on every safe sweep, and a
-gang-issued compaction does not hold a budget note the way it holds a context one:
-that hold exists because the agent was already told to do the thing a second note
-would repeat, and banking work before a cutoff is a different instruction.
+The [command reference](reference.md) summarizes the required structure and
+[ADR-0018](adr/0018-continuation-state-is-a-closed-reviewed-set.md) owns the
+normative wire grammar.
 
-With no cutoff declared there is no row, no note, and no log line — not a row
-saying nothing is declared, which would be one line per agent per sweep for the
-whole life of a team that never asked for a budget. And because the routine
-verdict is worded `steady`, which the patrol log drops by name, a budget that is
-merely running leaves no record behind while the reserve and the overrun both do.
+Use this workflow:
 
-## Compaction and handoff
+1. **Establish shared authority.** The lead creates or updates the ledger at its
+   durable absolute path. A worker asks the lead for ledger changes; it does not
+   edit the ledger or copy missing task data into its package.
+2. **Maintain one package per dog.** Keep it off `/tmp`, update it at checkpoints,
+   remove notes when their declared expiry condition fires, and replace changed
+   notes with new identifiers and explicit `Supersedes` links where required.
+   Every claim carries an evidence category and provenance locator; binding bounds
+   point to their source instead of copying governance prose.
+3. **Review immediately before renewal.** Re-read the ledger, durable work and
+   relevant environment. Set `Reviewed-At` to a host epoch strictly later than
+   the window's review floor and any previously accepted package review. Reusing
+   an inherited or already delivered timestamp is refused; a future timestamp is
+   refused too.
+4. **Cycle with the authored file.** For a self-renewal, the target, package
+   `Writer`, and attributed sender are the same identity:
 
-Renewal is `gang cycle` now, and that is what the band note escalates toward: it
-replaces the agent rather than summarising its context, carries the handoff in on
-the same `--resume-stdin` channel, and works self-issued on every profile because
-the caller is retired rather than dropped and lives through it. `gang cycle` in
-[the reference](reference.md) is the page for it. What follows is compaction,
-which remains a verb and remains driveable — everything below still holds for it.
+   ```sh
+   gang cycle scout --from scout --resume-stdin < /workspace/team/scout.continuation
+   ```
 
-The robust self-compaction form redirects a file that already exists:
+   Gangline stages and validates the complete package and its referenced ledger
+   before retiring anything. It then retires the predecessor as `scout~spent`,
+   hitches the replacement on the recorded launch facts, revalidates the live
+   ledger and transition, and uses the ordinary pane-verified delivery path.
+5. **Read the receipt literally.** Preflight acceptance is not delivery. Only the
+   final `resumed <dog>` line establishes that the package reached the replacement
+   and the transition became accepted. A valid structure still does not prove its
+   claims true, complete, or sufficient to restore files, processes or credentials.
 
-```sh
-gang compact <self> --from <self> --resume-stdin < <path to the handoff>
-```
+An older window without continuation state has a deliberate first-refusal path.
+Its first structured attempt establishes an observable review floor and a
+known-empty transition, preserves the live context, and refuses. Review the
+package again after that floor, advance `Reviewed-At`, and retry. New windows made
+by ordinary `hitch` or `adopt` already receive their floor and empty transition.
 
-`--resume-stdin` reads to EOF and has no opinion about where the bytes came
-from, so a caller composing a short resume for a *different* agent still writes
-one inline:
+Every preflight refusal leaves the old cycle target running and the authored
+files untouched. A failure after a candidate enters `pending` cannot be repaired
+by cycling again or by `gang send`: direct messaging is not continuation
+acceptance. Retire the lineage with `gang drop <dog>`, establish a genuinely new
+one with an ordinary `gang hitch` or `gang adopt`, review a new package after its
+new floor, and deliver that package through a later renewal. This loses the old
+lineage state by explicit operator action; never treat `pending` as accepted or
+empty.
 
-```sh
-gang compact <name> --from <caller> --resume-stdin <<'RESUME'
-continue from your compacted summary and report the result
-RESUME
-```
+Delete a dog's package when its referenced tasks are removed or the dog is
+released. At team wrap, the lead deletes the ledger after no live task needs it.
+Gangline does not author or delete either file.
 
-The difference between the two is authorship, not transport. An agent compacting
-itself feeds back a handoff it has been keeping since the task started — where
-that file belongs and what has to be in it are
-[roles/_common.md](../roles/_common.md)'s to say, under "Your context window" —
-and the band note Gangline injects at a crossing sends an agent to that file
-rather than asking it to author one there and then. A caller writing a resume for
-someone else is doing a smaller thing: handing over an instruction, not the
-context an agent is about to lose, and inline is the right shape for it.
+### Native harness compaction
 
-Gangline allows the calling agent to be busy: its compaction command can queue
-behind the current turn. A different busy agent is refused because forced
-compaction would discard its live work.
+`gang compact <dog>` submits the profile's own compaction command on the same
+window. It does not cycle the agent, restore a conversation, or change continuation
+transition state. The success line proves submission only; the harness remains the
+authority on whether compaction executed. A busy peer is refused. A self-issued
+command is allowed to queue behind the current turn, but Codex rejects `/compact`
+while a task is active, so use automatic compaction or have another caller compact
+an idle Codex window.
 
-That transport permission does not make every harness's command self-safe. Codex
-rejects `/compact` outright while a task is active, and a Codex agent invoking
-Gangline from its own pane is still inside that task, so it cannot self-compact
-by this route. Let Codex compact automatically, or have
-another caller wait for it to become idle and then run `gang compact codex-name`
-(with an attributed resume if needed). Do not pair the rejected self-issued Codex
-command with `--resume-stdin`: Gangline proves the slash command was submitted, not
-that Codex executed it, and a fallback can eventually deliver the resume without
-a context drop. For every profile, the native compaction command remains the
-authority on whether the request actually runs.
-
-The resume is not typed immediately after the slash command. Harness queues can
-hand ordinary text to the turn still running while keeping a slash command for
-the boundary, causing the resume to overtake and be consumed before compaction.
-Gangline instead starts a detached waiter.
-
-The waiter uses the first available safe signal:
-
-1. a declared live compaction marker (the shipped Pi profile currently declares
-   one; the other shipped profiles do not);
-2. for a gang-issued compaction with a readable baseline, context falling below
-   half that baseline;
-3. after the compaction grace or without context introspection, a bounded series
-   of non-busy and stable-screen observations;
-4. at the overall timeout, an attempted delivery through the ordinary verified
-   injection path.
-
-The context-drop threshold deliberately favours a late resume: a compaction that
-reclaims less waits for the fallback instead of declaring success early. If the
-detached delivery fails, the error lives in `@gl_resume_failed` and is reported
-by status and patrol.
+`gang compact <dog> --from <dog> --resume-stdin` accepts only that dog's valid
+structured package; arbitrary prose and a resume authored by another identity are
+refused before the native command is issued. The resume is not typed immediately.
+A detached worker waits for a declared compaction marker, context below half the
+issue-time baseline, or bounded stable-screen evidence, with a timeout fallback
+through the same verified injection path. At delivery it rechecks the active
+target, ledger, review, task ownership and transition policy before marking the
+candidate pending, then accepts it only after pane verification. `gang status`
+and patrol report a detached failure. If that failure left `pending`, use the
+explicit new-lineage recovery above.
 
 ## Understanding state
 
@@ -600,35 +532,13 @@ paste would land in the harness or in a live tool.
 
 ### An agent showing a busy marker reads as busy
 
-The busy regex is matched against pane text without asking who put it there, and
-`capture-pane` hands over cells rather than provenance, so it cannot be asked. An
-agent that displays a profile, quotes a capture, or reviews this repository puts a
-busy marker on its own screen and reads busy off its own source. The people that
-lands on are almost exclusively the people working on Gangline, since the markers
-live in this repo's files — a dogfooding tax rather than a bug most operators can
-hit.
-
-It is accepted because it fails in the safe direction, and that direction is a
-property rather than a hope: pane text can only **add** matches, never subtract the
-one a real turn paints. So a contaminated pane makes an idle agent read busy — sends
-queue or are refused, and `gang wait` runs to its timeout — and it can never make a
-working agent read idle. Nothing is delivered wrongly; something is delayed.
-
-There is no guard because the two available shapes both fail worse. Occupancy has a
-structural companion — a dialog watched live owns the screen, so a composer still
-being there proves the words are talk *about* a prompt — and busy has no equivalent:
-the composer is painted through a turn on some harnesses and dropped on others, so
-neither its presence nor its absence settles anything. Position does not work either;
-prose-quoted markers land inside a fixed bottom window about as readily as outside
-it, so where the text sits discriminates nothing. And conjoining the two signals
-that *can* tell a live turn from static text — recent pty activity and churn —
-would inverse the failure
-direction, because both are unavailable unless a profile declares itself quiet at
-rest, and an `AND` against an unavailable signal reads every busy agent as idle. That
-trades this bounded cost for an unbounded one.
-
-If you are working on Gangline and an agent reads busy while plainly idle, check
-whether its pane is showing a marker before suspecting the scraper.
+The busy regex sees pane cells, not who painted them. Displaying a profile,
+capture, or quoted marker can therefore make an idle contributor read busy. The
+failure direction is conservative: quoted text can add a match but cannot erase
+a real one, so sends or waits may be delayed but a working agent is never made to
+read idle. No reliable composer or position test distinguishes the quote across
+all harnesses. If an agent is visibly idle but reports busy, inspect its pane for
+a quoted marker before treating the scraper as stale.
 
 `pane_stable` proves only that captured cells did not change during the sample.
 A silent tool call or compaction can hold still while work continues. Patrol

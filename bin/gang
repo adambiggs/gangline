@@ -371,18 +371,21 @@ gang — drive a team of CLI agents as tmux windows
                                               The old window is KEPT as <name>~spent, out of
                                               the agent namespace but still readable; the
                                               next cycle closes it, or 'gang drop' does.
-                                              Wrap first — the handoff is the agent's own to
-                                              write. --resume-stdin reads that handoff from
-                                              stdin and delivers it to the fresh agent once
-                                              it is briefed; needs --from
+                                              Review the per-dog continuation package first.
+                                              --resume-stdin reads that structured package,
+                                              tied to a live task the Writer owns in its
+                                              declared lead-owned ledger, and delivers it to
+                                              the fresh agent once briefed; needs --from
   gang adopt <name> -p <profile>              register an existing window as an agent
   gang send  <name> --from <sender> --stdin   verified send; reads the body from stdin and
                                               delivers mid-turn if the harness takes input
                                               during one (--wait to block for idle instead)
-  gang compact <name> [--resume-stdin]        trigger the harness's own context compaction;
-                                              a resume read from stdin fires once it settles.
-                                              Naming yourself is allowed and is the
-                                              self-compaction path (--from/GANG_FROM required)
+  gang compact <name> [--resume-stdin]        submit the harness's own native compaction;
+                                              a valid structured package read from stdin is
+                                              queued for verified delivery once it settles.
+                                              Naming yourself is the self-issued native
+                                              compact path, not context renewal
+                                              (--from/GANG_FROM required with a package)
   gang status <name>                          busy (tight tug) | idle (slack tug) |
                                               parked (waiting on <agent>) |
                                               expired (<the evidence that ran out>:
@@ -692,9 +695,1733 @@ valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON 
   esac
 }
 
+# --- structured continuation boundary (ADR-0018) ---------------------------
+#
+# Renewal captures authored package and ledger bytes without first normalizing
+# them through shell variables, then admits only the closed schema and observed
+# transitions ADR-0018 defines. `cycle` and `compact` are the live consumers.
+
+CONTINUATION_VERB="continuation"
+CONTINUATION_TMP=""
+CONTINUATION_CLEANUP_ERROR=""
+
+continuation_fail() { die "$CONTINUATION_VERB: $*"; }
+
+continuation_path_disappeared() { # $1 exact path; 0 absent, 1 present, 2 unevaluable
+  local path="$1" parent="${1%/*}"
+  [ "$parent" != "$path" ] || return 2
+  [ -n "$parent" ] || parent=/
+  # A negative lstat predicate below is informative only while the exact name's
+  # parent is searchable. Check on both sides so an inaccessible parent cannot
+  # turn a surviving child into apparent absence.
+  [ -d "$parent" ] && [ -x "$parent" ] || return 2
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    return 1
+  fi
+  [ -d "$parent" ] && [ -x "$parent" ] || return 2
+  return 0
+}
+
+continuation_cleanup_attempt() {
+  local path="$CONTINUATION_TMP" rc=0 disappearance_rc=0
+  CONTINUATION_CLEANUP_ERROR=""
+  [ -n "$path" ] || return 0
+  if rm -rf -- "$path"; then :; else rc=$?; fi
+  if [ "$rc" -eq 0 ]; then
+    if continuation_path_disappeared "$path"; then
+      CONTINUATION_TMP=""
+      return 0
+    else
+      disappearance_rc=$?
+    fi
+    if [ "$disappearance_rc" -eq 2 ]; then
+      CONTINUATION_CLEANUP_ERROR="could not determine whether the private staging path $path disappeared after cleanup because its parent directory is unavailable; structural validation has no success receipt"
+    else
+      CONTINUATION_CLEANUP_ERROR="could not remove and verify the private staging path $path; structural validation has no success receipt"
+    fi
+  else
+    CONTINUATION_CLEANUP_ERROR="could not remove and verify the private staging path $path; structural validation has no success receipt"
+  fi
+  return 1
+}
+
+continuation_cleanup_required() {
+  if ! continuation_cleanup_attempt; then
+    continuation_fail "$CONTINUATION_CLEANUP_ERROR"
+  fi
+}
+
+continuation_need_tool() { # $1 = executable, $2 = predicate it supplies
+  command -v "$1" >/dev/null 2>&1 \
+    || continuation_fail "could not determine $2 because '$1' is unavailable"
+}
+
+continuation_begin() { # $1 = command label; establish byte-preserving private staging
+  CONTINUATION_VERB="$1"
+  continuation_need_tool cat "authored-file capture"
+  continuation_need_tool cmp "byte identity"
+  continuation_need_tool od "raw-byte shape"
+  continuation_need_tool awk "raw-byte controls"
+  continuation_need_tool rm "private staging cleanup"
+  # Arm cleanup before mktemp runs. A creator can print the directory it made
+  # and still return failure; the assignment retains that path, so the EXIT trap
+  # must already exist when continuation_fail spends the failed status.
+  trap 'on_exit' EXIT
+  trap 'exit 1' HUP INT TERM
+  CONTINUATION_TMP="$(mktemp -d "${TMPDIR:-/tmp}/gang-continuation-$$-XXXXXX")" \
+    || continuation_fail "could not create a private staging directory"
+  [ -n "$CONTINUATION_TMP" ] && [ -d "$CONTINUATION_TMP" ] \
+    || continuation_fail "could not establish a private staging directory"
+  chmod 700 "$CONTINUATION_TMP" 2>/dev/null \
+    || continuation_fail "could not restrict the continuation staging directory to this user"
+  continuation_cmp_controls
+}
+
+continuation_stage_stdin() { # $1 = destination, $2 = authored-body label
+  local dst="$1" label="$2"
+  if cat > "$dst"; then
+    :
+  else
+    continuation_fail "could not capture every byte of $label from stdin"
+  fi
+  [ -s "$dst" ] || continuation_fail "$label is empty"
+}
+
+continuation_cmp_controls() {
+  local equal_a="$CONTINUATION_TMP/cmp-equal-a" equal_b="$CONTINUATION_TMP/cmp-equal-b"
+  local different="$CONTINUATION_TMP/cmp-different" rc=0
+  printf 'known equal\n' > "$equal_a"
+  printf 'known equal\n' > "$equal_b"
+  printf 'known different\n' > "$different"
+  if cmp -s -- "$equal_a" "$equal_b"; then rc=0; else rc=$?; fi
+  [ "$rc" -eq 0 ] \
+    || continuation_fail "could not determine byte identity because cmp failed its known-equal control"
+  if cmp -s -- "$equal_a" "$different"; then rc=0; else rc=$?; fi
+  [ "$rc" -eq 1 ] \
+    || continuation_fail "could not determine byte identity because cmp failed its known-different control"
+}
+
+continuation_capture() { # $1 = authored path, $2 = private stage, $3 = label
+  local src="$1" dst="$2" label="$3" rc=0
+  [ -f "$src" ] \
+    || continuation_fail "could not capture $label at '$src' as an ordinary readable file"
+  if cat -- "$src" > "$dst"; then
+    :
+  else
+    continuation_fail "could not capture every byte of $label at '$src'"
+  fi
+  if cmp -s -- "$src" "$dst"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      1) continuation_fail "$label changed or was not captured byte-identically" ;;
+      *) continuation_fail "could not determine byte identity for $label at '$src'" ;;
+    esac
+  fi
+}
+
+continuation_byte_verdict() { # $1 = od -tu1 output; exact exit vocabulary below
+  awk '
+    function utf8(byte) {
+      if (need > 0) {
+        if (byte < low || byte > high) { invalid_utf8 = 1; need = 0; return }
+        need--
+        low = 128
+        high = 191
+        return
+      }
+      if (byte <= 127) return
+      if (byte >= 194 && byte <= 223) { need = 1; low = 128; high = 191; return }
+      if (byte == 224) { need = 2; low = 160; high = 191; return }
+      if ((byte >= 225 && byte <= 236) || (byte >= 238 && byte <= 239)) {
+        need = 2; low = 128; high = 191; return
+      }
+      if (byte == 237) { need = 2; low = 128; high = 159; return }
+      if (byte == 240) { need = 3; low = 144; high = 191; return }
+      if (byte >= 241 && byte <= 243) { need = 3; low = 128; high = 191; return }
+      if (byte == 244) { need = 3; low = 128; high = 143; return }
+      invalid_utf8 = 1
+    }
+    {
+      for (i = 1; i <= NF; i++) {
+        if ($i !~ /^[0-9]+$/ || $i + 0 > 255) bad = 1
+        byte = $i + 0
+        b[++n] = byte
+        if (byte == 0) nul = 1
+        if (byte == 13) cr = 1
+        utf8(byte)
+      }
+    }
+    END {
+      if (bad) exit 20
+      if (n == 0) exit 14
+      if (n >= 3 && b[1] == 239 && b[2] == 187 && b[3] == 191) exit 12
+      if (nul) exit 10
+      if (cr) exit 11
+      if (b[n] != 10) exit 13
+      if (invalid_utf8 || need != 0) exit 21
+    }
+  ' "$1"
+}
+
+continuation_raw_validate() { # $1 = staged file, $2 = label, $3 = scratch stem
+  local file="$1" label="$2" stem="$3" rc=0
+
+  # The controls distinguish an unavailable predicate from a negative result.
+  # A shimmed or broken od/awk therefore cannot make malformed bytes look like a
+  # clean absence, which is the evidence rule this boundary depends on.
+  printf 'A\n' > "$stem.control"
+  if od -An -v -tu1 "$stem.control" > "$stem.control.bytes" 2>/dev/null; then
+    :
+  else
+    continuation_fail "could not inspect raw bytes in $label because the byte reader failed its positive control"
+  fi
+  if awk '
+    { for (i = 1; i <= NF; i++) { if ($i !~ /^[0-9]+$/) bad = 1; b[++n] = $i + 0 } }
+    END { exit !(!bad && n == 2 && b[1] == 65 && b[2] == 10) }
+  ' "$stem.control.bytes"; then
+    :
+  else
+    continuation_fail "could not inspect raw bytes in $label because the byte reader produced an unrecognized control result"
+  fi
+  printf 'B\n' > "$stem.different-control"
+  if od -An -v -tu1 "$stem.different-control" > "$stem.different-control.bytes" 2>/dev/null; then
+    :
+  else
+    continuation_fail "could not inspect raw bytes in $label because the byte reader failed its known-different control"
+  fi
+  if awk '
+    { for (i = 1; i <= NF; i++) { if ($i !~ /^[0-9]+$/) bad = 1; b[++n] = $i + 0 } }
+    END { exit !(!bad && n == 2 && b[1] == 66 && b[2] == 10) }
+  ' "$stem.different-control.bytes"; then
+    :
+  else
+    continuation_fail "could not inspect raw bytes in $label because the byte reader failed its known-different control result"
+  fi
+
+  printf '65 32 226 130 172 10\n' > "$stem.valid-utf8-bytes"
+  if continuation_byte_verdict "$stem.valid-utf8-bytes"; then
+    :
+  else
+    continuation_fail "could not determine the encoding of $label because the byte validator failed its known-valid UTF-8 control"
+  fi
+  printf '65 255 10\n' > "$stem.invalid-utf8-bytes"
+  if continuation_byte_verdict "$stem.invalid-utf8-bytes"; then rc=0; else rc=$?; fi
+  [ "$rc" -eq 21 ] \
+    || continuation_fail "could not determine the encoding of $label because the byte validator failed its known-invalid UTF-8 control"
+
+  if od -An -v -tu1 "$file" > "$stem.bytes" 2>/dev/null; then
+    :
+  else
+    continuation_fail "could not inspect every raw byte in $label"
+  fi
+  if continuation_byte_verdict "$stem.bytes"; then
+    :
+  else
+    rc=$?
+    case "$rc" in
+      10) continuation_fail "$label contains a NUL byte" ;;
+      11) continuation_fail "$label contains CR rather than LF-only line endings" ;;
+      12) continuation_fail "$label begins with a UTF-8 byte-order mark" ;;
+      13) continuation_fail "$label does not end in exactly a line ending after its end marker" ;;
+      14) continuation_fail "$label is empty" ;;
+      21) continuation_fail "$label is not valid UTF-8" ;;
+      *) continuation_fail "could not determine the raw-byte shape of $label" ;;
+    esac
+  fi
+}
+
+continuation_positive_decimal() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
+
+continuation_decimal_predecessor() { # $1 canonical positive decimal -> DECIMAL_PREV
+  local value="$1" i digit out="" borrow=1
+  for (( i=${#value}-1; i>=0; i-- )); do
+    digit="${value:i:1}"
+    if [ "$borrow" -eq 1 ]; then
+      if [ "$digit" = 0 ]; then
+        digit=9
+      else
+        digit=$(( digit - 1 )); borrow=0
+      fi
+    fi
+    out="$digit$out"
+  done
+  while [ "${#out}" -gt 1 ] && [ "${out:0:1}" = 0 ]; do out="${out#0}"; done
+  DECIMAL_PREV="$out"
+}
+
+continuation_task_id() {
+  [[ "$1" =~ ^task\.[a-z0-9]+(-[a-z0-9]+)*\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+}
+
+continuation_note_id() {
+  [[ "$1" =~ ^note\.[a-z0-9]+(-[a-z0-9]+)*\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+}
+
+continuation_list_has() { # $1 = newline set, $2 = identifier
+  case $'\n'"$1"$'\n' in *$'\n'"$2"$'\n'*) return 0 ;; *) return 1 ;; esac
+}
+
+continuation_locator() { # exact canonical ADR-0018 locator encoding
+  local value="$1" i=0 char hex byte need=0 low=128 high=191 LC_ALL=C
+  [ -n "$value" ] && [ "$value" != none ] || return 1
+  [[ "$value" =~ ^[!-~]+$ ]] || return 1
+  while [ "$i" -lt "${#value}" ]; do
+    char="${value:i:1}"
+    case "$char" in
+      ,) return 1 ;;
+      %)
+        [ $(( i + 2 )) -lt "${#value}" ] || return 1
+        hex="${value:i+1:2}"
+        [[ "$hex" =~ ^[0-9A-F]{2}$ ]] || return 1
+        byte=$(( 16#$hex ))
+        i=$(( i + 3 ))
+        if [ "$byte" -lt 128 ]; then
+          [ "$need" -eq 0 ] || return 1
+          case "$byte" in
+            9|10|11|12|13|32|37|44) ;;
+            *) return 1 ;;
+          esac
+          continue
+        fi
+        if [ "$need" -gt 0 ]; then
+          [ "$byte" -ge "$low" ] && [ "$byte" -le "$high" ] || return 1
+          need=$(( need - 1 )); low=128; high=191
+          continue
+        fi
+        case "$byte" in
+          194|195|196|197|198|199|200|201|202|203|204|205|206|207|208|209|210|211|212|213|214|215|216|217|218|219|220|221|222|223)
+            need=1; low=128; high=191 ;;
+          224) need=2; low=160; high=191 ;;
+          225|226|227|228|229|230|231|232|233|234|235|236|238|239)
+            need=2; low=128; high=191 ;;
+          237) need=2; low=128; high=159 ;;
+          240) need=3; low=144; high=191 ;;
+          241|242|243) need=3; low=128; high=191 ;;
+          244) need=3; low=128; high=143 ;;
+          *) return 1 ;;
+        esac
+        continue ;;
+      *)
+        [ "$need" -eq 0 ] || return 1
+        i=$(( i + 1 )); continue ;;
+    esac
+  done
+  [ "$need" -eq 0 ]
+}
+
+CONTINUATION_ITEMS=()
+continuation_id_list() { # $1 = value, $2 = task|note, $3 = whether none is admitted
+  local value="$1" kind="$2" admit_none="$3" item seen="," IFS=,
+  CONTINUATION_ITEMS=()
+  if [ "$value" = none ]; then
+    [ "$admit_none" = yes ]
+    return
+  fi
+  case "$value" in ''|,*|*,|*,,*) return 1 ;; esac
+  read -r -a CONTINUATION_ITEMS <<< "$value"
+  [ "${#CONTINUATION_ITEMS[@]}" -gt 0 ] || return 1
+  for item in "${CONTINUATION_ITEMS[@]}"; do
+    case "$kind" in
+      task) continuation_task_id "$item" || return 1 ;;
+      note) continuation_note_id "$item" || return 1 ;;
+      *) return 1 ;;
+    esac
+    case "$seen" in *",$item,"*) return 1 ;; esac
+    seen="$seen$item,"
+  done
+}
+
+continuation_locator_list() { # $1 = comma-separated canonical locators
+  local value="$1" item seen=$'\n' IFS=,
+  CONTINUATION_ITEMS=()
+  case "$value" in ''|none|,*|*,|*,,*) return 1 ;; esac
+  read -r -a CONTINUATION_ITEMS <<< "$value"
+  for item in "${CONTINUATION_ITEMS[@]}"; do
+    continuation_locator "$item" || return 1
+    case "$seen" in *$'\n'"$item"$'\n'*) return 1 ;; esac
+    seen="$seen$item"$'\n'
+  done
+}
+
+PARSE_LINE=""
+PARSE_EOF=0
+PARSE_NUMBER=0
+PARSE_VALUE=""
+
+continuation_read_line() {
+  if IFS= read -r PARSE_LINE <&9; then
+    PARSE_EOF=0; PARSE_NUMBER=$(( PARSE_NUMBER + 1 ))
+  else
+    PARSE_LINE=""; PARSE_EOF=1
+  fi
+}
+
+continuation_expect_line() { # $1 = document, $2 = exact line
+  [ "$PARSE_EOF" -eq 0 ] && [ "$PARSE_LINE" = "$2" ] \
+    || continuation_fail "$1 line $PARSE_NUMBER does not match the required closed grammar"
+  continuation_read_line
+}
+
+continuation_field() { # $1 = document, $2 = key; sets PARSE_VALUE and advances
+  local label="$1" key="$2" prefix="$2: "
+  [ "$PARSE_EOF" -eq 0 ] \
+    || continuation_fail "$label ended before required field '$key'"
+  case "$PARSE_LINE" in
+    "$prefix"*) PARSE_VALUE="${PARSE_LINE:${#prefix}}" ;;
+    *) continuation_fail "$label line $PARSE_NUMBER is not required field '$key' in order" ;;
+  esac
+  [ -n "$PARSE_VALUE" ] \
+    || continuation_fail "$label field '$key' is an empty scalar"
+  continuation_read_line
+}
+
+LEDGER_REVISION=""
+LEDGER_WRITER=""
+LEDGER_PRESSURE=""
+LEDGER_IDS=""
+LEDGER_TASK_ROWS=""
+LEDGER_DEP_ROWS=""
+LEDGER_TRANSITION_ROWS=""
+
+continuation_ledger_lookup() { # $1 = task; sets LEDGER_OWNER
+  local wanted="$1" id owner
+  LEDGER_OWNER=""
+  [ -n "$LEDGER_TASK_ROWS" ] || return 1
+  while IFS=$'\t' read -r id owner; do
+    if [ "$id" = "$wanted" ]; then
+      LEDGER_OWNER="$owner"; return 0
+    fi
+  done <<< "$LEDGER_TASK_ROWS"
+  return 1
+}
+
+continuation_parse_ledger() { # $1 = validated stage
+  local file="$1" label="task ledger" id reviewed remove owner state depends
+  local acceptance receipt blocker source item row task_count=0
+  LEDGER_REVISION=""; LEDGER_WRITER=""; LEDGER_PRESSURE=""
+  LEDGER_IDS=""; LEDGER_TASK_ROWS=""; LEDGER_DEP_ROWS=""; LEDGER_TRANSITION_ROWS=""
+  exec 9<"$file" || continuation_fail "could not open the staged task ledger for parsing"
+  PARSE_NUMBER=0; continuation_read_line
+  continuation_expect_line "$label" "GANGLINE-TASK-LEDGER 1"
+  continuation_field "$label" Revision; LEDGER_REVISION="$PARSE_VALUE"
+  continuation_positive_decimal "$LEDGER_REVISION" \
+    || continuation_fail "$label Revision is not a canonical positive decimal"
+  continuation_field "$label" Reviews
+  if [ "$LEDGER_REVISION" = 1 ]; then
+    [ "$PARSE_VALUE" = first ] \
+      || continuation_fail "$label revision one must say 'Reviews: first'"
+  else
+    continuation_decimal_predecessor "$LEDGER_REVISION"
+    [ "$PARSE_VALUE" = "$DECIMAL_PREV" ] \
+      || continuation_fail "$label Reviews does not name Revision's immediate predecessor"
+  fi
+  continuation_field "$label" Writer; LEDGER_WRITER="$PARSE_VALUE"
+  valid_name "$LEDGER_WRITER" \
+    || continuation_fail "$label Writer is not a usable claimed identity"
+  continuation_field "$label" Note-Pressure; LEDGER_PRESSURE="$PARSE_VALUE"
+  continuation_positive_decimal "$LEDGER_PRESSURE" \
+    || continuation_fail "$label Note-Pressure is not a canonical positive decimal"
+  continuation_expect_line "$label" ""
+  continuation_expect_line "$label" "## Tasks"
+  continuation_expect_line "$label" ""
+
+  while [ "$PARSE_EOF" -eq 0 ] && [ "$PARSE_LINE" != "END GANGLINE-TASK-LEDGER" ]; do
+    case "$PARSE_LINE" in
+      '### '*) id="${PARSE_LINE#'### '}" ;;
+      *) continuation_fail "$label line $PARSE_NUMBER is not a task heading or the end marker" ;;
+    esac
+    continuation_task_id "$id" \
+      || continuation_fail "$label has malformed task identifier '$id'"
+    continuation_list_has "$LEDGER_IDS" "$id" \
+      && continuation_fail "$label repeats task identifier '$id'"
+    LEDGER_IDS="${LEDGER_IDS}${LEDGER_IDS:+$'\n'}$id"
+    task_count=$(( task_count + 1 ))
+    continuation_read_line
+    continuation_field "$label" Reviewed-In; reviewed="$PARSE_VALUE"
+    [ "$reviewed" = "$LEDGER_REVISION" ] \
+      || continuation_fail "$label task '$id' was not reviewed in current Revision"
+    continuation_field "$label" Remove; remove="$PARSE_VALUE"
+    [ "$remove" = acceptance-met-and-receipted ] \
+      || continuation_fail "$label task '$id' has an unknown removal instruction"
+    continuation_field "$label" Outcome
+    continuation_field "$label" Owner; owner="$PARSE_VALUE"
+    valid_name "$owner" \
+      || continuation_fail "$label task '$id' has an unusable Owner"
+    continuation_field "$label" State; state="$PARSE_VALUE"
+    case "$state" in queued|active|blocked|review) ;; *) continuation_fail "$label task '$id' has unknown live State '$state'" ;; esac
+    continuation_field "$label" Depends-On; depends="$PARSE_VALUE"
+    continuation_id_list "$depends" task yes \
+      || continuation_fail "$label task '$id' has a malformed Depends-On set"
+    continuation_field "$label" Acceptance; acceptance="$PARSE_VALUE"
+    continuation_locator "$acceptance" \
+      || continuation_fail "$label task '$id' has a malformed Acceptance locator"
+    continuation_field "$label" Receipt; receipt="$PARSE_VALUE"
+    [ "$receipt" = none ] || continuation_locator "$receipt" \
+      || continuation_fail "$label task '$id' has a malformed Receipt locator"
+    continuation_field "$label" Blocker; blocker="$PARSE_VALUE"
+    [ "$blocker" = none ] || continuation_locator "$blocker" \
+      || continuation_fail "$label task '$id' has a malformed Blocker locator"
+    continuation_field "$label" Source; source="$PARSE_VALUE"
+    continuation_locator "$source" \
+      || continuation_fail "$label task '$id' has a malformed Source locator"
+    case "$state" in
+      blocked) [ "$blocker" != none ] || continuation_fail "$label blocked task '$id' names no Blocker" ;;
+      *) [ "$blocker" = none ] || continuation_fail "$label non-blocked task '$id' carries a Blocker" ;;
+    esac
+    if [ "$state" = review ]; then
+      [ "$receipt" != none ] || continuation_fail "$label review task '$id' names no candidate Receipt"
+    fi
+    continuation_expect_line "$label" ""
+    row="$id"$'\t'"$owner"
+    LEDGER_TASK_ROWS="${LEDGER_TASK_ROWS}${LEDGER_TASK_ROWS:+$'\n'}$row"
+    row="$id"$'\t'"$depends"
+    LEDGER_DEP_ROWS="${LEDGER_DEP_ROWS}${LEDGER_DEP_ROWS:+$'\n'}$row"
+    row="$id"$'\t'"$receipt"
+    LEDGER_TRANSITION_ROWS="${LEDGER_TRANSITION_ROWS}${LEDGER_TRANSITION_ROWS:+$'\n'}$row"
+  done
+  continuation_expect_line "$label" "END GANGLINE-TASK-LEDGER"
+  [ "$PARSE_EOF" -eq 1 ] \
+    || continuation_fail "$label has trailing content after its end marker"
+  exec 9<&-
+
+  if [ -n "$LEDGER_DEP_ROWS" ]; then
+    while IFS=$'\t' read -r id depends; do
+      [ "$depends" = none ] && continue
+      continuation_id_list "$depends" task no \
+        || continuation_fail "$label task '$id' has a malformed dependency set after parsing"
+      for item in "${CONTINUATION_ITEMS[@]}"; do
+        continuation_list_has "$LEDGER_IDS" "$item" \
+          || continuation_fail "$label task '$id' depends on unknown live task '$item'"
+      done
+    done <<< "$LEDGER_DEP_ROWS"
+  fi
+}
+
+PACKAGE_WRITER=""
+PACKAGE_REVIEWED_AT=""
+PACKAGE_LEDGER=""
+PACKAGE_REFS=""
+PACKAGE_NOTES=""
+PACKAGE_OBLIGATIONS=""
+PACKAGE_NOTE_ROWS=""
+PACKAGE_MANIFEST_HEX=""
+
+continuation_value_hex() { # $1 = already validated text -> lowercase byte hex
+  printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'
+}
+
+continuation_file_hex() { # $1 = already validated file -> lowercase byte hex
+  od -An -v -tx1 "$1" | tr -d ' \n'
+}
+
+continuation_hex_to_file() { # $1 lowercase byte hex, $2 private staging path
+  local hex="$1" dst="$2" readback
+  continuation_hex_valid "$hex" || return 1
+  printf '%s\n' "$hex" | awk '
+    function nibble(c) { return index("0123456789abcdef", c) - 1 }
+    {
+      for (i = 1; i <= length($0); i += 2) {
+        hi = nibble(substr($0, i, 1)); lo = nibble(substr($0, i + 1, 1))
+        if (hi < 0 || lo < 0) exit 2
+        printf "%c", hi * 16 + lo
+      }
+    }
+  ' > "$dst" || return 1
+  readback="$(continuation_file_hex "$dst")" || return 1
+  [ "$readback" = "$hex" ]
+}
+
+# A manifest can legitimately be larger than one tmux option while still far
+# below GANG_RESUME_MAX. Keep the transition header small and store the complete
+# lowercase-hex manifest in one of two window-scoped banks. Each bank is split
+# into conservative chunks, written and byte-verified before any header points at
+# it. Window options retain the original deletion path: they die with the window.
+CONTINUATION_SHARD_CHARS=4096
+CONTINUATION_WINDOW_OPTIONS=""
+CONTINUATION_BANK_HEX=""
+CONTINUATION_BANK_ROWS=""
+CONTINUATION_BANK_ERROR=""
+
+continuation_window_options() { # $1 target -> exact option listing
+  CONTINUATION_WINDOW_OPTIONS="$(tmux show-options -w -t "$1" 2>/dev/null)" \
+    || return 1
+}
+
+continuation_option_present() { # $1 option listing, $2 exact option name
+  local lines="$1" wanted="$2" line option
+  while IFS= read -r line; do
+    option="${line%% *}"
+    [ "$option" = "$wanted" ] && return 0
+  done <<< "$lines"
+  return 1
+}
+
+continuation_bank_prefix() { # $1 = a|b
+  case "$1" in
+    a|b) CONTINUATION_BANK_PREFIX="@gl_resume_manifest_$1" ;;
+    *) return 1 ;;
+  esac
+}
+
+continuation_bank_clear() { # $1 target, $2 bank; remove and verify every shard
+  local target="$1" bank="$2" line option
+  CONTINUATION_BANK_ERROR=""
+  continuation_bank_prefix "$bank" \
+    || { CONTINUATION_BANK_ERROR="unknown manifest bank '$bank'"; return 1; }
+  continuation_window_options "$target" \
+    || { CONTINUATION_BANK_ERROR="could not list continuation options while clearing bank $bank"; return 1; }
+  while IFS= read -r line; do
+    option="${line%% *}"
+    case "$option" in
+      "$CONTINUATION_BANK_PREFIX"|"$CONTINUATION_BANK_PREFIX"_*)
+        tmux set-option -uw -t "$target" "$option" 2>/dev/null \
+          || { CONTINUATION_BANK_ERROR="could not remove manifest option $option"; return 1; } ;;
+    esac
+  done <<< "$CONTINUATION_WINDOW_OPTIONS"
+  continuation_window_options "$target" \
+    || { CONTINUATION_BANK_ERROR="could not verify manifest-bank cleanup"; return 1; }
+  while IFS= read -r line; do
+    option="${line%% *}"
+    case "$option" in
+      "$CONTINUATION_BANK_PREFIX"|"$CONTINUATION_BANK_PREFIX"_*)
+        CONTINUATION_BANK_ERROR="manifest option $option remained after cleanup"
+        return 1 ;;
+    esac
+  done <<< "$CONTINUATION_WINDOW_OPTIONS"
+}
+
+continuation_bank_read() { # $1 target, $2 bank, $3 bound writer -> complete verified manifest
+  local target="$1" bank="$2" writer="$3" meta fields count length expected_count
+  local i option chunk manifest="" expected_names="" line present
+  CONTINUATION_BANK_HEX=""; CONTINUATION_BANK_ROWS=""; CONTINUATION_BANK_ERROR=""
+  continuation_bank_prefix "$bank" \
+    || { CONTINUATION_BANK_ERROR="unknown manifest bank '$bank'"; return 1; }
+  continuation_window_options "$target" \
+    || { CONTINUATION_BANK_ERROR="could not list continuation options for bank $bank"; return 1; }
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" "$CONTINUATION_BANK_PREFIX" \
+    || { CONTINUATION_BANK_ERROR="manifest bank $bank has no metadata"; return 1; }
+  meta="$(tmux show-options -wqv -t "$target" "$CONTINUATION_BANK_PREFIX" 2>/dev/null)" \
+    || { CONTINUATION_BANK_ERROR="could not read manifest-bank $bank metadata"; return 1; }
+  IFS='|' read -r -a fields <<< "$meta"
+  [ "${#fields[@]}" -eq 3 ] && [ "${fields[0]:-}" = 1 ] \
+    || { CONTINUATION_BANK_ERROR="manifest-bank $bank metadata is malformed"; return 1; }
+  count="${fields[1]}"; length="${fields[2]}"
+  continuation_positive_decimal "$count" && continuation_positive_decimal "$length" \
+    || { CONTINUATION_BANK_ERROR="manifest-bank $bank count or length is not canonical"; return 1; }
+  continuation_decimal_compare "$length" 9223372036854775807
+  [ "$DECIMAL_CMP" -le 0 ] \
+    || { CONTINUATION_BANK_ERROR="manifest-bank $bank length cannot be represented"; return 1; }
+  expected_count=$(( (length - 1) / CONTINUATION_SHARD_CHARS + 1 ))
+  [ "$count" = "$expected_count" ] \
+    || { CONTINUATION_BANK_ERROR="manifest-bank $bank count and length disagree"; return 1; }
+  expected_names="$CONTINUATION_BANK_PREFIX"
+  for (( i=0; i<count; i++ )); do
+    printf -v option '%s_%06d' "$CONTINUATION_BANK_PREFIX" "$i"
+    continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" "$option" \
+      || { CONTINUATION_BANK_ERROR="manifest bank $bank is missing shard $i"; return 1; }
+    chunk="$(tmux show-options -wqv -t "$target" "$option" 2>/dev/null)" \
+      || { CONTINUATION_BANK_ERROR="could not read manifest-bank $bank shard $i"; return 1; }
+    [ -n "$chunk" ] \
+      || { CONTINUATION_BANK_ERROR="manifest-bank $bank shard $i is empty"; return 1; }
+    if [ "$i" -lt $(( count - 1 )) ]; then
+      [ "${#chunk}" -eq "$CONTINUATION_SHARD_CHARS" ] \
+        || { CONTINUATION_BANK_ERROR="manifest-bank $bank shard $i has the wrong length"; return 1; }
+    else
+      [ "${#chunk}" -le "$CONTINUATION_SHARD_CHARS" ] \
+        || { CONTINUATION_BANK_ERROR="manifest-bank $bank final shard is oversized"; return 1; }
+    fi
+    case "$chunk" in *[!0-9a-f]*) CONTINUATION_BANK_ERROR="manifest-bank $bank shard $i is not lowercase hex"; return 1 ;; esac
+    manifest+="$chunk"
+    expected_names+=$'\n'"$option"
+  done
+  [ "${#manifest}" -eq "$length" ] \
+    || { CONTINUATION_BANK_ERROR="manifest-bank $bank reconstructed length differs from metadata"; return 1; }
+  while IFS= read -r line; do
+    option="${line%% *}"
+    case "$option" in
+      "$CONTINUATION_BANK_PREFIX"|"$CONTINUATION_BANK_PREFIX"_*)
+        continuation_list_has "$expected_names" "$option" \
+          || { CONTINUATION_BANK_ERROR="manifest bank $bank carries unexpected option $option"; return 1; } ;;
+    esac
+  done <<< "$CONTINUATION_WINDOW_OPTIONS"
+  continuation_manifest_decode "$manifest" "$writer" \
+    || { CONTINUATION_BANK_ERROR="manifest bank $bank does not decode to a valid private-note manifest"; return 1; }
+  CONTINUATION_BANK_HEX="$manifest"; CONTINUATION_BANK_ROWS="$MANIFEST_ROWS"
+}
+
+continuation_bank_write() { # $1 target, $2 bank, $3 complete manifest hex
+  local target="$1" bank="$2" manifest="$3" length count i offset option chunk readback writer
+  CONTINUATION_BANK_ERROR=""
+  continuation_hex_valid "$manifest" \
+    || { CONTINUATION_BANK_ERROR="candidate manifest is not non-empty lowercase hex"; return 1; }
+  continuation_bank_prefix "$bank" \
+    || { CONTINUATION_BANK_ERROR="unknown manifest bank '$bank'"; return 1; }
+  writer="$(tmux display-message -p -t "$target" '#W' 2>/dev/null)" \
+    || { CONTINUATION_BANK_ERROR="could not bind manifest bank $bank to its target writer"; return 1; }
+  valid_name "$writer" \
+    || { CONTINUATION_BANK_ERROR="manifest bank $bank target has an unusable writer identity"; return 1; }
+  continuation_bank_clear "$target" "$bank" || return 1
+  length="${#manifest}"; count=$(( (length - 1) / CONTINUATION_SHARD_CHARS + 1 ))
+  for (( i=0; i<count; i++ )); do
+    offset=$(( i * CONTINUATION_SHARD_CHARS ))
+    chunk="${manifest:offset:CONTINUATION_SHARD_CHARS}"
+    printf -v option '%s_%06d' "$CONTINUATION_BANK_PREFIX" "$i"
+    tmux set-option -w -t "$target" "$option" "$chunk" 2>/dev/null \
+      || { CONTINUATION_BANK_ERROR="could not store manifest-bank $bank shard $i"; return 1; }
+    readback="$(tmux show-options -wqv -t "$target" "$option" 2>/dev/null)" || readback=""
+    [ "$readback" = "$chunk" ] \
+      || { CONTINUATION_BANK_ERROR="could not verify manifest-bank $bank shard $i byte-identically"; return 1; }
+  done
+  tmux set-option -w -t "$target" "$CONTINUATION_BANK_PREFIX" "1|$count|$length" 2>/dev/null \
+    || { CONTINUATION_BANK_ERROR="could not store manifest-bank $bank metadata"; return 1; }
+  readback="$(tmux show-options -wqv -t "$target" "$CONTINUATION_BANK_PREFIX" 2>/dev/null)" || readback=""
+  [ "$readback" = "1|$count|$length" ] \
+    || { CONTINUATION_BANK_ERROR="could not verify manifest-bank $bank metadata"; return 1; }
+  continuation_bank_read "$target" "$bank" "$writer" \
+    && [ "$CONTINUATION_BANK_HEX" = "$manifest" ] \
+    || { [ -n "$CONTINUATION_BANK_ERROR" ] || CONTINUATION_BANK_ERROR="manifest bank $bank did not round-trip byte-identically"; return 1; }
+}
+
+continuation_manifest_inventory() { # $1 target, $2 expected banks: none|a|b|a,b
+  local target="$1" expected="$2" line option bank
+  continuation_window_options "$target" || return 1
+  while IFS= read -r line; do
+    option="${line%% *}"
+    case "$option" in
+      @gl_resume_manifest_a|@gl_resume_manifest_a_*) bank=a ;;
+      @gl_resume_manifest_b|@gl_resume_manifest_b_*) bank=b ;;
+      @gl_resume_manifest_*) return 1 ;;
+      *) continue ;;
+    esac
+    case ",$expected," in *",$bank,"*) ;; *) return 1 ;; esac
+  done <<< "$CONTINUATION_WINDOW_OPTIONS"
+}
+
+continuation_window_pristine() { # no preexisting floor, transition or bank fact
+  local target="$1" line option
+  continuation_window_options "$target" || return 1
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_review_floor && return 1
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_transition && return 1
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_quarantine && return 1
+  while IFS= read -r line; do
+    option="${line%% *}"
+    case "$option" in @gl_resume_manifest_*) return 1 ;; esac
+  done <<< "$CONTINUATION_WINDOW_OPTIONS"
+}
+
+# A new agent lineage begins as related window facts. Absence is reserved for the
+# legacy migration path, while a cycle carries a canonical header plus every bank
+# it references. Ordinary hitch/adopt leave the carry globals empty.
+CONTINUATION_HITCH_STATE=""
+CONTINUATION_HITCH_BANK_A=""
+CONTINUATION_HITCH_BANK_B=""
+CONTINUATION_HITCH_CONTROL=""
+
+continuation_window_retired() { # $1 replacement id, $2 known surviving control
+  local id="$1" control="$2" inventory="" line wid declared
+  local expected="" rows=0 saw_control=0 saw_replacement=0 seen=$'\n'
+  [ -n "$control" ] || return 1
+  inventory="$(tmux list-windows -t "=$SESSION" \
+    -F '#{window_id}|#{session_windows}' 2>/dev/null)" || return 1
+  [ -n "$inventory" ] || return 1
+  while IFS= read -r line; do
+    case "$line" in *'|'*) ;; *) return 1 ;; esac
+    wid="${line%%|*}"; declared="${line#*|}"
+    case "$declared" in *'|'*) return 1 ;; esac
+    [[ "$wid" =~ ^%[0-9]+$ ]] || return 1
+    continuation_positive_decimal "$declared" || return 1
+    if [ -z "$expected" ]; then expected="$declared"; else [ "$declared" = "$expected" ] || return 1; fi
+    case "$seen" in *$'\n'"$wid"$'\n'*) return 1 ;; esac
+    seen="$seen$wid"$'\n'; rows=$(( rows + 1 ))
+    [ "$wid" != "$control" ] || saw_control=1
+    [ "$wid" != "$id" ] || saw_replacement=1
+  done <<< "$inventory"
+  [ "$rows" -eq "$expected" ] \
+    && [ "$saw_control" -eq 1 ] \
+    && [ "$saw_replacement" -eq 0 ]
+}
+
+continuation_window_quarantine() { # $1 replacement id, $2 known control id
+  local id="$1" control="$2" poison='1|carried-install-failed' readback="" _attempt
+  if tmux set-option -w -t "$id" @gl_resume_transition "$poison" 2>/dev/null; then
+    readback="$(tmux show-options -wqv -t "$id" @gl_resume_transition 2>/dev/null)" \
+      || readback=""
+    [ "$readback" = "$poison" ] && return 0
+  fi
+  # A marker that cannot be proved must not leave an unregistered window which
+  # adopt can reinterpret as a pristine lineage. Retire only this internal fresh
+  # window, then positively evaluate its absence in a complete session inventory.
+  # Every row carries tmux's declared session cardinality: agreeing declarations,
+  # exact unique ids, the full row count and the known spent predecessor together
+  # distinguish a complete readable inventory from success with partial output.
+  # If retirement cannot be established, a second independently named marker is
+  # the non-pristine boundary adopt can verify on any surviving window.
+  if tmux kill-window -t "$id" 2>/dev/null \
+     && continuation_window_retired "$id" "$control"; then
+    return 0
+  fi
+  # One repeat covers the case where the first quarantine store itself was the
+  # failed predicate. Neither status is spent: only an exact readback succeeds.
+  for _attempt in 1 2; do
+    if tmux set-option -w -t "$id" @gl_resume_quarantine "$poison" 2>/dev/null; then
+      readback="$(tmux show-options -wqv -t "$id" @gl_resume_quarantine 2>/dev/null)" \
+        || readback=""
+      [ "$readback" = "$poison" ] && return 0
+    fi
+  done
+  return 1
+}
+
+CONTINUATION_RESUME_GUARD="structured resume delivery has no verified detached outcome yet"
+CONTINUATION_RESUME_INFLIGHT="structured resume delivery is still in flight"
+CONTINUATION_RESUME_FAILURE_FALLBACK="structured resume was not delivered; its detached worker could not store the detailed failure byte-identically"
+
+continuation_resume_outcome_store() { # $1 = target, $2 = exact outcome phase
+  local target="$1" outcome="${2:-$CONTINUATION_RESUME_GUARD}" readback=""
+  tmux set-option -w -t "$target" @gl_resume_outcome "$outcome" 2>/dev/null \
+    || return 1
+  readback="$(tmux show-options -wqv -t "$target" @gl_resume_outcome 2>/dev/null)" \
+    || return 1
+  [ "$readback" = "$outcome" ]
+}
+
+continuation_resume_outcome_clear() { # $1 = target; verified absence
+  local target="$1"
+  tmux set-option -uw -t "$target" @gl_resume_outcome 2>/dev/null \
+    || return 1
+  continuation_window_options "$target" || return 1
+  ! continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_outcome
+}
+
+continuation_resume_failure_store() { # $1 = target, $2 = exact alert
+  local target="$1" alert="$2" readback=""
+  tmux set-option -w -t "$target" @gl_resume_failed "$alert" 2>/dev/null \
+    || return 1
+  readback="$(tmux show-options -wqv -t "$target" @gl_resume_failed 2>/dev/null)" \
+    || return 1
+  [ "$readback" = "$alert" ]
+}
+
+continuation_resume_failure_clear() { # $1 = target; verified absence
+  local target="$1"
+  tmux set-option -uw -t "$target" @gl_resume_failed 2>/dev/null \
+    || return 1
+  continuation_window_options "$target" || return 1
+  ! continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_failed
+}
+
+continuation_window_initialize() { # $1 = new/adopted window id
+  local id="$1" floor state floor_read state_read failed="" carried=0
+  [ -n "$CONTINUATION_HITCH_STATE" ] && carried=1
+  continuation_window_pristine "$id" \
+    || die "continuation: $id already carries a review floor, transition, or manifest-bank fact"
+  floor="$(date +%s 2>/dev/null)" || floor=""
+  continuation_positive_decimal "$floor" \
+    || die "continuation: could not establish a canonical review floor from the host clock"
+  state="${CONTINUATION_HITCH_STATE:-1|empty}"
+  if ! tmux set-option -w -t "$id" @gl_resume_review_floor "$floor" 2>/dev/null; then
+    if [ "$carried" -eq 1 ] \
+       && ! continuation_window_quarantine "$id" "$CONTINUATION_HITCH_CONTROL"; then
+      die "continuation: could not establish the review floor on $id, then could neither verify non-pristine failure evidence nor retire that unregistered replacement; do not adopt it"
+    fi
+    die "continuation: could not establish the review floor on $id"
+  fi
+  if [ -n "$CONTINUATION_HITCH_BANK_A" ]; then
+    continuation_bank_write "$id" a "$CONTINUATION_HITCH_BANK_A" \
+      || failed="could not initialize carried manifest bank a — $CONTINUATION_BANK_ERROR"
+  fi
+  if [ -z "$failed" ] && [ -n "$CONTINUATION_HITCH_BANK_B" ]; then
+    continuation_bank_write "$id" b "$CONTINUATION_HITCH_BANK_B" \
+      || failed="could not initialize carried manifest bank b — $CONTINUATION_BANK_ERROR"
+  fi
+  if [ -z "$failed" ]; then
+    tmux set-option -w -t "$id" @gl_resume_transition "$state" 2>/dev/null \
+      || failed="could not initialize the transition state on $id"
+  fi
+  floor_read="$(tmux show-options -wqv -t "$id" @gl_resume_review_floor 2>/dev/null)" || floor_read=""
+  state_read="$(tmux show-options -wqv -t "$id" @gl_resume_transition 2>/dev/null)" || state_read=""
+  if [ -n "$failed" ] || [ "$floor_read" != "$floor" ] || [ "$state_read" != "$state" ]; then
+    if [ "$carried" -eq 0 ]; then
+      tmux set-option -uw -t "$id" @gl_resume_review_floor 2>/dev/null || true
+      tmux set-option -uw -t "$id" @gl_resume_transition 2>/dev/null || true
+      continuation_bank_clear "$id" a >/dev/null 2>&1 || true
+      continuation_bank_clear "$id" b >/dev/null 2>&1 || true
+    fi
+    [ -n "$failed" ] || failed="could not verify the initialized review floor and transition state on $id"
+    if [ "$carried" -eq 1 ]; then
+      continuation_window_quarantine "$id" "$CONTINUATION_HITCH_CONTROL" \
+        || die "continuation: $failed; the replacement could neither retain byte-verified non-pristine quarantine state nor be positively retired; do not adopt it"
+      failed="$failed; the replacement was left byte-verified non-pristine or positively retired and must not be adopted as empty"
+    fi
+    die "continuation: $failed"
+  fi
+}
+
+continuation_claimed_provenance() { # $1 list, $2 package writer
+  local value="$1" writer="$2" item claim rest IFS=,
+  read -r -a CONTINUATION_ITEMS <<< "$value"
+  for item in "${CONTINUATION_ITEMS[@]}"; do
+    case "$item" in
+      message:*/*)
+        claim="${item#message:}"; rest="${claim#*/}"; claim="${claim%%/*}"
+        valid_name "$claim" || continue
+        [ "$claim" != "$writer" ] || continue
+        [ -n "$rest" ] || continue
+        continuation_locator "$rest" || continue
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+continuation_parse_note_section() { # $1 = title, $2 = fixed Remove
+  local section="$1" fixed_remove="$2" label="continuation package"
+  local id task supersedes remove evidence provenance text row provenance_hex text_hex
+  continuation_expect_line "$label" "## $section"
+  continuation_expect_line "$label" ""
+  while [ "$PARSE_EOF" -eq 0 ] && [[ "$PARSE_LINE" == '### '* ]]; do
+    id="${PARSE_LINE#'### '}"
+    continuation_note_id "$id" \
+      || continuation_fail "$label section '$section' has malformed note identifier '$id'"
+    continuation_list_has "$PACKAGE_NOTES" "$id" \
+      && continuation_fail "$label repeats private-note identifier '$id'"
+    PACKAGE_NOTES="${PACKAGE_NOTES}${PACKAGE_NOTES:+$'\n'}$id"
+    continuation_read_line
+    continuation_field "$label" Task; task="$PARSE_VALUE"
+    continuation_field "$label" Supersedes; supersedes="$PARSE_VALUE"
+    continuation_id_list "$supersedes" note yes \
+      || continuation_fail "$label note '$id' has a malformed Supersedes set"
+    continuation_field "$label" Remove; remove="$PARSE_VALUE"
+    [ "$remove" = "$fixed_remove" ] \
+      || continuation_fail "$label note '$id' has the wrong removal instruction for '$section'"
+    continuation_field "$label" Evidence; evidence="$PARSE_VALUE"
+    case "$evidence" in verified|claimed|inferred|unverified|refuted) ;; *) continuation_fail "$label note '$id' has unknown Evidence '$evidence'" ;; esac
+    continuation_field "$label" Provenance; provenance="$PARSE_VALUE"
+    continuation_locator_list "$provenance" \
+      || continuation_fail "$label note '$id' has malformed or duplicate Provenance locators"
+    continuation_field "$label" Text; text="$PARSE_VALUE"
+    continuation_expect_line "$label" ""
+
+    if [ "$section" = "Dangerous Refutations" ]; then
+      [ "$evidence" = refuted ] \
+        || continuation_fail "$label Dangerous Refutation '$id' is not Evidence: refuted"
+    else
+      [ "$evidence" != refuted ] \
+        || continuation_fail "$label note '$id' uses Evidence: refuted outside Dangerous Refutations"
+    fi
+    if [ "$evidence" = claimed ]; then
+      continuation_claimed_provenance "$provenance" "$PACKAGE_WRITER" \
+        || continuation_fail "$label claimed note '$id' has no message locator naming a non-writer claimant and receipt"
+    fi
+    if [ "$section" = "Binding Bounds" ]; then
+      case "$text" in
+        ref:*) continuation_locator "${text#ref:}" \
+                 || continuation_fail "$label Binding Bound '$id' has a malformed ref locator" ;;
+        *) continuation_fail "$label Binding Bound '$id' copies text instead of carrying one ref locator" ;;
+      esac
+    fi
+    case "$section" in
+      "Binding Bounds"|"Dangerous Refutations")
+        if [ "$task" != all ]; then
+          continuation_task_id "$task" \
+            || continuation_fail "$label note '$id' has malformed Task '$task'"
+          continuation_list_has "$PACKAGE_REFS" "$task" \
+            || continuation_fail "$label note '$id' names unreferenced Task '$task'"
+        fi ;;
+      *)
+        continuation_task_id "$task" \
+          || continuation_fail "$label note '$id' has malformed Task '$task'"
+        continuation_list_has "$PACKAGE_REFS" "$task" \
+          || continuation_fail "$label note '$id' names unreferenced Task '$task'" ;;
+    esac
+    case "$section" in
+      "Next Actions"|"Local Blockers")
+        continuation_list_has "$PACKAGE_OBLIGATIONS" "$task" \
+          || PACKAGE_OBLIGATIONS="${PACKAGE_OBLIGATIONS}${PACKAGE_OBLIGATIONS:+$'\n'}$task" ;;
+    esac
+    # Tabs and newlines are structural here, never authored delimiters. The fields
+    # that may carry either are encoded byte-for-byte after raw validation; the
+    # fixed vocabulary remains readable so transition checks do not decode data
+    # merely to find a record by identity.
+    provenance_hex="$(continuation_value_hex "$provenance")"
+    text_hex="$(continuation_value_hex "$text")"
+    row="$id"$'\t'"$section"$'\t'"$task"$'\t'"$supersedes"$'\t'"$remove"$'\t'"$evidence"$'\t'"$provenance_hex"$'\t'"$text_hex"
+    PACKAGE_NOTE_ROWS="${PACKAGE_NOTE_ROWS}${PACKAGE_NOTE_ROWS:+$'\n'}$row"
+  done
+}
+
+continuation_parse_package() { # $1 = validated stage, $2 = expected writer
+  local file="$1" expected_writer="$2" label="continuation package" id
+  PACKAGE_WRITER=""; PACKAGE_REVIEWED_AT=""; PACKAGE_LEDGER=""
+  PACKAGE_REFS=""; PACKAGE_NOTES=""; PACKAGE_OBLIGATIONS=""
+  PACKAGE_NOTE_ROWS=""; PACKAGE_MANIFEST_HEX=""
+  exec 9<"$file" || continuation_fail "could not open the staged continuation package for parsing"
+  PARSE_NUMBER=0; continuation_read_line
+  continuation_expect_line "$label" "GANGLINE-CONTINUATION 1"
+  continuation_field "$label" Writer; PACKAGE_WRITER="$PARSE_VALUE"
+  valid_name "$PACKAGE_WRITER" \
+    || continuation_fail "$label Writer is not a usable claimed identity"
+  [ "$PACKAGE_WRITER" = "$expected_writer" ] \
+    || continuation_fail "$label Writer '$PACKAGE_WRITER' does not match requested writer '$expected_writer'"
+  continuation_field "$label" Reviewed-At; PACKAGE_REVIEWED_AT="$PARSE_VALUE"
+  continuation_positive_decimal "$PACKAGE_REVIEWED_AT" \
+    || continuation_fail "$label Reviewed-At is not a canonical positive epoch"
+  continuation_field "$label" Ledger; PACKAGE_LEDGER="$PARSE_VALUE"
+  case "$PACKAGE_LEDGER" in /*) ;; *) continuation_fail "$label Ledger is not an absolute path" ;; esac
+  continuation_expect_line "$label" ""
+  continuation_expect_line "$label" "## Task References"
+  continuation_expect_line "$label" ""
+  while [ "$PARSE_EOF" -eq 0 ] && [[ "$PARSE_LINE" == '### '* ]]; do
+    id="${PARSE_LINE#'### '}"
+    continuation_task_id "$id" \
+      || continuation_fail "$label has malformed task reference '$id'"
+    continuation_list_has "$PACKAGE_REFS" "$id" \
+      && continuation_fail "$label repeats task reference '$id'"
+    PACKAGE_REFS="${PACKAGE_REFS}${PACKAGE_REFS:+$'\n'}$id"
+    continuation_read_line
+    continuation_expect_line "$label" ""
+  done
+  [ -n "$PACKAGE_REFS" ] \
+    || continuation_fail "$label Task References section is empty"
+  continuation_parse_note_section "Active Work" checkpointed-or-no-longer-live
+  continuation_parse_note_section "Next Actions" done-or-superseded
+  continuation_parse_note_section "Local Blockers" resolved-or-task-removed
+  continuation_parse_note_section "Binding Bounds" reference-superseded
+  continuation_parse_note_section "Dangerous Refutations" contrary-evidence-accepted
+  continuation_expect_line "$label" "END GANGLINE-CONTINUATION"
+  [ "$PARSE_EOF" -eq 1 ] \
+    || continuation_fail "$label has trailing content after its end marker"
+  exec 9<&-
+  PACKAGE_MANIFEST_HEX="$(continuation_value_hex "$PACKAGE_NOTE_ROWS")"
+  [ -n "$PACKAGE_MANIFEST_HEX" ] \
+    || continuation_fail "$label produced no private-note manifest"
+}
+
+continuation_cross_validate() {
+  local task
+  while IFS= read -r task; do
+    continuation_ledger_lookup "$task" \
+      || continuation_fail "continuation package references unknown live task '$task'"
+    [ "$LEDGER_OWNER" = "$PACKAGE_WRITER" ] \
+      || continuation_fail "continuation package writer '$PACKAGE_WRITER' does not own referenced task '$task'"
+    continuation_list_has "$PACKAGE_OBLIGATIONS" "$task" \
+      || continuation_fail "referenced task '$task' has neither a Next Actions nor Local Blockers note"
+  done <<< "$PACKAGE_REFS"
+}
+
+DECIMAL_CMP=0
+continuation_decimal_compare() { # $1,$2 canonical positive decimals -> -1,0,1
+  local left="$1" right="$2"
+  if [ "${#left}" -lt "${#right}" ]; then DECIMAL_CMP=-1
+  elif [ "${#left}" -gt "${#right}" ]; then DECIMAL_CMP=1
+  elif [[ "$left" < "$right" ]]; then DECIMAL_CMP=-1
+  elif [[ "$left" > "$right" ]]; then DECIMAL_CMP=1
+  else DECIMAL_CMP=0
+  fi
+}
+
+continuation_hex_valid() { # $1 = non-empty canonical lowercase byte hex
+  [ -n "$1" ] && [ $(( ${#1} % 2 )) -eq 0 ] || return 1
+  case "$1" in *[!0-9a-f]*) return 1 ;; esac
+}
+
+HEX_VALUE=""
+continuation_hex_shell_safe() { # internal rows are ASCII plus tab/LF, never NUL
+  local hex="$1" i pair
+  continuation_hex_valid "$hex" || return 1
+  case "$hex" in *0a) return 1 ;; esac # command substitution would erase it
+  for (( i=0; i<${#hex}; i+=2 )); do
+    pair="${hex:i:2}"
+    case "$pair" in 09|0a|2[0-9a-f]|[3-6][0-9a-f]|7[0-9a-e]) ;; *) return 1 ;; esac
+  done
+}
+
+continuation_hex_to_value() { # $1 = ASCII-only internal encoding -> HEX_VALUE
+  local hex="$1"
+  continuation_hex_shell_safe "$hex" || return 1
+  HEX_VALUE="$(printf '%s' "$hex" | awk '
+    function nibble(c) { return index("0123456789abcdef", c) - 1 }
+    {
+      for (i = 1; i <= length($0); i += 2) {
+        hi = nibble(substr($0, i, 1)); lo = nibble(substr($0, i + 1, 1))
+        if (hi < 0 || lo < 0) exit 2
+        printf "%c", hi * 16 + lo
+      }
+    }
+  ')" || return 1
+}
+
+continuation_utf8_scalar_hex() { # $1 = non-empty UTF-8 scalar encoded as lowercase hex
+  local hex="$1" i pair byte need=0 low=128 high=191
+  continuation_hex_valid "$hex" || return 1
+  for (( i=0; i<${#hex}; i+=2 )); do
+    pair="${hex:i:2}"; byte=$(( 16#$pair ))
+    case "$byte" in 0|10|13) return 1 ;; esac
+    if [ "$need" -gt 0 ]; then
+      [ "$byte" -ge "$low" ] && [ "$byte" -le "$high" ] || return 1
+      need=$(( need - 1 )); low=128; high=191
+      continue
+    fi
+    if [ "$byte" -le 127 ]; then continue; fi
+    case "$byte" in
+      194|195|196|197|198|199|200|201|202|203|204|205|206|207|208|209|210|211|212|213|214|215|216|217|218|219|220|221|222|223)
+        need=1; low=128; high=191 ;;
+      224) need=2; low=160; high=191 ;;
+      225|226|227|228|229|230|231|232|233|234|235|236|238|239)
+        need=2; low=128; high=191 ;;
+      237) need=2; low=128; high=159 ;;
+      240) need=3; low=144; high=191 ;;
+      241|242|243) need=3; low=128; high=191 ;;
+      244) need=3; low=128; high=143 ;;
+      *) return 1 ;;
+    esac
+  done
+  [ "$need" -eq 0 ]
+}
+
+MANIFEST_ROWS=""
+continuation_manifest_decode() { # $1 manifest hex, $2 bound writer -> MANIFEST_ROWS
+  local hex="$1" writer="$2" id section task supersedes remove evidence
+  local provenance_hex text_hex extra provenance text ids=""
+  valid_name "$writer" || return 1
+  continuation_hex_to_value "$hex" || return 1
+  MANIFEST_ROWS="$HEX_VALUE"
+  [ -n "$MANIFEST_ROWS" ] || return 1
+  while IFS=$'\t' read -r id section task supersedes remove evidence provenance_hex text_hex extra; do
+    [ -z "$extra" ] || return 1
+    continuation_note_id "$id" || return 1
+    continuation_list_has "$ids" "$id" && return 1
+    ids="${ids}${ids:+$'\n'}$id"
+    case "$section" in
+      "Active Work") [ "$remove" = checkpointed-or-no-longer-live ] || return 1 ;;
+      "Next Actions") [ "$remove" = done-or-superseded ] || return 1 ;;
+      "Local Blockers") [ "$remove" = resolved-or-task-removed ] || return 1 ;;
+      "Binding Bounds") [ "$remove" = reference-superseded ] || return 1 ;;
+      "Dangerous Refutations") [ "$remove" = contrary-evidence-accepted ] || return 1 ;;
+      *) return 1 ;;
+    esac
+    case "$section" in
+      "Binding Bounds"|"Dangerous Refutations")
+        [ "$task" = all ] || continuation_task_id "$task" || return 1 ;;
+      *)
+        [ "$task" != all ] && continuation_task_id "$task" || return 1 ;;
+    esac
+    continuation_id_list "$supersedes" note yes || return 1
+    case "$evidence" in verified|claimed|inferred|unverified|refuted) ;; *) return 1 ;; esac
+    [ "$section" != "Dangerous Refutations" ] || [ "$evidence" = refuted ] || return 1
+    [ "$section" = "Dangerous Refutations" ] || [ "$evidence" != refuted ] || return 1
+    continuation_hex_to_value "$provenance_hex" || return 1
+    provenance="$HEX_VALUE"
+    continuation_locator_list "$provenance" || return 1
+    if [ "$evidence" = claimed ]; then
+      continuation_claimed_provenance "$provenance" "$writer" || return 1
+    fi
+    continuation_utf8_scalar_hex "$text_hex" || return 1
+    if [ "$section" = "Binding Bounds" ]; then
+      continuation_hex_to_value "$text_hex" || return 1
+      text="$HEX_VALUE"
+      case "$text" in
+        ref:*) continuation_locator "${text#ref:}" || return 1 ;;
+        *) return 1 ;;
+      esac
+    fi
+  done <<< "$MANIFEST_ROWS"
+}
+
+MANIFEST_ROW=""
+MANIFEST_SECTION=""
+MANIFEST_EVIDENCE=""
+MANIFEST_PROVENANCE_HEX=""
+continuation_manifest_lookup() { # $1 rows, $2 id -> selected globals
+  local rows="$1" wanted="$2" id section task supersedes remove evidence provenance_hex text_hex
+  MANIFEST_ROW=""; MANIFEST_SECTION=""
+  MANIFEST_EVIDENCE=""; MANIFEST_PROVENANCE_HEX=""
+  while IFS=$'\t' read -r id section task supersedes remove evidence provenance_hex text_hex; do
+    if [ "$id" = "$wanted" ]; then
+      MANIFEST_ROW="$id"$'\t'"$section"$'\t'"$task"$'\t'"$supersedes"$'\t'"$remove"$'\t'"$evidence"$'\t'"$provenance_hex"$'\t'"$text_hex"
+      MANIFEST_SECTION="$section"
+      MANIFEST_EVIDENCE="$evidence"; MANIFEST_PROVENANCE_HEX="$provenance_hex"
+      return 0
+    fi
+  done <<< "$rows"
+  return 1
+}
+
+continuation_locator_superset() { # $1 candidate list, $2 required list
+  local candidate="$1" required="$2" item IFS=,
+  read -r -a CONTINUATION_ITEMS <<< "$required"
+  for item in "${CONTINUATION_ITEMS[@]}"; do
+    case ",$candidate," in *",$item,"*) ;; *) return 1 ;; esac
+  done
+}
+
+continuation_manifest_count() { # $1 newline rows -> MANIFEST_COUNT
+  local rows="$1" row
+  MANIFEST_COUNT=0
+  while IFS= read -r row; do [ -z "$row" ] || MANIFEST_COUNT=$(( MANIFEST_COUNT + 1 )); done <<< "$rows"
+}
+
+continuation_manifest_transition() { # $1 prior rows; candidate is PACKAGE_NOTE_ROWS
+  local prior="$1" id section task supersedes remove evidence provenance_hex text_hex
+  local prior_row candidate_provenance predecessor predecessor_provenance
+  local claimed="" item additions=0 removals=0 prior_count=0
+
+  # Retention means immutable byte identity. Every changed record therefore enters
+  # the new-note path and must use a new identifier rather than editing history in
+  # place under the old one.
+  while IFS=$'\t' read -r id section task supersedes remove evidence provenance_hex text_hex; do
+    if continuation_manifest_lookup "$prior" "$id"; then
+      prior_row="$MANIFEST_ROW"
+      [ "$prior_row" = "$id"$'\t'"$section"$'\t'"$task"$'\t'"$supersedes"$'\t'"$remove"$'\t'"$evidence"$'\t'"$provenance_hex"$'\t'"$text_hex" ] \
+        || continuation_fail "private note '$id' changed under a retained identifier"
+      continue
+    fi
+    additions=$(( additions + 1 ))
+    [ "$supersedes" != none ] || continue
+    continuation_id_list "$supersedes" note no \
+      || continuation_fail "new private note '$id' has an unreadable Supersedes set"
+    continuation_hex_to_value "$provenance_hex" \
+      || continuation_fail "new private note '$id' has unreadable provenance state"
+    candidate_provenance="$HEX_VALUE"
+    for item in "${CONTINUATION_ITEMS[@]}"; do
+      continuation_manifest_lookup "$prior" "$item" \
+        || continuation_fail "private note '$id' supersedes '$item', which is not in the immediately prior manifest"
+      predecessor="$MANIFEST_ROW"
+      predecessor_provenance="$MANIFEST_PROVENANCE_HEX"
+      continuation_manifest_lookup "$PACKAGE_NOTE_ROWS" "$item" \
+        && continuation_fail "private note '$id' supersedes retained note '$item'"
+      continuation_list_has "$claimed" "$item" \
+        && continuation_fail "prior private note '$item' is superseded by more than one new note"
+      claimed="${claimed}${claimed:+$'\n'}$item"
+      continuation_hex_to_value "$predecessor_provenance" \
+        || continuation_fail "prior private note '$item' has unreadable provenance state"
+      continuation_locator_superset "$candidate_provenance" "$HEX_VALUE" \
+        || continuation_fail "private note '$id' does not preserve every provenance locator from '$item'"
+      # Re-read after the candidate lookup above changed the selected globals.
+      continuation_manifest_lookup "$prior" "$item" || continuation_fail "internal: prior note '$item' vanished"
+      if [ "$MANIFEST_SECTION" = "Dangerous Refutations" ] || [ "$MANIFEST_EVIDENCE" = refuted ]; then
+        [ "$section" = "Dangerous Refutations" ] && [ "$evidence" = refuted ] \
+          || continuation_fail "private note '$id' synthesizes refutation '$item' without preserving its refuted status"
+      fi
+      [ -n "$predecessor" ] || continuation_fail "internal: prior manifest row was empty"
+    done
+  done <<< "$PACKAGE_NOTE_ROWS"
+
+  while IFS=$'\t' read -r id section task supersedes remove evidence provenance_hex text_hex; do
+    continuation_manifest_lookup "$PACKAGE_NOTE_ROWS" "$id" || removals=$(( removals + 1 ))
+  done <<< "$prior"
+  continuation_manifest_count "$prior"; prior_count="$MANIFEST_COUNT"
+  continuation_decimal_compare "$prior_count" "$LEDGER_PRESSURE"
+  if [ "$DECIMAL_CMP" -ge 0 ] && [ "$additions" -gt "$removals" ]; then
+    continuation_fail "private-note pressure is active at the current ledger watermark: $additions additions require at least that many removals, but the candidate removes $removals"
+  fi
+}
+
+LINEAGE_FLOOR=""
+LINEAGE_RAW=""
+LINEAGE_STATUS=""
+LINEAGE_REVIEW=""
+LINEAGE_MANIFEST_HEX=""
+LINEAGE_MANIFEST_ROWS=""
+LINEAGE_ACTIVE_BANK=""
+LINEAGE_PENDING_CANDIDATE_REVIEW=""
+LINEAGE_PENDING_CANDIDATE_MANIFEST=""
+LINEAGE_PENDING_CANDIDATE_BANK=""
+LINEAGE_CANONICAL_STATE=""
+LINEAGE_BANK_A_HEX=""
+LINEAGE_BANK_B_HEX=""
+
+continuation_lineage_read() { # $1 target; 0 valid, 1 legacy, 2 inconsistent
+  local target="$1" floor raw fields prior_status prior_review prior_manifest writer
+  local prior_bank candidate_bank expected_banks floor_present=0 transition_present=0
+  continuation_window_options "$target" || return 2
+  writer="$(tmux display-message -p -t "$target" '#W' 2>/dev/null)" || return 2
+  valid_name "$writer" || return 2
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_review_floor && floor_present=1
+  continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_resume_transition && transition_present=1
+  if [ "$floor_present" -eq 0 ] && [ "$transition_present" -eq 0 ]; then
+    continuation_manifest_inventory "$target" none || return 2
+    return 1
+  fi
+  [ "$floor_present" -eq 1 ] && [ "$transition_present" -eq 1 ] || return 2
+  floor="$(tmux show-options -wqv -t "$target" @gl_resume_review_floor 2>/dev/null)" || return 2
+  raw="$(tmux show-options -wqv -t "$target" @gl_resume_transition 2>/dev/null)" || return 2
+  LINEAGE_FLOOR="$floor"; LINEAGE_RAW="$raw"; LINEAGE_STATUS=""
+  LINEAGE_REVIEW=""; LINEAGE_MANIFEST_HEX=""; LINEAGE_MANIFEST_ROWS=""
+  LINEAGE_ACTIVE_BANK=""; LINEAGE_PENDING_CANDIDATE_REVIEW=""
+  LINEAGE_PENDING_CANDIDATE_MANIFEST=""
+  LINEAGE_PENDING_CANDIDATE_BANK=""; LINEAGE_CANONICAL_STATE=""
+  LINEAGE_BANK_A_HEX=""; LINEAGE_BANK_B_HEX=""
+  continuation_positive_decimal "$floor" || return 2
+  IFS='|' read -r -a fields <<< "$raw"
+  [ "${fields[0]:-}" = 1 ] || return 2
+  case "${fields[1]:-}" in
+    empty)
+      [ "${#fields[@]}" -eq 2 ] || return 2
+      continuation_manifest_inventory "$target" none || return 2
+      LINEAGE_STATUS=empty; LINEAGE_CANONICAL_STATE="1|empty" ;;
+    accepted)
+      [ "${#fields[@]}" -eq 4 ] || return 2
+      continuation_positive_decimal "${fields[2]}" || return 2
+      case "${fields[3]}" in
+        bank-a|bank-b)
+          LINEAGE_ACTIVE_BANK="${fields[3]#bank-}"
+          continuation_bank_read "$target" "$LINEAGE_ACTIVE_BANK" "$writer" || return 2
+          LINEAGE_MANIFEST_HEX="$CONTINUATION_BANK_HEX"
+          LINEAGE_MANIFEST_ROWS="$CONTINUATION_BANK_ROWS"
+          continuation_manifest_inventory "$target" "$LINEAGE_ACTIVE_BANK" || return 2 ;;
+        *)
+          # Version-one inline accepted state is the live migration source. It is
+          # normalized into bank a only when a cycle replacement or candidate
+          # pending transition is actually written; reading never re-baselines it.
+          continuation_manifest_decode "${fields[3]}" "$writer" || return 2
+          continuation_manifest_inventory "$target" none || return 2
+          LINEAGE_ACTIVE_BANK=a
+          LINEAGE_MANIFEST_HEX="${fields[3]}"; LINEAGE_MANIFEST_ROWS="$MANIFEST_ROWS"
+          LINEAGE_BANK_A_HEX="${fields[3]}" ;;
+      esac
+      [ "$LINEAGE_ACTIVE_BANK" != a ] || LINEAGE_BANK_A_HEX="$LINEAGE_MANIFEST_HEX"
+      [ "$LINEAGE_ACTIVE_BANK" != b ] || LINEAGE_BANK_B_HEX="$LINEAGE_MANIFEST_HEX"
+      LINEAGE_STATUS=accepted; LINEAGE_REVIEW="${fields[2]}"
+      LINEAGE_CANONICAL_STATE="1|accepted|${fields[2]}|bank-$LINEAGE_ACTIVE_BANK" ;;
+    pending)
+      [ "${#fields[@]}" -eq 7 ] || return 2
+      prior_status="${fields[2]}"; prior_review="${fields[3]}"; prior_manifest="${fields[4]}"
+      case "$prior_status" in
+        empty) [ "$prior_review" = - ] && [ "$prior_manifest" = - ] || return 2 ;;
+        accepted)
+          continuation_positive_decimal "$prior_review" || return 2
+          case "$prior_manifest" in
+            bank-a|bank-b) prior_bank="${prior_manifest#bank-}" ;;
+            *) continuation_manifest_decode "$prior_manifest" "$writer" || return 2
+               LINEAGE_MANIFEST_HEX="$prior_manifest"; LINEAGE_MANIFEST_ROWS="$MANIFEST_ROWS"
+               prior_bank=a; LINEAGE_BANK_A_HEX="$prior_manifest" ;;
+          esac ;;
+        *) return 2 ;;
+      esac
+      continuation_positive_decimal "${fields[5]}" || return 2
+      case "${fields[6]}" in
+        bank-a|bank-b) candidate_bank="${fields[6]#bank-}" ;;
+        *) continuation_manifest_decode "${fields[6]}" "$writer" || return 2
+           LINEAGE_PENDING_CANDIDATE_MANIFEST="${fields[6]}"
+           if [ "$prior_status" = accepted ]; then candidate_bank=b; else candidate_bank=a; fi
+           [ "$candidate_bank" != a ] || LINEAGE_BANK_A_HEX="${fields[6]}"
+           [ "$candidate_bank" != b ] || LINEAGE_BANK_B_HEX="${fields[6]}" ;;
+      esac
+      [ "$prior_status" != accepted ] || [ "$prior_bank" != "$candidate_bank" ] || return 2
+      expected_banks="$candidate_bank"
+      [ "$prior_status" != accepted ] || expected_banks="$prior_bank,$candidate_bank"
+      if [[ "$prior_manifest" == bank-* ]]; then
+        continuation_bank_read "$target" "$prior_bank" "$writer" || return 2
+        LINEAGE_MANIFEST_HEX="$CONTINUATION_BANK_HEX"; LINEAGE_MANIFEST_ROWS="$CONTINUATION_BANK_ROWS"
+        [ "$prior_bank" != a ] || LINEAGE_BANK_A_HEX="$CONTINUATION_BANK_HEX"
+        [ "$prior_bank" != b ] || LINEAGE_BANK_B_HEX="$CONTINUATION_BANK_HEX"
+      fi
+      if [[ "${fields[6]}" == bank-* ]]; then
+        continuation_bank_read "$target" "$candidate_bank" "$writer" || return 2
+        LINEAGE_PENDING_CANDIDATE_MANIFEST="$CONTINUATION_BANK_HEX"
+        [ "$candidate_bank" != a ] || LINEAGE_BANK_A_HEX="$CONTINUATION_BANK_HEX"
+        [ "$candidate_bank" != b ] || LINEAGE_BANK_B_HEX="$CONTINUATION_BANK_HEX"
+      fi
+      continuation_manifest_inventory "$target" "$expected_banks" || return 2
+      if [ "$prior_status" = accepted ]; then
+        continuation_decimal_compare "${fields[5]}" "$prior_review"
+        [ "$DECIMAL_CMP" -gt 0 ] || return 2
+      fi
+      LINEAGE_STATUS=pending
+      LINEAGE_PENDING_CANDIDATE_REVIEW="${fields[5]}"
+      LINEAGE_PENDING_CANDIDATE_BANK="$candidate_bank"
+      if [ "$prior_status" = accepted ]; then
+        LINEAGE_REVIEW="$prior_review"; LINEAGE_ACTIVE_BANK="$prior_bank"
+        LINEAGE_CANONICAL_STATE="1|pending|accepted|$prior_review|bank-$prior_bank|${fields[5]}|bank-$candidate_bank"
+      else
+        LINEAGE_CANONICAL_STATE="1|pending|empty|-|-|${fields[5]}|bank-$candidate_bank"
+      fi ;;
+    *) return 2 ;;
+  esac
+  return 0
+}
+
+CANDIDATE_ACCEPTED_STATE=""
+CANDIDATE_PENDING_STATE=""
+continuation_candidate_check() { # parsed package+ledger against target facts
+  local target="$1" now rc=0 prior_status prior_review prior_manifest
+  continuation_lineage_read "$target" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) continuation_window_initialize "$target"
+       continuation_fail "initialized the legacy continuation review floor and empty transition for this agent; review the package after that floor and retry" ;;
+    *) continuation_fail "the agent carries missing, malformed, or relationally inconsistent continuation state" ;;
+  esac
+  [ "$LINEAGE_STATUS" != pending ] \
+    || continuation_fail "the agent lineage is pending a prior continuation delivery; retire it with 'gang drop', establish a new lineage with ordinary hitch or adopt, then review a new package after that floor"
+  now="$(date +%s 2>/dev/null)" || now=""
+  continuation_positive_decimal "$now" \
+    || continuation_fail "could not compare Reviewed-At with a canonical host clock"
+  continuation_decimal_compare "$PACKAGE_REVIEWED_AT" "$LINEAGE_FLOOR"
+  [ "$DECIMAL_CMP" -gt 0 ] \
+    || continuation_fail "Reviewed-At must be strictly later than this agent's review floor $LINEAGE_FLOOR"
+  continuation_decimal_compare "$PACKAGE_REVIEWED_AT" "$now"
+  [ "$DECIMAL_CMP" -le 0 ] \
+    || continuation_fail "Reviewed-At $PACKAGE_REVIEWED_AT is later than the host clock $now"
+
+  prior_status="$LINEAGE_STATUS"; prior_review="$LINEAGE_REVIEW"
+  prior_manifest="$LINEAGE_MANIFEST_HEX"
+  if [ "$prior_status" = accepted ]; then
+    continuation_decimal_compare "$PACKAGE_REVIEWED_AT" "$prior_review"
+    [ "$DECIMAL_CMP" -gt 0 ] \
+      || continuation_fail "Reviewed-At must advance past the previously accepted review $prior_review"
+    continuation_manifest_transition "$LINEAGE_MANIFEST_ROWS"
+  fi
+  CANDIDATE_ACCEPTED_STATE="1|accepted|$PACKAGE_REVIEWED_AT|$PACKAGE_MANIFEST_HEX"
+  if [ "$prior_status" = empty ]; then
+    CANDIDATE_PENDING_STATE="1|pending|empty|-|-|$PACKAGE_REVIEWED_AT|$PACKAGE_MANIFEST_HEX"
+  else
+    CANDIDATE_PENDING_STATE="1|pending|accepted|$prior_review|$prior_manifest|$PACKAGE_REVIEWED_AT|$PACKAGE_MANIFEST_HEX"
+  fi
+}
+
+LEDGER_STATE=""
+continuation_ledger_transition() { # $1 = prior decoded id/receipt rows
+  local prior="$1" id receipt extra found row
+  while IFS=$'\t' read -r id receipt extra; do
+    found=0
+    while IFS=$'\t' read -r row extra; do [ "$row" = "$id" ] && found=1; done <<< "$LEDGER_TRANSITION_ROWS"
+    if [ "$found" -eq 0 ] && [ "$receipt" = none ]; then
+      continuation_fail "task ledger removed observed task '$id' before its receipt-bearing revision was observed"
+    fi
+  done <<< "$prior"
+}
+
+continuation_ledger_observe() { # current staged ledger is parsed; ledger lock held by caller
+  local raw="" fields path_hex writer_hex ledger_hex rows_hex prior_rows="" readback
+  local options present=0 stored_writer_hex stored_rows_hex
+  path_hex="$(continuation_value_hex "$PACKAGE_LEDGER")"
+  writer_hex="$(continuation_value_hex "$LEDGER_WRITER")"
+  ledger_hex="$(continuation_file_hex "$CONTINUATION_TMP/ledger")"
+  rows_hex="$(continuation_value_hex "$LEDGER_TRANSITION_ROWS")"
+  continuation_hex_valid "$path_hex" && continuation_hex_valid "$writer_hex" \
+    && continuation_hex_valid "$ledger_hex" \
+    || continuation_fail "could not encode the captured ledger continuity facts"
+  # An empty task set is valid, so its transition-row encoding may be empty. It is
+  # still relationally checked against the parsed candidate before storage.
+  if [ -n "$rows_hex" ]; then continuation_hex_valid "$rows_hex" \
+    || continuation_fail "could not encode the captured ledger task transition facts"; fi
+  LEDGER_STATE="1|$path_hex|$writer_hex|$LEDGER_REVISION|$ledger_hex|${rows_hex:--}"
+  options="$(tmux show-options -t "=$SESSION:" 2>/dev/null)" \
+    || continuation_fail "could not determine whether this tmux session carries ledger continuity state"
+  continuation_option_present "$options" @gl_resume_ledger && present=1
+  if [ "$present" -eq 1 ]; then
+    raw="$(tmux show-options -qv -t "=$SESSION:" @gl_resume_ledger 2>/dev/null)" \
+      || continuation_fail "could not read the ledger continuity state known to exist in this tmux session"
+    [ -n "$raw" ] \
+      || continuation_fail "the session ledger continuity state is partial or malformed"
+    IFS='|' read -r -a fields <<< "$raw"
+    [ "${#fields[@]}" -eq 6 ] && [ "${fields[0]:-}" = 1 ] \
+      || continuation_fail "the session ledger continuity state is partial or malformed"
+    continuation_hex_valid "${fields[1]}" && continuation_hex_valid "${fields[2]}" \
+      && continuation_positive_decimal "${fields[3]}" && continuation_hex_valid "${fields[4]}" \
+      || continuation_fail "the session ledger continuity state is unreadable"
+    [ "${fields[5]}" = - ] || continuation_hex_valid "${fields[5]}" \
+      || continuation_fail "the session ledger transition rows are unreadable"
+    [ "${fields[1]}" = "$path_hex" ] \
+      || continuation_fail "the declared Ledger path differs from the path pinned for this tmux session"
+    [ "${fields[2]}" = "$writer_hex" ] \
+      || continuation_fail "the task ledger Writer differs from the writer pinned for this tmux session"
+
+    # Syntax on the compound fields is not enough: its stored ledger bytes are
+    # the authority the revision, writer and removal rows summarize. Recreate
+    # those bytes in private staging, run the closed parser over them, and derive
+    # every redundant field again before any of them can govern a transition.
+    continuation_hex_to_file "${fields[4]}" "$CONTINUATION_TMP/observed-ledger" \
+      || continuation_fail "could not decode the ledger bytes pinned for this tmux session byte-identically"
+    continuation_raw_validate "$CONTINUATION_TMP/observed-ledger" \
+      "stored task ledger" "$CONTINUATION_TMP/observed-ledger-check"
+    continuation_parse_ledger "$CONTINUATION_TMP/observed-ledger"
+    stored_writer_hex="$(continuation_value_hex "$LEDGER_WRITER")"
+    stored_rows_hex="$(continuation_value_hex "$LEDGER_TRANSITION_ROWS")"
+    [ "$LEDGER_REVISION" = "${fields[3]}" ] \
+      || continuation_fail "the stored task ledger Revision disagrees with its pinned compound state"
+    [ "$stored_writer_hex" = "${fields[2]}" ] \
+      || continuation_fail "the stored task ledger Writer disagrees with its pinned compound state"
+    [ "${stored_rows_hex:--}" = "${fields[5]}" ] \
+      || continuation_fail "the stored task ledger receipt rows disagree with its pinned compound state"
+    prior_rows="$LEDGER_TRANSITION_ROWS"
+
+    # Parsing the stored ledger intentionally replaced the candidate globals.
+    # Restore them from the already raw-validated candidate stage before the
+    # current ledger is compared or returned to package cross-validation.
+    continuation_parse_ledger "$CONTINUATION_TMP/ledger"
+    continuation_decimal_compare "$LEDGER_REVISION" "${fields[3]}"
+    case "$DECIMAL_CMP" in
+      -1) continuation_fail "task ledger revision $LEDGER_REVISION rolls back the observed session revision ${fields[3]}" ;;
+      0) [ "$ledger_hex" = "${fields[4]}" ] \
+           || continuation_fail "task ledger bytes changed without advancing revision $LEDGER_REVISION"
+         LEDGER_STATE="$raw"; return 0 ;;
+    esac
+    continuation_ledger_transition "$prior_rows"
+  fi
+  tmux set-option -t "=$SESSION:" @gl_resume_ledger "$LEDGER_STATE" 2>/dev/null \
+    || continuation_fail "could not store the captured ledger continuity state"
+  readback="$(tmux show-options -qv -t "=$SESSION:" @gl_resume_ledger 2>/dev/null)" \
+    || continuation_fail "could not read back the captured ledger continuity state after storing it"
+  [ "$readback" = "$LEDGER_STATE" ] \
+    || continuation_fail "could not verify the captured ledger continuity state"
+}
+
+CONTINUATION_BYTES=0
+CONTINUATION_RESUME=""
+CONTINUATION_ENVELOPE=""
+PREFLIGHT_ACCEPTED_STATE=""
+PREFLIGHT_PENDING_STATE=""
+
+continuation_stage_begin() { # CONTINUATION_VERB already names the live caller
+  [ -z "$CONTINUATION_TMP" ] \
+    || continuation_fail "internal: a continuation staging directory is already live"
+  continuation_begin "$CONTINUATION_VERB"
+}
+
+continuation_parse_staged_package() { # $1 expected writer
+  continuation_raw_validate "$CONTINUATION_TMP/package" "continuation package" "$CONTINUATION_TMP/package-check"
+  continuation_parse_package "$CONTINUATION_TMP/package" "$1"
+  continuation_capture "$PACKAGE_LEDGER" "$CONTINUATION_TMP/ledger" "declared task ledger"
+  continuation_raw_validate "$CONTINUATION_TMP/ledger" "declared task ledger" "$CONTINUATION_TMP/ledger-check"
+  continuation_parse_ledger "$CONTINUATION_TMP/ledger"
+  continuation_cross_validate
+}
+
+continuation_runtime_preflight() { # $1 verb, $2 target name, $3 id, $4 writer/from
+  local verb="$1" name="$2" target="$3" writer="$4" refusal_consequence
+  CONTINUATION_VERB="$verb"
+  CONTINUATION_BYTES=0; CONTINUATION_RESUME=""; CONTINUATION_ENVELOPE=""
+  PREFLIGHT_ACCEPTED_STATE=""; PREFLIGHT_PENDING_STATE=""
+  continuation_stage_begin
+  continuation_stage_stdin "$CONTINUATION_TMP/package" "continuation package"
+  CONTINUATION_BYTES="$(wc -c < "$CONTINUATION_TMP/package" | tr -d '[:space:]')"
+  continuation_positive_decimal "$CONTINUATION_BYTES" \
+    || continuation_fail "the continuation package is empty or its byte size could not be determined"
+  require_whole GANG_RESUME_MAX "$RESUME_MAX" bytes
+  case "$verb" in
+    cycle)
+      refusal_consequence="Nothing has been typed or dropped, '$name' is still running with the context it had, and the authored file is untouched." ;;
+    compact)
+      refusal_consequence="Nothing has been typed, no compaction was issued, and the authored file is untouched." ;;
+    *) continuation_fail "internal: unknown structured-renewal verb '$verb'" ;;
+  esac
+  [ "$CONTINUATION_BYTES" -le "$RESUME_MAX" ] \
+    || refuse "$verb: this resume is $CONTINUATION_BYTES bytes and GANG_RESUME_MAX is $RESUME_MAX, so it is refused rather than delivered. Gangline will not trim it; fold expired private notes or raise GANG_RESUME_MAX when the current state genuinely needs that space. $refusal_consequence"
+  continuation_parse_staged_package "$writer"
+
+  continuation_lock_take target "$name"
+  continuation_lock_take ledger "$SESSION"
+  continuation_ledger_observe
+  continuation_lock_release ledger
+  continuation_candidate_check "$target"
+  PREFLIGHT_ACCEPTED_STATE="$CANDIDATE_ACCEPTED_STATE"
+  PREFLIGHT_PENDING_STATE="$CANDIDATE_PENDING_STATE"
+  continuation_lock_release target
+
+  # Only validated UTF-8 text enters the shell representation used by the existing
+  # envelope and delivery machinery. The envelope exposes its post-neutralisation
+  # body so a reserved-tag rewrite is a refusal rather than a different delivery.
+  stdin_body "$verb: --resume-stdin" < "$CONTINUATION_TMP/package"
+  CONTINUATION_RESUME="$STDIN_BODY"
+  envelope "$writer" "$CONTINUATION_RESUME"
+  [ "$ENVELOPE_BODY" = "$CONTINUATION_RESUME" ] \
+    || continuation_fail "the validated continuation package contains reserved tag-shaped text that attribution would rewrite"
+  CONTINUATION_ENVELOPE="$ENVELOPE"
+  continuation_cleanup_required
+}
+
+continuation_event_revalidate() { # $1 target name, $2 active window id; leaves target lock held
+  local name="$1" target="$2"
+  continuation_lock_take target "$name"
+  continuation_stage_begin
+  continuation_capture "$PACKAGE_LEDGER" "$CONTINUATION_TMP/ledger" "declared task ledger"
+  continuation_raw_validate "$CONTINUATION_TMP/ledger" "declared task ledger" "$CONTINUATION_TMP/ledger-check"
+  continuation_parse_ledger "$CONTINUATION_TMP/ledger"
+  continuation_cross_validate
+  continuation_lock_take ledger "$SESSION"
+  continuation_ledger_observe
+  continuation_lock_release ledger
+  continuation_candidate_check "$target"
+  [ "$CANDIDATE_ACCEPTED_STATE" = "$PREFLIGHT_ACCEPTED_STATE" ] \
+    && [ "$CANDIDATE_PENDING_STATE" = "$PREFLIGHT_PENDING_STATE" ] \
+    || continuation_fail "the continuation lineage changed after preflight; no candidate bytes were delivered"
+  continuation_cleanup_required
+}
+
+continuation_pending_event_revalidate() { # $1 fresh id; owning cycle still holds target lock
+  local target="$1" rc=0
+  continuation_lineage_read "$target" || rc=$?
+  [ "$rc" -eq 0 ] && [ "$LINEAGE_STATUS" = pending ] \
+    && [ "$LINEAGE_CANONICAL_STATE" = "$PREFLIGHT_PENDING_STATE" ] \
+    || continuation_fail "the replacement does not carry the pending continuation candidate owned by this cycle"
+
+  continuation_stage_begin
+  continuation_capture "$PACKAGE_LEDGER" "$CONTINUATION_TMP/ledger" "declared task ledger"
+  continuation_raw_validate "$CONTINUATION_TMP/ledger" "declared task ledger" "$CONTINUATION_TMP/ledger-check"
+  continuation_parse_ledger "$CONTINUATION_TMP/ledger"
+  continuation_cross_validate
+  continuation_lock_take ledger "$SESSION"
+  continuation_ledger_observe
+  continuation_lock_release ledger
+  if [ -n "$LINEAGE_REVIEW" ]; then
+    continuation_manifest_transition "$LINEAGE_MANIFEST_ROWS"
+  fi
+  [ "$LINEAGE_PENDING_CANDIDATE_REVIEW" = "$PACKAGE_REVIEWED_AT" ] \
+    && [ "$LINEAGE_PENDING_CANDIDATE_MANIFEST" = "$PACKAGE_MANIFEST_HEX" ] \
+    || continuation_fail "the carried pending candidate identity differs from the package being delivered"
+  continuation_cleanup_required
+}
+
+CONTINUATION_HEADER_ERROR=""
+continuation_header_write() { # $1 target, $2 exact small transition header
+  local target="$1" state="$2" readback
+  CONTINUATION_HEADER_ERROR=""
+  tmux set-option -w -t "$target" @gl_resume_transition "$state" 2>/dev/null \
+    || { CONTINUATION_HEADER_ERROR="could not store the continuation transition header"; return 1; }
+  readback="$(tmux show-options -wqv -t "$target" @gl_resume_transition 2>/dev/null)" || readback=""
+  [ "$readback" = "$state" ] \
+    || { CONTINUATION_HEADER_ERROR="could not verify the continuation transition header byte-identically"; return 1; }
+}
+
+continuation_pending_restore() { # $1 target, $2 old raw header, $3 banks created here
+  local target="$1" old_raw="$2" created="$3" bank rc=0
+  continuation_header_write "$target" "$old_raw" || rc=1
+  for bank in a b; do
+    case ",$created," in
+      *",$bank,"*) continuation_bank_clear "$target" "$bank" || rc=1 ;;
+    esac
+  done
+  continuation_lineage_read "$target" || rc=1
+  [ "$LINEAGE_RAW" = "$old_raw" ] || rc=1
+  return "$rc"
+}
+
+continuation_transition_pending() { # $1 target; candidate/prior globals are parsed
+  local target="$1" old_raw="$LINEAGE_RAW" prior_status="$LINEAGE_STATUS"
+  local prior_bank="$LINEAGE_ACTIVE_BANK" candidate_bank created="" pending
+  local prior_hex="$LINEAGE_MANIFEST_HEX" failure=""
+
+  if [ "$prior_status" = accepted ]; then
+    # An inline version-one accepted state has no physical bank yet. Materialize
+    # its complete manifest first; the old inline header remains authoritative
+    # until both it and the candidate bank round-trip.
+    if [[ "$old_raw" != *'|bank-'* ]]; then
+      prior_bank=a
+      created="$prior_bank"
+      continuation_bank_write "$target" "$prior_bank" "$prior_hex" \
+        || failure="could not migrate the prior inline manifest — $CONTINUATION_BANK_ERROR"
+    fi
+    [ "$prior_bank" = a ] && candidate_bank=b || candidate_bank=a
+  else
+    candidate_bank=a
+  fi
+  if [ -z "$failure" ]; then
+    created="${created}${created:+,}$candidate_bank"
+    continuation_bank_write "$target" "$candidate_bank" "$PACKAGE_MANIFEST_HEX" \
+      || failure="could not store the complete candidate manifest — $CONTINUATION_BANK_ERROR"
+  fi
+  if [ "$prior_status" = accepted ]; then
+    pending="1|pending|accepted|$LINEAGE_REVIEW|bank-$prior_bank|$PACKAGE_REVIEWED_AT|bank-$candidate_bank"
+  else
+    pending="1|pending|empty|-|-|$PACKAGE_REVIEWED_AT|bank-$candidate_bank"
+  fi
+  if [ -z "$failure" ]; then
+    continuation_header_write "$target" "$pending" \
+      || failure="$CONTINUATION_HEADER_ERROR"
+  fi
+  if [ -n "$failure" ]; then
+    continuation_pending_restore "$target" "$old_raw" "$created" \
+      || continuation_fail "$failure; the prior transition could not be restored and verified, so lineage state is could-not-determine"
+    continuation_fail "$failure; the prior $prior_status transition was restored byte-identically and no retirement or delivery began"
+  fi
+  continuation_lineage_read "$target" \
+    || continuation_fail "could not read the pending continuation state just written"
+  [ "$LINEAGE_STATUS" = pending ] \
+    && [ "$LINEAGE_PENDING_CANDIDATE_MANIFEST" = "$PACKAGE_MANIFEST_HEX" ] \
+    || continuation_fail "the pending continuation state did not preserve the complete candidate manifest"
+  [ "$prior_status" != accepted ] || [ "$LINEAGE_MANIFEST_HEX" = "$prior_hex" ] \
+    || continuation_fail "the pending continuation state did not preserve the complete prior manifest"
+  PREFLIGHT_PENDING_STATE="$LINEAGE_CANONICAL_STATE"
+  PREFLIGHT_ACCEPTED_STATE="1|accepted|$PACKAGE_REVIEWED_AT|bank-$candidate_bank"
+}
+
+continuation_accept_restore_pending() { # $1 target, $2 header, $3/$4 prior bank/hex, $5/$6 candidate bank/hex
+  local target="$1" pending="$2" prior_bank="$3" prior_hex="$4"
+  local candidate_bank="$5" candidate_hex="$6" rc=0 read_rc=0
+  # Acceptance removes the prior bank before its final read. Keep both complete
+  # manifests in memory and rebuild them before returning the header to pending,
+  # so a post-delivery failure cannot strand an accepted header or a pending
+  # header whose relation no longer exists.
+  if [ -n "$prior_bank" ]; then
+    continuation_bank_write "$target" "$prior_bank" "$prior_hex" || rc=1
+  fi
+  continuation_bank_write "$target" "$candidate_bank" "$candidate_hex" || rc=1
+  continuation_header_write "$target" "$pending" || rc=1
+  continuation_lineage_read "$target" || read_rc=$?
+  [ "$read_rc" -eq 0 ] && [ "$LINEAGE_STATUS" = pending ] \
+    && [ "$LINEAGE_CANONICAL_STATE" = "$pending" ] \
+    && [ "$LINEAGE_PENDING_CANDIDATE_BANK" = "$candidate_bank" ] \
+    && [ "$LINEAGE_PENDING_CANDIDATE_MANIFEST" = "$candidate_hex" ] \
+    || rc=1
+  if [ -n "$prior_bank" ]; then
+    [ "$LINEAGE_ACTIVE_BANK" = "$prior_bank" ] \
+      && [ "$LINEAGE_MANIFEST_HEX" = "$prior_hex" ] || rc=1
+  else
+    [ -z "$LINEAGE_ACTIVE_BANK" ] && [ -z "$LINEAGE_MANIFEST_HEX" ] || rc=1
+  fi
+  return "$rc"
+}
+
+continuation_transition_accept() { # $1 target; pending and both banks already verify
+  local target="$1" rc=0 prior_bank prior_hex pending_header accepted_header
+  local candidate_bank candidate_hex failure=""
+  continuation_lineage_read "$target" || rc=$?
+  [ "$rc" -eq 0 ] && [ "$LINEAGE_STATUS" = pending ] \
+    && [ "$LINEAGE_CANONICAL_STATE" = "$PREFLIGHT_PENDING_STATE" ] \
+    || continuation_fail "the pending continuation state changed before acceptance"
+  pending_header="$LINEAGE_CANONICAL_STATE"; prior_bank="$LINEAGE_ACTIVE_BANK"
+  prior_hex="$LINEAGE_MANIFEST_HEX"
+  candidate_bank="$LINEAGE_PENDING_CANDIDATE_BANK"
+  candidate_hex="$LINEAGE_PENDING_CANDIDATE_MANIFEST"
+  accepted_header="$PREFLIGHT_ACCEPTED_STATE"
+  if ! continuation_header_write "$target" "$accepted_header"; then
+    failure="$CONTINUATION_HEADER_ERROR"
+    continuation_accept_restore_pending "$target" "$pending_header" \
+      "$prior_bank" "$prior_hex" "$candidate_bank" "$candidate_hex" \
+      || continuation_fail "$failure; complete pending state could not be restored and verified"
+    continuation_fail "$failure; complete pending state was restored and verified"
+  fi
+  if [ -n "$prior_bank" ] && ! continuation_bank_clear "$target" "$prior_bank"; then
+    failure="could not clean the prior manifest bank — $CONTINUATION_BANK_ERROR"
+    continuation_accept_restore_pending "$target" "$pending_header" \
+      "$prior_bank" "$prior_hex" "$candidate_bank" "$candidate_hex" \
+      || continuation_fail "$failure; complete pending state could not be restored and verified"
+    continuation_fail "$failure; complete pending state was restored and verified"
+  fi
+  if ! continuation_lineage_read "$target"; then
+    failure="could not read the accepted continuation state just written"
+  elif [ "$LINEAGE_STATUS" != accepted ] || [ "$LINEAGE_RAW" != "$accepted_header" ] \
+       || [ "$LINEAGE_ACTIVE_BANK" != "$candidate_bank" ] \
+       || [ "$LINEAGE_MANIFEST_HEX" != "$candidate_hex" ]; then
+    failure="accepted continuation state did not preserve the candidate identity byte-identically"
+  fi
+  if [ -n "$failure" ]; then
+    continuation_accept_restore_pending "$target" "$pending_header" \
+      "$prior_bank" "$prior_hex" "$candidate_bank" "$candidate_hex" \
+      || continuation_fail "$failure; complete pending state could not be restored and verified"
+    continuation_fail "$failure; complete pending state was restored and verified"
+  fi
+}
+
 mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE=""
+ENVELOPE_BODY=""
 envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into ENVELOPE
   # A bare prefix on the first line leaves every line after it unsigned — and the
   # role briefs read an unsigned line as the OPERATOR, who outranks every peer. A
@@ -759,6 +2486,7 @@ envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into 
     *"$sentinel") body="${marked%"$sentinel"}" ;;
     *) die "internal: the envelope sentinel was lost while neutralising tag-shaped text" ;;
   esac
+  ENVELOPE_BODY="$body"
   ENVELOPE="[gang:$1#$nonce] $body [/gang:$1#$nonce]"
 }
 
@@ -2150,6 +3878,10 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
 PARKED=0
 PARKED_WAIT_TARGET=""
 WAIT_STATE=""
+CONTINUATION_TARGET_LOCK_PATH=""
+CONTINUATION_LEDGER_LOCK_PATH=""
+CONTINUATION_LOCK_CLAIM_PATH=""
+CONTINUATION_LOCK_CLAIM_SERIAL=0
 
 unpark() { # drop OUR marker, never somebody else's
   [ "$PARKED" = 1 ] || return 0
@@ -2174,7 +3906,74 @@ unpark() { # drop OUR marker, never somebody else's
 # Calling it unconditionally is safe by construction: it returns at its first
 # line when no probe is running, and it clears its own state, so twice costs the
 # same as once. That matters because cmd_vet also calls it on the success path.
-on_exit() { probe_teardown; lock_release; unpark; }
+CONTINUATION_LOCK_ERROR=""
+
+continuation_lock_recorded_clear() { # $1 path variable, $2 exact path, $3 label, $4 recursive 0|1
+  local var="$1" path="$2" label="$3" recursive="$4" disappearance_rc=0
+  CONTINUATION_LOCK_ERROR=""
+  [ -n "$path" ] || return 0
+  if [ "$recursive" -eq 1 ]; then
+    if ! rm -rf -- "$path" 2>/dev/null; then
+      CONTINUATION_LOCK_ERROR="could not remove the $label at $path; its recorded path was retained"
+      return 1
+    fi
+  elif ! rm -f -- "$path" 2>/dev/null; then
+    CONTINUATION_LOCK_ERROR="could not remove the $label at $path; its recorded path was retained"
+    return 1
+  fi
+  if continuation_path_disappeared "$path"; then
+    printf -v "$var" '%s' ''
+    return 0
+  else
+    disappearance_rc=$?
+  fi
+  if [ "$disappearance_rc" -eq 2 ]; then
+    CONTINUATION_LOCK_ERROR="could not determine whether the $label at $path disappeared after cleanup because its parent directory is unavailable; its recorded path was retained"
+  else
+    CONTINUATION_LOCK_ERROR="could not remove and verify the $label at $path; its recorded path was retained"
+  fi
+  return 1
+}
+
+continuation_lock_release_all() {
+  local rc=0
+  continuation_lock_recorded_clear CONTINUATION_LOCK_CLAIM_PATH \
+    "$CONTINUATION_LOCK_CLAIM_PATH" "temporary continuation ownership claim" 0 || {
+      printf 'gang: %s: %s\n' "$CONTINUATION_VERB" "$CONTINUATION_LOCK_ERROR" >&2
+      rc=1
+    }
+  continuation_lock_recorded_clear CONTINUATION_LEDGER_LOCK_PATH \
+    "$CONTINUATION_LEDGER_LOCK_PATH" "ledger continuation critical section" 1 || {
+      printf 'gang: %s: %s\n' "$CONTINUATION_VERB" "$CONTINUATION_LOCK_ERROR" >&2
+      rc=1
+    }
+  continuation_lock_recorded_clear CONTINUATION_TARGET_LOCK_PATH \
+    "$CONTINUATION_TARGET_LOCK_PATH" "target continuation critical section" 1 || {
+      printf 'gang: %s: %s\n' "$CONTINUATION_VERB" "$CONTINUATION_LOCK_ERROR" >&2
+      rc=1
+    }
+  return "$rc"
+}
+
+continuation_runtime_cleanup() {
+  [ -z "$CONTINUATION_TMP" ] || continuation_cleanup_attempt || {
+    printf 'gang: %s: %s\n' "$CONTINUATION_VERB" \
+      "$CONTINUATION_CLEANUP_ERROR" >&2
+    return 1
+  }
+}
+
+on_exit() {
+  local exit_rc=$? cleanup_rc=0
+  trap - EXIT
+  probe_teardown
+  continuation_lock_release_all || cleanup_rc=1
+  lock_release
+  unpark
+  continuation_runtime_cleanup || cleanup_rc=1
+  [ "$cleanup_rc" -eq 0 ] || exit_rc=1
+  exit "$exit_rc"
+}
 
 park_self() { # $1 = target name; mark this window as blocked in gang's own wait
   # Not being in a pane is normal, not an error: gang runs from the operator's
@@ -2360,6 +4159,143 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
   # the wait below and says so, and one naming a dead pid is reclaimed there. gang
   # does not sweep them: a cleanup that guesses which lock is stale is how a tool
   # ends somebody's team.
+}
+
+continuation_lock_claim_clear() { # remove and verify our pre-ownership claim
+  continuation_lock_recorded_clear CONTINUATION_LOCK_CLAIM_PATH \
+    "$CONTINUATION_LOCK_CLAIM_PATH" "temporary continuation ownership claim" 0
+}
+
+continuation_lock_take() { # $1 = target|ledger, $2 = exact scope key
+  local kind="$1" key="$2" var base path claim contender pidfile holder
+  local t=0 tries="${GANG_LOCK_WAIT:-150}" interrupted=0 owner_live=0 owner_unknown=0
+  case "$kind" in
+    target) var=CONTINUATION_TARGET_LOCK_PATH ;;
+    ledger) var=CONTINUATION_LEDGER_LOCK_PATH ;;
+    *) continuation_fail "internal: unknown continuation critical section '$kind'" ;;
+  esac
+  [ -z "${!var}" ] || continuation_fail "internal: continuation $kind critical section was taken twice"
+  require_whole GANG_LOCK_WAIT "$tries" attempts
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$base"
+  path="$base/continuation-$(continuation_value_hex "$SESSION|$kind|$key").lock"
+  while :; do
+    # A claimant publishes its pid BEFORE mkdir creates the ownership boundary.
+    # Therefore a PID-less lock with no live/ambiguous claim is an orphan, while
+    # the same directory beside a live claim is the real owner's narrow
+    # mkdir-to-pid interval and must not be stolen. The serial makes each claim
+    # unique within one pid; noclobber turns pid reuse plus a surviving claim into
+    # a loud refusal rather than overwriting evidence we do not own.
+    CONTINUATION_LOCK_CLAIM_SERIAL=$(( CONTINUATION_LOCK_CLAIM_SERIAL + 1 ))
+    claim="$path.claim.$$.$CONTINUATION_LOCK_CLAIM_SERIAL"
+    CONTINUATION_LOCK_CLAIM_PATH="$claim"
+    trap 'on_exit' EXIT
+    if ! ( set -o noclobber; printf '%s\n' "$$" > "$claim" ) 2>/dev/null; then
+      continuation_fail "could not publish the $kind continuation critical-section ownership claim at $claim"
+    fi
+    holder="$(cat "$claim" 2>/dev/null)" \
+      || continuation_fail "could not read back the $kind continuation critical-section ownership claim at $claim"
+    [ "$holder" = "$$" ] \
+      || continuation_fail "could not verify the $kind continuation critical-section ownership claim at $claim"
+
+    # mkdir is the ownership boundary, but a trapped signal is dispatched after
+    # the foreground command returns and before the next shell command. Defer
+    # that exit just long enough to publish the path to shared EXIT cleanup and
+    # record our pid. If mkdir lost to another owner, restore the ordinary trap
+    # without publishing their path, so interruption can never remove their lock.
+    interrupted=0
+    trap 'interrupted=1' HUP INT TERM
+    if mkdir "$path" 2>/dev/null; then
+      printf -v "$var" '%s' "$path"
+      trap 'on_exit' EXIT
+      printf '%s' "$$" > "$path/pid" \
+        || continuation_fail "could not record ownership of the $kind continuation critical section"
+      continuation_lock_claim_clear \
+        || continuation_fail "$CONTINUATION_LOCK_ERROR"
+      trap 'exit 1' HUP INT TERM
+      [ "$interrupted" -eq 0 ] || exit 1
+      break
+    fi
+    trap 'exit 1' HUP INT TERM
+    continuation_lock_claim_clear \
+      || continuation_fail "$CONTINUATION_LOCK_ERROR"
+    [ "$interrupted" -eq 0 ] || exit 1
+    [ -d "$path" ] \
+      || continuation_fail "could not acquire the $kind continuation critical section at $path — nothing holds this lock, but its path could not be created"
+
+    owner_live=0; owner_unknown=0; pidfile="$path/pid"
+    if [ -e "$pidfile" ] || [ -L "$pidfile" ]; then
+      if [ -L "$pidfile" ] || [ ! -f "$pidfile" ]; then
+        owner_unknown=1
+      else
+        holder="$(cat "$pidfile" 2>/dev/null)" || holder=""
+        case "$holder" in
+          [1-9]* ) case "$holder" in *[!0-9]*) owner_unknown=1 ;; *)
+            if kill -0 "$holder" 2>/dev/null; then
+              owner_live=1
+            elif rm -rf -- "$path" 2>/dev/null \
+                 && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+              continue
+            else
+              owner_unknown=1
+            fi ;;
+          esac ;;
+          *) owner_unknown=1 ;;
+        esac
+      fi
+    else
+      # Only pre-ownership claims can explain a legitimately PID-less lock. A
+      # valid live claimant protects it; a malformed, unreadable or unremovable
+      # claim keeps ownership ambiguous; dead claims are retired by exact path.
+      for contender in "$path".claim.*; do
+        [ -e "$contender" ] || [ -L "$contender" ] || continue
+        if [ -L "$contender" ] || [ ! -f "$contender" ]; then
+          owner_unknown=1
+          continue
+        fi
+        holder="$(cat "$contender" 2>/dev/null)" || holder=""
+        case "$holder" in
+          [1-9]* ) case "$holder" in *[!0-9]*) owner_unknown=1 ;; *)
+            if kill -0 "$holder" 2>/dev/null; then
+              owner_live=1
+            elif ! rm -f -- "$contender" 2>/dev/null \
+                 || [ -e "$contender" ] || [ -L "$contender" ]; then
+              owner_unknown=1
+            fi ;;
+          esac ;;
+          *) owner_unknown=1 ;;
+        esac
+      done
+      # The owner may have crossed the claim-to-pid boundary while claims were
+      # read. Re-evaluate from the pid branch instead of spending that race as an
+      # orphan. With neither fact present, retirement is the positive stale case.
+      if [ -e "$pidfile" ] || [ -L "$pidfile" ]; then
+        continue
+      fi
+      if [ "$owner_live" -eq 0 ] && [ "$owner_unknown" -eq 0 ]; then
+        if rm -rf -- "$path" 2>/dev/null \
+           && [ ! -e "$path" ] && [ ! -L "$path" ]; then
+          continue
+        fi
+        owner_unknown=1
+      fi
+    fi
+    t=$(( t + 1 ))
+    if [ "$t" -ge "$tries" ]; then
+      [ "$owner_unknown" -eq 0 ] \
+        || continuation_fail "could not determine the owner of the $kind continuation critical section; its pid or pre-ownership claim could not be evaluated, so gang did not steal it"
+      continuation_fail "could not acquire the $kind continuation critical section; another invocation still holds it"
+    fi
+    sleep 0.2
+  done
+}
+
+continuation_lock_release() { # $1 = target|ledger
+  local var path
+  case "$1" in target) var=CONTINUATION_TARGET_LOCK_PATH ;; ledger) var=CONTINUATION_LEDGER_LOCK_PATH ;; *) return 1 ;; esac
+  path="${!var}"
+  [ -z "$path" ] || rm -rf -- "$path"
+  printf -v "$var" '%s' ''
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
@@ -2879,7 +4815,7 @@ deliver_held() { # $1 = window id, $2 = text, $3 = the target's name; hold a sen
   return "$rc"
 }
 
-resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot overtake
+resume_after_compaction() { # $1=id, $2=envelope, $3=name, $4=package bytes
   # A resume cannot ride the input queue behind its own compaction. Both are typed
   # from inside a live turn, and a harness does not treat the two alike: a queued
   # slash command waits for the turn to genuinely end, while queued text can be
@@ -2924,7 +4860,7 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   # later than visibly-running and still safe, because a compaction reads no
   # input, and unlike a still screen it cannot be true of a turn that is merely
   # quiet.
-  local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}"
+  local t=0 streak=0 timeout="${GANG_RESUME_TIMEOUT:-900}" name="$3" resume_bytes="$4"
   # The one bound in this file whose unchecked failure is corrupting rather than
   # noisy: an unusable value makes the `while` below refuse on its first test,
   # and execution falls straight through to the unconditional inject at the end —
@@ -3014,6 +4950,18 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   # Spent against the CLOCK rather than counted in retries: an attempt is not a
   # fixed cost — a contended pane lock alone can hold one for thirty seconds — so
   # a per-retry counter would run far past the budget it claims to keep.
+  # Preflight was not certification for a delayed delivery. The named window must
+  # still be the same registered lineage, and the ledger, references, pressure and
+  # transition are re-read under its critical section before pending is written.
+  local current=""
+  current="$(win_id "$name")" || current=""
+  [ -n "$current" ] && [ "$current" = "$1" ] \
+    || continuation_fail "the compacted agent was retired or replaced before its continuation could be delivered"
+  [ -n "$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" ] \
+    || continuation_fail "the compacted window is no longer an active agent lineage"
+  continuation_event_revalidate "$name" "$1"
+  continuation_transition_pending "$1"
+
   local rc=0 err="" started="$SECONDS" left=$(( timeout - t ))
   [ "$left" -ge 0 ] || left=0
   while :; do
@@ -3022,7 +4970,14 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
     # lock it takes is released with that subshell, leaving the next attempt to
     # take it cleanly rather than holding one across a sleep.
     err="$(inject "$1" "$2" 2>&1)" || rc=$?
-    [ "$rc" -ne 0 ] || return 0
+    if [ "$rc" -eq 0 ]; then
+      continuation_transition_accept "$1"
+      tmux set-option -w -t "$1" @gl_resume_bytes "$resume_bytes" 2>/dev/null || true
+      continuation_resume_outcome_clear "$1" \
+        || continuation_fail "the structured resume was delivered and accepted, but its detached outcome guard could not be removed and verified"
+      continuation_lock_release target
+      return 0
+    fi
     [ "$rc" -eq 3 ] || break                        # typed something: not ours to repeat
     [ $(( SECONDS - started )) -lt "$left" ] || break
     sleep 2
@@ -3031,6 +4986,7 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
   # actually left in, and cmd_compact records it where status, roster and patrol
   # read it out.
   [ -z "$err" ] || printf '%s\n' "$err" >&2
+  printf 'gang: compact: structured resume delivery failed after pending was stored; direct send cannot cure this lineage. Retire it with gang drop, establish a new lineage with ordinary hitch or adopt, then review a new package after that floor\n' >&2
   return "$rc"
 }
 
@@ -3425,30 +5381,30 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # has to unpack before it can act is a sentence charged against the thing it is
   # trying to save.
   #
-  # The top rung says to compact now rather than at a boundary. A boundary is
+  # The top rung says to cycle now rather than wait for another boundary. A boundary is
   # only ever wanted because it is a moment with something coherent to write
-  # down, so writing the handoff IS the boundary, and it is reachable at any
-  # moment for the cost of doing it.
+  # down, so reviewing and updating the structured continuation package IS the
+  # boundary, and it is reachable at any moment for the cost of doing it.
   #
-  # And the tail sends an agent to the handoff it already has rather than asking
-  # it to start one. The role brief moved that file to something opened at task
+  # And the tail sends an agent to the package it already has rather than asking
+  # it to invent one. The role brief moved that file to something opened at task
   # start and superseded at every checkpoint, so by the time a band is crossed it
-  # usually exists — while this note went on saying "write the handoff", which
-  # asks for the composition that most needs recall in the same breath as telling
-  # the agent its recall is unreliable. Steering costs a clause and buys a
-  # re-read; prompting from scratch invites a second file and strands the
-  # evidenced claims in the first.
+  # usually exists — while the old note asked for a new free-form summary, the
+  # composition that most needs recall, in the same breath as telling the agent
+  # its recall is unreliable. Steering costs a clause and buys a re-read;
+  # prompting from scratch invites invalid prose and strands the evidenced claims
+  # in the reviewed package.
   #
   # BOTH CASES ARE CARRIED IN THE PROSE because gang cannot know which one it is
-  # in. Where a handoff lives is the brief's to say, deliberately, so a team can
-  # keep its own — so branching on the file would mean minting a path here that
-  # the contract left per-brief, and a branch on a path gang guessed is worse
-  # than a clause an agent resolves against the brief in front of it. That is
-  # also why the tail POINTS at the brief instead of repeating it: off /tmp, how
-  # a claim is labelled, what a pointer has to resolve to, are all argued there
-  # to an agent that has already read them. A second copy in a string here would
-  # drift from the first and spend the note's length on rules rather than on the
-  # action it is interrupting the agent to ask for.
+  # in. Where a package lives is the brief's to say, while the declared live-task
+  # authority is the lead-owned ledger's — so branching on the file would mean
+  # minting a path here that the contract left per-brief, and a branch on a path
+  # gang guessed is worse than a clause an agent resolves against the brief in
+  # front of it. That is also why the tail POINTS at the brief and ledger instead
+  # of repeating their grammar: off /tmp, evidence labels, and valid task
+  # ownership are argued there to an agent that has already read them. A second
+  # copy in a string here would drift from the first and spend the note's length
+  # on rules rather than on the action it is interrupting the agent to ask for.
   local total remaining tail qname
   local -a rungs
   IFS=',' read -r -a rungs <<<"$5"
@@ -3462,7 +5418,7 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
   # that passed valid_name byte-identical, so the suggestion an agent actually
   # reads is unchanged in every case that is not already broken.
   printf -v qname '%q' "$3"
-  tail="Check the handoff you have been keeping and refresh what this arc changed — if you have none yet, write one now; your role brief says where. Then run: gang cycle $qname --from $qname --resume-stdin < your-handoff — a fresh agent replaces you on the same facts and picks up that file, and your window stays open as $qname~spent so your closing remarks can still be read."
+  tail="Review and refresh the structured continuation package your role brief requires, including the lead-owned live task ledger it declares. If that ledger has no live task owned by you, report the blocker; do not substitute prose. Replace /path/to/your-package below with the durable package path from your role brief. Then run: gang cycle $qname --from $qname --resume-stdin < /path/to/your-package — a fresh agent replaces you on the same facts and picks up that package, and your window stays open as $qname~spent so your closing remarks can still be read."
   if [ "${6:-}" = repeat ]; then
     printf '[context-usage] %s in context — still past the %s-token band. You have not renewed. Do it now, before your next action. Each turn you take instead adds to this context and degrades your recall of it. Anything you have not written down is lost when the context is replaced. You will get this note on every turn until you cycle. %s' \
       "$1" "$2" "$tail"
@@ -4274,6 +6230,10 @@ cmd_hitch() {
   # hitch — and it missed for names tmux and `read` disagree about, like one
   # with a leading space.
   [ -n "$id" ] || die "'$name' never appeared in session '$SESSION'"
+  # Before @gl_profile makes the window an addressable agent. A failed pair does
+  # not leave a registered lineage whose absent half a later renewal could mistake
+  # for legacy state.
+  continuation_window_initialize "$id"
   # Window name IS the identity — the app must not rename it out from under us.
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
@@ -4567,26 +6527,10 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   fi
   [ "$resume_stdin" -eq 0 ] || check_sender "$from"
   if [ "$resume_stdin" -eq 1 ]; then
-    stdin_body "compact: --resume-stdin"; resume="$STDIN_BODY"
-    # Bytes off `wc -c`, never off ${#resume}: that counts CHARACTERS under a
-    # UTF-8 locale, so a budget declared in bytes and measured that way admits a
-    # multibyte handoff at several times its stated size — measured here, a
-    # two-word line of accented and CJK text reads seven one way and twelve the
-    # other. It also has to be the figure `wc -c` gives on the file the agent is
-    # about to fold, or the refusal names a number nobody can reproduce.
-    require_whole GANG_RESUME_MAX "$RESUME_MAX" bytes
-    resume_bytes="$(printf '%s' "$resume" | wc -c | tr -d '[:space:]')"
-    # The refusal is here rather than on `send` because the two are not the same
-    # bytes twice. A report is read inside a context that already exists; a
-    # resume is charged to one just emptied to make room for it, so an oversized
-    # one spends the renewal it was supposed to pay for. Nothing above this line
-    # moves: an unresolvable name and an unattributed body still die before
-    # stdin is consumed.
-    # refuse rather than die, because the claim in the wording is a claim about
-    # this code path: the budget is read before the first keystroke, so a caller
-    # can tell this apart from a failure that may have left a paste behind.
-    [ "$resume_bytes" -le "$RESUME_MAX" ] \
-      || refuse "compact: this resume is $resume_bytes bytes and GANG_RESUME_MAX is $RESUME_MAX, so it is refused rather than delivered. A resume is charged to a context emptied to make room for it, and it grows by additions each window judged reasonable one at a time. Fold it: supersede sections in place, cut finished work to a pointer at the receipts it is archived under, keep only what the successor must act on. Gangline will not trim it for you — a resume cut by a tool is one nobody wrote. Nothing has been typed, no compaction was issued, and the file on disk is untouched. Raise GANG_RESUME_MAX if this handoff is genuinely this size."
+    [ "$from" = "$name" ] \
+      || die "compact: the continuation Writer, target dog, and attributed sender must be the same identity ('$name')"
+    continuation_runtime_preflight compact "$name" "$AGENT_ID" "$from"
+    resume="$CONTINUATION_RESUME"; resume_bytes="$CONTINUATION_BYTES"
   fi
   ! occupied "$AGENT_ID" \
     || die "'$name' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it (gang attach)"
@@ -4608,6 +6552,15 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
       2) die "'$name' is in a state gang cannot resolve ($BUSY_EXPIRED_WHAT), so gang cannot determine whether a live turn would be cut; refusing compaction" ;;
       *) die "internal: busy returned unknown verdict $busy_rc" ;;
     esac
+  fi
+
+  if [ -n "$resume" ]; then
+    continuation_resume_failure_clear "$AGENT_ID" \
+      || continuation_fail "could not remove and verify the prior detached resume failure marker; no compaction was issued"
+    continuation_resume_outcome_clear "$AGENT_ID" \
+      || continuation_fail "could not remove and verify the prior detached resume outcome marker; no compaction was issued"
+    continuation_resume_outcome_store "$AGENT_ID" \
+      || continuation_fail "could not store and verify the detached resume outcome guard; no compaction was issued"
   fi
 
   inject "$AGENT_ID" "$GANG_COMPACT_CMD" head
@@ -4641,7 +6594,6 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
     # unobservable while the caller had already been told the resume was on its
     # way — an agent woke with nothing to pick up and nothing said why. The
     # verdict is recorded on the window, where status and patrol read it out.
-    tmux set-option -uw -t "$AGENT_ID" @gl_resume_failed 2>/dev/null || true
     # What the last resume into this window measured, read before this one
     # overwrites it. A size is a point and the defect is a slope: every window's
     # additions are defensible one at a time, which is why nothing in the loop
@@ -4668,14 +6620,27 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
       *) [ "$resume_bytes" -gt "$prev_bytes" ] \
            && grew=", up $(( resume_bytes - prev_bytes )) since the last one delivered here" ;;
     esac
-    tmux set-option -w -t "$AGENT_ID" @gl_resume_bytes "$resume_bytes" 2>/dev/null || true
-    # Wrapped before the fork rather than inside it: every stream in that subshell
-    # is closed, so an envelope that refused in there would take the resume down
-    # without a word reaching any terminal.
-    envelope "$from" "$resume"
+    # The prior reading is not replaced until verified delivery changes the
+    # transition from pending to accepted. A queued candidate is not a delivered
+    # size reading, and a failed one must not become the next slope's baseline.
     ( trap '' HUP INT TERM
-      err="$(resume_after_compaction "$AGENT_ID" "$ENVELOPE" 2>&1)" \
-        || tmux set-option -w -t "$AGENT_ID" @gl_resume_failed "${err##*$'\n'}"
+      CONTINUATION_VERB=compact
+      # This is the worker's first verified action. The parent leaves the guard in
+      # place through native submission, so an in-flight phase now witnesses that
+      # the detached process exists rather than merely that one was about to fork.
+      worker_rc=0; err=""
+      continuation_resume_outcome_store "$AGENT_ID" "$CONTINUATION_RESUME_INFLIGHT" \
+        || { worker_rc=1; err="gang: compact: could not store and verify that the detached structured resume worker entered its in-flight phase"; }
+      if [ "$worker_rc" -eq 0 ] \
+         && ! err="$(resume_after_compaction "$AGENT_ID" "$CONTINUATION_ENVELOPE" "$name" "$resume_bytes" 2>&1)"; then
+        worker_rc=1
+      fi
+      if [ "$worker_rc" -ne 0 ]; then
+        continuation_resume_outcome_store "$AGENT_ID" "$CONTINUATION_RESUME_GUARD" || true
+        continuation_resume_failure_store "$AGENT_ID" "${err##*$'\n'}" \
+          || continuation_resume_failure_store "$AGENT_ID" \
+               "$CONTINUATION_RESUME_FAILURE_FALLBACK" || true
+      fi
     ) </dev/null >/dev/null 2>&1 &
     disown
     echo "$(colour "$C_OK" "compaction $where") $(colour "$C_DIM" "($GANG_COMPACT_CMD submitted; execution unconfirmed); resume queued as [gang:$from] for when compaction settles — gang status $name says so if it never lands; the resume is $resume_bytes bytes of $RESUME_MAX$grew")"
@@ -4743,15 +6708,27 @@ cmd_status() {
   # in an argument list is thrown away — printf would succeed, print a blank line,
   # and report exit 0 for a state nobody ever established. An assignment carries the
   # failure, so errexit still ends the command (law 8).
-  local state failed staged blocked
+  local state failed outcome staged blocked
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   # A resume that never landed is the one thing about an agent that its screen
   # cannot show: it is the absence of a message. Scripts keep matching the state
   # prefix on line one.
   failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_failed)"
-  [ -z "$failed" ] \
-    || printf '%s\n' "$(colour "$C_BAD" "resume NOT delivered after compaction: $failed")"
+  outcome="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_outcome)"
+  case "$failed" in
+    '') ;;
+    "$CONTINUATION_RESUME_GUARD") outcome="$CONTINUATION_RESUME_GUARD" ;;
+    *) printf '%s\n' "$(colour "$C_BAD" "resume NOT delivered after compaction: $failed")"
+       outcome="" ;;
+  esac
+  case "$outcome" in
+    '') ;;
+    "$CONTINUATION_RESUME_INFLIGHT") ;;
+    "$CONTINUATION_RESUME_GUARD")
+      printf '%s\n' "$(colour "$C_BAD" "resume outcome unconfirmed after compaction: $outcome")" ;;
+    *) printf '%s\n' "$(colour "$C_BAD" "unreadable structured-resume outcome state: $outcome")" ;;
+  esac
   # A staged paste IS on the screen, but it reads as a message this agent is
   # about to send rather than one somebody else abandoned in its box, and the
   # damage is done by whoever types next.
@@ -4792,7 +6769,7 @@ EOF
 
 roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolved it;
                # subshell — a death here costs one row
-  local prof state ctx="-" brief
+  local prof state ctx="-" brief resume_alert resume_outcome
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] || { printf '%-16s %-12s %-18s %s\n' "$2" "-" "-" \
                         "$(colour "$C_DIM" "unadopted")"; return; }
@@ -4826,8 +6803,19 @@ roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolv
   # with no hint, and the sole surface that reported it was `gang status <name>` —
   # which an operator runs about an agent they already suspect. Same shape as the
   # cost above it: a failure visible only to somebody who has already guessed it.
-  [ -z "$(tmux show-options -wqv -t "$1" @gl_resume_failed)" ] \
-    || ctx="$ctx $(colour "$C_BAD" "resume lost")"
+  resume_alert="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
+  resume_outcome="$(tmux show-options -wqv -t "$1" @gl_resume_outcome)"
+  case "$resume_alert" in
+    '') ;;
+    "$CONTINUATION_RESUME_GUARD") resume_outcome="$CONTINUATION_RESUME_GUARD" ;;
+    *) ctx="$ctx $(colour "$C_BAD" "resume lost")"; resume_outcome="" ;;
+  esac
+  case "$resume_outcome" in
+    '') ;;
+    "$CONTINUATION_RESUME_INFLIGHT") ;;
+    "$CONTINUATION_RESUME_GUARD") ctx="$ctx $(colour "$C_BAD" "resume unconfirmed")" ;;
+    *) ctx="$ctx $(colour "$C_BAD" "resume outcome unreadable")" ;;
+  esac
   printf '%-16s %-12s %s %s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$ctx"
 }
@@ -4940,11 +6928,23 @@ cmd_patrol() { # ambient warning leg: nudge past a context band, and past a budg
 
 patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this agent,
                # not the sweep, and advances no state, so the next sweep retries.
-  local prof ctx tw tokens window band crossed thresholds prev failed rung now
+  local prof ctx tw tokens window band crossed thresholds prev failed outcome rung now
   local state_rc compaction_rc=0 blocked top_repeat=0
   failed="$(tmux show-options -wqv -t "$1" @gl_resume_failed)"
-  [ -z "$failed" ] \
-    || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
+  outcome="$(tmux show-options -wqv -t "$1" @gl_resume_outcome)"
+  case "$failed" in
+    '') ;;
+    "$CONTINUATION_RESUME_GUARD") outcome="$CONTINUATION_RESUME_GUARD" ;;
+    *) say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
+       outcome="" ;;
+  esac
+  case "$outcome" in
+    '') ;;
+    "$CONTINUATION_RESUME_INFLIGHT") ;;
+    "$CONTINUATION_RESUME_GUARD")
+      say "$2" "-" "RESUME OUTCOME UNCONFIRMED after compaction — $outcome" "$C_BAD" ;;
+    *) say "$2" "-" "STRUCTURED-RESUME OUTCOME STATE UNREADABLE — $outcome" "$C_BAD" ;;
+  esac
   # Refused inbound belongs with the other things an agent's own screen cannot
   # show, and it belongs ABOVE the occupancy report that returns early: the case
   # ADR-0004 was written from is an occupied routing point with peers stacking up
@@ -7127,8 +9127,15 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
   id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
+  continuation_window_options "$id" \
+    || die "adopt: could not determine whether '$name' is already registered or carries continuation state"
+  ! continuation_option_present "$CONTINUATION_WINDOW_OPTIONS" @gl_profile \
+    || die "adopt: '$name' is already a registered agent; adoption cannot reset its lineage"
+  continuation_window_pristine "$id" \
+    || die "adopt: '$name' already carries a continuation review floor, transition, or manifest bank; retire that lineage explicitly instead of re-baselining it"
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
+  continuation_window_initialize "$id"
   tmux set-option -w -t "$id" @gl_profile "$prof"
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
@@ -7156,7 +9163,8 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # all. The handoff is still the agent's own authored act — gang carries it, and
   # writes none of it.
   local name="" from="${GANG_FROM:-}" resume="" resume_stdin=0 resume_bytes=0
-  local prev_bytes="" id rc=0 waited=0 model=""
+  local prev_bytes="" id rc=0 waited=0 model="" carry_state=""
+  local carry_bank_a="" carry_bank_b=""
   name="${1:-}"; [ -n "$name" ] || usage_die; shift || true
   # Parsed rather than ignored, and that is a fix rather than an addition: the
   # dispatcher used to hand this function the name alone, so every word after it
@@ -7212,28 +9220,36 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
     [ -n "$from" ] \
       || die "cycle: --resume-stdin needs identity (--from <sender> or GANG_FROM) — an unattributed message is an error"
     check_sender "$from"
-    stdin_body "cycle: --resume-stdin"; resume="$STDIN_BODY"
-    # The same budget as compact's, off the same global, because the two are the
-    # same act seen through different verbs: a body charged to a context emptied
-    # to make room for it. Measuring one policy a second time under its own name
-    # is how the two readings start disagreeing, and only one of them can be the
-    # one an agent was refused by.
-    require_whole GANG_RESUME_MAX "$RESUME_MAX" bytes
-    resume_bytes="$(printf '%s' "$resume" | wc -c | tr -d '[:space:]')"
-    # `wc -c` and never ${#resume}: under a UTF-8 locale that counts CHARACTERS,
-    # so a budget declared in bytes and measured that way admits a multibyte
-    # handoff at several times its stated size.
-    #
-    # refuse rather than die, because exit 3 is a claim this path can actually
-    # make: nothing was typed, and here nothing was dropped either.
-    [ "$resume_bytes" -le "$RESUME_MAX" ] \
-      || refuse "cycle: this resume is $resume_bytes bytes and GANG_RESUME_MAX is $RESUME_MAX, so it is refused rather than delivered. A resume is charged to a context emptied to make room for it, and it grows by additions each window judged reasonable one at a time. Fold it: supersede sections in place, cut finished work to a pointer at the receipts it is archived under, keep only what the successor must act on. Gangline will not trim it for you — a resume cut by a tool is one nobody wrote. Nothing has been dropped, '$name' is still running with the context it had, and the file on disk is untouched. Raise GANG_RESUME_MAX if this handoff is genuinely this size."
+    [ "$from" = "$name" ] \
+      || die "cycle: the continuation Writer, target dog, and attributed sender must be the same identity ('$name')"
+    continuation_runtime_preflight cycle "$name" "$id" "$from"
+    resume="$CONTINUATION_RESUME"; resume_bytes="$CONTINUATION_BYTES"
     # Read off the OLD window while there still is one. The slope is a property
     # of the FILE and the seat that keeps growing it, not of any single window,
     # and a renewal that dropped the previous reading would take the instrument
     # away at exactly the moment a team renewing by cycle alone is the only
     # place it could still speak.
     prev_bytes="$(tmux show-options -wqv -t "$id" @gl_resume_bytes 2>/dev/null)" || prev_bytes=""
+    # Event validation repeats the ledger and transition checks under the lineage
+    # lock. Pending is stored before the first destructive act and is the only
+    # state the internal hitch may carry onto the replacement.
+    continuation_event_revalidate "$name" "$id"
+    continuation_transition_pending "$id"
+    carry_state="$PREFLIGHT_PENDING_STATE"
+    carry_bank_a="$LINEAGE_BANK_A_HEX"; carry_bank_b="$LINEAGE_BANK_B_HEX"
+  else
+    CONTINUATION_VERB=cycle
+    continuation_lock_take target "$name"
+    continuation_lineage_read "$id" || rc=$?
+    case "$rc" in
+      0) ;;
+      1) continuation_fail "the agent predates continuation state; use an ordinary drop and hitch/adopt to establish a new lineage before cycling without a package" ;;
+      *) continuation_fail "the agent carries missing, malformed, or relationally inconsistent continuation state" ;;
+    esac
+    [ "$LINEAGE_STATUS" != pending ] \
+      || continuation_fail "the agent lineage is pending a prior continuation delivery; retire it with 'gang drop' and establish a genuinely new lineage with ordinary hitch or adopt"
+    carry_state="$LINEAGE_CANONICAL_STATE"
+    carry_bank_a="$LINEAGE_BANK_A_HEX"; carry_bank_b="$LINEAGE_BANK_B_HEX"
   fi
   # Both exclusions said on the surface that acts on them, because the assumption
   # an operator arrives with is that a renewal restores what it renewed.
@@ -7313,7 +9329,14 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # Neither is recorded either: a fact gang records is a fact some later reader
   # replays.
   local hitch_rc=0
+  CONTINUATION_HITCH_STATE="$carry_state"
+  CONTINUATION_HITCH_BANK_A="$carry_bank_a"
+  CONTINUATION_HITCH_BANK_B="$carry_bank_b"
+  CONTINUATION_HITCH_CONTROL="$id"
   cmd_hitch "$name" "${flags[@]}" || hitch_rc=$?
+  CONTINUATION_HITCH_STATE=""
+  CONTINUATION_HITCH_BANK_A=""; CONTINUATION_HITCH_BANK_B=""
+  CONTINUATION_HITCH_CONTROL=""
   # The fresh window is looked up rather than assumed: cmd_hitch owns the id it
   # created, and it has paths that report and RETURN rather than die — a dialog
   # owning the screen of a role-less agent is one. So "hitch said something" is
@@ -7366,9 +9389,17 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
         || printf '%s\n' "$(colour "$C_BAD" "renewed $name, but tmux would not move $spent to the end — it is at index $spentidx")" >&2
     fi
   fi
-  [ "$resume_stdin" -eq 1 ] || return "$hitch_rc"
+  if [ "$resume_stdin" -eq 0 ]; then
+    continuation_lock_release target
+    return "$hitch_rc"
+  fi
   [ -n "$fresh" ] \
     || die "cycle: hitched '$name' and tmux lists no window by that name, so its resume was not delivered and the file on disk is untouched"
+  # The candidate was admitted against the old window's floor. The replacement's
+  # newer floor governs the NEXT authored review, while this invocation proves it
+  # is still carrying the exact pending candidate and rechecks the live ledger at
+  # the delivery event.
+  continuation_pending_event_revalidate "$fresh"
   # ONE attempt, and the difference from the compaction path is what licenses it.
   # There the resume goes in from a disowned subshell minutes later, into a pane
   # gang has not touched since, with both streams closed — a transient refusal
@@ -7382,13 +9413,15 @@ cmd_cycle() { # drop an agent and hitch a fresh one on the facts it was launched
   # than this process, which would take the report below with it. The envelope is
   # minted OUTSIDE it for the same reason cmd_compact mints it outside its fork:
   # an envelope that refused in there would take the resume down without a word.
-  envelope "$from" "$resume"
+  ENVELOPE="$CONTINUATION_ENVELOPE"
   local irc=0 ierr=""
   ierr="$(inject "$fresh" "$ENVELOPE" 2>&1)" || irc=$?
   if [ "$irc" -ne 0 ]; then
     [ -z "$ierr" ] || printf '%s\n' "$ierr" >&2
-    die "cycle: '$name' was renewed and its resume was NOT delivered, so it is running with an empty context and does not know it. The handoff on disk is untouched — deliver it with: gang send $name --from $from --stdin < the-file"
+    die "cycle: '$name' was renewed and its structured resume was NOT delivered; its lineage remains pending and direct send cannot cure it. Retire it with 'gang drop $name', hitch or adopt a genuinely new lineage, then review a new package after that floor"
   fi
+  continuation_transition_accept "$fresh"
+  continuation_lock_release target
   # Recorded on the window that now holds the body, so it dies with that window
   # (law 6) and the next delivery here has a figure to measure against. Written
   # by one delivery, read by the next: nothing watches it and nothing schedules

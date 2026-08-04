@@ -97,6 +97,18 @@ A clone commits and pushes unchecked until you run this. With it, a
 non-conforming commit message is refused locally in a second; without it, the
 same message fails in CI minutes later, after you have moved on.
 
+## Proof must earn its cost
+
+Take the shortest path from the requested result to the repository's existing
+acceptance gates. Run those gates at a coherent checkpoint. If one reports a
+concrete failure, fix that failure and rerun the relevant gate.
+
+Do not invent bespoke test matrices, serial reviewer chains, freeze-and-fingerprint
+loops, or new release blockers merely because another failure can be imagined.
+Extra proof infrastructure is additional scope and requires an explicit operator
+request. When the requested outcome exists and the ordinary repository gates are
+green, ship it.
+
 ## Where the answer lives
 
 Restating something in the wrong document is how this repo grows duplication,

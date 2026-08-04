@@ -46,7 +46,7 @@ fi
 mkdir -p "$DEMO/bin" "$DEMO/.tmux" "$DEMO/.claude" "$DEMO/.codex" \
          "$DEMO/.config/opencode" "$DEMO/.local/share/opencode" "$DEMO/hello"
 
-# Frozen copy of gangline itself, so repo churn never changes a take mid-series.
+# Frozen copy of Gangline itself, so repo churn never changes a take mid-series.
 rsync -a --delete "$REPO/bin" "$REPO/profiles" "$REPO/roles" "$REPO/statusline" \
   "$DEMO/gangline/"
 
@@ -204,11 +204,11 @@ rm -rf "$DEMO/.claude/projects" "$DEMO/.claude/history.jsonl" \
 #              invoking user's server instead of the demo one.
 #   TMUX_PANE  gang's self_window() resolves the CALLER's identity from it, and
 #              tmux exports it into everything a pane starts. Measured: recording
-#              from a gangline lead's own pane leaked TMUX_PANE into the tape, so
+#              from a Gangline lead's own pane leaked TMUX_PANE into the tape, so
 #              `gang send lead --from adam` was refused as impersonation —
 #              correctly, since gang saw the caller as `lead` — and the take died
 #              at scene 2. Recording from inside a pane is the normal case: a
-#              gangline lead is exactly who records this.
+#              Gangline lead is exactly who records this.
 #   XDG_RUNTIME_DIR
 #              lock_pane() defaults its lock directory to
 #              $XDG_RUNTIME_DIR/gangline-$(id -u). A login session sets that to

@@ -7,7 +7,7 @@ It is how teammates address you, and what you sign every message with.
 The vocabulary here is mushing: a gangline is the one line hitching many dogs,
 each in its own harness, to one sled and one musher. You are one of the dogs,
 your CLI is your harness, and the operator is the musher. Every term is plain
-on first use; the full map is `docs/field-guide.md` in the gangline repo.
+on first use; the full map is `docs/field-guide.md` in the Gangline repo.
 
 ## Reading your inbox
 
@@ -175,58 +175,55 @@ You cannot feel how full your context is, so the substrate measures it for you.
 A note like `[context-usage] 180k/1000k (18%) — crossed the 180000-token band`
 means you are approaching the point where you lose the thread.
 
-**Keep a handoff continuously, not at the band.** Open one file when you start
-a task and update it at every checkpoint — the same checkpoints that already
-end an arc, below. Each update supersedes the last in place: one file for the
-whole run, not a fresh one per band. That turns the band moment from "now
-write a handoff" into "check the one you have, then cycle" — composing it
-while you still have the context to get it right beats composing it at the
-moment you are about to lose that context, which is the worst moment
-available for the job. If you reach a band and no handoff exists yet, write
-one then: the file existing is not a precondition for crossing a band safely,
-it is what makes crossing one cheap when you kept it current.
+**Keep one structured continuation package current from the start of the task.**
+It is a `GANGLINE-CONTINUATION 1` file, not free-form Markdown. Keep it at one
+durable path outside `/tmp`; keep referenced deliverables durable too. The lead
+alone owns the `GANGLINE-TASK-LEDGER 1` named by its absolute `Ledger` field.
+Read that ledger directly and ask the lead to change it. Never edit it yourself
+or copy its task fields into your package.
 
-Keep it off `/tmp`. `/tmp` is delivery, never a store: a handoff that points
-into it is asserting something it cannot check, because nothing there is
-guaranteed to still be there when it is read. Put the handoff itself at one
-stable path that lasts your whole run, and put any deliverable it points at
-somewhere that will still exist after you renew — your task or role brief
-says where the team keeps those; if it does not say, ask rather than guessing.
+Your package references at least one live ledger task owned by your exact agent
+name. Task references are headings only. Private state goes only in the fixed
+Active Work, Next Actions, Local Blockers, Binding Bounds and Dangerous
+Refutations sections, and every referenced task has a next action or blocker.
+Follow the exact package grammar in
+[`docs/reference.md`](../docs/reference.md#structured-continuation-input); do not
+invent a field or catch-all notes section. If the ledger has no live task owned
+by you, you cannot author a valid package: tell the lead instead of making up
+authority in your own file.
 
-Every claim in it carries how you know it, because an unlabelled claim reads
-as settled fact to whoever inherits the file, and that is the failure this
-rule exists to stop:
+Update the package at each checkpoint. It carries current private state and
+what is still owed, never the turns that produced them. Remove a note when its
+declared expiry condition fires. A changed note gets a new identifier and, where
+required, explicitly supersedes the old one; a retained identifier keeps an
+identical record body. Point to a file, command receipt, message receipt, commit
+or ADR section rather than copying it. Carry no standing counts, versions or
+tallies; [ADR-0012](../docs/adr/0012-instale-data-is-refused-from-documentation.md)
+explains why.
 
-- **Verified** — you checked it yourself; name the command or file that did.
-- **Claimed by a teammate** — name them and their receipt; you are relaying,
-  not vouching.
-- **Unverified** — asserted, not checked; say so rather than let silence read
-  as verification.
-- **Refuted** — and why. A refuted claim is the most valuable line in the
-  file: without it, the next reader re-derives the dead end at full cost.
+Every private note carries one of the contract's evidence labels and supporting
+provenance:
 
-Point rather than restate: a path, a commit hash, an ADR id. A pointer at a
-document resolves only as far as it names — give the section, not just the
-file, or the pointer stands in for several decisions and none of them is
-reachable from it. Carry no counts, versions, or tallies —
-[ADR-0012](../docs/adr/0012-instale-data-is-refused-from-documentation.md)
-already argues why documentation refuses them; a handoff is that same rot,
-aimed at your own future self instead of a reader.
+- `verified` — you checked the proposition directly.
+- `claimed` — another named agent asserted it; preserve their message receipt.
+- `inferred` — you derived it from the named provenance rather than observing it
+  directly.
+- `unverified` — you assert neither a check nor a derivation.
+- `refuted` — the named provenance disproved it. Keep it in Dangerous
+  Refutations so the successor does not re-derive the dead end.
 
-What goes in it is bounded by state, not by history: what is true now and what
-is still owed, never the sequence of turns that produced it. A background job
-still running is state, because your successor must wait on it or re-arm it;
-the turn that started it is not.
-
-Your own arrival is not state either: a handoff is written before the act that
-delivers it, so it can tell you what to check but never what happened to you.
+Before renewal, review the ledger, durable work, relevant environment and every
+retained note again. Advance `Reviewed-At` to a host epoch strictly later than
+the window's review floor and the prior accepted review; do not reuse an inherited
+or already delivered review. Gangline validates structure and ordering, not truth,
+completeness or environment survival.
 
 What a band note asks of you depends on how high the rung is, and the ladder
 climbs for a reason: the widest gap sits at the bottom, where you still have
 room to act, and the rungs tighten as that room runs out.
 
 **A low rung is information, not an instruction.** You have crossed a mark with
-most of your context still ahead of you. Check the handoff you have been keeping
+most of your context still ahead of you. Check the package you have been keeping
 is current, and carry on with what you were doing. Renewing here is not the
 cautious choice — renewal is never free, and it costs you the working context
 you are holding right now. Buying room you already had, with a thread you were
@@ -245,31 +242,27 @@ like nothing from the inside. Then:
 
 1. **Finish the arc you are in.** An arc ends at a checkpoint — tests green,
    a commit made, a question answered. Never mid-edit.
-2. **Check your handoff is current.** Refresh anything the arc you just
-   finished changed. If none exists yet, write it now, per above.
-3. **Cycle yourself, feeding the resume straight from that file** — one command
-   does both:
+2. **Review and update your package.** Refresh anything the arc changed, remove
+   expired notes, re-read the lead's ledger, and advance `Reviewed-At`. Do not
+   substitute a prose summary if the package or ledger is invalid; report the
+   blocker immediately.
+3. **Cycle yourself with that package:**
 
    ```
-   gang cycle <your own name> --from <your own name> --resume-stdin < <path to your handoff>
+   gang cycle <your own name> --from <your own name> --resume-stdin < <path to your package>
    ```
 
-   Your own name goes in twice and that is not a typo: the first says which
-   agent is being renewed, the second signs the resume. Attribution works here
-   exactly as it does on `gang send`, and it is bound to the calling window, so
-   it is a name you could not fake anyway.
+   Your name is also the package `Writer`; target, writer and attributed sender
+   must agree. A preflight refusal leaves your context intact. On a legacy window,
+   the first structured attempt establishes a review floor and deliberately
+   refuses; review again with a later timestamp and retry. Only the final
+   `resumed <name>` receipt proves delivery.
 
-   **You survive this.** Cycling does not kill you — your window is unmarked and
-   renamed `<your name>~spent`, so you stop being the agent and keep running as
-   a pane the operator can still read. A fresh agent takes your name, launches
-   on the same facts you launched on, and receives that handoff as its first
-   message. Exactly one spent window is kept per agent; the previous one is
-   closed when you cycle again.
-
-   That is why cycling beats compacting for renewal: your successor starts on a
-   clean context holding a handoff you wrote deliberately, rather than on a
-   summary of you made by a machine that did not know which parts mattered. What
-   you lose is the pane, and cycling no longer costs you even that.
+   After success, your old pane remains readable as `<your name>~spent` and the
+   fresh agent takes your name on the same recorded launch facts. A failure after
+   the lineage becomes `pending` cannot be cured by direct send or another cycle:
+   tell the operator, who must explicitly drop the lineage, hitch or adopt a new
+   one, and require a newly reviewed package after its new floor.
 
 At a high rung, do not ask permission and do not wait to be told twice — you
 have the judgment and nobody else has the view. At a low one, the same autonomy
@@ -277,9 +270,13 @@ runs the other way: nothing here obliges you to renew, and an agent that renews
 at every rung it is told about is following a schedule rather than exercising
 the judgment this section is asking for.
 
+Native `gang compact` is not renewal. It asks the harness to compact the current
+window and does not replace the context with a fresh agent; use it only as the
+[command reference](../docs/reference.md) describes under `gang compact`.
+
 ## When the substrate misbehaves
 
-gangline reads your harness's screen to tell whether you are busy and how full
+Gangline reads your harness's screen to tell whether you are busy and how full
 you are, and that reading breaks when your harness updates. If Gangline reports the
 wrong state, misses your context readout, or fails to verify a send that clearly
 landed, run `gang vet` before assuming you made the mistake. If it reports

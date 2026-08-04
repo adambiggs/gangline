@@ -1,4 +1,4 @@
-# gangline demo — a Claude Code lead, a Codex worker, an opencode reviewer.
+# Gangline demo — a Claude Code lead, a Codex worker, an opencode reviewer.
 #
 # Everything on screen is real: real harnesses on real subscriptions, real
 # messages, real roster state. Hide/Show only skips the inference waits —
@@ -91,7 +91,7 @@ Wait+Screen@120s /delivered to lead as/
 Show
 Sleep 4.5s
 
-# ── Scene 3: the lead has hired a worker ────────────────────────────────────
+# ── Scene 3: the lead has hitched a worker ──────────────────────────────────
 Hide
 Type `while :; do gang roster 2>/dev/null | grep -q '^worker' && { clear; echo S3-"OK"; break; }; sleep 2; done`
 Enter
@@ -145,7 +145,7 @@ Sleep 2s
 Show
 Sleep 10s
 
-# ── Scene 6: the reviewer, hired only once there was work to review ─────────
+# ── Scene 6: the reviewer, hitched only once there was work to review ────────
 Hide
 Ctrl+B
 Sleep 300ms
