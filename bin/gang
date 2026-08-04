@@ -816,13 +816,13 @@ role_brief() { # $1 = role, $2 = agent name; the message that points at the brie
   # whose first line has scrolled out of view cannot be verified — capture-pane
   # sees only what is on screen. Every coding agent can read a file, so the
   # universal surface here is the filesystem (law 1), and the brief stays on
-  # disk where the agent can re-read it after compacting.
+  # disk where the agent can re-read its operating contract throughout the session.
   local f common where
   f="$(role_file "$1")" || die "unknown role '$1' (have: $(list_roles | tr '\n' ' '))"
   where="$f"
   common="$(role_file _common)" && where="$common and $f"
-  printf 'You are `%s` on a gangline team, in the %s role. Your operating brief is %s — read it now and follow it for the rest of this session.%s' \
-    "$2" "$1" "$where" "${GANG_COMPACT_CMD:+ Your compaction command is $GANG_COMPACT_CMD}"
+  printf 'You are `%s` on a gangline team, in the %s role. Your operating brief is %s — read it now and follow it for the rest of this session.' \
+    "$2" "$1" "$where"
 }
 
 # --- window plumbing --------------------------------------------------------

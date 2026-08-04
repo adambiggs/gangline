@@ -3558,6 +3558,23 @@ check "a hitched agent is briefed" "yes" \
   "$(has scout 'You are `scout` on a gangline team, in the worker role')"
 check "the brief is pointed at, not pasted" "yes" "$(has scout "${GANG%/bin/gang}/roles/worker.md")"
 
+# A profile-native compaction command is an explicit operator capability, not a
+# renewal instruction for the newly hitched agent. Give this profile a spelling
+# no role path can contain, then hold the absence against both positive halves of
+# the delivered operating brief so a missing brief cannot satisfy the guard.
+fake_harness rolecompact "PS1='❯ ' bash --norc"
+printf '%s\n' 'GANG_COMPACT_CMD="/native-compact"' \
+  >> "$SHIM/custom-profiles/rolecompact.sh"
+GANG_PROFILES="$SHIM/custom-profiles" \
+  "$GANG" hitch rolecompact -p rolecompact -r worker -d /tmp >/dev/null
+wait_for rolecompact "both role paths on rolecompact's screen" yes \
+  has rolecompact "${GANG%/bin/gang}/roles/_common.md and ${GANG%/bin/gang}/roles/worker.md"
+check "a role-bearing hitch still points at the common and role briefs" "yes" \
+  "$(has rolecompact "${GANG%/bin/gang}/roles/_common.md and ${GANG%/bin/gang}/roles/worker.md")"
+check "and does not advertise its profile-native compaction command" "no" \
+  "$(has rolecompact 'Your compaction command is /native-compact')"
+GANG_PROFILES="$SHIM/custom-profiles" "$GANG" drop rolecompact >/dev/null
+
 "$GANG" hitch ghostrole -p bash -r nosuch -d /tmp >/dev/null 2>&1
 check "an unknown role fails" "1" "$?"
 check "before anything is hitched" "" "$("$GANG" roster | awk '$1=="ghostrole"{print $1}')"
