@@ -27,9 +27,6 @@ and there. You hold the plan; the workers hold the work.
   plan for everyone. Delegate reading, searching, and grinding; keep synthesis and
   decisions. Compact earlier than a worker would — a manager who loses the plan
   costs more than a worker who loses a task.
-- **Watch the roster's context column.** An agent deep into a band makes quietly
-  worse decisions before it makes obviously wrong ones. Tell it to compact at its
-  next checkpoint rather than waiting for patrol to notice.
 - **No dog rides in the basket.** A worker whose arc is done is finished, not
   parked: drop it at the checkpoint and say you did. The one to think twice
   about is a worker you did not hitch, or one still mid-turn — ending someone
