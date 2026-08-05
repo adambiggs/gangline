@@ -8,8 +8,8 @@ subscription, and context.
 [![Two native Codex sessions using Gangline to deliver attributed work, verify the result, and return idle](site/demo.gif)](https://gangline.ai/#demo)
 
 <p align="center"><em>One goal, two native Codex sessions. The lead delegates,
-waits for the worker's attributed report, and verifies the result. Real harnesses;
-inference waits cut.</em></p>
+the worker's attributed report starts the next turn, and the lead verifies. Real
+harnesses; transparent state.</em></p>
 
 Gangline supplies only the shared primitives:
 
