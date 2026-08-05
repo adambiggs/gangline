@@ -84,6 +84,7 @@ gang — drive native CLI agents in tmux
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
   gang compact <name>
+  gang cutoff [<duration|HH:MM>|clear]
   gang status <name>
   gang roster
   gang wait <name> [timeout_s]
@@ -267,6 +268,64 @@ session_live() { # exit 0 if the team's session is running
     *"error connecting to"*"No such file or directory"*) return 1 ;;
     *) die "cannot reach the tmux server — $err" ;;
   esac
+}
+
+CUTOFF_AT=0 CUTOFF_DECLARED=0
+cutoff_read() { # populate the team declaration; 1 = absent, 2 = unreadable
+  local raw
+  raw="$(tmux show-options -qv -t "=$SESSION:" @gl_cutoff 2>/dev/null)" || raw=""
+  CUTOFF_AT=0 CUTOFF_DECLARED=0
+  [ -n "$raw" ] || return 1
+  read -r CUTOFF_AT CUTOFF_DECLARED _ <<<"$raw"
+  [[ "$CUTOFF_AT" =~ ^[0-9]+$ && "$CUTOFF_DECLARED" =~ ^[0-9]+$ ]] \
+    && [ "$CUTOFF_AT" -gt "$CUTOFF_DECLARED" ] || return 2
+}
+
+CUTOFF_PARSED=0
+cutoff_parse() { # $1 = duration or HH:MM, $2 = now; populate CUTOFF_PARSED
+  local spec="$1" now="$2" rest n unit seconds=0 day target
+  CUTOFF_PARSED=0
+  if [[ "$spec" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
+    [[ "$spec" =~ ^([0-9]{2}):([0-9]{2})$ ]] || return 1
+    [ "$((10#${BASH_REMATCH[1]}))" -lt 24 ] \
+      && [ "$((10#${BASH_REMATCH[2]}))" -lt 60 ] || return 1
+    day="$(date +%F)"
+    target="$(date -d "$day $spec" +%s 2>/dev/null)" || return 1
+    if [ "$target" -le "$now" ]; then
+      target="$(date -d "$day + 1 day $spec" +%s 2>/dev/null)" || return 1
+    fi
+    CUTOFF_PARSED="$target"
+    return 0
+  fi
+  rest="$spec"
+  while [[ "$rest" =~ ^([0-9]+)([hms])(.*)$ ]]; do
+    n="$((10#${BASH_REMATCH[1]}))" unit="${BASH_REMATCH[2]}" rest="${BASH_REMATCH[3]}"
+    case "$unit" in h) seconds=$(( seconds + n * 3600 )) ;;
+      m) seconds=$(( seconds + n * 60 )) ;;
+      s) seconds=$(( seconds + n )) ;;
+    esac
+  done
+  [ -z "$rest" ] && [ "$seconds" -gt 0 ] || return 1
+  CUTOFF_PARSED=$(( now + seconds ))
+}
+
+human_seconds() { # $1 = non-negative seconds
+  local left="$1" h m s out=""
+  h=$(( left / 3600 )); m=$(( left % 3600 / 60 )); s=$(( left % 60 ))
+  [ "$h" -eq 0 ] || out="${h}h"
+  [ "$m" -eq 0 ] || out="${out:+$out }${m}m"
+  [ "$s" -eq 0 ] && [ -n "$out" ] || out="${out:+$out }${s}s"
+  printf '%s' "$out"
+}
+
+cutoff_summary() { # $1 = now
+  local left=$(( CUTOFF_AT - $1 )) when
+  when="$(date -d "@$CUTOFF_AT" '+%Y-%m-%d %H:%M %Z')"
+  if [ "$left" -ge 0 ]; then
+    printf 'cutoff %s — %s remaining' "$when" "$(human_seconds "$left")"
+  else
+    printf 'cutoff %s — %s past' "$when" "$(human_seconds $(( 0 - left )))"
+  fi
 }
 
 capture() { tmux capture-pane -p -t "$1"; }
@@ -875,9 +934,10 @@ context_light_read() { # $1 = window, profile loaded; yellow|red, or 1 below
   fi
 }
 
-context_light_reply() { # $1 event, $2 profile; safe reply hooks only
+ADVISORY_NOTE=""
+context_light_note() { # $1 profile; append an edge to ADVISORY_NOTE
   local previous="" agent note="" rc=0
-  load_profile "$2"
+  load_profile "$1"
   context_light_read "$TMUX_PANE" || rc=$?
   previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_light 2>/dev/null)" \
     || previous=""
@@ -903,8 +963,61 @@ context_light_reply() { # $1 event, $2 profile; safe reply hooks only
       red) note="Red context light: finish the current arc and compact now with gang compact $agent." ;;
     esac
   fi
+  ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$note"
+}
+
+time_light_note() { # append the team cutoff edge, if any, to ADVISORY_NOTE
+  local rc=0 now span spent light previous key left note
+  cutoff_read || rc=$?
+  [ "$rc" -ne 1 ] || return 0
+  previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_time_light 2>/dev/null)" \
+    || previous=""
+  if [ "$rc" -eq 2 ]; then
+    key=unavailable
+    [ "$previous" = "$key" ] && return 0
+    note="Time lights unavailable: Gangline cannot read the team's cutoff declaration. Run gang cutoff clear and declare it again."
+  else
+    now="$(date +%s)"
+    if [ "$now" -lt "$CUTOFF_DECLARED" ]; then
+      key=unavailable
+      [ "$previous" = "$key" ] && return 0
+      note="Time lights unavailable: the team's cutoff declaration is stamped in the future. Run gang cutoff clear and declare it again."
+    else
+      span=$(( CUTOFF_AT - CUTOFF_DECLARED ))
+      spent=$(( now - CUTOFF_DECLARED ))
+      if [ $(( spent * 5 )) -ge $(( span * 4 )) ]; then
+        light=red
+      elif [ $(( spent * 2 )) -ge "$span" ]; then
+        light=yellow
+      else
+        return 0
+      fi
+      key="$CUTOFF_DECLARED:$CUTOFF_AT:$light"
+      [ "$previous" = "$key" ] && return 0
+      left=$(( CUTOFF_AT - now ))
+      if [ "$left" -ge 0 ]; then
+        case "$light" in
+          yellow) note="Yellow time light: half the team budget is spent; check the path and converge. $(human_seconds "$left") remain." ;;
+          red) note="Red time light: bank the current result at the next natural checkpoint. $(human_seconds "$left") remain; continuing is still your call." ;;
+        esac
+      else
+        note="Red time light: the team cutoff passed $(human_seconds $(( 0 - left ))) ago. Bank the current result; continuing is still your call."
+      fi
+    fi
+  fi
+  tmux set-option -w -t "$TMUX_PANE" @gl_time_light "$key" 2>/dev/null || return 0
+  ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$note"
+}
+
+advisory_reply() { # $1 event, $2 profile; emit at most one native hook payload
+  ADVISORY_NOTE=""
+  context_light_note "$2"
+  time_light_note
+  [ -n "$ADVISORY_NOTE" ] || return 0
   python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
-    "$1" "$note"
+    "$1" "$ADVISORY_NOTE"
 }
 
 cmd_hitch() {
@@ -1053,6 +1166,33 @@ cmd_compact() {
   echo "$(colour "$C_OK" "native compaction submitted to $name") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
 }
 
+cmd_cutoff() { # declare, show, or clear one optional team cutoff
+  local spec="${1:-}" now rc=0
+  [ $# -le 1 ] || die "cutoff: expected one duration, HH:MM clock time, or clear"
+  session_live || die "no team (session '$SESSION' not running)"
+  if [ -z "$spec" ]; then
+    cutoff_read || rc=$?
+    case "$rc" in
+      0) cutoff_summary "$(date +%s)"; printf '\n' ;;
+      1) printf 'no cutoff declared\n' ;;
+      2) die "the stored cutoff is unreadable — gang cutoff clear removes it" ;;
+    esac
+    return 0
+  fi
+  if [ "$spec" = clear ]; then
+    tmux set-option -u -t "=$SESSION:" @gl_cutoff 2>/dev/null || true
+    printf 'cutoff cleared\n'
+    return 0
+  fi
+  now="$(date +%s)"
+  cutoff_parse "$spec" "$now" \
+    || die "cutoff: '$spec' is not a positive duration (90m, 2h, 1h30m) or 24-hour HH:MM clock time"
+  tmux set-option -t "=$SESSION:" @gl_cutoff "$CUTOFF_PARSED $now" \
+    || die "cutoff: could not store the declaration for session '$SESSION'"
+  CUTOFF_AT="$CUTOFF_PARSED" CUTOFF_DECLARED="$now"
+  cutoff_summary "$now"; printf '\n'
+}
+
 state_now() { # $1 = window id, profile loaded -> the state, in words
   if occupied "$1"; then
     activity_hold_clear "$1"
@@ -1127,7 +1267,7 @@ roster_row() { # $1 window, $2 name, $3 batched churn verdict
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
 }
 
-cmd_hook() { # native harness events; facts are silent unless lights are enabled
+cmd_hook() { # native harness events; facts are silent unless a light crosses
   local payload event prof
   payload="$(cat)" || payload=""
   event="$(printf '%s' "$payload" \
@@ -1144,7 +1284,7 @@ cmd_hook() { # native harness events; facts are silent unless lights are enabled
   esac
   case "$event" in
     UserPromptSubmit|PostToolUse)
-      ( set +e; context_light_reply "$event" "$prof"; exit 0 ) ;;
+      ( set +e; advisory_reply "$event" "$prof"; exit 0 ) ;;
   esac
   exit 0
 }
@@ -1199,6 +1339,7 @@ case "$cmd" in
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   compact)  cmd_compact "$@" ;;
+  cutoff)   cmd_cutoff "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   hook)     cmd_hook ;;
   wait)     [ $# -ge 1 ] || usage_die

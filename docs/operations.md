@@ -89,6 +89,23 @@ hook messages, not patrols or automatic actions.
 If an enabled source fails, the affected agent receives one unavailable notice.
 Disabled lights perform no context read and add no prompt or roster noise.
 
+## Optional team cutoff
+
+Declare one wall-clock endpoint when a team is timeboxed:
+
+```sh
+gang cutoff 2h
+gang cutoff 17:30
+gang cutoff
+gang cutoff clear
+```
+
+Gangline gives hook-enabled agents one yellow time light halfway through the
+declared span and one red light after four-fifths. Yellow asks them to check the
+path and converge; red asks them to bank the current result at a natural
+checkpoint. These are native hook messages, not a patrol. The cutoff never stops
+an agent, and no declaration means no time guidance.
+
 ## Understanding observation
 
 Gangline selects evidence for each predicate rather than averaging it. Fresh

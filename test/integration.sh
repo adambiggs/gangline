@@ -198,6 +198,53 @@ excludes "startup does not ask for a reply to its synthetic sender" \
 equal "context lights leave no state when disabled" "|" \
   "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
 
+# One optional cutoff is team state. Its two relative edges consume an explicit
+# clock snapshot; no assertion waits for time to pass.
+equal "a team starts without an invented cutoff" "no cutoff declared" \
+  "$("$GANG" cutoff)"
+if "$GANG" cutoff 90 >/dev/null 2>&1; then
+  fail "a cutoff never guesses the unit of a bare number" "cutoff accepted 90"
+else
+  pass "a cutoff never guesses the unit of a bare number"
+fi
+clock_spec="$(date -d '+ 2 minutes' '+%H:%M')"
+clock_cutoff="$("$GANG" cutoff "$clock_spec")"
+contains "a local clock time declares its next occurrence" "$clock_cutoff" "remaining"
+declared_cutoff="$("$GANG" cutoff 1h30m)"
+contains "a duration declares the team cutoff" "$declared_cutoff" "remaining"
+cutoff_pair="$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_cutoff)"
+if [[ "$cutoff_pair" =~ ^[0-9]+\ [0-9]+$ ]]; then
+  pass "the cutoff stores one team declaration"
+else
+  fail "the cutoff stores one team declaration" "got [$cutoff_pair]"
+fi
+
+cutoff_now="$(date +%s)"
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$(( cutoff_now + 40 )) $(( cutoff_now - 60 ))"
+yellow_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
+contains "half the declared span exposes a yellow time light" \
+  "$yellow_time" "Yellow time light"
+repeat_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
+equal "a time light is emitted once per declaration edge" "" "$repeat_time"
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$(( cutoff_now + 10 )) $(( cutoff_now - 90 ))"
+red_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
+contains "four-fifths of the declared span exposes a red time light" \
+  "$red_time" "Red time light"
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff unreadable
+unavailable_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
+contains "an unreadable team declaration fails visibly to its agents" \
+  "$unavailable_time" "Time lights unavailable"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook >/dev/null
+equal "the operator can remove the team cutoff" "cutoff cleared" \
+  "$("$GANG" cutoff clear)"
+equal "clearing a cutoff restores silence" "no cutoff declared" \
+  "$("$GANG" cutoff)"
+
 printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"

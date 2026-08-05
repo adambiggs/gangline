@@ -6,7 +6,7 @@ the rule and the reason it exists; implementation history belongs in git.
 ## Gangline is substrate, not coordination
 
 Provide local harness lifecycle, transport, observation, and compaction
-primitives. Do not manage roles, deadlines, work allocation, or agent behaviour;
+primitives. Do not manage roles, work allocation, or agent behaviour;
 those policies belong to the operator and the native harnesses.
 Coordination is declarative: express goals, roles, status, handoffs, and lead
 heuristics through prose or native harness features. Gangline defines no
@@ -73,11 +73,13 @@ directory-scoped native command for the latest conversation and fails when the
 profile cannot make that request safely; the operator supplies which agents to
 relaunch.
 
-## Time budgets are not substrate state
+## A team cutoff is an optional declaration
 
-Do not implement cutoffs, time-warning ladders, banking prompts, or deadline
-enforcement. Timeboxing is work policy and belongs in operator or task prose,
-not in Gangline's agent surface.
+Let the operator declare one wall-clock cutoff for the team. Derive exactly two
+relative, advisory edges from that span: yellow halfway through and red after
+four-fifths. Do not invent a default, enforce the deadline, allocate per-agent
+budgets, or run a patrol; the substrate exposes operator intent and each agent
+decides how to respond.
 
 ## Benchmarks consume Gangline but do not shape it
 

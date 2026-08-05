@@ -33,7 +33,7 @@ before asserting state.
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
 observation, profiles, native hooks, native compaction, and optional yellow/red
-context lights. It does not coordinate work or supervise agents.
+context and team-time lights. It does not coordinate work or supervise agents.
 
 - Harness-specific knowledge belongs in `profiles/`, not harness-name branches
   in `bin/gang`.

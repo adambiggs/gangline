@@ -20,13 +20,15 @@ else belongs in operator reference material or nowhere.
 - Harness profiles and silent native hooks that establish observable state.
 - Native compaction, including self-compaction at natural checkpoints.
 - Optional context lights with exactly two thresholds: yellow and red.
+- One optional team cutoff with exactly two relative advisory edges.
 
 ## Refuse or remove
 
 - Agent startup bookkeeping, marker turns, state-machine tutorials, and Gangline
   operating doctrine.
-- Coordination policy: patrol, deadlines, cutoffs, automatic nudging, role
-  management, and any component that watches another Gangline component.
+- Coordination policy: patrol, deadline enforcement, per-agent budgets,
+  automatic nudging, role management, and any component that watches another
+  Gangline component.
 - Context ladders, repeated warnings, and context output when lights are disabled.
 - Agent-facing diagnostics and issue-filing machinery that belong to operators.
 - Historical arguments, forensic commentary, duplicated explanations, and dead
@@ -43,6 +45,7 @@ delivery, exact addressing, truthful observation, and loud failure.
   to peers, and request native compaction without a bookkeeping turn.
 - Disabled context lights add no prompts, warnings, markers, or roster noise.
 - Enabled context lights have only yellow and red states and remain advisory.
+- A declared team cutoff has only yellow and red states and remains advisory.
 - Self-compaction happens at a natural checkpoint through the harness's native
   mechanism and reports failure explicitly.
 - The mandatory suite contains no sleeps, polling, or timeout tests and normally

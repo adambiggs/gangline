@@ -71,6 +71,17 @@ When a Codex agent requests its own compaction, Gangline records a one-shot
 request. Its native Stop hook submits `/compact` after the active turn releases
 the composer. `status` and `roster` expose pending or failed self-compaction.
 
+### `gang cutoff [<duration|HH:MM>|clear]`
+
+Declares, shows, or clears one optional wall-clock cutoff for the team. Durations
+carry their units, such as `90m`, `2h`, or `1h30m`; a bare number is refused.
+`HH:MM` means the next occurrence of that local 24-hour clock time.
+
+The declaration creates two relative advisory edges: yellow halfway through its
+span and red after four-fifths. Native prompt and tool hooks expose each edge once
+to hook-enabled agents. There is no default, per-agent budget, patrol, or automatic
+action. Declaring again replaces and restarts the span; `clear` removes it.
+
 ## Observation
 
 ### `gang status <name>`
@@ -113,8 +124,8 @@ unless `GANG_TEST_PROFILES=1`.
 Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction, and permission requests raise occupancy.
-Hooks are silent unless an enabled context
-light crosses an edge.
+Hooks are silent unless an enabled context light or declared team-time light
+crosses an edge.
 
 ## Environment
 
