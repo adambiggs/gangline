@@ -23,8 +23,9 @@ controllable without a daemon, database, or private protocol.
 
 Keep launch syntax, composer parsing, native state, submission, and native
 commands behind the small profile contract. Gangline consumes that boundary
-internally; extract a general harness driver only when a second non-benchmark
-consumer exists and can define the interface from real use.
+internally so core decisions can consume explicit observations and remain
+deterministically unit-testable. Extract a general harness driver only when a
+second non-benchmark consumer exists and can define the interface from real use.
 
 ## Messages are attributed and delivery is verified
 
