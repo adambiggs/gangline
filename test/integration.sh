@@ -192,6 +192,8 @@ contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
 contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
+contains "startup tells the harness to await real work" \
+  "$(pane alpha)" "Await work."
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
 excludes "startup does not ask for a reply to its synthetic sender" \
   "$(pane alpha)" "Reply to that sender"
