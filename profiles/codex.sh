@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
 _gl_codex_hook_flags=""
-for _gl_codex_event in UserPromptSubmit PostToolUse Stop PreCompact PostCompact PermissionRequest; do
+for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
   _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
 done
 GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"

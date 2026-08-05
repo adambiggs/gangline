@@ -69,7 +69,6 @@ else
   C_OK="" C_WORK="" C_BAD="" C_DIM="" C_OFF=""
 fi
 colour() { printf "%s%s%s" "$1" "$2" "$C_OFF"; }
-now_epoch() { if [ -n "${GANG_NOW:-}" ]; then printf "%s" "$GANG_NOW"; else date +%s; fi; }
 
 usage() {
   cat <<'EOF'
@@ -551,15 +550,6 @@ self_compact_request() { # $1 window id -> request token
   tmux set-option -w -t "$1" @gl_self_compact_requested "$token" \
     || die "could not record the self-compaction request"
   printf '%s' "$token"
-}
-
-compaction_trigger_of() {
-  case "$1" in manual|auto) printf "%s" "$1" ;; *) printf "unknown" ;; esac
-}
-
-compaction_bracket_write() { # $1 window, $2 open|closed, $3 trigger
-  tmux set-option -w -t "$1" @gl_compact_bracket \
-    "$2 $(date +%s) $(compaction_trigger_of "$3")" 2>/dev/null || true
 }
 
 OCCUPY_STATE=""
@@ -1255,10 +1245,6 @@ cmd_hook() { # native harness events; facts are silent unless lights are enabled
     UserPromptSubmit|PostToolUse) turn_state_write "$TMUX_PANE" open ;;
     Stop) turn_state_write "$TMUX_PANE" closed
           self_compact_dispatch "$TMUX_PANE" "$prof" ;;
-    PreCompact) compaction_bracket_write "$TMUX_PANE" open \
-                  "$(hook_trigger_of "$payload")" ;;
-    PostCompact) compaction_bracket_write "$TMUX_PANE" closed \
-                   "$(hook_trigger_of "$payload")" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE" ;;
   esac
   case "$event" in
@@ -1266,13 +1252,6 @@ cmd_hook() { # native harness events; facts are silent unless lights are enabled
       ( set +e; context_light_reply "$event" "$prof"; exit 0 ) ;;
   esac
   exit 0
-}
-
-hook_trigger_of() { # $1 = the raw payload; the compaction discriminator, never fatal
-  printf '%s' "$1" \
-    | python3 -c 'import json,sys
-v = json.load(sys.stdin).get("trigger", "")
-print(v if isinstance(v, str) else "")' 2>/dev/null || true
 }
 
 cmd_capture() { # trailing blank pane rows are dead space, not content

@@ -113,8 +113,8 @@ unless `GANG_TEST_PROFILES=1`.
 
 Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
-dispatch deferred self-compaction, compact events bracket native compaction, and
-permission requests raise occupancy. Hooks are silent unless an enabled context
+dispatch deferred self-compaction, and permission requests raise occupancy.
+Hooks are silent unless an enabled context
 light crosses an edge.
 
 ## Environment

@@ -70,7 +70,7 @@ profiles="$(GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ')"
 equal "the public profile list is the supported harness set" \
   "claude-code codex opencode pi " "$profiles"
 
-# Codex receives six additive native hooks on fresh and resumed launches. The
+# Codex receives the native hooks with live consumers on fresh and resumed launches. The
 # command must remain one shell word even when Gangline is installed under a path
 # containing spaces.
 CODEX_STUB="$RUN_ROOT/codex-stub"
@@ -104,8 +104,7 @@ import re
 import sys
 
 events = {
-    "UserPromptSubmit", "PostToolUse", "Stop", "PreCompact", "PostCompact",
-    "PermissionRequest",
+    "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest",
 }
 shape = re.compile(
     r'hooks\.([A-Za-z]+)=\[\{ hooks = \[\{ type = "command", '
