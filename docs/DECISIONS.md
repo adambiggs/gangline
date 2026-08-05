@@ -8,6 +8,9 @@ the rule and the reason it exists; implementation history belongs in git.
 Provide local harness lifecycle, transport, observation, and compaction
 primitives. Do not manage roles, deadlines, work allocation, or agent behaviour;
 those policies belong to the operator and the native harnesses.
+Coordination is declarative: express goals, roles, status, handoffs, and lead
+heuristics through prose or native harness features. Gangline defines no
+coordination schema, reporting protocol, or lead state machine.
 
 ## tmux is the transport
 
