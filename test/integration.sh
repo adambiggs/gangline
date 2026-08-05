@@ -21,9 +21,6 @@ export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_SESSION="gangtest-$$"
 export GANG_TEST_PROFILES=1
 export GANG_CHURN_WAIT=0
-export GANG_SEND_HOLD=0
-export GANG_BRIEF_GATE_WAIT=0
-export GANG_PATROL_LOG=
 
 checks=0
 fails=0
@@ -168,6 +165,11 @@ equal "the Codex profile defers self-compaction to its native Stop hook" \
 "$GANG" hitch alpha -p bash -d /tmp >/dev/null
 contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
 contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
+contains "startup is one useful contract, not a bookkeeping turn" \
+  "$(pane alpha)" "You are alpha in Gangline"
+excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
+equal "context lights leave no state when disabled" "|" \
+  "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
 
 printf 'MARK_ALPHA' | "$GANG" send alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
@@ -258,6 +260,38 @@ printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null
 turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
 contains "a native stop hook closes the turn record" "$turn_closed" "closed"
+
+# Optional context guidance has two edge-triggered states and no clock path.
+cat > "$RUN_ROOT/profiles/lights.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+profile_context() {
+  tmux show-options -wqv -t "\$1" @test_context
+}
+SH
+GANG_CONTEXT_LIGHTS=100000,200000 "$GANG" hitch lit -p lights -d /tmp >/dev/null
+lit_id="$(window_id lit)"
+lit_tmux_pane="$(tmux list-panes -t "$lit_id" -F '#{pane_id}')"
+tmux set-option -w -t "$lit_id" @test_context '150k/300k (50%)'
+yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "enabled lights expose yellow" "$yellow" "Yellow context light"
+repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "a context light is emitted once per context epoch" "" "$repeat"
+tmux set-option -w -t "$lit_id" @test_context '250k/300k (83%)'
+red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "enabled lights expose red" "$red" "Red context light"
+tmux set-option -w -t "$lit_id" @test_context '50k/300k (17%)'
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$lit_id" @test_context '150k/300k (50%)'
+yellow_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "dropping below yellow starts a new context epoch" \
+  "$yellow_again" "Yellow context light"
 
 "$GANG" down >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
