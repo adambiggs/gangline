@@ -13,7 +13,10 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]}"
-      _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}"
+      case "${GANG_CONTEXT_LIGHTS:-off}" in
+        off|'') _gl_cc_json="$_gl_cc_json}" ;;
+        *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
+      esac
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
       unset _gl_cc_cmd _gl_cc_esc _gl_cc_json
@@ -32,7 +35,7 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   local m
   m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
-    || die "no ctx beacon in pane — hitched windows wire it at launch; adopted windows must wire statusline/claude-code-context.sh themselves"
+    || die "no ctx beacon in pane — enabled lights wire it at hitch; adopted windows must wire statusline/claude-code-context.sh themselves"
   m="${m#ctx }"
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }

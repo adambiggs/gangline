@@ -154,6 +154,16 @@ equal "Codex native hooks survive fresh and resumed launch paths" \
   "plain/GANG_LAUNCH=hook  | plain/GANG_RESUME_LAUNCH=hook  | has space/GANG_LAUNCH=hook  | has space/GANG_RESUME_LAUNCH=hook " \
   "$hook_receipts"
 
+claude_profile="$ROOT/profiles/claude-code.sh"
+claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
+excludes "disabled lights do not paint Claude context output" \
+  "$claude_off" 'statusLine'
+claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
+  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
+contains "enabled Claude lights wire their context source" \
+  "$claude_on" 'statusLine'
+
 codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_profile")"

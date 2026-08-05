@@ -87,7 +87,8 @@ Prints one current state:
 - `expired (...)` — the available evidence can no longer determine the answer.
 
 It also reports staged input, pending or failed self-compaction, and—only when
-enabled—the current yellow or red context light.
+enabled—the current yellow or red context light. Claude's context statusline is
+also wired only for agents hitched with lights enabled.
 
 ### `gang roster`
 
