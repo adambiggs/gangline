@@ -13,6 +13,9 @@ set, supplies an optional brief.
 ### `gang hitch <name> [-p profile] [-r brief] [-d dir] [-m model] [--resume]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
+The launch environment carries the exact `GANG_SESSION` plus any custom profile
+and lock paths, so harness commands cannot drift to another session on the same
+tmux server.
 
 - `-p` selects a profile.
 - `-r` selects `NAME.md` from `GANG_ROLES`, falling back to the repository's

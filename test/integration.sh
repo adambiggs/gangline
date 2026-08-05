@@ -65,6 +65,11 @@ window_id() { # $1 exact window name
 
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
 
+# Start the private tmux server with the wrong session in its global environment.
+# Hitched harnesses must receive the exact team identity in their launch command,
+# rather than inheriting whichever session started the shared server.
+GANG_SESSION=stale-session tmux new-session -d -s environment-seed
+
 # Public profile surface: the bash fixture remains test-only.
 profiles="$(GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ')"
 equal "the public profile list is the supported harness set" \

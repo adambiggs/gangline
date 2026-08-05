@@ -43,6 +43,12 @@ require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractio
   esac
 }
 
+shell_quote() { # one POSIX-shell word
+  local value
+  value="$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  printf "'%s'" "$value"
+}
+
 gang_root() { # $1 = path to this script; the install tree it lives in
   local src="$1" dir
   while [ -L "$src" ]; do
@@ -990,7 +996,7 @@ context_light_reply() { # $1 event, $2 profile; safe reply hooks only
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
+  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0 launch_env
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -1020,6 +1026,13 @@ cmd_hitch() {
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
+
+  launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
+  [ -z "${GANG_PROFILES:-}" ] \
+    || launch_env="$launch_env GANG_PROFILES=$(shell_quote "$GANG_PROFILES")"
+  [ -z "${GANG_LOCK_DIR:-}" ] \
+    || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
+  GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
 
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
