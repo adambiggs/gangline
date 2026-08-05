@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# The push-triggered CI checks that are quick enough to run before the push
-# instead of learning their result minutes after it. Enable in a clone with:
+# The fast push-triggered CI checks. Enable in a clone with:
 #   git config core.hooksPath .githooks
 #
-# Deliberately NOT here: test/integration.sh (minutes, not seconds — the whole
-# point of a pre-push gate is that you wait for it), the installer step (it
-# writes outside the repo and wants a real clone), and tmux-floor (pulls distro
-# images). So a green hook means the quick gates passed, never that CI will.
-#
-# Refuse rather than skip. Every check below either runs or fails the push with
-# a reason; `git push --no-verify` is the way past one you have judged.
+# The installer remains in CI because it writes an install tree outside the repo.
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -32,7 +25,7 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   rm -rf "$work"; mkdir -p "$work"
   git archive "$local_sha" | tar -x -C "$work"
   if [ -x "$work/test/lint.sh" ]; then
-    (cd "$work" && ./test/lint.sh) || fail=1
+    (cd "$work" && ./test/lint.sh && ./test/integration.sh) || fail=1
   else
     echo "pre-push: $local_sha carries no test/lint.sh, so nothing was linted" >&2
     fail=1

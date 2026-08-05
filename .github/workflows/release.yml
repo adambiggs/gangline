@@ -1,43 +1,7 @@
 name: release
 
-# release-please keeps one open PR against main. Every push here refreshes it
-# with the Conventional Commits landed since the last tag; merging it tags the
-# release, cuts the GitHub Release, and writes CHANGELOG.md. There is no bespoke
-# changelog script in this repo and there must not be one.
-#
-# Versions live in exactly two places and both are driven from this manifest:
-# version.txt (the anchor release-please reads) and the packaging stubs, bumped
-# as extra-files in release-please-config.json. Do not add a second mechanism.
-#
-# The repo had zero tags when this landed. The manifest is anchored at 0.0.1 —
-# the version the packaging stubs already claimed and never published — and
-# bump-minor-pre-major means the first cut off this history lands at 0.1.0.
-# Verified by dry run against release-please 17.10.4, the version the v4 action
-# pins: it plans "chore(main): release gangline 0.1.0" and five file writes —
-# CHANGELOG.md, version.txt, both packaging stubs, and the manifest.
-#
-# WATCH THE PACKAGING STUBS AFTER EVERY RELEASE. The updaters behind those two
-# extra-files entries fail silently, measured rather than assumed: GenericToml
-# logs "No entries modified in <jsonpath>" and returns the file UNCHANGED when
-# the jsonpath matches nothing, and logs a warning and returns it unchanged when
-# the file will not parse. Neither raises, so the run stays green. A typo in
-# either jsonpath therefore ships a stub left behind at the old version while
-# CHANGELOG.md, version.txt and the manifest all move — and release-please will
-# not say a word about it. If you edit those paths, re-run the dry run.
-#
-# THE RELEASE BRANCH AND HOW IT DIES (Law 6). Each run pushes
-# release-please--branches--main--components--gangline. It is reused, not
-# accumulated — one branch, never one per run — and it is DELETED BY MERGE: this
-# repo has delete_branch_on_merge enabled, so merging the release PR removes it.
-# Nothing in this workflow deletes it, and nothing needs to.
-#
-# It is also never stale, which matters because failed runs leave it sitting on
-# an old main. Read out of release-please 17.10.4 rather than assumed: the branch
-# helper takes baseSha from the CURRENT head of the target branch and, when the
-# branch already exists, skips creation and returns that sha anyway; the commit
-# is then built with main's head as its parent and the ref is moved with
-# force: true. So a branch left behind by a failed run is force-replaced on the
-# next successful one, not added to.
+# Release Please owns the release PR, changelog, tag, GitHub Release, and version
+# updates declared in release-please-config.json.
 
 on:
   push:

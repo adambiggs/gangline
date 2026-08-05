@@ -3,13 +3,7 @@ name: commits
 on:
   push:
   pull_request:
-    # `edited` is load-bearing and is NOT in the default set, which is opened,
-    # synchronize and reopened. The title job below reads the PR title, and a
-    # title can change without a single commit changing. Without `edited`,
-    # retitling a PR never re-runs the check: a green run for the old title
-    # stands over a new one nobody looked at, and a contributor who FIXES a bad
-    # title stays red with nothing they can push to clear it. Measured on PR #18
-    # — edited the title and no run was queued until this was added.
+    # Titles can change without commits, so edited must rerun the title gate.
     types: [opened, edited, reopened, synchronize]
 
 jobs:
@@ -27,9 +21,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Same gate the commit-msg hook runs — one regex, not two that drift.
-          # A push with no usable base (new branch, or a force-push whose old tip
-          # is gone) falls back to the full history rather than passing silently.
+          # Use the same gate as commit-msg; fall back to reachable history when
+          # the event has no usable base.
           if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] \
              && git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             range="${BASE}..${HEAD_SHA}"
@@ -51,10 +44,7 @@ jobs:
           echo "checked $n commit(s), $fail non-conforming"
           [ "$fail" -eq 0 ]
 
-  # A squash merge does not put any of the checked commits on main. This repo's
-  # squash title is COMMIT_OR_PR_TITLE, so a PR with two or more commits lands
-  # under its PR TITLE — a string the job above never sees. Without this the
-  # violation is only caught by the push event, after it is already on main.
+  # A squash merge uses the PR title as its commit message.
   title:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

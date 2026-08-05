@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Every shell file in the repo, parsed and linted. CI and the pre-push hook both
-# run THIS, because a second copy of the list is a list that drifts, and the
-# drift is silent in the worst direction: the shorter copy stays green over a
-# file it never opened. That is not hypothetical — the local gate was three
-# files against CI's eight globs, and the two warnings that turned CI red lived
-# in test/integration.sh, which only CI's copy named.
+# Parse and lint every shell file from one canonical file list.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

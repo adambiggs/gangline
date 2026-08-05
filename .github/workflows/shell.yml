@@ -2,21 +2,7 @@ name: shell
 
 on: [push, pull_request]
 
-# Matrix axes are chosen, not accumulated — see issue #8.
-#
-#   os        LIVE. The suite asserts "a BSD readlink still resolves the install
-#             tree" and until this cell existed it had never run on a BSD. macOS
-#             covers BSD readlink/grep/sed/awk and the bash 3.2 userland.
-#
-#   awk       DEFERRED, not rejected. Note the DIRECTION before adding it: every
-#             runner here already has gawk, so gawk cells buy nothing. The
-#             untested direction is the reverse — code that works under gawk and
-#             breaks under mawk or busybox awk (the substr byte-vs-character
-#             class has already shipped two bugs). Add mawk/busybox cells only,
-#             and only once the macOS cell is demonstrably stable, so a flake has
-#             one candidate cause rather than two.
-#
-#   python    REJECTED. gangline is shell; python3 appears in one place.
+# Linux and macOS cover the GNU and BSD userlands Gangline supports.
 
 jobs:
   check:
@@ -33,9 +19,6 @@ jobs:
       - name: Dependencies
         run: |
           set -eu
-          # Every tool the later steps need. Keep this list and the installs
-          # below in step: a guard that names fewer tools than the case installs
-          # will skip an install on a runner that happens to have the named ones.
           have_all=yes
           for t in tmux shellcheck; do
             command -v "$t" >/dev/null || have_all=no
@@ -44,35 +27,20 @@ jobs:
           case "${{ runner.os }}" in
             Linux) sudo apt-get install -y tmux shellcheck ;;
             macOS)
-              # No coreutils here: brew's usual gnubin path would put GNU readlink,
-              # grep, sed and awk ahead of the BSD ones and leave this cell green
-              # while testing nothing it was added to test. If something here ever
-              # needs a GNU tool again, expose that ONE binary, never gnubin.
+              # Keep BSD userland ahead of GNU coreutils in this cell.
               brew install tmux shellcheck
               ;;
             *) echo "no dependency recipe for runner.os=${{ runner.os }}" >&2; exit 1 ;;
           esac
 
       - name: Versions
-        # The point of the macOS cell is the userland, so name it in the log —
-        # a green run that silently used GNU tools would prove nothing.
         run: |
           set -euo pipefail
 
-          # The scripts run under their shebang's bash, not this step's shell, so
-          # resolve that one. A Homebrew bash ahead of /bin/bash on PATH would
-          # make the "bash 3.2 userland" claim in this file's header false.
           interp="$(command -v bash)"
           echo "interpreter: $interp"
           "$interp" --version | head -1
 
-          # And that claim is load-bearing enough to assert rather than print.
-          # This cell is the only place these files meet a real bash 3.2 parser,
-          # which is the guarantee the suite's source-level 3.2 rule defers to
-          # instead of duplicating. A newer bash here would keep every later step
-          # green while parsing nothing old, and a 3.2-only error surfaces
-          # hundreds of lines from its cause (#28) — so nothing downstream would
-          # notice the loss.
           if [ "${{ runner.os }}" = macOS ]; then
             bv="$("$interp" -c 'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"')"
             [ "$bv" = 3.2 ] || {
@@ -83,11 +51,6 @@ jobs:
 
           tmux -V
 
-          # awk is the reason this step exists, and the implementations differ on
-          # how to ask. gawk/BSD awk take --version, mawk takes -W version, and
-          # busybox awk takes neither. Capture and test the STRING: a pipeline
-          # ending in head always exits 0, so `awk --version | head -1 || ...`
-          # can never reach its fallback and prints a blank line instead.
           v="$(awk --version 2>/dev/null | head -1 || true)"
           [ -n "$v" ] || v="$(awk -W version 2>&1 | head -1 || true)"
           [ -n "$v" ] || v="$(awk 2>&1 | head -1 || true)"   # busybox names itself in usage
@@ -95,9 +58,6 @@ jobs:
           echo "awk: $v"
 
       - name: Syntax and lint
-        # The file list lives in test/lint.sh, which the pre-push hook also
-        # runs. Inlining it here again would put the same list in two places,
-        # and the shorter of two copies stays green over what it never read.
         run: test/lint.sh
 
       - name: Installer

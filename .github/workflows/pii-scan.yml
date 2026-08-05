@@ -2,14 +2,7 @@ name: pii-scan
 
 on: [push, pull_request]
 
-# Catches what the pre-push hook would have caught if a clone never ran
-# `git config core.hooksPath .githooks` — AGENTS.md documents that gap, and
-# this is the backstop for it. Same scanner, same patterns, no drift by
-# construction: both cells run tools/pii-scan, never a copy of its logic.
-#
-# Both cells, not just ubuntu, for the same reason shell.yml runs both: the
-# scanner's own portability claim (bash 3.2, BSD grep, POSIX ERE only) is a
-# claim about a userland, and only running it there tests that claim.
+# Backstop the optional local hook with the same scanner on GNU and BSD userlands.
 
 jobs:
   scan:
@@ -28,12 +21,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # tools/pii-scan runs under its shebang's bash (env bash), not this
-          # step's shell, so resolve that one specifically — same hazard and
-          # same guard as shell.yml:87-91, mirrored rather than reimplemented.
-          # Printing a version and moving on would let a Homebrew bash ahead
-          # of /bin/bash on PATH render this cell green while never running
-          # the 3.2 parse the tool's own header claims to support.
+          # Resolve the interpreter used by the scanner's shebang.
           interp="$(command -v bash)"
           echo "interpreter: $interp"
           "$interp" --version | head -1
@@ -62,12 +50,7 @@ jobs:
           fi
           before="${{ github.event.before }}"
           if [ "$before" = "$zero" ]; then
-            # New ref: before carries no prior state to diff against, and by
-            # the time this runs the push has already landed, so the pushed
-            # commits are now themselves on a remote-tracking ref — unlike
-            # the pre-push hook's own --not --remotes fallback, that would
-            # exclude exactly what needs scanning here. The push event's own
-            # commit list is the reliable bound instead.
+            # A new ref has no base; the event's commit list is the exact bound.
             count="$(jq '.commits | length' "$GITHUB_EVENT_PATH")"
             "$BASH_INTERP" tools/pii-scan --range -n "$count" "$after"
           else
