@@ -19,6 +19,9 @@
     pre { overflow:auto; padding:1rem; border:1px solid var(--rule); border-radius:.4rem; background:var(--code); }
     code { font-family:inherit; }
     li { margin:.5rem 0; }
+    .term { overflow:hidden; margin:2rem 0; border:1px solid var(--rule); border-radius:.4rem; background:#0f1115; }
+    .term video { display:block; width:100%; height:auto; }
+    .term p { margin:0; padding:.7rem 1rem; color:var(--dim); font-size:.8rem; }
     footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); }
   </style>
 </head>
@@ -28,6 +31,7 @@
   <p class="tag">Native coding agents. One local tmux substrate.</p>
 
   <nav>
+    <a href="#demo">demo</a>
     <a href="#start">start</a>
     <a href="#surface">surface</a>
     <a href="#long">long sessions</a>
@@ -42,6 +46,19 @@
   <p>It is substrate, not an agent coordinator. There is no task graph, role
   doctrine, deadline manager, patrol, daemon, database, watchdog, or cloud agent
   swarm. The operator and native harnesses remain in control.</p>
+
+  <section id="demo">
+    <h2>Demo</h2>
+    <div class="term">
+      <video autoplay loop muted playsinline controls preload="metadata"
+             poster="demo-poster.jpg"
+             aria-label="A Codex lead delegates work through Gangline to a Codex worker, waits for its attributed report, verifies the result, and returns idle.">
+        <source src="demo.mp4" type="video/mp4">
+      </video>
+      <p>One goal, two native Codex sessions. Delivery, native pane output, and
+      final state are real; inference waits are cut.</p>
+    </div>
+  </section>
 
   <section id="start">
     <h2>Start</h2>
