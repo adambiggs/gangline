@@ -19,6 +19,13 @@ tty for input, pane capture for observation, window options for ephemeral state,
 and profiles for harness-specific knowledge; this keeps agents observable and
 controllable without a daemon, database, or private protocol.
 
+## Harness driving is a seam, not a second product
+
+Keep launch syntax, composer parsing, native state, submission, and native
+commands behind the small profile contract. Gangline consumes that boundary
+internally; extract a general harness driver only when a second non-benchmark
+consumer exists and can define the interface from real use.
+
 ## Messages are attributed and delivery is verified
 
 Require a sender, wrap each message in a nonce-bound envelope, and confirm that
