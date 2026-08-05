@@ -20,13 +20,8 @@ need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installe
 need git
 need tmux
 
-# This floor is bounded by evidence rather than by a feature, which is why it does
-# not name one. 2.1 is the newest version any tmux call gang makes can be dated to
-# in tmux's own source; 2.6 is the oldest version the whole call set has actually
-# been executed on, including that paste-buffer -p delivers text as a paste, which
-# cannot be dated from source at all. The gap between those two is the floor, and
-# the way to lower it is to execute the set lower — see issue #31. A version that
-# nobody has run is not a version anybody can promise.
+# This is the oldest tmux release on which Gangline's complete call set has been
+# executed. Lower it only after running that call set on the lower release.
 ver="$(tmux -V | tr -cd '0-9.')"
 major="${ver%%.*}"
 minor="${ver#*.}"; minor="${minor%%.*}"
@@ -51,10 +46,7 @@ fi
 mkdir -p "$BIN_DIR"
 ln -sf "$HOME_DIR/bin/gang" "$BIN_DIR/gang"
 
-# Prove it runs rather than announcing success and hoping. Both commands read the
-# tree that was just installed, so either one failing means the install is broken
-# even though every step above reported success -- swallowing one hides exactly
-# the failure this check exists to catch.
+# Execute the installed tree before reporting success.
 "$BIN_DIR/gang" profiles >/dev/null || die "installed, but 'gang profiles' failed"
 
 echo
@@ -67,8 +59,6 @@ case ":$PATH:" in
      echo "      export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 echo
-# `gang up` attaches, so the next thing this reader sees is an agent's TUI with no
-# prompt of their own. Naming the detach here costs one line and saves them
-# discovering it in the README they have not opened yet.
+# `gang up` attaches to the lead.
 echo "Start a team:  cd ~/your/repo && gang up"
 echo "  that attaches you to the lead; detach with Ctrl-b then d, return with 'gang attach'"

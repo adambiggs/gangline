@@ -39,8 +39,8 @@ delivery, exact addressing, truthful observation, and loud failure.
 
 ## Acceptance
 
-- A newly hitched agent can identify itself, attribute and answer messages, and
-  request native compaction without a bookkeeping turn.
+- A newly hitched agent can identify itself, receive attributed messages, send
+  to peers, and request native compaction without a bookkeeping turn.
 - Disabled context lights add no prompts, warnings, markers, or roster noise.
 - Enabled context lights have only yellow and red states and remain advisory.
 - Self-compaction happens at a natural checkpoint through the harness's native

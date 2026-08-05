@@ -86,9 +86,8 @@ gang roster</code></pre>
 
     <pre><code>GANG_CONTEXT_LIGHTS=120000,200000 gang hitch worker -p codex</code></pre>
 
-    <p>The lights are advisory and edge-triggered. The agent finishes a coherent
-    arc, records durable state in the repository, and compacts at a natural
-    checkpoint.</p>
+    <p>The lights are advisory and edge-triggered. The agent decides when to
+    compact.</p>
   </section>
 
   <p class="dim">One Bash CLI over tmux. No daemon, message bus, private protocol,
