@@ -58,8 +58,8 @@ The following rules are mandatory:
   not pass because its fixture produced no value.
 - Use a private tmux server and disposable session for integration tests. Never
   address the live `gangline` session.
-- Real harness turns are explicit operator probes, not mandatory tests. Run them
-  through `gang vet --probe` or a separately named tmux session. Never enroll the
+- Real harness turns are explicit operator smoke tests, not mandatory tests. Run
+  them in a separately named disposable tmux session. Never enroll the
   development agent to test Gangline.
 - Existing assertions are guards. Changing or deleting one requires proving that
   its old expectation was wrong; do not edit it merely to make a behaviour change
@@ -119,8 +119,7 @@ tools/pii-scan --stdin < body.txt
 - Use **Gangline** for the project and `gang` for the command.
 - Use *hitch* for adding an agent; never *hire*.
 - Put command syntax and configuration in `docs/reference.md`, operations in
-  `docs/operations.md`, vocabulary in `docs/field-guide.md`, and product purpose
-  in `README.md`.
+  `docs/operations.md`, and product purpose in `README.md`.
 - Do not write changing counts, versions, sizes, or tallies into documentation.
   Point to the command that reports them.
 - When a default changes, read every section describing its semantics; a literal

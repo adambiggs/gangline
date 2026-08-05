@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # Fast substrate contract checks. Every assertion reads state that already exists.
-# Real-harness behaviour belongs to `gang vet --probe`, not this mandatory gate.
+# Real-harness behavior belongs in a separately named disposable team.
 set -euo pipefail
 
 unset TMUX TMUX_PANE
