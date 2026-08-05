@@ -335,6 +335,17 @@ yellow_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
 contains "dropping below yellow starts a new context epoch" \
   "$yellow_again" "Yellow context light"
+tmux set-option -w -t "$lit_id" @test_context 'unreadable'
+unavailable="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "an enabled light source fails visibly to its own agent" \
+  "$unavailable" "Context lights unavailable"
+unavailable_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "an unavailable context source reports once per failure epoch" \
+  "" "$unavailable_repeat"
+excludes "status does not inspect another agent's context" \
+  "$("$GANG" status lit)" "context"
 
 "$GANG" down >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then

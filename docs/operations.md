@@ -86,9 +86,8 @@ finish the current arc and compact now. A light is emitted once per context
 epoch; usage falling below yellow resets the epoch. These are advisory native
 hook messages, not patrols or automatic actions.
 
-If an enabled light reports unavailable, the profile's context source failed.
-Inspect the native harness directly. Disabled lights perform no context read and
-add no prompt or roster noise.
+If an enabled source fails, the affected agent receives one unavailable notice.
+Disabled lights perform no context read and add no prompt or roster noise.
 
 ## Understanding observation
 

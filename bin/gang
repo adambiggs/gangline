@@ -66,7 +66,6 @@ GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
-GANG_CONTEXT_FACT_LIMIT="${GANG_CONTEXT_FACT_LIMIT:-60}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -819,33 +818,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   lock_release
 }
 
-CTX_FACT_TOKENS=0
-CTX_FACT_WINDOW=0
-
-ctx_fact_read() { # $1 = window id; 0 = a fact this reader believes, sets CTX_FACT_*
-  local raw word tokens window at now
-  raw="$(tmux show-options -wqv -t "$1" @gl_ctx 2>/dev/null)" || raw=""
-  CTX_FACT_TOKENS=0; CTX_FACT_WINDOW=0
-  [ -n "$raw" ] || return 1
-  read -r word tokens window at _ <<<"$raw"
-  [ "$word" = ctx ] || return 1
-  [[ "$tokens" =~ ^[0-9]+$ ]] && [ "$tokens" -gt 0 ] || return 1
-  [[ "$window" =~ ^[0-9]+$ ]] && [ "$window" -gt 0 ] || return 1
-  [[ "$at" =~ ^[0-9]+$ ]] || return 1
-  require_whole GANG_CONTEXT_FACT_LIMIT "$GANG_CONTEXT_FACT_LIMIT" seconds
-  now="$(date +%s)"
-  [ "$at" -le "$now" ] || return 1
-  [ $(( now - at )) -lt "$GANG_CONTEXT_FACT_LIMIT" ] || return 1
-  CTX_FACT_TOKENS="$tokens"; CTX_FACT_WINDOW="$window"
-}
-
-context_now() { # $1 = window id, profile loaded; the readout, best tier first
-  if ctx_fact_read "$1"; then
-    printf '%sk/%sk (%s%%)\n' \
-      "$(( CTX_FACT_TOKENS / 1000 ))" "$(( CTX_FACT_WINDOW / 1000 ))" \
-      "$(( 100 * CTX_FACT_TOKENS / CTX_FACT_WINDOW ))"
-    return 0
-  fi
+context_now() { # $1 = window id, profile loaded; read the native source
   declare -F profile_context >/dev/null || return 1
   profile_context "$1"
 }
@@ -884,12 +857,12 @@ context_lights_for() { # $1 = window; load its hitch-time setting
 
 CONTEXT_LIGHT=""
 context_light_read() { # $1 = window, profile loaded; yellow|red, or 1 below
-  local ctx pair used window
+  local ctx pair used
   CONTEXT_LIGHT=""
   context_lights_for "$1" || return 1
   ctx="$(context_now "$1" 2>/dev/null)" || return 2
   pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 2
-  read -r used window <<<"$pair"
+  read -r used _ <<<"$pair"
   if [ "$used" -ge "$LIGHT_RED" ]; then
     CONTEXT_LIGHT=red
   elif [ "$used" -ge "$LIGHT_YELLOW" ]; then
@@ -909,16 +882,24 @@ context_light_reply() { # $1 event, $2 profile; safe reply hooks only
     tmux set-option -uw -t "$TMUX_PANE" @gl_context_light 2>/dev/null || true
     return 0
   fi
-  [ "$rc" -eq 0 ] || return 0
+  if [ "$rc" -eq 2 ]; then
+    [ "$previous" != unavailable ] || return 0
+    CONTEXT_LIGHT=unavailable
+    note="Context lights unavailable: Gangline cannot read this harness's native context source. Inspect the harness directly."
+  else
+    [ "$rc" -eq 0 ] || return 0
+  fi
   [ "$CONTEXT_LIGHT" != "$previous" ] || return 0
-  [ "$previous" != red ] || return 0
+  [ "$previous" != red ] || [ "$CONTEXT_LIGHT" = unavailable ] || return 0
   tmux set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" 2>/dev/null \
     || return 0
-  agent="$(agent_name_of "$TMUX_PANE")"
-  case "$CONTEXT_LIGHT" in
-    yellow) note="Yellow context light: compact at the next natural checkpoint with gang compact $agent." ;;
-    red) note="Red context light: finish the current arc and compact now with gang compact $agent." ;;
-  esac
+  if [ -z "$note" ]; then
+    agent="$(agent_name_of "$TMUX_PANE")"
+    case "$CONTEXT_LIGHT" in
+      yellow) note="Yellow context light: compact at the next natural checkpoint with gang compact $agent." ;;
+      red) note="Red context light: finish the current arc and compact now with gang compact $agent." ;;
+    esac
+  fi
   python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
     "$1" "$note"
 }
@@ -1095,7 +1076,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged light_rc=0
+  local state self_failed self_pending staged
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1110,14 +1091,6 @@ cmd_status() {
   staged="$(staged_note "$AGENT_ID")"
   [ -z "$staged" ] \
     || printf '%s\n' "$(colour "$C_BAD" "undelivered paste in the input box: $staged")"
-  if context_lights_for "$AGENT_ID"; then
-    context_light_read "$AGENT_ID" || light_rc=$?
-    case "$light_rc" in
-      0) printf '%s\n' "context light: $CONTEXT_LIGHT" ;;
-      1) ;;
-      *) printf '%s\n' "$(colour "$C_BAD" "context light unavailable")" ;;
-    esac
-  fi
 }
 
 cmd_roster() {
@@ -1136,7 +1109,7 @@ EOF
 }
 
 roster_row() { # $1 window, $2 name, $3 batched churn verdict
-  local prof state detail="" light_rc=0
+  local prof state detail=""
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -1147,14 +1120,6 @@ roster_row() { # $1 window, $2 name, $3 batched churn verdict
   [ -z "$(staged_note "$1")" ] || detail=" undelivered-paste"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
-  if context_lights_for "$1"; then
-    context_light_read "$1" || light_rc=$?
-    case "$light_rc" in
-      0) detail="$detail $CONTEXT_LIGHT" ;;
-      1) ;;
-      *) detail="$detail context-unavailable" ;;
-    esac
-  fi
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
 }

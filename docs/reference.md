@@ -83,15 +83,13 @@ Prints one current state:
 - `occupied (authority unknown)` — a native UI owns the composer;
 - `expired (...)` — the available evidence can no longer determine the answer.
 
-It also reports staged input, pending or failed self-compaction, and—only when
-enabled—the current yellow or red context light. Claude's context statusline is
-also wired only for agents hitched with lights enabled.
+It also reports staged input and pending or failed self-compaction.
 
 ### `gang roster`
 
 Prints every session window with its profile and current state. Unadopted windows
-are shown but not treated as agents. Disabled context lights add no column,
-warning, or placeholder.
+are shown but not treated as agents. Context usage belongs to each agent and is
+not reported to the lead or operator.
 
 ### `gang capture <name> [lines]`
 
@@ -131,7 +129,7 @@ light crosses an edge.
 
 Operational evidence bounds also use `GANG_CHURN_WAIT`,
 `GANG_ACTIVITY_WINDOW`, `GANG_ACTIVITY_LIMIT`, `GANG_TURN_LIMIT`,
-`GANG_OCCUPIED_LIMIT`, and `GANG_CONTEXT_FACT_LIMIT`. Their defaults live once in
+and `GANG_OCCUPIED_LIMIT`. Their defaults live once in
 `bin/gang`; change them only with evidence about the native harness surface.
 
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_PROFILES`,
