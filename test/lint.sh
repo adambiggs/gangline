@@ -11,6 +11,23 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Mandatory tests consume state, not wall time. A fake clock may hand code any
+# timestamp it needs, but executable test code may not sleep, poll, or exercise
+# timeout behaviour. Real harness probes are operator commands, not this suite.
+timing_hits="$(awk '
+  /^[[:space:]]*#/ { next }
+  {
+    if ($0 ~ /(^|[;&|()[:space:]])(sl[e]ep|time[o]ut)([;&|()[:space:]]|$)/ ||
+        $0 ~ /(wait[_]for|absence[_]window)[[:space:]]*[(]/) {
+      print FILENAME ":" FNR ":" $0
+    }
+  }
+' test/*.sh)"
+if [ -n "$timing_hits" ]; then
+  printf '%s\n' "lint: mandatory tests may not consume wall time:" "$timing_hits" >&2
+  exit 1
+fi
+
 # site/demo/record.sh ships in the repo and was unchecked until a bug in it cost
 # two demo takes. Every shell file here is checked or none is.
 #

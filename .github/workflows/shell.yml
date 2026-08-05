@@ -117,4 +117,5 @@ jobs:
           "$RUNNER_TEMP/bin/gang" roles
 
       - name: Integration test
+        timeout-minutes: 5
         run: test/integration.sh
