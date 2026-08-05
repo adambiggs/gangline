@@ -1,5 +1,11 @@
 # Gangline simplification plan
 
+## Status
+
+Complete. The mandatory acceptance is guarded by `test/lint.sh` and
+`test/integration.sh`; native-harness behavior is verified only in separately
+named disposable teams as documented in `docs/operations.md`.
+
 ## Target
 
 Gangline is the local substrate for long-running, multi-harness coding sessions.
@@ -38,15 +44,15 @@ reference material or nowhere.
 Delete policy while preserving transport guarantees: sender attribution, verified
 delivery, exact addressing, truthful observation, and loud failure.
 
-## Sequence
+## Completed sequence
 
-1. Make native Codex self-compaction reliable at the end of the requesting turn.
-2. Collapse standing decisions into `DECISIONS.md` and delete the numbered archive.
-3. Reduce hitch output and role briefs to the minimum agent contract.
-4. Make context lights disabled by default; when enabled, expose only yellow and
+1. Made native Codex self-compaction reliable at the end of the requesting turn.
+2. Collapsed standing decisions into `DECISIONS.md` and deleted the numbered archive.
+3. Reduced hitch output and role briefs to the minimum agent contract.
+4. Made context lights disabled by default; when enabled, they expose only yellow and
    red and notify once per context epoch.
-5. Delete coordination and supervision commands, state, hooks, tests, and docs.
-6. Slim profiles, diagnostics, and operator documentation around the remaining
+5. Deleted coordination and supervision commands, state, hooks, tests, and docs.
+6. Slimmed profiles, diagnostics, and operator documentation around the remaining
    substrate.
 
 Each step lands as a small green checkpoint. Deletion does not wait for a grand
