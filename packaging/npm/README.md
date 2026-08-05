@@ -1,5 +1,3 @@
 # gangline
 
-Many harnesses. One line.
-
-Coming soon — <https://gangline.ai>
+Reserved package name. Install Gangline from <https://gangline.ai>.

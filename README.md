@@ -101,8 +101,8 @@ gang cutoff 2h
 gang cutoff 17:30
 ```
 
-Yellow appears halfway through the declared span and red after four-fifths. The
-hook-enabled agents receive each edge once. `gang cutoff` shows the declaration
+Yellow appears halfway through the declared span and red after four-fifths.
+Hook-enabled agents receive each edge once. `gang cutoff` shows the declaration
 and `gang cutoff clear` removes it. Nothing stops automatically.
 
 ## Safety model
