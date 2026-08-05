@@ -36,13 +36,10 @@ if [ -n "$timing_hits" ]; then
   exit 1
 fi
 
-# site/demo/record.sh ships in the repo and was unchecked until a bug in it cost
-# two demo takes. Every shell file here is checked or none is.
-#
 # .githooks is globbed rather than listed: hooksPath points the whole directory
 # at git, so a hook added later is a shell file this repo runs, and it should
 # not also need an edit here to be read.
-files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh tools/pii-scan .githooks/* site/demo/record.sh"
+files="bin/gang install.sh profiles/*.sh statusline/*.sh test/*.sh tools/pii-scan .githooks/*"
 for f in .github/workflows/*.sh; do
   [ -f "$f" ] || continue
   files="$files $f"

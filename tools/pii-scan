@@ -73,7 +73,6 @@ class_regex() {
 class_allowed() {
   case "$1" in
     home-path)
-      case "$2" in /home/demo|/home/demo/*) return 0 ;; esac
       return 1 ;;
     email)
       case "$2" in

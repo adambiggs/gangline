@@ -1,485 +1,104 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Gangline — CLI coding agents, one coordinated team</title>
-<meta name="description" content="The substrate for long-horizon, multi-harness agent teams. CLI coding agents as named tmux windows, with delivery verified into the input box. One Bash script, no daemon.">
-<meta property="og:type" content="website">
-<meta property="og:title" content="Gangline — CLI coding agents, one coordinated team">
-<meta property="og:description" content="Run different CLI coding agents as one team of named tmux windows. Delivery verified into the input box, state that admits what it could not determine, no daemon.">
-<meta name="twitter:card" content="summary">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%2316171a'/%3E%3Cpath%20d='M4%2016h24'%20stroke='%235c6169'%20stroke-width='2.5'%20stroke-linecap='round'/%3E%3Cg%20fill='%236ea8fe'%3E%3Ccircle%20cx='9'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='3.4'/%3E%3Ccircle%20cx='23'%20cy='16'%20r='3.4'/%3E%3C/g%3E%3C/svg%3E">
-<style>
-  :root {
-    --bg: #fbfbfa; --fg: #16171a; --dim: #5c6169; --rule: #e3e2df;
-    --accent: #1f6feb; --code-bg: #f2f1ee;
-    --ok: #1a7f37; --warn: #9a6700; --bad: #cf222e;
-    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #0f1115; --fg: #e8e6e3; --dim: #9aa0a8; --rule: #24272e;
-      --accent: #6ea8fe; --code-bg: #171a20;
-      --ok: #3fb950; --warn: #d29922; --bad: #f85149;
-    }
-  }
-
-  * { box-sizing: border-box; }
-  body {
-    background: var(--bg); color: var(--fg);
-    font: 16px/1.65 var(--mono);
-    margin: 0; padding: 4rem 1.5rem 6rem;
-    -webkit-text-size-adjust: 100%;
-  }
-  main { max-width: 46rem; margin: 0 auto; }
-  h1 { font-size: 1.9rem; letter-spacing: -0.02em; margin: 0 0 .25rem; }
-  h2 {
-    font-size: .8rem; text-transform: uppercase; letter-spacing: .12em;
-    color: var(--dim); font-weight: 600;
-    margin: 3.5rem 0 1rem; padding-bottom: .5rem; border-bottom: 1px solid var(--rule);
-  }
-  section { scroll-margin-top: 1.5rem; }
-  .tag { color: var(--accent); margin: 0 0 1.25rem; }
-  .lede { color: var(--dim); max-width: 38rem; }
-  .outro { margin-top: 2.5rem; }
-  a { color: var(--accent); }
-
-  nav { margin: 0 0 2.25rem; font-size: .85rem; color: var(--dim); }
-  nav a { color: var(--dim); text-decoration: none; }
-  nav a:hover { color: var(--accent); }
-  nav span { margin: 0 .4rem; }
-
-  pre {
-    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px;
-    padding: .9rem 1.1rem; overflow-x: auto; font-size: .875rem; line-height: 1.6;
-    margin: 1rem 0;
-  }
-  code { font-family: var(--mono); }
-  p code, li code, dd code, td code {
-    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 4px;
-    padding: .05rem .3rem; font-size: .85em;
-  }
-  .cmd { font-size: .95rem; }
-  .p { color: var(--dim); user-select: none; }
-  .c { color: var(--dim); }
-  .ok { color: var(--ok); }
-  .busy { color: var(--warn); }
-  .det { color: var(--dim); }
-  .gate { color: var(--bad); }
-  .note { color: var(--dim); font-size: .85rem; margin-top: .6rem; }
-
-  .term {
-    background: var(--code-bg); border: 1px solid var(--rule); border-radius: 6px;
-    margin: 1.75rem 0; overflow: hidden;
-  }
-  .term-bar {
-    display: flex; align-items: center; gap: .4rem;
-    padding: .55rem .9rem; border-bottom: 1px solid var(--rule);
-    color: var(--dim); font-size: .75rem;
-  }
-  .term-bar i { width: .65rem; height: .65rem; border-radius: 50%; background: var(--rule); }
-  .term pre { background: none; border: none; border-radius: 0; margin: 0; }
-  .term video { display: block; width: 100%; height: auto; background: #0f1115; }
-  .term-cap { padding: .55rem .9rem; border-top: 1px solid var(--rule);
-              color: var(--dim); font-size: .75rem; }
-
-  dl { margin: 0; }
-  dt { font-weight: 600; margin-top: 1.5rem; }
-  dd { margin: .3rem 0 0; color: var(--dim); }
-
-  .tbl { overflow-x: auto; }
-  table { border-collapse: collapse; width: 100%; font-size: .875rem; }
-  th, td { text-align: left; vertical-align: top; padding: .5rem .9rem .5rem 0; border-bottom: 1px solid var(--rule); }
-  th { color: var(--dim); font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; }
-  td:first-child { white-space: nowrap; }
-
-  ul { padding-left: 1.2rem; }
-  li { margin: .5rem 0; }
-  li, dd, td { color: var(--dim); }
-  li strong, dd strong, td strong { color: var(--fg); }
-
-  footer {
-    margin-top: 4rem; padding-top: 1.25rem; border-top: 1px solid var(--rule);
-    color: var(--dim); font-size: .85rem;
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Gangline — native coding agents in tmux</title>
+  <meta name="description" content="A local substrate for long-running teams of native CLI coding agents: tmux lifecycle, attributed verified delivery, observation, and native compaction.">
+  <style>
+    :root { color-scheme: light dark; --accent:#6ea8fe; --dim:#888; --rule:#7774; --code:#7771; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:4rem 1.5rem; font:16px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
+    main { max-width:48rem; margin:auto; }
+    h1 { margin:0; font-size:2rem; }
+    h2 { margin-top:3rem; padding-bottom:.4rem; border-bottom:1px solid var(--rule); font-size:1rem; }
+    .tag,.dim,li { color:var(--dim); }
+    a { color:var(--accent); }
+    nav { margin:2rem 0; }
+    nav a { margin-right:1rem; }
+    pre { overflow:auto; padding:1rem; border:1px solid var(--rule); border-radius:.4rem; background:var(--code); }
+    code { font-family:inherit; }
+    li { margin:.5rem 0; }
+    footer { margin-top:4rem; padding-top:1rem; border-top:1px solid var(--rule); color:var(--dim); }
+  </style>
 </head>
 <body>
 <main>
   <h1>gangline</h1>
-  <p class="tag">Many CLI agents. One coordinated team.</p>
+  <p class="tag">Native coding agents. One local tmux substrate.</p>
 
   <nav>
-    <a href="#install">install</a><span>·</span>
-    <a href="#solo">a team of one</a><span>·</span>
-    <a href="#ideas">how it works</a><span>·</span>
-    <a href="#compare">how it compares</a><span>·</span>
-    <a href="#proof">measured</a><span>·</span>
-    <a href="#commands">commands</a><span>·</span>
-    <a href="#extend">extend</a><span>·</span>
-    <a href="#trail">the trail</a><span>·</span>
+    <a href="#start">start</a>
+    <a href="#surface">surface</a>
+    <a href="#long">long sessions</a>
     <a href="https://github.com/adambiggs/gangline">github</a>
   </nav>
 
-  <p class="lede">
-    <strong>gangline is the substrate under a long-running, multi-harness agent
-    team &mdash; not the orchestration on top of it.</strong> CLI coding agents run
-    as named windows in one tmux session, each used where it is strongest;
-    <code>gang</code> hitches them, <em>proves</em> each attributed message into the
-    target's input box, reads each tug tight or slack, carries them across their own
-    context limits, and drops them when the work is done. One Bash CLI over tmux
-    &mdash; no daemon, message bus, database, or harness plugin, and
-    <code>gang</code> exits after every command.
-  </p>
+  <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
+  tmux session. Each keeps its native terminal, tools, permissions,
+  subscription, and context. Gangline provides lifecycle, attributed verified
+  delivery, direct observation, and native compaction.</p>
 
-  <p class="lede">
-    The name is literal. A gangline is the line down the middle of a dog team:
-    every dog is hitched to it by its own tug line, the lead runs out front, and one
-    look down the line tells the musher who is working &mdash; a tight tug is
-    pulling, a slack tug is not. That is what the roster below is reporting.
-  </p>
+  <p>It is substrate, not an agent coordinator. There is no task graph, role
+  doctrine, deadline manager, patrol, daemon, database, watchdog, or cloud agent
+  swarm. The operator and native harnesses remain in control.</p>
 
-  <p class="lede">
-    Who does what, and in what order, is your call. It lives in a markdown brief you
-    can replace with a directory of your own; what gangline owns is the layer
-    <a href="#compare">underneath</a>.
-  </p>
+  <section id="start">
+    <h2>Start</h2>
+    <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 
-  <div class="term">
-  <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
-  <!-- iOS: muted+playsinline are what make autoplay legal at all, and Low Power
-       Mode still refuses it — so `controls` is the fallback, not a nicety. H.264
-       mp4 leads; iOS WebM support is too recent and too partial to lead with. -->
-  <video autoplay loop muted playsinline controls preload="metadata"
-         poster="demo-poster.jpg"
-         aria-label="gang up hitches a Claude Code lead, which hitches a Codex worker off one message and then an opencode reviewer once there is work to review.">
-    <source src="demo.mp4" type="video/mp4">
-    <source src="demo.webm" type="video/webm">
-  </video>
-  <p class="term-cap">One message to a Claude Code lead: it hitches a Codex worker,
-  waits for the work, then hitches an opencode reviewer to check it. Real harnesses,
-  real subscriptions, unedited except for cuts through the waiting.</p>
-  </div>
+cd ~/your/repo
+gang up</code></pre>
 
-  <div class="term">
-  <div class="term-bar" aria-hidden="true"><i></i><i></i><i></i>&nbsp;tmux: gangline</div>
-  <pre><code><span class="p">$</span> cd ~/my/repo &amp;&amp; gang up
-<span class="c"># attached to the lead; detach with Ctrl-b d, then use another shell</span>
-<span class="p">$</span> gang hitch worker -p codex -r worker
-<span class="ok">hitched worker</span> (codex) in ~/my/repo <span class="det">— watch: gang attach</span>
-<span class="ok">briefed worker as worker</span>
-<span class="p">$</span> gang send worker --from lead --stdin &lt;&lt;'MESSAGE'
-read the failing test in ci and fix it
-MESSAGE
-<span class="ok">delivered to worker as [gang:lead]</span> <span class="det">(verified in pane, submitted)</span>
-<span class="p">$</span> gang roster
-lead             claude-code  <span class="ok">idle (slack tug)</span>   142k/1000k (14%)
-worker           codex        <span class="busy">busy (tight tug)</span>   31k/272k (11%)</code></pre>
-  </div>
+    <pre><code>gang hitch worker -p codex -d "$PWD"
 
-  <section id="install">
-  <h2>Install</h2>
-  <!-- Deliberately the raw URL, DNS or not: what you pipe is verifiably the file
-       in the repo, not whatever a vanity path serves today. -->
-  <pre class="cmd"><code><span class="p">$</span> curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
-  <p class="note">
-    Needs git, tmux&nbsp;&ge;&nbsp;2.6 and python3. Clones to <code>~/.local/share/gangline</code>,
-    links <code>gang</code> into <code>~/.local/bin</code>, re-run to update.
-    Piping a stranger's script into a shell is your call to make &mdash;
-    <a href="https://github.com/adambiggs/gangline/blob/main/install.sh">read it first</a>,
-    or clone and symlink <code>bin/gang</code> yourself.
-  </p>
-  <p class="note">
-    <strong>One thing your harness will not tell you.</strong> Gangline launches
-    your harness with your own configuration and sets no permission bypass
-    (<a href="https://github.com/adambiggs/gangline/blob/main/README.md#before-you-leave-one-unattended">one
-    small exception</a> for opencode). An unattended agent cannot answer a dialog
-    and Gangline will not answer one for it, so the setting that stops your
-    harness asking belongs in that harness's own config &mdash; the README names
-    the one each wants.
-  </p>
-  <p class="note">
-    Beyond that, the boundary is the machine. Agents on one host already pass
-    text to one another through files, a shared checkout, or each other's panes;
-    Gangline does not create that path, it makes it routine and gives it
-    structure the ad-hoc versions lack &mdash; envelopes a body cannot close from
-    the inside, delivery verified in the pane, and a refusal when the input box
-    is not free. Treat every agent's output as untrusted input to the next, and
-    bound the machine if you need a boundary: a container, a VM, a separate
-    account. A separate <code>$HOME</code> is not one.
-  </p>
+gang send worker --from lead --stdin &lt;&lt;'TASK'
+Fix the failing parser test and report the proof.
+TASK
+
+gang roster</code></pre>
   </section>
 
-  <section id="solo">
-  <h2>A team of one</h2>
-  <p>
-    A team can have one dog in it: <code>gang up</code> with nobody else hitched
-    gives you
-    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#a-team-of-one">the
-    context loop</a> by itself &mdash; measure, warn, act &mdash; and needs no
-    permissions decision, because you are attached and watching the pane.
-  </p>
-  <pre class="cmd"><code><span class="p">$</span> gang up</code></pre>
+  <section id="surface">
+    <h2>The surface</h2>
+    <ul>
+      <li><code>up</code>, <code>hitch</code>, <code>adopt</code>, <code>attach</code>,
+        <code>drop</code>, and <code>down</code> control native tmux windows.</li>
+      <li><code>send</code> requires a sender and reports success only after the
+        target composer visibly accepts and submits the message.</li>
+      <li><code>status</code>, <code>roster</code>, <code>capture</code>, and
+        <code>wait</code> expose conservative current state.</li>
+      <li><code>compact</code> invokes the harness's own compaction mechanism.</li>
+      <li>Profiles contain harness-specific launch syntax, native hooks, and TUI
+        observation. The core has no harness-name branches.</li>
+    </ul>
   </section>
 
-  <section id="ideas">
-  <h2>How it works</h2>
-  <dl>
-    <dt>Agents are tmux windows.</dt>
-    <dd>Hitching is <code>new-window</code>, dropping is <code>kill-window</code>,
-        watching is <code>capture-pane</code>, and the window name <em>is</em> the
-        agent's identity. Attach and you are looking at your team &mdash; the pane is
-        the transcript, and you can type into it yourself at any time.</dd>
+  <section id="long">
+    <h2>Long sessions</h2>
+    <p>Agents get one short startup contract: their name, how to answer an
+    attributed message, and how to request native compaction. Codex
+    self-compaction crosses its native Stop boundary so <code>/compact</code> is
+    submitted only after the requesting turn releases the composer.</p>
 
-    <dt>Every message is attributed, and delivery is verified.</dt>
-    <dd>A send is wrapped in a <code>[gang:&lt;sender&gt;#&lt;nonce&gt;]</code>
-        envelope whose nonce is minted from a body that already exists, so the
-        body cannot close its own envelope and open another. It is confirmed by
-        capturing the pane, and only then submitted. No sender means no send.
-        Unverified means a loud failure, never a shrug. This is attribution and
-        not authentication &mdash; gangline is single-operator software, and
-        anyone who can type into a pane is already trusted.</dd>
+    <p>Optional context lights are off by default. An operator may set absolute
+    yellow and red thresholds at hitch time:</p>
 
-    <dt>Agents manage their own context.</dt>
-    <dd>A model cannot feel its own token count, so the substrate measures it and
-        warns at configurable bands. The agent compacts <em>itself</em> at the next
-        clean seam, using a detached resume handoff so work continues unattended.</dd>
+    <pre><code>GANG_CONTEXT_LIGHTS=120000,200000 gang hitch worker -p codex</code></pre>
 
-    <dt>A new harness costs a profile, not a core integration.</dt>
-    <dd>The profile owns launch and model syntax, observable busy and occupied
-        states, compaction, mid-turn input, and optional composer and context
-        readers. Profiles observe the stock TUI: a theme or UI extension that
-        repaints it takes a shadow profile of your own
-        (<code>GANG_PROFILES</code>), re-verified against what you actually run.</dd>
-
-    <dt>Batteries included, every one replaceable.</dt>
-    <dd>Agents are hitched with a role brief &mdash; lead, worker, reviewer. Point
-        <code>GANG_ROLES</code> at a directory of your own and any brief becomes
-        yours.</dd>
-  </dl>
+    <p>The lights are advisory and edge-triggered. The agent finishes a coherent
+    arc, records durable state in the repository, and compacts at a natural
+    checkpoint.</p>
   </section>
 
-  <section id="compare">
-  <h2>Where this sits</h2>
-  <p>
-    <strong>gangline is a substrate, not an orchestration framework.</strong> Who
-    does what, in what order, and what happens when one of them stalls lives in the
-    agent and in a role brief you replace wholesale. gangline owns the layer
-    underneath: how an agent is started, how a message is <em>proven</em> into its
-    input box, what may and may not be claimed about its state, and what becomes of
-    its context over the following six hours. The axis is duration, not breadth
-    &mdash; a team that finishes inside one context window needs none of this, and a
-    team still working tomorrow morning needs all of it.
-  </p>
-  <div class="tbl">
-  <table>
-    <tr><th></th><th>what it owns</th><th>agents run as</th><th>what stays running</th></tr>
-    <tr><td><strong>gangline</strong></td>
-        <td>the substrate: delivery, state, context, rot</td>
-        <td>tmux windows you attach to</td>
-        <td>nothing; <code>gang</code> exits</td></tr>
-    <tr><td><a href="https://code.claude.com/docs/en/agent-teams">Claude Code agent teams</a></td>
-        <td>orchestration: shared task list, claiming, plan approval</td>
-        <td>rows in the lead's terminal, or split panes</td>
-        <td>the lead session</td></tr>
-    <tr><td><a href="https://github.com/smtg-ai/claude-squad">claude-squad</a></td>
-        <td>isolation: a git worktree and tmux session per agent</td>
-        <td>tmux sessions in a Go TUI</td>
-        <td>the TUI</td></tr>
-    <tr><td><a href="https://github.com/mixpeek/amux">amux</a></td>
-        <td>a control plane: dashboard, scheduler, watchdog</td>
-        <td>tmux sessions behind a web UI</td>
-        <td>a server on a port</td></tr>
-    <tr><td><a href="https://github.com/SeemSeam/claude_codex_bridge">CCB</a></td>
-        <td>collaboration graphs across many vendors</td>
-        <td>native terminal panes</td>
-        <td>a background daemon</td></tr>
-    <tr><td>Agent SDK, LangGraph, CrewAI</td>
-        <td>orchestration in code you write</td>
-        <td>API calls in your program &mdash; model APIs, not a CLI</td>
-        <td>your program</td></tr>
-  </table>
-  </div>
-
-  <p>
-    That second column is the difference you feel daily: <strong>the client is a
-    terminal.</strong> Everything else in the table puts a layer between you and the
-    agent &mdash; a TUI, a web dashboard, rows re-rendered inside another session
-    &mdash; where <code>gang attach</code> drops you into the harness's own real
-    interface, the one its authors built. There is nothing to serve and no port to
-    forward, so anywhere you can SSH from is a place you can check on the team,
-    including a phone on the train.
-  </p>
-
-  <p class="lede">
-    <strong>Where gangline is the wrong tool.</strong> No worktree isolation, no
-    dashboard, no notifications, no history to browse afterwards, no auto-restart
-    &mdash; and it is Bash on tmux, so Windows means WSL. Not on that list: no task
-    list, no dependency graph, no retry policy, no supervisor loop, which are absent
-    on purpose because they are the layer above. Every tool in that table solves a
-    real problem, and for several of them the honest answer is &ldquo;use that one
-    instead&rdquo; &mdash; or &ldquo;use that one <em>on top of this</em>&rdquo;. The
-    README
-    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#where-this-sits">says
-    which, and why</a>, along with the constitution laws that put the boundary
-    there.
-  </p>
-  </section>
-
-  <section id="proof">
-  <h2>Measured, not assumed</h2>
-
-  <p>
-    <strong>Delivery is proven into the box.</strong> A send reads the target's
-    input box, pastes, and requires the box to have <em>changed</em>; Enter goes in
-    as its own keystroke, and a later read must differ again. Unreadable and
-    unchanged are separate failures and both are loud &mdash; a paste stranded by
-    one is reported as an undelivered paste until the box is empty.
-  </p>
-
-  <p>
-    <strong>&ldquo;I cannot tell&rdquo; is a state, not a default.</strong> A
-    predicate that could not reach an answer says so rather than returning the
-    convenient one. gangline can establish that a harness-owned UI has taken an
-    input box; who may free it is a different finding, and it does not pretend to
-    have made it.
-  </p>
-
-  <pre><code><span class="p">$</span> gang send reviewer --from lead --stdin &lt;&lt;'MESSAGE'
-ship it
-MESSAGE
-gang: 'reviewer' is <span class="gate">occupied (authority unknown)</span> — a UI owns its
-input box and gang cannot establish who may clear it; a send would act on that
-UI instead of landing (gang attach)</code></pre>
-
-  <p>
-    <strong>Context is measured, not felt.</strong> A model cannot feel its own
-    token count, so the substrate reads it through the harness's own introspection
-    and warns on a ladder keyed to how long a context <em>is</em> rather than how
-    full its window is. Measure, warn, act &mdash; the substrate does the first two,
-    and the agent does the third, compacting itself at the next clean seam and
-    handing its own successor the thread.
-  </p>
-
-  <pre><code><span class="c">[gang:patrol]</span> [context-usage] 187k in context — past the
-158000-token band. Start no new work. Close what is open, then compact. Your
-recall is already degrading: instructions given once earlier in this
-conversation are dropping out, and you cannot tell which ones.
-Check the handoff you have been keeping and refresh what this arc changed —
-if you have none yet, write one now; your role brief says where. Then run:
-gang compact worker --from worker --resume-stdin &lt; your-handoff
-— this queues behind the turn you are in, and the resume is delivered once
-compaction settles.</code></pre>
-
-  <p class="note">
-    Every one of those is a mechanism you can read rather than take on trust: the
-    measured composer sequence, the band ladder and its absolute bounds, and the
-    detached waiter that keeps a resume out of the turn being compacted are in the
-    <a href="https://github.com/adambiggs/gangline/blob/main/README.md">README</a>
-    and in
-    <a href="https://github.com/adambiggs/gangline/blob/main/docs/operations.md">operating
-    a team</a>.
-  </p>
-  </section>
-
-  <section id="commands">
-  <h2>The verbs</h2>
-  <div class="tbl">
-  <table>
-    <tr><th>command</th><th>what it does</th></tr>
-    <tr><td><code>gang up</code></td>
-        <td>the whole setup, no arguments: hitches <code>lead</code> in the current
-            repo and puts you in the session</td></tr>
-    <tr><td><code>gang hitch &lt;name&gt; -p &lt;profile&gt; -r &lt;role&gt;</code></td>
-        <td>start an agent &mdash; the name becomes its tmux window, its identity,
-            and its handle</td></tr>
-    <tr><td><code>gang send &lt;name&gt; --from &lt;you&gt; --stdin</code></td>
-        <td>attributed, pane-verified message read from stdin; delivered mid-turn where the harness
-            takes input during one</td></tr>
-    <tr><td><code>gang roster</code></td>
-        <td>everyone, with harness, state, and context usage</td></tr>
-    <tr><td><code>gang status &lt;name&gt;</code> / <code>context &lt;name&gt;</code> / <code>capture &lt;name&gt;</code></td>
-        <td>one agent's state, window usage, or screen</td></tr>
-    <tr><td><code>gang wait &lt;name&gt; [seconds]</code></td>
-        <td>block for two consecutive idle readings; <code>parked</code> and
-            <code>expired</code> end it too, so read what it printed</td></tr>
-    <tr><td><code>gang compact &lt;name&gt; --from &lt;sender&gt; --resume-stdin</code></td>
-        <td>submit the harness's own compaction command; a detached waiter attempts
-            the resume and reports delivery failure in status. Native command rejection
-            remains the harness's verdict</td></tr>
-    <tr><td><code>gang patrol</code></td>
-        <td>ambient roster sweep from cron: band warnings in, occupancy and
-            refused inbound out</td></tr>
-    <tr><td><code>gang cron [--install]</code></td>
-        <td>the crontab entry that runs the sweep, derived from this install and
-            the overrides in force; installing replaces a stale one in place</td></tr>
-    <tr><td><code>gang vet [--probe [profile]]</code></td>
-        <td>check installed versions, file schemas, and whether the patrol entry
-            still matches this install; optionally launch a real turn on a private
-            tmux socket and fire declared markers</td></tr>
-    <tr><td><code>gang adopt &lt;name&gt; -p &lt;profile&gt;</code></td>
-        <td>register an existing team window without launching or briefing it</td></tr>
-    <tr><td><code>gang attach</code> / <code>drop</code> / <code>down</code></td>
-        <td>watch the team live; end one named window; end the whole session</td></tr>
-    <tr><td><code>gang profiles</code> / <code>roles</code></td>
-        <td>list available harness and brief names</td></tr>
-  </table>
-  </div>
-  </section>
-
-  <section id="extend">
-  <h2>Extend it</h2>
-  <p>
-    A profile says how to talk to a harness; a role says what an agent is for.
-    Neither is an integration, and both are shadowed rather than patched, so a new
-    harness &mdash; or a fix for a TUI that moved under you &mdash; costs a file of
-    the same name and never surgery on the installed tree.
-    <a href="https://github.com/adambiggs/gangline/blob/main/README.md#profiles-roles-and-diagnostics">What
-    a profile declares</a>, and how to point gangline at your own, is in the README.
-  </p>
-  </section>
-
-  <section id="trail">
-  <h2>The trail</h2>
-  <p class="lede">
-    Every term names something real, and the
-    <a href="https://github.com/adambiggs/gangline/blob/main/docs/field-guide.md">musher's
-    field guide</a> maps all of it &mdash; roles, states and verbs, never rules.
-    The four worth knowing before you start:
-  </p>
-  <div class="tbl">
-  <table>
-    <tr><th>on the trail</th><th>on the team</th></tr>
-    <tr><td><span class="busy">tight tug</span> / <span class="ok">slack tug</span></td>
-        <td>busy / idle &mdash; a pulling dog keeps its tugline taut</td></tr>
-    <tr><td><span class="gate">hook set</span></td>
-        <td>occupied &mdash; the snow hook is dug in and the team stands anchored,
-            whether the musher set it or it caught on its own</td></tr>
-    <tr><td>dropped</td>
-        <td>a released window &mdash; deliberate and routine; finishing an arc and
-            being released is health, not failure</td></tr>
-    <tr><td>dog in the basket</td>
-        <td>a finished agent left running instead of released &mdash; the
-            anti-pattern <em>dropped</em> exists to prevent</td></tr>
-  </table>
-  </div>
-  </section>
-
-  <p class="lede outro">
-    One bash script. Profiles and roles are files you can replace. tmux is not a
-    hack under it &mdash; tmux <em>is</em> the substrate, and when the metaphor
-    stops carrying weight, every command still reads literally without it.
-  </p>
+  <p class="dim">One Bash CLI over tmux. No daemon, message bus, private protocol,
+  or silent fallback. State dies with the window.</p>
 
   <footer>
-    <a href="https://github.com/adambiggs/gangline">github.com/adambiggs/gangline</a>
-    &nbsp;&middot;&nbsp;
-    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a>
-    &nbsp;&middot;&nbsp;
-    <a href="https://github.com/adambiggs/gangline/blob/main/docs/DECISIONS.md">design decisions</a>
-    &nbsp;&middot;&nbsp; Apache-2.0
-    &nbsp;&middot;&nbsp; one bash script, no daemon
+    <a href="https://github.com/adambiggs/gangline">source</a> ·
+    <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a> ·
+    <a href="https://github.com/adambiggs/gangline/blob/main/CONSTITUTION.md">constitution</a> ·
+    Apache-2.0
   </footer>
 </main>
 </body>
