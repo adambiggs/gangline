@@ -97,6 +97,16 @@ A clone commits and pushes unchecked until you run this. With it, a
 non-conforming commit message is refused locally in a second; without it, the
 same message fails in CI minutes later, after you have moved on.
 
+## Proof must earn its cost
+
+Take the shortest path from the requested result to the repository's existing
+acceptance gates. Run those gates at a coherent checkpoint. If one reports a
+concrete failure, fix that failure and rerun the relevant gate.
+
+Before adding or changing a test, read CONTRIBUTING's "Test runtime is a
+contract." The no-wait rule is enforced by `test/lint.sh`; moving a timed test
+outside `test/` does not exempt it.
+
 ## Where the answer lives
 
 Restating something in the wrong document is how this repo grows duplication,

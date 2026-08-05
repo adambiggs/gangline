@@ -16,14 +16,6 @@ on: [push, pull_request]
 #             and only once the macOS cell is demonstrably stable, so a flake has
 #             one candidate cause rather than two.
 #
-#   tmux ver  ELSEWHERE, and narrower than an axis here. tmux-floor.yml tests one
-#             property — bracketed paste — against the version install.sh
-#             enforces, using distro images that ship old tmux without a source
-#             build. Running the whole suite per tmux version is still rejected:
-#             3.4's -J was one of four wrong hypotheses burned on a CI-only
-#             failure whose real cause was awk, so version breadth here buys
-#             candidate causes rather than coverage.
-#
 #   python    REJECTED. gangline is shell; python3 appears in one place.
 
 jobs:
@@ -52,9 +44,7 @@ jobs:
           case "${{ runner.os }}" in
             Linux) sudo apt-get install -y tmux shellcheck ;;
             macOS)
-              # No coreutils here, on purpose. The suite once needed `timeout`,
-              # which macOS does not ship, and brew's own advice for coreutils is
-              # to put its gnubin on PATH — which would also put GNU readlink,
+              # No coreutils here: brew's usual gnubin path would put GNU readlink,
               # grep, sed and awk ahead of the BSD ones and leave this cell green
               # while testing nothing it was added to test. If something here ever
               # needs a GNU tool again, expose that ONE binary, never gnubin.

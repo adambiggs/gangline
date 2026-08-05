@@ -79,31 +79,6 @@ ln -s ~/.local/share/gangline/bin/gang ~/.local/bin/gang
 Requirements: Bash, git, tmux 2.6 or newer, Python 3, and at least one supported
 CLI harness. `gang profiles` lists the harnesses currently offered.
 
-<details>
-<summary>Why the tmux floor is 2.6, and how to lower it</summary>
-
-The floor is bounded by evidence rather than by a feature. Every tmux subcommand,
-flag and format `gang` calls can be dated in tmux's own source, and the newest of
-them is 2.1 — the exact-match `=` target and `#{window_activity}`. But one thing
-`gang` depends on cannot be dated from source at all: that a `paste-buffer -p`
-arrives at the harness as a *paste* rather than being interpreted keystroke by
-keystroke. 2.6 is the oldest version the whole call set has been executed on, that
-property included, so 2.6 is what the installer promises.
-
-That makes the floor lowerable on purpose. Run the call set and the paste property
-against something older and the number can follow the evidence down; [issue
-#31](https://github.com/adambiggs/gangline/issues/31) has the inventory and both
-probes. What will not lower it is reading a changelog — tmux was still correcting
-how pasted input is interpreted [in
-3.6](https://github.com/tmux/tmux/blob/master/CHANGES).
-
-Requirement is not the same as coverage. CI exercises the floor itself and one
-version below it on every change to the installer, and runs the full suite on the
-newer versions its workflow pins — so the range between the floor and those meets
-the enforced floor without the suite ever running on it.
-
-</details>
-
 ## Your first team
 
 Start in the repository the team will work on:
