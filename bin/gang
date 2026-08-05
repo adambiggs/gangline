@@ -282,18 +282,42 @@ cutoff_read() { # populate the team declaration; 1 = absent, 2 = unreadable
 }
 
 CUTOFF_PARSED=0
+cutoff_clock_epoch() { # $1 = HH:MM, $2 = now; print the next local occurrence
+  python3 - "$1" "$2" <<'PY'
+from datetime import date, timedelta
+import sys
+import time
+
+hour, minute = map(int, sys.argv[1].split(":"))
+now = int(sys.argv[2])
+today = date.fromtimestamp(now)
+for offset in (0, 1):
+    day = today + timedelta(days=offset)
+    target = int(time.mktime((day.year, day.month, day.day, hour, minute, 0, -1, -1, -1)))
+    if target > now:
+        print(target)
+        break
+PY
+}
+
+cutoff_format_epoch() { # $1 = epoch; print it in local time
+  python3 - "$1" <<'PY'
+from datetime import datetime
+import sys
+
+print(datetime.fromtimestamp(int(sys.argv[1])).astimezone().strftime("%Y-%m-%d %H:%M %Z"))
+PY
+}
+
 cutoff_parse() { # $1 = duration or HH:MM, $2 = now; populate CUTOFF_PARSED
-  local spec="$1" now="$2" rest n unit seconds=0 day target
+  local spec="$1" now="$2" rest n unit seconds=0 target
   CUTOFF_PARSED=0
   if [[ "$spec" =~ ^[0-9]{2}:[0-9]{2}$ ]]; then
     [[ "$spec" =~ ^([0-9]{2}):([0-9]{2})$ ]] || return 1
     [ "$((10#${BASH_REMATCH[1]}))" -lt 24 ] \
       && [ "$((10#${BASH_REMATCH[2]}))" -lt 60 ] || return 1
-    day="$(date +%F)"
-    target="$(date -d "$day $spec" +%s 2>/dev/null)" || return 1
-    if [ "$target" -le "$now" ]; then
-      target="$(date -d "$day + 1 day $spec" +%s 2>/dev/null)" || return 1
-    fi
+    target="$(cutoff_clock_epoch "$spec" "$now")" || return 1
+    [ -n "$target" ] || return 1
     CUTOFF_PARSED="$target"
     return 0
   fi
@@ -320,7 +344,7 @@ human_seconds() { # $1 = non-negative seconds
 
 cutoff_summary() { # $1 = now
   local left=$(( CUTOFF_AT - $1 )) when
-  when="$(date -d "@$CUTOFF_AT" '+%Y-%m-%d %H:%M %Z')"
+  when="$(cutoff_format_epoch "$CUTOFF_AT")"
   if [ "$left" -ge 0 ]; then
     printf 'cutoff %s — %s remaining' "$when" "$(human_seconds "$left")"
   else

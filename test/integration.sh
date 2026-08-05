@@ -207,7 +207,12 @@ if "$GANG" cutoff 90 >/dev/null 2>&1; then
 else
   pass "a cutoff never guesses the unit of a bare number"
 fi
-clock_spec="$(date -d '+ 2 minutes' '+%H:%M')"
+clock_spec="$(python3 - <<'PY'
+from datetime import datetime, timedelta
+
+print((datetime.now() + timedelta(minutes=2)).strftime("%H:%M"))
+PY
+)"
 clock_cutoff="$("$GANG" cutoff "$clock_spec")"
 contains "a local clock time declares its next occurrence" "$clock_cutoff" "remaining"
 declared_cutoff="$("$GANG" cutoff 1h30m)"
