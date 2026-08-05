@@ -152,7 +152,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
-  GANG_MIDTURN_INPUT="" GANG_MIDTURN_ACTS="" GANG_SESSION_KEY=""
+  GANG_MIDTURN_INPUT="" GANG_SESSION_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
@@ -163,8 +163,6 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     ''|deferred) ;;
     *) die "profile '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
   esac
-  [ "${GANG_MIDTURN_ACTS:-}" != 1 ] || [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-    || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -403,21 +401,15 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   return 0
 }
 
-turn_vets_paint() { :; }
-
 BUSY_EXPIRED_WHAT="pty activity bound reached"
 
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
-  if [ "${GANG_MIDTURN_ACTS:-}" = 1 ] && parked "$1"; then
-    activity_hold_clear "$1"
-    return 1
-  fi
   local turn_rc=0 undetermined=0
   BUSY_EXPIRED_WHAT="pty activity bound reached"
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
     0) activity_hold_clear "$1"; return 0 ;;
-    1) turn_vets_paint "$1"; activity_hold_clear "$1"; return 1 ;;
+    1) activity_hold_clear "$1"; return 1 ;;
     2) undetermined=1 ;;
     3) ;;
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
@@ -462,7 +454,6 @@ churn_verdict() { # $1 = window id -> "churning" | "still" | "" if it was not sa
 
 churn_first_sample() { # $1 = window id, $2 = profile -> first pane checksum
   load_profile "$2"
-  if parked "$1"; then activity_hold_clear "$1"; return 1; fi
   if busy_painted "$1"; then activity_hold_clear "$1"; return 1; fi
   local activity_rc=0
   recently_active "$1" || activity_rc=$?
@@ -632,68 +623,16 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   return 1
 }
 
-PARKED=0
-PARKED_WAIT_TARGET=""
 WAIT_STATE=""
 
-unpark() { # drop OUR marker, never somebody else's
-  [ "$PARKED" = 1 ] || return 0
-  PARKED=0
-  local w held
-  w="$(self_window)" || return 0
-  held="$(tmux show-options -wqv -t "$w" @gl_waiting 2>/dev/null)" || return 0
-  [ "${held%% *}" = "$$" ] || return 0
-  tmux set-option -uw -t "$w" @gl_waiting 2>/dev/null || true
-}
-
-on_exit() { lock_release; unpark; }
-
-park_self() { # $1 = target name; mark this window as blocked in gang's own wait
-  local w
-  w="$(self_window)" || return 0
-  tmux set-option -w -t "$w" @gl_waiting "$$ $1" 2>/dev/null || return 0
-  PARKED=1
-  trap 'on_exit' EXIT
-}
-
-parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
-  local held holder
-  PARKED_WAIT_TARGET=""
-  held="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" \
-    || die "cannot read gang-wait state for pane $1 — refusing to guess parked/idle"
-  [ -n "$held" ] || return 1
-  holder="${held%% *}"
-  case "$holder" in
-    ''|*[!0-9]*)
-      printf 'gang: discarded an unreadable gang-wait mark on pane %s: %s\n' "$1" "$held" >&2
-      tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
-      return 1 ;;
-  esac
-  case "$held" in
-    *' '*) PARKED_WAIT_TARGET="${held#* }" ;;
-  esac
-  kill -0 "$holder" 2>/dev/null && return 0
-  tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true  # waiter died; reclaim
-  PARKED_WAIT_TARGET=""
-  return 1
-}
+on_exit() { lock_release; }
 
 wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   local t=0 timeout="${3:-300}" streak=0 busy_rc=0
   WAIT_STATE=""
-  park_self "$2"
   while :; do
     if occupied "$1"; then
       die "'$2' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it (gang attach)"
-    fi
-    if [ "${GANG_MIDTURN_ACTS:-}" = 1 ] && parked "$1"; then
-      if [ -n "$PARKED_WAIT_TARGET" ]; then
-        WAIT_STATE="parked (waiting on $PARKED_WAIT_TARGET)"
-      else
-        WAIT_STATE="parked (gang wait in progress)"
-      fi
-      unpark
-      return 0
     fi
     busy_rc=0
     busy "$1" || busy_rc=$?
@@ -702,12 +641,10 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
       1) streak=$((streak + 1))
          if [ "$streak" -ge 2 ]; then
            WAIT_STATE="idle (slack tug)"
-           unpark
            return 0
          fi ;;
       2) # An arm has spent its whole allowance — which one is in the phrase,
          WAIT_STATE="expired ($BUSY_EXPIRED_WHAT)"
-         unpark
          return 0 ;;
       *) die "internal: busy returned unknown verdict $busy_rc" ;;
     esac
@@ -1138,15 +1075,6 @@ state_now() { # $1 = window id, profile loaded -> the state, in words
     echo "occupied (authority unknown)"
     return
   fi
-  if parked "$1"; then
-    activity_hold_clear "$1"
-    if [ -n "$PARKED_WAIT_TARGET" ]; then
-      echo "parked (waiting on $PARKED_WAIT_TARGET)"
-    else
-      echo "parked (gang wait in progress)"
-    fi
-    return
-  fi
   local busy_rc=0
   busy "$1" "${2:-}" || busy_rc=$?
   case "$busy_rc" in
@@ -1161,7 +1089,6 @@ paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
     occupied*) colour "$C_BAD"  "$1" ;;
     expired*) colour "$C_BAD" "$1" ;;
-    parked*) colour "$C_WORK" "$1" ;;
     busy*)  colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
   esac

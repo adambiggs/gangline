@@ -81,7 +81,6 @@ Prints one current state:
   witnesses active work;
 - `idle (slack tug)` — the evidence positively witnesses readiness;
 - `occupied (authority unknown)` — a native UI owns the composer;
-- `parked (...)` — the agent itself is blocked in `gang wait`; or
 - `expired (...)` — the available evidence can no longer determine the answer.
 
 It also reports staged input, pending or failed self-compaction, and—only when
@@ -100,7 +99,7 @@ Prints the tail of the target pane after trimming trailing blank terminal rows.
 
 ### `gang wait <name> [timeout_seconds]`
 
-Waits until the target is positively idle, parked, occupied, or indeterminate.
+Waits until the target is positively idle, occupied, or indeterminate.
 This is an operator command; mandatory tests do not exercise its wall-clock
 behavior.
 
@@ -152,7 +151,6 @@ there, never in a harness-name branch in the core script.
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
-| `GANG_MIDTURN_ACTS=1` | mid-turn text acts immediately rather than queueing |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
 | `GANG_SESSION_KEY=1` | context lookup needs the startup-envelope nonce |

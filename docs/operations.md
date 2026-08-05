@@ -98,8 +98,7 @@ expired, or contradictory evidence produces an explicit indeterminate state.
 
 `busy` means Gangline has positive evidence of work. `idle` means it has positive
 evidence the composer is ready. `occupied` means a native UI owns the composer.
-`parked` means an agent is itself blocked in `gang wait`. `expired` means the
-available evidence can no longer answer truthfully.
+`expired` means the available evidence can no longer answer truthfully.
 
 Profiles contain the only harness-specific regexes and parsers. A native TUI
 update can invalidate them. The intended repair loop is direct: reproduce the
