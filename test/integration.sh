@@ -11,6 +11,17 @@ GANG="$ROOT/bin/gang"
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
+# The Bash fixture establishes every transition synchronously. Production waits
+# are inputs here, not evidence, so replace their clock with an immediate one.
+mkdir -p "$RUN_ROOT/bin"
+cat > "$RUN_ROOT/bin/sleep" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod +x "$RUN_ROOT/bin/sleep"
+PATH="$RUN_ROOT/bin:$PATH"
+export PATH
+
 cleanup() {
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
