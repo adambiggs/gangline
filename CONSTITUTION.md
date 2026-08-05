@@ -16,7 +16,7 @@ own right. Violating a law is a defect.
 2. **Every message is attributed; trust is assumed.** A sender identity is required —
    there is no default. Where Gangline can see the sending window it reads the name off
    that window and refuses a mismatch, so an agent cannot casually sign as a peer.
-   Where it cannot see one — the operator's own shell, cron — the name stands as
+   Where it cannot see one — the operator's own shell — the name stands as
    claimed. This is attribution, not authentication, and it holds because the system
    is single-tenant by design: anyone at the keyboard is the operator. Never build
    authentication, generation fencing, or anti-tamper into this repo.

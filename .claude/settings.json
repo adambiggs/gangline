@@ -11,8 +11,7 @@
       "Bash(test/integration.sh:*)",
       "Bash(gang roster:*)",
       "Bash(gang status:*)",
-      "Bash(gang capture:*)",
-      "Bash(gang vet:*)"
+      "Bash(gang capture:*)"
     ],
     "deny": [
       "Bash(tmux kill-server:*)",
