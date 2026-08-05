@@ -1,5 +1,77 @@
 # Changelog
 
+## [0.5.0](https://github.com/adambiggs/gangline/compare/gangline-v0.4.0...gangline-v0.5.0) (2026-08-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* reduce Gangline to substrate primitives
+
+### Features
+
+* **claude-code:** the context beacon rides the launch line, quoted for the shell that reads it ([6cf0139](https://github.com/adambiggs/gangline/commit/6cf01393259e75622ca319fbca6ba548f3083a40))
+* **context:** tell an agent what it is carrying, not what is left ([724458b](https://github.com/adambiggs/gangline/commit/724458b8c003d3455c013653d704ab1f3ab89427))
+* **context:** the compaction bracket, an event tier over the mark ([3698e20](https://github.com/adambiggs/gangline/commit/3698e20ef40965d2a1d54b9625f97d87ea95c169))
+* **context:** the context fact, an owned tier over the beacon scrape ([6f8753c](https://github.com/adambiggs/gangline/commit/6f8753c4449ad05579bbd727c2122880d671b6ff))
+* **context:** write the band nudges as instructions, not prose ([e5e40ef](https://github.com/adambiggs/gangline/commit/e5e40efc9e2708f817b591f0dddcdf03390e2b66))
+* **cron:** derive the patrol entry from the install that will run it ([3455b88](https://github.com/adambiggs/gangline/commit/3455b88ae667f9b1d8b3d15797524ce99e647219))
+* **cutoff:** a hitch can declare the team's budget on the way in ([7ea3764](https://github.com/adambiggs/gangline/commit/7ea37643d582933a59ff9919560263aa8033fbc0))
+* **cutoff:** the team's wall-clock budget enters as a declaration, not a measurement ([cbfa3d0](https://github.com/adambiggs/gangline/commit/cbfa3d07a5f75738020fff5b1ac339f6688048b1))
+* **hooks:** run the quick CI gates before the push, not after it ([c19e25b](https://github.com/adambiggs/gangline/commit/c19e25bdf8cfb20b65b2daa9ecd1d0248ecb9196))
+* **hook:** the budget speaks in the turn, both notes in one reply ([674ed2f](https://github.com/adambiggs/gangline/commit/674ed2fb6bd172786492fecc9937ffdd03b79b70))
+* **hook:** turn brackets, and a busy() that prefers them to the pane ([019bc06](https://github.com/adambiggs/gangline/commit/019bc060db61bc7670cee522dfd38709042bcb6b))
+* **install:** refresh an existing patrol entry when the install updates ([6c174e8](https://github.com/adambiggs/gangline/commit/6c174e8b272ed65676d3c25334023e157c591643))
+* **occupancy:** the occupied raise, an event tier over both scrapes ([d131ab9](https://github.com/adambiggs/gangline/commit/d131ab9ca9ea1980975ebca613a6645205085ce5))
+* **patrol:** an explicit ladder for the budget, absolute rungs refused ([535524e](https://github.com/adambiggs/gangline/commit/535524eb91eb8e92fbb9d933a8453d36e00398b8))
+* **patrol:** record a sweep in gang, not in a crontab pipeline ([9ffa6e2](https://github.com/adambiggs/gangline/commit/9ffa6e29ddd160facd1c08ece65083a6bd82ef7a))
+* **patrol:** the band ladder speaks on the time axis ([087db27](https://github.com/adambiggs/gangline/commit/087db27bd66dfe729dbdcd2a735f6039ea8ec447))
+* **patrol:** the team's budget is reported on every sweep ([9bbee3d](https://github.com/adambiggs/gangline/commit/9bbee3d0f03830c8064d024ac24f5eb5d1787412))
+* **pii-scan:** scan commits for PII, gate pushes on it ([567a700](https://github.com/adambiggs/gangline/commit/567a700a90f12fbd768296e4ef63b9ed3c0bd0dc))
+* **probe:** vet --probe learns the fact pipeline ([53ed9ee](https://github.com/adambiggs/gangline/commit/53ed9ee5bcc31a8a170e40da3b4134a9c032bc29))
+* **profile:** wire claude-code's turn hooks at hitch, in exec form ([87743a4](https://github.com/adambiggs/gangline/commit/87743a49645b3a158d855d07ac7812d7e7302be5))
+* **send:** hold a send behind a hand at the keyboard instead of handing it back ([bf76648](https://github.com/adambiggs/gangline/commit/bf76648acfcff21f9ac01ef791d7b0b06eeacd52))
+* **vet:** --file-issue reaches the tier-conflict class ([bda6c24](https://github.com/adambiggs/gangline/commit/bda6c24b9b25454c8ac773a50f1f44fe658d1e16))
+* **vet:** hold each agent's two witnesses against each other ([2ea1982](https://github.com/adambiggs/gangline/commit/2ea198284b59c52b842d8d7a099c1e8425a2ba26))
+* **vet:** python3 is re-asserted where an operator looks, by being run ([4e614d7](https://github.com/adambiggs/gangline/commit/4e614d7f1020871e2dca44a2434e8b0717b96e82))
+* **vet:** report a patrol entry that stopped matching this install ([e029a74](https://github.com/adambiggs/gangline/commit/e029a74ebf3e913d2c98a670f35388440fd1645c))
+
+
+### Bug Fixes
+
+* bind harness commands to their exact team ([88adef6](https://github.com/adambiggs/gangline/commit/88adef6c84804ffc11e1b459e6ed1129e939f8f0))
+* **codex:** tell Codex's placeholder from a draft somebody typed ([97c0450](https://github.com/adambiggs/gangline/commit/97c04503acdea5f8fee0c006c545f9458b204c77)), closes [#53](https://github.com/adambiggs/gangline/issues/53)
+* **context:** quote both names in compact's inline-resume refusal ([d26286f](https://github.com/adambiggs/gangline/commit/d26286f8584553a02cc31dbf9e04450bd66eb815))
+* **context:** quote the agent name in the suggested compaction command ([351efc4](https://github.com/adambiggs/gangline/commit/351efc4c61e1f3b4bcb48fc749f2f37fa9d231d7))
+* **context:** steer the band note to the handoff already being kept ([497048d](https://github.com/adambiggs/gangline/commit/497048dcc2e7a557ef4faa2a2046cb8b6fe7ef69))
+* **context:** stop reading a zero token count as usage dropping ([ec6159d](https://github.com/adambiggs/gangline/commit/ec6159df08f41a2a50a1fd6ee3838853f8af4ba0))
+* keep disabled context lights invisible ([85477aa](https://github.com/adambiggs/gangline/commit/85477aa4a3304f2838c9ff743868faa94621daf4))
+* **lint:** guard on shellcheck running, not its name resolving ([5b10b83](https://github.com/adambiggs/gangline/commit/5b10b83ea312e71eaddaa609326d4c9d2c056c65))
+* **patrol:** let an unproved compaction expire instead of silencing an agent ([f208506](https://github.com/adambiggs/gangline/commit/f208506e7e35d6ace3531476c0e2c457253c9c66))
+* **patrol:** nudge the agent that is working, not only the one that is idle ([aa47fab](https://github.com/adambiggs/gangline/commit/aa47fab0875a5e2429d63afed4683c6f891f6ecf))
+* **patrol:** rebuild an unreadable band memory instead of going silent ([7ea66b6](https://github.com/adambiggs/gangline/commit/7ea66b6ad6b497bfe09334137aa473b91ac5ce73))
+* **patrol:** rebuild the state gang wrote instead of refusing over it ([64d85c4](https://github.com/adambiggs/gangline/commit/64d85c42331286f6a3d69e59dbe4a68cee007eb4))
+* **pii-scan:** pin and assert bash 3.2 on the macOS CI cell ([fc70490](https://github.com/adambiggs/gangline/commit/fc70490e01c13f9060511b382c9d49cbf9788ace))
+* **probe:** a row that names a busy marker names the file, not the pattern ([29c48df](https://github.com/adambiggs/gangline/commit/29c48df69d6e3eb7dc7d16691ed5e44a0ef786c5))
+* **profiles:** an indented marker is a menu cursor, not a prompt ([5731f40](https://github.com/adambiggs/gangline/commit/5731f4097f83c58b4abeb7fe04c0c62c93bb4bae))
+* **profiles:** restore native Codex hooks ([70dd4e2](https://github.com/adambiggs/gangline/commit/70dd4e294f9fb2f6414c3cff937a6620bc10c400))
+* **profiles:** the box is the last non-empty row ([f764110](https://github.com/adambiggs/gangline/commit/f764110f2b0cedb0efae3a92a0a50314b0e394b6))
+* **profiles:** the marker picks the box's row, not emptiness ([6b02018](https://github.com/adambiggs/gangline/commit/6b020183b744f87837520f6e4c5f6bf60aa1a0a7))
+* scan only prospective PII additions ([a4e52aa](https://github.com/adambiggs/gangline/commit/a4e52aa5923772e0d8b1c5289147d83b062300d9))
+* **send:** a clear nobody made cannot erase the record of a paste ([ae41693](https://github.com/adambiggs/gangline/commit/ae41693704cd6de1bd19eff9fe789c5f94e9855a))
+* **send:** an unverified paste is recorded, not only reported ([d81f02f](https://github.com/adambiggs/gangline/commit/d81f02f545b7f68aa007fbfc0fce0365a81fa053))
+* **send:** refuse a delivery into a box that still holds a draft ([e0d5d31](https://github.com/adambiggs/gangline/commit/e0d5d319e56eb3129d882fad58b14511d556f991))
+* **test:** clear the two shellcheck warnings that turned CI red ([91291b6](https://github.com/adambiggs/gangline/commit/91291b62b8e7fac5141e21c0887d26617027b547))
+* **test:** the retryable fixture counts its looks instead of trusting $RANDOM ([b6cf1ef](https://github.com/adambiggs/gangline/commit/b6cf1ef56ce497df925d6c15302eaf8700db795d))
+* **turn-bracket:** a closed bracket stops outranking a pane still being written to ([0562d8a](https://github.com/adambiggs/gangline/commit/0562d8afad8182e11d28a9a194ba8c5638a6846e))
+* **vet:** a compaction in flight explains the paint it is blamed for ([9ee60e3](https://github.com/adambiggs/gangline/commit/9ee60e3cfa34fbfed01740a30876a6eea5117b8a))
+* **vet:** a failed gh issue create can no longer report a filing ([3e056fe](https://github.com/adambiggs/gangline/commit/3e056fe2277a30326b8575023eec0257a32880b7))
+* **vet:** the tier row names the file that declares a marker, not the marker ([6a08458](https://github.com/adambiggs/gangline/commit/6a08458972c4090932e1785b50877c43da0f4d06))
+
+
+### Code Refactoring
+
+* reduce Gangline to substrate primitives ([a1f6286](https://github.com/adambiggs/gangline/commit/a1f6286c847d2377f9ef7a3253b6c9c6dc5de23f))
+
 ## [0.4.0](https://github.com/adambiggs/gangline/compare/gangline-v0.3.0...gangline-v0.4.0) (2026-07-31)
 
 
