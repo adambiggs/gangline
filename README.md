@@ -69,8 +69,8 @@ gang down
 ## Long sessions
 
 Agents receive one short startup contract: their Gangline name, how to reply,
-and how to request native compaction. An optional role brief may be supplied with
-`gang hitch -r NAME` from `GANG_ROLES`, but Gangline ships no team doctrine.
+and how to request native compaction. Goals, roles, and working agreements stay
+as ordinary prose in the native harnesses and messages.
 
 At a natural checkpoint an agent runs:
 

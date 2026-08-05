@@ -7,10 +7,9 @@
 ### `gang up [name] [hitch flags]`
 
 Hitches one agent, named `lead` when omitted, then attaches or switches the
-current tmux client to it. `GANG_PROFILE` selects the harness. `GANG_ROLE`, when
-set, supplies an optional brief.
+current tmux client to it. `GANG_PROFILE` selects the harness.
 
-### `gang hitch <name> [-p profile] [-r brief] [-d dir] [-m model] [--resume]`
+### `gang hitch <name> [-p profile] [-d dir] [-m model] [--resume]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 The launch environment carries the exact `GANG_SESSION` plus any custom profile
@@ -18,8 +17,6 @@ and lock paths, so harness commands cannot drift to another session on the same
 tmux server.
 
 - `-p` selects a profile.
-- `-r` selects `NAME.md` from `GANG_ROLES`, falling back to the repository's
-  `roles/` directory. Gangline ships no role briefs.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the profile's model option.
 - `--resume` uses the profile's directory-scoped native resume command. Profiles
@@ -127,11 +124,9 @@ light crosses an edge.
 | Variable | Meaning |
 |---|---|
 | `GANG_PROFILE` | default profile for `up` and `hitch` |
-| `GANG_ROLE` | optional brief used by `up` |
 | `GANG_SESSION` | exact tmux session Gangline addresses |
 | `GANG_CONTEXT_LIGHTS` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_PROFILES` | custom profile directory searched before shipped profiles |
-| `GANG_ROLES` | custom optional-brief directory |
 | `GANG_BOOT_TIMEOUT` | harness startup readiness bound |
 | `GANG_LOCK_DIR` | shared per-pane delivery-lock directory |
 

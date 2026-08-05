@@ -81,7 +81,7 @@ usage() {
 gang — drive native CLI agents in tmux
 
   gang up [name] [hitch flags]
-  gang hitch <name> [-p <profile>] [-r <brief>] [-d <dir>] [-m <model>] [--resume]
+  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [--resume]
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
   gang compact <name>
@@ -96,11 +96,9 @@ gang — drive native CLI agents in tmux
 
 Environment:
   GANG_PROFILE         default profile (claude-code)
-  GANG_ROLE            optional brief for gang up
   GANG_SESSION         tmux session (gangline)
   GANG_CONTEXT_LIGHTS  off, or absolute yellow,red token thresholds
   GANG_PROFILES        custom profile directory
-  GANG_ROLES           custom brief directory
   GANG_BOOT_TIMEOUT    harness startup timeout in seconds
 EOF
 }
@@ -169,14 +167,6 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
 
-role_file() { # $1 = role name -> path on stdout; yours wins over the shipped one
-  local d
-  for d in ${GANG_ROLES:+"$GANG_ROLES"} "$ROOT/roles"; do
-    [ -f "$d/$1.md" ] && { printf '%s' "$d/$1.md"; return 0; }
-  done
-  return 1
-}
-
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
   case "$1" in
     hitch) return 1 ;;
@@ -237,15 +227,9 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
     || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
 }
 
-startup_brief() { # $1 = agent name, $2 = optional role
-  local role_path="" role_text=""
-  if [ -n "$2" ]; then
-    role_path="$(role_file "$2")" \
-      || die "unknown role '$2' in ${GANG_ROLES:-$ROOT/roles}"
-    role_text=" Role brief: $role_path. Read it now."
-  fi
-  printf 'You are %s in Gangline. Messages name their sender in the gang envelope. Reply to that sender with: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s.%s' \
-    "$1" "$1" "$role_text"
+startup_brief() { # $1 = agent name
+  printf 'You are %s in Gangline. Messages name their sender in the gang envelope. Reply to that sender with: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s.' \
+    "$1" "$1"
 }
 
 win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
@@ -1003,21 +987,18 @@ context_light_reply() { # $1 event, $2 profile; safe reply hooks only
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0 launch_env
+  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" id resume=0 launch_env
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
   while [ $# -gt 0 ]; do case "$1" in
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
-    -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     --resume)     resume=1; shift ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
-  [ -z "$role" ] || role_file "$role" >/dev/null \
-    || die "hitch: unknown role '$role' in ${GANG_ROLES:-$ROOT/roles}"
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_profile "$prof" \
@@ -1058,7 +1039,7 @@ cmd_hitch() {
   fi
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
   local msg
-  msg="$(startup_brief "$name" "$role")"
+  msg="$(startup_brief "$name")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   command -v python3 >/dev/null 2>&1 \
     || die "python3 is required for native hook payloads and context lights"
@@ -1083,9 +1064,7 @@ cmd_hitch() {
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   local name="lead" id
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
-  if [ -n "${GANG_ROLE:-}" ]; then cmd_hitch "$name" -r "$GANG_ROLE" "$@"
-  else cmd_hitch "$name" "$@"
-  fi
+  cmd_hitch "$name" "$@"
   id="$(win_id "$name")" || die "up: '$name' vanished between hitch and attach"
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"

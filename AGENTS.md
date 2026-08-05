@@ -15,9 +15,9 @@ If it resolves into this checkout, every save changes the executable used by
 attached agents immediately. There is no daemon or build step. Keep the script
 parseable and make small green checkpoints.
 
-Profiles and optional role briefs are read at hitch time. Existing agents retain
-the copy already in their context. Model selection is also a launch choice: drop
-the old window and hitch a new one to change it.
+Profiles are read at hitch time. Existing agents retain the copy already in their
+context. Model selection is also a launch choice: drop the old window and hitch
+a new one to change it.
 
 ## Preserve guards
 
