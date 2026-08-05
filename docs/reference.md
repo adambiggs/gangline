@@ -33,7 +33,7 @@ Starts a harness in a new tmux window. `spawn` is an alias.
   working directory, instead of starting a fresh one. This is how a team is
   rebuilt after the tmux server dies and takes every window's state with it.
   A profile without a declared resume form refuses the flag rather than launching
-  bare — see [ADR-0007](adr/0007-server-death-is-a-relaunch-not-a-restore.md),
+  bare — see the [resume decision](DECISIONS.md#server-loss-is-a-relaunch-not-restoration),
   which also records why `opencode` and `pi` declare none.
 - `--cutoff`: declare the team's cutoff while hitching, in the forms `gang cutoff`
   itself takes — a duration or an `HH:MM` clock time, described under The cutoff
@@ -141,13 +141,13 @@ Submits the profile's compaction command through the same verified injection
 path. A profile with no compaction command is refused. Verification proves the
 command was delivered, not that the harness executed it successfully.
 
-A busy peer cannot be compacted. Gangline permits an agent to compact its own
-busy window because the slash command can queue behind the turn that ends when
-its `gang compact` call returns. This is permission at the transport layer, not a
-promise that every harness accepts its slash command there: Codex rejects
-`/compact` while a task is active, and a self-issued Gangline call keeps that task
-active. Compact an idle Codex from another caller or let Codex auto-compact; do
-not attach a self-issued Codex resume to a native command Codex will reject.
+A busy peer cannot be compacted. A profile declaring
+`GANG_SELF_COMPACT=deferred` gives its own agent a safe path: `gang compact`
+records one request, the native Stop hook claims it when the current turn ends,
+and a one-shot worker waits for the input box, submits the native command, and
+exits. Codex declares this because it rejects `/compact` while its task is still
+active. A pending or failed request is reported by `status`; a failure never
+becomes a reported compaction.
 
 `--resume-stdin` reads the complete handoff through EOF and requires `--from` or
 `GANG_FROM`, checked under the same identity rule as `send`. The old inline
@@ -155,7 +155,9 @@ not attach a self-issued Codex resume to a native command Codex will reject.
 prose before Gangline starts. Gangline starts a detached waiter that delivers
 the attributed resume at a boundary where it cannot overtake its own compaction
 command. Failure is stored on the window and printed by `status` and `patrol`.
-Without `--resume-stdin`, no sender is required.
+Without `--resume-stdin`, no sender is required. Deferred self-compaction refuses
+`--resume-stdin` and relies on the harness's native summary; an external caller
+may still pair compaction with an attributed resume.
 
 ## Observation and waiting
 
@@ -174,7 +176,8 @@ It may then print diagnostic lines for a resume that failed after compaction or
 an undelivered paste recorded in the input box. Scripts should match the first
 line's state prefix rather than requiring single-line output.
 
-Busy takes the highest evidence tier still fresh (ADR-0008): a live turn
+Busy takes the highest evidence tier still fresh
+([decision](DECISIONS.md#evidence-is-selected-per-predicate)): a live turn
 bracket fed by the harness's own hook events where the profile wires them, then
 a declared busy marker, recent pty activity on a profile known to be quiet at
 rest, or pane movement between captures. Occupancy takes precedence over busy,
@@ -186,7 +189,7 @@ the tier below.
 clear it. No shipped profile classifies the UI it found, so the qualifier is
 always `(authority unknown)` today; a profile that earns a narrower one adds it
 without changing the primary word
-([ADR-0004](adr/0004-occupancy-is-not-authority.md)).
+([decision](DECISIONS.md#occupancy-is-not-authority)).
 
 `parked` is an agent blocked inside Gangline's own `wait`. It is reported for every
 waiter, because *available* and *idle* are different claims and only the first is
@@ -200,7 +203,8 @@ to idle is what would make a fabricated busy permanent.
 
 ### `gang context <name>`
 
-Prints the best fresh context witness (ADR-0008): a figure the owned tier
+Prints the best fresh context witness
+([decision](DECISIONS.md#evidence-is-selected-per-predicate)): a figure the owned tier
 recorded — on claude-code, the shipped statusline script writes it as it paints
 the beacon — and the profile's own reader when no fresh fact exists. A
 successful readout prints `<used>k/<window>k (<percent>%)`. The command fails
@@ -254,8 +258,7 @@ more whole `<n>h`, `<n>m`, `<n>s` groups — `90m`, `2h`, `1h30m`. A clock time 
 timezone. Anything else is refused, a bare number included: gang does not pick a
 unit on the operator's behalf.
 
-The cutoff is session-scoped — one team, one cutoff
-([ADR-0009](adr/0009-time-bands-are-relative.md)). Declaring again replaces the
+The cutoff is session-scoped — one team, one cutoff. Declaring again replaces the
 previous declaration and re-spans the budget from now, so what is stored is
 always the cutoff together with the moment it was declared. With no argument the
 command prints the declaration, or `no cutoff declared`; an explicit query is
@@ -279,8 +282,8 @@ Performs one roster sweep. For each adopted agent it:
    much budget is left — escalating to the banking reserve at the last rung and to
    a distinct overrun line past the cutoff. The rungs are fractions of the declared
    budget minus `GANG_TIME_RESERVE`, so the same elapsed minutes land differently
-   under different budgets ([ADR-0009](adr/0009-time-bands-are-relative.md)). It
-   needs no profile and no readout, which is why it is reported ahead of everything
+   under different budgets. It needs no profile and no readout, which is why it is
+   reported ahead of everything
    that needs one, and why an agent gang cannot otherwise patrol still carries it;
    with no cutoff declared there is no row and no log line. This row reports; the
    note that acts on it comes lower, because typing into a pane needs a profile
@@ -294,8 +297,7 @@ Performs one roster sweep. For each adopted agent it:
    while an agent sits idle, so a sweep that gives up on an agent's context still
    tells it how much of the day is left. The note states the remaining budget,
    where the context warning below withholds its own figure — remaining budget is
-   what an agent paces against, and remaining context is not
-   ([ADR-0009](adr/0009-time-bands-are-relative.md)). The two legs remember their
+   what an agent paces against, and remaining context is not. The two legs remember their
    bands separately, so a context crossing never silences a budget note or the
    reverse;
 6. reads and parses context usage;
@@ -350,7 +352,7 @@ command, where `--install` fails loudly instead.
 
 ### `gang hook`
 
-Ingestion verb for harness hook events (ADR-0008). It reads a JSON hook payload
+Ingestion verb for harness hook events. It reads a JSON hook payload
 from stdin, identifies the current agent through `TMUX_PANE`, branches on the
 native `hook_event_name`, and writes the mapped fact to that agent's own window
 options. Three events carry the turn bracket: `UserPromptSubmit` opens it,
@@ -510,11 +512,12 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 | Declaration | Meaning |
 |---|---|
 | `GANG_LAUNCH` | required harness launch command |
-| `GANG_RESUME_LAUNCH` | full launch command that resumes the most recent harness conversation in the working directory, used by hitch's `--resume`. A complete command rather than a flag, because a harness may spell resume as a subcommand. Declared only where the harness scopes sessions to a directory; a profile that declares none refuses `--resume` rather than launching bare (ADR-0007) |
+| `GANG_RESUME_LAUNCH` | full launch command that resumes the most recent harness conversation in the working directory, used by hitch's `--resume`. A complete command rather than a flag, because a harness may spell resume as a subcommand. Declared only where the harness scopes sessions to a directory; a profile that declares none refuses `--resume` rather than launching bare |
 | `GANG_MODEL_OPT` | model option used by hitch's `-m` |
 | `GANG_BUSY_REGEX` | painted working marker |
 | `GANG_OCCUPIED_REGEX` | modal marker, confirmed against composer absence |
 | `GANG_COMPACT_CMD` | native compaction command |
+| `GANG_SELF_COMPACT=deferred` | a self-issued compact request is consumed once by the native Stop hook rather than submitted during the active turn |
 | `GANG_COMPACTING_REGEX` | live compaction marker |
 | `GANG_MIDTURN_INPUT=1` | composer safely takes input during a turn |
 | `GANG_MIDTURN_ACTS=1` | harness *acts* on ordinary text inside the running turn, rather than queueing it until the turn ends. Strictly stronger than `GANG_MIDTURN_INPUT` and the only thing that makes a parked agent reachable mid-wait. Declared by `claude-code` alone; `vet --probe` can confirm it from B-before-A filesystem ordering but cannot refute it |
@@ -530,7 +533,7 @@ A profile is sourced shell, not a data-only record. Its declaration surface is:
 The scrape declarations above are every predicate's bottom tier. Per predicate,
 evidence is tiered — owned event > owned file > pane scrape — and every reader
 takes the highest tier still fresh, refusing a fact past its bound rather than
-trusting it as last-known-good (ADR-0008). A profile adds a tier above the
+trusting it as last-known-good. A profile adds a tier above the
 scrape by wiring the harness's own surfaces into the launch line at hitch — an
 inline settings string naming `gang hook`, a notify program — never by a
 generated file on disk. Degradation is per predicate, not per profile: a
@@ -564,10 +567,10 @@ fragments and are not listed as roles.
 | `GANG_ROLE` | role used by `up` when `-r` is absent | `lead` |
 | `GANG_FROM` | sender identity for `send` and compact resumes | none |
 | `GANG_CONTEXT_FLOOR` | first rung, in absolute tokens — the same number on every harness | `120000` |
-| `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window ([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)) | `350000` |
-| `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default ([ADR-0005](adr/0005-context-bands-are-absolute.md)) | `auto` |
-| `GANG_TIME_RESERVE` | banking room held back from the end of a declared cutoff, so the last time rung fires where banking has to start rather than where the budget stops. A whole percentage below 100, or a duration (`15m`). The absolute form is an operator's to pick rather than a convenience: writing results out costs roughly the same however much budget is left, so a proportional reserve shrinks below the cost of banking exactly when the budget is short ([ADR-0009](adr/0009-time-bands-are-relative.md)) | `10%` |
-| `GANG_TIME_BANDS` | explicit comma-separated ladder for the budget, bypassing that derivation; every rung is a `%` of what the reserve leaves — the same span the derivation divides — and an absolute duration is refused, naming the rung it should have been. The escape hatch inverts here: on the context axis absolute is the design and `%` is the hatch ([ADR-0009](adr/0009-time-bands-are-relative.md)) | `auto` |
+| `GANG_CONTEXT_CAP` | ceiling for the last rung, in absolute tokens. Five rungs are derived across `[floor, min(90% of window, cap)]`, so both ends are token counts and only the spacing fits the window | `350000` |
+| `GANG_CONTEXT_BANDS` | explicit comma-separated ladder, bypassing that derivation; a `%` of the agent's window is an escape hatch, never a default | `auto` |
+| `GANG_TIME_RESERVE` | banking room held back from the end of a declared cutoff, so the last time rung fires where banking has to start rather than where the budget stops. A whole percentage below 100, or a duration (`15m`). The absolute form is an operator's to pick rather than a convenience: writing results out costs roughly the same however much budget is left, so a proportional reserve shrinks below the cost of banking exactly when the budget is short | `10%` |
+| `GANG_TIME_BANDS` | explicit comma-separated ladder for the budget, bypassing that derivation; every rung is a `%` of what the reserve leaves — the same span the derivation divides — and an absolute duration is refused, naming the rung it should have been. The escape hatch inverts here: on the context axis absolute is the design and `%` is the hatch | `auto` |
 | `GANG_PROFILES` | one custom profile directory searched before shipped files | none |
 | `GANG_ROLES` | one custom role directory searched before shipped files | none |
 | `GANG_BOOT_TIMEOUT` | seconds hitch waits for a ready input box | `30` |

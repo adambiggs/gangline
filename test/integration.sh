@@ -157,6 +157,10 @@ codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_profile")"
 equal "the Codex profile keeps native compaction" "/compact" "$codex_compact"
+codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
+equal "the Codex profile defers self-compaction to its native Stop hook" \
+  "deferred" "$codex_self_compact"
 
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked
@@ -196,6 +200,51 @@ export GANG_PROFILES="$RUN_ROOT/profiles"
 "$GANG" compact compactable >/dev/null
 contains "compact submits the profile's native command" \
   "$(pane compactable)" "NATIVE_COMPACT"
+
+# A self-request made inside an agent's own pane must not submit the native
+# command during that turn. Stop consumes it once, after which a one-shot worker
+# submits the profile command and exits. Both waits below are tmux event barriers,
+# not clocks or polling loops.
+self_executed="test-self-compact-executed-$$"
+cat > "$RUN_ROOT/profiles/deferred.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_COMPACT_CMD="printf SELF_COMPACT; tmux wait-for -S $self_executed"
+GANG_SELF_COMPACT=deferred
+SH
+"$GANG" hitch selfable -p deferred -d /tmp >/dev/null
+self_id="$(window_id selfable)"
+self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
+self_requested="test-self-compact-requested-$$"
+printf -v self_command 'GANG_SESSION=%q GANG_PROFILES=%q %q compact selfable; tmux wait-for -S %q' \
+  "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested"
+tmux send-keys -l -t "$self_id" "$self_command"
+tmux send-keys -t "$self_id" Enter
+tmux wait-for "$self_requested"
+self_request="$(tmux show-options -wqv -t "$self_id" @gl_self_compact_requested)"
+contains "self-compaction records one request inside the running agent" \
+  "$(pane selfable)" "self-compaction scheduled for the end of this turn"
+excludes "self-compaction does not submit before Stop" \
+  "$(pane selfable)" "SELF_COMPACT"
+
+if [ -n "$self_request" ]; then
+  tmux wait-for "gang-self-compact-$self_request" &
+  self_dispatch_waiter=$!
+  tmux wait-for "$self_executed" &
+  self_execute_waiter=$!
+  printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$self_tmux_pane" "$GANG" hook >/dev/null
+  wait "$self_execute_waiter"
+  wait "$self_dispatch_waiter"
+  contains "native Stop submits the deferred self-compaction command" \
+    "$(pane selfable)" "SELF_COMPACT"
+  equal "the one-shot self-compaction worker exits without an error" "" \
+    "$(tmux show-options -wqv -t "$self_id" @gl_self_compact_failed)"
+else
+  fail "self-compaction records one request inside the running agent" \
+    "@gl_self_compact_requested is empty"
+fi
 
 # The universal hook endpoint records immediately against the firing pane.
 alpha_id="$(window_id alpha)"

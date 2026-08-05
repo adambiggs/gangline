@@ -12,7 +12,7 @@
 #   "NN%/NNNk" readout. Keep the format stable: "ctx <used>k/<win>k <pct>%".
 #
 #   THE FACT, written to the window's @gl_ctx option. The context predicate's
-#   owned tier (ADR-0008), which gang prefers over scraping the beacon back off
+#   owned tier (the evidence precedence rule), which gang prefers over scraping the beacon back off
 #   the screen it just painted it onto. bin/gang's context-fact section is the
 #   reader and sets out the record's shape; this is its only writer, and the two
 #   are pinned against each other in the suite.

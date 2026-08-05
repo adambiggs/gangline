@@ -96,7 +96,7 @@ for _gl_codex_event in UserPromptSubmit PostToolUse Stop PreCompact PostCompact 
   _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
 done
 GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"
-# Resuming after a tmux server death (ADR-0007). A full launch line rather than a
+# Resuming after a tmux server death (the resume decision). A full launch line rather than a
 # flag, because codex spells resume as a SUBCOMMAND and no appended option could
 # express it. Directory-scoped by default: `codex resume --all` is documented as
 # "disables cwd filtering", which is what establishes that the default filters.
@@ -174,6 +174,9 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # a reader that cannot see that difference closes every compaction path this
 # harness has at once, silently, while each individual refusal looks correct.
 GANG_COMPACT_CMD="/compact"
+# A Codex task cannot execute /compact from inside itself. `gang compact <self>`
+# records one request; the native Stop hook submits this command after that turn.
+GANG_SELF_COMPACT=deferred
 # Codex takes input during a turn, and says so itself twice over: the hint row
 # switches to "tab to queue message" while it is working, and the startup tip
 # reads "Press Tab to queue a message when a task is running; otherwise it sends

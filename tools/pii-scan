@@ -5,7 +5,7 @@
 # commit messages and patches over a range, or prose piped to --stdin (issue
 # and PR bodies). One scanner, so the pre-push hook, CI, and the manual
 # --stdin gate can never drift into checking different things. Scope is
-# docs/adr/0013-a-pii-control-is-a-gate-not-a-history-rewrite.md.
+# docs/DECISIONS.md, "PII prevention is prospective".
 #
 # Portable shell + POSIX ERE only: the macOS CI cell is bash 3.2 with BSD
 # grep, so no GNU regex extensions (\d \s \w \b), no PCRE, no bash-4 syntax.
@@ -210,7 +210,7 @@ main() {
         # those fixtures are synthetic values that satisfy their own class by
         # design. Scanning them here would flag this tool's own patch on
         # every commit that touches it. Nothing else in the repo gets this
-        # carve-out — see docs/adr/0013-a-pii-control-is-a-gate-not-a-history-rewrite.md.
+        # carve-out — see docs/DECISIONS.md, "PII prevention is prospective".
         content="$(git show --no-color "$sha" -- . ':!tools/pii-scan')"
         scan_content "commit $sha" "$content" || fail=1
       done

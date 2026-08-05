@@ -18,19 +18,19 @@
 # gang's to make. Want it in the launch line anyway? Shadow this profile via
 # GANG_PROFILES and patch this one line.
 GANG_LAUNCH="claude"
-# Resuming after a tmux server death (ADR-0007). Declared because claude scopes
+# Resuming after a tmux server death (the resume decision). Declared because claude scopes
 # the selection to the working directory — its own help says "Continue the most
 # recent conversation in the current directory" — so an agent re-hitched in its
 # old directory picks up the thread from there rather than whichever was last
 # anywhere on the machine. Directory and recency are the whole of the selection;
 # no agent name reaches it, so "its own" holds only where one agent worked there.
 GANG_RESUME_LAUNCH="claude --continue"
-# THE EVENT TIER, wired at hitch with nothing on disk (ADR-0008). Claude Code
+# THE EVENT TIER, wired at hitch with nothing on disk (the evidence precedence rule). Claude Code
 # fires hooks from its settings, and --settings takes an inline JSON string — so
 # the operator's own settings.json is untouched and there is no generated file to
 # owe law 6 a deletion path. Two things were driven against 2.1.220 before this
 # was called load-bearing. Hooks supplied this way face NO trust gate, which was
-# the ADR's open verification item. And the merge is BY KEY, measured in both
+# the decision's open verification item. And the merge is BY KEY, measured in both
 # directions at one live launch with a statusLine wired on each side: a key this
 # payload does not name survives from the operator's file, and a key it does name
 # is overridden for that session — the inline one painted, and the operator's did
@@ -157,7 +157,7 @@ GANG_RESUME_LAUNCH="claude --continue"
 # one holding a dollar sign and one holding a backtick.
 #
 # An install path that cannot be wired leaves both launch lines bare rather than
-# refusing to load. Degrading to the scrape tier is what ADR-0008 designs for,
+# refusing to load. Degrading to the scrape tier is what the evidence precedence rule designs for,
 # while dying here would take `gang roster` and `gang status` down for every
 # claude-code agent over a condition that only stops new hitches — the same call
 # opencode.sh makes, for the same reason. What would be dishonest is doing it

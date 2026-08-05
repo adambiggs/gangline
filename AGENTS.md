@@ -44,9 +44,7 @@ drop the agent, hitch a fresh one.
 ## A guard you edited is a guard you removed
 
 The suite goes red. The smallest diff that turns it green is in the test file,
-and it is right there. Take it and you have deleted a decision.
-[ADR-0005](docs/adr/0005-context-bands-are-absolute.md) says it about one ladder
-and means it generally:
+and it is right there. Take it and you have deleted a decision:
 
 > A change that edits those checks to agree with a new default has removed the
 > guard rather than passed it.
@@ -55,8 +53,8 @@ Adding cases is ordinary. **Changing what an existing assertion expects is a
 claim that the old expectation was wrong, and it needs the same argument that
 changing the behaviour needs.** Deleting one is that claim at its strongest. So
 when a change requires editing an assertion, stop and find out what it was
-protecting: the reasoning is usually in `docs/adr/`, and the code implementing
-it usually points there.
+protecting: the reasoning is usually in `docs/DECISIONS.md`, and the code
+implementing it usually points there.
 
 Nor is green evidence on its own. A guard is a negative assertion, and a
 negative assertion passes when its predicate could not evaluate anything at all
@@ -72,7 +70,8 @@ break them by reflex.
 
 - **Laws 1 and 4** — the reflex to special-case the harness in front of you.
   Per-harness knowledge is a file in `profiles/`, never a branch in `bin/gang`,
-  and a branch needs an ADR proving no universal surface can carry the value.
+  and a branch needs a recorded decision proving no universal surface can carry
+  the value.
 - **Law 5** — the reflex to build the general version first. If nothing invokes
   it the day it merges, it does not merge.
 - **Law 7** — the reflex to add a supervisor, a watchdog, a reconciliation loop.
@@ -81,7 +80,7 @@ break them by reflex.
 - **Law 8** — the reflex to add a graceful fallback. A regex that stops matching
   a new TUI must break the command, visibly; a degraded mode that reports
   healthy is the defect this repo exists to refuse.
-- **[ADR-0012](docs/adr/0012-instale-data-is-refused-from-documentation.md)** —
+- **[Instale data](docs/DECISIONS.md#instale-data-is-refused-from-documentation)** —
   the reflex to write "28 checks" into a document, because a count reads as
   evidence of having looked. It is evidence of having looked *once*. Counts,
   versions, sizes and tallies are refused from documentation, history sections
@@ -120,7 +119,7 @@ and duplication costs more to remove once two pages disagree.
 | `docs/operations.md` | running a team unattended, and recovering one |
 | `docs/field-guide.md` | the mushing vocabulary, translated |
 | `roles/*.md` | what an agent must do |
-| `docs/adr/` | why something was chosen, or refused |
+| `docs/DECISIONS.md` | terse durable decisions and rationale |
 | `CONTRIBUTING.md` | how to commit, release, and measure |
 | `CHANGELOG.md` | what shipped — release-please owns it; never hand-edit |
 

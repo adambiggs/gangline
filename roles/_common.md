@@ -197,12 +197,12 @@ rule exists to stop:
 - **Refuted** — and why. A refuted claim is the most valuable line in the
   file: without it, the next reader re-derives the dead end at full cost.
 
-Point rather than restate: a path, a commit hash, an ADR id. A pointer at a
+Point rather than restate: a path, a commit hash, a decision heading. A pointer at a
 document resolves only as far as it names — give the section, not just the
 file, or the pointer stands in for several decisions and none of them is
-reachable from it. Carry no counts, versions, or tallies —
-[ADR-0012](../docs/adr/0012-instale-data-is-refused-from-documentation.md)
-already argues why documentation refuses them; a handoff is that same rot,
+reachable from it. Carry no counts, versions, or tallies — the
+[instale-data decision](../docs/DECISIONS.md#instale-data-is-refused-from-documentation)
+explains why documentation refuses them; a handoff is that same rot,
 aimed at your own future self instead of a reader.
 
 When you get a band note:
@@ -211,20 +211,15 @@ When you get a band note:
    a commit made, a question answered. Never mid-edit.
 2. **Check your handoff is current.** Refresh anything the arc you just
    finished changed. If none exists yet, write it now, per above.
-3. **Compact yourself, feeding the resume straight from that file** — one
-   command does both:
+3. **Request native compaction:**
 
    ```
-   gang compact <your own name> --from <your own name> --resume-stdin < <path to your handoff>
+   gang compact <your own name>
    ```
 
-   It queues behind the turn you are in, so you never have to be idle to run it,
-   and the resume is delivered once compaction settles. Do not hand-roll that
-   second half by typing the resume in behind your compaction: queued text can be
-   handed to the turn already running while a queued slash command waits for that
-   turn to end, so the resume arrives *first* and is eaten by the very turn you
-   were about to compact — leaving post-compaction you with nothing to pick up.
-   Re-reading this brief is cheap; say so in that message if it would help.
+   Codex records the request and submits `/compact` through its native Stop hook
+   after this turn. Finish the turn cleanly; the native summary carries the
+   continuation.
 
 Do not ask permission to compact. Do not wait to be told twice.
 

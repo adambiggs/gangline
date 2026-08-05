@@ -1,0 +1,102 @@
+# Decisions
+
+This file records the durable choices that constrain Gangline. Each entry states
+the rule and the reason it exists; implementation history belongs in git.
+
+## Gangline is substrate, not coordination
+
+Provide local harness lifecycle, transport, observation, and compaction
+primitives. Do not manage roles, deadlines, work allocation, or agent behaviour;
+those policies belong to the operator and the native harnesses.
+
+## tmux is the transport
+
+Represent a team as one tmux session and each agent as a named window. Use the
+tty for input, pane capture for observation, window options for ephemeral state,
+and profiles for harness-specific knowledge; this keeps agents observable and
+controllable without a daemon, database, or private protocol.
+
+## Messages are attributed and delivery is verified
+
+Require a sender, wrap each message in a nonce-bound envelope, and confirm that
+the target composer accepted and submitted it. Gangline is single-tenant and
+does not claim authentication, but it never reports unverified delivery.
+
+## MCP may be a face, not the transport
+
+Add an MCP wrapper only for a real consumer that cannot use the CLI. MCP does not
+universally start a turn in an idle native harness, while tty input does; agents
+remain free to use MCP tools without Gangline mediating them.
+
+## Native self-compaction stays in Gangline
+
+Agents request their harness's native compaction at natural checkpoints. Keep
+this beside the verified tty substrate it needs rather than creating a second
+product or a duplicate injection path; defer the command to Stop when a harness
+cannot submit it during its own turn.
+
+## Occupancy is not authority
+
+Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
+not infer who may clear it. UI recognition belongs in profiles, unknown authority
+fails closed, and Gangline does not autonomously answer native dialogs.
+
+## Context lights are optional and minimal
+
+Keep context signaling off by default. When enabled, expose exactly yellow and
+red at absolute token thresholds, notify once per context epoch, and leave the
+decision to compact with the agent; larger windows do not make degraded context
+more useful.
+
+## Evidence is selected per predicate
+
+For each fact, prefer the freshest owned event, then owned file state, then pane
+scraping; witnesses do not vote. Expired or contradictory evidence is
+indeterminate and surfaced, hooks only translate facts, and no background
+processor reconciles them.
+
+## Server loss is a relaunch, not restoration
+
+Do not persist a Gangline roster. `--resume` asks a profile's verified,
+directory-scoped native command for the latest conversation and fails when the
+profile cannot make that request safely; the operator supplies which agents to
+relaunch.
+
+## Time budgets are not substrate state
+
+Do not implement cutoffs, time-warning ladders, banking prompts, or deadline
+enforcement. Timeboxing is work policy and belongs in operator or task prose,
+not in Gangline's agent surface.
+
+## Benchmarks consume Gangline but do not shape it
+
+Every core change must have a general operator or agent consumer and a rationale
+that survives removing the benchmark's name. Benchmark-specific adaptation stays
+outside the core and hidden tests or reference solutions are never read.
+
+## Unpublished renames are complete
+
+Before publication, replace an abandoned name everywhere without compatibility
+breadcrumbs or rename history. After publication, preserve compatibility and use
+normal deprecation because the old name has become an external fact.
+
+## Instale data is refused from documentation
+
+A data point that is stale the instant it is recorded does not belong in standing
+documentation. Do not record changing counts, versions, sizes, timings, or
+tallies; point to the command that measures them, and retain a measurement only
+when it is dated evidence without which a decision's rationale would fail.
+
+## PII prevention is prospective
+
+Use one scanner for repository content at local and CI gates, and scan issue or
+pull-request prose before sending it. Keep operator-specific denylist values
+untracked, prove scanner patterns against fixtures, and treat any history rewrite
+as a separate explicit decision.
+
+## Mandatory tests are immediate
+
+The mandatory suite normally completes in seconds and must remain under five
+minutes. Tests do not sleep, poll, or test timeout behaviour; use immediate state,
+event barriers, or fake clocks, and test real harnesses only in separate disposable
+tmux sessions.

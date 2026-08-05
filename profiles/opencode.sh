@@ -53,7 +53,7 @@ done
 unset _gl_oc_dirs _gl_oc_d
 # From `opencode --help`: -m/--model, spelled provider/model
 # ("google/gemini-3.1-pro-preview").
-# NO GANG_RESUME_LAUNCH, deliberately (ADR-0007). opencode has --continue, but its
+# NO GANG_RESUME_LAUNCH, deliberately (the resume decision). opencode has --continue, but its
 # sessions are not scoped to a directory: `opencode session list` returns a
 # byte-identical list from two different directories, measured here. So --continue
 # resumes the most recent session anywhere on the machine, and two opencode agents

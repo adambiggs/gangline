@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # gang — gangline: drive a team of CLI agents as tmux windows.
-# Laws: CONSTITUTION.md. Transport decision: docs/adr/0001-tmux-is-the-substrate.md
+# Laws: CONSTITUTION.md. Durable decisions: docs/DECISIONS.md.
 set -euo pipefail
 
 # Named rather than written inline, because the crontab reader below has to work
@@ -133,12 +133,11 @@ unset _d
 # past the cap. A bigger window is a reason to warn on the same schedule, not a
 # licence to fill it. A ladder made entirely of window fractions inverts that exactly
 # where it costs most: 85% of 1M is 850k tokens, warning the biggest contexts last.
-# It has been proposed and refused three times; docs/adr/0005-context-bands-are-
-# absolute.md exists so a fourth proposal reads it instead of re-deriving it.
+# The current context-band implementation uses this absolute schedule.
 #
 # Between the two bounds the hazard is a different one — running out of room to
 # finish the turn — and that is relative to the window by nature, so the rungs there
-# scale. docs/adr/0006-the-band-ladder-spans-absolute-bounds.md carries both halves.
+# scale.
 #
 # A profile may export either bound to set it for its own harness: load_profile runs
 # before the ladder in both nudge legs. An explicit GANG_CONTEXT_BANDS CSV bypasses
@@ -156,9 +155,7 @@ BANDS="${GANG_CONTEXT_BANDS:-auto}"
 # span the ladder is cut from — the declared budget less its reserve, which is the
 # same extent the derivation divides — and an absolute duration is refused. It has
 # to be relative: a rung written in minutes means a different fraction of every
-# budget it is used under. docs/adr/0009-time-bands-
-# are-relative.md carries the argument under "The escape hatch inverts", and
-# `ladder` is where it is enforced.
+# budget it is used under; `ladder` is where that rule is enforced.
 TIME_BANDS="${GANG_TIME_BANDS:-auto}"
 
 # One wait with two users: pane_stable asks it of a single pane and churn_batch
@@ -199,7 +196,7 @@ GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 
 # How long an OPEN turn bracket alone may witness busy. The bracket is the event
-# tier for that predicate (ADR-0008) and it is refreshed on every tool call, so
+# tier for that predicate (the evidence precedence rule) and it is refreshed on every tool call, so
 # what this bound has to clear is the longest stretch of one turn that calls no
 # tool: thinking, then streaming an answer.
 #
@@ -411,15 +408,15 @@ Env: GANG_PROFILE (default harness: claude-code), GANG_ROLE (role gang up briefs
      GANG_CONTEXT_FLOOR (first rung, absolute tokens; default 120000),
      GANG_CONTEXT_CAP (last rung's ceiling, absolute tokens; default 350000 — five
        rungs are derived across [floor, min(90% of window, cap)], so both ends are
-       token counts and only the spacing fits the window: ADR-0006),
+       token counts and only the spacing fits the window: the context-band implementation),
      GANG_CONTEXT_BANDS (explicit ladder, bypassing that derivation; % of the
-       window is an escape hatch, never a default: ADR-0005),
+       window is an escape hatch, never a default: the context-band implementation),
      GANG_TIME_RESERVE (banking room held back from the end of a declared cutoff,
        so the last time rung fires where banking has to start; a whole percentage
        below 100, or a duration like 15m; default 10%),
      GANG_TIME_BANDS (explicit ladder for the budget, bypassing that derivation;
        every rung is a % of what the reserve leaves, and an absolute duration is
-       refused — the escape hatch inverts: ADR-0009),
+       refused — the escape hatch inverts: the time-band implementation),
      GANG_LOCK_DIR (delivery locks; default /tmp/gangline-<uid>, created 0700 and
        reachable from a sandbox — they die at reboot, not at logout),
      GANG_ROLES / GANG_PROFILES (your own dirs, searched before the shipped ones),
@@ -553,7 +550,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   local f
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
-  GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_MIDTURN_INPUT=""
+  GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT="" GANG_MIDTURN_INPUT=""
   GANG_MIDTURN_ACTS="" GANG_PROBE_FACTS=""
   GANG_COMPACTING_REGEX="" GANG_OCCUPIED_REGEX="" GANG_SESSION_KEY="" GANG_QUIET_AT_REST=""
   # Cleared alongside it so a value left by a PREVIOUS profile cannot make the
@@ -571,9 +568,13 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
+  case "$GANG_SELF_COMPACT" in
+    ''|deferred) ;;
+    *) die "profile '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
+  esac
   # The retired name is recognised ONLY in order to refuse it, which is what makes
   # this a deletion path (law 6) rather than a compatibility shim. Accepting both
-  # is the alias ADR-0004 forbids, and it would keep the retired word alive in the
+  # is the alias the occupancy decision forbids, and it would keep the retired word alive in the
   # contract for good.
   #
   # It has to be loud because the quiet version is a silent downgrade of a safety
@@ -585,7 +586,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # A profile that cannot declare its occupancy marker cannot be trusted to route
   # messages, so it does not get to load at all.
   [ -z "${GANG_GATED_REGEX:-}" ] \
-    || die "profile '$1' ($GANG_PROFILE_FILE) sets GANG_GATED_REGEX, which gang no longer reads — rename it to GANG_OCCUPIED_REGEX. The state it declares is 'occupied' (ADR-0004); leaving the old name would silently demote this profile to composer-absence detection and read a gated agent as idle"
+    || die "profile '$1' ($GANG_PROFILE_FILE) sets GANG_GATED_REGEX, which gang no longer reads — rename it to GANG_OCCUPIED_REGEX. The state it declares is 'occupied' (the occupancy decision); leaving the old name would silently demote this profile to composer-absence detection and read a gated agent as idle"
   [ "${GANG_MIDTURN_ACTS:-}" != 1 ] || [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
     || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
@@ -1101,7 +1102,7 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
 # ===[ turn-bracket ]=========================================================
 #
 # The harness's own account of whether a turn is running: the event tier for
-# busy/idle (ADR-0008). The harness fires `gang hook` at named
+# busy/idle (the evidence precedence rule). The harness fires `gang hook` at named
 # moments and the verb writes one window option: UserPromptSubmit opens the
 # bracket, Stop closes it, PostToolUse refreshes the open one. Every scrape in
 # this file sits below it, and the pane stays the only witness for everything the
@@ -1112,7 +1113,7 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
 # named fields out of `read -r`, timestamp trailing the value it stamps.
 #
 # THE EPOCH IS NOT DECORATION. `Stop` is silent on an Esc interrupt and silent on
-# a crash — verified against the vendor's own docs, ADR-0008 — so an open bracket
+# a crash — verified against the vendor's own docs, the evidence precedence rule — so an open bracket
 # with nobody left to close it is the ordinary end of an interrupted turn, not an
 # exotic failure. The bound is the only thing that covers those two, and without
 # it the fact this file trusts most is also the one that can never be wrong.
@@ -1136,7 +1137,7 @@ turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2
 }
 
 turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
-  # Never fatal, and that is the ADR's answer rather than a lapse from law 8. A
+  # Never fatal, and that is the decision's answer rather than a lapse from law 8. A
   # translator that can fail its harness's own turn is the self-management loop
   # law 7 forbids wearing a new coat, so a hook writes its fact and steps aside.
   # A fact that cannot be written simply does not arrive, the reader falls to the
@@ -1155,7 +1156,7 @@ turn_mark() { # $1 = window id, $2 = open|closed; write the fact, log the transi
   local prev=""
   turn_state_read "$1" && prev="$TURN_STATE"
   turn_state_write "$1" "$2"
-  # Transitions log and heartbeats do not (ADR-0008). PostToolUse fires once per
+  # Transitions log and heartbeats do not (the evidence precedence rule). PostToolUse fires once per
   # tool call, so a row apiece would bury the two rows a postmortem actually
   # reads under a transcript gang already refuses to keep a second copy of.
   #
@@ -1168,7 +1169,7 @@ turn_mark() { # $1 = window id, $2 = open|closed; write the fact, log the transi
   # its bound still stores `open`, so the next open matches it and writes no row —
   # the expiry was a reading, and it left no mark here to compare against. Closing
   # that would mean deciding freshness at write time, which is exactly the
-  # smartness ADR-0008 keeps out of the write path; the log loses one row for a
+  # smartness the evidence precedence rule keeps out of the write path; the log loses one row for a
   # turn that resumed after a long silence, and the reader still reports it
   # correctly.
   [ "$prev" != "$2" ] || return 0
@@ -1330,7 +1331,7 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
 }
 
 turn_vets_paint() { # $1 = window id; the event tier vetting the scrape tier, for free
-  # Tiers pick witnesses; they do not vote (ADR-0008). So when the bracket says
+  # Tiers pick witnesses; they do not vote (the evidence precedence rule). So when the bracket says
   # closed and the pane paints a busy marker, this does not average them and does
   # not switch verdicts — the higher tier still wins, and the disagreement is
   # recorded as a FINDING. An event saying idle under a pane still painting a
@@ -1380,7 +1381,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     return 1
   fi
   # The highest tier that is still fresh answers, and nothing below it is
-  # consulted (ADR-0008): a fresh bracket beats paint, and paint beats pty. No
+  # consulted (the evidence precedence rule): a fresh bracket beats paint, and paint beats pty. No
   # blending and no scoring — a witness is chosen, and the ones underneath it are
   # evidence about GANG when they disagree, not evidence about the agent.
   #
@@ -1610,10 +1611,72 @@ compaction_mark() { # $1 = target; record that WE issued one, with the tokens at
 
 compaction_clear() { tmux set-option -uw -t "$1" @gl_compacting 2>/dev/null || true; }
 
+# A Codex task cannot submit its own /compact while that task is still active.
+# The request therefore crosses exactly one native lifecycle boundary: compact
+# records it, Stop claims it, and this one-shot child waits for the composer,
+# submits the profile's native command, then exits. It is not a supervisor and
+# has no recurring mode.
+self_compact_after_stop() { # $1 window id, $2 profile
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  load_profile "$2"
+  [ "$GANG_SELF_COMPACT" = deferred ] \
+    || die "profile '$2' no longer declares deferred self-compaction"
+  [ -n "$GANG_COMPACT_CMD" ] \
+    || die "profile '$2' declares no compact command"
+  require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  wait_ready "$1" "$boot" || ready=$?
+  case "$ready" in
+    0) ;;
+    2) die "a dialog owns the screen after the turn ended" ;;
+    *) die "the input box did not become ready after the turn ended" ;;
+  esac
+  inject "$1" "$GANG_COMPACT_CMD" head
+  compaction_mark "$1"
+}
+
+self_compact_dispatch() { # $1 window id, $2 profile; called only by Stop
+  local request
+  request="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
+    || request=""
+  [ -n "$request" ] || return 0
+  tmux set-option -w -t "$1" @gl_self_compact_dispatching "$request" 2>/dev/null \
+    || return 0
+  tmux set-option -uw -t "$1" @gl_self_compact_requested 2>/dev/null || true
+  (
+    trap '' HUP INT TERM
+    local err=""
+    if err="$(self_compact_after_stop "$1" "$2" 2>&1)"; then
+      tmux set-option -uw -t "$1" @gl_self_compact_failed 2>/dev/null || true
+    else
+      err="${err##*$'\n'}"
+      [ -n "$err" ] || err="self-compaction dispatcher failed"
+      tmux set-option -w -t "$1" @gl_self_compact_failed "$err" 2>/dev/null || true
+    fi
+    tmux set-option -uw -t "$1" @gl_self_compact_dispatching 2>/dev/null || true
+    tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+  ) </dev/null >/dev/null 2>&1 &
+  disown
+}
+
+self_compact_request() { # $1 window id -> request token
+  local request dispatch token
+  request="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
+    || request=""
+  dispatch="$(tmux show-options -wqv -t "$1" @gl_self_compact_dispatching 2>/dev/null)" \
+    || dispatch=""
+  [ -z "$request$dispatch" ] \
+    || die "self-compaction is already waiting for this turn to end"
+  token="$(mint_nonce)"
+  tmux set-option -uw -t "$1" @gl_self_compact_failed 2>/dev/null || true
+  tmux set-option -w -t "$1" @gl_self_compact_requested "$token" \
+    || die "could not record the self-compaction request"
+  printf '%s' "$token"
+}
+
 # ===[ compaction-bracket ]===================================================
 #
 # The harness's own account of a compaction: the event tier for the compaction
-# predicate (ADR-0008), sitting above both the mark below it and the pane scrape
+# predicate (the evidence precedence rule), sitting above both the mark below it and the pane scrape
 # below that. PreCompact opens the bracket, PostCompact closes it, and `gang hook`
 # is the one verb that writes it — the same shape as @gl_turn, deliberately, since
 # a second convention for a stamped fact is a second thing to get wrong.
@@ -1707,7 +1770,7 @@ compaction_explains_paint() { # $1 = window id; 0 = a live compaction accounts f
   # agent was reported as a rotted scrape, on both surfaces, and under
   # --file-issue it would open a GitHub issue about it.
   #
-  # ASKING THIS IS WITNESS SELECTION, NOT VOTING (ADR-0008). Neither busy-tier
+  # ASKING THIS IS WITNESS SELECTION, NOT VOTING (the evidence precedence rule). Neither busy-tier
   # witness is overruled and nothing is averaged: the bracket still answers idle,
   # the paint is still on the pane, and busy() returns what it returned before.
   # What changes is the CLAIM MADE ABOUT THE DISAGREEMENT — the row does not
@@ -1762,7 +1825,7 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
   now="$(date +%s)"
   COMPACTION_PENDING_WHAT="compaction gang issued, unconfirmed"
 
-  # THE EVENT TIER, ahead of everything below it (ADR-0008): the harness saying a
+  # THE EVENT TIER, ahead of everything below it (the evidence precedence rule): the harness saying a
   # compaction is running outranks gang's own record of having asked for one, and
   # it answers for the auto-compaction the mark below is blind to by construction.
   compaction_bracket_read "$1" || rc=$?
@@ -1785,7 +1848,7 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
     # fact. It stands until PostCompact overwrites it.
     #
     # Expiry falls THROUGH to the mark and scrape tiers rather than returning an
-    # answer of its own. That is the ADR's shape for a spent fact: the tier stops
+    # answer of its own. That is the decision's shape for a spent fact: the tier stops
     # witnessing and the next one down is asked, which is precisely the state this
     # arc found the function in. A crash mid-compaction therefore costs the tier
     # it earned and nothing that was already there.
@@ -1862,7 +1925,7 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
 # ===[ occupied-bracket ]=====================================================
 #
 # The harness's own account of a permission dialog: the event tier for the
-# occupied predicate (ADR-0008), sitting above the two pane scrapes below it.
+# occupied predicate (the evidence precedence rule), sitting above the two pane scrapes below it.
 # PermissionRequest raises it, `gang hook` is the one verb that writes it, and the
 # shape is the compaction bracket's — a stamped fact, every field validated before
 # any of them is believed, written by a writer that can never be fatal.
@@ -1880,7 +1943,7 @@ compaction_pending() { # $1 = window id, $2 = tokens NOW (optional)
 # be told from a stamp, and the read below has to be able to refuse one.
 #
 # WHAT RETIRES A RAISE IS THE PANE, and that is not the scrape outvoting the event
-# tier — tiers pick witnesses, they do not vote (ADR-0008). It is this fact
+# tier — tiers pick witnesses, they do not vote (the evidence precedence rule). It is this fact
 # reaching its end and the pane being able to prove it, the same shape as the
 # compaction mark settling on an observed context drop. Expiry is the only other
 # closer, and it costs the tier rather than answering with it.
@@ -1962,7 +2025,7 @@ occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
   #
   # Occupancy is the whole of what this establishes. Who may clear the UI, and
   # whether it clears itself, is a different question with a different answer,
-  # and no caller may read one off the other (ADR-0004).
+  # and no caller may read one off the other (the occupancy decision).
   #
   # There are three ways in, because enumerating modal chrome will always miss
   # one — and the first of them does not read the pane for the answer at all. The
@@ -3002,11 +3065,11 @@ resume_after_compaction() { # $1 = window id, $2 = text; deliver where it cannot
 
 # ===[ context-fact ]=========================================================
 #
-# The context predicate's owned tier (ADR-0008), and the only one `gang hook` does
+# The context predicate's owned tier (the evidence precedence rule), and the only one `gang hook` does
 # not write. Nothing in the harness's event vocabulary carries a context figure,
 # so there is no harness voice here for the one-verb rule to keep single: the
 # writer is statusline/claude-code-context.sh, which is gangline's own code
-# running in the harness's statusline callback. That is what the ADR means by
+# running in the harness's statusline callback. That is what the decision means by
 # written DIRECTLY. It keeps painting the beacon byte-identically as it goes,
 # because the human reads that line and so does the scrape tier below.
 #
@@ -3190,7 +3253,7 @@ time_rungs() { # $1 = the usable span in seconds; sets LADDER_AUTO to the derive
   # The interior alone, and the missing opening rung is this axis's argument rather
   # than an omission: a rung at zero claims the start of the span is already a
   # hazard, and the start of a budget is the one moment nothing has been spent
-  # (ADR-0009). Context takes that rung because a context at the floor is already
+  # (the time-band implementation). Context takes that rung because a context at the floor is already
   # rotting; time has no onset to warn about, so a warning at the starting line
   # would warn about nothing.
   #
@@ -3240,11 +3303,11 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
   #
   # Each axis has its own explicit ladder, and their two opinions about how a rung
   # may be spelled are opposite. CONTEXT: both ends of its default ladder are
-  # absolute and that is load-bearing (ADR-0006), so its CSV is read as written and
+  # absolute and that is load-bearing (the context-band implementation), so its CSV is read as written and
   # the % suffix is an escape hatch for an unusual window — the one place a fraction
   # is the operator's intent rather than a mistake. TIME inverts it exactly: a
   # percentage of the span the ladder is cut from is the design and an absolute
-  # duration is refused (ADR-0009, "The escape hatch inverts"), because a rung
+  # duration is refused (the time-band implementation, "The escape hatch inverts"), because a rung
   # written in minutes means a different fraction of every budget it is used under.
   # On either axis the hatch is a
   # hatch, not a default, and must not become one.
@@ -3307,7 +3370,7 @@ ladder() { # $1 = axis, $2 = position on it, $3 = the extent its rungs are place
       # to catch.
       *)  [[ "$part" =~ ^[0-9]+$ ]] || die "invalid $var '$spec' — fix the ladder"
           if [ "$axis" = time ] && [ "$spec" != auto ]; then
-            die "invalid GANG_TIME_BANDS '$spec': the '$part' rung is an absolute duration, and a time rung is a proportion of the budget a team declared, less its reserve (ADR-0009) — write it as '$part%'"
+            die "invalid GANG_TIME_BANDS '$spec': the '$part' rung is an absolute duration, and a time rung is a proportion of the budget a team declared, less its reserve (the time-band implementation) — write it as '$part%'"
           fi
           t="$part" ;;
     esac
@@ -3327,7 +3390,7 @@ ladder_at_top() { # $1 = current band, $2 = resolved CSV; true at or beyond its 
   # five rungs. A one-rung exhaustion ladder, an explicit operator ladder, and the
   # time ladder all reach their own top through the same question. The last of
   # those read "a future wall-clock ladder" until the time axis landed, and the
-  # arrival cost this function nothing — which is the claim ADR-0009 makes about
+  # arrival cost this function nothing — which is the claim the time-band implementation makes about
   # this seam, kept true here rather than asserted there alone.
   local total=0 rung
   for rung in ${2//,/ }; do total=$((total + 1)); done
@@ -3449,7 +3512,7 @@ band_note() { # $1 readout, $2 threshold, $3 agent, $4 band, $5 ladder, $6 optio
 }
 
 time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the ladder
-  # ADR-0009 says band_note grows a time voice. This is that voice, and it is a
+  # the time-band implementation says band_note grows a time voice. This is that voice, and it is a
   # SIBLING rather than a branch inside band_note, which is a decision about what
   # band_note's header argues rather than about line count. Every paragraph of it
   # reasons from a context that degrades AS IT GROWS and from the compaction that
@@ -3480,13 +3543,13 @@ time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the l
   # Remaining budget is not that: it IS the pacing input, and an agent told only
   # that time is short can neither rebalance what it is doing nor decide what to
   # drop. Do not "fix" this back into symmetry with band_note. The asymmetry is
-  # the argument (ADR-0009), and the two axes differ in what the figure is FOR.
+  # the argument (the time-band implementation), and the two axes differ in what the figure is FOR.
   #
   # WHAT IS ABSENT: there is no `repeat` wording for the rung that repeats, and the
   # absence is the argument rather than an omission. band_note needs a second
   # phrasing because its figure barely moves between turns, so the same note twice
   # IS the same sentence, and a sentence that arrives again unchanged is the
-  # unchanging nag ADR-0009 refuses to send. Every rung here is built around a
+  # unchanging nag the time-band implementation refuses to send. Every rung here is built around a
   # number that SHRINKS on every sweep, so a repeat says something the previous one
   # could not have said, without a word of it being written twice. Adding a repeat
   # variant later would be phrasing a distinction the note already makes.
@@ -3501,7 +3564,7 @@ time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the l
     # the cutoff: one team declared one budget, and ending it is not one agent's
     # call. It also keeps the licence to continue explicit, because gang enforces
     # nothing here and a note that reads as `stop` would take a decision this tool
-    # does not get to take (ADR-0009).
+    # does not get to take (the time-band implementation).
     printf '[time-budget] Bank your work now — the declared cutoff passed %s ago. Anything that exists only in this pane is already past the moment it was meant to survive. Nothing is enforced and nothing is stopping you: keep going if there is more worth doing. This note repeats on every sweep until the operator clears or moves the cutoff.' \
       "$2"
     return
@@ -3515,7 +3578,7 @@ time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the l
     # to spend a moment on it is that the reserve was held back for exactly this.
     # A rung that led with the time and closed with the ask would be read as an
     # alarm, and the loudest rung of the ladder reading as `stop` is the decision
-    # ADR-0009 reserves for the musher.
+    # the time-band implementation reserves for the musher.
     printf '[time-budget] Bank your work now — write results out, commit what works, record where you got to. %s of the declared budget is left, which is the reserve held back for exactly this. Then keep going: improving what is already banked is the best use of what remains, and nothing here is telling you to stop.' \
       "$2"
   elif [ "$remaining" -eq 1 ]; then
@@ -3533,7 +3596,7 @@ time_note() { # $1 = band number, or `past`; $2 = the span it states; $3 = the l
 # --- the cutoff -------------------------------------------------------------
 #
 # Operator intent about wall-clock time: one team, one cutoff, declared and never
-# measured (ADR-0009). Stored as the PAIR cutoff-epoch and declared-at-epoch,
+# measured (the time-band implementation). Stored as the PAIR cutoff-epoch and declared-at-epoch,
 # because the span a ladder divides is the span that was DECLARED. Keeping only
 # the cutoff would leave every reader dividing whatever happened to be left when
 # it looked, so a rung would sit at a different moment on every sweep and the
@@ -3759,7 +3822,7 @@ colour() { # $1 = colour, $2 = text — already padded to its column width
 
 # --- what a sweep says about the budget --------------------------------------
 #
-# The cutoff is the declaration; this is the ladder cut from it (ADR-0009). They are
+# The cutoff is the declaration; this is the ladder cut from it (the time-band implementation). They are
 # kept apart because one is operator intent and the other is arithmetic over it, and
 # only the arithmetic changes between one sweep and the next.
 
@@ -3817,7 +3880,7 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   TIME_BAND=""; TIME_RUNGS=""; TIME_LEFT=""; TIME_OVER=""
   cutoff_read || rc=$?
   # An undeclared budget produces silence, and the silence is total: no row, no log
-  # line, no phrase of its own (ADR-0009). A phrase of its own would be one line per
+  # line, no phrase of its own (the time-band implementation). A phrase of its own would be one line per
   # agent on every sweep for the whole life of a team that never asked for a budget,
   # which is how a log stops being read.
   [ "$rc" -ne 1 ] || return 0
@@ -3838,7 +3901,7 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   # before a span the run has already spent is divided into rungs. The sentence
   # changes rather than repeating the last rung's ask: an ask about pacing a budget
   # that no longer exists is noise and is also false, while going quiet would
-  # fabricate an all-clear at the moment it is least earned (ADR-0009).
+  # fabricate an all-clear at the moment it is least earned (the time-band implementation).
   if [ "$now" -ge "$CUTOFF_AT" ]; then
     TIME_OVER="$(human_span $(( now - CUTOFF_AT )))"
     TIME_SAY="PAST THE CUTOFF — $TIME_OVER past the declared budget"
@@ -3867,7 +3930,7 @@ time_sweep() { # settle the team's budget for this sweep -> TIME_SAY, TIME_COLOU
   ladder time 0 "$span" >/dev/null
   # The band and the resolved ladder. The rung's own position is the third field and
   # this leg has no use for it: what a row states is what is LEFT, which is the
-  # figure an operator paces against (ADR-0009).
+  # figure an operator paces against (the time-band implementation).
   rung="$(ladder time "$elapsed" "$span")"
   band="${rung%% *}"; rungs="${rung##* }"
   TIME_BAND="$band"; TIME_RUNGS="$rungs"
@@ -3893,7 +3956,7 @@ time_nudge() { # $1 = window id, $2 = name; the budget's warning leg, one note p
   if [ -n "$TIME_OVER" ]; then
     # Past the cutoff there is no rung to cross, so this note is the one that
     # carries no band and consults no memory. It is restated fresh on every sweep
-    # by design (ADR-0009) — going quiet would fabricate an all-clear at the moment
+    # by design (the time-band implementation) — going quiet would fabricate an all-clear at the moment
     # it is least earned — and the memory is left exactly as it was, so a cutoff the
     # operator moves forward resumes the ladder from the rung the agent last heard.
     if ! input_clear "$1"; then
@@ -4010,10 +4073,10 @@ cmd_hitch() {
   # refuses instead of launching bare: a bare launch here hands back a blank agent
   # wearing the name of the one whose thread the operator asked for, with nothing
   # on any surface saying the conversation was gone. That is the silent downgrade
-  # law 8 forbids (ADR-0007).
+  # law 8 forbids (the resume decision).
   if [ "$resume" -eq 1 ]; then
     [ -n "$GANG_RESUME_LAUNCH" ] \
-      || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume. Either its harness has no resume form gang can drive, or its sessions are not scoped to a working directory — resuming there would pick up whichever conversation was last anywhere on this machine, including another agent's (docs/adr/0007-server-death-is-a-relaunch-not-a-restore.md)"
+      || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume. Either its harness has no resume form gang can drive, or its sessions are not scoped to a working directory — resuming there would pick up whichever conversation was last anywhere on this machine, including another agent's (docs/DECISIONS.md#server-loss-is-a-relaunch-not-restoration)"
     GANG_LAUNCH="$GANG_RESUME_LAUNCH"
   fi
   # A model is one concept every harness spells differently; the profile owns the
@@ -4343,6 +4406,13 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   local self=""
   self="$(self_window)" || self=""
   local mine=0; [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
+  if [ "$mine" -eq 1 ] && [ "$GANG_SELF_COMPACT" = deferred ]; then
+    [ -z "$resume" ] \
+      || die "compact: deferred self-compaction uses the harness's native summary and does not accept --resume-stdin"
+    self_compact_request "$AGENT_ID" >/dev/null
+    echo "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(the native compact command will be submitted after Stop; finish this turn now)")"
+    return 0
+  fi
   if [ "$mine" -ne 1 ]; then
     local busy_rc=0
     busy "$AGENT_ID" || busy_rc=$?
@@ -4362,6 +4432,7 @@ cmd_compact() { # trigger the harness's own compaction, via its own command
   # ONE, and both readers already carry the case where nothing follows, each
   # giving up at GANG_COMPACT_GRACE.
   compaction_mark "$AGENT_ID"
+  tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_failed 2>/dev/null || true
   # What inject just proved is DELIVERY: the paste changed the input box and the
   # Enter emptied it. It did not prove EXECUTION, and on some harnesses those
   # come apart — codex answers a self-issued `/compact` with "'/compact' is
@@ -4414,7 +4485,7 @@ state_now() { # $1 = window id, profile loaded -> the state, in words
   # way, so batching changes what it costs to answer and never what it says.
   if occupied "$1"; then
     activity_hold_clear "$1"
-    # No shipped profile classifies the UI it found, and ADR-0004 is explicit
+    # No shipped profile classifies the UI it found, and the occupancy decision is explicit
     # that an absent classifier yields authority-unknown rather than the stronger
     # operator-only claim. A profile that earns a narrower qualifier changes this
     # line and nothing else.
@@ -4460,7 +4531,7 @@ cmd_status() {
   # in an argument list is thrown away — printf would succeed, print a blank line,
   # and report exit 0 for a state nobody ever established. An assignment carries the
   # failure, so errexit still ends the command (law 8).
-  local state failed staged blocked
+  local state failed self_failed self_pending staged blocked
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   # A resume that never landed is the one thing about an agent that its screen
@@ -4469,6 +4540,14 @@ cmd_status() {
   failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_resume_failed)"
   [ -z "$failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "resume NOT delivered after compaction: $failed")"
+  self_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_failed)"
+  [ -z "$self_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")"
+  self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_requested)"
+  [ -n "$self_pending" ] \
+    || self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_dispatching)"
+  [ -z "$self_pending" ] \
+    || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
   # A staged paste IS on the screen, but it reads as a message this agent is
   # about to send rather than one somebody else abandoned in its box, and the
   # damage is done by whoever types next.
@@ -4545,6 +4624,8 @@ roster_row() { # $1 = window id, $2 = name, $3 = churn verdict if a batch resolv
   # cost above it: a failure visible only to somebody who has already guessed it.
   [ -z "$(tmux show-options -wqv -t "$1" @gl_resume_failed)" ] \
     || ctx="$ctx $(colour "$C_BAD" "resume lost")"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
+    || ctx="$ctx $(colour "$C_BAD" "self-compact failed")"
   printf '%-16s %-12s %s %s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$ctx"
 }
@@ -4623,7 +4704,7 @@ cmd_cutoff() { # declare, show, or clear the team's wall-clock cutoff
       cutoff_parse "$sub" "$now"
       cutoff_write "$CUTOFF_PARSED" "$now"
       # Declaring again re-spans from NOW: last declaration wins, and the pair it
-      # writes is the whole of the team's budget from this moment (ADR-0009).
+      # writes is the whole of the team's budget from this moment (the time-band implementation).
       CUTOFF_AT="$CUTOFF_PARSED"; CUTOFF_DECLARED="$now"
       printf '%s\n' "$(cutoff_line "$now")"
       ;;
@@ -4664,7 +4745,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
     || say "$2" "-" "RESUME NOT DELIVERED after compaction — $failed" "$C_BAD"
   # Refused inbound belongs with the other things an agent's own screen cannot
   # show, and it belongs ABOVE the occupancy report that returns early: the case
-  # ADR-0004 was written from is an occupied routing point with peers stacking up
+  # the occupancy decision was written from is an occupied routing point with peers stacking up
   # behind it, and reporting the occupancy while withholding what it costs is the
   # half of that story the operator already has. It needs no profile, so a sweep
   # that cannot resolve one still carries it.
@@ -4729,7 +4810,7 @@ patrol_one() { # $1 = window id, $2 = name; subshell — a death here skips this
   # That gap is the whole point rather than a leftover. An agent whose beacon has
   # gone missing is still inside the team's budget, and time is the axis that
   # advances while an agent sits idle — which is why patrol is this axis's primary
-  # leg (ADR-0009). So the sweep that gives up on an agent's context still tells it
+  # leg (the time-band implementation). So the sweep that gives up on an agent's context still tells it
   # how much of the day is left. What gets the row and no note is a pane gang cannot
   # type into at all — a profile it cannot resolve or load, and an input box a
   # harness UI owns — and that is correct: the row is arithmetic and the note is
@@ -5103,7 +5184,7 @@ EOF
 # ===[ hook-ingestion ]=======================================================
 
 cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pane, per event
-  # ADR-0008. The harness runs the SAME command for every event it is wired for,
+  # the evidence precedence rule. The harness runs the SAME command for every event it is wired for,
   # this branches on the native event name, and the event-to-fact mapping is
   # gangline's vocabulary rather than the settings file's — so the wiring names
   # claude-code's events and nothing else, and what those MEAN to gang is decided
@@ -5145,7 +5226,8 @@ cmd_hook() { # the one ingestion verb: a harness fires this from the agent's pan
     # turn_mark: the first is a transition and gets a log row, the second lands on
     # a bracket already open and is a heartbeat, which does not.
     UserPromptSubmit|PostToolUse) turn_mark "$TMUX_PANE" open ;;
-    Stop)                         turn_mark "$TMUX_PANE" closed ;;
+    Stop)                         turn_mark "$TMUX_PANE" closed
+                                  self_compact_dispatch "$TMUX_PANE" "$prof" ;;
     # The compaction bracket, and it is NOT turn-shaped however alike the two
     # read. No Stop fires for a compaction, so nothing else could close this; the
     # composer is usable a second or two after PostCompact, so the close is the
@@ -5309,7 +5391,7 @@ hook_time_note() { # -> the budget's in-turn note for this agent, or nothing at 
   # context is.
   #
   # CROSSINGS ONLY. patrol repeats the top rung on every safe sweep and restates a
-  # passed cutoff on every one (ADR-0009), and neither repeat transfers here: a
+  # passed cutoff on every one (the time-band implementation), and neither repeat transfers here: a
   # sweep happens on the cadence an operator set, while this fires on every tool
   # call an agent makes, so a note that repeats per sweep there repeats per ACTION
   # here. This leg speaks when a band is crossed and is otherwise silent, which is
@@ -5330,7 +5412,7 @@ hook_time_note() { # -> the budget's in-turn note for this agent, or nothing at 
   SESSION="$sess"
   time_sweep
   # No band settled covers every reason there is not to speak, in one guard: no
-  # cutoff declared, which ADR-0009 answers with total silence; a stored pair that
+  # cutoff declared, which the time-band implementation answers with total silence; a stored pair that
   # will not parse; and the moment past the cutoff, where there is no rung left to
   # cross. Patrol reports all three in a row it was going to print anyway. This leg
   # has no row, and inventing a sentence for any of them would be a note about a
@@ -5627,7 +5709,7 @@ gang vet found two fresh witnesses for the same predicate disagreeing.
 - predicate: $3
 $4
 
-ADR-0008 has every reader take the highest tier still fresh, so gang answers
+the evidence precedence rule has every reader take the highest tier still fresh, so gang answers
 from the first witness above and never consults the second again. That is the
 tier order working, and it is also why this fault is invisible from every
 surface an operator has: the good witness answers each time it is asked, and
@@ -6076,7 +6158,7 @@ probe_facts() { # $1 = profile, $2 = window, $3 = version; 0 = every declared fa
             "a record arrived and gang's own reader refused it, which is worth exactly as much as none at all: $raw"
           rc=1
         fi ;;
-      # The two the ADR names, and they keep saying this until something can drive
+      # The two cases the decision names, and they keep saying this until something can drive
       # them honestly. A quieter row here would be a clean bill for a marker
       # nobody fired — the failure the whole probe exists to have stopped.
       occupied)
@@ -6403,7 +6485,7 @@ vet_tier_row() { # $1 = agent, $2 = profile, $3 = colour, $4 = text
 }
 
 vet_tiers_agent() { # $1 = window id, $2 = name, $3 = --file-issue; 2 = the witnesses disagree
-  # TIERS PICK WITNESSES, THEY DO NOT VOTE (ADR-0008), and this changes no
+  # TIERS PICK WITNESSES, THEY DO NOT VOTE (the evidence precedence rule), and this changes no
   # answer. gang still replies from the highest fresh tier for every predicate
   # below; what is reported here is that the tier UNDER it, freshly read, says
   # something else. Two witnesses that were both written seconds ago and do not
@@ -6733,7 +6815,7 @@ EOF
   # payload through that one line, so with it broken the turn bracket, the
   # compaction bracket and the occupancy fact are never written, the context fact
   # and its band note are never parsed, and the beacon prints nothing — every
-  # predicate in ADR-0008 drops to its scrape tier. SILENTLY, and that is the
+  # predicate in the evidence precedence rule drops to its scrape tier. SILENTLY, and that is the
   # whole reason this row has to exist: law 7 forbids a translator failing its
   # harness's turn, so cmd_hook is built to exit 0 having written nothing and said
   # nothing. That is correct there and it is why the loudness has to be here.

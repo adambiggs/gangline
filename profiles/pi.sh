@@ -7,7 +7,7 @@
 GANG_LAUNCH="pi"
 # From `pi --help`: --model, spelled provider/id with an optional :<thinking>
 # suffix ("openai-codex/gpt-5.6-sol:high").
-# NO GANG_RESUME_LAUNCH, deliberately (ADR-0007). pi has --continue, documented
+# NO GANG_RESUME_LAUNCH, deliberately (the resume decision). pi has --continue, documented
 # only as "Continue previous session", with no statement that the selection is
 # scoped to a working directory and no such scoping established here. Every other
 # marker in this file was watched live before it was written down, and a resume

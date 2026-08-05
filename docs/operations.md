@@ -255,8 +255,7 @@ same warning everywhere. It ends at `min(90% of the window, GANG_CONTEXT_CAP)`, 
 no agent goes unwarned past 350000 however large its window, and the last rung
 always sits below the window with enough room left to issue a compaction and have it
 land. Five rungs are placed across that span at fixed fractions, closer together
-toward the top, so the warnings arrive faster as the situation gets worse
-([ADR-0006](adr/0006-the-band-ladder-spans-absolute-bounds.md)).
+toward the top, so the warnings arrive faster as the situation gets worse.
 
 The note escalates with the rung, and what escalates is the ask rather than the
 volume. The lowest rung asks the agent to finish the task in hand and then compact;
@@ -298,8 +297,7 @@ top rung's instruction — there is nothing above it to escalate to.
 
 Setting `GANG_CONTEXT_BANDS` to a comma-separated ladder replaces the derivation
 entirely. Bare entries are absolute tokens; `%` entries are a percentage of that
-agent's window — an escape hatch for an unusual one, never a default
-([ADR-0005](adr/0005-context-bands-are-absolute.md)). A profile may export the floor
+agent's window — an escape hatch for an unusual one, never a default. A profile may export the floor
 or the cap to set it for its own harness. The last warned band is a tmux window
 option, shared with `gang hook`, and re-arms when usage falls after compaction.
 
@@ -343,7 +341,7 @@ company with the context one. A context rung is an absolute number of tokens
 because rot tracks how long a context is. A time rung cannot be, because the same
 elapsed hour is most of a two-hour budget and the start of a six-hour one, and
 what an agent has to pace against is how much of the declared work is left rather
-than what the clock says ([ADR-0009](adr/0009-time-bands-are-relative.md)).
+than what the clock says.
 
 `GANG_TIME_RESERVE` (`10%`) is banking room held back from the end, so the ladder
 spans from the declaration to the cutoff minus the reserve and the last rung fires
@@ -412,15 +410,20 @@ merely running leaves no record behind while the reserve and the overrun both do
 
 ## Compaction and handoff
 
-The robust self-compaction form redirects a file that already exists:
+At a natural checkpoint, an agent requests its harness's native compaction:
 
 ```sh
-gang compact <self> --from <self> --resume-stdin < <path to the handoff>
+gang compact <self>
 ```
 
-`--resume-stdin` reads to EOF and has no opinion about where the bytes came
-from, so a caller composing a short resume for a *different* agent still writes
-one inline:
+Codex defers a self-request until its native Stop hook closes the requesting
+turn, then a one-shot worker submits `/compact` and exits. Finish the current
+turn after making the request. `gang status <self>` reports a request still
+waiting for that boundary or a command that failed to submit. The harness's
+native summary carries the continuation, so deferred self-compaction does not
+accept `--resume-stdin`.
+
+An external caller may compact an idle agent and provide an attributed resume:
 
 ```sh
 gang compact <name> --from <caller> --resume-stdin <<'RESUME'
@@ -428,29 +431,9 @@ continue from your compacted summary and report the result
 RESUME
 ```
 
-The difference between the two is authorship, not transport. An agent compacting
-itself feeds back a handoff it has been keeping since the task started — where
-that file belongs and what has to be in it are
-[roles/_common.md](../roles/_common.md)'s to say, under "Your context window" —
-and the band note Gangline injects at a crossing sends an agent to that file
-rather than asking it to author one there and then. A caller writing a resume for
-someone else is doing a smaller thing: handing over an instruction, not the
-context an agent is about to lose, and inline is the right shape for it.
-
-Gangline allows the calling agent to be busy: its compaction command can queue
-behind the current turn. A different busy agent is refused because forced
-compaction would discard its live work.
-
-That transport permission does not make every harness's command self-safe. Codex
-rejects `/compact` outright while a task is active, and a Codex agent invoking
-Gangline from its own pane is still inside that task, so it cannot self-compact
-by this route. Let Codex compact automatically, or have
-another caller wait for it to become idle and then run `gang compact codex-name`
-(with an attributed resume if needed). Do not pair the rejected self-issued Codex
-command with `--resume-stdin`: Gangline proves the slash command was submitted, not
-that Codex executed it, and a fallback can eventually deliver the resume without
-a context drop. For every profile, the native compaction command remains the
-authority on whether the request actually runs.
+A different busy agent is refused because forced compaction would discard live
+work the caller does not own. For every profile, the native compaction command
+remains the authority on whether the request actually runs.
 
 The resume is not typed immediately after the slash command. Harness queues can
 hand ordinary text to the turn still running while keeping a slash command for

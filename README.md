@@ -219,13 +219,11 @@ Orchestration competes on breadth: fan out, join, retry, dependency graphs,
 structured output. Every mechanism Gangline actually invented is about surviving
 **time** instead.
 
-- **Self-compaction** ([ADR-0003](docs/adr/0003-self-compaction-is-a-pillar-not-a-product.md))
-  — an agent compacts *itself* at a clean seam and hands its own successor the
-  thread, through a detached waiter so the resume cannot be swallowed by the turn
-  being compacted.
-- **Absolute context bands**
-  ([ADR-0005](docs/adr/0005-context-bands-are-absolute.md),
-  [ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md)) — warnings
+- **Self-compaction** ([decision](docs/DECISIONS.md#native-self-compaction-stays-in-gangline))
+  — an agent requests native compaction at a clean seam, with the harness's own
+  summary carrying the thread and a Stop-boundary deferral where the harness
+  cannot accept `/compact` during the requesting turn.
+- **Absolute context bands** — warnings
   keyed to how long a context *is*, not how full its window is, so a bigger
   window buys a warning on the same schedule rather than permission to fill it.
 - **Strategy-rot detection** — `gang vet --probe` fires each profile's markers at
@@ -328,7 +326,7 @@ above — no push notification will ever tell you an agent went idle.
 
 **What would make half of this unnecessary.** Gangline scrapes panes because the
 harnesses it drives expose no stable programmatic surface to do it any other way,
-and [ADR-0001](docs/adr/0001-tmux-is-the-substrate.md) accepts the consequence out
+and the [tmux decision](docs/DECISIONS.md#tmux-is-the-transport) accepts the consequence out
 loud: text conventions are version-fragile, a TUI update can move a busy marker,
 and what makes that survivable is that the break is loud and the fix is one line
 in a profile. `gang vet --probe` exists because of that acceptance, not in spite
@@ -394,7 +392,7 @@ composer still contains exactly that paste. Otherwise `status`, `roster`, and
   or a profile with a composer reader cannot otherwise identify a safe input box.
   Occupancy is the whole of what Gangline establishes here; who may clear the UI,
   and whether it clears itself, is a separate question no shipped profile answers
-  yet ([ADR-0004](docs/adr/0004-occupancy-is-not-authority.md));
+  yet ([decision](docs/DECISIONS.md#occupancy-is-not-authority));
 - `parked (waiting on <agent>)` when the agent is blocked inside its own `gang wait`;
 - `expired (pty activity bound reached)` when pty activity alone had been carrying
   the busy verdict and has spent its bound.
@@ -441,11 +439,9 @@ lands at `GANG_CONTEXT_FLOOR` (120000), and none goes unwarned past
 `GANG_CONTEXT_CAP` (350000) however large its window — a bigger window is a reason
 to warn on the same schedule, not a licence to fill it. Between those two the
 rungs are spread across `min(90% of the window, cap)`, closer together toward the
-top, because there the hazard is running out of room rather than rot
-([ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md)). Setting
+top, because there the hazard is running out of room rather than rot. Setting
 `GANG_CONTEXT_BANDS` replaces the ladder outright, and a percentage of the window
-works there as an escape hatch for an unusual one
-([ADR-0005](docs/adr/0005-context-bands-are-absolute.md)). Patrol skips an
+works there as an escape hatch for an unusual one. Patrol skips an
 occupied, gang-compacting, or non-empty input area without advancing the band, so
 a later sweep retries. A busy agent is nudged rather than skipped: the note is
 prose, so it queues behind the turn it arrives in, and a busy agent is the one
@@ -481,23 +477,17 @@ so a verdict added in a later version is recorded without anyone touching the
 crontab. `GANG_PATROL_LOG` moves the file, or writes none when set empty;
 `GANG_PATROL_LOG_MAX` (1 MiB) is the size at which it rolls to a single `.1`.
 
-At a clean checkpoint, an agent whose harness accepts compaction during an active
-task can compact itself in one command, feeding back the handoff it has been
-keeping:
+At a clean checkpoint, an agent can request its harness's native compaction:
 
 ```sh
-gang compact lead --from lead --resume-stdin < <path to the handoff>
+gang compact lead
 ```
 
-Self-compaction may queue behind the caller's current turn. Codex is a known
-exception: it rejects `/compact` while a task is active, and running
-`gang compact` from its own pane is itself such a task. Compact an idle Codex
-from another caller, or let it auto-compact. Do not use a self-issued Codex
-`--resume-stdin`: Gangline verifies command delivery, not whether Codex accepted
-the native command. Compacting any busy peer is refused because it would cut off
-live work. Resume delivery is attempted by a detached waiter rather than pasted
-behind the slash command, where the current turn could consume it first. A failed
-resume is reported by `gang status` and `gang patrol`.
+Codex cannot execute `/compact` while its current task is active. Its profile
+therefore defers a self-request until the native Stop hook closes that turn, then
+a one-shot worker submits `/compact` and exits. `gang status` reports a request
+that is still waiting or failed to submit. Compacting any busy peer remains
+refused because it would cut off work the caller does not own.
 
 ## Commands
 
@@ -576,25 +566,14 @@ without it.
 
 ## Design record
 
-Gangline is built to a written constitution and a set of architecture decisions,
-and they are the most useful thing in the repository if you want to know why it is
-shaped this way.
+Gangline keeps its constraints short and current:
 
 - [Constitution](CONSTITUTION.md) — the laws this repo is built under, including
   the ones that forbid building authentication into this repo and require a
   deletion path for everything
-- [ADR-0001](docs/adr/0001-tmux-is-the-substrate.md) — tmux is the substrate
-- [ADR-0002](docs/adr/0002-mcp-is-a-face-not-a-transport.md) — MCP is a face, not a transport
-- [ADR-0003](docs/adr/0003-self-compaction-is-a-pillar-not-a-product.md) — self-compaction is a pillar, not a product
-- [ADR-0004](docs/adr/0004-occupancy-is-not-authority.md) — input occupancy is not clearance authority
-- [ADR-0005](docs/adr/0005-context-bands-are-absolute.md) — context bands are absolute
-- [ADR-0006](docs/adr/0006-the-band-ladder-spans-absolute-bounds.md) — the band ladder spans absolute bounds
-- [ADR-0007](docs/adr/0007-server-death-is-a-relaunch-not-a-restore.md) — recovery from tmux server death is a relaunch, not a restore
-- [ADR-0008](docs/adr/0008-evidence-is-tiered-per-predicate.md) — evidence is tiered per predicate
-- [ADR-0009](docs/adr/0009-time-bands-are-relative.md) — time bands are relative to a declared cutoff
-- [ADR-0010](docs/adr/0010-a-benchmark-is-a-consumer-not-a-design-input.md) — a benchmark is a consumer, not a design input
-- [ADR-0011](docs/adr/0011-a-rename-before-publication-is-total-and-retroactive.md) — a rename before publication is total and retroactive
-- [ADR-0012](docs/adr/0012-instale-data-is-refused-from-documentation.md) — instale data is refused from documentation
+- [Decisions](docs/DECISIONS.md) — terse rules and rationale
+- [Simplification plan](docs/simplification-plan.md) — the deletion path to the
+  intended minimal surface
 
 ## Project guide
 
