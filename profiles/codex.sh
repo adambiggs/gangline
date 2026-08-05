@@ -45,12 +45,63 @@
 # harness gets is the decision of the person at the keyboard, made in their own
 # ~/.codex/config.toml; shipping it as a default hands it to every future
 # installer without asking. See CONTRIBUTING, "Before adding code".
-GANG_LAUNCH="codex -c check_for_update_on_startup=false"
+#
+# OWNED-EVENT WRITERS, WITHOUT AN OWNERSHIP DECLARATION YET. Codex's official
+# Hooks documentation says `-c` accepts a dotted key with a TOML value, and that
+# matching hooks from separate configuration sources all run: this launch layer
+# is additive to an operator's ~/.codex/hooks.json, never a rewrite of it. The
+# nested value below was accepted by `codex doctor`; its malformed-shape control
+# was refused.
+#
+# Doctor is NOT an event-name allowlist: a structurally valid invented event was
+# accepted as `config loaded`. The event names therefore stay literal from the
+# official table, in this one list, and must agree with cmd_hook's cases. Generating
+# or spelling a second copy would restore the silent typo route the check cannot
+# see.
+#
+# ONE COMMAND STRING FOR EVERY EVENT AND SEAT. Trust is attached to the hook
+# definition, so putting a pane id in here would make every hitch a new trust
+# decision. The absolute path is fixed when the profile is loaded; cmd_hook binds
+# the firing process to its seat from inherited $TMUX_PANE instead. That inheritance
+# was observed in Codex exec and interactive use, but it is ordinary process
+# ancestry rather than a documented Codex contract.
+#
+# PostToolUse is wired only after the exact bytes cmd_hook emits were driven
+# through a real Codex event: the tool result reached the raw rollout unchanged,
+# and no decision-shaped key appeared in the reply. Its additionalContext is NOT
+# a no-op — Codex records it in the model's context as a developer-role message.
+# That is the intended route for an in-turn band nudge, and any future Codex
+# hook_notes work must preserve it deliberately rather than discovering it anew.
+#
+# Real Codex turn bytes reached the shipped cmd_hook unchanged, python3 resolved
+# and ran from the inherited PATH, and the resulting closed @gl_turn bracket was
+# read back from the seat. The compaction pair and PermissionRequest have not been
+# driven live: their ingestion is inferred from that shared payload path and the
+# same documented event-name field, not claimed as observed. Phase one's absent
+# declaration keeps that distinction honest if any of them never arrives.
+#
+# The wired set is stdout-safe as presently mapped: Stop, both compaction events,
+# and PermissionRequest are silent; UserPromptSubmit has no Codex decision-channel
+# vocabulary; PostToolUse's current reply was observed not to block or alter its
+# tool result. PermissionRequest's reply object carries both a decision and
+# additional context, so its silence is load-bearing.
+#
+# GANG_PROBE_FACTS stays unset. The readers already consume any records these
+# writers produce, while an untrusted hook leaves no record and preserves today's
+# scrape tier. Declaring ownership waits until bin/gang can make a declared fact
+# that never arrives as loud as one that arrived and expired.
+_gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
+_gl_codex_hook_flags=""
+for _gl_codex_event in UserPromptSubmit PostToolUse Stop PreCompact PostCompact PermissionRequest; do
+  _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
+done
+GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"
 # Resuming after a tmux server death (ADR-0007). A full launch line rather than a
 # flag, because codex spells resume as a SUBCOMMAND and no appended option could
 # express it. Directory-scoped by default: `codex resume --all` is documented as
 # "disables cwd filtering", which is what establishes that the default filters.
-GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false"
+GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false$_gl_codex_hook_flags"
+unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
 # From `codex --help`: -m/--model, a bare model id ("gpt-5.6-sol").
 GANG_MODEL_OPT="-m"
 # One busy form that covers more than it looks like it does. A running turn
@@ -140,7 +191,7 @@ GANG_MIDTURN_INPUT=1
 # Every scraped marker in this file was live-verified against these harness
 # versions. New release = re-verify + append (gang vet watches the pin).
 GANG_VERSION_CMD="codex --version"
-GANG_VERIFIED_VERSIONS="0.144.5 0.145.0"
+GANG_VERIFIED_VERSIONS="0.144.5 0.145.0 0.146.0"
 # Codex paints no context readout a passive observer can reach — the composer
 # hint row needs text typed to appear, and /status is a submitted command; both
 # mean typing into somebody's session. So this profile reads the figure where
