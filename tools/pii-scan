@@ -163,10 +163,17 @@ scan_content() { # $1 = label, $2 = content
   return "$fail"
 }
 
+added_lines() {
+  awk '
+    /^\+\+\+/ { next }
+    /^\+/ { sub(/^\+/, ""); print }
+  '
+}
+
 # The vacuous-check refusal, applied prospectively: prove every pattern still
 # catches its own fixture before trusting any of them against real content.
 selftest() {
-  local class fixture
+  local class fixture projected
   for class in $CLASSES; do
     fixture="$(class_fixture "$class")"
     if class_hits selftest "$class" "$fixture" >/dev/null 2>&1; then
@@ -176,6 +183,19 @@ selftest() {
       exit 1
     fi
   done
+
+  projected="$(printf '%s\n' '--- a/file' '+++ b/file' \
+    '-/home/alice/removed' '+safe' | added_lines)"
+  [ "$projected" = safe ] || {
+    echo "pii-scan: self-test FAILED — deleted diff content reached the prospective scanner" >&2
+    exit 1
+  }
+  projected="$(printf '%s\n' '--- a/file' '+++ b/file' \
+    '-safe' '+/home/alice/added' | added_lines)"
+  [ "$projected" = /home/alice/added ] || {
+    echo "pii-scan: self-test FAILED — added diff content did not reach the prospective scanner" >&2
+    exit 1
+  }
 }
 
 main() {
@@ -201,7 +221,7 @@ main() {
       [ "$#" -gt 0 ] || usage
       local sha_list
       sha_list="$(git rev-list "$@")"
-      local fail=0 sha content
+      local fail=0 sha content message additions
       for sha in $sha_list; do
         # This tool's own source is excluded from diff content, not from the
         # commit message: it embeds every pattern's self-test fixture as a
@@ -210,7 +230,11 @@ main() {
         # design. Scanning them here would flag this tool's own patch on
         # every commit that touches it. Nothing else in the repo gets this
         # carve-out — see docs/DECISIONS.md, "PII prevention is prospective".
-        content="$(git show --no-color "$sha" -- . ':!tools/pii-scan')"
+        message="$(git log -1 --format=%B "$sha")"
+        additions="$(git show --format= --no-color --unified=0 "$sha" -- \
+          . ':!tools/pii-scan' | added_lines)"
+        content="$message
+$additions"
         scan_content "commit $sha" "$content" || fail=1
       done
       exit "$fail"
