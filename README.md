@@ -68,7 +68,7 @@ gang down
 
 ## Long sessions
 
-Agents receive one short startup contract: their Gangline name, how to reply,
+Agents receive one short startup contract: their Gangline name, how to send,
 and how to request native compaction. Goals, roles, and working agreements stay
 as ordinary prose in the native harnesses and messages.
 

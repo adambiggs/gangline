@@ -8,8 +8,8 @@ lifecycle control, and native compaction. It does not coordinate the work,
 supervise agents, prescribe team strategy, or spend agent context explaining its
 own machinery.
 
-The agent-facing surface should fit in one short startup message: its name, who
-sent a message, how to reply, and how to request native compaction. Everything
+The agent-facing surface should fit in one short startup message: its name, how
+to message a peer, and how to request native compaction. Everything
 else belongs in operator reference material or nowhere.
 
 ## Keep

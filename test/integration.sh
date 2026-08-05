@@ -193,6 +193,8 @@ contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
+excludes "startup does not ask for a reply to its synthetic sender" \
+  "$(pane alpha)" "Reply to that sender"
 equal "context lights leave no state when disabled" "|" \
   "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
 
