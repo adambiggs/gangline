@@ -1,23 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
-# gang — gangline: drive a team of CLI agents as tmux windows.
-# Laws: CONSTITUTION.md. Durable decisions: docs/DECISIONS.md.
 set -euo pipefail
 
-# Named rather than written inline, because the crontab reader below has to work
-# out which session an entry sweeps and an entry that names none sweeps this one.
-# A default spelled in two places is a default that eventually disagrees.
 DEFAULT_SESSION=gangline
 SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
 
-# Every marker gang matches is a glyph a TUI painted: spinners, progress-bar
-# segments, menu cursors. Matching them means nothing outside a UTF-8 locale —
-# under LC_ALL=C a bracket expression matches single BYTES and `[^ ]` eats one
-# third of a spinner glyph, so "✽ Generating…" stops matching the busy pattern
-# written for it and a live turn reads idle. cron runs in C. Rather than harden
-# every regex in every profile against byte semantics, gang states the
-# requirement it always had and satisfies it here, once. An environment that
-# already names a UTF-8 locale is left exactly as it is.
 utf8_locale() {
   case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
     *[Uu][Tt][Ff]8*|*[Uu][Tt][Ff]-8*) return 0 ;;
@@ -29,39 +16,14 @@ utf8_locale() {
   done
   return 1
 }
-# Non-fatal: a host with no UTF-8 locale can still hitch, send, and drop — it is
-# only marker matching that degrades, and gang vet reports the degradation
-# rather than every command refusing to run.
 utf8_locale || true
 
 die() { fail 1 "$@"; }
 
-# A refusal that typed NOTHING into the pane, exiting 3 so a caller can tell it
-# from a failure that may have left keystrokes behind. That distinction is the
-# only safe basis for retrying a delivery: "the wording sounds transient" is a
-# guess about prose, while "nothing was typed" is a property of the code path,
-# and re-running a delivery that got as far as the paste can submit the same
-# message twice. So this is for the checks BEFORE the first keystroke only —
-# everything downstream of `paste-buffer` dies on 1 however recoverable it reads.
-#
-# The implication runs ONE WAY and the asymmetry is deliberate. 3 always means
-# nothing was typed; 1 does not mean something was. Plenty of refusals that never
-# reach a pane still exit 1 — cmd_send refuses an occupied target itself rather
-# than leaving it to a delivery, so an ordinary send to an occupied agent is a 1
-# for a keystroke that was never sent, whether that occupancy was found before the
-# delivery or handed back by one. Converting those would make the converse true
-# and buys nothing: the consumers are the delivery waiters, which call inject
-# directly, and a retry rule needs "safe to repeat" to be provable, not
-# exhaustive. Reading 1 as proof that something was typed is the mistake this
-# paragraph exists to prevent.
 refuse() { fail 3 "$@"; }
 
 fail() { # $1 = exit status, rest = message
   local code="$1"; shift
-  # stderr gets its own terminal test. `gang roster 2>/dev/null | grep ...` is the
-  # ordinary shape in a script, and there stdout is a pipe while stderr is still a
-  # terminal — one test for both fds would drop the colour from the one line that
-  # most wants it.
   if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
     printf '\033[31mgang:\033[0m %s\n' "$*" >&2
   else
@@ -70,42 +32,18 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-# Every numeric knob in this file is read from an environment gang does not own,
-# and a value that is not a number does not fail alike everywhere it lands.
-#
-# `[ "$t" -lt "$timeout" ]` against a non-numeric bound writes "integer expression
-# expected" and exits 2 — and a FAILING condition on a `while` does not trip
-# errexit, so the loop never runs and execution continues past it as though the
-# wait were over. Most of these then merely lie: a lock refusal claims thirty
-# seconds of contention that never happened, a boot timeout reports a dialog
-# nobody saw. GANG_RESUME_TIMEOUT is the one that lands somewhere corrupting —
-# skipping that loop delivers the resume instantly, which is the overtaking the
-# whole function exists to prevent, and the agent wakes with nothing to pick up.
-#
-# Checked AT EACH READ rather than once at startup. A profile is sourced after
-# these defaults are taken and can export any of them, so a startup sweep would
-# pass and the value actually in force would be the one it never saw.
 require_whole() { # $1 = name to blame, $2 = value, $3 = the unit for the message
   case "$2" in
     ''|*[!0-9]*) die "$1 must be a whole number of $3, got '$2'" ;;
   esac
 }
 require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractions are fine
-  # A bare `.`, a second dot, and anything signed are all rejected: sleep takes
-  # none of them, and a leading dash would be read as an option rather than a
-  # number besides.
   case "$2" in
     ''|.|*[!0-9.]*|*.*.*) die "$1 must be a non-negative number of seconds, got '$2'" ;;
   esac
 }
 
 gang_root() { # $1 = path to this script; the install tree it lives in
-  # Plain readlink in a loop, not `readlink -f`: the -f form is GNU-only and a
-  # stock macOS rejects it. When it failed the substitution came back empty,
-  # dirname read that as ".", and ROOT silently became the parent of whatever
-  # directory the CALLER happened to be in — so gang ran with no profiles and no
-  # roles while install.sh reported success. Law 8: a tool that cannot find its
-  # own tree says so rather than running half-configured.
   local src="$1" dir
   while [ -L "$src" ]; do
     dir="$(cd -P "$(dirname "$src")" && pwd)"
@@ -121,7 +59,6 @@ GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
-GANG_COMPACTION_LIMIT="${GANG_COMPACTION_LIMIT:-300}"
 GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
 GANG_CONTEXT_FACT_LIMIT="${GANG_CONTEXT_FACT_LIMIT:-60}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
@@ -166,53 +103,20 @@ EOF
 
 usage_die() { usage >&2; exit 1; }
 
-# --- profiles ---------------------------------------------------------------
-#
-# A profile says how to talk to one harness: how to launch it, how to tell it is
-# mid-turn, how its modals read, how to read its context, how to see its input
-# box. GANG_PROFILES
-# points at your own directory, which is searched before the shipped one, so a
-# new harness — or a fix to a shipped profile whose TUI has moved on — costs a
-# file, never a patch to the installed tree.
-
-# Profiles that exist to exercise gang's own mechanics rather than to drive a
-# harness. They ship, because the suite needs them and a test dependency that is
-# not installed is not tested — but they are not OFFERED. `gang profiles` is what
-# the installer prints and what an operator picks from, and a shell sitting in
-# that list reads as a fifth harness gangline supports: the operator asks which
-# agent to run on it, and the honest answer is none. The suite opts back in.
 TEST_ONLY_PROFILES="bash"
 
 test_only_profile() { # $1 = profile name; exit 0 if it is a stand-in, not a harness
   [ "${GANG_TEST_PROFILES:-}" = 1 ] && return 1
   case " $TEST_ONLY_PROFILES " in *" $1 "*) ;; *) return 1 ;; esac
-  # Only the SHIPPED stand-in is withheld. Somebody whose own GANG_PROFILES holds
-  # a bash.sh means it, and shadowing is the documented way to override anything
-  # gang ships — withholding their file too would make the override silently
-  # useless for one name and nobody would guess which.
   [ "$(profile_file "$1" 2>/dev/null)" = "$ROOT/profiles/$1.sh" ]
 }
 
-# Every profile INSTALLED, whether or not it is offered: both dirs, deduped by
-# name, because a name present in each is one profile with the shipped copy
-# shadowed. The two callers want different sets and the difference is the whole
-# point of splitting this out — `gang profiles` offers, `gang vet` diagnoses, and
-# a rot check that only walked what is offered would quietly stop walking the
-# stand-in it is shipped beside.
 all_profiles() {
   local d p
   for d in ${GANG_PROFILES:+"$GANG_PROFILES"} "$ROOT/profiles"; do
     [ -d "$d" ] || continue
     for p in "$d"/*.sh; do
       [ -f "$p" ] || continue
-      # Stripped with parameter expansion rather than basename, and that is not
-      # micro-optimisation. A fork that fails — and under real load on this box
-      # they do — drops that ONE name from the list and reports nothing: the
-      # profile silently stops being offered by `gang profiles` and silently stops
-      # being VETTED, which is a guard lost with nothing printed to say so. It is
-      # the same class this function's own comment was written about. Demonstrated
-      # with a basename shim failing on one file: codex disappeared from `gang
-      # profiles` and the exit status stayed 0. An expansion cannot fail that way.
       p="${p##*/}"
       printf '%s\n' "${p%.sh}"
     done
@@ -220,26 +124,6 @@ all_profiles() {
 }
 
 list_profiles() { # what an operator may pick from
-  # Built whole rather than a line at a time, which helps and saves nobody. The
-  # hazard is real: a caller piping this into `grep -q` gets a reader that exits
-  # at its match while the writer still has lines to write, the writer takes
-  # SIGPIPE, and under the caller's pipefail the pipeline reads as a MISS — a
-  # name that IS in the list reported absent, one run in five.
-  #
-  # What this comment used to claim, and what is false: that one printf of one
-  # variable is ONE write, so the payload lands in the pipe buffer before any
-  # reader can have matched. bash line-buffers stdout, so printf emits one write
-  # PER LINE and the payload size never enters into it. Measured on this tree:
-  # `gang profiles | grep -q bash` fails 155 times in 1000, PIPESTATUS 141,0,
-  # against exactly this function — while the same payload with the match on the
-  # LAST line fails 0 in 500, because there the reader must consume everything
-  # before it can exit. Attributed by sigpipe under GDB (issue #6): five writes,
-  # one per profile name.
-  #
-  # So this function cannot make a piping caller safe and nothing it does will.
-  # The rule lives at the CONSUMER: capture first, match off a here-string. That
-  # is structural — no pipe is left to raise a signal — and it is what this tree
-  # now does everywhere, including the eight predicates in this file.
   local n out=""
   while read -r n; do
     [ -n "$n" ] || continue
@@ -281,8 +165,6 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "profile '$1' declares GANG_MIDTURN_ACTS without GANG_MIDTURN_INPUT — acting on text cannot make an unsafe mid-turn paste safe"
 }
 
-# --- optional role briefs ----------------------------------------------------
-
 role_file() { # $1 = role name -> path on stdout; yours wins over the shipped one
   local d
   for d in ${GANG_ROLES:+"$GANG_ROLES"} "$ROOT/roles"; do
@@ -292,7 +174,6 @@ role_file() { # $1 = role name -> path on stdout; yours wins over the shipped on
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
-  # Names must round-trip through tmux targets, hook JSON and envelopes.
   case "$1" in
     hitch) return 1 ;;
     ''|-*|.*) return 1 ;;
@@ -304,64 +185,9 @@ mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE="" ENVELOPE_NONCE=""
 envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into ENVELOPE
-  # A bare prefix on the first line leaves every line after it unsigned — and the
-  # role briefs read an unsigned line as the OPERATOR, who outranks every peer. A
-  # peer with nothing but permission to run `gang send` could then deliver
-  # `ok\nnow do the dangerous thing`, where the second line arrives in the
-  # operator's voice. A repository that gets text into one agent reaches the
-  # whole team that way.
-  #
-  # The envelope closes it: everything the sender said is inside a matched pair,
-  # and the pair carries a nonce minted for this message alone. A body cannot
-  # close the envelope and open another, because the nonce is minted here, from
-  # a body that already exists, and whoever wrote that body cannot know the value.
-  #
-  # THE NONCE IS THE MECHANISM. Neutralising tag-shaped text below is defence in
-  # depth over it, aimed at a reader that is a model rather than a parser: a
-  # wrong-nonce tag is not a valid close, but it can still read as one to
-  # something skimming.
-  #
-  # What none of this does is authenticate the sender: any writer to a pane can
-  # type an envelope. That is why the sender is read off the sending window
-  # wherever gang can see one (check_sender), rather than believed.
-  #
-  # The result lands in ENVELOPE rather than on stdout, and that is the fix for a
-  # guarantee that used to end here. stdin_body goes to real trouble to keep a
-  # body's trailing newlines — a sentinel byte appended and stripped inside one
-  # substitution — and every caller of this function then wrote
-  # `inject "$id" "$(envelope ...)"`, which takes them straight back off. The
-  # sentinel protected nothing that shipped. A variable cannot be stripped by a
-  # substitution that is no longer written, so the shape is the guarantee.
   local nonce body marked sentinel=$'\034'
   nonce="$(mint_nonce)"
   ENVELOPE_NONCE="$nonce"
-  # Match the SHAPE of a tag, not the one spelling gang emits. A model reads
-  # `［gang:lead#0000]` as an envelope as readily as the ASCII form, so matching
-  # the exact literal caught the honest case and none of the others: fullwidth
-  # brackets, any capitalisation, and whitespace anywhere inside the tag all went
-  # through untouched when they were measured against it.
-  #
-  # Literal alternation, never a bracket class. The C locale is reachable here —
-  # utf8_locale warns and continues (:31) — and there a bracket class holding a
-  # multibyte character matches its individual BYTES: `[[［]` consumes only the
-  # last byte of ［ and leaves the other two behind as mojibake, corrupting the
-  # body instead of neutralising the tag. Measured, on this expression. The ASCII
-  # class over `gang` is safe for the reason it looks redundant — every member is
-  # one byte.
-  #
-  # This widens the net; it does not close it. Homoglyphs are unbounded and no
-  # enumeration of them terminates, so what is here is a speed bump in front of
-  # the nonce rather than a parser guarantee, and no document may promise more.
-  #
-  # Comma delimiter so the `/` of a closing tag needs no escape: whether `\/` is
-  # defined inside an ERE group is a question worth not asking on a CI matrix
-  # that includes BSD sed.
-  #
-  # The neutralisation still needs a substitution, so it carries the sentinel too.
-  # A sed that appends a newline to a final line lacking one — BSD does, GNU does
-  # not — is absorbed rather than guarded against: the substitution strips that
-  # newline back off, and the sentinel is what stops it from continuing into the
-  # body's own.
   marked="$(printf '%s\034' "$2" \
     | sed -E 's,(\[|［|〔|【)([[:space:]]*/?[[:space:]]*)([Gg][Aa][Nn][Gg])([[:space:]]*:),(\2\3\4,g')"
   case "$marked" in
@@ -373,15 +199,6 @@ envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into 
 
 STDIN_BODY=""
 stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_BODY
-  # Message prose does not belong in argv. The caller's shell expands argv before
-  # gang exists: backticks and $() run commands, variables expand, and globs turn
-  # into filenames. Delivery verification then correctly vouches for text the
-  # sender never wrote. Reading stdin makes the body data rather than shell syntax.
-  #
-  # A plain `body="$(cat)"` strips every trailing newline. Append a non-newline
-  # sentinel inside the same substitution, then remove exactly that final byte,
-  # so stdin keeps the shape the caller supplied. Guard cat explicitly: otherwise
-  # the trailing printf would replace a read error with its own success.
   local marked sentinel=$'\034'
   if marked="$(
     cat || { rc=$?; exit "$rc"; }
@@ -399,7 +216,6 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
 }
 
 check_sender() { # $1 = claimed sender; inside the session, it must be your own window
-  # Inside the team, the caller's window name must match the claimed sender.
   valid_name "$1" \
     || die "sender '$1' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
   local self mine
@@ -420,20 +236,6 @@ startup_brief() { # $1 = agent name, $2 = optional role
     "$1" "$1" "$1" "$role_text"
 }
 
-# --- window plumbing --------------------------------------------------------
-#
-# Agents are addressed by tmux window id (@N), never by "session:name": tmux's
-# target grammar reads an all-digit name as a window INDEX, so a name-built
-# target delivers `2` to whatever sits at index 2 and calls it verified. An id
-# is immutable for the window's life, survives rename and reorder, and is never
-# reused — so a name resolved once cannot drift under the rest of the command.
-#
-# The session is addressed as "=$SESSION" everywhere for the same class of
-# reason: an unanchored tmux target is a PREFIX match, so GANG_SESSION=team
-# resolves to a running team-production when nothing is called team — quietly
-# hitching into the wrong team, and, through `gang down`, killing it. The "="
-# demands the whole name.
-
 win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
   local id name
   while read -r id name; do   # `read id name` keeps spaces in the name
@@ -445,13 +247,6 @@ win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that nam
 exists() { win_id "$1" >/dev/null; }
 
 self_window() { # -> the window id this process is running in; nonzero if not in one
-  # tmux exports $TMUX_PANE into every pane it starts, so it names the caller
-  # exactly — unlike the attached-client list, which names whoever is LOOKING at
-  # the session, not who is running inside it. It can also be stale: a process
-  # that outlived its pane, or one that inherited the variable across an ssh or
-  # mosh hop, still carries a pane id for a pane that is gone. So the id is
-  # checked against the live session rather than trusted; a stale one matches
-  # nothing and the caller is simply not-self, which is the safe answer.
   [ -n "${TMUX_PANE:-}" ] || return 1
   local pid wid
   while read -r pid wid; do
@@ -460,7 +255,6 @@ self_window() { # -> the window id this process is running in; nonzero if not in
   return 1
 }
 
-# resolve() sets these two for the command that follows; the only name->agent lookup.
 AGENT_ID="" AGENT_PROFILE=""
 
 resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profile
@@ -472,83 +266,21 @@ resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profi
 }
 
 session_live() { # exit 0 if the team's session is running
-  # has-session fails identically for "there is no such session" and "the tmux
-  # server cannot be reached at all", and discarding its stderr made the second
-  # wear the first's clothes: inside a sandbox that denies connect() on the tmux
-  # socket, `gang roster` printed "no team (session gangline not running)". The
-  # operator read a message about the session, reasoned about $TMUX, and filed a
-  # bug against the wrong subsystem. The message cost more than the fault did.
-  #
-  # Recognised phrasings of "not there" are treated as absence. Anything else is
-  # surfaced verbatim rather than guessed at, because the set of ways a server
-  # can be unreachable is not one gang can enumerate, and an unexpected message
-  # reported as itself is the safe direction.
-  #
-  # The empty case is the exception, and it is a GUESS named as one. A nonzero
-  # exit with nothing on stderr says nothing at all, and it is resolved toward
-  # absence deliberately: a silent failure here is far more often a session that
-  # is not running than a server that cannot be reached, and dying with "cannot
-  # reach the tmux server — " and nothing after the dash is a worse answer than
-  # "no team" for what is almost certainly a missing team. It is the one branch
-  # that resolves ambiguity toward the direction which caused the original bug.
   local err
   err="$(tmux has-session -t "=$SESSION" 2>&1)" && return 0
   case "$err" in
     ""|*"can't find session"*|*"session not found"*|*"no such session"*) return 1 ;;
-    # A server that was never started is not a server that cannot be reached.
-    # tmux says so two ways depending on how it was asked, and both mean nothing
-    # is running here yet — which is the ordinary cold start on a machine with no
-    # tmux, the state every `gang up` and the whole test suite begin from. These
-    # resolve toward absence so the caller goes on to create the session.
-    #
-    # This does not give back what the branch below is for. A connect() that is
-    # actually refused — the sandbox case, where the socket exists and the kernel
-    # says no — reports "Permission denied", matches neither of these, and still
-    # dies with its own message. The distinction is the socket's existence, which
-    # is the thing the two situations genuinely differ on.
     *"no server running"*) return 1 ;;
     *"error connecting to"*"No such file or directory"*) return 1 ;;
     *) die "cannot reach the tmux server — $err" ;;
   esac
 }
 
-# No -e, deliberately, and this is the first thing anyone proposes on being told
-# a marker might be a colour rather than a character. Nearly every marker
-# gangline scrapes is anchored to the START of a line, which is exactly where an
-# escape sequence sits: claude-code's busy branch matches its own captured
-# thinking line with escapes stripped and does not match it with them present,
-# because the anchor eats the ESC. The same anchoring carries codex's gate
-# (^› [0-9]+\.), pi's (^→), claude-code's own (^ +❯|Esc to) and opencode's badge
-# and box parsing. Passing -e here would blind gate detection on three harnesses
-# the day it landed.
 capture() { tmux capture-pane -p -t "$1"; }
 
-# -J joins pane-width-wrapped lines so matching never breaks on a wrap boundary.
 capture_joined() { tmux capture-pane -pJ -t "$1"; }
 
 re_match() { # $1 = the profile variable NAME holding an ERE, $2 = text; 0 hit, 1 miss
-  # grep answers three things, not two: 0 it matched, 1 it did not, and >=2 it
-  # could not tell. Consumed as a boolean the third collapses into the second,
-  # and that collapse only ever runs one way — a marker that cannot be EVALUATED
-  # reads as a marker that is ABSENT. So a working agent reads idle, a modal
-  # reads clear, and resume_after_compaction counts a not-busy sample against a
-  # turn it never established had ended. Every fabricated-status defect found in
-  # this file is that same distinction being dropped: DETERMINED FALSE and COULD
-  # NOT DETERMINE are different answers, and only the first may be spent as false.
-  #
-  # Reachable rather than theoretical. These regexes come from profiles, profiles
-  # are edited by hand, and GANG_PROFILES points at whatever directory an operator
-  # names. Measured against the grep gang actually runs (GNU 3.7, from a script,
-  # not an interactive shell): '[', '(', '[z-a]' and a trailing backslash each
-  # exit 2. Which patterns error is grep's business and varies between builds —
-  # that the class exists is what this handles.
-  #
-  # Taking the NAME rather than the value is what keeps the report honest: the
-  # message names the variable an operator has to go and fix, and that name
-  # cannot drift from the pattern it describes, because it is where the pattern
-  # was read from. Paired with the file load_profile kept, that is both halves of
-  # the answer — which setting, in which file — so the report ends the search
-  # instead of starting one.
   local re="${!1:-}" rc=0
   grep -qE -- "$re" <<<"$2" || rc=$?
   [ "$rc" -le 1 ] \
@@ -557,60 +289,11 @@ re_match() { # $1 = the profile variable NAME holding an ERE, $2 = text; 0 hit, 
 }
 
 composer_live() { # $1 = window id; the harness's own input box is on screen NOW
-  # Nonzero for a profile with no input hook, which is the honest answer: gang
-  # cannot see a box it was never taught to find, so callers fall back to
-  # whatever they did before one existed.
   declare -F profile_input >/dev/null || return 1
   profile_input "$1" >/dev/null 2>&1
 }
 
 busy_painted() { # $1 = window id, profile loaded; exit 0 if a turn is visibly in flight
-  # The pane question, unconditioned: is this harness painting its busy marker?
-  # Captured into a variable, not piped: a capture that FAILS must not read as
-  # "idle" and wave an injection into a pane nobody looked at.
-  #
-  # Unconditioned includes unguarded about PROVENANCE, and that is settled rather
-  # than overlooked. An agent that displays a profile, quotes a capture, or
-  # reviews this repo puts the marker on its own screen and reads busy off its
-  # own source, and the people that lands on are almost exclusively the people
-  # working on gangline. What was looked for is the thing occupied() has: a
-  # structural fact separating "the harness is painting its marker" from "the
-  # pane holds that text for another reason". Every dialog watched live OWNS the
-  # screen, so a composer that is still there proves the words are talk ABOUT a
-  # prompt. Busy has no such companion. The composer is painted through a turn on
-  # some harnesses and dropped on others, so neither its presence nor its absence
-  # says anything here. Position is not it: prose-quoted markers were measured
-  # inside the bottom twenty rows in 49 samples and outside it in the rest, which
-  # is why capture_status is one predicate's window and not a general defence.
-  # And tmux hands over cells, not provenance — capture-pane cannot say who wrote
-  # one, while styling would mean -e, which blinds the anchored gate regexes and
-  # marks up quoted text anyway.
-  #
-  # What is left is excluding prose by pattern, and prose is not a thing to
-  # pattern-match. So what guards this is the failure DIRECTION — stated as
-  # MEASURED, because the reasoned version of it was written here and was wrong.
-  # Contamination is one-way: pane text can only ADD matches, so a contaminated
-  # pane makes an idle agent read busy — sends queue or are refused, `gang wait`
-  # runs to its timeout — and it cannot subtract the match a real turn paints.
-  #
-  # What does NOT follow, and was claimed here anyway, is that a busy agent can
-  # therefore never read idle. It can, by two mechanisms, neither of them
-  # contamination. This predicate's own pipeline was one: `printf | grep -q` with
-  # the marker on an early line lost the race 3 times in 500 and returned
-  # not-busy on a working pane, which is why the match is now taken off a
-  # here-string with no pipe in it to raise a signal. The other was busy()'s old
-  # override for every parked harness that accepted mid-turn input — measured
-  # live on opencode 1.18.8 at twenty consecutive false idles while the marker
-  # stayed painted. state_now now names that owned state PARKED, and busy() only
-  # overrides it for the narrower, witnessed ACTS declaration. This function is
-  # therefore still not the whole answer to "what can this agent do now?".
-  #
-  # The two signals that CAN tell a live turn from static text — recently_active
-  # and churn — are ORed into busy() and have to stay that way. Conjoined into a
-  # guard here they invert that direction: both are unavailable by default,
-  # GANG_QUIET_AT_REST is declared per harness with each profile saying why, and
-  # an AND with an unavailable signal reads every busy agent as idle. That trades
-  # a bounded cost for the unbounded one.
   [ -n "$GANG_BUSY_REGEX" ] || return 1
   local pane
   pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess busy/idle"
@@ -623,29 +306,6 @@ activity_hold_clear() { # $1 = window id; end any activity-only busy episode
 }
 
 recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
-  # The pty question, which is neither of the other two. busy_painted asks what
-  # the pane SAYS and churn asks whether the pane CHANGED; this asks whether the
-  # harness WROTE, and that is the only one of the three a full-screen TUI cannot
-  # hide from. A live claude-code turn runs a render loop that parks the cursor
-  # into the composer rows on every frame — `\e[34;1H` and `\e[31;3H`, 748 of 748
-  # frames — and a cursor move changes no cell. So bytes flow while cksum stays
-  # flat, and 44 of 47 byte-identical pairs in the blind state had ticked.
-  #
-  # Declared per harness and OFF by default. window_activity ticks on any output
-  # at all, so a TUI that repaints anything at rest — a clock, a cursor blink, a
-  # late-settling counter — can otherwise hold busy forever. That happened in the
-  # field for about forty minutes after a Pi agent had finished, despite an empty
-  # composer and a byte-identical capture. Pi no longer declares the signal, but
-  # finite quiet-at-rest observations cannot prove the other declarations forever
-  # either. @gl_activity_only_since bounds the time gang will trust this signal
-  # ALONE; it dies with the window, and genuine quiet or independent busy evidence
-  # clears it sooner. tmux exposes the LAST write, not when a repeating episode
-  # began, so the bound starts when gang first has to rely on the signal. It
-  # bounds how long a query/send/wait is held, not unobserved time before anyone
-  # asked.
-  #
-  # No second capture and no sleep: tmux maintains this timestamp already, so
-  # unlike churn it is read once and compared against now.
   if [ "${GANG_QUIET_AT_REST:-}" != 1 ]; then
     activity_hold_clear "$1"
     return 1
@@ -655,8 +315,6 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   local stamped now since
   stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
     || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
-  # A malformed stamp is not quiet. Naming the third answer here keeps busy()
-  # from feeding it to the churn fallback as though tmux had determined false.
   case "$stamped" in
     ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
   esac
@@ -670,24 +328,11 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
 
   since="$(tmux show-options -wqv -t "$1" @gl_activity_only_since 2>/dev/null)" \
     || die "cannot read the activity-only bound for pane $1 — refusing to guess"
-  # Absent, unreadable, and later than now are ONE fact — no usable bound is
-  # recorded — and they get one answer, because gang wrote this option and an
-  # option gang wrote is gang's to rebuild rather than gang's to refuse over.
-  # Refusing spent a single bad value as a permanent kill of status, roster,
-  # wait, send and patrol for the life of the window, over a cache whose only job
-  # is to remember when the bound started. Nothing downstream would ever rewrite
-  # it, so the refusal could not end: exactly how a @gl_band this reader had
-  # stopped understanding silenced patrol for five hours. Writing it is what the
-  # absent case already did three lines up; the other two were the same case
-  # wearing a different value.
   case "$since" in
     ''|*[!0-9]*) since="" ;;
     *) [ "$since" -le "$now" ] || since="" ;;
   esac
   if [ -z "$since" ]; then
-    # This one stays fatal, and the difference is whose failure it is: above,
-    # gang could not read what gang wrote; here tmux will not accept a write.
-    # An unbounded busy state is the hazard the whole bound exists to prevent.
     tmux set-option -w -t "$1" @gl_activity_only_since "$now" 2>/dev/null \
       || die "cannot record the activity-only bound for pane $1 — refusing an unbounded busy state"
     since="$now"
@@ -696,24 +341,6 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   return 2
 }
 
-# ===[ turn-bracket ]=========================================================
-#
-# The harness's own account of whether a turn is running: the event tier for
-# busy/idle (the evidence precedence rule). The harness fires `gang hook` at named
-# moments and the verb writes one window option: UserPromptSubmit opens the
-# bracket, Stop closes it, PostToolUse refreshes the open one. Every scrape in
-# this file sits below it, and the pane stays the only witness for everything the
-# events cannot see — boot, death, and a dialog nobody dismissed.
-#
-# Shape is @gl_compacting's, because a fact with an epoch already exists here and
-# a second convention is a second thing to get wrong: one space-separated string,
-# named fields out of `read -r`, timestamp trailing the value it stamps.
-#
-# THE EPOCH IS NOT DECORATION. `Stop` is silent on an Esc interrupt and silent on
-# a crash — verified against the vendor's own docs, the evidence precedence rule — so an open bracket
-# with nobody left to close it is the ordinary end of an interrupted turn, not an
-# exotic failure. The bound is the only thing that covers those two, and without
-# it the fact this file trusts most is also the one that can never be wrong.
 TURN_STATE=""
 TURN_AT=0
 turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2 = malformed
@@ -722,10 +349,6 @@ turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2
   TURN_STATE=""; TURN_AT=0
   [ -n "$raw" ] || return 1
   read -r TURN_STATE TURN_AT _ <<<"$raw"
-  # Both halves are checked before either is believed. A value carrying a state
-  # this reader does not know is not a bracket in some other shape — it is a
-  # value gang cannot interpret, and interpreting it anyway is how a fact layer
-  # starts inventing answers.
   case "$TURN_STATE" in
     open|closed) ;;
     *) TURN_STATE=""; return 2 ;;
@@ -734,12 +357,6 @@ turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2
 }
 
 turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
-  # Never fatal, and that is the decision's answer rather than a lapse from law 8. A
-  # translator that can fail its harness's own turn is the self-management loop
-  # law 7 forbids wearing a new coat, so a hook writes its fact and steps aside.
-  # A fact that cannot be written simply does not arrive, the reader falls to the
-  # tier below, and the loudness lives one level up: an expected fact that stops
-  # arriving surfaces as expiry, which is a state an operator can see.
   tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
 }
 
@@ -750,23 +367,9 @@ agent_name_of() { # $1 = window id; the name a log row is filed under
 }
 
 turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to now
-  # NOT recently_active, and the difference is what each is FOR. That one asks
-  # whether pty activity may carry a busy verdict on its own, so it owns the
-  # activity-only episode bound that stops it carrying one forever. This asks a
-  # narrower question with no verdict attached — is something writing to this
-  # pane right now — and starting an episode bound from a path that claims
-  # nothing would put a fact somewhere its consumer is not (law 5).
-  #
-  # The same declaration gates both, for the same reason. A harness that repaints
-  # at rest writes bytes on a pane where nothing is happening, so there this
-  # question has no answer rather than a false one, and the caller keeps the
-  # bracket it already had.
   [ "${GANG_QUIET_AT_REST:-}" = 1 ] || return 1
   require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
   local stamped now
-  # Refuses rather than guesses, the way busy_painted already does on this same
-  # path — consuming an unreadable stamp as "nothing is writing" is exactly the
-  # silent inversion the caller below exists to stop making.
   stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
     || die "cannot read pty activity for pane $1 — refusing to consume unknown as a quiet pane"
   case "$stamped" in
@@ -784,12 +387,6 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
     0) ;;
     1) return 3 ;;
     2) # gang wrote this value and gang cannot read it back. @gl_band's precedent
-       # is rebuild rather than refuse, and there is nothing here to rebuild —
-       # whether a turn is open is exactly what was lost — so the mark is
-       # discarded the way an unreadable @gl_waiting is, leaving the next event
-       # to heal it. What this read must NOT do is spend an unparseable fact as
-       # "no turn open": that inverts a fact it could not read into the one
-       # answer that lets a send land in a live turn.
        turn_state_clear "$1"
        BUSY_EXPIRED_WHAT="turn-bracket value unreadable"
        return 2 ;;
@@ -797,107 +394,14 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   esac
   require_whole GANG_TURN_LIMIT "$GANG_TURN_LIMIT" seconds
   now="$(date +%s)"
-  # A closed bracket does not expire ON AGE, and the asymmetry is the point rather
-  # than an oversight. An OPEN bracket claims a turn is running, and turns end, so
-  # the claim decays with nothing to renew it. A CLOSED bracket claims no turn is
-  # open, and on this harness only an event can open one — so age alone adds no
-  # doubt to it, and bounding it on age alone would report every genuinely idle
-  # agent as could-not-determine within minutes, which is the tool not working.
-  #
-  # What age buys is the right to LOOK. The residual this used to name and leave
-  # standing: if the hooks stop firing altogether while the bracket reads closed,
-  # the fact that would have expired is the one that never arrived, so the bracket
-  # witnesses idle over a working agent forever — silent, permanent, and in the
-  # one direction that lets a send land in a live turn.
-  #
-  # So the bracket keeps the verdict until it is older than the bound an OPEN one
-  # gets, and past that it keeps the verdict only while nothing contradicts it.
-  # GANG_TURN_LIMIT rather than a number of this branch's own, because it is the
-  # same question asked of the other state word — how long is this bracket's claim
-  # good for without renewal — and a second bound is a second thing to tune wrong.
-  # It also has to clear the tail of the turn that just ended: Stop fires while the
-  # harness is still drawing its last frame, and a grace shorter than that would
-  # report an agent expired seconds after every turn it finished.
-  #
-  # THE PTY AND NOT THE PAINT, which is why turn_vets_paint below still only
-  # records. A painted marker carries no timestamp, so a rotted regex matching
-  # static transcript text would pin an idle agent at the wrong answer with
-  # nothing to age it out. The pty signal carries tmux's own stamp, so a
-  # disagreement built on it is bounded by construction and heals the moment the
-  # writing stops. Measured rather than assumed: an idle claude-code pane wrote
-  # nothing at all after Stop — one distinct window_activity stamp across 40
-  # samples spanning 172 seconds, equal to the second the bracket closed — while
-  # two working agents in the same session ticked on nearly every sample.
-  #
-  # The bracket loses the power to say idle without gaining the power to say busy.
-  # This returns the third answer and the tiers below answer on their own merits,
-  # exactly as they already do for an expired OPEN bracket — so a pane genuinely
-  # working reads busy off the pty, and one merely touched falls through to churn
-  # like any other. The pty usually answering next is a lower tier winning on its
-  # own evidence, not this branch voting with it.
-  #
-  # WHAT IS LEFT, named rather than argued away. The exposure is bounded, not
-  # closed: for the first GANG_TURN_LIMIT after a close, a working agent whose
-  # hooks have died still reads idle. Closing that means bounding a closed bracket
-  # on age alone, which is the paragraph above. And a harness that does not declare
-  # quiet-at-rest offers no signal to look at, so there the residual stands in
-  # full — every harness carrying an event tier today declares it.
-  #
-  # One benign firing, kept deliberately: an operator typing into the composer of
-  # an agent idle longer than the bound reads could-not-determine until they stop.
-  # That is close enough to true to leave standing — a send landing there would
-  # interleave with what they are typing — and it heals in GANG_ACTIVITY_WINDOW.
   if [ "$TURN_STATE" != open ]; then
     [ $(( now - TURN_AT )) -ge "$GANG_TURN_LIMIT" ] || return 1
     turn_pane_still_writing "$1" || return 1
     BUSY_EXPIRED_WHAT="turn-bracket closed while the pane kept being written to"
     return 2
   fi
-  # A stamp from the future has no freshness left to test, so it reads the same
-  # could-not-determine an unparseable one does — but it is NOT discarded the way
-  # that one is, and the asymmetry is the point. A malformed value can never be
-  # true, so clearing it loses nothing and restores an honest "no event tier". A
-  # future stamp can be true: a backward clock step makes a genuinely open bracket
-  # written seconds ago read as future, and clearing that would throw away a
-  # correct fact and drop a live turn to the scrape tier. So it stands and reads
-  # could-not-determine until any event overwrites it — one heartbeat away on a
-  # live turn, and never on a dead one, which is the direction law 8 wants.
-  #
-  # Its own qualifier, by this file's own rule that two different exhausted
-  # signals under one wording is a fabricated status. They are not fixed the same
-  # way: one says the clock moved, the other says something wrote a value gang
-  # cannot read.
   [ "$TURN_AT" -le "$now" ] \
     || { BUSY_EXPIRED_WHAT="turn-bracket stamped in the future"; return 2; }
-  # WHAT THIS BOUND IS ACTUALLY CLOSING, measured rather than imagined: a turn
-  # whose permission dialog is Esc-dismissed or explicitly denied ends in the pane
-  # — the composer comes back — and fires NO Stop. Watched twice, ending at +12s
-  # and +15s with the event counts frozen. So a dismissed dialog leaves a bracket
-  # that nothing will ever close, and expiry is its only closer. That is why the
-  # answer here is could-not-determine and not idle: the pane is idle-SHAPED in
-  # exactly this case, and reading the shape would be the assumption this whole
-  # tier exists to stop making.
-  #
-  # THE OCCUPANCY RAISE DOES NOT BELONG HERE, and working out why is worth more
-  # than the branch would have been. A turn paused at a permission dialog outlives
-  # any bound this can safely carry — nothing heartbeats while a dialog is up — so
-  # a fresh raise looks like exactly the fact that should explain a stale bracket
-  # and keep it from expiring into noise.
-  #
-  # It cannot, because occupancy strictly DOMINATES busy. occupied() consults the
-  # same raise as its own first tier and answers on it, every caller of busy() asks
-  # occupied() first and returns on that answer, and a raise the pane has retired is
-  # cleared by that call before this one could read it. So the state where this
-  # branch would fire is the state nobody reaches: the operator is told `occupied`,
-  # which is both truer and more actionable than a busy they cannot send into. A
-  # branch here would be a second reader of one fact that can never disagree with
-  # the first — dead by construction rather than by oversight (law 5).
-  #
-  # What is left uncovered is the window AFTER the dialog is answered and before
-  # the harness fires its next event, where this bracket can read expired with the
-  # raise already retired. Closing that needs a fact that outlives the dialog, and
-  # a lingering raise is precisely what would let a crashed turn borrow a dialog's
-  # alibi — so it is named here rather than reached for.
   [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] \
     || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; return 2; }
   return 0
@@ -905,42 +409,14 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
 
 turn_vets_paint() { :; }
 
-# Which evidence ran out, so the third answer can name itself. busy() sets this
-# whenever it returns 2 and every phrase an operator reads is built from it: two
-# different exhausted signals reported under one wording is a fabricated status
-# (law 8), and the two are not fixed the same way.
 BUSY_EXPIRED_WHAT="pty activity bound reached"
-# ===[ /turn-bracket ]========================================================
 
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
-  # The transport question — "will a send land at a sane boundary?" — which is
-  # the same as the pane question everywhere except one case.
-  #
-  # An agent parked in gang's own `gang wait` is inside a harness turn. Accepting
-  # a mid-turn paste is not enough to make it available: opencode and the other
-  # queueing harnesses submit that paste only after the running turn — the wait —
-  # ends. Only a profile witnessed ACTING on ordinary text inside the current
-  # turn may override busy here. state_now still reports every waiter as PARKED,
-  # because available and idle are different claims.
-  #
   if [ "${GANG_MIDTURN_ACTS:-}" = 1 ] && parked "$1"; then
     activity_hold_clear "$1"
     return 1
   fi
-  # The highest tier that is still fresh answers, and nothing below it is
-  # consulted (the evidence precedence rule): a fresh bracket beats paint, and paint beats pty. No
-  # blending and no scoring — a witness is chosen, and the ones underneath it are
-  # evidence about GANG when they disagree, not evidence about the agent.
-  #
-  # Expiry is the one case that does not short-circuit, and it behaves exactly as
-  # the pty arm's expiry already does below: an exhausted fact loses its power to
-  # SAY busy without gaining the power to say idle. Positive evidence from a lower
-  # tier still wins on its own merits; what the expired fact forbids is concluding
-  # idle from silence, which would be reading it as last-known-good inverted.
   local turn_rc=0 undetermined=0
-  # Reset per call: a roster asks this of every agent in one process, and a
-  # reason left over from the previous one would name the wrong exhausted signal
-  # on the next.
   BUSY_EXPIRED_WHAT="pty activity bound reached"
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
@@ -954,17 +430,6 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     activity_hold_clear "$1"
     return 0
   fi
-  # ORed with churn below rather than replacing it, and the redundancy is
-  # deliberate. Every pair churn calls moving is one this also calls moving — a
-  # cksum cannot change without bytes — so as sets of detected-busy states this
-  # SUBSUMES churn and the disjunct looks like it can never contribute a case.
-  # That is true only while this signal behaves as measured. Keeping churn costs
-  # nothing when it does and degrades to exactly today's behaviour if it ever
-  # stops: a tmux that does not stamp it, a harness that starves it, a mechanism
-  # that goes away in a release. That is a fallback for the signal being
-  # UNAVAILABLE, which is a different thing from the disjunction that once made a
-  # probe unable to fail — and the difference is that the suite asserts this arm
-  # on its own, so it can still be caught being wrong.
   local activity_rc=0
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
@@ -973,28 +438,6 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
-  # A missing marker is not a missing turn, and there is nothing to widen a
-  # branch onto. claude-code marks THINKING and leaves the rest bare: of 220
-  # samples with the pane demonstrably changing, 19 carried any branch of the
-  # busy regex, and the longest unbroken run of live-but-unmarked samples was 64
-  # — about 16 seconds. Compared over the whole pane, a mid-stream screen is
-  # transcript text, rule, empty composer, rule, context beacon, permissions
-  # line: the idle screen exactly, with no line present in one and absent from
-  # the other. So this is not a scan-depth problem and not a pattern problem.
-  #
-  # The only difference is that it keeps changing, which is not a question a
-  # single frame can be asked. Markers demote to a fast path — a marked pane
-  # never pays for the second capture — and churn answers for everything they
-  # miss. The check scrapes nothing, so unlike a marker it cannot rot, and gang
-  # already trusts it to mean "quietly idle" where a resume and a nudge are held.
-  #
-  # Churn is content-blind, so on its own it would call a pane parked in `gang
-  # wait` busy — the false busy the parked branch above exists to kill. That
-  # collision does not arise, because the exclusion is by state gang OWNS
-  # (@gl_waiting, holding the waiter's pid) rather than by matching the screen.
-  #
-  # $2 is that same answer resolved ahead of time for a whole team at once, so a
-  # roster pays one sleep rather than one per agent. Absent, this asks for itself.
   case "${2:-}" in
     churning) activity_hold_clear "$1"; return 0 ;;
     still)    [ "$undetermined" -eq 1 ] && return 2; return 1 ;;
@@ -1007,20 +450,6 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   return 0
 }
 
-# Churn costs two captures separated by a wait, and asking each agent in turn
-# makes a roster O(agents) in wall clock — the most-used command, growing with
-# the size of the team it exists to show. So the question is asked for everyone
-# at once: probe each pane, keep only the ones no marker and no owned state has
-# already answered, wait ONCE, and re-read that set. A marked pane never reaches
-# the second capture, so it is cheaper here than it was before churn existed.
-#
-# This makes the per-pane interval VARIABLE — the wait plus however long the
-# batch itself takes — where a lone busy() uses a fixed one. It can never be
-# SHORTER than the wait, and a longer interval only makes movement easier to
-# catch, so the error moves toward calling a live pane busy. Safe direction.
-#
-# Skipping an agent here is always safe: whatever is not resolved falls through
-# to the per-agent path in busy(), which is what every caller did before.
 CHURN_MAP=""
 
 map_get() { # $1 = "k=v k=v ...", $2 = key -> value on stdout
@@ -1036,20 +465,11 @@ churn_verdict() { # $1 = window id -> "churning" | "still" | "" if it was not sa
 }
 
 churn_first_sample() { # $1 = window id, $2 = profile -> first pane checksum
-  # Kept outside the command substitution that consumes it. Bash 3.2 scans that
-  # substitution with a parser that can treat an apostrophe in a comment as an
-  # opening quote; putting the logic in a function leaves only one plain call in
-  # that fragile lexical context.
   load_profile "$2"
-  # state_now names every live waiter before asking busy(), so no parked pane
-  # needs a churn verdict regardless of ACTS/QUEUES.
   if parked "$1"; then activity_hold_clear "$1"; return 1; fi
   if busy_painted "$1"; then activity_hold_clear "$1"; return 1; fi
   local activity_rc=0
   recently_active "$1" || activity_rc=$?
-  # Fresh activity is the fast path. Expired activity MUST reach the churn
-  # sample: movement can still prove busy independently, while a still pane
-  # preserves the third verdict from busy() for state_now.
   [ "$activity_rc" -eq 0 ] && return 1
   capture "$1" | cksum | tr ' ' '-'
 }
@@ -1061,22 +481,6 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
     prof="$(tmux show-options -wqv -t "$id" @gl_profile)" || continue
     [ -n "$prof" ] || continue
     profile_file "$prof" >/dev/null 2>&1 || continue
-    # Subshelled for two reasons. A pane gang cannot read costs this agent its
-    # batching rather than costing the whole roster its state column; and
-    # load_profile is per agent, so without the subshell the profile read last
-    # would leak into every state read after it.
-    #
-    # cksum rather than the screen itself, because holding a team's worth of
-    # captures means arrays this file does not use. Its byte count is the second
-    # field, so a false match needs a collision at identical length — but the
-    # cost of being wrong matters more than the odds of it: a false match reads
-    # as unchanged, which reads as not churning, which reads as IDLE. That is the
-    # false-idle direction, the one this whole state path exists to close.
-    #
-    # It is also the single place gang trades exactness for cost. pane_stable
-    # compares full screen text; this compares 32 bits. They are not the same
-    # test, and what holds them to the same answer is the suite asserting the
-    # batched column against the per-agent read on one pane.
     sum="$(churn_first_sample "$id" "$prof" 2>/dev/null)" || continue
     [ -n "$sum" ] || continue
     pending="$pending $id"
@@ -1093,11 +497,6 @@ churn_batch() { # $@ = window ids; resolve the churn question for all of them at
   done
 }
 
-# A Codex task cannot submit its own /compact while that task is still active.
-# The request therefore crosses exactly one native lifecycle boundary: compact
-# records it, Stop claims it, and this one-shot child waits for the composer,
-# submits the profile's native command, then exits. It is not a supervisor and
-# has no recurring mode.
 self_compact_after_stop() { # $1 window id, $2 profile
   local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   load_profile "$2"
@@ -1154,8 +553,6 @@ self_compact_request() { # $1 window id -> request token
   printf '%s' "$token"
 }
 
-# ===[ compaction-bracket ]===================================================
-
 compaction_trigger_of() {
   case "$1" in manual|auto) printf "%s" "$1" ;; *) printf "unknown" ;; esac
 }
@@ -1165,36 +562,6 @@ compaction_bracket_write() { # $1 window, $2 open|closed, $3 trigger
     "$2 $(date +%s) $(compaction_trigger_of "$3")" 2>/dev/null || true
 }
 
-# ===[ occupied-bracket ]=====================================================
-#
-# The harness's own account of a permission dialog: the event tier for the
-# occupied predicate (the evidence precedence rule), sitting above the two pane scrapes below it.
-# PermissionRequest raises it, `gang hook` is the one verb that writes it, and the
-# shape is the compaction bracket's — a stamped fact, every field validated before
-# any of them is believed, written by a writer that can never be fatal.
-#
-# IT ONLY EVER RAISES, and that is forced rather than chosen. Verified against the
-# vendor's own docs: PermissionRequest fires just before the dialog is presented,
-# and NOTHING fires when it goes away — Esc, an explicit No, and the harness's own
-# dismissal are all silent, and no Stop fires for it either. PermissionDenied is
-# not the missing closer despite the name: it fires only for auto-mode classifier
-# denials, which are decided with no dialog on screen at all, so wiring it would
-# raise occupancy for a prompt nobody was ever shown.
-#
-# The record still carries a state word rather than a bare epoch, because a lone
-# number is not self-describing: a foreign value landing in this option could not
-# be told from a stamp, and the read below has to be able to refuse one.
-#
-# WHAT RETIRES A RAISE IS THE PANE, and that is not the scrape outvoting the event
-# tier — tiers pick witnesses, they do not vote (the evidence precedence rule). It is this fact
-# reaching its end and the pane being able to prove it, the same shape as the
-# compaction mark settling on an observed context drop. Expiry is the only other
-# closer, and it costs the tier rather than answering with it.
-#
-# NOTHING IS READ OUT OF THE PAYLOAD. The dialog's tool name is the obvious field
-# to keep and is deliberately dropped: no predicate consumes it (law 5), a tool
-# name is an open vocabulary where `trigger` was a closed one, and an unbounded
-# string has no business in a space-separated record.
 OCCUPY_STATE=""
 OCCUPY_AT=0
 
@@ -1204,8 +571,6 @@ occupied_raise_read() { # $1 = window id; sets OCCUPY_*; 1 = absent, 2 = malform
   OCCUPY_STATE=""; OCCUPY_AT=0
   [ -n "$raw" ] || return 1
   read -r OCCUPY_STATE OCCUPY_AT _ <<<"$raw"
-  # Both fields before either of them, @gl_turn's rule. One state word is the whole
-  # vocabulary here, so anything else is a record gang did not write.
   [ "$OCCUPY_STATE" = open ] || { OCCUPY_STATE=""; return 2; }
   [[ "$OCCUPY_AT" =~ ^[0-9]+$ ]] || { OCCUPY_STATE=""; OCCUPY_AT=0; return 2; }
 }
@@ -1227,120 +592,29 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
   esac
   require_whole GANG_OCCUPIED_LIMIT "$GANG_OCCUPIED_LIMIT" seconds
   now="$(date +%s)"
-  # A future stamp is not discarded, for the turn bracket's reason: a backward
-  # clock step makes a true raise read future, and clearing it would throw away a
-  # live dialog and hand the pane to scrapes that may not have a name for it.
   [ "$OCCUPY_AT" -le "$now" ] || return 1
   [ $(( now - OCCUPY_AT )) -lt "$GANG_OCCUPIED_LIMIT" ] || return 1
-  # THE CLEAR. A composer back on screen is the dialog gone: every dialog watched
-  # live owns the screen while it is up, which is the same structural companion the
-  # declared marker below leans on. Cleared rather than left to age out, so no
-  # later reader is still answering off a dialog somebody dismissed minutes ago.
   if composer_live "$1"; then
     occupied_raise_clear "$1"
     return 1
   fi
   return 0
 }
-# ===[ /occupied-bracket ]====================================================
 
 occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
-  # The third state, and the one that must not pass for the other two: a harness
-  # whose own UI has displaced the composer is not working and not reachable —
-  # keystrokes sent to it land IN that UI, where they ACT on it. Every occupied
-  # pane watched live (claude-code, codex, opencode) also drops its busy hint and
-  # its input box while the UI is up, so an undeclared one reads idle: patrol
-  # holds a nudge on a box it cannot find, sends die "not taking input", and
-  # nothing on any surface says a dialog is what the whole team is stalled on.
-  # Lived it: three agents sat occupied for minutes and the only diagnostic was
-  # capturing panes one by one.
-  #
-  # Occupancy is the whole of what this establishes. Who may clear the UI, and
-  # whether it clears itself, is a different question with a different answer,
-  # and no caller may read one off the other (the occupancy decision).
-  #
-  # There are three ways in, because enumerating modal chrome will always miss
-  # one — and the first of them does not read the pane for the answer at all. The
-  # harness says a dialog went up, so nothing has to be recognised for this to be
-  # true, which is exactly what the two scrapes below cannot manage: one needs a
-  # marker somebody watched live, and the other infers occupancy from failing to
-  # find a composer.
   if occupied_witness "$1"; then return 0; fi
   local pane
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
-    # The declared marker: the dialogs somebody has watched live, named in the
-    # profile. Unset is a real answer — a profile whose gate nobody has watched
-    # declares nothing and reaches this state only through the fallback below.
-    #
-    # The WHOLE pane, not the bottom rows. A dialog is drawn above the composer,
-    # but it is drawn as tall as it needs to be, and its distinguishing wording is
-    # not always in its last twenty rows: opencode's model picker paints its own
-    # declared branch on the full pane and on NOTHING inside the status window, so
-    # that branch was alive in the TUI and dead in the region gang read it from.
-    # Nothing catches that by auditing markers for liveness — the marker is not
-    # dead, only unreachable — so the scan is what has to widen.
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
     if re_match GANG_OCCUPIED_REGEX "$pane"; then
-      # The wording alone is not the gate. Every dialog watched live OWNS the
-      # screen while it is up: the composer is gone, which is why an unmarked gate
-      # read idle in the first place. So a match beside a live input box is the
-      # harness talking ABOUT a prompt, not stopped at one — an agent reviewing
-      # this repo, quoting a capture, or reading these very profiles. Lived it:
-      # reviewers quoting the dialog wording froze their own lead and had their
-      # reports refused, which is a denial of the whole control plane out of
-      # ordinary prose.
-      #
-      # This check, not the scan depth, is what makes matching the whole pane
-      # safe — and the pairing does not transfer. busy() and compacting() ask for
-      # no box, so widening either of them the same way would believe any agent
-      # that quotes a marker: measured on this team, compacting() would have read
-      # true for three minutes off a reviewer's own grep output. Narrowing them to
-      # the status window is not a defence either, it is luck — prose-quoted
-      # markers landed inside the bottom twenty rows in 49 samples and outside it
-      # in the rest. Anyone widening those two needs their own argument.
       composer_live "$1" || return 0
     fi
   fi
-  # The fallback: a state gang cannot positively determine is occupied, not idle.
-  # No busy hint, no marker, and no input box to be found is not evidence of an
-  # agent waiting for work — it is evidence that something gang was never taught
-  # to recognise is holding the screen (Claude Code's /model picker reads exactly
-  # this way). Idle MEANS "go ahead and send", so calling the unknown idle loses
-  # the message, and `gang wait` cannot rescue it either: the waiter keys on
-  # BECOMING idle and the pane already reads idle. Occupancy costs a delay
-  # instead, and reaching this branch is exactly the authority-unknown case:
-  # gang cannot name a UI it was never taught to recognise.
-  #
-  # The box is asked about first because it is the cheap question and the common
-  # answer: a box gang can find is not a box a modal has taken. It is also where
-  # a profile that declares no input hook stops — gang cannot claim a box is
-  # missing when it was never taught to find one, so such a profile keeps exactly
-  # the busy/idle reading it always had.
   if input_painted "$1"; then return 1; fi
-  # No box, then. That is a UI unless a turn in flight explains it: several
-  # harnesses stop painting their composer while one runs. The PANE question,
-  # not the transport one — an agent parked in `gang wait` has a turn in flight
-  # and is not behind a UI, so asking busy() here would call it occupied the
-  # moment its composer went missing for any other reason.
   ! busy_painted "$1"
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
-  # Marker regexes are snapshots of a screen that may be actively redrawing —
-  # at a turn boundary or during compaction, one capture can miss the spinner
-  # and the next can miss the input-box content, and every guard reads a
-  # different frame (lived it: patrol nudged mid-compaction and the note
-  # jumped the harness's own input queue). A quietly idle TUI paints a static
-  # screen; streaming, spinners and timers all churn. Scrapes no marker, so it
-  # cannot rot.
-  #
-  # What it cannot do is tell a finished turn from a silent one, and the gap is
-  # measured rather than supposed: a claude-code compaction paints nothing at
-  # all and holds the screen byte-identical — 633 consecutive captures over 158
-  # seconds, no marker of any kind on any of them — so this answers "stable"
-  # straight through one. Any long silent stretch reads the same way: a test
-  # run, a fetch, a large read. Stable means the PANE has stopped moving, which
-  # is not the same claim as the agent having stopped working.
   local a b
   require_interval GANG_CHURN_WAIT "$GANG_CHURN_WAIT"
   a="$(capture "$1")" || die "cannot read pane $1"
@@ -1349,21 +623,12 @@ pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ 
   [ "$a" = "$b" ]
 }
 
-# A harness that declares an input box tells gang two things no generic screen
-# scrape can: that the TUI is up at all, and that a paste would not land on top
-# of something already typed. Profiles without one keep the generic path.
 input_painted() { # $1 = window id; the harness has drawn an input box
   declare -F profile_input >/dev/null || return 0
   profile_input "$1" >/dev/null
 }
 
 input_clear() { # $1 = window id; nothing a person typed is sitting in that box
-  # What counts as content is the PROFILE's answer, not this function's. A
-  # profile that can tell suggestion text from typed text hands back only what
-  # was typed, and an empty-looking box reads clear here even while the harness
-  # is painting a placeholder into it; a profile that cannot tell hands back
-  # everything, and its ghost text reads as a draft and holds. Both are correct
-  # for the harness they describe (Law 4), and the difference is invisible here.
   declare -F profile_input >/dev/null || return 0
   local box
   box="$(profile_input "$1")" || return 1
@@ -1371,27 +636,6 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
 }
 
 wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
-  # Two conditions, because a booting harness passes either one alone.
-  #
-  # Quiet is not enough: for the first seconds the pane is EMPTY, and an empty
-  # screen is a perfectly stable screen. Quiet alone therefore says "ready"
-  # before the harness has read a byte of stdin, and the brief pastes into a
-  # process that is not listening (lived it: `gang up` hitched a manager and
-  # then failed to verify a brief that had gone nowhere). A painted input box
-  # is the direct evidence that the TUI is up and taking input.
-  #
-  # The box's CONTENT is deliberately not tested, and paintedness is not a weaker
-  # version of the same question. A fresh TUI paints a placeholder into its empty
-  # box, and whether that reads as content depends on whether the profile can
-  # tell suggestion text from typed text — so a content test would gate booting
-  # on a per-harness capability that has nothing to do with whether the TUI is
-  # up. On a profile that cannot tell, waiting for an empty box never returns at
-  # all. Paintedness answers the question actually being asked here.
-  # Exit 2 is the settled-but-not-an-input-box case, worth telling apart because
-  # it is nearly always a first-run modal a human has to answer — Claude Code's
-  # "Do you trust the files in this folder?". Its menu cursor is a "❯" too, but
-  # indented, so no input box is found and gang refuses to paste a brief into a
-  # security prompt.
   local t=0
   while [ "$t" -lt "$2" ]; do
     input_painted "$1" && pane_stable "$1" && return 0
@@ -1401,13 +645,6 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   return 1
 }
 
-# --- parked in gang's own wait ----------------------------------------------
-# A window option, like every other piece of gang's state, so it dies with the
-# window and `tmux show-options -w` is its whole debugger. The holder's pid goes
-# inside for the same reason lock_pane keeps one: an option outlives the process
-# that set it, so a waiter killed mid-wait would otherwise leave its agent
-# reading available forever. The target name rides beside it so the state says
-# what the wait is waiting ON instead of making the operator inspect the pane.
 PARKED=0
 PARKED_WAIT_TARGET=""
 WAIT_STATE=""
@@ -1425,8 +662,6 @@ unpark() { # drop OUR marker, never somebody else's
 on_exit() { lock_release; unpark; }
 
 park_self() { # $1 = target name; mark this window as blocked in gang's own wait
-  # Not being in a pane is normal, not an error: gang runs from the operator's
-  # own shell and from cron, and neither has an agent to mark.
   local w
   w="$(self_window)" || return 0
   tmux set-option -w -t "$w" @gl_waiting "$$ $1" 2>/dev/null || return 0
@@ -1443,14 +678,6 @@ parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
   holder="${held%% *}"
   case "$holder" in
     ''|*[!0-9]*)
-      # Same rule as the activity bound, and the stakes are higher here: parked()
-      # is on the path for status, roster, patrol AND send, so refusing over one
-      # unreadable value took message delivery down for the whole life of the
-      # window — not just a warning leg. It also never needed to guess. The
-      # question is "is a live gang wait parked here", and a holder that is not a
-      # pid names no live process, so the answer is no on the evidence rather
-      # than by assumption. Discarding it is the same reclaim the dead-waiter
-      # path below performs, for a mark that is dead in a different way.
       printf 'gang: discarded an unreadable gang-wait mark on pane %s: %s\n' "$1" "$held" >&2
       tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
       return 1 ;;
@@ -1465,17 +692,8 @@ parked() { # $1 = window id; exit 0 if a live gang wait is parked in that window
 }
 
 wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
-  # Idle must hold for two consecutive polls: a just-submitted turn shows no
-  # busy marker for a beat, and a single-shot check falls through that gap
-  # (observed live — a send landed mid-turn and got queued). A gate is a dead
-  # end, not a wait: only the operator clears it, so blocking on it is blocking
-  # on a human nobody has told — and worse, a gate drops the busy hint, so a
-  # waiter that cannot see it would read the dialog as idle and paste into it.
   local t=0 timeout="${3:-300}" streak=0 busy_rc=0
   WAIT_STATE=""
-  # Marked for the whole wait, so a teammate reading this agent's state while it
-  # blocks here sees available rather than busy. Set before the first poll: the
-  # window this closes is exactly the one somebody else is looking in.
   park_self "$2"
   while :; do
     if occupied "$1"; then
@@ -1501,9 +719,6 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
            return 0
          fi ;;
       2) # An arm has spent its whole allowance — which one is in the phrase,
-         # because a bracket nobody closed and a pty signal that ran out are not
-         # the same fault and are not fixed the same way. Waiting longer would
-         # turn a bounded policy into the permanent fabricated busy it bounds.
          WAIT_STATE="expired ($BUSY_EXPIRED_WHAT)"
          unpark
          return 0 ;;
@@ -1514,100 +729,28 @@ wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
   done
 }
 
-# --- delivery ---------------------------------------------------------------
-
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
   if declare -F profile_input >/dev/null; then profile_input "$1"
   else capture_joined "$1"; fi
 }
 
-# One pane, one writer. A delivery is read-the-box, paste, read-it-again, Enter —
-# four steps against a screen anyone else can also write to. Two of them
-# interleaved put both messages in the box and submit them as one, with both
-# senders told they succeeded; the same collision happens between a send and the
-# operator's own hands. Lived it, twice in one afternoon: a patrol nudge merged
-# with a lead's send, and an inbound send merged mid-word with what the operator
-# was typing.
-#
-# mkdir, not flock(1): flock is util-linux and a stock macOS ships none, while
-# mkdir is atomic on every filesystem worth running on. The holder's pid goes
-# inside so a crashed writer's lock is reclaimed instead of blocking the pane
-# until someone notices.
 LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -rf "$LOCK_PATH"; LOCK_PATH=""; }
 
-# The lock root is /tmp, not XDG_RUNTIME_DIR, and deliberately not a choice
-# between them. Every process delivering to a pane must AGREE on this path, and
-# XDG_RUNTIME_DIR is set by the login session — so one default resolved two ways:
-# /run/user/<uid> from a pane, which inherits it, and /tmp from anything not
-# carrying that environment. Measured: it is in the tmux server's GLOBAL
-# environment, and `env -i bash -lc` has it unset. Two writable roots, both
-# creations succeeding, neither excluding the other, and no error anywhere — the
-# lock does not fail there, it stops being a lock. /tmp is also reachable from a
-# workspace-write sandbox, which XDG_RUNTIME_DIR is not, and that sandbox is the
-# Codex setup this project's own README recommends.
-#
-# Law 6, where these die: at reboot or on the distro's tmpfiles sweep, not at
-# logout. They are empty between deliveries, so what outlives a session is an
-# empty directory; a lock left behind by a killed writer is reclaimed by the pid
-# check in the wait below.
-#
-# What /tmp costs is that it is world-writable, which is what lock_base is for.
 lock_base() { # $1 = the lock root; returns with it established as ours, or refuses
   local err
-  # Intermediate components get mkdir -p: a nested GANG_LOCK_DIR needs them, and
-  # everything guaranteed below is about the FINAL component, whose contents are
-  # the locks. A hostile ANCESTOR is outside what a shell can
-  # check at all — that needs openat/O_NOFOLLOW — so the checked scope is stated
-  # rather than implied.
   mkdir -p "$(dirname "$1")" 2>/dev/null || :
-  # NOT mkdir -p on the root itself. -p maps "I created it", "it existed and is
-  # mine", "it existed and is someone ELSE's", and "it is a symlink pointing
-  # anywhere at all" onto a single exit 0 — measured: -p on a symlink to a
-  # directory succeeds and writes THROUGH the link, so on a shared /tmp another
-  # user's directory, or their symlink, is adopted in silence. That is this
-  # release's own collapse sitting inside a POSIX utility. Plain mkdir returns
-  # EEXIST instead, which makes SUCCESS here proof by construction: mkdir(2) never
-  # follows a final symlink and never adopts an existing directory, and -m sets the
-  # mode in that same call rather than leaving a window open before a chmod.
   err="$(mkdir -m 700 "$1" 2>&1)" && return 0
-  # A failed create is rc=1 for EEXIST, EACCES, EROFS, ENOSPC and ENAMETOOLONG
-  # alike and the shell cannot see which, so reading it AS "the name is taken" is
-  # the same collapse one level down: a full disk reported as an ownership
-  # problem. Ask the filesystem instead — the way the contention
-  # check below does, and for the same reason, that errno text is localised — and
-  # let mkdir's own message speak for every other cause. Surfaced, never matched on.
-  #
-  # -e is FALSE for a dangling symlink, which does yield EEXIST, so the entry test
-  # has to include -L. Without it, a link planted at the lock root is reported as a
-  # full disk, and that is the one branch where the wrong cause points AWAY from an
-  # attack.
   [ -e "$1" ] || [ -L "$1" ] \
     || die "cannot create the lock directory $1 — ${err:-unknown error}. Every gang process delivering to a pane must agree on this path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable by ALL of them."
-  # -d, -O and the mode all FOLLOW a symlink, so -L has to answer first or a
-  # planted link reads as the healthy case. Every question here is asked about the
-  # LINK, not through it.
   [ ! -L "$1" ] \
     || die "the lock directory $1 is a symlink to $(readlink "$1" 2>/dev/null) — refusing to lock through it. A lock taken somewhere other than where the other delivering processes look is not a lock. Remove it, or point GANG_LOCK_DIR at a real directory."
   [ -d "$1" ] \
     || die "the lock path $1 exists and is not a directory — remove it, or point GANG_LOCK_DIR at a directory gang can own."
   [ -O "$1" ] \
     || die "the lock directory $1 is not owned by uid $(id -u) — refusing to take delivery locks in a directory somebody else controls, because they could delete or forge them. Point GANG_LOCK_DIR somewhere you own."
-  # Tightened, not refused. Every root that exists today was made by mkdir -p under
-  # the caller's umask — 0775, measured, on both of the ones this box had — so
-  # refusing anything looser than 0700 would refuse the root every existing user
-  # already has and break their first send after upgrade. Repairing a directory we
-  # have just established we OWN is not a fallback to somewhere else, and
-  # tightening only ever removes access, so there is no window in doing it. Set
-  # rather than read: what matters is that it IS 0700, chmod is idempotent, and
-  # this keeps stat's incompatible flags out of the delivery path entirely.
   err="$(chmod 700 "$1" 2>&1)" \
     || die "cannot restrict the lock directory $1 to this user — ${err:-unknown error}. Left open to others on a shared /tmp, another user can delete or forge the delivery locks gang relies on."
-  # What tightening cannot undo: entries another user planted while it stood open.
-  # Those remain, and remain LOUD — a planted lock naming a live pid times out in
-  # the wait below and says so, and one naming a dead pid is reclaimed there. gang
-  # does not sweep them: a cleanup that guesses which lock is stale is how a tool
-  # ends somebody's team.
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
@@ -1618,14 +761,6 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
   while :; do
     err="$(mkdir "$path" 2>&1)" && break
-    # An existing directory is the ONLY failure that means contention. Anything
-    # else — a read-only mount, a denied path — is permanent, and retrying it
-    # turns a hard failure into a thirty-second wait that then blames a process
-    # which does not exist. Measured: a sandbox mounting /run/user/<uid> read
-    # only made every send report contention against an empty lock directory,
-    # and a permanent failure wearing a transient message makes the caller retry
-    # forever. Asked of the filesystem rather than by matching errno text, which
-    # is localised and varies between platforms.
     [ -d "$path" ] \
       || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created at all, so retrying will not help. Point GANG_LOCK_DIR at somewhere writable by every gang process that delivers to this pane."
     holder="$(cat "$path/pid" 2>/dev/null)" || holder=""
@@ -1633,9 +768,6 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
       rm -rf "$path"; continue          # the writer died mid-delivery
     fi
     t=$((t + 1))
-    # The wait is stated from the bound actually in force rather than from the
-    # default's arithmetic. An operator who moved GANG_LOCK_WAIT was being told
-    # about thirty seconds that had nothing to do with how long this waited.
     [ "$t" -lt "$tries" ] \
       || refuse "another gang process has been delivering to $1 for $(( tries / 5 ))s and has not finished — look at it with gang capture before retrying"
     sleep 0.2
@@ -1646,11 +778,6 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 }
 
 composer_settled() { # $1 = window id; nobody is typing into the box right now
-  # A static box may hold a draft, ghost text, or nothing, and appending to any
-  # of those is safe — inject verifies the change it makes. A box whose contents
-  # are MOVING is a human at the keyboard, and a paste into that interleaves
-  # mid-word with what they are writing. Two looks, because typing is continuous
-  # and a single sample cannot tell a draft from a hand.
   declare -F profile_input >/dev/null || return 0
   local a b
   a="$(profile_input "$1")" || return 0   # no box: other guards own that case
@@ -1659,36 +786,11 @@ composer_settled() { # $1 = window id; nobody is typing into the box right now
   [ "$a" = "$b" ]
 }
 
-# --- a paste that was never submitted ----------------------------------------
-#
-# A delivery that fails after the paste has landed leaves its text where the
-# paste went: in the target's input box, unsent. That is not a clean failure.
-# The next thing that agent types is submitted with somebody else's message
-# prepended to it — confirmed in the field, a full envelope sat in an agent's
-# prompt waiting for exactly that.
-#
-# The obvious repair is a trap. Clearing the box means sending a keystroke, and
-# the paths that strand text are mostly the paths where a modal owns the box —
-# where a keystroke is an ANSWER to the dialog, which is precisely what the
-# withheld Enter refused to send. So gang clears only where it can prove both
-# halves: the composer is live and settled, and the box still holds exactly what
-# gang put there. Everywhere else the paste is RECORDED on the target window,
-# read out by status, roster and patrol, and cleared by the first delivery or
-# sweep that can see the box again.
-#
-# The record is a window option, so it is exactly as long-lived as the agent it
-# describes and tmux is the one that deletes it (Law 1, Law 6) — and it has a
-# deletion path that does not need a modal to lift, because a box that reads back
-# empty proves the text is gone whoever removed it.
-
 staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste there
   tmux show-options -wqv -t "$1" @gl_staged
 }
 
 stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (may be empty)
-  # Only for a profile that declares an input box: without one "the box" is the
-  # whole pane, nothing about it can be matched or cleared, and a record nobody
-  # can act on is noise on every roster from here on.
   declare -F profile_input >/dev/null || return 0
   tmux set-option -w -t "$1" @gl_staged "$2"
   if [ -n "$3" ]; then tmux set-option -w -t "$1" @gl_staged_box "$3"
@@ -1701,43 +803,9 @@ stage_forget() { # $1 = window id
 }
 
 clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
-              # opinion); erase the input box, and prove it is erased
-  # C-u is the line kill every readline-shaped composer honours, and a hardcoded
-  # default whose outcome is verified beats an extension point no profile sets.
-  # Sent only where the composer is provably live — into a modal this keystroke
-  # is an answer — and the box is read back afterwards, because a harness that
-  # ignores it must not be reported as cleared. The day one turns up, the key
-  # becomes a profile declaration (Law 4); the read-back is what will say so.
-  # ONE PRESS IS NOT ONE BOX. Measured on Claude Code 2.1.220: C-u kills the last
-  # VISUAL ROW of the composer and leaves the rows above it — 8 of 8 on a draft
-  # wrapped to two rows, 5 of 5 cleared first press on a draft that fit one. Every
-  # gang envelope wraps, so the single press this used to send erased the tail of
-  # a stranded paste and left its head in the agent's box, which is the failure
-  # described above and the one this function exists to prevent.
-  #
-  # So: press, read back, press again while it is still shrinking. The stop
-  # condition is a press that changes NOTHING, which is the honest signal that
-  # this composer does not honour the key — the day that harness turns up, this
-  # returns failure on the first iteration and the record stands (Law 4 applies
-  # then, not before). Bounded because a loop driven by a pane must be.
-  #
-  # 0.4s per press: the composer repaints in 0.14–0.16s, five samples, so this is
-  # better than twice the measured latency and unchanged from what it was.
   declare -F profile_input >/dev/null || return 1
   local before after n=0 presses="${GANG_CLEAR_PRESSES:-40}"
   require_whole GANG_CLEAR_PRESSES "$presses" presses
-  # Reporting a clear having pressed nothing rests entirely on the read below
-  # agreeing that the box is empty, and a caller that has just read text there is
-  # a second opinion on exactly that. Where one is handed in and the two
-  # disagree, this is the first look and no key has been sent, so "cleared" would
-  # be a report about a keystroke that never happened, made on the reading that
-  # is in doubt. Entry only: after a press the caller's reading is stale by
-  # construction, and an empty box then is this function's own work.
-  #
-  # Refusing here is the recoverable direction. A caller told the box would not
-  # clear keeps its record, and a later sweep whose two readings agree still
-  # drops it; a caller told the box was cleared drops the record, and nothing an
-  # operator can run puts one back.
   if [ -n "${2:-}" ] && grep -q '[^[:space:]]' <<<"$2" && input_clear "$1"; then
     return 1
   fi
@@ -1764,199 +832,46 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
     stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
   fi
   want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
-  # Matched, not merely present: by the time the modal lifts the box may hold the
-  # operator's own draft, and wiping that to tidy up gang's mess is a worse bug
-  # than the one being fixed. A path that never read the box records no rendering
-  # and is therefore reported until a human deals with it.
   [ -n "$want" ] && [ "$box" = "$want" ] || return 0
-  # The box read above goes with it: this is the destructive branch — what it
-  # forgets is the only surface saying somebody's text is sitting in that box,
-  # and there is no verb that writes one back. So a clear reported by a reading
-  # that disagrees with the one this branch was entered on is refused rather than
-  # acted on, and the record waits for a sweep whose readings agree.
   clear_box "$1" "$box" || return 0
   stage_forget "$1"
 }
 
 inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningful
-           # at the head of an empty box; bracketed-paste, verify in pane, submit. Law 3.
   local buf="gang-$$" frag before after
-  # frag is a LABEL, not a probe. It names which message a failure is about, in
-  # the eleven human-facing strings below, and nothing here compares it against
-  # the pane: delivery is proved by the input box CHANGING across the paste. So
-  # the width is chosen for someone reading an error, not for matching, and the
-  # question "did the first N units land" is never asked. Anyone restoring a
-  # fragment-versus-pane comparison brings back the bug the before/after check
-  # replaced — a second identical send verifying against the first one's echo.
-  #
-  # Sliced by the shell, not by `cut -c`. That option is specified in characters
-  # and implemented in BYTES by GNU coreutils while BSD honours the spec, which
-  # is the same platform coin-flip that cost this repo two shipped bugs one axis
-  # over (awk's substr, 9417312 and 077cdeb). A byte cut through a multibyte
-  # first line leaves half a glyph on the end of every message quoting it, and
-  # on the record stage_record writes into tmux. Bash slices in this process's
-  # own LC_CTYPE, and gang settles that at the top of this file — a UTF-8 locale
-  # or vet reporting it could not get one — so the cut lands on a character
-  # boundary wherever any marker in this repo matches at all, and a host too
-  # bare for that degrades through the mechanism that already announces itself.
-  #
-  # It also retires a `producer | head -1` on a delivery path. bash's stdout is
-  # line-buffered, so printf emits one write per LINE: given a multi-line message
-  # head exits at line one while printf still has lines to write, and the SIGPIPE
-  # that follows reads as 141 under pipefail — with set -e, the send dies at its
-  # own first line. Issue #6's shape, and NOT bounded by payload size; measured
-  # at four lines it did not lose the race in 500 runs, but the race is there.
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-  # The one delivery no before/after verification can make safe: while a modal
-  # owns the input box, keystrokes are ANSWERS. Checked here at the chokepoint —
-  # immediately before the paste — so every path in (send, compact, patrol,
-  # hitch, resume) hits it, including a modal that painted after the caller's own
-  # earlier check.
-  # Taken before the gate check, and held past the Enter: everything below reads
-  # the pane and then acts on what it read, so another writer between any two of
-  # those steps invalidates the rest.
   lock_pane "$1"
   ! occupied "$1" \
     || refuse "refusing to deliver '$frag': $1 is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
   composer_settled "$1" \
     || refuse "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
-  # Before anything is read or pasted: an earlier delivery that could not be
-  # verified may have left its text in this box, and appending to that would
-  # submit both as one message. This is the moment the modal that stranded it has
-  # demonstrably lifted — the gate check above just passed — so it is also the
-  # first moment gang may type into the pane at all.
   stage_clear "$1"
-  # Position-sensitive text needs a stricter bar than prose does, and the gap
-  # between the two is what shipped a false compaction record. composer_settled
-  # asserts STILLNESS, deliberately — a box holding a draft, ghost text or nothing
-  # is safe to append to, because inject verifies the change it makes. But a draft
-  # the operator has PAUSED on is perfectly still, so the guard passes, the paste
-  # appends, and the Enter submits their half-written line with gang's text glued
-  # to the end of it.
-  #
-  # For prose that is recoverable: the message arrives mangled but present, and
-  # the sender still has it. For a slash command it is silent and it lies. A
-  # slash command is only a command at the head of an EMPTY box; appended to a
-  # draft it is literal text, so no compaction runs — and inject still verifies,
-  # because the box did change across the paste and Enter did empty it, so
-  # compaction_mark records a compaction that will never happen and patrol then
-  # holds its nudge on an agent at full context. Observed live.
-  #
-  # So the bar is EMPTINESS, asked of the profile rather than answered here —
-  # input_clear, the same question patrol asks before it nudges.
-  #
-  # It is asked of every payload, and that was once parked here as a separate call
-  # with a real cost: requiring it of ordinary sends would refuse every agent with
-  # a draft parked in its box, which on some claude-code profiles included ghost
-  # text. The dim-attribute readers retired that cost. A box holding only what the
-  # harness suggested now reads EMPTY through profile_input, asserted for both
-  # harnesses that paint one — grep 'reads empty' in the suite for the two checks —
-  # so what is left to refuse is a draft a human actually typed.
-  #
-  # The other half of the parked cost was that prose is recoverable, and it was
-  # measuring the wrong thing: "mangled but present" describes the MESSAGE, while
-  # what the Enter destroys is the operator's line. Measured on the fixed side
-  # too — a parked draft survives the refusal intact and unsent, and deliver_held
-  # then lands that same send the moment the operator's own line goes, so the
-  # refusal costs a wait rather than a message.
-  #
-  # The refusal says the body was not delivered instead of leaving that to
-  # deliver_held's hand-back, which prints only where there WAS a hold: under
-  # GANG_SEND_HOLD=0 that line is skipped and this wording is all a sender gets.
   if ! input_clear "$1"; then
-    # The agent's NAME, not the window id this function is handed. `gang capture
-    # @0` is not a runnable command — win_id matches on the window's name — so the
-    # id spent an operator an attempt to find that out. Looked up here rather than
-    # beside the other locals so an ordinary delivery does not pay for a string it
-    # will never print.
     local tname onlyhead=""
     tname="$(agent_name_of "$1")"
-    # Position adds a second failure rather than changing the first: prose loses
-    # the operator's line, a slash command loses that AND silently never runs.
     [ "${3:-}" != head ] \
       || onlyhead=", and this text is only a command at the head of an empty one, so appended to a draft it would be literal text and would never run"
     refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty, so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear (gang capture $tname to see it)"
   fi
-  # Verified = the paste changed the input box, which is where a paste lands.
-  # Reading the box asks the profile (Law 4) instead of teaching gang how each
-  # TUI draws a collapsed paste, and those renderings agree on nothing: Claude
-  # Code writes "[Pasted text #1 +10 lines]", counting lines BEYOND the first,
-  # and collapses a long single-line paste to "[Pasted text #2]" with no count
-  # at all; Pi writes "[paste #N +13 lines]", counting every line. A short
-  # paste stays literal in both. Every one of them is a box that differs from
-  # the box before the paste.
-  #
-  # A CHANGE, not "the box is non-empty": the box may legitimately hold a draft
-  # already, and appending to a draft still changes it. Comparing against the
-  # box captured BEFORE this paste is also what keeps an identical earlier send
-  # sitting in the transcript from vouching for a paste that never landed.
-  # The last refusal before the first keystroke, so it exits 3 like the others
-  # above it. Everything from the paste down dies on 1 however transient it reads,
-  # because by then a retry can submit the same message twice.
   before="$(landing_zone "$1")" \
     || refuse "cannot read the input box of $1 — the harness is not taking input"
-  # Buffer name is per-process: patrol runs on cron, and a concurrent send would
-  # otherwise overwrite the buffer between load-buffer and paste-buffer.
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
   sleep 0.4
-  # The box went unreadable with the paste already in flight, so where the text
-  # ended up is genuinely unknown: in the box behind whatever took the screen, or
-  # in that thing's own field. Gang cannot see it, so it cannot clear it — it says
-  # what it does not know and leaves a record no rendering can be matched against,
-  # which is what keeps this one being reported until a human deals with it.
   after="$(landing_zone "$1")" || {
     stage_record "$1" "'$frag' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent" ""
     die "cannot read the input box of $1 after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $1)"
   }
-  # Two readings agreeing is not one fact here: either the paste never landed, or
-  # it landed in a box these reads cannot see. Gang put the bytes on the wire
-  # itself, so "nothing landed" is the confident half of an ambiguity it cannot
-  # resolve — and the half it cannot rule out leaves text in somebody's box. This
-  # was the one exit between the paste and the Enter that only SAID so; the two
-  # either side of it record it. No rendering to match against, because the
-  # reading that would be the baseline is the one in doubt — which gives this
-  # record the same life as the unreadable-after one above: the first sweep that
-  # finds the box provably empty drops it, so it costs nothing when the paste
-  # really never landed and it survives when the paste is really sitting there.
   if [ "$after" = "$before" ]; then
     stage_record "$1" "'$frag' was pasted into this box and it read back unchanged — either nothing landed or this box cannot be read reliably, so it may be sitting there unsent" ""
     die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $(agent_name_of "$1"))"
   fi
-  # Enter goes as its own keystroke, and then gets checked, because the failure
-  # it guards against is silent and reads exactly like success. Batch the text
-  # and the Enter into one send-keys and Claude Code takes the burst for a paste
-  # and the trailing newline for part of it: the message stays in the box as an
-  # unsent draft that scrollback renders identically to a sent one. Submitting
-  # empties the box — or, mid-turn, replaces it with the harness's queued-message
-  # hint — so a box still holding what we just pasted was never submitted.
-  # Occupancy is checked again here, and this is the check that matters most: the
-  # earlier one guards the paste, but Enter is the keystroke that ANSWERS a
-  # dialog. A modal can paint in the moment between the paste and this line —
-  # that is the whole hazard, an asynchronous dialog against a four-step
-  # delivery — and an Enter aimed at a composer that is no longer there selects
-  # whatever the dialog has highlighted. Nothing is submitted, and the paste stays
-  # in the box behind the modal: not a clean failure, a loaded one. The box was
-  # read a line ago, so this is the path that can hand a rendering to the record —
-  # the next send or patrol after the modal lifts clears it on that evidence.
   if occupied "$1"; then
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
-    die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next send or patrol once the modal is gone)"
+    die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
   tmux send-keys -t "$1" Enter
-  # An unreadable box in the moments after Enter is not a failed submit — it is
-  # the submit in flight. opencode's box is only "readable" while the hardware
-  # cursor sits in it, and the cursor leaves while the accepted message is
-  # repainted into the transcript: the check that confirms submission fails
-  # precisely BECAUSE submission is happening. One bad sample is therefore not a
-  # verdict, it just buys another look.
-  #
-  # The two failures stay on separate counters because they are different
-  # accusations. A box that reads back unchanged is positive evidence the text
-  # never went — it keeps the five looks it has always had, so nothing about
-  # that verdict loosens here. Unreadable is an absence of evidence, and only
-  # the wider budget running out escalates it to "I could not tell".
   local unchanged=0 looks=0 posted
   while :; do
     sleep 0.4
@@ -1964,12 +879,6 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       [ "$posted" = "$after" ] || break
       unchanged=$((unchanged + 1))
       if [ "$unchanged" -ge 5 ]; then
-        # The one path where both halves are provable without waiting for
-        # anything: the box reads back, which is only true while the composer
-        # owns the screen, and it reads back as exactly what gang pasted. So the
-        # text goes out the way it came in rather than being left for whatever
-        # this agent types next. The clear is verified too — a harness that
-        # ignores the keystroke is told about, not reported as tidy.
         if clear_box "$1"; then
           die "submit NOT verified: '$frag' was pasted into the input box of $1 and never sent — the paste has been cleared back out of that box"
         fi
@@ -1979,11 +888,6 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     fi
     looks=$((looks + 1))
     if [ "$looks" -ge 15 ]; then
-      # Unlike the branch above this is an absence of evidence both ways: the
-      # Enter went, and a box that never reads back cannot say whether it took.
-      # opencode's box reads this way precisely BECAUSE a submit is happening, so
-      # the record is worded as the doubt it is — and it costs nothing when the
-      # send did land, because the first sweep that finds the box empty drops it.
       stage_record "$1" "'$frag' was pasted here and Enter sent, but the box never read back — it may be sitting there unsent" ""
       die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s); if the Enter never took, the paste is sitting unsent in that box (gang capture $1)"
     fi
@@ -1991,37 +895,6 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   lock_release
 }
 
-# ===[ context-fact ]=========================================================
-#
-# The context predicate's owned tier (the evidence precedence rule), and the only one `gang hook` does
-# not write. Nothing in the harness's event vocabulary carries a context figure,
-# so there is no harness voice here for the one-verb rule to keep single: the
-# writer is statusline/claude-code-context.sh, which is gangline's own code
-# running in the harness's statusline callback. That is what the decision means by
-# written DIRECTLY. It keeps painting the beacon byte-identically as it goes,
-# because the human reads that line and so does the scrape tier below.
-#
-# WHAT THIS REPLACES IS A ROUND TRIP. The same script already had the figures; it
-# printed them into the pane, and gang captured the pane and parsed them back out.
-# Every way that trip goes wrong is the trip's own fault — a capture landing
-# mid-paint reads a torn line, a dialog drawn over the statusline hides it
-# entirely, and the zero the guards downstream refuse is a beacon caught between
-# paints. This tier is the same script's own numbers with the screen taken out of
-# the middle.
-#
-# THE READER NEVER WRITES, which is where this bracket parts company with the
-# other three. Their readers clear — a malformed record, a raise the pane has
-# retired — because nothing else was ever going to rewrite one. This record is
-# rewritten on EVERY repaint, so no clear here can be the thing that repairs it: a
-# clear is either overwritten moments later or it deletes a figure the writer was
-# about to refresh anyway. Expired, malformed and future-stamped therefore all
-# fall through to the scrape and leave the record where it lies — and the record
-# that stays is the only evidence an operator has for WHY the fallback is
-# answering.
-#
-# That decision settles the verdict's shape too. The other readers split absent
-# from malformed so the malformed arm can clear; with no clear there is nothing
-# for the split to decide, so this one answers yes or no (law 5).
 CTX_FACT_TOKENS=0
 CTX_FACT_WINDOW=0
 
@@ -2030,62 +903,28 @@ ctx_fact_read() { # $1 = window id; 0 = a fact this reader believes, sets CTX_FA
   raw="$(tmux show-options -wqv -t "$1" @gl_ctx 2>/dev/null)" || raw=""
   CTX_FACT_TOKENS=0; CTX_FACT_WINDOW=0
   [ -n "$raw" ] || return 1
-  # A trailing field this reader has no name for is TOLERATED, where the record's
-  # own four are not. The statusline is wired into settings.json by absolute path,
-  # so it can be a different checkout from the gang reading it — the skew vet
-  # exists to report — and a newer writer's extra field is the survivable half of
-  # that. Refusing the whole figure over it turns a skew into a blind spot.
   read -r word tokens window at _ <<<"$raw"
-  # Every field before any of them, @gl_turn's rule, and the globals are assigned
-  # only once all four have passed. A reader that fills them as it goes leaves a
-  # half-parsed record standing behind a refusal, where the next caller to forget
-  # the verdict finds a number waiting for it.
   [ "$word" = ctx ] || return 1
-  # Zero is refused HERE rather than downstream, because on this tier it is not
-  # the beacon-between-paints case at all: the writer prints "ctx -" and writes
-  # nothing when it has no usage to report, so a zero in this record is a value
-  # gang did not put there. The guards in the two ladder legs keep their own zero
-  # check for the tier that really can produce one.
   [[ "$tokens" =~ ^[0-9]+$ ]] && [ "$tokens" -gt 0 ] || return 1
   [[ "$window" =~ ^[0-9]+$ ]] && [ "$window" -gt 0 ] || return 1
   [[ "$at" =~ ^[0-9]+$ ]] || return 1
   require_whole GANG_CONTEXT_FACT_LIMIT "$GANG_CONTEXT_FACT_LIMIT" seconds
   now="$(date +%s)"
-  # A future stamp is not believed and not cleared, the turn bracket's rule: a
-  # backward clock step makes a live figure read future, and the next repaint
-  # will restamp it without anyone's help.
   [ "$at" -le "$now" ] || return 1
   [ $(( now - at )) -lt "$GANG_CONTEXT_FACT_LIMIT" ] || return 1
   CTX_FACT_TOKENS="$tokens"; CTX_FACT_WINDOW="$window"
 }
 
 context_now() { # $1 = window id, profile loaded; the readout, best tier first
-  # What comes out is the profile-readout data interface — "<used>k/<win>k
-  # (<pct>%)" — whichever tier answered, so ctx_measured, ctx_carried and
-  # ctx_tokens below are untouched and none of them can tell. That is what a tier
-  # is for: it picks the witness, it does not change the vocabulary.
-  #
-  # The interface is thousands and the fact is exact, so the render throws away
-  # under a thousand tokens. Nothing downstream can spend that: the ladder's rungs
-  # are set in absolute counts far coarser than a thousand, and the figure an
-  # agent is handed is printed in thousands as well.
   if ctx_fact_read "$1"; then
     printf '%sk/%sk (%s%%)\n' \
       "$(( CTX_FACT_TOKENS / 1000 ))" "$(( CTX_FACT_WINDOW / 1000 ))" \
       "$(( 100 * CTX_FACT_TOKENS / CTX_FACT_WINDOW ))"
     return 0
   fi
-  # The profile gate stays with the callers rather than moving in here, because
-  # each of them has a different thing to say when a profile has no context at all
-  # — a die, a dash in a column, a row that says not patrolled. This tier order is
-  # all that lives here.
   declare -F profile_context >/dev/null || return 1
   profile_context "$1"
 }
-# ===[ /context-fact ]========================================================
-
-
-# --- optional context lights ------------------------------------------------
 
 ctx_tokens() { # $1 = <used>k/<window>k (...) -> used and window in tokens
   [[ "$1" =~ ^([0-9]+)k/([0-9]+)k ]] || return 1
@@ -2160,8 +999,6 @@ context_light_reply() { # $1 event, $2 profile; safe reply hooks only
     "$1" "$note"
 }
 
-# --- commands ---------------------------------------------------------------
-
 cmd_hitch() {
   local name="" prof="${GANG_PROFILE:-claude-code}" role="" dir="$PWD" model="" id resume=0
   local lights=""
@@ -2183,27 +1020,13 @@ cmd_hitch() {
   ! test_only_profile "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
-  # Before the model option below, because this REPLACES the launch line rather
-  # than appending to it, and a resume that ran second would drop the -m the
-  # caller asked for.
-  #
-  # Same rule as -m, for a sharper reason. A profile with no declared resume form
-  # refuses instead of launching bare: a bare launch here hands back a blank agent
-  # wearing the name of the one whose thread the operator asked for, with nothing
-  # on any surface saying the conversation was gone. That is the silent downgrade
-  # law 8 forbids (the resume decision).
   if [ "$resume" -eq 1 ]; then
     [ -n "$GANG_RESUME_LAUNCH" ] \
       || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume. Either its harness has no resume form gang can drive, or its sessions are not scoped to a working directory — resuming there would pick up whichever conversation was last anywhere on this machine, including another agent's (docs/DECISIONS.md#server-loss-is-a-relaunch-not-restoration)"
     GANG_LAUNCH="$GANG_RESUME_LAUNCH"
   fi
-  # A model is one concept every harness spells differently; the profile owns the
-  # spelling (GANG_MODEL_OPT), hitch carries the intent. A profile that declares
-  # no spelling refuses rather than guessing a flag the harness may not have.
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
-    # GANG_LAUNCH is handed to sh by tmux; anything outside this charset would
-    # need quoting there, and a model id never does — refuse instead.
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
@@ -2216,13 +1039,7 @@ cmd_hitch() {
     id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not open a window for '$name' in session '$SESSION'"
   fi
-  # The id comes from the command that created the window, not from looking the
-  # name up afterwards. A lookup that missed left the window running and
-  # unregistered — a live agent nobody could address, reported as a failed
-  # hitch — and it missed for names tmux and `read` disagree about, like one
-  # with a leading space.
   [ -n "$id" ] || die "'$name' never appeared in session '$SESSION'"
-  # Window name IS the identity — the app must not rename it out from under us.
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
@@ -2235,32 +1052,17 @@ cmd_hitch() {
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   command -v python3 >/dev/null 2>&1 \
     || die "python3 is required for native hook payloads and context lights"
-  # Readiness is checked whether or not there is a brief to deliver. A role-less
-  # hitch used to return right here, reporting success while a first-run dialog
-  # owned the screen — and no later surface said so either: a dialog drops the
-  # busy hint and the input box, so the agent read idle, sends died on the
-  # missing box, and the team stalled on a security prompt nobody was told
-  # about. Gang never answers a dialog; what it owes the operator is the loud
-  # report that one is up, and the profile's own words for the way past it.
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  # `|| ready=$?` keeps this in a tested context: a bare call would trip errexit
-  # on the very return codes the case below exists to report.
   local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$id" "$boot" || ready=$?
   case "$ready" in
     0) ;;
     2) # Settled screen, no input box: nearly always a dialog only a human may
-       # answer. With a brief pending that is a failed hitch — the brief went
-       # nowhere. Without one the hitch itself is done, so the same discovery is
-       # a warning: the window is real, registered, and waiting on the operator.
        die "'$name' is up but is showing something other than its input box, so its startup message was not delivered — most likely a first-run prompt waiting on you. Answer it with 'gang attach', then 'gang drop $name' and hitch again." ;;
     *) die "'$name' is running but never went quiet, so its startup message was not delivered — look at it with 'gang attach' or 'gang capture $name'" ;;
   esac
   envelope hitch "$msg"
-  # A profile that reads an owned transcript can bind it to this window using the
-  # nonce already present in the useful startup message. No bookkeeping prompt is
-  # needed, and the nonce dies with the window option.
   if [ -n "$lights" ] && [ "${GANG_SESSION_KEY:-}" = 1 ]; then
     tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
   fi
@@ -2275,8 +1077,6 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   else cmd_hitch "$name" "$@"
   fi
   id="$(win_id "$name")" || die "up: '$name' vanished between hitch and attach"
-  # Inside tmux, switch the client instead of refusing: needing to detach first
-  # is friction for the one command that is supposed to need nothing.
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
   fi
@@ -2343,16 +1143,8 @@ cmd_compact() {
 }
 
 state_now() { # $1 = window id, profile loaded -> the state, in words
-  # One namer for `status` and the roster column, so the two cannot answer the
-  # same question differently — and renaming a state is one edit, not two. $2 is
-  # a churn verdict a batch already resolved; the vocabulary stays here either
-  # way, so batching changes what it costs to answer and never what it says.
   if occupied "$1"; then
     activity_hold_clear "$1"
-    # No shipped profile classifies the UI it found, and the occupancy decision is explicit
-    # that an absent classifier yields authority-unknown rather than the stronger
-    # operator-only claim. A profile that earns a narrower qualifier changes this
-    # line and nothing else.
     echo "occupied (authority unknown)"
     return
   fi
@@ -2376,9 +1168,6 @@ state_now() { # $1 = window id, profile loaded -> the state, in words
 }
 
 paint_state() { # $1 = a state phrase, padding and all
-  # Matches on the phrase state_now just built, so the two live side by side:
-  # renaming a state means seeing this. The fallback is idle's green, which makes
-  # a missed rename a wrong colour rather than a wrong state.
   case "$1" in
     occupied*) colour "$C_BAD"  "$1" ;;
     expired*) colour "$C_BAD" "$1" ;;
@@ -2480,27 +1269,11 @@ cmd_hook() { # native harness events; facts are silent unless lights are enabled
 }
 
 hook_trigger_of() { # $1 = the raw payload; the compaction discriminator, never fatal
-  # The only field gang reads out of a payload beyond the event name, and it is
-  # read here rather than in the fact writer so the writer stays a store: this is
-  # the parse, compaction_trigger_of is the vocabulary, and neither of them
-  # decides anything.
-  #
-  # ABSENCE IS NOT AN ERROR AND MUST NOT BE. A harness that stops carrying the
-  # field, a hand-fired hook, a shape change — each leaves this empty, and each
-  # still leaves gang holding the fact that has a consumer, which is that a
-  # compaction is running. The vocabulary closes an empty one to `unknown`, so a
-  # reader is told the discriminator was missing rather than handed the commoner
-  # of the two values as though somebody had observed it.
-  #
-  # A non-string value is spent as absent for the same reason. `trigger: 3` is not
-  # a trigger this gang knows, and rendering it into the record would put a value
-  # nothing maps into a field two branches read.
   printf '%s' "$1" \
     | python3 -c 'import json,sys
 v = json.load(sys.stdin).get("trigger", "")
 print(v if isinstance(v, str) else "")' 2>/dev/null || true
 }
-
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
   local id
@@ -2536,8 +1309,6 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  # Every piece of gang's state is a window option, so tmux deletes all of it with
-  # the windows it belongs to and there is nothing here to sweep (law 6).
   session_live || die "no session '$SESSION' running"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
   tmux kill-session -t "=$SESSION"
@@ -2546,8 +1317,6 @@ cmd_down() { # inverse of up: end the whole team's session
 cmd_attach() { exec tmux attach -t "=$SESSION"; }
 
 cmd_profiles() { list_profiles; }
-
-# --- dispatch ---------------------------------------------------------------
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
