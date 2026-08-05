@@ -185,22 +185,51 @@ excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session ma
 equal "context lights leave no state when disabled" "|" \
   "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
 
-printf 'MARK_ALPHA' | "$GANG" send alpha --from tester --stdin >/dev/null
+printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
 contains "the delivered message is attributed" "$alpha_pane" "[gang:tester#"
 
-if printf 'MARK_GHOST' | "$GANG" send ghost --from tester --stdin >/dev/null 2>&1; then
+if printf 'MARK_GHOST' | "$GANG" send --to ghost --from tester --stdin >/dev/null 2>&1; then
   fail "an unknown target is refused" "send exited successfully"
 else
   pass "an unknown target is refused"
 fi
 
 "$GANG" hitch 1 -p bash -d /tmp >/dev/null
-printf 'MARK_NUMERIC' | "$GANG" send 1 --from tester --stdin >/dev/null
+printf 'MARK_NUMERIC' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 contains "a numeric name reaches its exact window" "$(pane 1)" "MARK_NUMERIC"
 excludes "numeric addressing does not fall through to another window" \
   "$(pane alpha)" "MARK_NUMERIC"
+
+self_sent="test-self-attributed-send-$$"
+printf -v self_send_command \
+  'printf MARK_SELF_ATTRIBUTED | %q send --to 1 --stdin >/dev/null; tmux wait-for -S %q' \
+  "$GANG" "$self_sent"
+tmux send-keys -l -t "$(window_id alpha)" "$self_send_command"
+tmux send-keys -t "$(window_id alpha)" Enter
+tmux wait-for "$self_sent"
+contains "a Gangline window derives its own sender identity" \
+  "$(pane 1)" "[gang:alpha#"
+contains "a self-attributed send reaches the intended peer" \
+  "$(pane 1)" "MARK_SELF_ATTRIBUTED"
+
+claimed_sent="test-claimed-inside-send-$$"
+printf -v claimed_send_command \
+  'printf MARK_FALSE_CLAIM | %q send --to 1 --from impostor --stdin >/dev/null 2>&1; tmux set-option -w @test_sender_rc "$?"; tmux wait-for -S %q' \
+  "$GANG" "$claimed_sent"
+tmux send-keys -l -t "$(window_id alpha)" "$claimed_send_command"
+tmux send-keys -t "$(window_id alpha)" Enter
+tmux wait-for "$claimed_sent"
+equal "a Gangline window cannot override its observable identity" "1" \
+  "$(tmux show-options -wqv -t "$(window_id alpha)" @test_sender_rc)"
+excludes "a refused claimed identity delivers nothing" "$(pane 1)" "MARK_FALSE_CLAIM"
+
+if printf 'MARK_UNSIGNED' | "$GANG" send --to 1 --stdin >/dev/null 2>&1; then
+  fail "an outside caller must provide its identity" "send exited successfully"
+else
+  pass "an outside caller must provide its identity"
+fi
 
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.

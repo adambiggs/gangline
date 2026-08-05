@@ -44,15 +44,15 @@ Add another native harness and send it work:
 ```sh
 gang hitch worker -p codex -d "$PWD"
 
-gang send worker --from lead --stdin <<'TASK'
+gang send --to worker --stdin <<'TASK'
 Inspect the failing parser tests, fix the root cause, and report the proof.
 TASK
 ```
 
-Every delivered message names its sender in a nonce-bound envelope. When a
-Gangline command runs inside the team, the claimed sender must match that
-window's name. Delivery succeeds only after the target composer visibly accepts
-the paste and submission.
+Every delivered message names its sender in a nonce-bound envelope. Inside the
+team, Gangline reads the sender from the calling window; outside callers name
+themselves with `--from`. Delivery succeeds only after the target composer
+visibly accepts the paste and submission.
 
 Observe and control the team without replacing the harness interface:
 

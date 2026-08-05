@@ -52,7 +52,7 @@ gang up</code></pre>
 
     <pre><code>gang hitch worker -p codex -d "$PWD"
 
-gang send worker --from lead --stdin &lt;&lt;'TASK'
+gang send --to worker --stdin &lt;&lt;'TASK'
 Fix the failing parser test and report the proof.
 TASK
 
@@ -64,8 +64,8 @@ gang roster</code></pre>
     <ul>
       <li><code>up</code>, <code>hitch</code>, <code>adopt</code>, <code>attach</code>,
         <code>drop</code>, and <code>down</code> control native tmux windows.</li>
-      <li><code>send</code> requires a sender and reports success only after the
-        target composer visibly accepts and submits the message.</li>
+      <li><code>send</code> derives the sender inside the team and reports success
+        only after the target composer visibly accepts and submits the message.</li>
       <li><code>status</code>, <code>roster</code>, <code>capture</code>, and
         <code>wait</code> expose conservative current state.</li>
       <li><code>compact</code> invokes the harness's own compaction mechanism.</li>

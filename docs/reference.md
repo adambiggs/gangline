@@ -53,12 +53,13 @@ Kills the exact team session and every window in it.
 
 ## Delivery and compaction
 
-### `gang send <name> --from <sender> --stdin`
+### `gang send --to <name> [--from <sender>] --stdin`
 
-Reads the full message body from standard input. The sender is required; inside
-the team it must match the calling window's name. Gangline wraps the body in a
-nonce-bound envelope, serializes writers per pane, verifies the paste changed the
-target composer, submits it, and reports success only after verification.
+Reads the full message body from standard input. Inside the team, Gangline derives
+the sender from the calling window and refuses `--from`. Calls from outside the
+team must supply `--from`. Gangline wraps the body in a nonce-bound envelope,
+serializes writers per pane, verifies the paste changed the target composer,
+submits it, and reports success only after verification.
 
 Gangline refuses a missing or occupied composer, a human draft, indeterminate
 state, and unsafe mid-turn input. A profile may declare that its native harness
@@ -127,7 +128,6 @@ light crosses an edge.
 |---|---|
 | `GANG_PROFILE` | default profile for `up` and `hitch` |
 | `GANG_ROLE` | optional brief used by `up` |
-| `GANG_FROM` | sender identity when `--from` is omitted |
 | `GANG_SESSION` | exact tmux session Gangline addresses |
 | `GANG_CONTEXT_LIGHTS` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_PROFILES` | custom profile directory searched before shipped profiles |

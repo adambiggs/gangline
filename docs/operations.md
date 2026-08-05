@@ -33,7 +33,7 @@ that addresses the team.
 Pass message prose on standard input so shell syntax remains data:
 
 ```sh
-gang send worker --from lead --stdin <<'TASK'
+gang send --to worker --stdin <<'TASK'
 Run the parser test whose fixture contains $(literal shell text).
 TASK
 ```

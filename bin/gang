@@ -83,7 +83,7 @@ gang — drive native CLI agents in tmux
   gang up [name] [hitch flags]
   gang hitch <name> [-p <profile>] [-r <brief>] [-d <dir>] [-m <model>] [--resume]
   gang adopt <name> -p <profile>
-  gang send <name> --from <sender> --stdin
+  gang send --to <name> [--from <sender>] --stdin
   gang compact <name>
   gang status <name>
   gang roster
@@ -97,7 +97,6 @@ gang — drive native CLI agents in tmux
 Environment:
   GANG_PROFILE         default profile (claude-code)
   GANG_ROLE            optional brief for gang up
-  GANG_FROM            sender identity
   GANG_SESSION         tmux session (gangline)
   GANG_CONTEXT_LIGHTS  off, or absolute yellow,red token thresholds
   GANG_PROFILES        custom profile directory
@@ -220,14 +219,22 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
   [ -n "$STDIN_BODY" ] || die "$1: empty body on stdin"
 }
 
-check_sender() { # $1 = claimed sender; inside the session, it must be your own window
-  valid_name "$1" \
-    || die "sender '$1' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
-  local self mine
-  self="$(self_window)" || return 0
-  mine="$(tmux display-message -p -t "$self" '#W' 2>/dev/null)" || return 0
-  [ -z "$mine" ] || [ "$mine" = "$1" ] \
-    || die "you are '$mine', so sign as '$mine' — a message signed '$1' from this window would put a peer's words in another agent's inbox under somebody else's name"
+SEND_FROM=""
+send_sender() { # $1 = optional outside identity; derive identity inside the team
+  local claimed="$1" self
+  SEND_FROM=""
+  if self="$(self_window)"; then
+    [ -z "$claimed" ] \
+      || die "send: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity"
+    SEND_FROM="$(tmux display-message -p -t "$self" '#W' 2>/dev/null)" \
+      || die "send: cannot read this Gangline window's identity"
+  else
+    [ -n "$claimed" ] \
+      || die "send: calls outside session '$SESSION' must name their identity with --from <sender>"
+    SEND_FROM="$claimed"
+  fi
+  valid_name "$SEND_FROM" \
+    || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
 }
 
 startup_brief() { # $1 = agent name, $2 = optional role
@@ -237,8 +244,8 @@ startup_brief() { # $1 = agent name, $2 = optional role
       || die "unknown role '$2' in ${GANG_ROLES:-$ROOT/roles}"
     role_text=" Role brief: $role_path. Read it now."
   fi
-  printf 'You are %s in Gangline. Messages name their sender in the gang envelope. Reply to that sender with: gang send NAME --from %s --stdin. At natural checkpoints compact with: gang compact %s.%s' \
-    "$1" "$1" "$1" "$role_text"
+  printf 'You are %s in Gangline. Messages name their sender in the gang envelope. Reply to that sender with: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s.%s' \
+    "$1" "$1" "$role_text"
 }
 
 win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
@@ -1087,20 +1094,21 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
 }
 
 cmd_send() {
-  local name="${1:-}" from="${GANG_FROM:-}" use_stdin=0 body="" busy_rc=0
-  [ -n "$name" ] || usage_die
-  shift
+  local name="" from="" use_stdin=0 body="" busy_rc=0
   while [ $# -gt 0 ]; do case "$1" in
+    --to) [ $# -ge 2 ] || die "send: --to needs a value"
+          [ -z "$name" ] || die "send: --to may be passed only once"
+          name="$2"; shift 2 ;;
     --from) [ $# -ge 2 ] || die "send: --from needs a value"; from="$2"; shift 2 ;;
     --stdin) [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
              use_stdin=1; shift ;;
     *) die "send: unknown argument '$1'" ;;
   esac; done
+  [ -n "$name" ] || die "send: target required (--to <name>)"
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
-  [ -n "$from" ] || die "send: identity required (--from <sender> or GANG_FROM)"
+  send_sender "$from"
   stdin_body "send"
   body="$STDIN_BODY"
-  check_sender "$from"
   resolve "$name"
   ! occupied "$AGENT_ID" \
     || die "'$name' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
@@ -1111,9 +1119,9 @@ cmd_send() {
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
-  envelope "$from" "$body"
+  envelope "$SEND_FROM" "$body"
   inject "$AGENT_ID" "$ENVELOPE"
-  echo "$(colour "$C_OK" "delivered to $name as [gang:$from]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+  echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
 }
 
 cmd_compact() {
