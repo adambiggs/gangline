@@ -33,8 +33,8 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 [ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 6 ]; } \
   || die "tmux >= 2.6 required: the oldest version gang's whole call set has been run on, found $(tmux -V)"
 
-command -v python3 >/dev/null 2>&1 \
-  || die "python3 required — native hook payloads and optional context lights use it"
+python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
+  || die "working python3 with JSON support required — native hook payloads and optional context lights use it"
 
 # The whole tree is the tool: bin/gang reads profiles/ relative to itself.
 if [ -d "$HOME_DIR/.git" ]; then
