@@ -231,6 +231,23 @@ else
   pass "an outside caller must provide its identity"
 fi
 
+tmux send-keys -l -t "$(window_id 1)" HUMAN_DRAFT
+draft_refusal=""
+if draft_refusal="$(printf 'MARK_DRAFT' |
+  "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
+  fail "delivery refuses a human draft" "send exited successfully"
+else
+  pass "delivery refuses a human draft"
+fi
+contains "a delivery refusal names a runnable inspection command" \
+  "$draft_refusal" "gang capture 1"
+if "$GANG" capture 1 >/dev/null; then
+  pass "the inspection command named by the refusal runs"
+else
+  fail "the inspection command named by the refusal runs" "gang capture 1 failed"
+fi
+tmux send-keys -t "$(window_id 1)" C-u
+
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
 mkdir -p "$RUN_ROOT/profiles"

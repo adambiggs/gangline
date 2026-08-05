@@ -355,7 +355,7 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
 
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 
-agent_name_of() { # $1 = window id; the name a log row is filed under
+agent_name_of() { # $1 = window id; its CLI name on stdout
   tmux display-message -p -t "$1" '#W' 2>/dev/null || printf 'COULD-NOT-DETERMINE'
 }
 
@@ -677,10 +677,11 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder t=0 path err tries="${GANG_LOCK_WAIT:-150}"
+  local base holder name t=0 path err tries="${GANG_LOCK_WAIT:-150}"
   require_whole GANG_LOCK_WAIT "$tries" attempts
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
+  name="$(agent_name_of "$1")"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
   while :; do
     err="$(ln -s "$$" "$path" 2>&1)" && break
@@ -695,7 +696,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
     fi
     t=$((t + 1))
     [ "$t" -lt "$tries" ] \
-      || refuse "another gang process has been delivering to $1 for $(( tries / 5 ))s and has not finished — look at it with gang capture before retrying"
+      || refuse "another Gangline process has been delivering to $name and has not finished — inspect it with gang capture $name before retrying"
     sleep 0.2
   done
   LOCK_PATH="$path"
@@ -763,38 +764,38 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 }
 
 inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningful
-  local buf="gang-$$" frag before after
+  local buf="gang-$$" frag before after tname
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
+  tname="$(agent_name_of "$1")"
   lock_pane "$1"
   ! occupied "$1" \
-    || refuse "refusing to deliver '$frag': $1 is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
+    || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
   composer_settled "$1" \
-    || refuse "refusing to deliver '$frag': somebody is typing into $1 right now — the paste would interleave with their draft mid-word (try again in a moment)"
+    || refuse "refusing to deliver '$frag': somebody is typing into $tname right now — the paste would interleave with their draft mid-word (try again in a moment)"
   stage_clear "$1"
   if ! input_clear "$1"; then
-    local tname onlyhead=""
-    tname="$(agent_name_of "$1")"
+    local onlyhead=""
     [ "${3:-}" != head ] \
       || onlyhead=", and this text is only a command at the head of an empty one, so appended to a draft it would be literal text and would never run"
     refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty, so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear (gang capture $tname to see it)"
   fi
   before="$(landing_zone "$1")" \
-    || refuse "cannot read the input box of $1 — the harness is not taking input"
+    || refuse "cannot read the input box of $tname — the harness is not taking input (gang capture $tname)"
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
   sleep 0.4
   after="$(landing_zone "$1")" || {
     stage_record "$1" "'$frag' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent" ""
-    die "cannot read the input box of $1 after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $1)"
+    die "cannot read the input box of $tname after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $tname)"
   }
   if [ "$after" = "$before" ]; then
     stage_record "$1" "'$frag' was pasted into this box and it read back unchanged — either nothing landed or this box cannot be read reliably, so it may be sitting there unsent" ""
-    die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $(agent_name_of "$1"))"
+    die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $tname)"
   fi
   if occupied "$1"; then
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
-    die "refusing to submit '$frag': a modal took the screen of $1 while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
+    die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
   tmux send-keys -t "$1" Enter
   local unchanged=0 looks=0 posted
@@ -805,16 +806,16 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       unchanged=$((unchanged + 1))
       if [ "$unchanged" -ge 5 ]; then
         if clear_box "$1"; then
-          die "submit NOT verified: '$frag' was pasted into the input box of $1 and never sent — the paste has been cleared back out of that box"
+          die "submit NOT verified: '$frag' was pasted into the input box of $tname and never sent — the paste has been cleared back out of that box"
         fi
         stage_record "$1" "'$frag' is staged unsent in this box — it was pasted, never sent, and would not clear" "$posted"
-        die "submit NOT verified: '$frag' was pasted into the input box of $1, never sent, and would not clear — it is staged there now and has to be cleared by hand (gang attach)"
+        die "submit NOT verified: '$frag' was pasted into the input box of $tname, never sent, and would not clear — it is staged there now and has to be cleared by hand (gang attach)"
       fi
     fi
     looks=$((looks + 1))
     if [ "$looks" -ge 15 ]; then
       stage_record "$1" "'$frag' was pasted here and Enter sent, but the box never read back — it may be sitting there unsent" ""
-      die "cannot read the input box of $1 after Enter — submission unverifiable (15 looks over 6s); if the Enter never took, the paste is sitting unsent in that box (gang capture $1)"
+      die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the paste is sitting unsent in that box (gang capture $tname)"
     fi
   done
   lock_release
