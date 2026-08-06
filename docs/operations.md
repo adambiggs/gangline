@@ -76,11 +76,12 @@ instead of claiming success.
 
 Context lights are disabled unless the operator supplies absolute thresholds at
 hitch time. Set them intentionally high so the harness retains most of its
-native window and the agent can choose self-compaction before automatic native
-compaction:
+effective native window, but below its observed automatic-compaction boundary
+so the agent can choose self-compaction first. Set `YELLOW_TOKENS` and
+`RED_TOKENS` from a current observation of that harness:
 
 ```sh
-GANG_CONTEXT_LIGHTS=210000,225000 gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -p codex
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to

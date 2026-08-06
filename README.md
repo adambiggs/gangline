@@ -90,10 +90,12 @@ in `gang status` and `gang roster`.
 
 Context lights are optional and off by default. When enabled, set their absolute
 yellow and red thresholds intentionally high so the agent retains most of its
-native context window and can self-compact before native automatic compaction:
+effective native context window, but below the harness's observed automatic
+compaction boundary so the agent can self-compact first. Set `YELLOW_TOKENS`
+and `RED_TOKENS` from a current observation of that harness:
 
 ```sh
-GANG_CONTEXT_LIGHTS=210000,225000 gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -p codex
 ```
 
 The native hook advises once when usage crosses yellow and once when it crosses

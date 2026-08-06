@@ -56,9 +56,10 @@ fails closed, and Gangline does not autonomously answer native dialogs.
 
 Keep context signaling off by default. When enabled, expose exactly yellow and
 red at intentionally high absolute token thresholds, notify once per context
-epoch, and leave the decision to compact with the agent. Preserve most of the
-native window rather than imposing a smaller effective context; larger windows
-do not make degraded context more useful.
+epoch, and leave the decision to compact with the agent. Place both thresholds
+below the observed native automatic-compaction boundary while preserving most
+of that effective window; larger windows do not make degraded context more
+useful.
 
 ## Evidence is selected per predicate
 
