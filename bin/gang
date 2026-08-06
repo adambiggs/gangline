@@ -887,7 +887,14 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       qlooks=$((qlooks + 1))
       [ "$qlooks" -lt 3 ] || break
       sleep 0.4
-      posted="$(landing_zone "$1")" || break
+      # An unreadable reread is AMBIGUITY, not proof of submission: once the
+      # profile declares queue evidence, gang has promised to tell entered
+      # from parked, and a capture it cannot read answers neither. Fail
+      # closed with the uncertainty named, never fall through to success.
+      posted="$(landing_zone "$1")" || {
+        stage_record "$1" "'$frag' was pasted and Enter sent, but the box stopped reading back while gang was checking for parked input — whether it entered the session or sits in the harness's queue is unknown" ""
+        die "submit NOT verified: the input box of $tname stopped reading back while gang was checking for parked input — whether '$frag' entered the session or sits in the harness's queue is unknown (gang capture $tname; if parked: attach, press Up, then Enter)"
+      }
     done
   fi
   lock_release

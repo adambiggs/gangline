@@ -722,6 +722,49 @@ contains "roster carries the same verdict" "$("$GANG" roster)" "undelivered-past
 tmux send-keys -t "$(window_id 1)" C-u
 tmux set-option -uw -t "$(window_id 1)" @gl_staged
 
+# Once queue evidence is declared, an UNREADABLE verification reread is
+# ambiguity, not proof of submission. The fixture's composer flips to a
+# sentinel after Enter and its profile_input grants exactly one readable look
+# at that sentinel: the first reading breaks the change loop as a normal
+# non-queue submission would, and the late queue-evidence reread finds the
+# box unreadable. Falling through to success here is the hole; the send must
+# die naming the uncertainty and record the body as unknown.
+cat > "$RUN_ROOT/flicker-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+PROMPT_COMMAND='[ -f "$FLICKER_FLAG" ] && PS1="❯ POST_SENTINEL"'
+RC
+cat > "$RUN_ROOT/profiles/flicker.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'FLICKER_FLAG=$RUN_ROOT/flicker-flag exec bash --rcfile $RUN_ROOT/flicker-rc' fixture"
+GANG_QUEUED_REGEX='^[[:space:]]*QUEUE_HINT_NEVER_SHOWN\$'
+profile_input() { # one readable look at the post-Enter sentinel, then nothing
+  local line
+  line="\$(tmux capture-pane -pJ -t "\$1" | grep '❯' | tail -1)" || return 1
+  line="\${line#*❯}"
+  case "\$line" in
+    *POST_SENTINEL*)
+      [ ! -e "$RUN_ROOT/flicker-seen" ] || return 1
+      : > "$RUN_ROOT/flicker-seen" ;;
+  esac
+  printf '%s' "\$line" | tr -d '\302\240'
+}
+SH
+"$GANG" hitch flicker -p flicker -d /tmp >/dev/null
+touch "$RUN_ROOT/flicker-flag"
+if flicker_out="$(printf 'MARK_FLICKER' | "$GANG" send --to flicker --from tester --stdin 2>&1)"; then
+  fail "an unreadable verification reread is not a delivery" "send reported success"
+else
+  pass "an unreadable verification reread is not a delivery"
+fi
+contains "the ambiguity is named rather than spent as success" \
+  "$flicker_out" "is unknown"
+contains "the uncertain body is recorded against the window" \
+  "$(tmux show-options -wqv -t "$(window_id flicker)" @gl_staged)" "is unknown"
+"$GANG" drop flicker >/dev/null
+
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
 mkdir -p "$RUN_ROOT/profiles"
