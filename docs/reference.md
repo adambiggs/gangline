@@ -119,7 +119,8 @@ Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction, and permission requests raise occupancy.
 Hooks are silent unless an enabled context light or declared team-time light
-crosses an edge.
+crosses an edge. Context-source warm-up is silent until the first native turn
+completes; an unreadable source after that boundary fails visibly.
 
 ## Environment
 

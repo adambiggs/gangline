@@ -890,7 +890,7 @@ context_light_read() { # $1 = window, profile loaded; yellow|red, or 1 below
 
 ADVISORY_NOTE=""
 context_light_note() { # $1 profile; append an edge to ADVISORY_NOTE
-  local previous="" agent note="" rc=0
+  local previous="" agent note="" ready="" rc=0
   load_profile "$1"
   context_light_read "$TMUX_PANE" || rc=$?
   previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_light 2>/dev/null)" \
@@ -900,6 +900,9 @@ context_light_note() { # $1 profile; append an edge to ADVISORY_NOTE
     return 0
   fi
   if [ "$rc" -eq 2 ]; then
+    ready="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_ready 2>/dev/null)" \
+      || ready=""
+    [ "$ready" = 1 ] || return 0
     [ "$previous" != unavailable ] || return 0
     CONTEXT_LIGHT=unavailable
     note="Context lights unavailable: Gangline cannot read this harness's native context source. Inspect the harness directly."
@@ -1231,6 +1234,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   case "$event" in
     UserPromptSubmit|PostToolUse) turn_state_write "$TMUX_PANE" open ;;
     Stop) turn_state_write "$TMUX_PANE" closed
+          tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$prof" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE" ;;
   esac

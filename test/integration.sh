@@ -405,6 +405,11 @@ SH
 GANG_CONTEXT_LIGHTS=100000,200000 "$GANG" hitch lit -p lights -d /tmp >/dev/null
 lit_id="$(window_id lit)"
 lit_tmux_pane="$(tmux list-panes -t "$lit_id" -F '#{pane_id}')"
+warming="$(printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "context warm-up is silent before the first completed turn" "" "$warming"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook >/dev/null
 tmux set-option -w -t "$lit_id" @test_context '150k/300k (50%)'
 yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
