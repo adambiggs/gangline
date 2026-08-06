@@ -16,7 +16,7 @@ else belongs in operator reference material or nowhere.
 
 - Lifecycle: `up`, `hitch`, `adopt`, `drop`, `down`, and `attach`.
 - Attributed, verified `send`.
-- Direct observation: `status`, `roster`, `capture`, and `wait`.
+- Direct observation: `status`, `roster`, and `capture`.
 - Harness profiles and silent native hooks that establish observable state.
 - Native compaction, including self-compaction at natural checkpoints.
 - Optional context lights with exactly two thresholds: yellow and red.

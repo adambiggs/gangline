@@ -87,7 +87,6 @@ gang — drive native CLI agents in tmux
   gang cutoff [<duration|HH:MM>|clear]
   gang status <name>
   gang roster
-  gang wait <name> [timeout_s]
   gang capture <name> [lines]
   gang attach
   gang drop <name>
@@ -705,35 +704,7 @@ wait_ready() { # $1 = window id, $2 = timeout seconds; harness booted and quiet
   return 1
 }
 
-WAIT_STATE=""
-
 on_exit() { lock_release; }
-
-wait_idle() { # $1 = window id, $2 = name, $3 = timeout seconds
-  local t=0 timeout="${3:-300}" streak=0 busy_rc=0
-  WAIT_STATE=""
-  while :; do
-    if occupied "$1"; then
-      die "'$2' is occupied (authority unknown) — a UI owns its input box and gang cannot establish who may clear it (gang attach)"
-    fi
-    busy_rc=0
-    busy "$1" || busy_rc=$?
-    case "$busy_rc" in
-      0) streak=0 ;;
-      1) streak=$((streak + 1))
-         if [ "$streak" -ge 2 ]; then
-           WAIT_STATE="idle (slack tug)"
-           return 0
-         fi ;;
-      2) # An arm has spent its whole allowance — which one is in the phrase,
-         WAIT_STATE="expired ($BUSY_EXPIRED_WHAT)"
-         return 0 ;;
-      *) die "internal: busy returned unknown verdict $busy_rc" ;;
-    esac
-    [ "$t" -ge "$timeout" ] && die "'$2' still busy after ${timeout}s"
-    sleep 2; t=$((t + 2))
-  done
-}
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
   if declare -F profile_input >/dev/null; then profile_input "$1"
@@ -1366,11 +1337,6 @@ case "$cmd" in
   cutoff)   cmd_cutoff "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   hook)     cmd_hook ;;
-  wait)     [ $# -ge 1 ] || usage_die
-            case "${2:-300}" in ''|*[!0-9]*) die "wait: timeout takes whole seconds, got '${2:-}'" ;; esac
-            resolve "$1"; wait_idle "$AGENT_ID" "$1" "${2:-300}"
-            echo "$WAIT_STATE"
-            case "$WAIT_STATE" in expired*) exit 2 ;; esac ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
   roster)   cmd_roster ;;
   attach)   cmd_attach ;;

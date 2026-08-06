@@ -106,12 +106,6 @@ not reported to the lead or operator.
 
 Prints the tail of the target pane after trimming trailing blank terminal rows.
 
-### `gang wait <name> [timeout_seconds]`
-
-Waits until the target is positively idle, occupied, or indeterminate.
-This is an operator command; mandatory tests do not exercise its wall-clock
-behavior.
-
 ## Discovery and hooks
 
 ### `gang profiles`

@@ -66,7 +66,6 @@ Observe and control the team without replacing the harness interface:
 gang roster
 gang status worker
 gang capture worker
-gang wait worker
 gang attach
 gang drop worker
 gang down
