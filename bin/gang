@@ -508,8 +508,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
   case "${2:-}" in
-    churning) activity_hold_clear "$1"; return 0 ;;
-    still)    [ "$undetermined" -eq 1 ] && return 2; return 1 ;;
+    snapshot) [ "$undetermined" -eq 1 ] && return 2; return 1 ;;
   esac
   if pane_stable "$1"; then
     [ "$undetermined" -eq 1 ] && return 2
@@ -517,52 +516,6 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   fi
   activity_hold_clear "$1"
   return 0
-}
-
-CHURN_MAP=""
-
-map_get() { # $1 = "k=v k=v ...", $2 = key -> value on stdout
-  local pair
-  for pair in $1; do
-    case "$pair" in "$2="*) printf '%s' "${pair#*=}"; return 0 ;; esac
-  done
-  return 1
-}
-
-churn_verdict() { # $1 = window id -> "churning" | "still" | "" if it was not sampled
-  map_get "$CHURN_MAP" "$1" || true
-}
-
-churn_first_sample() { # $1 = window id, $2 = profile -> first pane checksum
-  load_profile "$2"
-  if busy_painted "$1"; then activity_hold_clear "$1"; return 1; fi
-  local activity_rc=0
-  recently_active "$1" || activity_rc=$?
-  [ "$activity_rc" -eq 0 ] && return 1
-  capture "$1" | cksum | tr ' ' '-'
-}
-
-churn_batch() { # $@ = window ids; resolve the churn question for all of them at once
-  local id prof pending="" first="" sum was
-  CHURN_MAP=""
-  for id in "$@"; do
-    prof="$(tmux show-options -wqv -t "$id" @gl_profile)" || continue
-    [ -n "$prof" ] || continue
-    profile_file "$prof" >/dev/null 2>&1 || continue
-    sum="$(churn_first_sample "$id" "$prof" 2>/dev/null)" || continue
-    [ -n "$sum" ] || continue
-    pending="$pending $id"
-    first="$first $id=$sum"
-  done
-  [ -n "$pending" ] || return 0
-  require_interval GANG_CHURN_WAIT "$GANG_CHURN_WAIT"
-  sleep "$GANG_CHURN_WAIT"
-  for id in $pending; do
-    sum="$( capture "$id" 2>/dev/null | cksum | tr ' ' '-' )" || continue
-    was="$(map_get "$first" "$id")" || continue
-    if [ "$sum" = "$was" ]; then CHURN_MAP="$CHURN_MAP $id=still"
-    else CHURN_MAP="$CHURN_MAP $id=churning"; fi
-  done
 }
 
 self_compact_after_stop() { # $1 window id, $2 profile
@@ -1236,17 +1189,15 @@ cmd_roster() {
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
   local id name wins
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
-  # shellcheck disable=SC2046
-  churn_batch $(printf '%s\n' "$wins" | awk '{print $1}')
   while read -r id name; do
     [ -n "$id" ] || continue
-    ( roster_row "$id" "$name" "$(churn_verdict "$id")" ) || true
+    ( roster_row "$id" "$name" ) || true
   done <<EOF
 $wins
 EOF
 }
 
-roster_row() { # $1 window, $2 name, $3 batched churn verdict
+roster_row() { # $1 window, $2 name
   local prof state detail=""
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
@@ -1254,7 +1205,7 @@ roster_row() { # $1 window, $2 name, $3 batched churn verdict
   profile_file "$prof" >/dev/null \
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "profile not found")"; return; }
   load_profile "$prof"
-  state="$(state_now "$1" "${3:-}")"
+  state="$(state_now "$1" snapshot)"
   [ -z "$(staged_note "$1")" ] || detail=" undelivered-paste"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"

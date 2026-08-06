@@ -193,6 +193,8 @@ equal "the Codex profile defers self-compaction to its native Stop hook" \
 "$GANG" hitch alpha -p bash -d /tmp >/dev/null
 contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
 contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
+contains "roster is an immediate snapshot" \
+  "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup tells the harness to await real work" \
