@@ -100,7 +100,10 @@ swap so both launch forms carry the effort by construction.
 For each fact, prefer the freshest owned event, then owned file state, then pane
 scraping; witnesses do not vote. Expired or contradictory evidence is
 indeterminate and surfaced, hooks only translate facts, and no background
-processor reconciles them.
+processor reconciles them. Indeterminate never vetoes an action that fresher
+direct evidence proves safe — the action's own verification carries the
+residual risk — and state the new evidence refutes is retired at that moment,
+never by a patrol.
 
 ## Server loss is a relaunch, not restoration
 

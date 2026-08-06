@@ -71,6 +71,13 @@ Gangline refuses a missing or occupied composer, a human draft, indeterminate
 state, and unsafe mid-turn input. A profile may declare that its native harness
 accepts ordinary mid-turn input.
 
+An expired busy witness alone does not veto delivery: could-not-determine
+falls through to direct box evidence, a provably empty composer proceeds
+under the full submission verification, and anything less refuses naming both
+the expired witness and the box state. A verified submission retires the
+stale turn bracket it refuted; a fresh bracket, and every other consumer of
+turn state, is untouched.
+
 Queued is not delivered: where a profile declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed
 delivery with its manual recovery, both before pasting and after the Enter —

@@ -837,6 +837,74 @@ contains "the uncertain body is recorded against the window" \
   "$(tmux show-options -wqv -t "$(window_id flicker)" @gl_staged)" "is unknown"
 "$GANG" drop flicker >/dev/null
 
+# An EXPIRED turn bracket is could-not-determine, not busy: stale owned state
+# must not veto a delivery that fresh box evidence proves safe. A provably
+# empty composer proceeds under the full submission verification, and the
+# verified submission retires the bracket it refuted; anything less than
+# provably empty refuses naming both the expired witness and the box state.
+# A FRESH open bracket keeps refusing mid-turn exactly as before.
+tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(( $(date +%s) - 400 ))"
+if printf 'MARK_TURNFALL' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
+  pass "an expired bracket over a provably empty box does not veto delivery"
+else
+  pass_rc=$?
+  fail "an expired bracket over a provably empty box does not veto delivery" \
+    "send refused with rc $pass_rc"
+fi
+contains "and the delivery actually landed" "$(pane 1)" "MARK_TURNFALL"
+equal "the verified submission retires the bracket it refuted" "" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
+tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(( $(date +%s) - 400 ))"
+tmux send-keys -l -t "$(window_id 1)" 'half a draft'
+if veto_draft="$(printf 'MARK_NODRAFT' | "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
+  fail "an expired bracket over a drafted box still refuses" "send succeeded"
+else
+  pass "an expired bracket over a drafted box still refuses"
+fi
+contains "the refusal names the expired witness" \
+  "$veto_draft" "no usable busy witness"
+contains "with the bracket's own reason" "$veto_draft" "turn-bracket bound reached"
+contains "and the box state, not a mid-turn claim" \
+  "$veto_draft" "not provably empty"
+tmux send-keys -t "$(window_id 1)" C-u
+tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(date +%s)"
+if fresh_veto="$(printf 'MARK_FRESH' | "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
+  fail "a fresh open bracket still refuses mid-turn" "send succeeded"
+else
+  pass "a fresh open bracket still refuses mid-turn"
+fi
+contains "with the mid-turn refusal, not the expired one" \
+  "$fresh_veto" "not safely reachable mid-turn"
+tmux set-option -uw -t "$(window_id 1)" @gl_turn
+
+# An expired bracket over a box that cannot be read at all is refused by the
+# occupancy guard upstream of the busy witness — no readable composer on a
+# settled screen means a UI of unknown authority owns input, and that refusal
+# fires before the bracket is ever weighed. The in-branch unreadable refusal
+# stays as a backstop for a box that vanishes between those two reads.
+cat > "$RUN_ROOT/profiles/blindbox.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_blind_real="\$(declare -f profile_input)"
+eval "blind_real_input \${_gl_blind_real#profile_input}"
+profile_input() {
+  [ ! -f "$RUN_ROOT/blindbox-flag" ] || return 1
+  blind_real_input "\$1"
+}
+SH
+"$GANG" hitch blindbox -p blindbox -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id blindbox)" @gl_turn "open $(( $(date +%s) - 400 ))"
+touch "$RUN_ROOT/blindbox-flag"
+if blind_out="$(printf 'MARK_BLIND' | "$GANG" send --to blindbox --from tester --stdin 2>&1)"; then
+  fail "an expired bracket over an unreadable box still refuses" "send succeeded"
+else
+  pass "an expired bracket over an unreadable box still refuses"
+fi
+contains "as occupancy of unknown authority" "$blind_out" "authority unknown"
+"$GANG" drop blindbox >/dev/null
+
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
 mkdir -p "$RUN_ROOT/profiles"

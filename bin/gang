@@ -1206,7 +1206,7 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" busy_rc=0
+  local name="" from="" use_stdin=0 body="" busy_rc=0 box="" stale_turn=""
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -1226,13 +1226,41 @@ cmd_send() {
     || die "'$name' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
-    0|2) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-           || refuse "'$name' is not safely reachable mid-turn; wait for it to become idle" ;;
+    0) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+         || refuse "'$name' is not safely reachable mid-turn; wait for it to become idle" ;;
+    2) # Could-not-determine is not busy. An expired witness is stale owned
+       # state, and it must not veto a delivery that fresh box evidence can
+       # prove safe — the same inversion the staged-record read-repair fixed
+       # for status. A provably empty composer proceeds into inject, whose
+       # own guards and post-Enter queue verification carry the residual
+       # risk truthfully; anything less than provably empty refuses, naming
+       # BOTH the expired witness and the box state instead of claiming
+       # mid-turn work nobody witnessed.
+       if [ "${GANG_MIDTURN_INPUT:-}" != 1 ]; then
+         # An unreadable box is normally refused upstream by the occupancy
+         # guard; this read is the backstop for one that vanishes between
+         # those two looks.
+         box="$(landing_zone "$AGENT_ID")" \
+           || refuse "'$name' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box cannot be read — neither work nor idleness is provable; inspect with gang capture $name"
+         if grep -q '[^[:space:]]' <<<"$box"; then
+           refuse "'$name' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box is not provably empty — gang cannot tell a stale bracket from live work with a draft sitting there; inspect with gang capture $name"
+         fi
+         stale_turn="$(tmux show-options -wqv -t "$AGENT_ID" @gl_turn)"
+       fi ;;
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   envelope "$SEND_FROM" "$body"
   inject "$AGENT_ID" "$ENVELOPE"
+  # A verified submission is fresh evidence that the expired bracket described
+  # a turn which no longer exists. Retire exactly that bracket — compared
+  # first, so a fresh bracket a native hook wrote during delivery survives —
+  # the same retire-on-refuting-evidence rule the staged record follows.
+  # Turn-bracket semantics everywhere else are untouched.
+  if [ -n "$stale_turn" ] \
+    && [ "$(tmux show-options -wqv -t "$AGENT_ID" @gl_turn)" = "$stale_turn" ]; then
+    turn_state_clear "$AGENT_ID"
+  fi
   echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
 }
 
