@@ -32,6 +32,7 @@ export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_SESSION="gangtest-$$"
 export GANG_TEST_PROFILES=1
 export GANG_CHURN_WAIT=0
+export GANG_LOCK_DIR="$RUN_ROOT/locks"
 
 checks=0
 fails=0
@@ -302,6 +303,31 @@ if printf 'MARK_UNSIGNED' | "$GANG" send --to 1 --stdin >/dev/null 2>&1; then
 else
   pass "an outside caller must provide its identity"
 fi
+
+alpha_delivery_id="$(window_id alpha)"
+alpha_delivery_lock="$GANG_LOCK_DIR/$(printf '%s' "$alpha_delivery_id" | tr -c 'A-Za-z0-9' '_').lock"
+mkdir -p "$GANG_LOCK_DIR"
+ln -s "$$" "$alpha_delivery_lock"
+if live_lock_refusal="$(printf 'MARK_LIVE_LOCK' |
+  GANG_LOCK_WAIT=not-a-number "$GANG" send --to alpha --from tester --stdin 2>&1)"; then
+  live_lock_rc=0
+else
+  live_lock_rc=$?
+fi
+equal "a live delivery lock refuses immediately" "3" "$live_lock_rc"
+contains "a live delivery lock explains the contention" \
+  "$live_lock_refusal" "another Gangline process is delivering"
+excludes "a live delivery lock prevents the paste" "$(pane alpha)" "MARK_LIVE_LOCK"
+rm -f -- "$alpha_delivery_lock"
+
+ln -s 99999999 "$alpha_delivery_lock"
+printf 'MARK_STALE_LOCK' |
+  "$GANG" send --to alpha --from tester --stdin >/dev/null
+contains "a stale delivery lock is recovered exactly once" \
+  "$(pane alpha)" "MARK_STALE_LOCK"
+[ ! -e "$alpha_delivery_lock" ] \
+  && pass "a recovered delivery releases its lock" \
+  || fail "a recovered delivery releases its lock" "$alpha_delivery_lock remains"
 
 tmux send-keys -l -t "$(window_id 1)" HUMAN_DRAFT
 draft_refusal=""

@@ -690,28 +690,24 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name t=0 path err tries="${GANG_LOCK_WAIT:-150}"
-  require_whole GANG_LOCK_WAIT "$tries" attempts
+  local base holder name path err
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
-  while :; do
-    err="$(ln -s "$$" "$path" 2>&1)" && break
-    [ -L "$path" ] \
-      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
-    holder="$(readlink "$path" 2>/dev/null)" || holder=""
-    case "$holder" in
-      ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
-    esac
-    if ! kill -0 "$holder" 2>/dev/null; then
-      rm -f -- "$path"; continue          # the writer died mid-delivery
-    fi
-    t=$((t + 1))
-    [ "$t" -lt "$tries" ] \
-      || refuse "another Gangline process has been delivering to $name and has not finished — inspect it with gang capture $name before retrying"
-    sleep 0.2
-  done
+  err="$(ln -s "$$" "$path" 2>&1)" \
+    && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
+  [ -L "$path" ] \
+    || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  case "$holder" in
+    ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
+  esac
+  kill -0 "$holder" 2>/dev/null \
+    && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
+  rm -f -- "$path"
+  err="$(ln -s "$$" "$path" 2>&1)" \
+    || refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
   LOCK_PATH="$path"
   trap 'on_exit' EXIT
 }
