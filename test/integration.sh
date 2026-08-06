@@ -331,6 +331,11 @@ contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
+# composer reads the box through the profile's styled reading, not the raw
+# pane; a freshly hitched agent's box is definitively empty
+equal "composer prints nothing for an empty box" \
+  "" "$("$GANG" composer alpha)"
+
 mkdir -p "$RUN_ROOT/profiles"
 cat > "$RUN_ROOT/profiles/broken-observer.sh" <<SH
 # shellcheck shell=bash
@@ -653,6 +658,9 @@ if "$GANG" capture 1 >/dev/null; then
 else
   fail "the inspection command named by the refusal runs" "gang capture 1 failed"
 fi
+# the refusal above is the barrier proving the draft is on screen
+contains "composer prints what a human typed" \
+  "$("$GANG" composer 1)" "HUMAN_DRAFT"
 tmux send-keys -t "$(window_id 1)" C-u
 
 # A harness may park the Enter in its own input queue: the fixture's composer
