@@ -877,6 +877,45 @@ contains "with the mid-turn refusal, not the expired one" \
   "$fresh_veto" "not safely reachable mid-turn"
 tmux set-option -uw -t "$(window_id 1)" @gl_turn
 
+# The issue-#102 shape: an Escape-interrupted turn leaves a fossil busy
+# marker in the transcript — "Retrying in Ns" — matching the busy regex
+# forever while the process sits idle. Frozen paint witnesses a live turn
+# only while something repaints it: over an expired bracket, with no recent
+# pty activity and a byte-stable pane, it is could-not-determine, so status
+# stops claiming work nobody is doing and delivery falls through to the
+# provably empty box. Roster's immediate snapshot keeps the painted verdict
+# by design — it cannot probe stability without consuming the churn wait.
+cat > "$RUN_ROOT/profiles/fossil.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_BUSY_REGEX='Retrying in [0-9]+s'
+SH
+"$GANG" hitch fossil -p fossil -d /tmp >/dev/null
+tmux send-keys -l -t "$(window_id fossil)" \
+  'echo "Retrying in 8s left by an interrupted loop"'
+tmux send-keys -t "$(window_id fossil)" Enter
+tmux set-option -w -t "$(window_id fossil)" @gl_turn "open $(( $(date +%s) - 400 ))"
+fossil_status="$("$GANG" status fossil)"
+contains "frozen busy paint over an expired bracket reads expired, not busy" \
+  "$fossil_status" "expired"
+contains "naming the frozen paint beside the bracket's reason" \
+  "$fossil_status" "busy paint frozen"
+contains "roster's immediate snapshot keeps the painted verdict" \
+  "$("$GANG" roster)" "busy"
+if printf 'MARK_FOSSIL' | "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
+  pass "a fossil busy marker does not veto delivery to a provably empty box"
+else
+  fossil_rc=$?
+  fail "a fossil busy marker does not veto delivery to a provably empty box" \
+    "send refused rc $fossil_rc"
+fi
+contains "and the delivery landed under the fossil" "$(pane fossil)" "MARK_FOSSIL"
+equal "the verified submission retires the fossil's bracket too" "" \
+  "$(tmux show-options -wqv -t "$(window_id fossil)" @gl_turn)"
+"$GANG" drop fossil >/dev/null
+
 # An expired bracket over a box that cannot be read at all is refused by the
 # occupancy guard upstream of the busy witness — no readable composer on a
 # settled screen means a UI of unknown authority owns input, and that refusal

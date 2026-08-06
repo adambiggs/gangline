@@ -496,6 +496,24 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
   esac
   if busy_painted "$1"; then
+    # A busy marker on the pane witnesses a live turn only while something
+    # keeps it alive: a real turn repaints — spinners pulse, timers count.
+    # When the turn bracket has EXPIRED, a matching line can be a fossil: an
+    # Escape-interrupted turn leaves "Retrying in Ns" in the transcript
+    # forever, and treating it as busy makes one interrupted turn a
+    # permanently unreachable agent (issue #102). Demote to
+    # could-not-determine only on the full conjunction — expired bracket, no
+    # recent pty activity, byte-stable pane — so an animated or streaming
+    # turn keeps its busy verdict. Snapshot readers keep the immediate
+    # painted verdict: stability cannot be probed without the churn wait.
+    if [ "$undetermined" -eq 1 ] && [ "${2:-}" != snapshot ]; then
+      local fossil_rc=0
+      recently_active "$1" || fossil_rc=$?
+      if [ "$fossil_rc" -eq 1 ] && pane_stable "$1"; then
+        BUSY_EXPIRED_WHAT="busy paint frozen on a static pane after $BUSY_EXPIRED_WHAT"
+        return 2
+      fi
+    fi
     activity_hold_clear "$1"
     return 0
   fi
