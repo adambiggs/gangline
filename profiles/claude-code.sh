@@ -27,7 +27,6 @@ GANG_MODEL_OPT="--model"
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
-GANG_MIDTURN_INPUT=1
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 
 
