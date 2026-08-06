@@ -516,6 +516,47 @@ contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null
 
+# The real claude-code profile driven end-to-end through core: the exact -m
+# binding and the joined -e must reach the launch line of a window built from
+# the REAL profile's declarations — a core that stopped passing either would
+# stay green against fixture profiles alone. The harness is a stub on PATH,
+# reached two ways: through hitch's own environment for the vocabulary check,
+# and through the tmux global environment for the pane. GANG_BOOT_TIMEOUT=0
+# keeps the world clock-free: the stub never paints a claude composer, so
+# hitch dies AFTER the launch facts this world asserts are already
+# established in tmux, and the world reads them from the surviving window.
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+if [ "${1:-}" = "--help" ]; then
+  printf '  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh, max)\n'
+  exit 0
+fi
+PS1='stub ' exec bash --norc
+SH
+if tmux_path="$(tmux show-environment -g PATH 2>/dev/null)"; then
+  tmux_path="${tmux_path#PATH=}"
+else
+  tmux_path="$PATH"
+fi
+tmux set-environment -g PATH "$CLAUDE_STUB/bin:$tmux_path"
+if PATH="$CLAUDE_STUB/bin:$PATH" GANG_BOOT_TIMEOUT=0 \
+  "$GANG" hitch realmodel -p claude-code -d /tmp -m claude-opus-5 -e xhigh \
+  >/dev/null 2>&1; then
+  fail "a stub that never paints a composer cannot complete a hitch" \
+    "hitch reported success"
+else
+  pass "a stub that never paints a composer cannot complete a hitch"
+fi
+tmux set-environment -g PATH "$tmux_path"
+real_launch="$(tmux display-message -p -t "$(window_id realmodel)" '#{pane_start_command}')"
+contains "the real profile's launch command is the one that ran" \
+  "$real_launch" "claude --settings"
+contains "the exact model binds into the real launch line" \
+  "$real_launch" "--model claude-opus-5"
+contains "and the joined effort rides beside it" \
+  "$real_launch" "--effort=xhigh"
+"$GANG" drop realmodel >/dev/null
+
 "$GANG" hitch 1 -p bash -d /tmp >/dev/null
 printf 'MARK_NUMERIC' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 contains "a numeric name reaches its exact window" "$(pane 1)" "MARK_NUMERIC"
