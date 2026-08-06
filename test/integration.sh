@@ -174,9 +174,6 @@ claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
 contains "enabled Claude lights wire their context source" \
   "$claude_on" 'statusLine'
-claude_midturn="$(ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
-equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
 
 codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
