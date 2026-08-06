@@ -187,6 +187,16 @@ codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
 equal "the Codex profile defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
+cat > "$codex_context_fixture" <<'JSONL'
+{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":50000},"model_context_window":300000}}}
+{"payload":{"type":"message","role":"assistant","content":"later non-token event"}}
+{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":120000},"model_context_window":300000}}}
+JSONL
+codex_context="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  '. "$1"; codex_context_read "$2"' fixture "$codex_profile" "$codex_context_fixture")"
+equal "Codex context reads the newest native token record" \
+  "120k/300k (40%)" "$codex_context"
 
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked

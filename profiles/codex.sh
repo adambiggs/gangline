@@ -59,17 +59,31 @@ codex_context_read() { # $1 = rollout path; prints "<used>k/<win>k (<pct>%)"
 import json, sys
 path = sys.argv[1]
 info = None
-with open(path, encoding="utf-8", errors="replace") as f:
-    for line in f:
-        if "\"token_count\"" not in line:
+def newest_lines(path):
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        carry = b""
+        while pos:
+            size = min(65536, pos)
+            pos -= size
+            f.seek(pos)
+            parts = (f.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            yield from reversed(parts[1:])
+        if carry:
+            yield carry
+for raw in newest_lines(path):
+        if b"\"token_count\"" not in raw:
             continue
         try:
-            rec = json.loads(line)
+            rec = json.loads(raw)
         except ValueError:
             continue
         p = rec.get("payload") or {}
         if p.get("type") == "token_count" and p.get("info"):
             info = p["info"]
+            break
 if info is None:
     print("no token_count event yet — codex reports usage after its first turn",
           file=sys.stderr)
