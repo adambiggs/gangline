@@ -710,17 +710,37 @@ contains "naming the queue it is waiting on" \
 tmux set-option -w -t "$(window_id 1)" @gl_staged \
   "'MARK_GONE' is staged unsent in this box"
 excludes "an empty box retires a staged record at status time" \
-  "$("$GANG" status 1)" "undelivered paste"
+  "$("$GANG" status 1)" "undelivered input"
 equal "and the retired record is gone" "" \
   "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)"
 tmux set-option -w -t "$(window_id 1)" @gl_staged \
   "'MARK_HELD' is staged unsent in this box"
 tmux send-keys -l -t "$(window_id 1)" 'MARK_HELD draft'
 contains "a non-empty box keeps the record and the report" \
-  "$("$GANG" status 1)" "undelivered paste"
-contains "roster carries the same verdict" "$("$GANG" roster)" "undelivered-paste"
+  "$("$GANG" status 1)" "undelivered input"
+contains "roster carries the same verdict" "$("$GANG" roster)" "undelivered-input"
 tmux send-keys -t "$(window_id 1)" C-u
 tmux set-option -uw -t "$(window_id 1)" @gl_staged
+
+# Clearing a record is evidence the OBSTRUCTION is gone, never retroactive
+# proof the recorded body was delivered. A refused delivery changes nothing;
+# the next VERIFIED delivery to the same window retires the record, because
+# verified success is only reachable through the provably clear box that is
+# itself the gone-obstruction evidence.
+tmux set-option -w -t "$(window_id 1)" @gl_staged \
+  "'MARK_OLD' is staged unsent in this box"
+tmux send-keys -l -t "$(window_id 1)" 'blocking draft'
+if printf 'MARK_RETAIN' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
+  fail "a refused delivery does not clear another record" "send succeeded over a draft"
+else
+  pass "a refused delivery does not clear another record"
+fi
+contains "the record survives the refusal" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)" "MARK_OLD"
+tmux send-keys -t "$(window_id 1)" C-u
+printf 'MARK_CLEARS' | "$GANG" send --to 1 --from tester --stdin >/dev/null
+equal "a verified delivery to the same window retires the stale record" "" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)"
 
 # Once queue evidence is declared, an UNREADABLE verification reread is
 # ambiguity, not proof of submission. The fixture's composer flips to a

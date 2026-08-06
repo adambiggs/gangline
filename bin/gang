@@ -1323,8 +1323,12 @@ cmd_status() {
   [ -z "$self_pending" ] \
     || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
   staged="$(staged_current "$AGENT_ID")"
+  # "on record", not "in the input box": the body may sit in the box, in the
+  # harness's own queue, or in a state gang could not read — the note carries
+  # what is actually known, and its later clearing means the obstruction is
+  # gone, never that the recorded body was retroactively delivered.
   [ -z "$staged" ] \
-    || printf '%s\n' "$(colour "$C_BAD" "undelivered paste in the input box: $staged")"
+    || printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
 }
 
 cmd_roster() {
@@ -1349,7 +1353,7 @@ roster_row() { # $1 window, $2 name
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "profile not found")"; return; }
   load_profile "$prof"
   state="$(state_now "$1" snapshot)"
-  [ -z "$(staged_current "$1")" ] || detail=" undelivered-paste"
+  [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
