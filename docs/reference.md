@@ -71,6 +71,11 @@ Gangline refuses a missing or occupied composer, a human draft, indeterminate
 state, and unsafe mid-turn input. A profile may declare that its native harness
 accepts ordinary mid-turn input.
 
+Queued is not delivered: where a profile declares queue evidence, a harness
+that parks the submission in its own input queue is reported as a failed
+delivery with its manual recovery, both before pasting and after the Enter —
+never as a success.
+
 ### `gang compact <name>`
 
 Submits the profile's native compaction command through the same verified input
@@ -164,6 +169,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
+| `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |

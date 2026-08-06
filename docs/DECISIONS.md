@@ -46,6 +46,17 @@ this beside the verified tty substrate it needs rather than creating a second
 product or a duplicate injection path; defer the command to Stop when a harness
 cannot submit it during its own turn.
 
+## Queued is not delivered
+
+A harness may accept the Enter and park the message in its own input queue —
+claude's queue strand renders the parked body exactly like a submitted prompt
+and empties the composer, so "the box changed" cannot prove entry into the
+session. The one place the states differ is the composer itself, which reads
+as the harness's queue hint; the profile declares that evidence
+(`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
+body quoting the hint can never trip it. Parked input is a failed delivery
+named with its manual recovery, before pasting and after Enter alike.
+
 ## Occupancy is not authority
 
 Refuse ordinary input whenever a harness-owned UI occupies the composer, but do

@@ -634,6 +634,54 @@ else
 fi
 tmux send-keys -t "$(window_id 1)" C-u
 
+# A harness may park the Enter in its own input queue: the fixture's composer
+# flips to the queue hint once the strand flag exists, exactly as claude
+# 2.1.223 leaves its box reading "Press up to edit queued messages" while the
+# parked preview in the transcript looks like a submitted prompt. The box
+# changing is therefore not proof of entry, and delivery must say so instead
+# of reporting success.
+cat > "$RUN_ROOT/queue-rc" <<'RC'
+# --rcfile replaces ~/.bashrc but not /etc/bash.bashrc: Ubuntu's
+# command-not-found handler there spends seconds per envelope line, which
+# outlasts the immediate verification rhythm this suite runs on.
+unset -f command_not_found_handle
+PS1='❯ '
+PROMPT_COMMAND='[ -f "$QUEUE_STRAND" ] && PS1="❯ Press up to edit queued messages"'
+RC
+mkdir -p "$RUN_ROOT/profiles"
+cat > "$RUN_ROOT/profiles/queueing.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand exec bash --rcfile $RUN_ROOT/queue-rc' fixture"
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+SH
+export GANG_PROFILES="$RUN_ROOT/profiles"
+"$GANG" hitch strand -p queueing -d /tmp >/dev/null
+touch "$RUN_ROOT/queue-strand"
+if strand_out="$(printf 'MARK_QUEUED' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
+  fail "a submission the harness parks in its queue is not a delivery" \
+    "send reported success"
+else
+  pass "a submission the harness parks in its queue is not a delivery"
+fi
+contains "the failure names the parked queue" \
+  "$strand_out" "parked it in its own input queue"
+contains "and hands over the manual recovery" "$strand_out" "press Up"
+contains "the parked message is recorded against the window" \
+  "$(tmux show-options -wqv -t "$(window_id strand)" @gl_staged)" "queue"
+# With the queue still parked, the NEXT delivery is refused before anything is
+# typed, named as the queue rather than blamed on a half-written draft.
+if strand_more="$(printf 'MARK_SECOND' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
+  strand_more_rc=0
+else
+  strand_more_rc=$?
+fi
+equal "a parked queue refuses the next delivery without typing" "3" "$strand_more_rc"
+contains "naming the queue it is waiting on" \
+  "$strand_more" "parked earlier input in its own queue"
+"$GANG" drop strand >/dev/null
+
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
 mkdir -p "$RUN_ROOT/profiles"

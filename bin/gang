@@ -150,7 +150,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
-  GANG_OCCUPIED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
+  GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
@@ -670,6 +670,25 @@ landing_zone() { # $1 = window id; the input box, or the whole pane if none is d
   else capture_joined "$1"; fi
 }
 
+# A harness may accept the Enter and PARK the message in its own input queue:
+# claude's queue strand (observed on 2.1.223) renders the parked body in the
+# transcript styled exactly like a submitted prompt and empties the composer,
+# so "the box changed" cannot distinguish entered-the-session from
+# queued-as-preview. What the strand does leave behind is composer evidence —
+# the box itself reads as the queue hint — and the profile owns that spelling.
+# Matched against the BOX reading only, never the whole pane, so a delivered
+# body that merely quotes the hint can never trip it.
+box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a queue
+  [ -n "$GANG_QUEUED_REGEX" ] || return 1
+  local rc=0
+  printf '%s\n' "$1" | grep -Eq -- "$GANG_QUEUED_REGEX" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) die "GANG_QUEUED_REGEX in $GANG_PROFILE_FILE is not a pattern grep -E accepts (exit $rc) — queue evidence cannot be read, so delivery cannot be verified" ;;
+  esac
+}
+
 LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -f -- "$LOCK_PATH"; LOCK_PATH=""; }
 
@@ -783,6 +802,14 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   composer_settled "$1" \
     || refuse "refusing to deliver '$frag': somebody is typing into $tname right now — the paste would interleave with their draft mid-word (try again in a moment)"
   stage_clear "$1"
+  # A parked queue means the composer's Enter is queueing, not submitting:
+  # nothing pasted now can enter the session, and an earlier message is
+  # already waiting. Named for what it is rather than left to the emptiness
+  # guard below, which would blame a half-written draft.
+  local preflight
+  if preflight="$(landing_zone "$1")" && box_queued "$preflight"; then
+    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered by hand (gang attach, press Up to load the parked message, then Enter). Nothing was typed and the body is still the sender's"
+  fi
   if ! input_clear "$1"; then
     local onlyhead=""
     [ "${3:-}" != head ] \
@@ -827,6 +854,25 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the paste is sitting unsent in that box (gang capture $tname)"
     fi
   done
+  # The box changing is not yet proof of ENTRY. Where the profile declares
+  # queue evidence, the reading that broke the loop — and two more, because
+  # the hint can paint a beat after the box empties — must not be the
+  # harness's own parked-input hint. A parked message renders in the
+  # transcript exactly like a submitted one, so this composer reading is the
+  # one place the two states differ.
+  if [ -n "$GANG_QUEUED_REGEX" ]; then
+    local qlooks=0
+    while :; do
+      if box_queued "$posted"; then
+        stage_record "$1" "'$frag' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover with gang attach, Up, then Enter" ""
+        die "submit NOT verified: '$frag' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it by hand — gang attach, press Up to load the parked message, then Enter"
+      fi
+      qlooks=$((qlooks + 1))
+      [ "$qlooks" -lt 3 ] || break
+      sleep 0.4
+      posted="$(landing_zone "$1")" || break
+    done
+  fi
   lock_release
 }
 
