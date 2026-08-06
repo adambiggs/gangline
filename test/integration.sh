@@ -196,6 +196,25 @@ contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
 contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
+
+mkdir -p "$RUN_ROOT/profiles"
+cat > "$RUN_ROOT/profiles/broken-observer.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_BUSY_REGEX='['
+SH
+export GANG_PROFILES="$RUN_ROOT/profiles"
+"$GANG" hitch broken-observer -p broken-observer -d /tmp >/dev/null
+if broken_roster="$("$GANG" roster 2>&1)"; then
+  fail "roster fails when an agent row cannot be observed" "roster exited successfully"
+else
+  broken_roster_rc=$?
+  equal "roster propagates the observation failure" "1" "$broken_roster_rc"
+fi
+contains "roster names the profile whose observation failed" \
+  "$broken_roster" "broken-observer.sh"
+"$GANG" drop broken-observer >/dev/null
 contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup ends instead of polling for work" \

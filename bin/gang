@@ -1196,7 +1196,7 @@ cmd_roster() {
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
   while read -r id name; do
     [ -n "$id" ] || continue
-    ( roster_row "$id" "$name" ) || true
+    ( roster_row "$id" "$name" )
   done <<EOF
 $wins
 EOF
