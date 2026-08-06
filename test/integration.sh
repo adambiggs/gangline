@@ -753,8 +753,12 @@ equal "a verified delivery to the same window retires the stale record" "" \
 # stage_clear read it twice each, and stage_clear's landing zone is the
 # eighth — and every later read sees the real, drained composer. The ticket
 # count is coupled to that read order; changing inject's guard sequence must
-# update it, and the world fails loudly (refused send or surviving record)
-# when the coupling drifts.
+# update it. Leftover tickets fail loudly as a refused send, but EXHAUSTING
+# them early would let stage_clear see the drained box and clear the record
+# itself — both cores pass and the world silently stops exercising the race —
+# so the fixture logs the caller of every parked reading and the world
+# asserts the final ticket was consumed by stage_clear's landing-zone read,
+# the coupling's one load-bearing position.
 cat > "$RUN_ROOT/profiles/drain.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -765,6 +769,7 @@ eval "drain_real_input \${_gl_drain_real#profile_input}"
 profile_input() { # a parked reading per ticket, then the real drained box
   if [ -s "$RUN_ROOT/drain-tickets" ]; then
     sed -i '\$d' "$RUN_ROOT/drain-tickets"
+    printf '%s<%s\n' "\${FUNCNAME[1]}" "\${FUNCNAME[2]}" >> "$RUN_ROOT/drain-reads.log"
     printf 'PARKED_OBSTRUCTION'
     return 0
   fi
@@ -785,6 +790,8 @@ else
 fi
 equal "and the verified delivery retires the drained record" "" \
   "$(tmux show-options -wqv -t "$(window_id drain)" @gl_staged)"
+equal "the final parked reading was stage_clear's own landing-zone read" \
+  "landing_zone<stage_clear" "$(tail -1 "$RUN_ROOT/drain-reads.log")"
 "$GANG" drop drain >/dev/null
 
 # Once queue evidence is declared, an UNREADABLE verification reread is
