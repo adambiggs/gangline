@@ -55,7 +55,10 @@ session. The one place the states differ is the composer itself, which reads
 as the harness's queue hint; the profile declares that evidence
 (`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
 body quoting the hint can never trip it. Parked input is a failed delivery
-named with its manual recovery, before pasting and after Enter alike.
+named with its manual recovery, before pasting and after Enter alike. A
+hard-stuck variant re-queues even typed input and the Up-loaded body while
+reporting idle, and nothing drains; its recovery — drop and resume, re-sending
+what the queue swallowed — belongs to the operator, never to gang.
 
 ## Occupancy is not authority
 

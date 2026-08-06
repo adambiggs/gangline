@@ -808,7 +808,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   # guard below, which would blame a half-written draft.
   local preflight
   if preflight="$(landing_zone "$1")" && box_queued "$preflight"; then
-    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered by hand (gang attach, press Up to load the parked message, then Enter). Nothing was typed and the body is still the sender's"
+    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered by hand (gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
   fi
   if ! input_clear "$1"; then
     local onlyhead=""
@@ -865,7 +865,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     while :; do
       if box_queued "$posted"; then
         stage_record "$1" "'$frag' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover with gang attach, Up, then Enter" ""
-        die "submit NOT verified: '$frag' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it by hand — gang attach, press Up to load the parked message, then Enter"
+        die "submit NOT verified: '$frag' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it by hand — gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
       fi
       qlooks=$((qlooks + 1))
       [ "$qlooks" -lt 3 ] || break
