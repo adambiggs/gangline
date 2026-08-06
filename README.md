@@ -128,6 +128,8 @@ database, cloud service, background coordinator, or private agent protocol.
 - [`docs/reference.md`](docs/reference.md) — exact commands, environment, and
   profile contract
 - [`docs/operations.md`](docs/operations.md) — unattended operation and recovery
+- [`docs/benchmarks.md`](docs/benchmarks.md) — benchmark selection and validity
+  gates
 - [`CONSTITUTION.md`](CONSTITUTION.md) — binding project laws
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — terse durable decisions
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — repository gates and contribution policy
