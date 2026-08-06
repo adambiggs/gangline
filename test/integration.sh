@@ -302,6 +302,89 @@ else
   pass "an unknown target is refused"
 fi
 
+# Effort at hitch: the same shape as -m with one difference the worlds pin —
+# the join carries no space, because the separator belongs to the harness's
+# own spelling. The refusals are separated the way the code separates them: no
+# spelling at all, a spelling with no way to check a level, a checker that
+# answers nothing, and a level outside the printed vocabulary.
+if "$GANG" hitch effortless -p bash -d /tmp -e high >/dev/null 2>&1; then
+  fail "a profile with no effort spelling refuses -e" "hitch accepted -e"
+else
+  pass "a profile with no effort spelling refuses -e"
+fi
+
+cat > "$RUN_ROOT/profiles/noverify.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_EFFORT_OPT='--effort='
+SH
+if noverify_out="$("$GANG" hitch noverify -p noverify -d /tmp -e low 2>&1)"; then
+  fail "a profile that cannot check a level may not take one" "hitch accepted -e"
+else
+  pass "a profile that cannot check a level may not take one"
+fi
+contains "and the refusal names the missing declaration" \
+  "$noverify_out" "GANG_EFFORT_CMD"
+
+cat > "$RUN_ROOT/profiles/silent.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_EFFORT_OPT='--effort='
+GANG_EFFORT_CMD='true'
+SH
+if silent_out="$("$GANG" hitch silent -p silent -d /tmp -e low 2>&1)"; then
+  fail "a checker that produces no levels is refused" "hitch accepted -e"
+else
+  pass "a checker that produces no levels is refused"
+fi
+contains "as a broken declaration rather than a bad value" \
+  "$silent_out" "could not determine"
+
+cat > "$RUN_ROOT/profiles/efforted.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-fixture"
+GANG_EFFORT_OPT='--effort='
+GANG_EFFORT_CMD="printf 'low\nmedium\nxhigh\n'"
+SH
+if bogus_out="$("$GANG" hitch effbad -p efforted -d /tmp -e bogus 2>&1)"; then
+  fail "a level outside the vocabulary is refused" "hitch accepted bogus"
+else
+  pass "a level outside the vocabulary is refused"
+fi
+contains "naming the levels the profile takes" "$bogus_out" "low medium xhigh"
+# The neighbour that makes a substring test look like it works: high is not a
+# level here and xhigh is, so an unanchored match would pass a level this
+# harness never declared.
+if "$GANG" hitch effsub -p efforted -d /tmp -e high >/dev/null 2>&1; then
+  fail "a level that is only part of a declared one is refused too" \
+    "hitch accepted high"
+else
+  pass "a level that is only part of a declared one is refused too"
+fi
+
+"$GANG" hitch effok -p efforted -d /tmp -e xhigh >/dev/null
+contains "the declared spelling joins the effort into the launch, with no space" \
+  "$(tmux display-message -p -t "$(window_id effok)" '#{pane_start_command}')" \
+  "--effort=xhigh"
+# The other launch form, and POSITION is why it works rather than a second
+# branch: the resume swap happens above the append, so both forms carry the
+# flag by construction. Asserted anyway — construction is a reason to believe,
+# not a receipt, and a flag surviving hitch and lost on the other form would
+# be a renewal that quietly changed the agent.
+"$GANG" hitch effres -p efforted -d /tmp --resume -e low >/dev/null
+effres_line="$(tmux display-message -p -t "$(window_id effres)" '#{pane_start_command}')"
+contains "the resume launch form is the one that ran" "$effres_line" "resume-fixture"
+contains "and it carries the effort too" "$effres_line" "--effort=low"
+"$GANG" drop effok >/dev/null
+"$GANG" drop effres >/dev/null
+
 "$GANG" hitch 1 -p bash -d /tmp >/dev/null
 printf 'MARK_NUMERIC' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 contains "a numeric name reaches its exact window" "$(pane 1)" "MARK_NUMERIC"
