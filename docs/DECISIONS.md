@@ -61,6 +61,18 @@ below the observed native automatic-compaction boundary while preserving most
 of that effective window; larger windows do not make degraded context more
 useful.
 
+## Effort is the profile's word
+
+A reasoning-effort choice rides hitch beside the model choice, but the profile
+owns both the spelling and the vocabulary: the option is declared whole,
+including its separator, and joined to the level with no space; the levels come
+from a profile command that prints them. Printing keeps "not a level" distinct
+from "could not determine" — an exit status merges them and blames the operator
+for a harness that is merely absent. A bad level is refused at hitch, the last
+cheap place: harnesses either warn and run at a default nobody chose or open a
+window whose first turn the provider refuses. The append sits below the resume
+swap so both launch forms carry the effort by construction.
+
 ## Evidence is selected per predicate
 
 For each fact, prefer the freshest owned event, then owned file state, then pane

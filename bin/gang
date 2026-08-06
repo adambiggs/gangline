@@ -80,7 +80,7 @@ usage() {
 gang — drive native CLI agents in tmux
 
   gang up [name] [hitch flags]
-  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [--resume]
+  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
   gang compact <name>
@@ -152,7 +152,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY=""
-  GANG_QUIET_AT_REST="" GANG_MODEL_OPT=""
+  GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -973,8 +973,36 @@ advisory_reply() { # $1 event, $2 profile; emit at most one native hook payload
     "$1" "$ADVISORY_NOTE"
 }
 
+# A reasoning effort is one concept every harness spells differently and values
+# differently, so the profile owns BOTH: the option, and the command that says
+# which levels exist. Core holds neither vocabulary, because codex's is
+# model-specific and claude's may not be, and neither harness can be right about
+# the other.
+#
+# WHY A COMMAND THAT PRINTS THE LEVELS RATHER THAN ONE THAT JUDGES ONE. A checker
+# answering by exit status has two outcomes for three states, and the state it
+# cannot distinguish is the one that matters: "this level is not a level" and
+# "the check could not run at all" arrive as the same non-zero, so a harness that
+# is merely absent refuses every level while claiming the operator typed a bad
+# one. Printing the vocabulary separates them — nothing printed is
+# could-not-determine, and it is refused UNDER ITS OWN NAME rather than borrowed
+# from the other.
+#
+# Validation must run at STATEMENT LEVEL, never inside $(...): die in a command
+# substitution ends only that subshell, and the caller reads the empty string as
+# a pass. That is why this returns levels and the refusals live at the call site.
+# The || is part of the same protocol: empty output is the one failure channel,
+# so a failing profile command must not kill the hitch through set -e instead of
+# being named as a broken declaration.
+effort_levels() { # print the levels the profile says this harness takes
+  [ -n "$GANG_EFFORT_CMD" ] || return 0
+  # The model reaches the command because a vocabulary can depend on it; the
+  # profile decides whether to use it. Exported for the child only.
+  GANG_MODEL="$1" sh -c "$GANG_EFFORT_CMD" 2>/dev/null || true
+}
+
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" id resume=0 launch_env
+  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id resume=0 launch_env
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -983,6 +1011,7 @@ cmd_hitch() {
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
+    -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
     --resume)     resume=1; shift ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
@@ -1000,6 +1029,41 @@ cmd_hitch() {
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
+  fi
+  # Effort rides the model's path, and the POSITION is the argument rather than
+  # the append: the resume swap above has already chosen which launch line this
+  # is, so the plain and resume forms both carry the flag by construction
+  # instead of by a second branch kept in step with this one. A flag surviving
+  # hitch and lost on the other form would be a renewal that quietly changed
+  # the agent.
+  #
+  # No space in the join. Where a model's flag and value are separate words, an
+  # effort's separator belongs to the harness's own spelling — `--effort=` and
+  # `-c model_reasoning_effort=` are each one word — so the profile declares
+  # the whole thing and word-splitting does the rest.
+  if [ -n "$effort" ]; then
+    [ -n "$GANG_EFFORT_OPT" ] || die "hitch: profile '$prof' declares no GANG_EFFORT_OPT, so it cannot take -e"
+    case "$effort" in *[!A-Za-z0-9._:/@-]*) die "hitch: effort '$effort' has characters gang will not paste into a launch line" ;; esac
+    # REFUSED WHERE NO VALIDATION IS DECLARED, rather than accepted unchecked.
+    # The harness will not catch it: claude warns about an unknown level, exits
+    # 0 and runs at its default, and codex opens a window whose first turn the
+    # PROVIDER refuses — so the operator gets a live agent at an effort nobody
+    # chose, or one that dies as soon as it is briefed. Hitch is the last place
+    # this is cheap.
+    [ -n "$GANG_EFFORT_CMD" ] \
+      || die "hitch: profile '$prof' declares GANG_EFFORT_OPT but no GANG_EFFORT_CMD, so gang cannot tell whether '$effort' is a level this harness has. An unchecked effort is not refused by the harness either — it runs at a level nobody chose — so it is refused here"
+    local levels="" flat=""
+    levels="$(effort_levels "$model")"
+    [ -n "$levels" ] \
+      || die "hitch: profile '$prof' declares GANG_EFFORT_CMD and running it produced no levels, so gang could not determine whether '$effort' is one. That is a broken declaration rather than a bad value, and it is refused under its own name rather than blamed on what you typed"
+    # Padded on both sides and matched whole, so a level cannot be satisfied by
+    # sitting inside another one — `high` must not be answered by `xhigh`.
+    flat=" $(printf '%s' "$levels" | tr '[:space:]' ' ') "
+    case "$flat" in
+      *" $effort "*) ;;
+      *) die "hitch: '$effort' is not an effort profile '$prof' takes (have:$flat)" ;;
+    esac
+    GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
   fi
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
