@@ -18,8 +18,9 @@ GANG_MODEL_OPT="-m"
 GANG_EFFORT_OPT="-c model_reasoning_effort="
 # `codex debug models` is the harness's own live vocabulary. GANG_MODEL is the
 # exact model hitch is about to pass with -m; an empty model, an alias the catalog
-# cannot bind, a failed command, malformed JSON, a missing field, a duplicate, or
-# whitespace inside a level all produce NOTHING. The reader names that as a
+# cannot bind, a failed or wedged command (bounded by the timeout), malformed
+# JSON, a missing field, a duplicate, or whitespace inside a level all produce
+# NOTHING. The reader names that as a
 # broken GANG_EFFORT_CMD rather than blaming the operator's level. Validate the
 # whole catalog row before printing so a plausible prefix can never escape from
 # an answer the parser could not finish. The final `|| true` is part of that
@@ -27,12 +28,16 @@ GANG_EFFORT_OPT="-c model_reasoning_effort="
 GANG_EFFORT_CMD="python3 -c '
 import json, os, subprocess
 
-result = subprocess.run(
-    [\"codex\", \"debug\", \"models\"],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.DEVNULL,
-    text=True,
-)
+try:
+    result = subprocess.run(
+        [\"codex\", \"debug\", \"models\"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+    )
+except (subprocess.TimeoutExpired, OSError):
+    raise SystemExit(1)
 if result.returncode:
     raise SystemExit(result.returncode)
 

@@ -206,6 +206,44 @@ SH
 claude_drift="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
 equal "a help shape the parser cannot finish yields nothing rather than a guess" \
   "" "$claude_drift"
+# A prose parenthetical is not a vocabulary: only the comma-separated level
+# list counts, so "(experimental)" cannot be adopted while the real list on
+# the same row still is.
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+echo '  --effort <level>                      Effort selection (experimental); available values (low, medium, high)'
+SH
+claude_prose="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd" | tr '\n' ' ')"
+equal "a prose parenthetical beside the real list is never the vocabulary" \
+  "low medium high " "$claude_prose"
+# Two level-lists on one row is ambiguity, and ambiguity is nothing.
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+echo '  --effort <level>  Pick (low, medium) or later (high, xhigh)'
+SH
+claude_ambiguous="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
+equal "two plausible lists on the option row yield nothing rather than a pick" \
+  "" "$claude_ambiguous"
+# The list is anchored to the --effort row's own block: a list belonging to
+# the NEXT option must not be adopted when the effort row has none.
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+printf '  --effort <level>  Effort level for the current session\n  --other <x>  Choose (low, medium, high)\n'
+SH
+claude_neighbour="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
+equal "a neighbouring option's list is not adopted as the effort vocabulary" \
+  "" "$claude_neighbour"
+# Help from a claude that FAILED is not evidence, however plausible it reads:
+# the producer's exit status is honored, and its output lands in the
+# could-not-determine channel.
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+printf '  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh, max)\n'
+exit 17
+SH
+claude_failed="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
+equal "correct help from a failed producer yields nothing rather than a vocabulary" \
+  "" "$claude_failed"
 
 codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \

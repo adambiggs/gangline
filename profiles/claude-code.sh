@@ -29,26 +29,47 @@ GANG_MODEL_OPT="--model"
 # the observed harness. An unknown level is NOT an error there — claude warns,
 # exits 0 and runs at its default — so hitch must refuse it, and the vocabulary
 # comes from the harness's own --help, which prints the levels in a
-# parenthesized list after the flag. Wrapping may split that list across lines;
-# the parser reads through it. Any help shape it cannot finish produces
-# NOTHING, which bin/gang refuses as a broken declaration rather than a bad
-# value, and the final || true keeps empty output as the one failure channel.
+# parenthesized comma-list on the --effort option row.
+#
+# The producer is run under the parser's control so its exit status is honored:
+# help text from a claude that failed is not evidence, however plausible it
+# reads. The list is anchored to the option's own description block — cut at
+# the next option row — so a parenthetical belonging to another flag can never
+# be adopted, and only the comma-separated level-list form counts, so prose
+# parentheses like "(experimental)" cannot be mistaken for a vocabulary.
+# Exactly one such list may appear; ambiguity, wrapping the parser cannot
+# finish, a failed or wedged producer (bounded by the timeout), and a
+# duplicated level all produce NOTHING, which bin/gang refuses as a broken
+# declaration rather than a bad value. The final || true keeps empty output as
+# that channel.
 GANG_EFFORT_OPT="--effort="
-GANG_EFFORT_CMD="claude --help 2>/dev/null | python3 -c '
-import re, sys
+GANG_EFFORT_CMD="python3 -c '
+import re, subprocess
 
-text = sys.stdin.read()
+try:
+    result = subprocess.run(
+        [\"claude\", \"--help\"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+    )
+except (subprocess.TimeoutExpired, OSError):
+    raise SystemExit(1)
+if result.returncode:
+    raise SystemExit(result.returncode)
+
+text = result.stdout
 if text.count(\"--effort <level>\") != 1:
     raise SystemExit(1)
 after = text.split(\"--effort <level>\", 1)[1]
-match = re.match(r\"[^()]*\\(([^()]+)\\)\", after)
-if match is None:
+block = re.split(r\"\\n[ \\t]*-\", after, maxsplit=1)[0]
+lists = re.findall(
+    r\"\\(([a-z0-9-]+(?:[ \\t\\n]*,[ \\t\\n]*[a-z0-9-]+)+)\\)\", block
+)
+if len(lists) != 1:
     raise SystemExit(1)
-levels = [part.strip() for part in match.group(1).split(\",\")]
-if not levels or any(
-    not level or any(char.isspace() for char in level) for level in levels
-):
-    raise SystemExit(1)
+levels = [part.strip() for part in lists[0].split(\",\")]
 if len(levels) != len(set(levels)):
     raise SystemExit(1)
 print(*levels, sep=\"\\n\")
