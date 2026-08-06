@@ -257,6 +257,8 @@ yellow_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 contains "half the declared span exposes a yellow time light" \
   "$yellow_time" "Yellow time light"
+excludes "the yellow time light does not prescribe team strategy" \
+  "$yellow_time" "converge"
 repeat_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 equal "a time light is emitted once per declaration edge" "" "$repeat_time"
@@ -265,6 +267,8 @@ red_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 contains "four-fifths of the declared span exposes a red time light" \
   "$red_time" "Red time light"
+excludes "the red time light does not prescribe checkpoint strategy" \
+  "$red_time" "bank"
 tmux set-option -t "=$GANG_SESSION:" @gl_cutoff unreadable
 unavailable_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"

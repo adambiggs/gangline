@@ -101,10 +101,9 @@ gang cutoff clear
 ```
 
 Gangline gives hook-enabled agents one yellow time light halfway through the
-declared span and one red light after four-fifths. Yellow asks them to check the
-path and converge; red asks them to bank the current result at a natural
-checkpoint. These are native hook messages, not a patrol. The cutoff never stops
-an agent, and no declaration means no time guidance.
+declared span and one red light after four-fifths. Each reports the elapsed
+fraction and remaining time. These are native hook messages, not a patrol. The
+cutoff never stops an agent, and no declaration means no time guidance.
 
 ## Understanding observation
 

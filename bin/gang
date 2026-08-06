@@ -951,11 +951,11 @@ time_light_note() { # append the team cutoff edge, if any, to ADVISORY_NOTE
       left=$(( CUTOFF_AT - now ))
       if [ "$left" -ge 0 ]; then
         case "$light" in
-          yellow) note="Yellow time light: half the team budget is spent; check the path and converge. $(human_seconds "$left") remain." ;;
-          red) note="Red time light: bank the current result at the next natural checkpoint. $(human_seconds "$left") remain; continuing is still your call." ;;
+          yellow) note="Yellow time light: half the team budget is spent; $(human_seconds "$left") remain." ;;
+          red) note="Red time light: four-fifths of the team budget is spent; $(human_seconds "$left") remain." ;;
         esac
       else
-        note="Red time light: the team cutoff passed $(human_seconds $(( 0 - left ))) ago. Bank the current result; continuing is still your call."
+        note="Red time light: the team cutoff passed $(human_seconds $(( 0 - left ))) ago."
       fi
     fi
   fi
