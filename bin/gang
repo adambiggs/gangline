@@ -897,6 +897,14 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       }
     done
   fi
+  # A verified delivery retires any prior staged record for THIS window. Not
+  # redundant with the head-of-delivery clearing: each guard above re-reads
+  # the box, and an obstruction can drain between stage_clear's read and
+  # input_clear's — a queue emptying at a turn boundary mid-send — leaving a
+  # retained record beside a delivery that then verified. The clearing
+  # evidence is the gone obstruction this verified path just walked through,
+  # never retroactive proof the RECORDED body was delivered.
+  stage_forget "$1"
   lock_release
 }
 

@@ -742,6 +742,51 @@ printf 'MARK_CLEARS' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 equal "a verified delivery to the same window retires the stale record" "" \
   "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)"
 
+# The drain-between-reads race: a prior obstruction can vanish AFTER
+# stage_clear reads it (record retained on nonempty evidence) but BEFORE
+# input_clear reads again — a queue draining at a turn boundary mid-send. The
+# delivery then verifies cleanly and the stale record must not survive it.
+# The fixture replays the race deterministically: eight tickets return a
+# parked reading for exactly the box reads through stage_clear's landing
+# zone — the occupied probe at cmd_send, inject, and stage_clear reads the
+# box once each via input_painted, the settled pairs at inject and
+# stage_clear read it twice each, and stage_clear's landing zone is the
+# eighth — and every later read sees the real, drained composer. The ticket
+# count is coupled to that read order; changing inject's guard sequence must
+# update it, and the world fails loudly (refused send or surviving record)
+# when the coupling drifts.
+cat > "$RUN_ROOT/profiles/drain.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_drain_real="\$(declare -f profile_input)"
+eval "drain_real_input \${_gl_drain_real#profile_input}"
+profile_input() { # a parked reading per ticket, then the real drained box
+  if [ -s "$RUN_ROOT/drain-tickets" ]; then
+    sed -i '\$d' "$RUN_ROOT/drain-tickets"
+    printf 'PARKED_OBSTRUCTION'
+    return 0
+  fi
+  drain_real_input "\$1"
+}
+SH
+: > "$RUN_ROOT/drain-tickets"
+"$GANG" hitch drain -p drain -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id drain)" @gl_staged \
+  "'MARK_OLD' is staged unsent in this box"
+tmux set-option -w -t "$(window_id drain)" @gl_staged_box "BOXMEMO_NOT_MATCHING"
+printf 'x\nx\nx\nx\nx\nx\nx\nx\n' > "$RUN_ROOT/drain-tickets"
+if drain_out="$(printf 'MARK_DRAIN' | "$GANG" send --to drain --from tester --stdin 2>&1)"; then
+  pass "a delivery whose prior obstruction drained mid-send still verifies"
+else
+  fail "a delivery whose prior obstruction drained mid-send still verifies" \
+    "$drain_out"
+fi
+equal "and the verified delivery retires the drained record" "" \
+  "$(tmux show-options -wqv -t "$(window_id drain)" @gl_staged)"
+"$GANG" drop drain >/dev/null
+
 # Once queue evidence is declared, an UNREADABLE verification reread is
 # ambiguity, not proof of submission. The fixture's composer flips to a
 # sentinel after Enter and its profile_input grants exactly one readable look
