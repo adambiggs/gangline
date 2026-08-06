@@ -74,9 +74,15 @@ accepts ordinary mid-turn input.
 An expired busy witness alone does not veto delivery: could-not-determine
 falls through to direct box evidence, a provably empty composer proceeds
 under the full submission verification, and anything less refuses naming both
-the expired witness and the box state. A verified submission retires the
-stale turn bracket it refuted; a fresh bracket, and every other consumer of
-turn state, is untouched.
+the expired witness and the box state. Delivery never writes turn state —
+native hooks own the bracket lock-free and tmux offers no atomic
+compare-and-delete, so eligibility is re-derived from live evidence on every
+send instead of retiring anything.
+
+The frozen-paint demotion requires an expired bracket, so a window with no
+native hooks and no mid-turn-input declaration whose pane keeps a matching
+busy marker stays refused until the marker scrolls off or the agent is
+dropped. That refusal is fail-closed and deliberate.
 
 Queued is not delivered: where a profile declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed

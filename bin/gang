@@ -1224,7 +1224,7 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" busy_rc=0 box="" stale_turn=""
+  local name="" from="" use_stdin=0 body="" busy_rc=0 box=""
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -1263,22 +1263,19 @@ cmd_send() {
          if grep -q '[^[:space:]]' <<<"$box"; then
            refuse "'$name' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box is not provably empty — gang cannot tell a stale bracket from live work with a draft sitting there; inspect with gang capture $name"
          fi
-         stale_turn="$(tmux show-options -wqv -t "$AGENT_ID" @gl_turn)"
        fi ;;
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   envelope "$SEND_FROM" "$body"
   inject "$AGENT_ID" "$ENVELOPE"
-  # A verified submission is fresh evidence that the expired bracket described
-  # a turn which no longer exists. Retire exactly that bracket — compared
-  # first, so a fresh bracket a native hook wrote during delivery survives —
-  # the same retire-on-refuting-evidence rule the staged record follows.
-  # Turn-bracket semantics everywhere else are untouched.
-  if [ -n "$stale_turn" ] \
-    && [ "$(tmux show-options -wqv -t "$AGENT_ID" @gl_turn)" = "$stale_turn" ]; then
-    turn_state_clear "$AGENT_ID"
-  fi
+  # The stale bracket is deliberately NOT retired here. Native hooks write
+  # @gl_turn lock-free — a fresh UserPromptSubmit stamp can land between any
+  # read gang takes and any unset it issues, and tmux offers no atomic
+  # compare-and-delete, so a delivery-time retirement can erase fresh native
+  # evidence (a deterministic intercept proved it). Delivery does not need
+  # the retirement: eligibility re-derives the verdict from live evidence on
+  # every send, and the bracket belongs to the hooks that wrote it.
   echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
 }
 

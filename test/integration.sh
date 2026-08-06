@@ -839,11 +839,15 @@ contains "the uncertain body is recorded against the window" \
 
 # An EXPIRED turn bracket is could-not-determine, not busy: stale owned state
 # must not veto a delivery that fresh box evidence proves safe. A provably
-# empty composer proceeds under the full submission verification, and the
-# verified submission retires the bracket it refuted; anything less than
-# provably empty refuses naming both the expired witness and the box state.
-# A FRESH open bracket keeps refusing mid-turn exactly as before.
-tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(( $(date +%s) - 400 ))"
+# empty composer proceeds under the full submission verification; anything
+# less refuses naming both the expired witness and the box state. A FRESH
+# open bracket keeps refusing mid-turn exactly as before. Delivery leaves
+# @gl_turn byte-identical: native hooks write it lock-free, tmux has no
+# atomic compare-and-delete, so any delivery-time retirement can erase a
+# fresh hook stamp landing between gang's read and its unset — the invariant
+# pinned here is that gang never touches the bracket at delivery at all.
+stale_bracket="open $(( $(date +%s) - 400 ))"
+tmux set-option -w -t "$(window_id 1)" @gl_turn "$stale_bracket"
 if printf 'MARK_TURNFALL' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
   pass "an expired bracket over a provably empty box does not veto delivery"
 else
@@ -852,8 +856,8 @@ else
     "send refused with rc $pass_rc"
 fi
 contains "and the delivery actually landed" "$(pane 1)" "MARK_TURNFALL"
-equal "the verified submission retires the bracket it refuted" "" \
-  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
+equal "delivery leaves the turn bracket to its native owner, byte-identical" \
+  "$stale_bracket" "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
 tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(( $(date +%s) - 400 ))"
 tmux send-keys -l -t "$(window_id 1)" 'half a draft'
 if veto_draft="$(printf 'MARK_NODRAFT' | "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
@@ -875,36 +879,94 @@ else
 fi
 contains "with the mid-turn refusal, not the expired one" \
   "$fresh_veto" "not safely reachable mid-turn"
+excludes "the refused fresh-bracket body never landed" "$(pane 1)" "MARK_FRESH"
 tmux set-option -uw -t "$(window_id 1)" @gl_turn
+
+# The box-vanishes backstop: occupied's read sees a composer, then the box
+# disappears before the expired fall-through's own read — one readable look,
+# then nothing. The refusal must name the expired witness and the unreadable
+# box rather than claim mid-turn work.
+cat > "$RUN_ROOT/profiles/vanish.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_vanish_real="\$(declare -f profile_input)"
+eval "vanish_real_input \${_gl_vanish_real#profile_input}"
+profile_input() { # readable per ticket once the vanish flag is set, then not
+  if [ ! -f "$RUN_ROOT/vanish-flag" ]; then vanish_real_input "\$1"; return; fi
+  if [ -s "$RUN_ROOT/vanish-tickets" ]; then
+    sed -i '\$d' "$RUN_ROOT/vanish-tickets"
+    vanish_real_input "\$1"
+    return
+  fi
+  return 1
+}
+SH
+"$GANG" hitch vanish -p vanish -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id vanish)" @gl_turn "open $(( $(date +%s) - 400 ))"
+printf 'x\n' > "$RUN_ROOT/vanish-tickets"
+touch "$RUN_ROOT/vanish-flag"
+if vanish_out="$(printf 'MARK_VANISH' | "$GANG" send --to vanish --from tester --stdin 2>&1)"; then
+  fail "a box that vanishes before the fall-through's read still refuses" \
+    "send succeeded"
+else
+  pass "a box that vanishes before the fall-through's read still refuses"
+fi
+contains "naming the expired witness" "$vanish_out" "no usable busy witness"
+contains "and the unreadable box" "$vanish_out" "cannot be read"
+excludes "the refused vanished-box body never landed" \
+  "$(pane vanish)" "MARK_VANISH"
+"$GANG" drop vanish >/dev/null
 
 # The issue-#102 shape: an Escape-interrupted turn leaves a fossil busy
 # marker in the transcript — "Retrying in Ns" — matching the busy regex
 # forever while the process sits idle. Frozen paint witnesses a live turn
 # only while something repaints it: over an expired bracket, with no recent
-# pty activity and a byte-stable pane, it is could-not-determine, so status
-# stops claiming work nobody is doing and delivery falls through to the
-# provably empty box. Roster's immediate snapshot keeps the painted verdict
-# by design — it cannot probe stability without consuming the churn wait.
+# pty activity and a byte-stable pane, it is could-not-determine. The
+# fixture is quiet-at-rest so the activity leg genuinely reads
+# #{window_activity} — the deterministic activity inputs are the window
+# bounds themselves: an enormous window makes the fresh paint "recent"
+# under any load, a zero window makes every stamp old. Roster's immediate
+# snapshot keeps the painted verdict by design — it cannot probe stability
+# without consuming the churn wait.
 cat > "$RUN_ROOT/profiles/fossil.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
+GANG_QUIET_AT_REST=1
 SH
 "$GANG" hitch fossil -p fossil -d /tmp >/dev/null
 tmux send-keys -l -t "$(window_id fossil)" \
   'echo "Retrying in 8s left by an interrupted loop"'
 tmux send-keys -t "$(window_id fossil)" Enter
-tmux set-option -w -t "$(window_id fossil)" @gl_turn "open $(( $(date +%s) - 400 ))"
-fossil_status="$("$GANG" status fossil)"
+fossil_bracket="open $(( $(date +%s) - 400 ))"
+tmux set-option -w -t "$(window_id fossil)" @gl_turn "$fossil_bracket"
+# Positive control: recent pty activity preserves painted busy — the
+# demotion must not fire while the pty leg credits the fresh paint.
+fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil)"
+contains "recent pty activity keeps painted busy authoritative" \
+  "$fossil_active" "busy"
+if printf 'MARK_ACTIVE' | GANG_ACTIVITY_WINDOW=100000 \
+  "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
+  fail "recent pty activity keeps refusing delivery mid-turn" "send succeeded"
+else
+  pass "recent pty activity keeps refusing delivery mid-turn"
+fi
+excludes "the refused active-pane body never landed" \
+  "$(pane fossil)" "MARK_ACTIVE"
+contains "roster's immediate snapshot keeps the painted verdict" \
+  "$("$GANG" roster)" "busy"
+# The fossil verdict: no recent write, byte-stable pane, expired bracket.
+fossil_status="$(GANG_ACTIVITY_WINDOW=0 "$GANG" status fossil)"
 contains "frozen busy paint over an expired bracket reads expired, not busy" \
   "$fossil_status" "expired"
 contains "naming the frozen paint beside the bracket's reason" \
   "$fossil_status" "busy paint frozen"
-contains "roster's immediate snapshot keeps the painted verdict" \
-  "$("$GANG" roster)" "busy"
-if printf 'MARK_FOSSIL' | "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
+if printf 'MARK_FOSSIL' | GANG_ACTIVITY_WINDOW=0 \
+  "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
   pass "a fossil busy marker does not veto delivery to a provably empty box"
 else
   fossil_rc=$?
@@ -912,9 +974,32 @@ else
     "send refused rc $fossil_rc"
 fi
 contains "and the delivery landed under the fossil" "$(pane fossil)" "MARK_FOSSIL"
-equal "the verified submission retires the fossil's bracket too" "" \
+equal "the fossil's bracket is left to its native owner, byte-identical" \
+  "$fossil_bracket" \
   "$(tmux show-options -wqv -t "$(window_id fossil)" @gl_turn)"
 "$GANG" drop fossil >/dev/null
+
+# Positive control for the stability leg: a churning pane preserves painted
+# busy even with the activity credit forced off — the ticker rewrites the
+# screen between the two stability captures, so the demotion refuses to
+# call the paint frozen.
+cat > "$RUN_ROOT/profiles/ticker.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'while :; do echo Retrying in 9s; done' fixture"
+GANG_BUSY_REGEX='Retrying in [0-9]+s'
+GANG_QUIET_AT_REST=1
+SH
+if GANG_BOOT_TIMEOUT=0 "$GANG" hitch ticker -p ticker -d /tmp >/dev/null 2>&1; then
+  fail "a composer-less ticker cannot complete a hitch" "hitch reported success"
+else
+  pass "a composer-less ticker cannot complete a hitch"
+fi
+tmux set-option -w -t "$(window_id ticker)" @gl_turn "open $(( $(date +%s) - 400 ))"
+contains "a churning pane keeps painted busy authoritative" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker)" "busy"
+"$GANG" drop ticker >/dev/null
 
 # An expired bracket over a box that cannot be read at all is refused by the
 # occupancy guard upstream of the busy witness — no readable composer on a
