@@ -508,7 +508,13 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
   case "${2:-}" in
-    snapshot) [ "$undetermined" -eq 1 ] && return 2; return 1 ;;
+    snapshot)
+      if composer_live "$1"; then
+        [ "$undetermined" -eq 1 ] && return 2
+        return 1
+      fi
+      BUSY_EXPIRED_WHAT="no current busy witness or composer"
+      return 2 ;;
   esac
   if pane_stable "$1"; then
     [ "$undetermined" -eq 1 ] && return 2
