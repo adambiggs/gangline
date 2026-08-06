@@ -9,7 +9,7 @@
 Hitches one agent, named `lead` when omitted, then attaches or switches the
 current tmux client to it. `GANG_PROFILE` selects the harness.
 
-### `gang hitch <name> [-p profile] [-d dir] [-m model] [--resume]`
+### `gang hitch <name> [-p profile] [-d dir] [-m model] [-e effort] [--resume]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 The launch environment carries the exact `GANG_SESSION` plus any custom profile
@@ -19,6 +19,8 @@ tmux server.
 - `-p` selects a profile.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the profile's model option.
+- `-e` passes a harness-native reasoning-effort choice through the profile's
+  effort template. Profiles without one refuse it.
 - `--resume` uses the profile's directory-scoped native resume command. Profiles
   without a safe resume command refuse it.
 
@@ -154,6 +156,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_LAUNCH` | required native launch command |
 | `GANG_RESUME_LAUNCH` | optional safe native resume command |
 | `GANG_MODEL_OPT` | optional native model flag |
+| `GANG_EFFORT_OPT` | optional native reasoning-effort template; `%s` marks where the value lands |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |

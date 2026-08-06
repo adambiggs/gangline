@@ -10,6 +10,7 @@ GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"
 GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false$_gl_codex_hook_flags"
 unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
 GANG_MODEL_OPT="-m"
+GANG_EFFORT_OPT="-c model_reasoning_effort=%s"
 GANG_BUSY_REGEX="esc to interrupt"
 GANG_QUIET_AT_REST=1
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '

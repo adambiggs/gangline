@@ -178,6 +178,10 @@ contains "enabled Claude lights wire their context source" \
 claude_midturn="$(ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
 equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
+claude_effort="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$claude_profile")"
+equal "the Claude profile templates its native effort flag" \
+  "--effort %s" "$claude_effort"
 
 codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
@@ -187,6 +191,10 @@ codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
 equal "the Codex profile defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_effort="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_profile")"
+equal "the Codex profile templates its native effort override" \
+  "-c model_reasoning_effort=%s" "$codex_effort"
 codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
 cat > "$codex_context_fixture" <<'JSONL'
 {"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":50000},"model_context_window":300000}}}
@@ -300,6 +308,24 @@ if printf 'MARK_GHOST' | "$GANG" send --to ghost --from tester --stdin >/dev/nul
   fail "an unknown target is refused" "send exited successfully"
 else
   pass "an unknown target is refused"
+fi
+
+cat > "$RUN_ROOT/profiles/efforted.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_EFFORT_OPT='--reason %s'
+SH
+"$GANG" hitch efforted -p efforted -d /tmp -e high >/dev/null
+contains "an effort request lands in the launch line via the profile template" \
+  "$(tmux display-message -p -t "$(window_id efforted)" '#{pane_start_command}')" \
+  "--reason high"
+"$GANG" drop efforted >/dev/null
+if "$GANG" hitch effortless -p bash -d /tmp -e high >/dev/null 2>&1; then
+  fail "an effort request without a profile template is refused" "hitch accepted -e"
+else
+  pass "an effort request without a profile template is refused"
 fi
 
 "$GANG" hitch 1 -p bash -d /tmp >/dev/null

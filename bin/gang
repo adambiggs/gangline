@@ -80,7 +80,7 @@ usage() {
 gang — drive native CLI agents in tmux
 
   gang up [name] [hitch flags]
-  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [--resume]
+  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
   gang compact <name>
@@ -152,7 +152,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY=""
-  GANG_QUIET_AT_REST="" GANG_MODEL_OPT=""
+  GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -974,7 +974,7 @@ advisory_reply() { # $1 event, $2 profile; emit at most one native hook payload
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" id resume=0 launch_env
+  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id resume=0 launch_env
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -983,6 +983,7 @@ cmd_hitch() {
     -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
+    -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
     --resume)     resume=1; shift ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
@@ -1000,6 +1001,15 @@ cmd_hitch() {
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
+  fi
+  if [ -n "$effort" ]; then
+    [ -n "$GANG_EFFORT_OPT" ] || die "hitch: profile '$prof' declares no GANG_EFFORT_OPT, so it cannot take -e"
+    case "$GANG_EFFORT_OPT" in
+      *%s*) ;;
+      *) die "profile '$prof' GANG_EFFORT_OPT must embed %s where the effort value lands" ;;
+    esac
+    case "$effort" in *[!A-Za-z0-9-]*) die "hitch: effort '$effort' has characters gang will not paste into a launch line" ;; esac
+    GANG_LAUNCH="$GANG_LAUNCH ${GANG_EFFORT_OPT//%s/$effort}"
   fi
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
