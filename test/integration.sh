@@ -703,6 +703,25 @@ contains "naming the queue it is waiting on" \
   "$strand_more" "parked earlier input in its own queue"
 "$GANG" drop strand >/dev/null
 
+# A staged record is state; the box is fresher evidence. Staged input can
+# flush outside gang's sight — an operator's Enter, a queue draining at a
+# turn boundary — and status/roster must not report a paste the empty box
+# proves gone. A box still holding content keeps the record and the report.
+tmux set-option -w -t "$(window_id 1)" @gl_staged \
+  "'MARK_GONE' is staged unsent in this box"
+excludes "an empty box retires a staged record at status time" \
+  "$("$GANG" status 1)" "undelivered paste"
+equal "and the retired record is gone" "" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)"
+tmux set-option -w -t "$(window_id 1)" @gl_staged \
+  "'MARK_HELD' is staged unsent in this box"
+tmux send-keys -l -t "$(window_id 1)" 'MARK_HELD draft'
+contains "a non-empty box keeps the record and the report" \
+  "$("$GANG" status 1)" "undelivered paste"
+contains "roster carries the same verdict" "$("$GANG" roster)" "undelivered-paste"
+tmux send-keys -t "$(window_id 1)" C-u
+tmux set-option -uw -t "$(window_id 1)" @gl_staged
+
 # A profile-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
 mkdir -p "$RUN_ROOT/profiles"

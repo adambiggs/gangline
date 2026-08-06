@@ -744,6 +744,23 @@ staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste t
   tmux show-options -wqv -t "$1" @gl_staged
 }
 
+staged_current() { # $1 = window id -> the record, freshness-checked at read time
+  local note box
+  note="$(staged_note "$1")"
+  [ -n "$note" ] || return 0
+  # The record is state; the box is fresher evidence. Staged input can flush
+  # outside gang's sight — an operator's Enter, a queue draining at a turn
+  # boundary — and a claim the box refutes must not be reported as current.
+  # An empty box gets the verdict stage_clear renders at delivery time,
+  # "whoever cleared it, it is gone", here rendered at reporting time; an
+  # unreadable box cannot refute the record, so the record stands.
+  if box="$(landing_zone "$1")" && ! grep -q '[^[:space:]]' <<<"$box"; then
+    stage_forget "$1"
+    return 0
+  fi
+  printf '%s\n' "$note"
+}
+
 stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (may be empty)
   declare -F profile_input >/dev/null || return 0
   tmux set-option -w -t "$1" @gl_staged "$2"
@@ -1298,7 +1315,7 @@ cmd_status() {
     || self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_dispatching)"
   [ -z "$self_pending" ] \
     || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
-  staged="$(staged_note "$AGENT_ID")"
+  staged="$(staged_current "$AGENT_ID")"
   [ -z "$staged" ] \
     || printf '%s\n' "$(colour "$C_BAD" "undelivered paste in the input box: $staged")"
 }
@@ -1325,7 +1342,7 @@ roster_row() { # $1 window, $2 name
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "profile not found")"; return; }
   load_profile "$prof"
   state="$(state_now "$1" snapshot)"
-  [ -z "$(staged_note "$1")" ] || detail=" undelivered-paste"
+  [ -z "$(staged_current "$1")" ] || detail=" undelivered-paste"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
