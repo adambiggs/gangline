@@ -990,15 +990,17 @@ advisory_reply() { # $1 event, $2 profile; emit at most one native hook payload
 #
 # Validation must run at STATEMENT LEVEL, never inside $(...): die in a command
 # substitution ends only that subshell, and the caller reads the empty string as
-# a pass. That is why this returns levels and the refusals live at the call site.
-# The || is part of the same protocol: empty output is the one failure channel,
-# so a failing profile command must not kill the hitch through set -e instead of
-# being named as a broken declaration.
+# a pass. That is why this returns levels and the refusals live at the call
+# site, where the child's status is CAUGHT rather than absorbed: a checker that
+# exits nonzero is a broken declaration even when it printed something, because
+# output from a failed checker is not a vocabulary. Empty output with status 0
+# is the other failure channel — could-not-determine that the profile itself
+# established. Both are named as the declaration's fault, never the operator's.
 effort_levels() { # print the levels the profile says this harness takes
   [ -n "$GANG_EFFORT_CMD" ] || return 0
   # The model reaches the command because a vocabulary can depend on it; the
   # profile decides whether to use it. Exported for the child only.
-  GANG_MODEL="$1" sh -c "$GANG_EFFORT_CMD" 2>/dev/null || true
+  GANG_MODEL="$1" sh -c "$GANG_EFFORT_CMD" 2>/dev/null
 }
 
 cmd_hitch() {
@@ -1052,8 +1054,10 @@ cmd_hitch() {
     # this is cheap.
     [ -n "$GANG_EFFORT_CMD" ] \
       || die "hitch: profile '$prof' declares GANG_EFFORT_OPT but no GANG_EFFORT_CMD, so gang cannot tell whether '$effort' is a level this harness has. An unchecked effort is not refused by the harness either — it runs at a level nobody chose — so it is refused here"
-    local levels="" flat=""
-    levels="$(effort_levels "$model")"
+    local levels="" flat="" levels_rc=0
+    levels="$(effort_levels "$model")" || levels_rc=$?
+    [ "$levels_rc" -eq 0 ] \
+      || die "hitch: profile '$prof' declares GANG_EFFORT_CMD and running it failed (status $levels_rc), so gang could not determine whether '$effort' is a level. That is a broken declaration rather than a bad value — output from a failed checker is not a vocabulary"
     [ -n "$levels" ] \
       || die "hitch: profile '$prof' declares GANG_EFFORT_CMD and running it produced no levels, so gang could not determine whether '$effort' is one. That is a broken declaration rather than a bad value, and it is refused under its own name rather than blamed on what you typed"
     # Padded on both sides and matched whole, so a level cannot be satisfied by

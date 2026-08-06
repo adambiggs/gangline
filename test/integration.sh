@@ -377,6 +377,7 @@ if "$GANG" hitch effortless -p bash -d /tmp -e high >/dev/null 2>&1; then
 else
   pass "a profile with no effort spelling refuses -e"
 fi
+equal "and the refusal leaves no window behind" "" "$(window_id effortless)"
 
 cat > "$RUN_ROOT/profiles/noverify.sh" <<SH
 # shellcheck shell=bash
@@ -392,6 +393,8 @@ else
 fi
 contains "and the refusal names the missing declaration" \
   "$noverify_out" "GANG_EFFORT_CMD"
+equal "a refused unverifiable effort leaves no window behind" "" \
+  "$(window_id noverify)"
 
 cat > "$RUN_ROOT/profiles/silent.sh" <<SH
 # shellcheck shell=bash
@@ -408,6 +411,29 @@ else
 fi
 contains "as a broken declaration rather than a bad value" \
   "$silent_out" "could not determine"
+equal "a refused silent checker leaves no window behind" "" \
+  "$(window_id silent)"
+
+# A checker that PRINTS a plausible vocabulary and then fails is refused too:
+# output from a failed checker is not a vocabulary, and treating it as one
+# would open a window on evidence the profile itself declared unreliable.
+cat > "$RUN_ROOT/profiles/nonzero.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_EFFORT_OPT='--effort='
+GANG_EFFORT_CMD='printf "high\n"; exit 17'
+SH
+if nonzero_out="$("$GANG" hitch effdied -p nonzero -d /tmp -e high 2>&1)"; then
+  fail "a checker that fails after printing is refused" "hitch accepted its output"
+else
+  pass "a checker that fails after printing is refused"
+fi
+contains "and the refusal names the status, not the operator's level" \
+  "$nonzero_out" "failed (status 17)"
+equal "a refused failing checker leaves no window behind" "" \
+  "$(window_id effdied)"
 
 cat > "$RUN_ROOT/profiles/efforted.sh" <<SH
 # shellcheck shell=bash
@@ -424,6 +450,7 @@ else
   pass "a level outside the vocabulary is refused"
 fi
 contains "naming the levels the profile takes" "$bogus_out" "low medium xhigh"
+equal "a refused bad level leaves no window behind" "" "$(window_id effbad)"
 # The neighbour that makes a substring test look like it works: high is not a
 # level here and xhigh is, so an unanchored match would pass a level this
 # harness never declared.
@@ -433,6 +460,7 @@ if "$GANG" hitch effsub -p efforted -d /tmp -e high >/dev/null 2>&1; then
 else
   pass "a level that is only part of a declared one is refused too"
 fi
+equal "a refused partial level leaves no window behind" "" "$(window_id effsub)"
 
 "$GANG" hitch effok -p efforted -d /tmp -e xhigh >/dev/null
 contains "the declared spelling joins the effort into the launch, with no space" \
