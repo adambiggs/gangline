@@ -225,7 +225,7 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
 }
 
 startup_brief() { # $1 = agent name
-  printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. To message a peer: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s. Await work.' \
+  printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. To message a peer: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s. End this turn.' \
     "$1" "$1"
 }
 
