@@ -74,7 +74,18 @@ accepts ordinary mid-turn input.
 Queued is not delivered: where a profile declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed
 delivery with its manual recovery, both before pasting and after the Enter —
-never as a success.
+never as a success. An unreadable verification capture after the Enter is
+ambiguity and fails the same way.
+
+This detection is scoped to verified harness renderings: the claude-code pin
+is the composer hint observed on 2.1.223, and a harness version whose
+rendering has not been observed narrows the guarantee back to box-change
+verification without refusing sends. A reworded hint is the event that
+reopens the decision between stronger session-record verification and a
+version gate.
+
+A cleared staged record means the obstruction is gone — it is never
+retroactive proof that the recorded body was delivered.
 
 ### `gang compact <name>`
 

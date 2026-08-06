@@ -55,10 +55,18 @@ session. The one place the states differ is the composer itself, which reads
 as the harness's queue hint; the profile declares that evidence
 (`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
 body quoting the hint can never trip it. Parked input is a failed delivery
-named with its manual recovery, before pasting and after Enter alike. A
-hard-stuck variant re-queues even typed input and the Up-loaded body while
-reporting idle, and nothing drains; its recovery — drop and resume, re-sending
-what the queue swallowed — belongs to the operator, never to gang.
+named with its manual recovery, before pasting and after Enter alike, and an
+unreadable verification capture in the queue check is ambiguity that fails
+closed. A hard-stuck variant re-queues even typed input and the Up-loaded body
+while reporting idle, and nothing drains; its recovery — drop and resume,
+re-sending what the queue swallowed — belongs to the operator, never to gang.
+
+The contract is scoped to verified harness renderings: the pin is the
+composer hint observed on claude-code 2.1.223, an unobserved version narrows
+the guarantee back to box-change verification rather than refusing sends, and
+no session-record machinery is built unless a reworded hint supplies the
+evidence to reopen that choice. A cleared staged record is evidence the
+obstruction is gone, never retroactive proof the recorded body was delivered.
 
 ## Occupancy is not authority
 
