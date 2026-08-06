@@ -24,6 +24,35 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 GANG_MODEL_OPT="--model"
+# REASONING EFFORT. The option includes its separator because bin/gang joins it
+# to the level with no space; the joined --effort=<level> form is accepted by
+# the observed harness. An unknown level is NOT an error there — claude warns,
+# exits 0 and runs at its default — so hitch must refuse it, and the vocabulary
+# comes from the harness's own --help, which prints the levels in a
+# parenthesized list after the flag. Wrapping may split that list across lines;
+# the parser reads through it. Any help shape it cannot finish produces
+# NOTHING, which bin/gang refuses as a broken declaration rather than a bad
+# value, and the final || true keeps empty output as the one failure channel.
+GANG_EFFORT_OPT="--effort="
+GANG_EFFORT_CMD="claude --help 2>/dev/null | python3 -c '
+import re, sys
+
+text = sys.stdin.read()
+if text.count(\"--effort <level>\") != 1:
+    raise SystemExit(1)
+after = text.split(\"--effort <level>\", 1)[1]
+match = re.match(r\"[^()]*\\(([^()]+)\\)\", after)
+if match is None:
+    raise SystemExit(1)
+levels = [part.strip() for part in match.group(1).split(\",\")]
+if not levels or any(
+    not level or any(char.isspace() for char in level) for level in levels
+):
+    raise SystemExit(1)
+if len(levels) != len(set(levels)):
+    raise SystemExit(1)
+print(*levels, sep=\"\\n\")
+' || true"
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"

@@ -178,6 +178,34 @@ contains "enabled Claude lights wire their context source" \
 claude_midturn="$(ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
 equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
+claude_effort_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$claude_profile")"
+equal "the Claude profile spells effort as one joinable word" \
+  "--effort=" "$claude_effort_opt"
+claude_effort_cmd="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$claude_profile")"
+CLAUDE_STUB="$RUN_ROOT/claude-stub"
+mkdir -p "$CLAUDE_STUB/bin"
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+cat <<'HELP'
+  --model <model>                       Model for the current session
+  --effort <level>                      Effort level for the current session
+                                        (low, medium, high, xhigh, max)
+  --fallback-model <model>              Enable automatic fallback
+HELP
+SH
+chmod +x "$CLAUDE_STUB/bin/claude"
+claude_levels="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd" | tr '\n' ' ')"
+equal "the Claude effort vocabulary is read from the harness's own help, through the wrap" \
+  "low medium high xhigh max " "$claude_levels"
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+echo '  --effort <level>                      Effort level for the current session'
+SH
+claude_drift="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
+equal "a help shape the parser cannot finish yields nothing rather than a guess" \
+  "" "$claude_drift"
 
 codex_profile="$ROOT/profiles/codex.sh"
 codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
@@ -187,6 +215,43 @@ codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
 equal "the Codex profile defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_effort_opt="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_profile")"
+equal "the Codex profile spells effort as one joinable config option" \
+  "-c model_reasoning_effort=" "$codex_effort_opt"
+codex_effort_cmd="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$codex_profile")"
+CODEX_CATALOG_STUB="$RUN_ROOT/codex-catalog-stub"
+mkdir -p "$CODEX_CATALOG_STUB/bin"
+cat > "$CODEX_CATALOG_STUB/bin/codex" <<'SH'
+#!/bin/sh
+cat <<'JSON'
+{"models":[
+  {"slug":"gpt-5.6-sol","supported_reasoning_levels":[
+    {"effort":"low"},{"effort":"medium"},{"effort":"xhigh"}]},
+  {"slug":"gpt-5.6-mini","supported_reasoning_levels":[
+    {"effort":"low"}]}
+]}
+JSON
+SH
+chmod +x "$CODEX_CATALOG_STUB/bin/codex"
+codex_levels="$(GANG_MODEL=gpt-5.6-sol PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
+  sh -c "$codex_effort_cmd" | tr '\n' ' ')"
+equal "the Codex effort vocabulary binds the exact model hitch will launch" \
+  "low medium xhigh " "$codex_levels"
+codex_unbound="$(GANG_MODEL='' PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
+  sh -c "$codex_effort_cmd")"
+equal "a model the catalog cannot bind yields nothing rather than a guess" \
+  "" "$codex_unbound"
+# opencode and pi refuse -e by declaring nothing: their native effort forms
+# are unverified, and an unverified spelling must not reach a launch line.
+for unverified_profile in opencode pi; do
+  unverified_file="$ROOT/profiles/$unverified_profile.sh"
+  unverified_effort="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+    '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$unverified_file")"
+  equal "the $unverified_profile profile declares no effort spelling until one is verified" \
+    "" "$unverified_effort"
+done
 codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
 cat > "$codex_context_fixture" <<'JSONL'
 {"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":50000},"model_context_window":300000}}}
