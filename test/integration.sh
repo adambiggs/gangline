@@ -843,9 +843,10 @@ contains "the uncertain body is recorded against the window" \
 # less refuses naming both the expired witness and the box state. A FRESH
 # open bracket keeps refusing mid-turn exactly as before. Delivery leaves
 # @gl_turn byte-identical: native hooks write it lock-free, tmux has no
-# atomic compare-and-delete, so any delivery-time retirement can erase a
-# fresh hook stamp landing between gang's read and its unset — the invariant
-# pinned here is that gang never touches the bracket at delivery at all.
+# atomic compare-and-delete, so any reader's unset can erase a fresh hook
+# stamp landing between the read and the unset — the invariant pinned here
+# and in the malformed world below is that NO reader on delivery's
+# transitive path writes the bracket at all.
 stale_bracket="open $(( $(date +%s) - 400 ))"
 tmux set-option -w -t "$(window_id 1)" @gl_turn "$stale_bracket"
 if printf 'MARK_TURNFALL' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
@@ -919,6 +920,32 @@ excludes "the refused vanished-box body never landed" \
   "$(pane vanish)" "MARK_VANISH"
 "$GANG" drop vanish >/dev/null
 
+# A malformed bracket is REPORTED, never repaired: the reader-path clear was
+# the same erase-fresh-evidence race one call deeper — cmd_send reaches
+# turn_witness through busy(), and an unset there can land on top of a fresh
+# hook stamp. Status names the unreadable value, delivery falls through on
+# box evidence, and the value survives both byte-identical until the hooks
+# that own the bracket rewrite it.
+tmux set-option -w -t "$(window_id 1)" @gl_turn "gibberish not-a-stamp"
+malformed_status="$("$GANG" status 1)"
+contains "a malformed bracket reads as unreadable, not busy" \
+  "$malformed_status" "turn-bracket value unreadable"
+equal "and status leaves the malformed value in place" \
+  "gibberish not-a-stamp" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
+if printf 'MARK_MALFORMED' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
+  pass "a malformed bracket over a provably empty box does not veto delivery"
+else
+  malformed_rc=$?
+  fail "a malformed bracket over a provably empty box does not veto delivery" \
+    "send refused rc $malformed_rc"
+fi
+contains "and that delivery landed" "$(pane 1)" "MARK_MALFORMED"
+equal "delivery leaves even a malformed bracket untouched, byte-identical" \
+  "gibberish not-a-stamp" \
+  "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
+tmux set-option -uw -t "$(window_id 1)" @gl_turn
+
 # The issue-#102 shape: an Escape-interrupted turn leaves a fossil busy
 # marker in the transcript — "Retrying in Ns" — matching the busy regex
 # forever while the process sits idle. Frozen paint witnesses a live turn
@@ -946,9 +973,9 @@ fossil_bracket="open $(( $(date +%s) - 400 ))"
 tmux set-option -w -t "$(window_id fossil)" @gl_turn "$fossil_bracket"
 # Positive control: recent pty activity preserves painted busy — the
 # demotion must not fire while the pty leg credits the fresh paint.
-fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil)"
-contains "recent pty activity keeps painted busy authoritative" \
-  "$fossil_active" "busy"
+fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil | head -1)"
+equal "recent pty activity keeps the busy verdict itself, not its explanation" \
+  "busy (tight tug)" "$fossil_active"
 if printf 'MARK_ACTIVE' | GANG_ACTIVITY_WINDOW=100000 \
   "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
   fail "recent pty activity keeps refusing delivery mid-turn" "send succeeded"
@@ -980,25 +1007,64 @@ equal "the fossil's bracket is left to its native owner, byte-identical" \
 "$GANG" drop fossil >/dev/null
 
 # Positive control for the stability leg: a churning pane preserves painted
-# busy even with the activity credit forced off — the ticker rewrites the
-# screen between the two stability captures, so the demotion refuses to
-# call the paint frozen.
+# busy even with the activity credit forced off. The verdict is asserted
+# EXACTLY: the broken state reads "expired (busy paint frozen…)", whose
+# explanation contains the word busy, so a substring check would false-green
+# on the feature's own text. Two determinism traps solved here: the tick
+# lines are UNIQUE (a periodic screen scrolls into byte-identical captures
+# and genuinely reads stable), and the stability probe's wait runs under a
+# fake clock that returns once the pane has actually repainted — the wait
+# becomes an event barrier on the change real time would have delivered.
+# The ticker paints a ❯ line so its composer reads provably empty — if the
+# stability leg were deleted, the demotion would fire and this send would
+# DELIVER, turning the send assertions red alongside the verdict.
+mkdir -p "$RUN_ROOT/churn-bin"
+cat > "$RUN_ROOT/churn-bin/sleep" <<'SH'
+#!/bin/sh
+# Fake clock for the churn probe: return once the pane has repainted.
+[ -n "$CHURN_PANE" ] || exit 0
+base="$(tmux capture-pane -pJ -t "$CHURN_PANE" 2>/dev/null)" || exit 0
+i=0
+while [ "$i" -lt 200 ]; do
+  now="$(tmux capture-pane -pJ -t "$CHURN_PANE" 2>/dev/null)" || exit 0
+  [ "$now" = "$base" ] || exit 0
+  i=$((i + 1))
+done
+exit 0
+SH
+chmod +x "$RUN_ROOT/churn-bin/sleep"
 cat > "$RUN_ROOT/profiles/ticker.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'while :; do echo Retrying in 9s; done' fixture"
+GANG_LAUNCH="sh -c 'i=0; while :; do i=\\\$((i + 1)); echo Retrying in 9s tick \\\$i; echo \"❯ \"; tmux wait-for -S \"gltick-\\\$GANG_SESSION\"; done' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
 if GANG_BOOT_TIMEOUT=0 "$GANG" hitch ticker -p ticker -d /tmp >/dev/null 2>&1; then
-  fail "a composer-less ticker cannot complete a hitch" "hitch reported success"
+  fail "an always-churning ticker cannot complete a hitch" "hitch reported success"
 else
-  pass "a composer-less ticker cannot complete a hitch"
+  pass "an always-churning ticker cannot complete a hitch"
 fi
 tmux set-option -w -t "$(window_id ticker)" @gl_turn "open $(( $(date +%s) - 400 ))"
-contains "a churning pane keeps painted busy authoritative" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker)" "busy"
+# Event barrier, not a poll: every ticker iteration signals, so waiting for
+# one guarantees at least one full paint is on screen before any verdict.
+tmux wait-for "gltick-$GANG_SESSION"
+CHURN_PANE="$(tmux list-panes -t "$(window_id ticker)" -F '#{pane_id}')"
+equal "a churning pane keeps the busy verdict itself, not its explanation" \
+  "busy (tight tug)" \
+  "$(CHURN_PANE="$CHURN_PANE" PATH="$RUN_ROOT/churn-bin:$PATH" \
+     GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker | head -1)"
+if ticker_out="$(printf 'MARK_TICKER' | CHURN_PANE="$CHURN_PANE" \
+  PATH="$RUN_ROOT/churn-bin:$PATH" GANG_ACTIVITY_WINDOW=0 \
+  "$GANG" send --to ticker --from tester --stdin 2>&1)"; then
+  fail "a churning pane keeps refusing delivery mid-turn" "send succeeded"
+else
+  pass "a churning pane keeps refusing delivery mid-turn"
+fi
+contains "with the mid-turn refusal" "$ticker_out" "not safely reachable mid-turn"
+excludes "the refused churning-pane body never landed" \
+  "$(pane ticker)" "MARK_TICKER"
 "$GANG" drop ticker >/dev/null
 
 # An expired bracket over a box that cannot be read at all is refused by the

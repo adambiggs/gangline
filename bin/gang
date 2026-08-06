@@ -435,8 +435,6 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
   tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
 }
 
-turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
-
 agent_name_of() { # $1 = window id; its CLI name on stdout
   tmux display-message -p -t "$1" '#W' 2>/dev/null || printf 'COULD-NOT-DETERMINE'
 }
@@ -461,8 +459,11 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   case "$rc" in
     0) ;;
     1) return 3 ;;
-    2) # gang wrote this value and gang cannot read it back. @gl_band's precedent
-       turn_state_clear "$1"
+    2) # Reported, never repaired: readers do not write @gl_turn. Clearing here
+       # looked like hygiene and was a race one call deep — cmd_send reaches
+       # this branch through busy(), native hooks write the bracket lock-free,
+       # and an unset landing after a fresh hook stamp erases live evidence.
+       # The unreadable verdict simply persists until the owner rewrites it.
        BUSY_EXPIRED_WHAT="turn-bracket value unreadable"
        return 2 ;;
     *) die "internal: turn_state_read returned unknown verdict $rc" ;;
@@ -1269,13 +1270,14 @@ cmd_send() {
   esac
   envelope "$SEND_FROM" "$body"
   inject "$AGENT_ID" "$ENVELOPE"
-  # The stale bracket is deliberately NOT retired here. Native hooks write
-  # @gl_turn lock-free — a fresh UserPromptSubmit stamp can land between any
-  # read gang takes and any unset it issues, and tmux offers no atomic
-  # compare-and-delete, so a delivery-time retirement can erase fresh native
-  # evidence (a deterministic intercept proved it). Delivery does not need
-  # the retirement: eligibility re-derives the verdict from live evidence on
-  # every send, and the bracket belongs to the hooks that wrote it.
+  # No @gl_turn write exists anywhere on this command's transitive path — not
+  # here, and not in the witnesses it consults (turn_witness reports a
+  # malformed value without repairing it). Native hooks write the bracket
+  # lock-free, tmux offers no atomic compare-and-delete, and a fresh
+  # UserPromptSubmit stamp landing between any read gang takes and any unset
+  # it issues would be erased (deterministic intercepts proved it twice).
+  # Delivery does not need to touch it: eligibility re-derives the verdict
+  # from live evidence on every send, and the bracket belongs to its hooks.
   echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
 }
 

@@ -105,10 +105,11 @@ direct evidence proves safe — the action's own verification carries the
 residual risk — and state the new evidence refutes is retired at that moment,
 never by a patrol. Retirement applies only to state gang alone writes: the
 turn bracket belongs to lock-free native hooks and tmux offers no atomic
-compare-and-delete, so gang never retires it, re-deriving eligibility per
-action instead. A hookless window without mid-turn input whose pane keeps a
-frozen busy marker therefore stays refused until the marker scrolls off or
-the agent is renewed — fail-closed by intent.
+compare-and-delete, so no reader — delivery or status — writes it at all; a
+malformed value is reported as unreadable, never repaired, and eligibility
+is re-derived per action. A hookless window without mid-turn input whose
+pane keeps a frozen busy marker therefore stays refused until the marker
+scrolls off or the agent is renewed — fail-closed by intent.
 
 ## Server loss is a relaunch, not restoration
 
