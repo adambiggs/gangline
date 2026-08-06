@@ -75,10 +75,12 @@ instead of claiming success.
 ## Optional context lights
 
 Context lights are disabled unless the operator supplies absolute thresholds at
-hitch time:
+hitch time. Set them intentionally high so the harness retains most of its
+native window and the agent can choose self-compaction before automatic native
+compaction:
 
 ```sh
-GANG_CONTEXT_LIGHTS=120000,200000 gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS=210000,225000 gang hitch worker -p codex
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to

@@ -18,6 +18,7 @@
     nav a { margin-right:1rem; }
     pre { overflow:auto; padding:1rem; border:1px solid var(--rule); border-radius:.4rem; background:var(--code); }
     code { font-family:inherit; }
+    :not(pre) > code { padding:.08rem .3rem; border:1px solid var(--rule); border-radius:.25rem; background:var(--code); color:var(--accent); }
     li { margin:.5rem 0; }
     .term { overflow:hidden; margin:2rem 0; border:1px solid var(--rule); border-radius:.4rem; background:#0f1115; }
     .term video { display:block; width:100%; height:auto; }
@@ -80,15 +81,17 @@ gang roster</code></pre>
   <section id="surface">
     <h2>The surface</h2>
     <ul>
-      <li><code>up</code>, <code>hitch</code>, <code>adopt</code>, <code>attach</code>,
-        <code>drop</code>, and <code>down</code> control native tmux windows.</li>
-      <li><code>send</code> derives the sender inside the team and reports success
+      <li><code>gang up</code>, <code>gang hitch</code>, <code>gang adopt</code>,
+        <code>gang attach</code>, <code>gang drop</code>, and <code>gang down</code>
+        control native tmux windows.</li>
+      <li><code>gang send</code> derives the sender inside the team and reports success
         only after the target composer visibly accepts and submits the message.</li>
-      <li><code>status</code>, <code>roster</code>, <code>capture</code>, and
-        <code>wait</code> expose conservative current state.</li>
-      <li><code>compact</code> invokes the harness's own compaction mechanism.</li>
-      <li><code>cutoff</code> declares one optional team deadline and exposes
+      <li><code>gang status</code>, <code>gang roster</code>, and
+        <code>gang capture</code> expose conservative current state.</li>
+      <li><code>gang compact</code> invokes the harness's own compaction mechanism.</li>
+      <li><code>gang cutoff</code> declares one optional team deadline and exposes
         yellow and red advisory edges without enforcing it.</li>
+      <li><code>gang profiles</code> lists the available harness integrations.</li>
       <li>Profiles contain harness-specific launch syntax, native hooks, and TUI
         observation. The core has no harness-name branches.</li>
     </ul>
@@ -101,10 +104,12 @@ gang roster</code></pre>
     self-compaction crosses its native Stop boundary so <code>/compact</code> is
     submitted only after the requesting turn releases the composer.</p>
 
-    <p>Optional context lights are off by default. An operator may set absolute
-    yellow and red thresholds at hitch time:</p>
+    <p>Optional context lights are off by default. When enabled, their absolute
+    yellow and red thresholds should be intentionally high so agents retain most
+    of their native context and can self-compact before native automatic
+    compaction:</p>
 
-    <pre><code>GANG_CONTEXT_LIGHTS=120000,200000 gang hitch worker -p codex</code></pre>
+    <pre><code>GANG_CONTEXT_LIGHTS=210000,225000 gang hitch worker -p codex</code></pre>
 
     <p>The lights are advisory and edge-triggered. The agent decides when to
     compact.</p>

@@ -29,6 +29,8 @@ sender.
 When context lights are enabled, their thresholds are copied to the new window.
 Codex also binds that window to the useful startup envelope's nonce so later
 token events can be found without a marker turn.
+Operators normally place both thresholds high in the native window so lights do
+not impose an artificial context disadvantage.
 
 ### `gang adopt <name> -p <profile>`
 

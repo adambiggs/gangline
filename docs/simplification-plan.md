@@ -19,7 +19,8 @@ else belongs in operator reference material or nowhere.
 - Direct observation: `status`, `roster`, and `capture`.
 - Harness profiles and silent native hooks that establish observable state.
 - Native compaction, including self-compaction at natural checkpoints.
-- Optional context lights with exactly two thresholds: yellow and red.
+- Optional context lights with exactly two intentionally high thresholds:
+  yellow and red.
 - One optional team cutoff with exactly two relative advisory edges.
 
 ## Refuse or remove
@@ -44,7 +45,8 @@ delivery, exact addressing, truthful observation, and loud failure.
 - A newly hitched agent can identify itself, receive attributed messages, send
   to peers, and request native compaction without a bookkeeping turn.
 - Disabled context lights add no prompts, warnings, markers, or roster noise.
-- Enabled context lights have only yellow and red states and remain advisory.
+- Enabled context lights have only intentionally high yellow and red states,
+  preserve most of the native context window, and remain advisory.
 - A declared team cutoff has only yellow and red states and remains advisory.
 - Self-compaction happens at a natural checkpoint through the harness's native
   mechanism and reports failure explicitly.

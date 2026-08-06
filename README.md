@@ -88,11 +88,12 @@ Gangline submits the profile's native compaction command. Codex cannot submit
 native Stop hook submits it once at the turn boundary. Failure remains visible
 in `gang status` and `gang roster`.
 
-Context lights are optional and off by default. Enable them when hitching with
-absolute yellow and red token thresholds:
+Context lights are optional and off by default. When enabled, set their absolute
+yellow and red thresholds intentionally high so the agent retains most of its
+native context window and can self-compact before native automatic compaction:
 
 ```sh
-GANG_CONTEXT_LIGHTS=120000,200000 gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS=210000,225000 gang hitch worker -p codex
 ```
 
 The native hook advises once when usage crosses yellow and once when it crosses
