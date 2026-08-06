@@ -178,6 +178,27 @@ contains "enabled Claude lights wire their context source" \
 claude_midturn="$(ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
 equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
+claude_queued="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_QUEUED_REGEX:-}"' fixture "$claude_profile")"
+if [ -n "$claude_queued" ]; then
+  pass "the Claude profile declares its parked-queue evidence"
+else
+  fail "the Claude profile declares its parked-queue evidence" \
+    "GANG_QUEUED_REGEX is empty"
+fi
+if printf '%s\n' 'Press up to edit queued messages   ' | grep -Eq -- "$claude_queued"; then
+  pass "the observed queue hint reads as parked input"
+else
+  fail "the observed queue hint reads as parked input" \
+    "regex missed the observed 2.1.223 hint rendering"
+fi
+if printf '%s\n' 'a body quoting Press up to edit queued messages mid-line' |
+  grep -Eq -- "$claude_queued"; then
+  fail "a line quoting the hint is not parked-queue evidence" \
+    "regex matched a quotation"
+else
+  pass "a line quoting the hint is not parked-queue evidence"
+fi
 claude_effort_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$claude_profile")"
 equal "the Claude profile spells effort as one joinable word" \

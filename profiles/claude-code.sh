@@ -78,6 +78,15 @@ GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
+# PARKED INPUT IS NOT A SUBMISSION. The queue strand (observed on 2.1.223)
+# renders a queued body in the transcript styled exactly like a submitted
+# prompt and empties the composer; the state is visible only in the composer
+# itself, which reads "❯ Press up to edit queued messages" (nbsp after the
+# glyph, stripped by profile_input like every nbsp). bin/gang matches this
+# against the box reading before pasting and after Enter, and treats a hit as
+# failed delivery with a manual recovery — Up loads the parked body, Enter
+# submits it; a plain Enter does not flush it.
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
 
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
