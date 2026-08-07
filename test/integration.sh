@@ -962,12 +962,24 @@ fi
 contains "naming that declaration too" "$badstop_out" "GANG_INTERRUPT_KEY"
 equal "and it leaves no window behind either" "" "$(window_id badstop)"
 
+# A TARGET THAT WITNESSES THE KEYSTROKE. Every other assertion about interrupt
+# reads something gang wrote — its own report, its own tmux option — so all of
+# them hold just as well when no key leaves at all. This fixture binds the
+# declared key to a mark of its own, which is the only artifact in the world
+# that cannot exist unless the key arrived at the pane. It is also what pins the
+# key to the PROFILE's declaration rather than to anything hard-coded in core:
+# the bound key is C-g, so an interrupt that sent Escape would leave no mark.
+cat > "$RUN_ROOT/interrupt-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+bind -x '"\C-g": printf "INTERRUPT_KEY_RECEIVED\n"'
+RC
 cat > "$RUN_ROOT/profiles/interruptible.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-GANG_INTERRUPT_KEY='Escape'
+GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/interrupt-rc' fixture"
+GANG_INTERRUPT_KEY='C-g'
 GANG_BUSY_REGEX='STILL_WORKING'
 SH
 "$GANG" hitch stoppable -p interruptible -d /tmp >/dev/null
@@ -976,7 +988,24 @@ tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
 contains "an open turn bracket answers busy" \
   "$("$GANG" status stoppable)" "busy"
 contains "interrupt reports the key it sent" \
-  "$("$GANG" interrupt stoppable)" "Escape"
+  "$("$GANG" interrupt stoppable)" "C-g"
+# Ordering barrier, not a wait on the thing under test: the pane consumes its
+# input in order, so a command that runs at all runs after the keystroke ahead
+# of it was processed. A missing or wrong keystroke therefore fails the mark
+# below rather than hanging here — which it did until these two Enters existed.
+# A line editor reads Escape as the start of a sequence and swallows whatever
+# arrives next, so an interrupt key that leaves the pane mid-prefix would eat
+# the first byte of this barrier's own command and the suite would wait forever
+# on a signal that could never come.
+tmux send-keys -t "$stop_id" Enter Enter
+stop_settled="test-interrupt-settled-$$"
+tmux wait-for "$stop_settled" &
+stop_waiter=$!
+tmux send-keys -l -t "$stop_id" "tmux wait-for -S $stop_settled"
+tmux send-keys -t "$stop_id" Enter
+wait "$stop_waiter"
+contains "and the declared key actually reached the pane" \
+  "$(pane stoppable)" "INTERRUPT_KEY_RECEIVED"
 equal "an interrupt drops the bracket nothing else will close" "" \
   "$(tmux show-options -wqv -t "$stop_id" @gl_turn)"
 contains "so the keystroke cannot strand a false busy" \
@@ -1001,12 +1030,18 @@ contains "a target still painting work stays busy after the interrupt" \
   "$stubborn_state" "busy"
 excludes "the interrupt never invents an idle the pane contradicts" \
   "$stubborn_state" "idle"
-if printf 'MARK_MIDTURN' |
-  "$GANG" send --to stubborn --from tester --stdin >/dev/null 2>&1; then
+if midturn_out="$(printf 'MARK_MIDTURN' |
+  "$GANG" send --to stubborn --from tester --stdin 2>&1)"; then
   fail "and it stays unreachable while that work is painted" "send entered mid-turn"
 else
   pass "and it stays unreachable while that work is painted"
 fi
+# Refused FOR THAT REASON. A bare non-zero exit is satisfied by any refusal this
+# pane could raise — a draft, a lock, an occupied composer — so on its own it
+# stops pinning the interrupt's consequence the moment anything else refuses.
+contains "refused because the turn is still running, not for some other reason" \
+  "$midturn_out" "not safely reachable mid-turn"
+excludes "and nothing was typed into it" "$(pane stubborn)" "MARK_MIDTURN"
 "$GANG" drop stubborn >/dev/null
 
 # The shipped harnesses that stop on Escape say so themselves; the ones whose
