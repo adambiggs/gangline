@@ -89,6 +89,9 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # flush it.
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
 GANG_QUEUE_RECALL_KEY="Up"
+# Escape stops an active turn; the harness paints "esc to interrupt" while one
+# is in flight.
+GANG_INTERRUPT_KEY="Escape"
 
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon

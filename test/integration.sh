@@ -828,6 +828,73 @@ contains "naming the declaration rather than the operator" \
   "$badkey_out" "GANG_QUEUE_RECALL_KEY"
 equal "and the refused declaration leaves no window behind" "" "$(window_id badkey)"
 
+# INTERRUPTING IS A PROFILE'S KEYSTROKE AND A FACT GANG OWNS. The keystroke
+# ends a turn the harness will never close for itself, so the bracket it opened
+# has to be closed here or the target reads busy until that bound expires.
+# Whether the harness actually stopped remains its own verdict; the fact does
+# not claim otherwise.
+if nokey_out="$("$GANG" interrupt alpha 2>&1)"; then
+  fail "a profile with no declared interrupt key refuses to interrupt" \
+    "interrupt reported success"
+else
+  pass "a profile with no declared interrupt key refuses to interrupt"
+fi
+contains "naming the declaration it would need" "$nokey_out" "GANG_INTERRUPT_KEY"
+
+cat > "$RUN_ROOT/profiles/badstop.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_INTERRUPT_KEY='ctrl then c'
+SH
+if badstop_out="$("$GANG" hitch badstop -p badstop -d /tmp 2>&1)"; then
+  fail "an interrupt key that is not a tmux key name is refused" "hitch accepted it"
+else
+  pass "an interrupt key that is not a tmux key name is refused"
+fi
+contains "naming that declaration too" "$badstop_out" "GANG_INTERRUPT_KEY"
+equal "and it leaves no window behind either" "" "$(window_id badstop)"
+
+cat > "$RUN_ROOT/profiles/interruptible.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_INTERRUPT_KEY='Escape'
+SH
+"$GANG" hitch stoppable -p interruptible -d /tmp >/dev/null
+stop_id="$(window_id stoppable)"
+tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
+contains "an open turn bracket answers busy" \
+  "$("$GANG" status stoppable)" "busy"
+contains "interrupt reports the key it sent" \
+  "$("$GANG" interrupt stoppable)" "Escape"
+stop_turn="$(tmux show-options -wqv -t "$stop_id" @gl_turn)"
+contains "an interrupt closes the turn nothing else will close" "$stop_turn" "closed"
+equal "and records the interrupt as the reason it closed" "interrupt" \
+  "$(printf '%s' "$stop_turn" | awk '{print $3}')"
+contains "so the keystroke cannot strand a false busy" \
+  "$("$GANG" status stoppable)" "idle"
+"$GANG" drop stoppable >/dev/null
+
+# The shipped harnesses that stop on Escape say so themselves; the ones whose
+# interrupt gang has not observed declare nothing and refuse the command.
+for stopping_profile in claude-code codex; do
+  stopping_file="$ROOT/profiles/$stopping_profile.sh"
+  stopping_key="$(GANG_TEST_PROFILES='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$stopping_file")"
+  equal "the $stopping_profile profile declares the key that stops its turn" \
+    "Escape" "$stopping_key"
+done
+for unstopping_profile in opencode pi; do
+  unstopping_file="$ROOT/profiles/$unstopping_profile.sh"
+  unstopping_key="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+    '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$unstopping_file")"
+  equal "the $unstopping_profile profile declares no interrupt key until one is verified" \
+    "" "$unstopping_key"
+done
+
 # A staged record is state; the box is fresher evidence. Staged input can
 # flush outside gang's sight — an operator's Enter, a queue draining at a
 # turn boundary — and status/roster must not report a paste the empty box

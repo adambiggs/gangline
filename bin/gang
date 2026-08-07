@@ -84,6 +84,7 @@ gang — drive native CLI agents in tmux
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
   gang flush <name>
+  gang interrupt <name>
   gang compact <name>
   gang cutoff [<duration|HH:MM>|clear]
   gang status <name>
@@ -153,6 +154,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
+  GANG_INTERRUPT_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
@@ -167,10 +169,14 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # and C-c from this word, and anything outside the key-name alphabet would
   # arrive in the composer as characters instead of as the keystroke the
   # profile meant.
-  case "$GANG_QUEUE_RECALL_KEY" in
-    ''|*[!A-Za-z0-9-]*) [ -z "$GANG_QUEUE_RECALL_KEY" ] \
-      || die "profile '$1' declares GANG_QUEUE_RECALL_KEY '$GANG_QUEUE_RECALL_KEY', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
-  esac
+  local declared key
+  for declared in GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY; do
+    key="${!declared}"
+    case "$key" in
+      ''|*[!A-Za-z0-9-]*) [ -z "$key" ] \
+        || die "profile '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
+    esac
+  done
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -440,8 +446,8 @@ turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2
   [[ "$TURN_AT" =~ ^[0-9]+$ ]] || { TURN_STATE=""; return 2; }
 }
 
-turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
-  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
+turn_state_write() { # $1 = window id, $2 = open|closed, $3 = optional reason
+  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)${3:+ $3}" 2>/dev/null || true
 }
 
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
@@ -1338,6 +1344,33 @@ cmd_flush() {
     "$(colour "$C_DIM" "(recalled with $GANG_QUEUE_RECALL_KEY, read back against gang's record, submitted and verified)")"
 }
 
+cmd_interrupt() {
+  local name="${1:-}"
+  [ -n "$name" ] || usage_die
+  [ $# -eq 1 ] || die "interrupt: unexpected argument '$2'"
+  resolve "$name"
+  [ -n "$GANG_INTERRUPT_KEY" ] \
+    || die "interrupt: profile '$AGENT_PROFILE' declares no GANG_INTERRUPT_KEY, so gang does not know the keystroke that stops a turn in this harness (gang attach)"
+  lock_pane "$AGENT_ID"
+  # Occupancy is not authority here either: the stop key is very often the key
+  # a native dialog reads as an answer, and gang does not answer dialogs.
+  ! occupied "$AGENT_ID" \
+    || refuse "interrupt: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_INTERRUPT_KEY would answer that UI rather than stop a turn (gang attach)"
+  tmux send-keys -t "$AGENT_ID" "$GANG_INTERRUPT_KEY" \
+    || die "interrupt: could not send $GANG_INTERRUPT_KEY to $name"
+  # The interrupted turn is one the harness will never close for itself, so the
+  # bracket it opened would keep answering busy until its bound expired.
+  # Closing it here is what keeps the keystroke from stranding a false busy.
+  # The reason rides the fact's third field, which turn_state_read already
+  # reads past: the seam for whatever consumes interrupts later, at no new
+  # surface and no second record to keep in step with this one.
+  turn_state_write "$AGENT_ID" closed interrupt
+  lock_release
+  printf '%s %s\n' \
+    "$(colour "$C_OK" "interrupted $name with $GANG_INTERRUPT_KEY")" \
+    "$(colour "$C_DIM" "(the turn fact is closed; whether the harness stops remains its own verdict)")"
+}
+
 cmd_compact() {
   local name="${1:-}" self="" mine=0 busy_rc=0
   [ -n "$name" ] || usage_die
@@ -1543,6 +1576,7 @@ case "$cmd" in
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   flush)    [ $# -ge 1 ] || usage_die; cmd_flush "$@" ;;
+  interrupt) [ $# -ge 1 ] || usage_die; cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
