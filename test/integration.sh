@@ -735,12 +735,17 @@ PROMPT_COMMAND='if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRA
 if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
+_flush_probe() {   # what the composer holds, read where input ordering places it
+  printf '%s' "$READLINE_LINE" > "$FLUSH_PROBE"
+  tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
+}
+bind -x '"\C-t": _flush_probe'
 RC
 cat > "$RUN_ROOT/profiles/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 profile_input() { # a composer that spans lines, and reads as the hint when empty
@@ -773,6 +778,27 @@ parked_id="$(window_id parked)"
 # file empty and cannot fire it early, so the wait returns after the settling
 # command's own hook and nothing is left in flight to type into the composer
 # later. Its leading space keeps it out of the history the recall key reads.
+# What the composer holds, observed in ORDER rather than at a moment. Capturing
+# the pane straight after flush returns is timing luck: tmux send-keys returns
+# once the key is enqueued, so a mutant Enter may not have been consumed, nor
+# the new prompt painted, when the capture happens — and the world would report
+# the still-edited line and pass. The probe key travels the same input path
+# behind anything flush sent, so by the time it runs, that Enter has either been
+# processed or never existed. It reads the line without submitting it, so the
+# correct case is not disturbed by being watched.
+flush_probed=0
+flush_probe() {
+  flush_probed=$((flush_probed + 1))
+  local chan="test-flush-probe-$flush_probed-$$"
+  printf '%s' "$chan" > "$RUN_ROOT/flush-probe-chan"
+  : > "$RUN_ROOT/flush-probe"
+  tmux wait-for "$chan" &
+  local waiter=$!
+  tmux send-keys -t "$parked_id" C-t
+  wait "$waiter"
+  cat "$RUN_ROOT/flush-probe" 2>/dev/null || true
+}
+
 flush_settled=0
 flush_settle() {
   flush_settled=$((flush_settled + 1))
@@ -872,11 +898,11 @@ contains "the recalled body is recorded against the window" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
-# THE PANE, not gang's account of the pane. Everything above is gang reporting
-# on itself; only the composer still holding the recalled body says the Enter
-# was withheld, because a submitted line leaves it.
+# THE COMPOSER, not gang's account of it. Everything above is gang reporting on
+# itself; only the line still sitting there says the Enter was withheld, because
+# a submitted line leaves it.
 contains "the recalled body is still sitting in the composer, unsent" \
-  "$(pane parked | grep '❯' | tail -1)" "EXTRA_WORDS_NOBODY_SENT"
+  "$(flush_probe)" "EXTRA_WORDS_NOBODY_SENT"
 tmux send-keys -t "$parked_id" C-u
 
 # AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
@@ -918,8 +944,8 @@ contains "refused by the readback, not by anything downstream of it" \
   "$ts_out" "flush NOT performed"
 contains "and the body is recorded as sitting unsent, never as submitted" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
-contains "with the pane agreeing: it is still in the composer" \
-  "$(pane parked | grep '❯' | tail -1)" "MARK_TS head"
+contains "with the composer agreeing: it is still sitting there" \
+  "$(flush_probe)" "MARK_TS head"
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 
