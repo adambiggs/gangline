@@ -5,6 +5,23 @@
 48-character line budget so it remains legible in narrow phone-SSH terminals;
 this reference carries the complete command contract.
 
+When a command's only missing argument is an agent name, a bare invocation from
+inside a Gangline window targets that window. This applies only with zero
+arguments, so a numeric argument to `capture`, for example, remains an agent
+name rather than becoming a self-targeted line count. Self is resolved from the
+calling tmux pane in the same way as a message sender.
+
+| Bare command | Result |
+|---|---|
+| `status`, `capture`, `composer`, `compact`, `context` | Target the calling agent. |
+| `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
+| `drop` | Print help; destructive commands never target by omission. |
+| `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
+| `up`, `roster`, `attach`, `profiles`, `config`, `cutoff`, `notify`, `down` | Keep their ordinary bare meaning. |
+
+Outside a Gangline window, a bare self-targeting command prints its synopsis and
+states that no target or Gangline agent window was available.
+
 ## Lifecycle
 
 ### `gang up [name] [hitch flags]`

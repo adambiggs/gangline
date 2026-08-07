@@ -102,6 +102,9 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+bare_error_commands="hitch adopt send flush interrupt compact status capture composer drop"
+meaningful_bare_commands="up roster attach profiles config cutoff down"
+classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
   python3 -c 'import sys
@@ -113,6 +116,11 @@ for number, line in enumerate(sys.stdin.read().splitlines(), 1):
 top_help="$($GANG --help)"
 top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
 equal "top-level help fits the phone-SSH width" "" "$top_wide"
+equal "every dispatched operator command has a bare classification" \
+  "$dispatch_commands" "$classified_commands"
+help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
+equal "help names the classified command inventory" \
+  "$classified_commands" "$help_inventory"
 while read -r help_command; do
   [ -n "$help_command" ] || continue
   if command_help="$($GANG "$help_command" --help 2>&1)"; then
@@ -123,6 +131,16 @@ while read -r help_command; do
   command_wide="$(printf '%s\n' "$command_help" | help_width_failure)"
   equal "gang $help_command help fits the phone-SSH width" "" "$command_wide"
 done <<<"$dispatch_commands"
+
+for bare_command in $bare_error_commands; do
+  if bare_output="$(env -u TMUX_PANE "$GANG" "$bare_command" 2>&1)"; then
+    fail "bare gang $bare_command prints help and refuses outside an agent" \
+      "command unexpectedly succeeded: [$bare_output]"
+  else
+    contains "bare gang $bare_command prints its own synopsis" \
+      "$bare_output" "gang $bare_command"
+  fi
+done
 
 # Start the private tmux server with the wrong session in its global environment.
 # Hitched harnesses must receive the exact team identity in their launch command,
@@ -546,6 +564,46 @@ contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
 alpha_id="$(window_id alpha)"
+alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
+contains "bare status targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "idle"
+contains "bare capture targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" capture)" \
+  "You are alpha in Gangline"
+equal "bare composer targets the calling agent window" "" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
+
+alpha_before_bare_help="$(pane alpha)"
+alpha_composer_before_bare_help="$($GANG composer alpha)"
+for incoherent_bare in hitch adopt send flush interrupt drop; do
+  if incoherent_output="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$incoherent_bare" 2>&1)"; then
+    fail "bare gang $incoherent_bare refuses inside an agent" \
+      "command unexpectedly succeeded: [$incoherent_output]"
+  else
+    contains "bare gang $incoherent_bare prints help inside an agent" \
+      "$incoherent_output" "gang $incoherent_bare"
+  fi
+done
+equal "incoherent bare commands leave the calling pane untouched" \
+  "$alpha_before_bare_help" "$(pane alpha)"
+equal "incoherent bare commands leave the composer untouched" \
+  "$alpha_composer_before_bare_help" "$($GANG composer alpha)"
+
+outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
+contains "bare status outside an agent prints its synopsis" \
+  "$outside_status" "gang status"
+contains "bare status outside an agent explains why self is unavailable" \
+  "$outside_status" "this shell is not a Gangline agent window"
+
+for meaningful_command in roster profiles config cutoff; do
+  if meaningful_output="$($GANG "$meaningful_command" 2>&1)"; then
+    excludes "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output" "gang — drive native CLI agents in tmux"
+  else
+    fail "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output"
+  fi
+done
 binary_stamp="$(tmux show-options -wqv -t "$alpha_id" @gl_binary_id)"
 if [[ "$binary_stamp" =~ ^cksum:[0-9]+:[0-9]+$ ]]; then
   pass "hitch stamps the documented binary identity"
@@ -2782,7 +2840,7 @@ self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
 self_requested="test-self-compact-requested-$$"
 self_release="test-self-compact-release-$$"
 self_released="test-self-compact-released-$$"
-printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact selfable; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
   "$self_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested" \
   "$self_release" "$self_busy" "$self_released"
 tmux send-keys -l -t "$self_id" "$self_command"

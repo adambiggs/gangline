@@ -604,6 +604,12 @@ self_window() { # -> the window id this process is running in; nonzero if not in
   return 1
 }
 
+self_name() { # -> this window's agent name; nonzero outside a Gangline window
+  local id
+  id="$(self_window)" || return 1
+  agent_name_of "$id"
+}
+
 AGENT_ID="" AGENT_PROFILE=""
 
 resolve() { # $1 = agent name; sets AGENT_ID + AGENT_PROFILE and loads the profile
@@ -2293,8 +2299,14 @@ cmd_interrupt() {
 
 cmd_compact() {
   local name="${1:-}" self="" mine=0 busy_rc=0
-  [ -n "$name" ] || usage_die
-  [ $# -eq 1 ] || die "compact: unexpected argument '$2'"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help compact
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  [ $# -le 1 ] || die "compact: unexpected argument '$2'"
   resolve "$name"
   [ -n "${GANG_COMPACT_CMD:-}" ] \
     || die "profile '$AGENT_PROFILE' declares no compact command"
@@ -2374,7 +2386,15 @@ paint_state() { # $1 = a state phrase, padding and all
 
 cmd_status() {
   local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed skew="" current
-  resolve "$1"
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help status
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  resolve "$name"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   self_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_failed)"
@@ -2396,7 +2416,7 @@ cmd_status() {
     # operator is not left to read a raw capture and guess.
     staged_box_rc=0
     staged_box="$(landing_zone "$AGENT_ID")" || staged_box_rc=$?
-    printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$1" "$staged_box_rc")")"
+    printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$name" "$staged_box_rc")")"
   fi
   spooled="$(spool_count "$AGENT_ID")"
   [ "$spooled" -eq 0 ] \
@@ -2408,7 +2428,7 @@ cmd_status() {
     # go and read the body, so the place has to be in the report or the report
     # is worse than silence: it says the message was kept and does not say where.
     [ -n "$held_dir" ] \
-      || die "$held message(s) are held for '$1' and gang cannot name where: this window's spool identity is gone, so the directory holding them can no longer be resolved. Look for them under $(spool_root_of)"
+      || die "$held message(s) are held for '$name' and gang cannot name where: this window's spool identity is gone, so the directory holding them can no longer be resolved. Look for them under $(spool_root_of)"
     printf '%s\n' "$(colour "$C_BAD" "spool: $held held after an interrupted or unverified delivery — gang will not send them again; read them under $held_dir")"
   fi
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
@@ -2480,20 +2500,35 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
 }
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
-  local id
-  id="$(win_id "$1")" || die "no window '$1' in session '$SESSION'"
+  local id name="${1:-}"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help capture
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  id="$(win_id "$name")" || die "no window '$name' in session '$SESSION'"
   capture "$id" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
 }
 
 cmd_composer() { # what a human actually typed — capture shows the raw pane,
   # where a harness's dim suggested-prompt placeholder is indistinguishable from
   # a real draft; the profile's reading strips styling, so placeholders vanish
-  resolve "$1"
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help composer
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  resolve "$name"
   declare -F profile_input >/dev/null \
-    || die "profile '$AGENT_PROFILE' declares no profile_input, so '$1' has no readable composer"
+    || die "profile '$AGENT_PROFILE' declares no profile_input, so '$name' has no readable composer"
   local box
   box="$(profile_input "$AGENT_ID")" \
-    || die "no composer on screen in '$1' — the harness has not drawn its input box (gang capture $1)"
+    || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
   grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule
   printf '%s\n' "$box"
 }
@@ -2604,22 +2639,30 @@ if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
   cmd_help "$cmd"
   exit 0
 fi
+if [ $# -eq 0 ]; then
+  case "$cmd" in
+    hitch|spawn|adopt|send|flush|interrupt|drop)
+      cmd_help "$cmd"
+      exit 1
+      ;;
+  esac
+fi
 case "$cmd" in
   up)       cmd_up "$@" ;;
   hitch|spawn) cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
-  flush)    [ $# -ge 1 ] || usage_die; cmd_flush "$@" ;;
-  interrupt) [ $# -ge 1 ] || usage_die; cmd_interrupt "$@" ;;
+  flush)    cmd_flush "$@" ;;
+  interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
-  status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
+  status)   cmd_status "$@" ;;
   hook)     cmd_hook ;;
-  capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
-  composer) [ $# -ge 1 ] || usage_die; cmd_composer "$1" ;;
+  capture)  cmd_capture "$@" ;;
+  composer) cmd_composer "$@" ;;
   roster)   cmd_roster ;;
   attach)   cmd_attach ;;
-  drop)     [ $# -ge 1 ] || usage_die; cmd_drop "$1" ;;
+  drop)     cmd_drop "$1" ;;
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
   config)   cmd_config "$@" ;;
