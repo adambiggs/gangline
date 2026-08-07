@@ -92,6 +92,10 @@ GANG_INTERRUPT_KEY="Escape"
 # its own turn boundaries to gang — which is what a spool needs to drain, and
 # what deferred self-compaction already relies on.
 GANG_STOP_HOOK=1
+# Verified on codex 0.145.0: the native hook set contains no Notification
+# event. legacy_notify / agent-turn-complete reports turn completion, which the
+# Stop hook above already delivers; it is not an awaiting-input witness and is
+# deliberately not wired. PermissionRequest is this profile's only stall source.
 
 codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
 

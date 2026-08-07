@@ -397,6 +397,23 @@ claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
 contains "enabled Claude lights wire their context source" \
   "$claude_on" 'statusLine'
+claude_hook_events="$(python3 - "$claude_off" <<'PY'
+import json
+import sys
+
+launch = sys.argv[1]
+settings = launch.split("--settings '", 1)[1].rsplit("'", 1)[0]
+print(*sorted(json.loads(settings)["hooks"]), sep=" ")
+PY
+)"
+equal "Claude installs every native event Gangline consumes" \
+  "Notification PermissionRequest PostToolUse Stop UserPromptSubmit" \
+  "$claude_hook_events"
+claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' fixture "$claude_profile")"
+equal "Claude declares only native kinds that await a person" \
+  "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
+  "$claude_stall_types"
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
   fixture "$claude_profile")"
@@ -511,6 +528,11 @@ codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
 equal "the Codex profile defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_stall_types="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  'unset GANG_STALL_TYPES; . "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' \
+  fixture "$codex_profile")"
+equal "Codex invents no Notification kinds its hook set cannot raise" \
+  "" "$codex_stall_types"
 codex_effort_opt="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_profile")"
 equal "the Codex profile spells effort as one joinable config option" \

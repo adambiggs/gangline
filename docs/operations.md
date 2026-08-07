@@ -37,6 +37,20 @@ Use a stable `GANG_SESSION`, `GANG_PROFILES`, `GANG_LOCK_DIR`, and absolute
 resolved config root into its agent so nested hitches read the same file and
 doctrine.
 
+## Forwarding native stall witnesses
+
+Declare one optional receiver with `gang notify <name>`. Gangline forwards only
+events the native harness itself reports as awaiting a person; it never infers a
+stall from a quiet pane and runs no patrol. Claude Code can witness its declared
+`Notification` kinds and permission requests. Codex has no `Notification` hook,
+so its shipped profile witnesses only permission requests. opencode and Pi
+declare no stall source, so they raise no notes.
+
+A note accepted live or parked is debounced until the raising harness reports
+movement or the repeat bound expires. `gang status` and `gang roster` expose a
+delivery failure until a later note is accepted. Use `gang notify clear` to turn
+the forwarding off; the declaration also dies with the team session.
+
 ## Sending messages safely
 
 Pass message prose on standard input so shell syntax remains data:
