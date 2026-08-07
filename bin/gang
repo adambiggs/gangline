@@ -30,7 +30,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
-GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -233,6 +233,7 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
+GANG_STALL_REPEAT=600
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   C_OK="$(printf "\033[32m")" C_WORK="$(printf "\033[33m")" C_BAD="$(printf "\033[31m")" C_DIM="$(printf "\033[2m")" C_OFF="$(printf "\033[0m")"
@@ -255,6 +256,7 @@ gang — drive native CLI agents in tmux
   compact   ask an agent to compact context
   context   read an agent's context
   usage     read an agent's usage page
+  notify    set or show the stall-note target
   cutoff    set or show the team cutoff
   status    inspect one agent's state
   roster    list the team and its state
@@ -342,6 +344,15 @@ gang usage
   Read a harness usage page.
 
   gang usage <name>
+EOF
+      ;;
+    notify) cat <<'EOF'
+gang notify
+  Set, clear, or show the stall-note target.
+
+  gang notify
+  gang notify <name>
+  gang notify clear
 EOF
       ;;
     cutoff) cat <<'EOF'
@@ -474,6 +485,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
+  GANG_STALL_TYPES=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
@@ -1547,6 +1559,76 @@ spool_stop() { # $1 = the pane a native Stop fired in, $2 = profile
   spool_drain_dispatch "$win" "$2"
 }
 
+stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies for it
+  local win="$1"; shift
+  tmux set-option -w -t "$win" @gl_stall_failed "$*" 2>/dev/null || true
+}
+
+stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
+  local rc=0 err="" frag prof
+  AGENT_ID="$1"
+  AGENT_PROFILE="$(tmux show-options -wqv -t "$AGENT_ID" @gl_profile 2>/dev/null)"
+  [ -n "$AGENT_PROFILE" ] \
+    || die "window '$2' exists but is not a gang agent (gang adopt $2 -p <profile>)"
+  prof="$AGENT_PROFILE"
+  load_profile "$prof"
+  envelope "$3" "$4"
+  err="$(send_live "$2" 2>&1)" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) if spool_available "$AGENT_ID" "$2"; then
+         frag="${4%%$'\n'*}"
+         [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
+         spool_write "$AGENT_ID" "$3" "$ENVELOPE" "$frag"
+         return 0
+       fi
+       [ -z "$err" ] || printf '%s\n' "$err" >&2
+       printf '%s\n' "$SPOOL_UNAVAILABLE_WHY" >&2
+       return 3 ;;
+    *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+       return "$rc" ;;
+  esac
+}
+
+stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
+  local raising="$1" raising_win="" kind="$2" notify target raising_name body
+  local recorded_kind="" recorded_epoch="" extra="" now rc=0 err="" raw=""
+  notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
+  [ -n "$notify" ] || return 0
+  raising_win="$(tmux display-message -p -t "$raising" '#{window_id}' 2>/dev/null)" || raising_win=""
+  [ -n "$raising_win" ] || return 0
+  target="$(win_id "$notify")" || {
+    stall_failed_write "$raising_win" "notify target '$notify' does not exist"
+    return 0
+  }
+  [ "$target" != "$raising_win" ] || return 0
+
+  raw="$(tmux show-options -wqv -t "$raising_win" @gl_stall 2>/dev/null)" || raw=""
+  read -r recorded_kind recorded_epoch extra <<<"$raw"
+  now="$(date +%s)"
+  if [ "$recorded_kind" = "$kind" ] && [ -z "$extra" ] \
+     && [[ "$recorded_epoch" =~ ^[0-9]+$ ]] \
+     && [ "$recorded_epoch" -le "$now" ] \
+     && [ $(( now - recorded_epoch )) -lt "$GANG_STALL_REPEAT" ]; then
+    return 0
+  fi
+
+  raising_name="$(agent_name_of "$raising")"
+  body="stall: $raising_name is awaiting input ($kind) — inspect with gang capture $raising_name"
+  err="$(stall_deliver "$target" "$notify" "$raising_name" "$body" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    tmux set-option -w -t "$raising_win" @gl_stall "$kind $now" 2>/dev/null || true
+    tmux set-option -uw -t "$raising_win" @gl_stall_failed 2>/dev/null || true
+    return 0
+  fi
+  err="${err##*$'\n'}"
+  [ -n "$err" ] || err="stall note delivery failed"
+  stall_failed_write "$raising_win" "$err"
+  return 0
+}
+
+stall_clear() { tmux set-option -uw -t "$1" @gl_stall 2>/dev/null || true; }
+
 composer_settled() { # $1 = window id; nobody is typing into the box right now
   declare -F profile_input >/dev/null || return 0
   local a b
@@ -2423,6 +2505,28 @@ cmd_cutoff() { # declare, show, or clear one optional team cutoff
   cutoff_summary "$now"; printf '\n'
 }
 
+cmd_notify() { # declare, show, or clear one optional stall-note target
+  local name="${1:-}" current
+  [ $# -le 1 ] || die "notify: expected one agent name or clear"
+  session_live || die "no team (session '$SESSION' not running)"
+  if [ -z "$name" ]; then
+    current="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || current=""
+    [ -n "$current" ] \
+      && printf 'notify target: %s\n' "$current" \
+      || printf 'no notify target declared\n'
+    return 0
+  fi
+  if [ "$name" = clear ]; then
+    tmux set-option -u -t "=$SESSION:" @gl_notify 2>/dev/null || true
+    printf 'notify target cleared\n'
+    return 0
+  fi
+  valid_name "$name" || die "notify: '$name' is not a valid agent name"
+  tmux set-option -t "=$SESSION:" @gl_notify "$name" \
+    || die "notify: could not store the declaration for session '$SESSION'"
+  printf 'notify target: %s\n' "$name"
+}
+
 cmd_context() { # print the profile's native context reading, unparsed
   local name="${1:-}"
   [ $# -le 1 ] || die "context: expected at most one agent name"
@@ -2563,7 +2667,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed stall_failed skew="" current
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -2615,6 +2719,9 @@ cmd_status() {
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "spool drain NOT verified: $spool_failed")"
+  stall_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_stall_failed)"
+  [ -z "$stall_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "stall note NOT accepted: $stall_failed")"
   current="$(binary_id)"
   skew="$(binary_skew_note "$AGENT_ID" "$current")" || skew=""
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
@@ -2650,6 +2757,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ "$spooled" -eq 0 ] || detail="$detail spooled=$spooled"
   held="$(spool_held "$1")"
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
+    || detail="$detail stall-note-failed"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
   [ -z "$skew" ] || detail="$detail $skew"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
@@ -2657,7 +2766,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload event prof
+  local payload event prof kind=""
   payload="$(cat)" || payload=""
   event="$(printf '%s' "$payload" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
@@ -2665,13 +2774,25 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   [ -n "$event" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
   prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
   [ -n "$prof" ] || exit 0
+  load_profile "$prof"
+  if [ "$event" = Notification ]; then
+    kind="$(printf '%s' "$payload" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
+        2>/dev/null)" || kind=""
+  fi
   case "$event" in
-    UserPromptSubmit|PostToolUse) turn_state_write "$TMUX_PANE" open ;;
+    UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
+                                  turn_state_write "$TMUX_PANE" open ;;
     Stop) turn_state_write "$TMUX_PANE" closed
+          stall_clear "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$prof"
           spool_stop "$TMUX_PANE" "$prof" ;;
-    PermissionRequest) occupied_raise_write "$TMUX_PANE" ;;
+    PermissionRequest) occupied_raise_write "$TMUX_PANE"
+                       stall_note "$TMUX_PANE" permission_prompt ;;
+    Notification) case " $GANG_STALL_TYPES " in
+                    *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
+                  esac ;;
   esac
   case "$event" in
     UserPromptSubmit|PostToolUse)
@@ -2838,6 +2959,7 @@ case "$cmd" in
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
   usage)    cmd_usage "$@" ;;
+  notify)   cmd_notify "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
   status)   cmd_status "$@" ;;
   hook)     cmd_hook ;;

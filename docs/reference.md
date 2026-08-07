@@ -244,6 +244,22 @@ active turn releases the composer. `status` and `roster` expose pending or faile
 self-compaction. A guarded claude-code launch that cannot install hooks declares
 neither Stop support nor deferred self-compaction.
 
+### `gang notify [<name>|clear]`
+
+Declares, shows, or clears the optional agent that receives stall notes. The
+target is stored as the session option `@gl_notify`; it need not exist when
+declared, and no target is inferred. `gang notify clear` removes the declaration
+sooner, and ending the tmux session deletes it with the rest of the team state.
+
+When a profile's native hook witnesses an awaiting-input event, Gangline sends
+one ordinary attributed message:
+`stall: <agent> is awaiting input (<kind>) — inspect with gang capture <agent>`.
+Repeated events of the same kind within 600 seconds are one note. A native
+prompt, tool, or Stop event clears that debounce because it proves movement; an
+older stamp permits a fresh note without any patrol or timer. A delivery failure
+is recorded on the raising window for `status` and `roster`, and is retired only
+after a later note is accepted live or parked.
+
 ### `gang cutoff [<duration|HH:MM>|clear]`
 
 Declares, shows, or clears one optional wall-clock cutoff for the team. Durations
@@ -291,8 +307,8 @@ when the window has no hitch/adopt stamp or its executable-byte witness differs
 from the invoked `gang` binary. An unavailable witness is reported explicitly
 instead of treated as either match or mismatch.
 It also reports staged input, pending or failed self-compaction, how many
-messages are spooled for that target, and a spool drain that could not be
-verified.
+messages are spooled for that target, a spool drain that could not be verified,
+and a stall note that could not be accepted.
 
 ### `gang context [name]`
 
@@ -376,6 +392,8 @@ Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction and a spool drain, and permission requests
 raise occupancy.
+Awaiting-input events listed by `GANG_STALL_TYPES`, plus permission requests,
+raise a stall note only when `gang notify` has declared a target.
 Hooks are silent unless an enabled context light or declared team-time light
 crosses an edge. Context-source warm-up is silent until the first native turn
 completes; an unreadable source after that boundary fails visibly.
@@ -454,6 +472,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
+| `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |

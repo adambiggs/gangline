@@ -105,7 +105,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer drop"
-meaningful_bare_commands="up roster attach profiles config cutoff down"
+meaningful_bare_commands="up roster attach profiles config cutoff notify down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -885,7 +885,7 @@ contains "bare status outside an agent prints its synopsis" \
 contains "bare status outside an agent explains why self is unavailable" \
   "$outside_status" "this shell is not a Gangline agent window"
 
-for meaningful_command in roster profiles config cutoff; do
+for meaningful_command in roster profiles config cutoff notify; do
   if meaningful_output="$($GANG "$meaningful_command" 2>&1)"; then
     excludes "bare gang $meaningful_command keeps its ordinary meaning" \
       "$meaningful_output" "gang — drive native CLI agents in tmux"
@@ -3294,6 +3294,152 @@ printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null
 turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
 contains "a native stop hook closes the turn record" "$turn_closed" "closed"
+
+# Stall lights forward only native awaiting-input witnesses to one optional
+# declared target. Every outcome is synchronous: the hook returns after the
+# note is accepted live, parked, or recorded as failed.
+cat > "$RUN_ROOT/profiles/stallable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_STOP_HOOK=1
+GANG_STALL_TYPES="idle_prompt agent_needs_input"
+SH
+equal "a team starts without an inferred notify target" \
+  "no notify target declared" "$("$GANG" notify)"
+"$GANG" hitch stall-raise -p stallable -d /tmp >/dev/null
+"$GANG" hitch stall-target -p stallable -d /tmp >/dev/null
+stall_raise_id="$(window_id stall-raise)"
+stall_raise_pane="$(tmux list-panes -t "$stall_raise_id" -F '#{pane_id}')"
+stall_target_id="$(window_id stall-target)"
+stall_target_pane="$(tmux list-panes -t "$stall_target_id" -F '#{pane_id}')"
+equal "a notify target may be declared without inference" \
+  "notify target: stall-target" "$("$GANG" notify stall-target)"
+equal "the notify declaration is readable" \
+  "notify target: stall-target" "$("$GANG" notify)"
+
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_first="$(pane_all stall-target)"
+contains "a native awaiting-input witness reaches the declared target" \
+  "$stall_first" "stall: stall-raise is awaiting input (idle_prompt)"
+contains "the stall note keeps the raising window's attribution" \
+  "$stall_first" "[gang:stall-raise#"
+stall_first_count="$(printf '%s\n' "$stall_first" | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_repeat_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "the same native stall inside the debounce is one note" \
+  "$stall_first_count" "$stall_repeat_count"
+
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_after_move_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "a native movement event opens a new stall epoch" \
+  "$(( stall_first_count + 1 ))" "$stall_after_move_count"
+
+stall_old_now="$(date +%s)"
+tmux set-option -w -t "$stall_raise_id" @gl_stall \
+  "idle_prompt $(( stall_old_now - 601 ))"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_old_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "an old debounce stamp permits another native note" \
+  "$(( stall_after_move_count + 1 ))" "$stall_old_count"
+
+printf '%s' '{"hook_event_name":"Notification","notification_type":"auth_success"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "a notification kind outside the profile declaration raises nothing" \
+  "$stall_old_count" "$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+
+printf '%s' '{"hook_event_name":"PermissionRequest"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a native permission request is an awaiting-input witness" \
+  "$(pane_all stall-target)" "awaiting input (permission_prompt)"
+
+"$GANG" notify clear >/dev/null
+stall_cleared_before="$(pane_all stall-target)"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "no declaration is the silent off state" \
+  "$stall_cleared_before" "$(pane_all stall-target)"
+equal "clear removes the session declaration" \
+  "no notify target declared" "$("$GANG" notify)"
+
+"$GANG" notify stall-raise >/dev/null
+stall_self_before="$(pane_all stall-raise)"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "a stall note is never sent into the raising pane" \
+  "$stall_self_before" "$(pane_all stall-raise)"
+equal "self-target suppression records no delivery failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+
+"$GANG" notify ghost >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a missing notify target is visible in status" \
+  "$("$GANG" status stall-raise)" "stall note NOT accepted"
+contains "roster carries a failed stall light" \
+  "$("$GANG" roster)" "stall-note-failed"
+equal "a failed note writes no debounce stamp for that kind" "permission_prompt" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall | awk '{print $1}')"
+
+"$GANG" hitch ghost -p stallable -d /tmp >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a failed note retries once its target exists" \
+  "$(pane_all ghost)" "awaiting input (agent_needs_input)"
+equal "an accepted repair retires the delivery failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+excludes "status no longer reports the repaired stall light" \
+  "$("$GANG" status stall-raise)" "stall note NOT accepted"
+
+"$GANG" drop ghost >/dev/null
+"$GANG" notify ghost >/dev/null
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_failure_before="$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "movement does not retire a still-broken stall light" \
+  "$stall_failure_before" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+
+"$GANG" notify stall-target >/dev/null
+tmux send-keys -l -t "$stall_target_id" 'HUMAN_DRAFT'
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a refused stall note is accepted into a drainable target's spool" \
+  "$("$GANG" status stall-target)" "spooled: 1"
+contains "parking a stall note records the debounce" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)" "agent_needs_input"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a parked stall note is debounced without a duplicate" \
+  "$("$GANG" status stall-target)" "spooled: 1"
+tmux send-keys -t "$stall_target_id" C-u
+tmux wait-for "gang-spool-drain-$stall_target_id" &
+stall_target_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_target_pane" "$GANG" hook >/dev/null
+wait "$stall_target_waiter"
+contains "the parked stall note drains through the ordinary delivery path" \
+  "$(pane_all stall-target)" "awaiting input (agent_needs_input)"
+
+if "$GANG" notify 'bad name' >/dev/null 2>&1; then
+  fail "notify rejects a name outside the agent-name contract" \
+    "invalid name was accepted"
+else
+  pass "notify rejects a name outside the agent-name contract"
+fi
+"$GANG" notify clear >/dev/null
+"$GANG" drop stall-raise >/dev/null
+"$GANG" drop stall-target >/dev/null
 
 # Optional context guidance has two edge-triggered states and no clock path.
 cat > "$RUN_ROOT/profiles/lights.sh" <<SH

@@ -265,6 +265,19 @@ four-fifths. Do not invent a default, enforce the deadline, allocate per-agent
 budgets, or run a patrol; the substrate exposes operator intent and each agent
 decides how to respond.
 
+## A stall light is a harness's own witness, forwarded
+
+Where a harness itself reports that it is waiting on a person, deliver that
+fact as an ordinary attributed message to one optional operator-declared
+target. Nothing polls, nothing infers a stall from a quiet pane, and nothing
+infers a lead: the target is a declaration in the shape of the team cutoff,
+and with none declared there are no stall lights. A repeated report of the
+same kind inside one stall is one note, cleared by the harness's own next move.
+A harness that reports nothing gets no substitute, and a delivery that fails
+is recorded on the window for status to surface rather than killing the hook —
+a record retired only by a later note accepted live or parked, because a light
+that is still broken has to keep saying so.
+
 ## Benchmarks consume Gangline but do not shape it
 
 Every core change must have a general operator or agent consumer and a rationale
