@@ -71,6 +71,16 @@ excludes() { # $1 description, $2 haystack, $3 literal needle
   esac
 }
 
+refuses() { # $1 description, $2 expected message, rest = command
+  local description="$1" expected="$2" output
+  shift 2
+  if output="$("$@" 2>&1)"; then
+    fail "$description" "command unexpectedly succeeded: [$output]"
+  else
+    contains "$description" "$output" "$expected"
+  fi
+}
+
 window_id() { # $1 exact window name
   tmux list-windows -t "=$GANG_SESSION" -F '#{window_id} #{window_name}' |
     awk -v wanted="$1" '$2 == wanted { print $1; exit }'
@@ -87,6 +97,96 @@ GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 profiles="$(GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ')"
 equal "the public profile list is the supported harness set" \
   "claude-code codex opencode pi " "$profiles"
+
+# User configuration is parsed as a lower-precedence layer, never executed or
+# sourced. Each case names its own root so malformed fixtures cannot poison the
+# commands that follow.
+CONFIG_CASES="$RUN_ROOT/config-cases"
+mkdir -p "$CONFIG_CASES/file" "$CONFIG_CASES/env"
+tmux new-session -d -s config-file-session -n from-file
+tmux new-session -d -s config-env-session -n from-env
+printf '%s\n' 'GANG_SESSION=config-file-session' > "$CONFIG_CASES/file/config"
+config_file_roster="$(env -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/file" "$GANG" roster)"
+contains "the config file supplies the session a real roster addresses" \
+  "$config_file_roster" "from-file"
+config_env_roster="$(GANG_CONFIG_DIR="$CONFIG_CASES/file" GANG_SESSION=config-env-session "$GANG" roster)"
+contains "the environment session outranks the config file" \
+  "$config_env_roster" "from-env"
+excludes "the overridden config session is not addressed" \
+  "$config_env_roster" "from-file"
+
+mkdir -p "$CONFIG_CASES/unknown"
+printf '%s\n' 'GANG_NOPE=value' > "$CONFIG_CASES/unknown/config"
+refuses "an unknown config key names its file, line, and key" \
+  "$CONFIG_CASES/unknown/config line 1 has unknown key GANG_NOPE" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/unknown" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/profile-declaration"
+printf '%s\n' 'GANG_LAUNCH=claude' > "$CONFIG_CASES/profile-declaration/config"
+profile_decl_out="$(env GANG_CONFIG_DIR="$CONFIG_CASES/profile-declaration" "$GANG" profiles 2>&1 || true)"
+contains "a profile declaration is refused under its own name" \
+  "$profile_decl_out" "GANG_LAUNCH is a profile declaration, not operator configuration"
+contains "the profile-declaration refusal points at the supported escape hatch" \
+  "$profile_decl_out" "point GANG_PROFILES at its directory"
+
+mkdir -p "$CONFIG_CASES/test-switch"
+printf '%s\n' 'GANG_TEST_PROFILES=1' > "$CONFIG_CASES/test-switch/config"
+refuses "the suite-only profile switch cannot be persisted" \
+  "GANG_TEST_PROFILES is a per-invocation switch" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/bootstrap"
+printf '%s\n' 'GANG_CONFIG_DIR=/tmp/elsewhere' > "$CONFIG_CASES/bootstrap/config"
+refuses "the config root cannot bootstrap itself from inside the file" \
+  "GANG_CONFIG_DIR bootstraps the config file being read" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/bootstrap" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/duplicate"
+printf '%s\n' 'GANG_SESSION=first' 'GANG_SESSION=second' > "$CONFIG_CASES/duplicate/config"
+refuses "a duplicated config key names both lines" \
+  "duplicates GANG_SESSION on lines 1 and 2" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/duplicate" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/empty"
+printf '%s\n' 'GANG_SESSION=' > "$CONFIG_CASES/empty/config"
+refuses "an empty config value says to delete the line" \
+  "a key with no value states nothing — delete the line to take the default" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/empty" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/nul"
+printf 'GANG_SESSION=alpha\000omega\n' > "$CONFIG_CASES/nul/config"
+refuses "a NUL byte is refused instead of silently disappearing" \
+  "contains a NUL byte" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/nul" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/crlf" "$CONFIG_CASES/escape"
+printf 'GANG_BOOT_TIMEOUT=30\r\n' > "$CONFIG_CASES/crlf/config"
+refuses "a CRLF config line is refused as control-bearing" \
+  "contains control characters other than tab and newline" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/crlf" "$GANG" profiles
+printf 'GANG_SESSION=alpha\033omega\n' > "$CONFIG_CASES/escape/config"
+refuses "a bare escape in a config value is refused" \
+  "contains control characters other than tab and newline" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/escape" "$GANG" profiles
+
+mkdir -p "$CONFIG_CASES/no-final-newline"
+printf 'GANG_SESSION=config-file-session   ' > "$CONFIG_CASES/no-final-newline/config"
+trimmed_roster="$(env -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/no-final-newline" "$GANG" roster)"
+contains "a newline-free final value parses after trailing blanks are stripped" \
+  "$trimmed_roster" "from-file"
+
+for root_source in GANG_CONFIG_DIR XDG_CONFIG_HOME HOME; do
+  case "$root_source" in
+    GANG_CONFIG_DIR)
+      relative_out="$(GANG_CONFIG_DIR=relative "$GANG" profiles 2>&1 || true)" ;;
+    XDG_CONFIG_HOME)
+      relative_out="$(env -u GANG_CONFIG_DIR XDG_CONFIG_HOME=relative "$GANG" profiles 2>&1 || true)" ;;
+    HOME)
+      relative_out="$(env -u GANG_CONFIG_DIR -u XDG_CONFIG_HOME HOME=relative "$GANG" profiles 2>&1 || true)" ;;
+  esac
+  contains "a relative root from $root_source is refused under that source" \
+    "$relative_out" "$root_source must resolve Gangline's config root to an absolute path"
+done
 
 # Codex receives the native hooks with live consumers on fresh and resumed launches. The
 # command must remain one shell word even when Gangline is installed under a path
@@ -526,6 +626,84 @@ excludes "startup does not ask for a reply to its synthetic sender" \
   "$(pane alpha)" "Reply to that sender"
 equal "context lights leave no state when disabled" "|" \
   "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
+
+mkdir -p "$CONFIG_CASES/literal-lock"
+literal_lock="$CONFIG_CASES/lock with space # literal"
+printf '%s\n' "GANG_LOCK_DIR=$literal_lock" > "$CONFIG_CASES/literal-lock/config"
+printf '%s\n' 'MARK_CONFIG_LITERAL_LOCK' |
+  env -u GANG_LOCK_DIR GANG_CONFIG_DIR="$CONFIG_CASES/literal-lock" \
+    "$GANG" send --to alpha --from config-test --stdin >/dev/null
+if [ -d "$literal_lock" ]; then
+  pass "a config value keeps spaces and a literal hash in the lock path"
+else
+  fail "a config value keeps spaces and a literal hash in the lock path" \
+    "gang did not create its lock base at [$literal_lock]"
+fi
+
+mkdir -p "$CONFIG_CASES/broken-hook"
+printf '%s\n' 'GANG_UNKNOWN=value' > "$CONFIG_CASES/broken-hook/config"
+alpha_pane_id="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
+if hook_config_out="$(printf '%s' '{"hook_event_name":"Stop"}' |
+  env GANG_CONFIG_DIR="$CONFIG_CASES/broken-hook" TMUX_PANE="$alpha_pane_id" \
+    "$GANG" hook 2>&1)"; then
+  fail "a malformed config makes a native hook fail visibly" \
+    "hook unexpectedly succeeded: [$hook_config_out]"
+else
+  contains "a malformed config makes a native hook fail visibly" \
+    "$hook_config_out" "$CONFIG_CASES/broken-hook/config line 1"
+fi
+
+mkdir -p "$CONFIG_CASES/bad-file-value" "$CONFIG_CASES/bad-env-value"
+printf '%s\n' 'GANG_BOOT_TIMEOUT=abc' > "$CONFIG_CASES/bad-file-value/config"
+if bad_file_out="$(env -u GANG_BOOT_TIMEOUT GANG_CONFIG_DIR="$CONFIG_CASES/bad-file-value" \
+  "$GANG" hitch config-bad-file -p bash -d /tmp 2>&1)"; then
+  fail "a bad configured value is blamed on its file line" \
+    "hitch unexpectedly succeeded"
+else
+  contains "a bad configured value is blamed on its file line" \
+    "$bad_file_out" "from $CONFIG_CASES/bad-file-value/config line 1"
+fi
+tmux kill-window -t "=$GANG_SESSION:config-bad-file" 2>/dev/null || true
+if bad_env_out="$(GANG_BOOT_TIMEOUT=abc GANG_CONFIG_DIR="$CONFIG_CASES/bad-env-value" \
+  "$GANG" hitch config-bad-env -p bash -d /tmp 2>&1)"; then
+  fail "a bad environment value is blamed on the environment" \
+    "hitch unexpectedly succeeded"
+else
+  contains "a bad environment value is blamed on the environment" \
+    "$bad_env_out" "from the environment"
+fi
+tmux kill-window -t "=$GANG_SESSION:config-bad-env" 2>/dev/null || true
+
+mkdir -p "$CONFIG_CASES/missing-profile"
+printf '%s\n' 'GANG_PROFILE=no-such-profile' > "$CONFIG_CASES/missing-profile/config"
+if missing_profile_out="$(env -u GANG_PROFILE GANG_CONFIG_DIR="$CONFIG_CASES/missing-profile" \
+  "$GANG" hitch config-missing-profile -d /tmp 2>&1)"; then
+  fail "an unknown configured profile is blamed on its file line" \
+    "hitch unexpectedly succeeded"
+else
+  contains "an unknown configured profile is blamed on its file line" \
+    "$missing_profile_out" "from $CONFIG_CASES/missing-profile/config line 1"
+fi
+excludes "a refused configured profile opens no window" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "config-missing-profile"
+
+mkdir -p "$CONFIG_CASES/nested" "$RUN_ROOT/nested-parent-dir" "$RUN_ROOT/nested-child-dir"
+printf '%s\n' 'GANG_PROFILE=bash' 'GANG_SESSION=config-nested-session' \
+  > "$CONFIG_CASES/nested/config"
+env -u GANG_PROFILE -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/nested" \
+  "$GANG" hitch nested-parent -d "$RUN_ROOT/nested-parent-dir" >/dev/null
+nested_parent_id="$(tmux list-windows -t '=config-nested-session' \
+  -F '#{window_id} #W' | awk '$2 == "nested-parent" { print $1; exit }')"
+nested_done="test-config-nested-done-$$"
+tmux send-keys -t "$nested_parent_id" \
+  "$GANG hitch nested-child -d '$RUN_ROOT/nested-child-dir' >/dev/null; tmux wait-for -S '$nested_done'" Enter
+tmux wait-for "$nested_done"
+nested_child_id="$(tmux list-windows -t '=config-nested-session' \
+  -F '#{window_id} #W' | awk '$2 == "nested-child" { print $1; exit }')"
+equal "a nested hitch in another directory reloads the pinned config profile" \
+  "bash" "$(tmux show-options -wqv -t "$nested_child_id" @gl_profile)"
+contains "the nested hitch joins the session supplied only by the config file" \
+  "$(tmux list-windows -t '=config-nested-session' -F '#W')" "nested-child"
 
 # One optional cutoff is team state. Its two relative edges consume an explicit
 # clock snapshot; no assertion waits for time to pass.

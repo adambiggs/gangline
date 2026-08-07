@@ -2,9 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
 
-DEFAULT_SESSION=gangline
-SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
-
 utf8_locale() {
   case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
     *[Uu][Tt][Ff]8*|*[Uu][Tt][Ff]-8*) return 0 ;;
@@ -32,14 +29,171 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
+GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
+GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY'
+CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
+
+config_record() { # $1 key, $2 env|config, optional $3 config line
+  local record
+  printf -v record '%s\t%s' "$1" "$2"
+  [ $# -lt 3 ] || printf -v record '%s\t%s\t%s' "$1" "$2" "$3"
+  CONFIG_ORIGINS="${CONFIG_ORIGINS:+$CONFIG_ORIGINS
+}$record"
+}
+
+config_seen_line() { # $1 key -> its first line, or nonzero
+  local key line
+  while IFS=$'\t' read -r key line; do
+    [ "$key" = "$1" ] && { printf '%s' "$line"; return 0; }
+  done <<<"$CONFIG_SEEN"
+  return 1
+}
+
+config_path() { # $1 path -> operator-facing path with HOME collapsed
+  local home="${HOME:-}"
+  [ -n "$home" ] || { printf '%s' "$1"; return; }
+  case "$1" in
+    "$home") printf '~' ;;
+    "$home"/*) printf '%s/%s' '~' "${1#"$home"/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+config_origin() { # $1 key -> tab-separated origin record, or nonzero
+  local key origin line
+  while IFS=$'\t' read -r key origin line; do
+    [ "$key" = "$1" ] || continue
+    printf '%s\t%s' "$key" "$origin"
+    [ -z "$line" ] || printf '\t%s' "$line"
+    return 0
+  done <<<"$CONFIG_ORIGINS"
+  return 1
+}
+
+config_origin_note() { # $1 key -> a validation-error suffix
+  local record key origin line file
+  record="$(config_origin "$1")" || return 0
+  IFS=$'\t' read -r key origin line <<<"$record"
+  case "$origin" in
+    env) printf ' (from the environment)' ;;
+    config)
+      file="$(config_path "$CONFIG_FILE")"
+      printf ' (from %s line %s)' "$file" "$line"
+      ;;
+  esac
+}
+
+config_env_origins() { # record environment keys the file did not also name
+  local k envset
+  for k in $GANG_CONFIG_KEYS; do
+    config_origin "$k" >/dev/null 2>&1 && continue
+    envset=""
+    eval "envset=\${$k+set}"
+    [ "$envset" = set ] && config_record "$k" env
+  done
+  return 0
+}
+
+config_load() {
+  local root_source file raw marked sentinel=$'\034' probe bytes without_nul
+  local line n=0 k value previous envset
+  if [ "${GANG_CONFIG_DIR+x}" = x ]; then
+    CONFIG_DIR="$GANG_CONFIG_DIR" root_source=GANG_CONFIG_DIR
+  elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
+    CONFIG_DIR="$XDG_CONFIG_HOME/gangline" root_source=XDG_CONFIG_HOME
+  else
+    CONFIG_DIR="${HOME:-}/.config/gangline" root_source=HOME
+  fi
+  case "$CONFIG_DIR" in
+    /*) ;;
+    *) die "$root_source must resolve Gangline's config root to an absolute path, got '$CONFIG_DIR'" ;;
+  esac
+
+  CONFIG_FILE="$CONFIG_DIR/config"
+  file="$CONFIG_FILE"
+  if [ ! -e "$file" ] && [ ! -L "$file" ]; then
+    config_env_origins
+    return 0
+  fi
+  [ -f "$file" ] && [ -r "$file" ] \
+    || die "Gangline config $file exists but is not a readable regular file"
+
+  bytes="$(wc -c < "$file")" \
+    || die "cannot read Gangline config $file"
+  without_nul="$(LC_ALL=C tr -d '\000' < "$file" | wc -c)" \
+    || die "cannot read Gangline config $file"
+  [ "$bytes" = "$without_nul" ] \
+    || die "Gangline config $file contains a NUL byte"
+
+  marked="$(cat "$file" || { rc=$?; exit "$rc"; }; printf '\034')" \
+    || die "cannot read Gangline config $file"
+  case "$marked" in
+    *"$sentinel") raw="${marked%"$sentinel"}" ;;
+    *) die "internal: the config sentinel was lost while reading $file" ;;
+  esac
+  probe="$(printf '%s' "$raw" | tr -d '\11\12')"
+  case "$probe" in
+    *[[:cntrl:]]*) die "Gangline config $file contains control characters other than tab and newline" ;;
+  esac
+
+  while IFS= read -r line || [ -n "$line" ]; do
+    n=$((n + 1))
+    while [[ "$line" == ' '* || "$line" == $'\t'* ]]; do line="${line#?}"; done
+    case "$line" in ''|'#'*) continue ;; esac
+    case "$line" in
+      *=*) k="${line%%=*}"; value="${line#*=}" ;;
+      *) die "Gangline config $file line $n is not NAME=VALUE" ;;
+    esac
+    case "$k" in
+      ''|*[[:blank:]]*) die "Gangline config $file line $n has blanks in key '$k'" ;;
+    esac
+    while [[ "$value" == *' ' || "$value" == *$'\t' ]]; do value="${value%?}"; done
+    [ -n "$value" ] \
+      || die "Gangline config $file line $n sets $k to an empty value; a key with no value states nothing — delete the line to take the default"
+    previous="$(config_seen_line "$k")" || previous=""
+    [ -z "$previous" ] \
+      || die "Gangline config $file duplicates $k on lines $previous and $n"
+    CONFIG_SEEN="${CONFIG_SEEN:+$CONFIG_SEEN
+}$k"$'\t'"$n"
+    case " $GANG_CONFIG_KEYS " in
+      *" $k "*) ;;
+      *)
+        case " $GANG_PROFILE_KEYS " in
+          *" $k "*) die "Gangline config $file line $n: $k is a profile declaration, not operator configuration — load_profile clears it before sourcing the profile, so a value here would be discarded. Put it in a custom profile and point GANG_PROFILES at its directory." ;;
+        esac
+        case "$k" in
+          GANG_TEST_PROFILES) die "Gangline config $file line $n: GANG_TEST_PROFILES is a per-invocation switch for Gangline's own suite and cannot be persisted" ;;
+          GANG_CONFIG_DIR) die "Gangline config $file line $n: GANG_CONFIG_DIR bootstraps the config file being read and cannot be set inside it" ;;
+          GANG_MODEL|GANG_PROFILE_FILE) die "Gangline config $file line $n: $k is internal to Gangline and cannot be configured" ;;
+          *) die "Gangline config $file line $n has unknown key $k (settable: $GANG_CONFIG_KEYS)" ;;
+        esac
+        ;;
+    esac
+    envset=""
+    eval "envset=\${$k+set}"
+    if [ "$envset" = set ]; then
+      config_record "$k" env "$n"
+    else
+      eval "$k=\$value"
+      config_record "$k" config "$n"
+    fi
+  done < "$file"
+  config_env_origins
+}
+
+config_load
+
+DEFAULT_SESSION=gangline
+SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
+
 require_whole() { # $1 = name to blame, $2 = value, $3 = the unit for the message
   case "$2" in
-    ''|*[!0-9]*) die "$1 must be a whole number of $3, got '$2'" ;;
+    ''|*[!0-9]*) die "$1 must be a whole number of $3, got '$2'$(config_origin_note "$1")" ;;
   esac
 }
 require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractions are fine
   case "$2" in
-    ''|.|*[!0-9.]*|*.*.*) die "$1 must be a non-negative number of seconds, got '$2'" ;;
+    ''|.|*[!0-9.]*|*.*.*) die "$1 must be a non-negative number of seconds, got '$2'$(config_origin_note "$1")" ;;
   esac
 }
 
@@ -1468,12 +1622,12 @@ context_lights_parse() { # $1 = off or yellow,red absolute token thresholds
       LIGHT_RED="${1##*,}"
       case "$LIGHT_YELLOW:$LIGHT_RED" in
         *[!0-9:]*|:*|*:)
-          die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red" ;;
+          die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
       esac
       [ "$LIGHT_YELLOW" -gt 0 ] && [ "$LIGHT_RED" -gt "$LIGHT_YELLOW" ] \
-        || die "GANG_CONTEXT_LIGHTS must increase from yellow to red, got '$1'"
+        || die "GANG_CONTEXT_LIGHTS must increase from yellow to red, got '$1'$(config_origin_note GANG_CONTEXT_LIGHTS)"
       return 0 ;;
-    *) die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red" ;;
+    *) die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
   esac
 }
 
@@ -1620,13 +1774,13 @@ effort_levels() { # print the levels the profile says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id resume=0 launch_env
+  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id resume=0 launch_env profile_arg=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
   while [ $# -gt 0 ]; do case "$1" in
-    -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; shift 2 ;;
+    -p|--profile) [ $# -ge 2 ] || die "hitch: $1 needs a value"; prof="$2"; profile_arg=1; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
@@ -1637,6 +1791,10 @@ cmd_hitch() {
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_profile "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
+  if [ "$profile_arg" -eq 0 ]; then
+    profile_file "$prof" >/dev/null \
+      || die "unknown profile '$prof' (have: $(list_profiles | tr '\n' ' '))$(config_origin_note GANG_PROFILE)"
+  fi
   load_profile "$prof"
   if [ "$resume" -eq 1 ]; then
     [ -n "$GANG_RESUME_LAUNCH" ] \
@@ -1687,6 +1845,7 @@ cmd_hitch() {
   fi
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
+  launch_env="$launch_env GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR")"
   [ -z "${GANG_PROFILES:-}" ] \
     || launch_env="$launch_env GANG_PROFILES=$(shell_quote "$GANG_PROFILES")"
   [ -z "${GANG_LOCK_DIR:-}" ] \
