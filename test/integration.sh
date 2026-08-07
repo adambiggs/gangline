@@ -29,6 +29,7 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 export TMUX_TMPDIR="$RUN_ROOT"
+export GANG_CONFIG_DIR="$RUN_ROOT/config"
 export GANG_SESSION="gangtest-$$"
 export GANG_TEST_PROFILES=1
 export GANG_CHURN_WAIT=0
