@@ -2876,6 +2876,156 @@ equal "an unavailable context source reports once per failure epoch" \
 excludes "status does not inspect another agent's context" \
   "$("$GANG" status lit)" "context"
 
+# A repository-local hooksPath shadows the operator's global path, so the
+# tracked pre-push hook must delegate outward before it runs Gangline's gates.
+# The outer fixture deliberately calls back into the local hook: the depth
+# sentinel must make that re-entry a no-op while preserving argv and stdin.
+delegation_root="$RUN_ROOT/pre-push-delegation"
+delegation_hooks="$delegation_root/hooks"
+delegation_config="$delegation_root/gitconfig"
+delegation_record="$delegation_root/record"
+delegation_input="$delegation_root/input"
+mkdir -p "$delegation_hooks"
+cat > "$delegation_hooks/pre-push" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cat > "$GANGLINE_OUTER_INPUT"
+{
+  printf 'argv:%s|%s\n' "$1" "$2"
+  cat "$GANGLINE_OUTER_INPUT"
+} > "$GANGLINE_OUTER_RECORD"
+"$GANGLINE_LOCAL_PRE_PUSH" "$@" < "$GANGLINE_OUTER_INPUT"
+exit "${GANGLINE_OUTER_RC:-0}"
+SH
+chmod +x "$delegation_hooks/pre-push"
+git config --file "$delegation_config" core.hooksPath "$delegation_hooks"
+export GANGLINE_OUTER_INPUT="$delegation_input"
+export GANGLINE_OUTER_RECORD="$delegation_record"
+export GANGLINE_LOCAL_PRE_PUSH="$ROOT/.githooks/pre-push"
+zero_oid="$(printf '%040d' 0)"
+remote_oid="$(printf '%040d' 1)"
+deletion_record="refs/heads/topic $zero_oid refs/heads/topic $remote_oid"
+printf '%s\n' "$deletion_record" |
+  GIT_CONFIG_GLOBAL="$delegation_config" \
+  "$ROOT/.githooks/pre-push" origin /tmp/remote
+equal "the local pre-push delegates argv and stdin exactly once" \
+  "argv:origin|/tmp/remote
+$deletion_record" "$(cat "$delegation_record")"
+
+outer_refusal_rc=0
+outer_refusal_output="$(printf '%s\n' "$deletion_record" |
+  GANGLINE_OUTER_RC=23 GIT_CONFIG_GLOBAL="$delegation_config" \
+  "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || outer_refusal_rc=$?
+equal "an outer refusal is the local hook's exact status" 23 "$outer_refusal_rc"
+contains "an outer refusal is named before Gangline's gates run" \
+  "$outer_refusal_output" "outer gate refused with status 23"
+
+empty_global="$delegation_root/empty-global"
+: > "$empty_global"
+no_outer_rc=0
+no_outer_output="$(printf '%s\n' "$deletion_record" |
+  GIT_CONFIG_GLOBAL="$empty_global" \
+  "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
+equal "no global hook is a silent no-op before Gangline's gates" \
+  "0|" "$no_outer_rc|$no_outer_output"
+
+# The local sibling gate uses destination identity rather than remote-tracking
+# names, and refuses non-commit refs instead of treating an empty traversal as
+# a clean result. Its fixtures isolate the local hook from the host-global gate.
+gate_root="$RUN_ROOT/local-pre-push"
+gate_global="$gate_root/empty-global"
+mkdir -p "$gate_root"
+: > "$gate_global"
+
+gate_bare() { # $1 name
+  local repo="$gate_root/$1.git"
+  rm -rf "$repo"
+  GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$repo"
+  printf '%s\n' "$repo"
+}
+
+gate_repo() { # $1 name
+  local repo="$gate_root/$1"
+  rm -rf "$repo"
+  GIT_CONFIG_GLOBAL="$gate_global" git init -q "$repo"
+  git -C "$repo" config user.name 'Gangline gate test'
+  git -C "$repo" config user.email 'gangline@fixture.invalid'
+  mkdir -p "$repo/test" "$repo/.githooks"
+  cp "$ROOT/.githooks/commit-msg" "$repo/.githooks/commit-msg"
+  cat > "$repo/test/lint.sh" <<'SH'
+#!/bin/sh
+exit 0
+SH
+  cp "$repo/test/lint.sh" "$repo/test/integration.sh"
+  chmod +x "$repo/test/"*.sh "$repo/.githooks/commit-msg"
+  printf '%s\n' clean > "$repo/content"
+  git -C "$repo" add .
+  git -C "$repo" commit -qm 'test: local gate base'
+  git -C "$repo" config core.hooksPath "$ROOT/.githooks"
+  printf '%s\n' "$repo"
+}
+
+gate_bad_commit() { # $1 repo, $2 content
+  printf '%s\n' "$2" > "$1/content"
+  git -C "$1" add content
+  git -C "$1" commit --no-verify -qm 'not a conventional commit'
+}
+
+gate_push() { # $1 repo, remaining git-push args
+  local repo="$1"
+  shift
+  GATE_PUSH_RC=0
+  GATE_PUSH_OUTPUT="$(GIT_CONFIG_GLOBAL="$gate_global" \
+    git -C "$repo" push "$@" 2>&1)" || GATE_PUSH_RC=$?
+}
+
+gate_ref() { git --git-dir="$1" rev-parse --verify "$2" 2>/dev/null || true; }
+
+pushurl_repo="$(gate_repo local-gate-pushurl)"
+pushurl_private="$(gate_bare local-gate-pushurl-private)"
+pushurl_public="$(gate_bare local-gate-pushurl-public)"
+git -C "$pushurl_repo" remote add dest "$pushurl_private"
+gate_bad_commit "$pushurl_repo" clean-pushurl
+GIT_CONFIG_GLOBAL="$gate_global" git -C "$pushurl_repo" push \
+  --no-verify -qu dest HEAD:refs/heads/topic
+git -C "$pushurl_repo" remote set-url --add --push dest "$pushurl_public"
+gate_push "$pushurl_repo" dest HEAD:refs/heads/public-topic
+equal "the repository gate refuses a same-name pushurl destination escape" \
+  "blocked absent named" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ -z "$(gate_ref "$pushurl_public" refs/heads/public-topic)" ] && printf absent || printf received) $([[ "$GATE_PUSH_OUTPUT" = *'do not conform'* ]] && printf named || printf unnamed)"
+
+retarget_repo="$(gate_repo local-gate-retarget)"
+retarget_old="$(gate_bare local-gate-retarget-old)"
+retarget_new="$(gate_bare local-gate-retarget-new)"
+git -C "$retarget_repo" remote add dest "$retarget_old"
+gate_bad_commit "$retarget_repo" clean-retarget
+GIT_CONFIG_GLOBAL="$gate_global" git -C "$retarget_repo" push \
+  --no-verify -qu dest HEAD:refs/heads/topic
+git -C "$retarget_repo" remote set-url dest "$retarget_new"
+gate_push "$retarget_repo" dest HEAD:refs/heads/topic
+equal "the repository gate refuses a same-name retargeted destination escape" \
+  "blocked absent named" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ -z "$(gate_ref "$retarget_new" refs/heads/topic)" ] && printf absent || printf received) $([[ "$GATE_PUSH_OUTPUT" = *'do not conform'* ]] && printf named || printf unnamed)"
+
+blob_repo="$(gate_repo local-gate-blob)"
+blob_remote="$(gate_bare local-gate-blob)"
+blob_oid="$(printf '%s\n' clean-blob | git -C "$blob_repo" hash-object -w --stdin)"
+git -C "$blob_repo" update-ref refs/blobs/direct "$blob_oid"
+gate_push "$blob_repo" "$blob_remote" refs/blobs/direct:refs/blobs/direct
+blob_present=0
+git --git-dir="$blob_remote" cat-file -e "$blob_oid" 2>/dev/null && blob_present=1
+equal "the repository gate refuses a direct blob ref without destination receipt" \
+  "blocked blob absent" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'blob, not a commit'* ]] && printf blob || printf unnamed) $([ "$blob_present" -eq 0 ] && printf absent || printf received)"
+
+blob_mirror="$(gate_bare local-gate-blob-mirror)"
+gate_push "$blob_repo" --mirror "$blob_mirror"
+mirror_present=0
+git --git-dir="$blob_mirror" cat-file -e "$blob_oid" 2>/dev/null && mirror_present=1
+equal "the repository gate refuses a mirror carrying a blob ref" \
+  "blocked absent" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ "$mirror_present" -eq 0 ] && printf absent || printf received)"
+
 "$GANG" down >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
   fail "down removes the exact test session" "session still exists"
