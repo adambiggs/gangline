@@ -507,43 +507,46 @@ stall_note() { # $1 = window id, $2 = kind; never fatal
    Envelope it with the raising agent as sender — the fact originates in that
    window, and `agent_name_of` reads the name off the window, so the attribution
    law holds with no claimed identity anywhere.
-6. Deliver through the ordinary path: live delivery, and on a refusal park it if
+6. Send through the ordinary path: live delivery, and on a refusal park it if
    `spool_available` says a parked message would drain. This is the same code
    change 2 installs; a stall note is an ordinary message and gets no private
    transport (law 1). **Synchronously — never backgrounded.** A hook that
-   returns before its delivery has resolved reports a note nobody saw.
-7. **On success** — delivered live or parked where a drain will reach it — write
+   returns before the send's live, parked, or failed outcome has resolved cannot
+   truthfully record what happened.
+7. **On success** — accepted by live delivery or parked where a drain will reach
+   it — write
    `@gl_stall "$2 $(date +%s)"` and unset `@gl_stall_failed`. Return 0.
 8. **On failure**, record `@gl_stall_failed` on the raising window with the
    reason, leave `@gl_stall` untouched, and return 0. A hook may not kill its
    harness; this mirrors `spool_drain_dispatch`, which records
    `@gl_spool_failed` the same way.
 
-### The debounce is a record of a note that landed
+### The debounce is a record of a note accepted live or parked
 
 Steps 7 and 8 are ordered deliberately, and both halves of the ordering are
 load-bearing.
 
-**The stamp is written after the delivery, not before it.** `@gl_stall` exists to
-suppress a duplicate of a note the target already has. A note that failed to
-reach anyone is not a duplicate of anything, so stamping before the attempt would
-buy silence for a fact nobody received and would suppress the retry that repairs
-it. Written afterwards, the option means what its name implies: a note of this
-kind was delivered, and another one is noise until the repeat bound elapses. The
-cost of the failure path having no stamp is that a stalled agent re-attempts
-delivery on each native event until one lands — attempts that are cheap, bounded
-by how often the harness raises the event, and each one a chance for the light to
-start working again.
+**The stamp is written after acceptance, not before it.** `@gl_stall` exists to
+suppress a duplicate of a note the target either saw live or already has parked
+for its next drain. A note that failed to be accepted in either place is not a
+duplicate of anything, so stamping before the attempt would buy silence for a
+fact nobody has and would suppress the retry that repairs it. Written afterwards,
+the option means what its name implies: a note of this kind was accepted live or
+parked, and another one is noise until the repeat bound elapses. The cost of the
+failure path having no stamp is that a stalled agent re-attempts the send on each
+native event until one is accepted — attempts that are cheap, bounded by how
+often the harness raises the event, and each one a chance for the light to start
+working again.
 
-**A failure is retired only by a later note that landed.** Nothing else clears
-`@gl_stall_failed`: not a movement event, not a roster read, not time. A
+**A failure is retired only by a later note accepted live or parked.** Nothing
+else clears `@gl_stall_failed`: not a movement event, not a roster read, not time. A
 declaration naming a window that does not exist yet is the ordinary case — the
 operator may declare `gang notify lead` before hitching `lead` — and the failure
 must stay visible for exactly as long as it is still true. The moment a note
-gets through, the condition that produced the failure is gone and the light goes
-out on the evidence of a delivery, not on a guess. Movement events clear
-`@gl_stall` and deliberately leave `@gl_stall_failed` alone: an agent moving on
-says nothing about whether its notes can be delivered.
+is accepted live or parked, the condition that produced the failure is gone and
+the light goes out on the evidence of that outcome, not on a guess. Movement
+events clear `@gl_stall` and deliberately leave `@gl_stall_failed` alone: an
+agent moving on says nothing about whether its notes can be delivered.
 
 `gang status <name>` and `gang roster` report a set `@gl_stall_failed` beside
 the spool-failure reporting they already do. That is where a silently broken
@@ -574,7 +577,8 @@ them ended the first stall.
 
 Drive `gang hook` with fabricated stdin, as the suite already does for the
 malformed-config case. Every assertion reads the target's pane or a window
-option; `gang hook` returns only after its delivery has resolved, so no
+option; `gang hook` returns only after its live, parked, or failed outcome has
+resolved, so no
 assertion depends on timing.
 
 1. Declare `gang notify beta`, fire `Notification` / `idle_prompt` in `alpha`'s
@@ -582,15 +586,15 @@ assertion depends on timing.
    `alpha is awaiting input (idle_prompt)`.
 2. Fire it again immediately; assert `beta`'s pane gained nothing.
 3. Fire `Stop` in `alpha`, then `Notification` / `idle_prompt` again; assert a
-   second note landed.
+   second note reached the pane.
 4. Rewrite `@gl_stall` on `alpha` with an epoch older than `GANG_STALL_REPEAT`,
-   fire the same kind, assert a note landed. This is the repeat path, exercised
-   through state and not through wall time.
-5. Fire `Notification` / `auth_success`; assert nothing landed.
+   fire the same kind, assert a note reached the pane. This is the repeat path,
+   exercised through state and not through wall time.
+5. Fire `Notification` / `auth_success`; assert the target pane gained nothing.
 6. `gang notify clear`, fire `Notification` / `idle_prompt`, assert nothing
-   landed and the hook exited 0.
-7. `gang notify alpha`, fire in `alpha`; assert nothing landed and
-   `@gl_stall_failed` is unset.
+   reached the target pane and the hook exited 0.
+7. `gang notify alpha`, fire in `alpha`; assert the target pane gained nothing
+   and `@gl_stall_failed` is unset.
 8. `gang notify ghost` (no such window), fire in `alpha`; assert
    `@gl_stall_failed` is set and `gang status alpha` reports it.
 9. **A failure does not debounce the repair.** Continuing from 8 without
@@ -625,8 +629,8 @@ assertion depends on timing.
   > same kind inside one stall is one note, cleared by the harness's own next
   > move. A harness that reports nothing gets no substitute, and a delivery that
   > fails is recorded on the window for status to surface rather than killing
-  > the hook — a record retired only by a later note that landed, because a
-  > light that is still broken has to keep saying so.
+  > the hook — a record retired only by a later note accepted live or parked,
+  > because a light that is still broken has to keep saying so.
 
 ### Commit
 
@@ -972,8 +976,13 @@ body.
   with the precise current rule: Gangline answers only dialogs a profile
   enumerates as carrying no authority, verifies the answer cleared them, and
   never answers a permission, trust, or approval surface — those are refused
-  into `occupied (authority unknown)` and, with a notify target declared, raise a
-  stall note. Keep the prompt-injection reasoning.
+  into `occupied (authority unknown)`. A stall note follows only when a native
+  harness hook witnesses an event change 3 forwards; coverage is not universal.
+  Claude Code can raise notes for declared `Notification` kinds and permission
+  requests. Codex has no `Notification` hook, so only its permission requests
+  are witnessed; an unknown codex dialog can be refused with no stall note at
+  all. Keep the prompt-injection reasoning and state this coverage limit next to
+  the refusal rule.
 - `docs/DECISIONS.md` §"Occupancy is not authority" — the sentence "Gangline does
   not autonomously answer native dialogs" is no longer true and must be
   rewritten, not annotated. Replacement for that sentence:
@@ -1093,13 +1102,22 @@ In `test/integration.sh`, under `$RUN_ROOT`:
    and no remotes.
 2. Copy in `.githooks/pre-push`, `.githooks/commit-msg`, and `tools/pii-scan`
    from `$ROOT`, preserving the executable bit.
-3. Plant `test/lint.sh` as a stub that is executable and whose body is three
-   lines — `git ls-files >/dev/null`, the exact shape issue #106 names, plus
-   `git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"` and
-   `git ls-files main-index-only > "$PROBE_DIR/index"` — and
-   `test/integration.sh` as an executable stub that exits 0. `PROBE_DIR` is
-   passed in through the environment and sits outside the worktree, so the
-   evidence survives the worktree's removal.
+3. Plant `test/lint.sh` as an executable stub with this exact body, including a
+   required read of `PROBE_DIR` and `git ls-files >/dev/null`, the shape issue
+   #106 names:
+
+   ```sh
+   #!/bin/sh
+   # SPDX-License-Identifier: Apache-2.0
+   set -eu
+   : "${PROBE_DIR:?}"
+   git ls-files >/dev/null
+   git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"
+   git ls-files main-index-only > "$PROBE_DIR/index"
+   ```
+
+   Plant `test/integration.sh` as an executable stub that exits 0. `PROBE_DIR`
+   sits outside the worktree, so the evidence survives the worktree's removal.
 4. Commit with a conforming Conventional Commits message; record the SHA.
 5. **Diverge the main index from the pushed commit.** Create `main-index-only`
    and `git add` it without committing. It is now in the main repository's index
@@ -1109,9 +1127,9 @@ In `test/integration.sh`, under `$RUN_ROOT`:
    `GIT_DIR` pointing at the throwaway repository's `.git` for the invocation:
 
    ```sh
-   ( cd "$repo" && GIT_DIR="$repo/.git" PROBE_DIR="$probe" \
-       printf 'refs/heads/main %s refs/heads/main %s\n' "$sha" "$zero" \
-       | ./.githooks/pre-push )
+   ( cd "$repo" &&
+     printf 'refs/heads/main %s refs/heads/main %s\n' "$sha" "$zero" |
+       env GIT_DIR="$repo/.git" PROBE_DIR="$probe" ./.githooks/pre-push )
    ```
 
    A hand invocation without `GIT_DIR` tests a friendlier environment than the
@@ -1126,6 +1144,13 @@ Assertions:
 - `$PROBE_DIR/gitdir` ends in `.git/worktrees/…`, and is **not** the main
   repository's `.git`.
 - `$PROBE_DIR/index` is empty — `main-index-only` was invisible to the lint run.
+
+The named old-code mutant replaces the hook under test with the archive-export
+implementation while leaving this right-hand-side environment intact. The old
+hook itself exits 0 under the real leaked `GIT_DIR`, but the regression test goes
+red: `gitdir` names the main repository's `.git`, not `.git/worktrees/…`, and
+`index` contains `main-index-only`. Both assertions are required, so the test
+cannot pass merely because the hook command returned success.
 
 **Not `git rev-parse --show-toplevel`.** Verified in a scratch repository: with
 `GIT_DIR` leaked to the main repository from inside a detached worktree,
@@ -1437,16 +1462,19 @@ placeholder — the trim stops earlier and a row or two of chrome is printed. Th
 is the right direction to fail: chrome is noise the operator can ignore, and
 missing content is an answer they cannot recover.
 
-Pure awk, mawk-safe (no `length()` over multibyte text):
+Store the two whole-buffer captures in shell variables `before` and `after`.
+Feed their contents to awk with Bash 3.2 process substitution; the names are not
+paths and no capture file or cleanup lifecycle is implied. Pure awk, mawk-safe
+(no `length()` over multibyte text):
 
 ```sh
-awk 'NR==FNR { b[FNR]=$0; nb=FNR; next }
+awk 'FILENAME==ARGV[1] { b[FNR]=$0; nb=FNR; next }
      { a[FNR]=$0; na=FNR }
      END {
        p=0; while (p<nb && p<na && b[p+1]==a[p+1]) p++
        s=0; while (s<nb-p && s<na-p && b[nb-s]==a[na-s]) s++
        for (i=p+1; i<=na-s; i++) print a[i]
-     }' "$before" "$after"
+     }' <(printf '%s\n' "$before") <(printf '%s\n' "$after")
 ```
 
 **One bound.** If `before` was non-empty and the common prefix is zero lines, the
@@ -1645,15 +1673,17 @@ because they are different claims.
    **not** contain the top-level synopsis. This is the guard that a future
    refactor does not "fix" them into printing help. `up`, `attach`, and `down`
    are not invoked here; they are covered where they already are.
-7. **Every dispatched command is in one list or the other.** Extract the
-   dispatcher's case-arm names from `bin/gang` and the help list's names, and
-   assert the two agree once an explicit allowlist is subtracted: `hook`, which
-   is the harness callback and deliberately undocumented, `spawn`, an alias of
-   `hitch`, and `-h`/`--help`/`help`. A sweep enumerated from the help list
-   alone cannot notice a command that was added to the dispatcher and never
-   written into help — `hook` is proof that arms and help already diverge — so
-   the inventories are compared rather than one of them trusted. The allowlist is
-   a literal in the test, so adding to it is a visible edit.
+7. **Every dispatched command is classified in one list or the other.** Extract
+   the dispatcher's case-arm names from `bin/gang`. Sort and deduplicate the
+   union of the explicit bare-error and meaningful-bare arrays, then assert that
+   union equals the dispatcher names once this literal allowlist is subtracted:
+   `hook`, which is the harness callback and deliberately undocumented, `spawn`,
+   an alias of `hitch`, and `-h`/`--help`/`help`. Separately assert that the help
+   inventory names the same classified union. A new dispatch-and-help entry
+   omitted from both behavioural arrays must therefore fail the dispatcher-to-
+   union comparison; deriving the expected set from help alone would let it
+   dodge classification. The allowlist is a literal in the test, so adding to
+   it is a visible edit.
 
 ### Documentation
 
