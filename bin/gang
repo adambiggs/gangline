@@ -1904,7 +1904,7 @@ cmd_hitch() {
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
   fi
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
-  local msg delivery_err=""
+  local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
@@ -1921,9 +1921,10 @@ cmd_hitch() {
   if [ -n "$lights" ] && [ "${GANG_SESSION_KEY:-}" = 1 ]; then
     tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
   fi
-  if ! delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)"; then
-    delivery_err="${delivery_err##*$'\n'}"
-    die "startup contract to '$name' was not delivered: ${delivery_err:-delivery failed without an error}"
+  delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)" || delivery_rc=$?
+  if [ "$delivery_rc" -ne 0 ]; then
+    delivery_err="${delivery_err#gang: }"
+    fail "$delivery_rc" "startup contract to '$name' was not delivered: ${delivery_err:-delivery failed without an error}"
   fi
   printf '%s\n' "$(colour "$C_OK" "delivered startup contract to $name")"
 }

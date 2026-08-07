@@ -900,6 +900,28 @@ contains "a delivery-sized doctrine failure leaves its window for inspection" \
   "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-pane-overflow"
 "$GANG" drop doctrine-pane-overflow >/dev/null
 
+# Hitch has the same refusal contract as send. Start a fixture whose composer
+# already carries the profile's parked-queue evidence, so inject refuses before
+# pasting and the public hitch boundary must preserve that status and message.
+cat > "$RUN_ROOT/profiles/doctrine-prequeued.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="PS1='❯ Press up to edit queued messages' bash --norc"
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+SH
+doctrine_refusal_rc=0
+doctrine_refusal_out="$("$GANG" hitch doctrine-refusal \
+  -p doctrine-prequeued -d /tmp 2>&1)" || doctrine_refusal_rc=$?
+equal "a startup delivery refusal preserves the inject refusal status" \
+  "3" "$doctrine_refusal_rc"
+contains "a startup delivery refusal has one diagnostic prefix" \
+  "$doctrine_refusal_out" \
+  "gang: startup contract to 'doctrine-refusal' was not delivered: refusing to deliver"
+excludes "a startup delivery refusal does not nest a second diagnostic prefix" \
+  "$doctrine_refusal_out" ": gang: refusing to deliver"
+"$GANG" drop doctrine-refusal >/dev/null
+
 # A queued-composer fixture records the exact startup body before Enter. That
 # record is the witness for the trailing bytes the pane itself cannot display
 # unambiguously.
