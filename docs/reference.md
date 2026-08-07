@@ -65,15 +65,16 @@ Attaches to `GANG_SESSION`.
 
 ### `gang drop <name>`
 
-Kills the exact agent window. Its tmux-owned state dies with it.
+Kills the exact agent window. Its tmux-owned state and its spool die with it.
 
 ### `gang down`
 
-Kills the exact team session and every window in it.
+Kills the exact team session and every window in it, deleting each window's
+spool first.
 
 ## Delivery and compaction
 
-### `gang send --to <name> [--from <sender>] --stdin`
+### `gang send --to <name> [--from <sender>] [--spool [--supersede]] --stdin`
 
 Reads the full message body from standard input. Inside the team, Gangline derives
 the sender from the calling window and refuses `--from`. Calls from outside the
@@ -102,7 +103,7 @@ dropped. That refusal is fail-closed and deliberate.
 
 Queued is not delivered: where a profile declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed
-delivery with its manual recovery, both before pasting and after the Enter —
+delivery naming the `gang flush` recovery, both before pasting and after the Enter —
 never as a success. An unreadable verification capture after the Enter is
 ambiguity and fails the same way.
 
@@ -115,6 +116,56 @@ version gate.
 
 A cleared staged record means the obstruction is gone — it is never
 retroactive proof that the recorded body was delivered.
+
+`--spool` changes what a refusal does, never what a delivery proves. The live
+delivery is attempted first; if it is refused, the nonce-bound envelope is
+written to a per-target spool and reported as parked, not delivered. A failure
+after anything was typed is never spooled, because that body's fate is unknown
+and a second copy would be a second message.
+
+The target's own native Stop event drains its spool, oldest first, through the
+verified delivery path. Each entry is claimed before it is delivered, so no
+later drain can send a body this one may already have landed. A refused drain
+returns its entry to the spool for the next turn boundary. A drain that cannot
+verify, or one that dies between the submission and the entry's retirement,
+leaves that entry held: `status` and `roster` report how many are held, the
+bodies stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again.
+`--supersede` drops the same sender's earlier spooled messages before parking
+this one, and applies to that sender only.
+
+A profile that declares no `GANG_STOP_HOOK` refuses `--spool`: nothing else
+drains a spool.
+
+Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
+target's window options at `hitch` or `adopt` — never later, so that senders
+arriving together cannot mint competing ones. A window without that identity
+refuses `--spool`. Entries die with the window: `gang drop` and `gang down`
+delete them.
+
+### `gang flush <name>`
+
+Recovers a message the harness parked in its own input queue, as a verified
+operation. Gangline presses the profile's declared recall key, reads the loaded
+composer back against the body it recorded when it watched the harness park the
+message, submits it, and verifies the submission the way any delivery is
+verified.
+
+It refuses before pressing anything when the profile declares no queue evidence
+or no recall key, when the composer shows no parked-queue evidence, and when
+Gangline holds no record of the parked body. It refuses after the recall key
+when that key loaded nothing, or when the readback is not the recorded message;
+the Enter is not pressed in either case.
+
+### `gang interrupt <name>`
+
+Sends the keystroke the profile declares as its harness's turn-stop key and
+drops Gangline's turn bracket, so the interrupted turn neither leaves a bracket
+answering busy until its bound expires nor a written one answering idle. State
+then comes from the pane: a harness that stopped goes idle, and one that
+ignored the key stays busy and unreachable. Whether the harness stops remains
+the harness's verdict. A profile that declares no interrupt key refuses the
+command, and an occupied composer refuses it too — that keystroke is often what
+a native dialog reads as an answer.
 
 ### `gang compact <name>`
 
@@ -152,6 +203,9 @@ It also reports staged input, pending or failed self-compaction, and binary skew
 when the window has no hitch/adopt stamp or its executable-byte witness differs
 from the invoked `gang` binary. An unavailable witness is reported explicitly
 instead of treated as either match or mismatch.
+It also reports staged input, pending or failed self-compaction, how many
+messages are spooled for that target, and a spool drain that could not be
+verified.
 
 ### `gang roster`
 
@@ -176,7 +230,8 @@ unless `GANG_TEST_PROFILES=1`.
 
 Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
-dispatch deferred self-compaction, and permission requests raise occupancy.
+dispatch deferred self-compaction and a spool drain, and permission requests
+raise occupancy.
 Hooks are silent unless an enabled context light or declared team-time light
 crosses an edge. Context-source warm-up is silent until the first native turn
 completes; an unreadable source after that boundary fails visibly.
@@ -190,7 +245,7 @@ completes; an unreadable source after that boundary fails visibly.
 | `GANG_CONTEXT_LIGHTS` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_PROFILES` | custom profile directory searched before shipped profiles |
 | `GANG_BOOT_TIMEOUT` | harness startup readiness bound |
-| `GANG_LOCK_DIR` | shared per-pane delivery-lock directory |
+| `GANG_LOCK_DIR` | shared per-pane delivery-lock directory; per-target spools live under it |
 
 Operational evidence bounds also use `GANG_CHURN_WAIT`,
 `GANG_ACTIVITY_WINDOW`, `GANG_ACTIVITY_LIMIT`, `GANG_TURN_LIMIT`,
@@ -215,6 +270,9 @@ there, never in a harness-name branch in the core script.
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
+| `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
+| `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
+| `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |

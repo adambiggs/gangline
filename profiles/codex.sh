@@ -78,6 +78,13 @@ GANG_COMPACT_CMD="/compact"
 GANG_SELF_COMPACT=deferred
 GANG_MIDTURN_INPUT=1
 GANG_SESSION_KEY=1
+# Escape stops an active turn; the busy marker above is the harness's own
+# "esc to interrupt" footer.
+GANG_INTERRUPT_KEY="Escape"
+# The launch above passes a native Stop hook with -c, so this harness announces
+# its own turn boundaries to gang — which is what a spool needs to drain, and
+# what deferred self-compaction already relies on.
+GANG_STOP_HOOK=1
 
 codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
 

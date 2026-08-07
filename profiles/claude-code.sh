@@ -84,9 +84,18 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # itself, which reads "❯ Press up to edit queued messages" (nbsp after the
 # glyph, stripped by profile_input like every nbsp). bin/gang matches this
 # against the box reading before pasting and after Enter, and treats a hit as
-# failed delivery with a manual recovery — Up loads the parked body, Enter
-# submits it; a plain Enter does not flush it.
+# failed delivery — recoverable, because the hint also names the keystroke
+# below: Up loads the parked body, Enter submits it; a plain Enter does not
+# flush it.
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
+GANG_QUEUE_RECALL_KEY="Up"
+# Escape stops an active turn; the harness paints "esc to interrupt" while one
+# is in flight.
+GANG_INTERRUPT_KEY="Escape"
+# The launch above composes a native Stop hook into --settings, so this harness
+# announces its own turn boundaries to gang — which is what a spool needs to
+# drain.
+GANG_STOP_HOOK=1
 
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon

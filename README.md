@@ -60,6 +60,11 @@ team, Gangline reads the sender from the calling window; outside callers name
 themselves with `--from`. Delivery succeeds only after the target composer
 visibly accepts the paste and submission.
 
+A target that cannot take input right now refuses the send. Add `--spool` and
+the message waits instead of coming back, and the target's own native turn
+boundary delivers it through the same verified path — so nobody has to write a
+retry loop around a command that refuses on purpose.
+
 Observe and control the team without replacing the harness interface:
 
 ```sh
@@ -67,9 +72,16 @@ gang roster
 gang status worker
 gang capture worker
 gang attach
+gang interrupt worker
+gang flush worker
 gang drop worker
 gang down
 ```
+
+`gang interrupt` sends the keystroke the harness's profile declares for stopping
+a turn. `gang flush` recovers a message a harness parked in its own input queue,
+reading the reloaded composer back against what Gangline recorded before
+submitting it.
 
 ## Long sessions
 
