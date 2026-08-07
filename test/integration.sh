@@ -332,13 +332,107 @@ contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
 mkdir -p "$RUN_ROOT/profiles"
+export GANG_PROFILES="$RUN_ROOT/profiles"
+modal_observed="test-boot-modal-observed-$$"
+modal_painted="test-boot-modal-painted-$$"
+modal_clear="test-boot-modal-clear-$$"
+modal_probe_release="test-boot-modal-probe-release-$$"
+cat > "$RUN_ROOT/profiles/boot-modal.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'printf \"FIRST_RUN_MODAL\\n\"; tmux wait-for -S \"$modal_painted\"; tmux wait-for \"$modal_clear\"; PS1=\"❯ \" exec bash --norc' fixture"
+GANG_OCCUPIED_REGEX='FIRST_RUN_MODAL'
+_gl_modal_real="\$(declare -f profile_input)"
+eval "modal_real_input \${_gl_modal_real#profile_input}"
+profile_input() {
+  if [ -e "$RUN_ROOT/boot-modal-blocked" ]; then
+    if [ -e "$RUN_ROOT/boot-modal-seen" ]; then
+      tmux wait-for -S "$modal_observed"
+      tmux wait-for "$modal_probe_release"
+    else
+      tmux wait-for "$modal_painted"
+      : > "$RUN_ROOT/boot-modal-seen"
+    fi
+    return 1
+  fi
+  modal_real_input "\$1"
+}
+SH
+touch "$RUN_ROOT/boot-modal-blocked"
+modal_output="$RUN_ROOT/boot-modal.out"
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch boot-modal -p boot-modal -d /tmp \
+  >"$modal_output" 2>&1 &
+modal_hitch_pid=$!
+tmux wait-for "$modal_observed"
+contains "hitch reports a first-run modal before it is cleared" \
+  "$(<"$modal_output")" "answer it with 'gang attach'"
+rm -f -- "$RUN_ROOT/boot-modal-blocked"
+tmux wait-for -S "$modal_clear"
+tmux wait-for -S "$modal_probe_release"
+if wait "$modal_hitch_pid"; then
+  pass "the same hitch completes after the operator clears the modal"
+else
+  fail "the same hitch completes after the operator clears the modal" \
+    "$(<"$modal_output")"
+fi
+contains "the resumed hitch delivers its startup contract" \
+  "$(pane boot-modal)" "You are boot-modal in Gangline"
+contains "the resumed hitch reports verified startup delivery" \
+  "$(<"$modal_output")" "delivered startup contract to boot-modal"
+contains "the resumed hitch retracts the first-run warning" \
+  "$(<"$modal_output")" "now has an input box; hitch is continuing"
+"$GANG" drop boot-modal >/dev/null
+
+late_observed="test-late-composer-observed-$$"
+late_launch="test-late-composer-launch-$$"
+late_probe_release="test-late-composer-probe-release-$$"
+cat > "$RUN_ROOT/profiles/late-composer.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'tmux wait-for \"$late_launch\"; PS1=\"❯ \" exec bash --norc' fixture"
+_gl_late_real="\$(declare -f profile_input)"
+eval "late_real_input \${_gl_late_real#profile_input}"
+profile_input() {
+  if [ -e "$RUN_ROOT/late-composer-blocked" ]; then
+    if [ -e "$RUN_ROOT/late-composer-seen" ]; then
+      tmux wait-for -S "$late_observed"
+      tmux wait-for "$late_probe_release"
+    else
+      : > "$RUN_ROOT/late-composer-seen"
+    fi
+    return 1
+  fi
+  late_real_input "\$1"
+}
+SH
+touch "$RUN_ROOT/late-composer-blocked"
+late_output="$RUN_ROOT/late-composer.out"
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch late-composer -p late-composer -d /tmp \
+  >"$late_output" 2>&1 &
+late_hitch_pid=$!
+tmux wait-for "$late_observed"
+excludes "a blank slow boot is not reported as a first-run modal" \
+  "$(<"$late_output")" "answer it with 'gang attach'"
+rm -f -- "$RUN_ROOT/late-composer-blocked"
+tmux wait-for -S "$late_launch"
+tmux wait-for -S "$late_probe_release"
+if wait "$late_hitch_pid"; then
+  pass "a delayed composer completes its original hitch"
+else
+  fail "a delayed composer completes its original hitch" "$(<"$late_output")"
+fi
+excludes "a completed delayed composer leaves no first-run warning" \
+  "$(<"$late_output")" "answer it with 'gang attach'"
+"$GANG" drop late-composer >/dev/null
+
 cat > "$RUN_ROOT/profiles/broken-observer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
 GANG_BUSY_REGEX='['
 SH
-export GANG_PROFILES="$RUN_ROOT/profiles"
 "$GANG" hitch broken-observer -p broken-observer -d /tmp >/dev/null
 if broken_roster="$("$GANG" roster 2>&1)"; then
   fail "roster fails when an agent row cannot be observed" "roster exited successfully"

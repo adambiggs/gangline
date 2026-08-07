@@ -74,6 +74,12 @@ Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
 not infer who may clear it. UI recognition belongs in profiles, unknown authority
 fails closed, and Gangline does not autonomously answer native dialogs.
 
+At hitch, positive evidence of a prompt without a composer is an operator
+outcome before it is a launch failure: report `gang attach` once and spend the
+remaining original boot bound waiting. A blank pane is only startup, not prompt
+evidence. Never answer the native prompt; timeout retains the manual
+drop-and-re-hitch recovery.
+
 ## Context lights are optional and minimal
 
 Keep context signaling off by default. When enabled, expose exactly yellow and

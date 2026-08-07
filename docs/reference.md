@@ -16,6 +16,14 @@ The launch environment carries the exact `GANG_SESSION` plus any custom profile
 and lock paths, so harness commands cannot drift to another session on the same
 tmux server.
 
+If a first-run prompt owns the screen before the composer appears, `hitch`
+directs the operator to `gang attach` once the profile's occupied pattern
+provides positive pane evidence, then keeps waiting within the original
+`GANG_BOOT_TIMEOUT`. Clearing the prompt lets that same hitch report the
+recovered input box and deliver its startup contract. If the bound expires
+first, the window is left for inspection and the error gives the attach, drop,
+and re-hitch recovery.
+
 - `-p` selects a profile.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the profile's model option.

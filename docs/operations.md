@@ -20,6 +20,12 @@ and repository trust prompts. Gangline never answers permission dialogs. An
 occupied dialog appears as `occupied (authority unknown)` and blocks input until
 the operator resolves it in `gang attach`.
 
+During hitch, a first-run prompt is reported as soon as Gangline has positive
+pane evidence rather than a merely blank startup screen. Leave hitch running,
+use `gang attach` to answer the native prompt, and the same hitch will report
+when the input box appears and deliver the startup contract if that happens
+before `GANG_BOOT_TIMEOUT` expires.
+
 Native sandboxes must be able to reach the tmux server and the `gang` executable.
 For Codex, this commonly means the tmux socket and Gangline checkout need to be
 inside paths its sandbox permits. Fix that in the operator's Codex configuration;
