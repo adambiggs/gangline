@@ -872,6 +872,11 @@ contains "the recalled body is recorded against the window" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
+# THE PANE, not gang's account of the pane. Everything above is gang reporting
+# on itself; only the composer still holding the recalled body says the Enter
+# was withheld, because a submitted line leaves it.
+contains "the recalled body is still sitting in the composer, unsent" \
+  "$(pane parked | grep '❯' | tail -1)" "EXTRA_WORDS_NOBODY_SENT"
 tmux send-keys -t "$parked_id" C-u
 
 # AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
@@ -913,6 +918,8 @@ contains "refused by the readback, not by anything downstream of it" \
   "$ts_out" "flush NOT performed"
 contains "and the body is recorded as sitting unsent, never as submitted" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
+contains "with the pane agreeing: it is still in the composer" \
+  "$(pane parked | grep '❯' | tail -1)" "MARK_TS head"
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 
@@ -1246,7 +1253,38 @@ else
 fi
 contains "and says what would have to happen instead" \
   "$identityless_out" "re-hitch or re-adopt"
+# Refusing is only half of it. Minting on the way past is the race the identity
+# exists to avoid, so the refusal must also leave nothing behind — a window that
+# came out of this with a token would have been given one at exactly the moment
+# two senders could each give it a different one.
+equal "and the refusal mints nothing on its way out" "" \
+  "$(tmux show-options -wqv -t "$(window_id identityless)" @gl_spool)"
 "$GANG" drop identityless >/dev/null
+
+# ADOPTION MINTS IT TOO, and nothing tested that. An adopted window is an agent
+# by every other measure, so a spool identity it never received would make
+# --spool refuse a target the operator had just enrolled.
+tmux new-window -d -t "=$GANG_SESSION" -n taken -c /tmp \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+"$GANG" adopt taken -p spoolable >/dev/null
+taken_id="$(window_id taken)"
+taken_token="$(tmux show-options -wqv -t "$taken_id" @gl_spool)"
+if [ -n "$taken_token" ]; then
+  pass "an adopted agent receives the spool identity a sender will need"
+else
+  fail "an adopted agent receives the spool identity a sender will need" \
+    "@gl_spool is empty"
+fi
+# And it is a usable one, not merely a present one.
+tmux send-keys -l -t "$taken_id" 'HUMAN_DRAFT'
+# Tolerated rather than asserted here so a missing identity reports as the two
+# red checks it is, instead of aborting the run under set -e and taking every
+# later world with it.
+printf 'MARK_ADOPTED' |
+  "$GANG" send --to taken --from tester --spool --stdin >/dev/null 2>&1 || true
+contains "and it can park a refused message under it" \
+  "$("$GANG" status taken)" "spooled: 1"
+"$GANG" drop taken >/dev/null
 
 # A body that was already typed has an unknown fate, so it is NOT parked: a
 # second copy of a message that may have landed is worse than one that failed
@@ -1323,6 +1361,13 @@ for wedged_entry in "$wedged_spool"/failed-*; do
 done
 equal "the unverified body is kept where a person can read it" "1" \
   "$wedged_quarantined"
+# READ IT. A file of the right name is not a kept message: the promise gang
+# makes when it holds a body instead of re-sending it is that the body is still
+# there, and only reading it says so.
+wedged_body="$(cat "$wedged_spool"/failed-* 2>/dev/null)" || wedged_body=""
+contains "the body itself, not just a file with the right name" \
+  "$wedged_body" "MARK_WEDGED"
+contains "and the sender it was parked under" "$wedged_body" "tester"
 # READ OUT OF THE REPORT ITSELF, not recomputed beside it. Holding a message
 # instead of re-sending it is only honest if the report says where it went, and
 # a check that derives the path independently cannot see the report naming an
