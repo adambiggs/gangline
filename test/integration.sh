@@ -683,6 +683,9 @@ contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup ends instead of polling for work" \
   "$(pane alpha)" "End this turn."
+contains "startup requires deliberate model and effort choices when hitching" \
+  "$(pane alpha)" \
+  "When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e"
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
