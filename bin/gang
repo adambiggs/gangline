@@ -102,6 +102,7 @@ gang — drive native CLI agents in tmux
   gang status <name>
   gang roster
   gang capture <name> [lines]
+  gang composer <name>
   gang attach
   gang drop <name>
   gang down
@@ -1950,6 +1951,19 @@ cmd_capture() { # trailing blank pane rows are dead space, not content
   capture "$id" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
 }
 
+cmd_composer() { # what a human actually typed — capture shows the raw pane,
+  # where a harness's dim suggested-prompt placeholder is indistinguishable from
+  # a real draft; the profile's reading strips styling, so placeholders vanish
+  resolve "$1"
+  declare -F profile_input >/dev/null \
+    || die "profile '$AGENT_PROFILE' declares no profile_input, so '$1' has no readable composer"
+  local box
+  box="$(profile_input "$AGENT_ID")" \
+    || die "no composer on screen in '$1' — the harness has not drawn its input box (gang capture $1)"
+  grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule
+  printf '%s\n' "$box"
+}
+
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
   local name="" prof="" id
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
@@ -2010,6 +2024,7 @@ case "$cmd" in
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;
   hook)     cmd_hook ;;
   capture)  [ $# -ge 1 ] || usage_die; cmd_capture "$@" ;;
+  composer) [ $# -ge 1 ] || usage_die; cmd_composer "$1" ;;
   roster)   cmd_roster ;;
   attach)   cmd_attach ;;
   drop)     [ $# -ge 1 ] || usage_die; cmd_drop "$1" ;;

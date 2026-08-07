@@ -399,6 +399,11 @@ equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
 
+# composer reads the box through the profile's styled reading, not the raw
+# pane; a freshly hitched agent's box is definitively empty
+equal "composer prints nothing for an empty box" \
+  "" "$("$GANG" composer alpha)"
+
 mkdir -p "$RUN_ROOT/profiles"
 export GANG_PROFILES="$RUN_ROOT/profiles"
 modal_observed="test-boot-modal-observed-$$"
@@ -815,6 +820,9 @@ if "$GANG" capture 1 >/dev/null; then
 else
   fail "the inspection command named by the refusal runs" "gang capture 1 failed"
 fi
+# the refusal above is the barrier proving the draft is on screen
+contains "composer prints what a human typed" \
+  "$("$GANG" composer 1)" "HUMAN_DRAFT"
 tmux send-keys -t "$(window_id 1)" C-u
 
 # A harness may park the Enter in its own input queue: the fixture's composer

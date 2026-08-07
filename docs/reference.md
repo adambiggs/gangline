@@ -219,6 +219,16 @@ only for this snapshot.
 
 Prints the tail of the target pane after trimming trailing blank terminal rows.
 
+### `gang composer <name>`
+
+Prints what a human actually typed into the agent's input box, via the
+profile's styled reading. `capture` shows the raw pane, where a harness's dim
+suggested-prompt placeholder is indistinguishable from a real draft; `composer`
+strips styling, so placeholder text vanishes. Empty output means an empty box —
+a whitespace-only reading (prompt padding) counts as empty, the same rule
+delivery uses. Fails loudly when no input box is on screen or the profile
+declares no `profile_input`.
+
 ## Discovery and hooks
 
 ### `gang profiles`
