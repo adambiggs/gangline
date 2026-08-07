@@ -193,9 +193,19 @@ read one after another, so a decay could otherwise describe a state no instant
 held; the pty clock and the screen are read before the first tier and after the
 last, and a decay assembled while either moved is refused. That pair is also
 what lets the snapshot reader decay at all, being immediate where a stability
-check costs a churn wait. It widens no guard: inside its bound the bracket still outranks
-the tiers beneath it, and delivery already reached a provably empty box through
-the indeterminate fall-through.
+check costs a churn wait. It widens no guard: inside its bound the bracket still
+outranks the tiers beneath it, and delivery already reached a provably empty box
+through the indeterminate fall-through.
+
+Movement seen during a decision is not indeterminacy, and delivery must not
+consume it as such. Every other road to could-not-determine is an absence — a
+witness too old, a tier that never answered — and the fall-through exists
+precisely so an absence cannot veto what a fresh reading proves safe. A pane
+observed being written to is presence: a harness paints the opening of a turn
+with its composer still empty, so an empty box read out of a moving screen is
+one frame of something in motion rather than a settled reading, and typing into
+it lands in work that began while gang was deciding. That verdict carries its
+reason so delivery can refuse on it alone.
 
 ## A refusal names what was read, not just that it refused
 

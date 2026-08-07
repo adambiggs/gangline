@@ -1964,7 +1964,7 @@ SH
 tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400 ))"
 : > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
 equal "a pane that moves while gang is deciding refuses the decay" \
-  "expired (turn-bracket bound reached)" \
+  "expired (the pane was written to while gang was deciding)" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status moving | head -1)"
 contains "and roster's snapshot refuses it on the same witness" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "expired"
@@ -1998,9 +1998,41 @@ chmod +x "$RUN_ROOT/bin-seam/tmux"
 "$GANG" hitch seam -p abandoned -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a write between the quiet reading and the witness refuses the decay" \
-  "expired (turn-bracket bound reached)" \
+  "expired (the pane was written to while gang was deciding)" \
   "$(PATH="$RUN_ROOT/bin-seam:$PATH" GANG_ACTIVITY_WINDOW=0 "$GANG" status seam | head -1)"
 "$GANG" drop seam >/dev/null
+
+# The delivery half of the same seam. Refusing the decay leaves
+# could-not-determine, and send's fall-through delivers into a provably empty
+# box on that verdict — correct when the verdict means stale evidence, wrong
+# here, where it means gang WATCHED the screen being written to while it
+# decided. A harness paints the opening of a turn with its composer still
+# empty, so an empty box read out of a moving screen proves nothing and the
+# paste lands in live work. The profile's busy marker is what the shim paints,
+# so this is a turn starting mid-decision and not merely noise.
+cat > "$RUN_ROOT/profiles/seamsend.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_BUSY_REGEX='tick-after-quiet-read'
+GANG_QUIET_AT_REST=1
+SH
+"$GANG" hitch seamsend -p seamsend -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id seamsend)" @gl_turn "open $(( $(date +%s) - 400 ))"
+seamsend_out=""
+if seamsend_out="$(printf 'MARK_LIVE_SEND' | PATH="$RUN_ROOT/bin-seam:$PATH" \
+  GANG_ACTIVITY_WINDOW=0 "$GANG" send --to seamsend --from tester --stdin 2>&1)"; then
+  fail "a turn painted during the decision refuses the delivery" "send succeeded"
+else
+  pass "a turn painted during the decision refuses the delivery"
+fi
+contains "naming the moving screen rather than a stale witness" \
+  "$seamsend_out" "moving screen"
+excludes "and nothing was typed into it" "$(pane seamsend)" "MARK_LIVE_SEND"
+equal "so no paste is left staged there either" "" \
+  "$(tmux show-options -wqv -t "$(window_id seamsend)" @gl_staged)"
+"$GANG" drop seamsend >/dev/null
 
 # A profile that declares no input reader has no box for gang to measure:
 # landing_zone falls back to the whole pane, which is never empty, so the

@@ -224,10 +224,15 @@ once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
 whose input box is on screen and provably empty reads `idle`, because that is
 the same positive evidence idle means everywhere else. A drafted box, a frozen
 busy marker, or a pty whose quietness cannot be measured keeps it `expired`, and
-an unreadable or future-stamped bracket is unknown rather than abandoned. This
-narrows no delivery guard: within its bound the bracket still outranks the tiers
-beneath it, and a provably empty box already accepted delivery while the state
-read `expired`.
+an unreadable or future-stamped bracket is unknown rather than abandoned. Within
+its bound the bracket still outranks the tiers beneath it, and a provably empty
+box already accepted delivery while the state read `expired`.
+
+A decay refused because the pane was being written to during the decision reads
+`expired (the pane was written to while gang was deciding)`, and that reason
+refuses delivery rather than falling through to the empty-box check. A harness
+can paint the opening of a turn with its composer still empty, so an empty box
+read out of a moving screen does not witness an idle target.
 
 An undelivered-input report is followed by a `box:` line classifying what is in
 that box now, in the same vocabulary a refusal uses. The record says what

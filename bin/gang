@@ -548,6 +548,17 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
 
 BUSY_EXPIRED_WHAT="pty activity bound reached"
 
+# Set when a decay was refused because the pane was being written to during the
+# decision, and read by delivery, which may not spend that as ordinary
+# could-not-determine.
+BUSY_MOVED=0
+
+decay_moved_note() {
+  [ "$DECAY_MOVED" -eq 1 ] || return 0
+  BUSY_MOVED=1
+  BUSY_EXPIRED_WHAT="the pane was written to while gang was deciding"
+}
+
 composer_ready() { # $1 = window id; the harness's own box is on screen and empty
   composer_live "$1" && input_clear "$1"
 }
@@ -567,14 +578,25 @@ decay_witness() { # $1 = window id
   printf '%s %s' "$(activity_stamp "$1")" "$(capture_joined "$1" | cksum)"
 }
 
+DECAY_MOVED=0
+
 decay_allowed() { # $1 = window id, $2 = the witness pair taken before the tier reads
+  DECAY_MOVED=0
   [ -n "$ACTIVITY_AT" ] || return 1   # the quiet was abstained, not measured
-  [ "$(decay_witness "$1")" = "$2" ]
+  [ "$(decay_witness "$1")" = "$2" ] && return 0
+  # WHY this one failed has to survive. Every other road to
+  # could-not-determine is an absence — a witness too old, a tier that never
+  # answered — and absence is what the delivery fall-through exists to see
+  # past. This is the opposite: gang watched the pane being written to while it
+  # was deciding. That is presence, and nothing may spend it as absence.
+  DECAY_MOVED=1
+  return 1
 }
 
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   local turn_rc=0 undetermined=0 stale_turn=0
   BUSY_EXPIRED_WHAT="pty activity bound reached"
+  BUSY_MOVED=0
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
     0) activity_hold_clear "$1"; return 0 ;;
@@ -636,15 +658,17 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # harness's own input box on screen and provably empty, and — the leg every
   # path gets, including the snapshot that cannot afford the churn wait —
   # nothing having moved on the pty or the screen across the whole decision. A
-  # working-but-quiet harness fails at least one, and none of this widens
-  # delivery: send already reaches a provably empty box through the
-  # could-not-determine fall-through.
+  # working-but-quiet harness fails at least one. A decay refused because the
+  # pane MOVED is reported as its own thing, because delivery has to treat it
+  # as its own thing: see BUSY_MOVED.
   case "${2:-}" in
     snapshot)
       if composer_live "$1"; then
         if [ "$undetermined" -eq 1 ]; then
-          [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
-            && input_clear "$1" && decay_allowed "$1" "$moved" && return 1
+          if [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] && input_clear "$1"; then
+            decay_allowed "$1" "$moved" && return 1
+            decay_moved_note
+          fi
           return 2
         fi
         return 1
@@ -654,8 +678,10 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   esac
   if pane_stable "$1"; then
     if [ "$undetermined" -eq 1 ]; then
-      [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
-        && composer_ready "$1" && decay_allowed "$1" "$moved" && return 1
+      if [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] && composer_ready "$1"; then
+        decay_allowed "$1" "$moved" && return 1
+        decay_moved_note
+      fi
       return 2
     fi
     return 1
@@ -1740,6 +1766,16 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
        # BOTH the expired witness and the box state instead of claiming
        # mid-turn work nobody witnessed.
        if [ "${GANG_MIDTURN_INPUT:-}" != 1 ]; then
+         # NOT every could-not-determine is an absence. The fall-through below
+         # exists because stale evidence must not veto what a fresh reading can
+         # prove safe — but when the verdict is could-not-determine BECAUSE
+         # gang watched the pane being written to during the decision, the box
+         # is not a settled reading of a quiet screen. It is one frame of a
+         # screen in motion, and a harness can paint a whole turn's first
+         # moments with its composer still empty. Typing there is typing into
+         # work that started while gang was making up its mind.
+         [ "$BUSY_MOVED" -eq 0 ] \
+           || refuse "'$1' has no usable busy witness ($BUSY_EXPIRED_WHAT) — an empty input box read out of a moving screen does not prove no turn is running, and gang will not type into one; wait for it to settle, or inspect it with gang capture $1"
          # An unreadable box is normally refused upstream by the occupancy
          # guard; this read is the backstop for one that vanishes between
          # those two looks.
