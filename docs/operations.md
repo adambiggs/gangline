@@ -93,6 +93,23 @@ Spools die with their window, so `gang drop` and `gang down` remove them.
 Harnesses whose native Stop event does not reach Gangline refuse `--spool`
 outright — nothing would drain the message.
 
+## Working in the shared checkout
+
+Teammates hitched to the same directory share one working tree. Two habits
+keep that safe:
+
+**Commit as you go, atomically.** One logical change per commit, split by
+default — never a pile at the end of an arc. A window can end at any moment
+(teardown, compaction, a crash), and work that reached a commit survives it;
+work in your head or your uncommitted tree may not. When a change is coherent,
+land it.
+
+**Stage by explicit path, never by sweep.** `git add -A`, `git add .`, and
+`git commit -a` stage whatever the tree holds — including a teammate's
+half-finished work sitting beside yours. Name every file you stage. A path you
+did not touch showing up in `git status` is someone else's arc in flight:
+leave it alone.
+
 ## Compaction
 
 The startup contract tells every agent to use native compaction at natural
@@ -130,6 +147,12 @@ hook messages, not patrols or automatic actions.
 
 If an enabled source fails, the affected agent receives one unavailable notice.
 Disabled lights perform no context read and add no prompt or roster noise.
+
+Claude Code reads its hook configuration once, at process startup, and
+re-executes the statusline script from disk on every repaint. A change on the
+statusline side therefore reaches running harnesses at the next repaint, while
+a change to hook wiring reaches only processes started after it — re-hitch to
+pick it up.
 
 ## Optional team cutoff
 
