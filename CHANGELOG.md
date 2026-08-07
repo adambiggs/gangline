@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.6.0](https://github.com/adambiggs/gangline/compare/gangline-v0.5.0...gangline-v0.6.0) (2026-08-07)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cli:** gang wait is removed. End the native turn and let peer messages restart it, or inspect once with gang status or gang capture.
+
+### Features
+
+* **composer:** read the input box through the profile's styled reading ([169290b](https://github.com/adambiggs/gangline/commit/169290b22cc2b17316c4d3023fcdc74872ccadd6))
+* **delivery:** a box-not-empty refusal names what gang read ([8fce815](https://github.com/adambiggs/gangline/commit/8fce8156f0f328d7b09646ddbfbdd986b5ef0567))
+* **flush:** recover a parked queue as a verified operation ([e2c84dd](https://github.com/adambiggs/gangline/commit/e2c84dd278ee9d2b276a57ea8507da8bd30a0cc9))
+* **hitch:** continue through first-run prompts ([ce5c0db](https://github.com/adambiggs/gangline/commit/ce5c0dbae0453fe176316ebb7c0a8df659fbce2b))
+* **hitch:** launch an agent at the reasoning effort its profile spells ([3b83e48](https://github.com/adambiggs/gangline/commit/3b83e48a861abbfa9b72cc568a14f05906676353))
+* **interrupt:** send the profile's stop key and close the turn it ended ([7e70282](https://github.com/adambiggs/gangline/commit/7e70282d65f21e162d5a39d34e2a4ececbc85c27))
+* **profiles:** declare native reasoning effort for claude-code and codex ([cf28842](https://github.com/adambiggs/gangline/commit/cf288421490ef49b10fe968738b572781579d695))
+* **send:** --spool parks a refused delivery for the target's own Stop to drain ([62f9c7f](https://github.com/adambiggs/gangline/commit/62f9c7f53eaf2f7b7371fa6062811cfd981ec9d6))
+* **status:** witness executable binary skew ([d00d135](https://github.com/adambiggs/gangline/commit/d00d1358a6dedcdeef6625f6d0ccaa2101f9b6ca))
+
+
+### Bug Fixes
+
+* **busy:** a decay must witness that nothing moved while it decided ([cf74e73](https://github.com/adambiggs/gangline/commit/cf74e7357e06aa4505dac012bace582c9d4e8dac))
+* **busy:** an abandoned turn decays to idle instead of standing expired ([abce280](https://github.com/adambiggs/gangline/commit/abce2802be5d147d148b679f5e3b644c039457b5))
+* **busy:** frozen busy paint over an expired bracket is not a live turn ([571fd61](https://github.com/adambiggs/gangline/commit/571fd61d4541f2f96b828e5015f5e388abea98dd))
+* **busy:** readers never write the turn bracket; churn control senses its leg ([cbd6d2c](https://github.com/adambiggs/gangline/commit/cbd6d2c8866947b948812c4fb8e85dfbda1677d1))
+* **busy:** the quiet reading belongs inside the interval that guards it ([a959dd6](https://github.com/adambiggs/gangline/commit/a959dd6d98206bb523b1729102bb9d5e2f4fe29c))
+* **claude-code:** refuse queued mid-turn sends ([5300b08](https://github.com/adambiggs/gangline/commit/5300b089fc6227d40cf5e61a8a64080539045555))
+* **claude-code:** refuse stranded mid-turn sends ([cc8a9a1](https://github.com/adambiggs/gangline/commit/cc8a9a18f60b24f599eed04c44bf19e17697ae3b))
+* **context:** keep native warm-up silent ([0425608](https://github.com/adambiggs/gangline/commit/04256086ce801aaf6d260e168da44eb42bbce6cd))
+* **delivery:** a box gang cannot match is unattributed, not a human draft ([ec20540](https://github.com/adambiggs/gangline/commit/ec20540755b92418a31fdd2e73f974e958c7a913))
+* **delivery:** a box that emptied is not a box that cannot be read ([e324b13](https://github.com/adambiggs/gangline/commit/e324b13f8719e7e0b2fe2de6c6746a086b121feb))
+* **flush:** compare the recalled body byte for byte, normalizing nothing ([44c538a](https://github.com/adambiggs/gangline/commit/44c538a93456bdfd41e2a82d34da4d9951838b39))
+* **hitch:** keep new agents idle ([65ec90a](https://github.com/adambiggs/gangline/commit/65ec90a8121b1d1e21af41730c240c583987705d))
+* **hitch:** refuse an effort checker that fails, whatever it printed ([042ffe0](https://github.com/adambiggs/gangline/commit/042ffe0751d0508e60283387cd0facbd63549d9d))
+* **profiles:** claude-code declares its parked-queue evidence ([5452a72](https://github.com/adambiggs/gangline/commit/5452a723d493c84cc8dff415c2b8bab2a8a51015))
+* **profiles:** effort discovery honors producer status, strict list shape, bounded time ([10e58a4](https://github.com/adambiggs/gangline/commit/10e58a49fd7e96c7f45b4796ee586d7d647164eb))
+* **roster:** propagate observation failures ([de07f8c](https://github.com/adambiggs/gangline/commit/de07f8cfbc43fe8f1aed608420d17274abb5c22b))
+* **roster:** require a visible idle composer ([b2112c6](https://github.com/adambiggs/gangline/commit/b2112c6f7cdf0c41fa58590a23db95804e9dd4fa))
+* **send:** a submission the harness parks in its queue is not a delivery ([b0bda8b](https://github.com/adambiggs/gangline/commit/b0bda8bdaef35ce0b53043d0e21c483351954793))
+* **send:** a verified delivery retires the prior staged record ([6f39b75](https://github.com/adambiggs/gangline/commit/6f39b7585e9d6f32ad148f40fcee202155065504))
+* **send:** an expired busy witness does not veto a provably empty box ([55c175e](https://github.com/adambiggs/gangline/commit/55c175ea1d12dd2e6d71b9159320db5e834139aa))
+* **send:** an unreadable queue-evidence reread fails closed ([7cbc14c](https://github.com/adambiggs/gangline/commit/7cbc14cdbc8edc286c2adf5ac4417361cd41a45c))
+* **send:** close the round-1 review findings on spool, flush and interrupt ([7819590](https://github.com/adambiggs/gangline/commit/7819590fa31dac106e91e0b09faadd3b6f18e10c))
+* **send:** delivery never writes turn state; busy worlds exercise the pty leg ([fff3e06](https://github.com/adambiggs/gangline/commit/fff3e0673fcd49e0b26690bf35326c7266e7302d))
+* **send:** name the hard-stuck queue escalation in parked-input guidance ([051a26d](https://github.com/adambiggs/gangline/commit/051a26d1557f801ee4a99948f5f79bdf422337f5))
+* **send:** observed movement is not the absence the fall-through is for ([5661aae](https://github.com/adambiggs/gangline/commit/5661aaee34f5f9667d953a28a30613f1535285de))
+* **status:** a staged record the empty box refutes is not reported ([0475037](https://github.com/adambiggs/gangline/commit/047503742ca79a402ab334a38c2f5795cf24a265))
+* **status:** name the directory a held message is readable in ([9ffddd9](https://github.com/adambiggs/gangline/commit/9ffddd93670805fe3c78fd521843294e9f96bf35))
+* **status:** report undelivered input for what is known, guard clearing semantics ([09697b3](https://github.com/adambiggs/gangline/commit/09697b3246ef4b849b5b3eb01cd990fc4237065c))
+
+
+### Performance Improvements
+
+* **codex:** read newest context record first ([0bc14a8](https://github.com/adambiggs/gangline/commit/0bc14a844230fd61ceb060ca5315a39ba83b38b9))
+* **roster:** remove pane churn sampling ([5569bff](https://github.com/adambiggs/gangline/commit/5569bff77eaa55cb82c6457e37a4a3e979c2afe4))
+
+
+### Reverts
+
+* restore Claude mid-turn sends ([5814651](https://github.com/adambiggs/gangline/commit/58146519b50141251b063a3ba821a663d94b94b0))
+
+
+### Code Refactoring
+
+* **cli:** remove agent polling wait ([ae9ba17](https://github.com/adambiggs/gangline/commit/ae9ba17cf19db9e58c379161df44a2e388e3e3b9))
+
 ## [0.5.0](https://github.com/adambiggs/gangline/compare/gangline-v0.4.0...gangline-v0.5.0) (2026-08-05)
 
 
