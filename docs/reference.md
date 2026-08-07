@@ -16,6 +16,14 @@ The launch environment carries the exact `GANG_SESSION` plus any custom profile
 and lock paths, so harness commands cannot drift to another session on the same
 tmux server.
 
+If a first-run prompt owns the screen before the composer appears, `hitch`
+directs the operator to `gang attach` once the profile's occupied pattern
+provides positive pane evidence, then keeps waiting within the original
+`GANG_BOOT_TIMEOUT`. Clearing the prompt lets that same hitch report the
+recovered input box and deliver its startup contract. If the bound expires
+first, the window is left for inspection and the error gives the attach, drop,
+and re-hitch recovery.
+
 - `-p` selects a profile.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the profile's model option.
@@ -44,6 +52,12 @@ automatic-compaction boundary so the lights remain reachable.
 Registers an existing window in `GANG_SESSION`. Adoption does not inject startup
 text or retroactively add launch-time native hooks. A profile whose context
 source requires hitch-time identity may therefore report context unavailable.
+
+Both hitch and adopt stamp `@gl_binary_id` on the window. The identity is
+`cksum:` plus the POSIX checksum and byte size of the invoked `bin/gang`, in a
+checkout or an installed tree alike. It therefore witnesses the executable
+bytes rather than repository metadata. If the checksum cannot be read, the
+stamp is `unavailable`; identity evidence never blocks lifecycle commands.
 
 ### `gang attach`
 
@@ -134,13 +148,18 @@ Prints one current state:
 - `occupied (authority unknown)` — a native UI owns the composer;
 - `expired (...)` — the available evidence can no longer determine the answer.
 
-It also reports staged input and pending or failed self-compaction.
+It also reports staged input, pending or failed self-compaction, and binary skew
+when the window has no hitch/adopt stamp or its executable-byte witness differs
+from the invoked `gang` binary. An unavailable witness is reported explicitly
+instead of treated as either match or mismatch.
 
 ### `gang roster`
 
 Prints every session window with its profile and current state. Unadopted windows
 are shown but not treated as agents. Context usage belongs to each agent and is
-not reported to the lead or operator.
+not reported to the lead or operator. Each row compares the window's binary
+stamp with the invoked `gang` binary and visibly marks skew; the comparison runs
+only for this snapshot.
 
 ### `gang capture <name> [lines]`
 

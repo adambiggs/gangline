@@ -331,14 +331,176 @@ contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
+alpha_id="$(window_id alpha)"
+binary_stamp="$(tmux show-options -wqv -t "$alpha_id" @gl_binary_id)"
+if [[ "$binary_stamp" =~ ^cksum:[0-9]+:[0-9]+$ ]]; then
+  pass "hitch stamps the documented binary identity"
+else
+  fail "hitch stamps the documented binary identity" "got [$binary_stamp]"
+fi
+excludes "status is quiet when the stamped binary is current" \
+  "$("$GANG" status alpha)" "binary-skew"
+excludes "roster is quiet when the stamped binary is current" \
+  "$("$GANG" roster)" "binary-skew"
+tmux set-option -w -t "$alpha_id" @gl_binary_id cksum:1:2
+contains "status warns when the running window has another binary identity" \
+  "$("$GANG" status alpha)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+contains "roster warns when the running window has another binary identity" \
+  "$("$GANG" roster)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+installed_root="$RUN_ROOT/installed"
+mkdir -p "$installed_root/bin"
+cp -R "$ROOT/profiles" "$installed_root/profiles"
+cp "$GANG" "$installed_root/bin/gang"
+installed_gang="$installed_root/bin/gang"
+excludes "byte-identical Gangline copies compare as current" \
+  "$("$installed_gang" status alpha)" "binary-skew"
+printf '\n# fixture changes the executable bytes\n' >> "$installed_gang"
+changed_stamp="$(cksum "$installed_gang" | awk '{ print "cksum:" $1 ":" $2 }')"
+contains "an uncommitted executable change produces binary skew" \
+  "$("$installed_gang" status alpha)" \
+  "binary-skew ($binary_stamp != current $changed_stamp)"
+
+tmux set-option -uw -t "$alpha_id" @gl_binary_id
+contains "status warns when a pre-witness window is unstamped" \
+  "$("$GANG" status alpha)" "binary-skew (window unstamped; current $binary_stamp)"
+contains "roster warns when a pre-witness window is unstamped" \
+  "$("$GANG" roster)" "binary-skew (window unstamped; current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+mkdir -p "$RUN_ROOT/no-identity"
+cat > "$RUN_ROOT/no-identity/git" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/git"
+contains "a broken git command cannot abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" "alpha"
+cat > "$RUN_ROOT/no-identity/cksum" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/cksum"
+unavailable_status="$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" status alpha)"
+contains "an unavailable witness is explicit without aborting status" \
+  "$unavailable_status" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+contains "an unavailable witness does not abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+
+adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n adopted "PS1='❯ ' bash --norc")"
+"$GANG" adopt adopted -p bash >/dev/null
+equal "adopt stamps the current binary identity" "$binary_stamp" \
+  "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
+"$GANG" drop adopted >/dev/null
+
 mkdir -p "$RUN_ROOT/profiles"
+export GANG_PROFILES="$RUN_ROOT/profiles"
+modal_observed="test-boot-modal-observed-$$"
+modal_painted="test-boot-modal-painted-$$"
+modal_clear="test-boot-modal-clear-$$"
+modal_probe_release="test-boot-modal-probe-release-$$"
+cat > "$RUN_ROOT/profiles/boot-modal.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'printf \"FIRST_RUN_MODAL\\n\"; tmux wait-for -S \"$modal_painted\"; tmux wait-for \"$modal_clear\"; PS1=\"❯ \" exec bash --norc' fixture"
+GANG_OCCUPIED_REGEX='FIRST_RUN_MODAL'
+_gl_modal_real="\$(declare -f profile_input)"
+eval "modal_real_input \${_gl_modal_real#profile_input}"
+profile_input() {
+  if [ -e "$RUN_ROOT/boot-modal-blocked" ]; then
+    if [ -e "$RUN_ROOT/boot-modal-seen" ]; then
+      tmux wait-for -S "$modal_observed"
+      tmux wait-for "$modal_probe_release"
+    else
+      tmux wait-for "$modal_painted"
+      : > "$RUN_ROOT/boot-modal-seen"
+    fi
+    return 1
+  fi
+  modal_real_input "\$1"
+}
+SH
+touch "$RUN_ROOT/boot-modal-blocked"
+modal_output="$RUN_ROOT/boot-modal.out"
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch boot-modal -p boot-modal -d /tmp \
+  >"$modal_output" 2>&1 &
+modal_hitch_pid=$!
+tmux wait-for "$modal_observed"
+contains "hitch reports a first-run modal before it is cleared" \
+  "$(<"$modal_output")" "answer it with 'gang attach'"
+rm -f -- "$RUN_ROOT/boot-modal-blocked"
+tmux wait-for -S "$modal_clear"
+tmux wait-for -S "$modal_probe_release"
+if wait "$modal_hitch_pid"; then
+  pass "the same hitch completes after the operator clears the modal"
+else
+  fail "the same hitch completes after the operator clears the modal" \
+    "$(<"$modal_output")"
+fi
+contains "the resumed hitch delivers its startup contract" \
+  "$(pane boot-modal)" "You are boot-modal in Gangline"
+contains "the resumed hitch reports verified startup delivery" \
+  "$(<"$modal_output")" "delivered startup contract to boot-modal"
+contains "the resumed hitch retracts the first-run warning" \
+  "$(<"$modal_output")" "now has an input box; hitch is continuing"
+"$GANG" drop boot-modal >/dev/null
+
+late_observed="test-late-composer-observed-$$"
+late_launch="test-late-composer-launch-$$"
+late_probe_release="test-late-composer-probe-release-$$"
+cat > "$RUN_ROOT/profiles/late-composer.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'tmux wait-for \"$late_launch\"; PS1=\"❯ \" exec bash --norc' fixture"
+_gl_late_real="\$(declare -f profile_input)"
+eval "late_real_input \${_gl_late_real#profile_input}"
+profile_input() {
+  if [ -e "$RUN_ROOT/late-composer-blocked" ]; then
+    if [ -e "$RUN_ROOT/late-composer-seen" ]; then
+      tmux wait-for -S "$late_observed"
+      tmux wait-for "$late_probe_release"
+    else
+      : > "$RUN_ROOT/late-composer-seen"
+    fi
+    return 1
+  fi
+  late_real_input "\$1"
+}
+SH
+touch "$RUN_ROOT/late-composer-blocked"
+late_output="$RUN_ROOT/late-composer.out"
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch late-composer -p late-composer -d /tmp \
+  >"$late_output" 2>&1 &
+late_hitch_pid=$!
+tmux wait-for "$late_observed"
+excludes "a blank slow boot is not reported as a first-run modal" \
+  "$(<"$late_output")" "answer it with 'gang attach'"
+rm -f -- "$RUN_ROOT/late-composer-blocked"
+tmux wait-for -S "$late_launch"
+tmux wait-for -S "$late_probe_release"
+if wait "$late_hitch_pid"; then
+  pass "a delayed composer completes its original hitch"
+else
+  fail "a delayed composer completes its original hitch" "$(<"$late_output")"
+fi
+excludes "a completed delayed composer leaves no first-run warning" \
+  "$(<"$late_output")" "answer it with 'gang attach'"
+"$GANG" drop late-composer >/dev/null
+
 cat > "$RUN_ROOT/profiles/broken-observer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
 GANG_BUSY_REGEX='['
 SH
-export GANG_PROFILES="$RUN_ROOT/profiles"
 "$GANG" hitch broken-observer -p broken-observer -d /tmp >/dev/null
 if broken_roster="$("$GANG" roster 2>&1)"; then
   fail "roster fails when an agent row cannot be observed" "roster exited successfully"

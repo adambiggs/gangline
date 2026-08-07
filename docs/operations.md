@@ -20,6 +20,12 @@ and repository trust prompts. Gangline never answers permission dialogs. An
 occupied dialog appears as `occupied (authority unknown)` and blocks input until
 the operator resolves it in `gang attach`.
 
+During hitch, a first-run prompt is reported as soon as Gangline has positive
+pane evidence rather than a merely blank startup screen. Leave hitch running,
+use `gang attach` to answer the native prompt, and the same hitch will report
+when the input box appears and deliver the startup contract if that happens
+before `GANG_BOOT_TIMEOUT` expires.
+
 Native sandboxes must be able to reach the tmux server and the `gang` executable.
 For Codex, this commonly means the tmux socket and Gangline checkout need to be
 inside paths its sandbox permits. Fix that in the operator's Codex configuration;
@@ -117,6 +123,13 @@ expired, or contradictory evidence produces an explicit indeterminate state.
 `busy` means Gangline has positive evidence of work. `idle` means it has positive
 evidence the composer is ready. `occupied` means a native UI owns the composer.
 `expired` means the available evidence can no longer answer truthfully.
+
+`binary-skew` means the window was hitched or adopted from different `bin/gang`
+bytes than the observation command. Finish or checkpoint work using the agent's
+existing context, then drop and re-hitch it with the intended binary; changing a
+live checkout does not retrofit hooks or profiles already loaded into a running
+window. `binary-identity unavailable` means the snapshot could not checksum one
+side; repair the invoked Gangline installation before using the witness.
 
 Profiles contain the only harness-specific regexes and parsers. A native TUI
 update can invalidate them. The intended repair loop is direct: reproduce the
