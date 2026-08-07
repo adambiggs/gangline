@@ -11,8 +11,17 @@ cd "$(git rev-parse --show-toplevel)"
 
 zero=0000000000000000000000000000000000000000
 fail=0
+n_ref=0
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+cleanup() {
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+    local w
+    for w in "$tmp"/tree-*; do
+      [ -d "$w" ] && git worktree remove --force "$w" 2>/dev/null
+    done ) || true
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
 
 while read -r _local_ref local_sha _remote_ref remote_sha; do
   [ "$local_sha" != "$zero" ] || continue   # deleting a ref pushes no commits
@@ -21,15 +30,22 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
   # different trees whenever anything is uncommitted, and linting the wrong one
   # gives both false answers: a red hook over work-in-progress nobody is
   # sending, or a green one over a commit nobody read.
-  work="$tmp/tree"
-  rm -rf "$work"; mkdir -p "$work"
-  git archive "$local_sha" | tar -x -C "$work"
+  n_ref=$((n_ref + 1))
+  work="$tmp/tree-$n_ref"
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+    git worktree add --detach --quiet "$work" "$local_sha" ) || {
+    echo "pre-push: cannot check out $local_sha into a worktree, so nothing was linted" >&2
+    fail=1; continue
+  }
   if [ -x "$work/test/lint.sh" ]; then
-    (cd "$work" && ./test/lint.sh && ./test/integration.sh) || fail=1
+    ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+      cd "$work" && ./test/lint.sh && ./test/integration.sh ) || fail=1
   else
     echo "pre-push: $local_sha carries no test/lint.sh, so nothing was linted" >&2
     fail=1
   fi
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+    git worktree remove --force "$work" ) 2>/dev/null || true
 
   # The same conventional-commits gate CI runs over the same range. commit-msg
   # guards the message you type; it does not see an amend, a rebase, or a commit

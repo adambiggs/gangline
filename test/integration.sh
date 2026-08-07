@@ -2977,6 +2977,65 @@ equal "an unavailable context source reports once per failure epoch" \
 excludes "status does not inspect another agent's context" \
   "$("$GANG" status lit)" "context"
 
+# The pre-push gate must run git-aware lint from the pushed tree even when Git
+# gives the hook a GIT_DIR pointing at the main repository. A staged-only file
+# makes a leaked main index distinguishable from the detached worktree's index.
+hook_repo="$RUN_ROOT/pre-push-repo"
+hook_probe="$RUN_ROOT/pre-push-probe"
+mkdir -p "$hook_repo/.githooks" "$hook_repo/tools" "$hook_repo/test" "$hook_probe"
+cp "$ROOT/.githooks/pre-push" "$ROOT/.githooks/commit-msg" \
+  "$hook_repo/.githooks/"
+cp "$ROOT/tools/pii-scan" "$hook_repo/tools/"
+chmod +x "$hook_repo/.githooks/pre-push" "$hook_repo/.githooks/commit-msg" \
+  "$hook_repo/tools/pii-scan"
+cat > "$hook_repo/test/lint.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+: "${PROBE_DIR:?}"
+git ls-files >/dev/null
+git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"
+git ls-files main-index-only > "$PROBE_DIR/index"
+SH
+cat > "$hook_repo/test/integration.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 0
+SH
+chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh"
+git -C "$hook_repo" init -q
+git -C "$hook_repo" config user.name 'Gangline Test'
+git -C "$hook_repo" config user.email 'gangline-test@example.invalid'
+git -C "$hook_repo" add .
+git -C "$hook_repo" commit -q -m 'test: seed hook worktree'
+hook_sha="$(git -C "$hook_repo" rev-parse HEAD)"
+touch "$hook_repo/main-index-only"
+git -C "$hook_repo" add main-index-only
+hook_zero=0000000000000000000000000000000000000000
+if hook_out="$({
+  cd "$hook_repo"
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
+    env GIT_DIR="$hook_repo/.git" PROBE_DIR="$hook_probe" \
+      ./.githooks/pre-push
+} 2>&1)"; then
+  pass "pre-push lints the pushed commit under Git's hook environment"
+else
+  fail "pre-push lints the pushed commit under Git's hook environment" "$hook_out"
+fi
+hook_gitdir="$(<"$hook_probe/gitdir")"
+case "$hook_gitdir" in
+  "$hook_repo/.git/worktrees/"*)
+    pass "pre-push lint reads a detached-worktree git directory" ;;
+  *) fail "pre-push lint reads a detached-worktree git directory" "$hook_gitdir" ;;
+esac
+if [ "$hook_gitdir" != "$hook_repo/.git" ]; then
+  pass "pre-push lint does not read the main repository git directory"
+else
+  fail "pre-push lint does not read the main repository git directory" "$hook_gitdir"
+fi
+equal "pre-push lint does not read the main repository index" \
+  "" "$(<"$hook_probe/index")"
+
 "$GANG" down >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
   fail "down removes the exact test session" "session still exists"
