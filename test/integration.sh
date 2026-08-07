@@ -1821,6 +1821,48 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
   "$(tmux show-options -wqv -t "$(window_id abandoned)" @gl_turn)"
 "$GANG" drop abandoned >/dev/null
 
+# The quiet leg must be measured, and a profile that does not declare
+# quiet-at-rest measures nothing: its harness writes to the pty constantly at
+# rest, so the activity tier reports inactive by abstention rather than by
+# observation. Spending that as the positive evidence a decay requires would
+# decay every abandoned turn on a harness gang cannot hear.
+"$GANG" hitch assumed -p bash -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id assumed)" @gl_turn "open $(( $(date +%s) - 400 ))"
+equal "a profile that never measures the pty cannot witness the quiet a decay needs" \
+  "expired (turn-bracket bound reached)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status assumed | head -1)"
+"$GANG" drop assumed >/dev/null
+
+# Each tier read is a separate moment, and a decay assembled across them can be
+# a state no single instant held: the harness resuming between the quiet
+# reading and the box reading would have its still-open turn discarded on
+# evidence that had already gone stale. This profile writes to its own pty
+# whenever gang reads its box — the harness moving underneath the decision,
+# made deterministic — and the decay must refuse rather than report idle.
+{ printf '. %s\nMOVING_ON=%s\n' "$ROOT/profiles/bash.sh" "$RUN_ROOT/moving.on"; cat <<'SH'
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_QUIET_AT_REST=1
+eval "$(declare -f profile_input | sed '1s/profile_input/moving_read/')"
+profile_input() { # $1 = tmux target; reads the box, then writes below it
+  local out rc=0
+  out="$(moving_read "$1")" || rc=$?
+  [ ! -e "$MOVING_ON" ] \
+    || printf '\ntick\n' > "$(tmux display-message -p -t "$1" '#{pane_tty}')" 2>/dev/null
+  printf '%s' "$out"
+  return $rc
+}
+SH
+} > "$RUN_ROOT/profiles/moving.sh"
+"$GANG" hitch moving -p moving -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400 ))"
+: > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
+equal "a pane that moves while gang is deciding refuses the decay" \
+  "expired (turn-bracket bound reached)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status moving | head -1)"
+contains "and roster's snapshot refuses it on the same witness" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "expired"
+"$GANG" drop moving >/dev/null
+
 # A profile that declares no input reader has no box for gang to measure:
 # landing_zone falls back to the whole pane, which is never empty, so the
 # expired-witness refusal fires on a transcript rather than on a composer.

@@ -159,11 +159,14 @@ stopped by keys typed straight into the pane is one no harness reports and
 `gang interrupt` is the only path that closes explicitly, so its turn bracket
 stays open and only grows older. Once that bracket passes `GANG_TURN_LIMIT`,
 the tiers under the expired event decide: with nothing painting a turn, the pty
-past its quiet window, a stable pane, and the harness's own input box on screen
-and empty, the state is `idle`. Any one of those missing — a draft in the box, a
-frozen busy marker, a pty whose quietness cannot be measured — and the answer
-stays `expired`. A bracket that is unreadable or stamped in the future is
-unknown, not abandoned, and never decays. Within its bound the bracket still
+past its quiet window, a stable pane, the harness's own input box on screen and
+empty, and neither the pty clock nor the screen having moved while Gangline read
+those tiers, the state is `idle`. Any one of those missing — a draft in the box,
+a frozen busy marker, a pty whose quietness cannot be measured, a harness that
+wrote mid-decision — and the answer stays `expired`. A profile that does not
+declare `GANG_QUIET_AT_REST` never decays, because its harness writes at rest
+and its quiet is an abstention rather than an observation. A bracket that is
+unreadable or stamped in the future is unknown, not abandoned, and never decays. Within its bound the bracket still
 outranks every quiet tier beneath it, so a working-but-silent harness keeps its
 `busy` verdict.
 

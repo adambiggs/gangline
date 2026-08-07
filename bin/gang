@@ -412,7 +412,25 @@ activity_hold_clear() { # $1 = window id; end any activity-only busy episode
     || die "cannot clear the activity-only bound on pane $1 — refusing to fabricate its state"
 }
 
+activity_stamp() { # $1 = window id; tmux's own clock of the last write to that pty
+  local stamped
+  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
+    || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
+  case "$stamped" in
+    ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
+  esac
+  printf '%s' "$stamped"
+}
+
+# The stamp the last quiet verdict was actually MEASURED against, or empty when
+# no measurement was taken. A profile that does not declare quiet-at-rest gets
+# verdict 1 from a harness that writes constantly at rest, so that tier is
+# abstaining, not reporting quiet — and nothing may spend an abstention as the
+# positive evidence a decay requires.
+ACTIVITY_AT=""
+
 recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
+  ACTIVITY_AT=""
   if [ "${GANG_QUIET_AT_REST:-}" != 1 ]; then
     activity_hold_clear "$1"
     return 1
@@ -420,14 +438,11 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
   require_whole GANG_ACTIVITY_LIMIT "$GANG_ACTIVITY_LIMIT" seconds
   local stamped now since
-  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" \
-    || die "cannot read pty activity for pane $1 — refusing to consume unknown as inactive"
-  case "$stamped" in
-    ''|*[!0-9]*) die "tmux returned an unreadable activity stamp for pane $1: '$stamped'" ;;
-  esac
+  stamped="$(activity_stamp "$1")"
   now="$(date +%s)"
   [ "$stamped" -le "$now" ] \
     || die "tmux returned a future activity stamp for pane $1: $stamped > $now"
+  ACTIVITY_AT="$stamped"
   if [ $(( now - stamped )) -ge "$GANG_ACTIVITY_WINDOW" ]; then
     activity_hold_clear "$1"
     return 1
@@ -537,6 +552,26 @@ composer_ready() { # $1 = window id; the harness's own box is on screen and empt
   composer_live "$1" && input_clear "$1"
 }
 
+# A decay reads several tiers one after another, and each read is a separate
+# moment. Between them the harness may write — a turn that was merely quiet
+# resuming — and the decay would then be assembled out of readings no single
+# instant ever held, discarding a still-open native turn witness on the
+# strength of it. Both witnesses here are immediate: tmux's own clock of the
+# last write to that pty, and the bytes on screen. Taken before the tier reads
+# and again after the last one, an unchanged pair is the positive evidence that
+# nothing moved while gang was deciding. The clock's resolution is whole
+# seconds, so the screen carries the sub-second half; the pty stamp a quiet
+# verdict rests on is at least `GANG_ACTIVITY_WINDOW` old, which is why a write
+# during the decision moves it at all.
+decay_witness() { # $1 = window id
+  printf '%s %s' "$(activity_stamp "$1")" "$(capture_joined "$1" | cksum)"
+}
+
+decay_allowed() { # $1 = window id, $2 = the witness pair taken before the tier reads
+  [ -n "$ACTIVITY_AT" ] || return 1   # the quiet was abstained, not measured
+  [ "$(decay_witness "$1")" = "$2" ]
+}
+
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   local turn_rc=0 undetermined=0 stale_turn=0
   BUSY_EXPIRED_WHAT="pty activity bound reached"
@@ -570,7 +605,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     activity_hold_clear "$1"
     return 0
   fi
-  local activity_rc=0
+  local activity_rc=0 moved=""
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
     0) return 0 ;;
@@ -578,6 +613,9 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
+  # Taken as close to the activity reading as it can be, so the pair spans
+  # every tier read a decay is assembled from.
+  [ "$undetermined" -eq 0 ] || moved="$(decay_witness "$1")"
   # An abandoned turn's bracket is stale owned state, and it is the only thing
   # still claiming a turn. A turn ended by RAW keys in the pane — the operator's
   # own Escape, which no harness reports and `gang interrupt` is the only path
@@ -589,16 +627,19 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # or future-stamped one is unknown, not abandoned), nothing painting a turn,
   # the pty past its quiet window
   # (measured, never assumed: only verdict 1 counts, an unknown one does not),
-  # a byte-stable pane where the snapshot can afford to look, and the harness's
-  # own input box on screen and provably empty. A working-but-quiet harness
-  # fails at least one, and none of this widens delivery: send already reaches a
-  # provably empty box through the could-not-determine fall-through.
+  # a byte-stable pane where the snapshot can afford the churn wait to look, the
+  # harness's own input box on screen and provably empty, and — the leg every
+  # path gets, including the snapshot that cannot afford the churn wait —
+  # nothing having moved on the pty or the screen across the whole decision. A
+  # working-but-quiet harness fails at least one, and none of this widens
+  # delivery: send already reaches a provably empty box through the
+  # could-not-determine fall-through.
   case "${2:-}" in
     snapshot)
       if composer_live "$1"; then
         if [ "$undetermined" -eq 1 ]; then
           [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
-            && input_clear "$1" && return 1
+            && input_clear "$1" && decay_allowed "$1" "$moved" && return 1
           return 2
         fi
         return 1
@@ -609,7 +650,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   if pane_stable "$1"; then
     if [ "$undetermined" -eq 1 ]; then
       [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
-        && composer_ready "$1" && return 1
+        && composer_ready "$1" && decay_allowed "$1" "$moved" && return 1
       return 2
     fi
     return 1

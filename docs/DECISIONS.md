@@ -179,9 +179,15 @@ raw keystroke abandons stays open forever. Once it passes its bound the tiers
 beneath it answer: a quiet pty, a stable pane, and the harness's own input box
 on screen and provably empty are the positive readiness evidence idle is defined
 by, so the state is idle rather than a permanent could-not-determine. Decay
-requires every leg, measured rather than assumed, and applies only to a readable
-open bracket past its bound — an unreadable or future-stamped one is unknown,
-not abandoned. It widens no guard: inside its bound the bracket still outranks
+requires every leg, measured rather than assumed — a profile that does not
+declare quiet-at-rest reports inactive by abstention, and an abstention is not
+a witness — and applies only to a readable open bracket past its bound, since
+an unreadable or future-stamped one is unknown, not abandoned. Those legs are
+read one after another, so a decay could otherwise describe a state no instant
+held; the pty clock and the screen are read before the first tier and after the
+last, and a decay assembled while either moved is refused. That pair is also
+what lets the snapshot reader decay at all, being immediate where a stability
+check costs a churn wait. It widens no guard: inside its bound the bracket still outranks
 the tiers beneath it, and delivery already reached a provably empty box through
 the indeterminate fall-through.
 
