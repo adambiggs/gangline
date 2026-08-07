@@ -55,11 +55,12 @@ session. The one place the states differ is the composer itself, which reads
 as the harness's queue hint; the profile declares that evidence
 (`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
 body quoting the hint can never trip it. Parked input is a failed delivery
-named with its manual recovery, before pasting and after Enter alike, and an
-unreadable verification capture in the queue check is ambiguity that fails
-closed. A hard-stuck variant re-queues even typed input and the Up-loaded body
-while reporting idle, and nothing drains; its recovery — drop and resume,
-re-sending what the queue swallowed — belongs to the operator, never to gang.
+named with the recovery `gang flush` performs, before pasting and after Enter
+alike, and an unreadable verification capture in the queue check is ambiguity
+that fails closed. A hard-stuck variant re-queues even typed input and the
+recalled body while reporting idle, and nothing drains; its recovery — drop and
+resume, re-sending what the queue swallowed — belongs to the operator, never to
+gang.
 
 The contract is scoped to verified harness renderings: the pin is the
 composer hint observed on claude-code 2.1.223, an unobserved version narrows
@@ -67,6 +68,40 @@ the guarantee back to box-change verification rather than refusing sends, and
 no session-record machinery is built unless a reworded hint supplies the
 evidence to reopen that choice. A cleared staged record is evidence the
 obstruction is gone, never retroactive proof the recorded body was delivered.
+
+## A refused delivery may be spooled, a failed one may not
+
+A refusal happens before any keystroke, so the body is still the sender's and
+parking it loses nothing; a failure after a paste has an unknown fate, and a
+second copy of a message that may have landed is worse than one loud failure.
+Spooling is opt-in per send, drains only on the target's own native Stop event,
+and delivers through the ordinary verified path — no poller, scheduler, or
+watcher, and a profile whose harness announces no turn boundary refuses the flag
+rather than holding a message nothing would drain. An unverifiable drain
+quarantines its entry and reports; it never re-sends. Supersession is the
+sender's explicit flag and reaches only that sender's own earlier messages.
+Entries are keyed to a token in the target's window options and die with the
+window.
+
+## A parked queue is recovered, not narrated
+
+Gangline already owns every piece of evidence the manual recovery uses, so it
+performs the recovery instead of printing the keystrokes. The profile declares
+the key that loads the parked body, the record written when Gangline watched the
+harness park it says which body must come back, and the loaded composer is read
+back against that record before any Enter. Missing evidence, a key that loads
+nothing, and a readback that does not match are all refusals with nothing
+pressed. The post-Enter proof is one shared implementation, because two copies
+of it would drift and the drifted one would report a submission nobody saw.
+
+## An interrupt is a profile keystroke and a fact Gangline owns
+
+The key that stops a turn is harness knowledge, declared per profile; an
+undeclared profile refuses. Gangline closes the turn fact it opened, because a
+turn stopped by a keystroke is one the harness will never close, and the
+abandoned bracket would answer busy until its bound expired. The command claims
+the keystroke and the fact, never that the harness stopped. Occupancy refuses
+the command: that key is often what a native dialog reads as an answer.
 
 ## Occupancy is not authority
 

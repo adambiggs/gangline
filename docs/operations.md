@@ -54,6 +54,35 @@ A failure after a paste may leave staged text in the composer. `gang status` and
 safe delivery clears only a staged rendering that still exactly matches what
 Gangline recorded.
 
+## Spooling a message a busy target refused
+
+Add `--spool` when the message should wait for the target rather than come back
+to the sender:
+
+```sh
+gang send --to worker --spool --stdin <<'TASK'
+When you surface, the parser fix needs a second reviewer.
+TASK
+```
+
+The live delivery is tried first. If it is refused, the message is parked and
+reported as parked; the target's own native turn boundary drains it through the
+same verified path. Add `--supersede` when the newer message should replace the
+sender's earlier waiting ones.
+
+Do not write a retry loop around `gang send`. Spooling exists so that loop does
+not have to, and a loop that re-sends after a failure — as opposed to a refusal
+— can deliver a message twice.
+
+`gang status` and `gang roster` report how many messages are waiting for a
+target and whether a drain failed to verify. A drain that could not be verified
+keeps its message on disk under `GANG_LOCK_DIR` and never re-sends it; read it
+there and decide. Spools die with their window, so `gang drop` and `gang down`
+remove them.
+
+Harnesses whose native Stop event does not reach Gangline refuse `--spool`
+outright — nothing would drain the message.
+
 ## Compaction
 
 The startup contract tells every agent to use native compaction at natural
@@ -145,6 +174,34 @@ server and stand-in profile; they do not spend real harness turns.
 
 Run `gang attach`, answer it in the native TUI, then re-run `gang status`. Do not
 send prose into a dialog and do not teach Gangline to answer it.
+
+### The harness parked a message in its own input queue
+
+Delivery reports this instead of claiming success. Recover it:
+
+```sh
+gang flush worker
+```
+
+Gangline presses the profile's recall key, reads the loaded composer back
+against the message it recorded as parked, and submits it only if they match.
+It refuses when the composer no longer shows queue evidence, when it holds no
+record of the parked body, or when the readback does not match — without
+pressing Enter. If the flush reports that the harness parked the message again,
+the queue is hard-stuck: `gang drop` that agent, hitch it with `--resume`, and
+re-send what the queue swallowed.
+
+### A turn has to be stopped
+
+```sh
+gang interrupt worker
+```
+
+This sends the profile's declared turn-stop keystroke and closes Gangline's turn
+fact so the stopped turn does not keep reading as busy. Whether the harness
+stops is still the harness's decision — check with `gang status` and
+`gang capture`. Gangline refuses to interrupt an occupied composer, because that
+keystroke is often what a native dialog reads as an answer.
 
 ### The tmux server was lost
 
