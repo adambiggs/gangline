@@ -284,10 +284,21 @@ when it is dated evidence without which a decision's rationale would fail.
 
 ## PII prevention is prospective
 
-Use one scanner for repository content at local and CI gates, and scan issue or
-pull-request prose before sending it. Keep operator-specific denylist values
-untracked, prove scanner patterns against fixtures, and treat any history rewrite
-as a separate explicit decision.
+Use the operator's Snubline installation for local push and prose gates. Keep a
+self-contained, extraction-date snapshot of the reviewed scanner in Gangline
+solely for the repository's push and pull-request CI backstop; prove its patterns
+against fixtures. Keep operator-specific denylist values untracked, and treat any
+history rewrite as a separate explicit decision.
+
+## Host-global contribution safety belongs to Snubline
+
+Snubline owns the host-global dispatcher, deterministic PII scanner, installer,
+and their behavioral suite. Gangline remains a consumer: its repository-local
+pre-push hook delegates once to an executable global hook before running its own
+lint and commit gates, so opting into `.githooks` does not shadow the operator's
+machine-wide gate. A recursion sentinel bounds dispatcher re-entry, and an absent
+global hook is a silent no-op. The tracked `tools/pii-scan` is Gangline's frozen
+2026-08-07 extraction snapshot and is invoked by CI, not by local pre-push.
 
 ## Mandatory tests are immediate
 

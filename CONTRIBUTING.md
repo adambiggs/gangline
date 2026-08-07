@@ -95,11 +95,17 @@ When multiple contributors share a checkout:
 
 ## Public content
 
-Commits and pushes pass through the repository PII gate. Issue and pull request
-bodies do not; scan them before publishing:
+The local pre-push hook delegates to the operator's installed Snubline gate;
+Gangline's CI backstop covers pushed repository content independently. Issue and
+pull request bodies reach neither path, so scan them with the installed Snubline
+scanner before publishing:
 
 ```sh
-tools/pii-scan --stdin < body.txt
+scanner="$(git config --global --get snubline.piiScanner)" || {
+  echo "Snubline scanner is not configured" >&2
+  exit 1
+}
+bash "$scanner" --stdin < body.txt
 ```
 
 ## Releases

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# Scans for PII shapes in what this repo sends to public GitHub content:
-# commit messages and patches over a range, or prose piped to --stdin (issue
-# and PR bodies). One scanner, so the pre-push hook, CI, and the manual
-# --stdin gate can never drift into checking different things. Scope is
-# docs/DECISIONS.md, "PII prevention is prospective".
+# Gangline's self-contained CI backstop for PII shapes in commit messages and
+# patches. This is the reviewed extraction-date snapshot from source commit
+# 3a5f27d; operator-side pre-push and prose scanning belong to Snubline.
+# Scope is docs/DECISIONS.md, "PII prevention is prospective".
 #
 # Portable shell + POSIX ERE only: the macOS CI cell is bash 3.2 with BSD
 # grep, so no GNU regex extensions (\d \s \w \b), no PCRE, no bash-4 syntax.
@@ -13,6 +12,8 @@
 # Usage:
 #   pii-scan --stdin              < body.txt
 #   pii-scan --range <git-rev-list-args...>
+#   pii-scan --tag <annotated-tag-object>
+#   pii-scan --contract
 #
 # Every invocation self-tests its own patterns against fixtures before
 # scanning anything real. A pattern that stops matching its fixture — or a
@@ -20,26 +21,56 @@
 # reporting a clean scan that never looked (constitution law 8).
 set -euo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+top="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -z "$top" ] || cd "$top"
 
 DENYLIST=".pii-scan-denylist"
+GLOBAL_DENYLIST="${XDG_CONFIG_HOME:-$HOME/.config}/snubline/pii-scan-denylist"
 
 usage() {
   echo "usage: pii-scan --stdin" >&2
   echo "       pii-scan --range <git-rev-list-args...>" >&2
+  echo "       pii-scan --tag <annotated-tag-object>" >&2
+  echo "       pii-scan --contract" >&2
   exit 2
+}
+
+refuse() {
+  printf 'pii-scan: %s\n' "$1" >&2
+  exit 1
 }
 
 # A checked-in denylist would print the operator-specific strings it exists
 # to protect straight into the public tree it is meant to keep them out of.
 refuse_if_denylist_tracked() {
-  if git ls-files --error-unmatch -- "$DENYLIST" >/dev/null 2>&1; then
-    echo "pii-scan: $DENYLIST is tracked by git — refusing to run. A" \
-         "committed denylist of operator-specific strings would itself be" \
-         "the leak. Untrack it (git rm --cached $DENYLIST) and keep it" \
-         "gitignored." >&2
-    exit 1
-  fi
+  local path
+  for path in "$GLOBAL_DENYLIST" "$DENYLIST"; do
+    if git ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      echo "pii-scan: $path is tracked by git — refusing to run. A" \
+           "committed denylist of operator-specific strings would itself be" \
+           "the leak. Untrack it (git rm --cached $path) and keep it" \
+           "gitignored." >&2
+      exit 1
+    fi
+  done
+}
+
+check_global_denylist_permissions() {
+  [ -e "$GLOBAL_DENYLIST" ] || return 0
+  [ -r "$GLOBAL_DENYLIST" ] || refuse \
+    "$GLOBAL_DENYLIST exists but is not readable — refusing to scan"
+
+  local prc=0 probe
+  probe="$(find "$GLOBAL_DENYLIST" -print 2>/dev/null)" || prc=$?
+  { [ "$prc" -eq 0 ] && [ "$probe" = "$GLOBAL_DENYLIST" ]; } || refuse \
+    "find cannot run correctly here — refusing to scan rather than report a permissions check that never looked"
+
+  local lrc=0 loose
+  loose="$(find "$GLOBAL_DENYLIST" \( -perm -0040 -o -perm -0004 \) -print 2>/dev/null)" || lrc=$?
+  [ "$lrc" -eq 0 ] || refuse \
+    "find failed while checking permissions (status $lrc)"
+  [ -z "$loose" ] || refuse \
+    "$GLOBAL_DENYLIST is readable by group or other; chmod 600 it"
 }
 
 # Resolving on PATH is not the ability to run — test/lint.sh's shellcheck
@@ -141,15 +172,24 @@ class_hits() {
 # non-blank, non-comment line is its own ERE, always flagged, never allowed.
 scan_denylist() {
   local label="$1" content="$2" fail=0
-  [ -r "$DENYLIST" ] || return 0
-  local pat
-  while IFS= read -r pat; do
-    case "$pat" in ''|'#'*) continue ;; esac
-    if printf '%s' "$content" | grep -Eq "$pat" 2>/dev/null; then
-      printf 'pii-scan: %s: [denylist] matched a locally-configured string (value withheld)\n' "$label" >&2
-      fail=1
-    fi
-  done < "$DENYLIST"
+  local path pat line vrc
+  for path in "$GLOBAL_DENYLIST" "$DENYLIST"; do
+    [ -e "$path" ] || continue
+    [ -r "$path" ] || refuse "$path exists but is not readable — refusing to scan"
+    line=0
+    while IFS= read -r pat || [ -n "$pat" ]; do
+      line=$((line + 1))
+      case "$pat" in ''|'#'*) continue ;; esac
+      vrc=0
+      printf '' | grep -Eq "$pat" 2>/dev/null || vrc=$?
+      [ "$vrc" -le 1 ] || refuse \
+        "$path:$line is not a valid extended regular expression"
+      if printf '%s' "$content" | grep -Eq "$pat" 2>/dev/null; then
+        printf 'pii-scan: %s: [denylist] matched a locally-configured string (value withheld)\n' "$label" >&2
+        fail=1
+      fi
+    done < "$path"
+  done
   return "$fail"
 }
 
@@ -199,17 +239,26 @@ selftest() {
 }
 
 main() {
+  if [ "${1:-}" = --contract ]; then
+    [ "$#" -eq 1 ] || usage
+    local out="pii-scan-contract" class
+    for class in $CLASSES; do out="$out class:$class"; done
+    printf '%s feature:global-denylist feature:denylist-validated feature:range-authors feature:tag-message\n' "$out"
+    exit 0
+  fi
+
   require_working_grep
   refuse_if_denylist_tracked
+  check_global_denylist_permissions
 
-  # Computed before selftest: the email class's allowlist check reads this,
-  # and self-test exercises that same check against its own fixture.
-  KNOWN_AUTHOR_EMAILS="$(git log --format=%ae | sort -u)"
-
+  # Self-test proves the email fixture against an empty allowlist. A scan mode
+  # then admits only addresses its own input is already publishing.
+  KNOWN_AUTHOR_EMAILS=""
   selftest
 
   case "${1:-}" in
     --stdin)
+      KNOWN_AUTHOR_EMAILS="$(git log --format=%ae 2>/dev/null | sort -u || true)"
       local content
       content="$(cat)"
       local fail=0
@@ -219,6 +268,7 @@ main() {
     --range)
       shift
       [ "$#" -gt 0 ] || usage
+      KNOWN_AUTHOR_EMAILS="$(git log --format='%ae%n%ce' "$@" 2>/dev/null | sort -u || true)"
       local sha_list
       sha_list="$(git rev-list "$@")"
       local fail=0 sha content message additions
@@ -238,6 +288,19 @@ $additions"
         scan_content "commit $sha" "$content" || fail=1
       done
       exit "$fail"
+      ;;
+    --tag)
+      shift
+      [ "$#" -eq 1 ] || usage
+      [ "$(git cat-file -t "$1" 2>/dev/null || true)" = tag ] || usage
+      KNOWN_AUTHOR_EMAILS="$( {
+        git cat-file tag "$1" | sed -n 's/^tagger .*<\(.*\)>.*/\1/p'
+        git log -1 --format='%ae%n%ce' "$1^{commit}" 2>/dev/null
+      } | sort -u || true)"
+      local content
+      content="$(git cat-file tag "$1" | sed '1,/^$/d')"
+      scan_content "tag $1" "$content" || exit 1
+      exit 0
       ;;
     *) usage ;;
   esac
