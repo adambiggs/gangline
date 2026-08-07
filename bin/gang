@@ -895,9 +895,13 @@ spool_drain_after_stop() { # $1 window id, $2 profile
 }
 
 spool_drain_dispatch() { # $1 window id, $2 profile; called only by Stop
+  # No in-progress flag. Concurrent drains are already excluded by the pane
+  # delivery lock: a second one refuses there, returns with everything still
+  # spooled, and the next turn boundary is the next attempt. A flag would add
+  # nothing except a state that outlives a killed worker and wedges the spool
+  # silently — status would keep reporting messages that nothing would ever
+  # drain again.
   [ "$(spool_count "$1")" -gt 0 ] || return 0
-  [ -z "$(tmux show-options -wqv -t "$1" @gl_spool_draining 2>/dev/null)" ] || return 0
-  tmux set-option -w -t "$1" @gl_spool_draining 1 2>/dev/null || return 0
   (
     trap '' HUP INT TERM
     local err="" rc=0
@@ -909,7 +913,6 @@ spool_drain_dispatch() { # $1 window id, $2 profile; called only by Stop
          [ -n "$err" ] || err="the spool drain failed"
          tmux set-option -w -t "$1" @gl_spool_failed "$err" 2>/dev/null || true ;;
     esac
-    tmux set-option -uw -t "$1" @gl_spool_draining 2>/dev/null || true
     tmux wait-for -S "gang-spool-drain-$1" 2>/dev/null || true
   ) </dev/null >/dev/null 2>&1 &
   disown
