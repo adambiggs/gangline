@@ -88,6 +88,42 @@ window_id() { # $1 exact window name
 
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
 
+# Help coverage is derived from the dispatcher, so missing help cannot hide by
+# also being absent from a hand-maintained help inventory. The exclusions are
+# deliberate non-operator routes: the native callback, the hitch alias, and
+# help's own dispatcher arms.
+dispatch_commands="$({
+  sed -n '/^case "$cmd" in$/,/^esac$/p' "$GANG" |
+    awk '
+      /^  [^*].*\)/ {
+        arm=$1; sub(/\).*/, "", arm)
+        n=split(arm, names, "|")
+        for (i=1; i<=n; i++) print names[i]
+      }
+    '
+} | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+
+help_width_failure() { # stdin = help; prints every line wider than 48 chars
+  python3 -c 'import sys
+for number, line in enumerate(sys.stdin.read().splitlines(), 1):
+    if len(line) > 48:
+        print(f"line {number} ({len(line)}): {line}")'
+}
+
+top_help="$($GANG --help)"
+top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
+equal "top-level help fits the phone-SSH width" "" "$top_wide"
+while read -r help_command; do
+  [ -n "$help_command" ] || continue
+  if command_help="$($GANG "$help_command" --help 2>&1)"; then
+    contains "help exists for gang $help_command" "$command_help" "gang $help_command"
+  else
+    fail "help exists for gang $help_command" "$command_help"
+  fi
+  command_wide="$(printf '%s\n' "$command_help" | help_width_failure)"
+  equal "gang $help_command help fits the phone-SSH width" "" "$command_wide"
+done <<<"$dispatch_commands"
+
 # Start the private tmux server with the wrong session in its global environment.
 # Hitched harnesses must receive the exact team identity in their launch command,
 # rather than inheriting whichever session started the shared server.

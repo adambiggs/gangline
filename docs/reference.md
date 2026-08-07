@@ -1,6 +1,9 @@
 # Command and configuration reference
 
-`gang --help` is the authoritative command synopsis.
+`gang --help` is the authoritative command inventory, and
+`gang <command> --help` prints that command's synopsis. Help has a deliberate
+48-character line budget so it remains legible in narrow phone-SSH terminals;
+this reference carries the complete command contract.
 
 ## Lifecycle
 

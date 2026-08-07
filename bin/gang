@@ -241,31 +241,171 @@ else
 fi
 colour() { printf "%s%s%s" "$1" "$2" "$C_OFF"; }
 
-usage() {
-  cat <<'EOF'
+cmd_help() { # $1 = command; empty prints the command inventory
+  case "${1:-}" in
+    '') cat <<'EOF'
 gang — drive native CLI agents in tmux
 
-  gang up [name] [hitch flags]
-  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]
-  gang adopt <name> -p <profile>
-  gang send --to <name> [--from <sender>] [--spool [--supersede]] --stdin
-  gang flush <name>
-  gang interrupt <name>
-  gang compact <name>
-  gang cutoff [<duration|HH:MM>|clear]
-  gang status <name>
-  gang roster
-  gang capture <name> [lines]
-  gang composer <name>
-  gang attach
-  gang drop <name>
-  gang down
-  gang profiles
-  gang config
+  up        start a team and join it
+  hitch     add an agent
+  adopt     register an existing window
+  send      deliver a message to an agent
+  flush     recover a harness-queued message
+  interrupt stop an agent's current turn
+  compact   ask an agent to compact context
+  cutoff    set or show the team cutoff
+  status    inspect one agent's state
+  roster    list the team and its state
+  capture   read an agent's pane
+  composer  read an agent's input box
+  attach    join the team in tmux
+  drop      remove one agent
+  down      end the team
+  profiles  list available harness profiles
+  config    show effective configuration
 
-Configuration: gang config (full contract: docs/reference.md)
+gang <command> --help for one command.
 EOF
+      ;;
+    up) cat <<'EOF'
+gang up
+  Start a team and join it.
+
+  gang up [name]
+    [hitch flags]
+EOF
+      ;;
+    hitch|spawn) cat <<'EOF'
+gang hitch
+  Add an agent.
+
+  gang hitch <name>
+    [-p <profile>]
+    [-d <dir>]
+    [-m <model>]
+    [-e <effort>]
+    [--resume]
+EOF
+      ;;
+    adopt) cat <<'EOF'
+gang adopt
+  Register an existing tmux window.
+
+  gang adopt <name>
+    -p <profile>
+EOF
+      ;;
+    send) cat <<'EOF'
+gang send
+  Deliver a message to one agent.
+
+  gang send --to <name> --stdin
+    [--from <sender>]
+    [--spool]
+    [--supersede]
+
+  --spool parks a refused delivery.
+EOF
+      ;;
+    flush) cat <<'EOF'
+gang flush
+  Recover a harness-queued message.
+
+  gang flush <name>
+EOF
+      ;;
+    interrupt) cat <<'EOF'
+gang interrupt
+  Stop an agent's current turn.
+
+  gang interrupt <name>
+EOF
+      ;;
+    compact) cat <<'EOF'
+gang compact
+  Ask an agent to compact its context.
+
+  gang compact <name>
+EOF
+      ;;
+    cutoff) cat <<'EOF'
+gang cutoff
+  Set, clear, or show the team cutoff.
+
+  gang cutoff
+  gang cutoff <duration|HH:MM>
+  gang cutoff clear
+EOF
+      ;;
+    status) cat <<'EOF'
+gang status
+  Inspect one agent's state.
+
+  gang status <name>
+EOF
+      ;;
+    roster) cat <<'EOF'
+gang roster
+  List the team and its state.
+
+  gang roster
+EOF
+      ;;
+    capture) cat <<'EOF'
+gang capture
+  Read an agent's pane.
+
+  gang capture <name>
+    [lines]
+EOF
+      ;;
+    composer) cat <<'EOF'
+gang composer
+  Read an agent's input box.
+
+  gang composer <name>
+EOF
+      ;;
+    attach) cat <<'EOF'
+gang attach
+  Join the team in tmux.
+
+  gang attach
+EOF
+      ;;
+    drop) cat <<'EOF'
+gang drop
+  Remove one agent.
+
+  gang drop <name>
+EOF
+      ;;
+    down) cat <<'EOF'
+gang down
+  End the whole team.
+
+  gang down
+EOF
+      ;;
+    profiles) cat <<'EOF'
+gang profiles
+  List available harness profiles.
+
+  gang profiles
+EOF
+      ;;
+    config) cat <<'EOF'
+gang config
+  Show effective configuration.
+
+  gang config
+EOF
+      ;;
+    *) die "no help for unknown command '$1'" ;;
+  esac
 }
+
+usage() { cmd_help; }
 
 usage_die() { usage >&2; exit 1; }
 
@@ -2460,6 +2600,10 @@ cmd_config() {
 }
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
+if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
+  cmd_help "$cmd"
+  exit 0
+fi
 case "$cmd" in
   up)       cmd_up "$@" ;;
   hitch|spawn) cmd_hitch "$@" ;;
@@ -2479,6 +2623,6 @@ case "$cmd" in
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
   config)   cmd_config "$@" ;;
-  -h|--help|help) usage ;;
+  -h|--help|help) cmd_help "${1:-}" ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
 esac
