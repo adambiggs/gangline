@@ -701,7 +701,132 @@ fi
 equal "a parked queue refuses the next delivery without typing" "3" "$strand_more_rc"
 contains "naming the queue it is waiting on" \
   "$strand_more" "parked earlier input in its own queue"
+# Recovery is the profile's word too. This profile declares the evidence and no
+# recall key, so gang knows the composer is parked and does not know which
+# keystroke loads the body back — which is a refusal, never a guessed keypress.
+if norecall_out="$("$GANG" flush strand 2>&1)"; then
+  fail "a profile with no declared recall key refuses to flush" "flush reported success"
+else
+  pass "a profile with no declared recall key refuses to flush"
+fi
+contains "and the refusal names the missing declaration" \
+  "$norecall_out" "GANG_QUEUE_RECALL_KEY"
 "$GANG" drop strand >/dev/null
+
+# THE PARKED QUEUE, RECOVERED RATHER THAN DESCRIBED. The fixture's composer
+# reads as the queue hint while its strand file exists, and the body the
+# harness "parked" is the last command in the pane's own history — so the
+# profile's declared recall key genuinely loads that body back into the box,
+# the way Up does in claude's composer. The drain flag is what a queue entering
+# the session looks like from outside: the next prompt after it appears clears
+# the strand.
+cat > "$RUN_ROOT/flush-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+PROMPT_COMMAND='if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
+if [ -f "$FLUSH_STRAND" ]; then PS1="❯ Press up to edit queued messages"; else PS1="❯ "; fi'
+RC
+cat > "$RUN_ROOT/profiles/flushable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+GANG_QUEUE_RECALL_KEY='Up'
+SH
+"$GANG" hitch parked -p flushable -d /tmp >/dev/null
+parked_id="$(window_id parked)"
+touch "$RUN_ROOT/flush-strand"
+if printf 'MARK_PARKED' | "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "the flush world starts from a message the harness parked" "send reported success"
+else
+  pass "the flush world starts from a message the harness parked"
+fi
+parked_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+contains "gang records exactly which body the harness parked" \
+  "$parked_record" "MARK_PARKED"
+
+# Nothing to read a composer back against is a refusal, not a blind keypress:
+# without the record, the recall key would load and submit whatever happened to
+# be there.
+tmux set-option -uw -t "$parked_id" @gl_parked
+if unrecorded_out="$("$GANG" flush parked 2>&1)"; then
+  unrecorded_rc=0
+else
+  unrecorded_rc=$?
+fi
+equal "an unrecorded parked message refuses the flush" "3" "$unrecorded_rc"
+contains "naming the record it will not proceed without" \
+  "$unrecorded_out" "no record of a message parked"
+tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
+
+touch "$RUN_ROOT/flush-drain"
+if flush_out="$("$GANG" flush parked 2>&1)"; then
+  pass "flush recovers the parked message as a verified operation"
+else
+  fail "flush recovers the parked message as a verified operation" "$flush_out"
+fi
+contains "and reports what it verified" "$flush_out" "read back against gang's record"
+equal "a verified flush retires the parked record" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+equal "and the staged record with it" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)"
+
+# The composer must still read as parked. With the queue drained, there is
+# nothing to recover, and a recorded body is not evidence that outlives it.
+tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
+if drained_out="$("$GANG" flush parked 2>&1)"; then
+  drained_rc=0
+else
+  drained_rc=$?
+fi
+equal "a composer showing no queue evidence refuses the flush" "3" "$drained_rc"
+contains "rather than pressing the recall key blindly" \
+  "$drained_out" "none of the parked-queue evidence"
+
+# THE READBACK IS LOAD-BEARING. Here the recall key loads something real and
+# something else: the pane's newest history entry is now a bare colon, not the
+# body gang recorded. The Enter must not be pressed, because pressing it would
+# submit a line nobody sent.
+touch "$RUN_ROOT/flush-strand"
+tmux send-keys -l -t "$parked_id" ':'
+tmux send-keys -t "$parked_id" Enter
+if mismatch_out="$("$GANG" flush parked 2>&1)"; then
+  fail "a readback that does not match the record is not flushed" \
+    "flush reported success"
+else
+  pass "a readback that does not match the record is not flushed"
+fi
+# NOT performed, not merely NOT verified: the refusal has to be the readback's
+# own, because the re-queue verdict fails this send too and would let a missing
+# readback pass as a working one.
+contains "refused by the readback rather than by anything downstream of it" \
+  "$mismatch_out" "flush NOT performed"
+contains "and says the Enter was not pressed" "$mismatch_out" "Enter was NOT pressed"
+contains "the recalled body is recorded against the window" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
+excludes "and the message gang recorded was never submitted twice" \
+  "$mismatch_out" "flushed the parked message"
+tmux send-keys -t "$parked_id" C-u
+"$GANG" drop parked >/dev/null
+
+# A keystroke gang cannot send by name is a broken declaration, refused before
+# any window opens: tmux would deliver the letters into the composer instead.
+cat > "$RUN_ROOT/profiles/badkey.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_QUEUE_RECALL_KEY='M-x then y'
+SH
+if badkey_out="$("$GANG" hitch badkey -p badkey -d /tmp 2>&1)"; then
+  fail "a recall key that is not a tmux key name is refused" "hitch accepted it"
+else
+  pass "a recall key that is not a tmux key name is refused"
+fi
+contains "naming the declaration rather than the operator" \
+  "$badkey_out" "GANG_QUEUE_RECALL_KEY"
+equal "and the refused declaration leaves no window behind" "" "$(window_id badkey)"
 
 # A staged record is state; the box is fresher evidence. Staged input can
 # flush outside gang's sight — an operator's Enter, a queue draining at a

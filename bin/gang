@@ -83,6 +83,7 @@ gang — drive native CLI agents in tmux
   gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]
   gang adopt <name> -p <profile>
   gang send --to <name> [--from <sender>] --stdin
+  gang flush <name>
   gang compact <name>
   gang cutoff [<duration|HH:MM>|clear]
   gang status <name>
@@ -151,7 +152,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
-  GANG_MIDTURN_INPUT="" GANG_SESSION_KEY=""
+  GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
@@ -161,6 +162,14 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   case "$GANG_SELF_COMPACT" in
     ''|deferred) ;;
     *) die "profile '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
+  esac
+  # A key gang sends by NAME, never as literal text: tmux resolves Up, Escape
+  # and C-c from this word, and anything outside the key-name alphabet would
+  # arrive in the composer as characters instead of as the keystroke the
+  # profile meant.
+  case "$GANG_QUEUE_RECALL_KEY" in
+    ''|*[!A-Za-z0-9-]*) [ -z "$GANG_QUEUE_RECALL_KEY" ] \
+      || die "profile '$1' declares GANG_QUEUE_RECALL_KEY '$GANG_QUEUE_RECALL_KEY', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
   esac
 }
 
@@ -771,6 +780,10 @@ stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (m
 stage_forget() { # $1 = window id
   tmux set-option -uw -t "$1" @gl_staged 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_staged_box 2>/dev/null || true
+  # The parked-message record belongs to the same obstruction: once there is
+  # nothing staged here, there is nothing for `flush` to read a composer back
+  # against either.
+  tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
 }
 
 clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
@@ -825,7 +838,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   # guard below, which would blame a half-written draft.
   local preflight
   if preflight="$(landing_zone "$1")" && box_queued "$preflight"; then
-    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered by hand (gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
+    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered (gang flush $tname; or by hand: gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
   fi
   if ! input_clear "$1"; then
     local onlyhead=""
@@ -850,25 +863,48 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
+  submit_verify "$1" "$after" "$frag" paste "${2%%$'\n'*}"
+  lock_release
+}
+
+# THE POST-ENTER HALF OF A VERIFIED SUBMISSION, shared by the paste path and by
+# the parked-queue recovery `flush` performs. Both press one Enter against a box
+# they have just read, and both owe the same proof afterwards, so there is one
+# copy of it: two would drift, and the half that drifted would report a
+# submission nobody saw.
+#
+# The callers differ in exactly one thing — what may be done with a box that
+# never changed. Gang may clear back out its OWN paste; a body recalled from the
+# harness's queue is the harness's, and clearing it would delete the very
+# message being recovered.
+submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
+                  # $4 paste|recall, $5 = the body's first line (paste only)
+  local tname verb noun stuck mayclear unchanged=0 looks=0 posted
+  tname="$(agent_name_of "$1")"
+  case "$4" in
+    paste)  verb="pasted" noun="paste" stuck=", and would not clear" mayclear=1 ;;
+    recall) verb="recalled out of the harness's queue" noun="recalled message"
+            stuck="" mayclear=0 ;;
+    *) die "internal: submit_verify was given mode '$4'" ;;
+  esac
   tmux send-keys -t "$1" Enter
-  local unchanged=0 looks=0 posted
   while :; do
     sleep 0.4
     if posted="$(landing_zone "$1")"; then
-      [ "$posted" = "$after" ] || break
+      [ "$posted" = "$2" ] || break
       unchanged=$((unchanged + 1))
       if [ "$unchanged" -ge 5 ]; then
-        if clear_box "$1"; then
-          die "submit NOT verified: '$frag' was pasted into the input box of $tname and never sent — the paste has been cleared back out of that box"
+        if [ "$mayclear" -eq 1 ] && clear_box "$1"; then
+          die "submit NOT verified: '$3' was $verb into the input box of $tname and never sent — the $noun has been cleared back out of that box"
         fi
-        stage_record "$1" "'$frag' is staged unsent in this box — it was pasted, never sent, and would not clear" "$posted"
-        die "submit NOT verified: '$frag' was pasted into the input box of $tname, never sent, and would not clear — it is staged there now and has to be cleared by hand (gang attach)"
+        stage_record "$1" "'$3' is staged unsent in this box — it was $verb, never sent$stuck" "$posted"
+        die "submit NOT verified: '$3' was $verb into the input box of $tname, never sent$stuck — it is staged there now and has to be cleared by hand (gang attach)"
       fi
     fi
     looks=$((looks + 1))
     if [ "$looks" -ge 15 ]; then
-      stage_record "$1" "'$frag' was pasted here and Enter sent, but the box never read back — it may be sitting there unsent" ""
-      die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the paste is sitting unsent in that box (gang capture $tname)"
+      stage_record "$1" "'$3' was $verb here and Enter sent, but the box never read back — it may be sitting there unsent" ""
+      die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the $noun is sitting unsent in that box (gang capture $tname)"
     fi
   done
   # The box changing is not yet proof of ENTRY. Where the profile declares
@@ -880,10 +916,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   if [ -n "$GANG_QUEUED_REGEX" ]; then
     local qlooks=0
     while :; do
-      if box_queued "$posted"; then
-        stage_record "$1" "'$frag' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover with gang attach, Up, then Enter" ""
-        die "submit NOT verified: '$frag' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it by hand — gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
-      fi
+      ! box_queued "$posted" || submit_parked "$1" "$3" "$4" "${5:-}"
       qlooks=$((qlooks + 1))
       [ "$qlooks" -lt 3 ] || break
       sleep 0.4
@@ -892,12 +925,12 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
       # from parked, and a capture it cannot read answers neither. Fail
       # closed with the uncertainty named, never fall through to success.
       posted="$(landing_zone "$1")" || {
-        stage_record "$1" "'$frag' was pasted and Enter sent, but the box stopped reading back while gang was checking for parked input — whether it entered the session or sits in the harness's queue is unknown" ""
-        die "submit NOT verified: the input box of $tname stopped reading back while gang was checking for parked input — whether '$frag' entered the session or sits in the harness's queue is unknown (gang capture $tname; if parked: attach, press Up, then Enter)"
+        stage_record "$1" "'$3' was $verb and Enter sent, but the box stopped reading back while gang was checking for parked input — whether it entered the session or sits in the harness's queue is unknown" ""
+        die "submit NOT verified: the input box of $tname stopped reading back while gang was checking for parked input — whether '$3' entered the session or sits in the harness's queue is unknown (gang capture $tname; if parked: gang flush $tname)"
       }
     done
   fi
-  # A verified delivery retires any prior staged record for THIS window. Not
+  # A verified submission retires any prior staged record for THIS window. Not
   # redundant with the head-of-delivery clearing: each guard above re-reads
   # the box, and an obstruction can drain between stage_clear's read and
   # input_clear's — a queue emptying at a turn boundary mid-send — leaving a
@@ -905,7 +938,21 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
   # evidence is the gone obstruction this verified path just walked through,
   # never retroactive proof the RECORDED body was delivered.
   stage_forget "$1"
-  lock_release
+}
+
+submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the body's first line
+  local tname
+  tname="$(agent_name_of "$1")"
+  if [ "$3" = paste ]; then
+    # What `flush` will read the composer back against. Recorded HERE and only
+    # here: this is the one moment gang knows both that the harness parked
+    # something and exactly which body it parked.
+    [ -z "$4" ] || tmux set-option -w -t "$1" @gl_parked "$4" 2>/dev/null || true
+    stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
+    die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname, which loads the parked message, reads it back against what gang recorded, and submits it — or by hand: gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
+  fi
+  stage_record "$1" "'$2' was recalled out of the harness's queue and Enter sent, and the harness parked it again — it never entered the session" ""
+  die "flush NOT verified: '$2' was loaded back into the composer of $tname and the Enter parked it in the harness's queue again. The queue is not draining, so no keystroke gang can send will submit it: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
 }
 
 context_now() { # $1 = window id, profile loaded; read the native source
@@ -1236,6 +1283,61 @@ cmd_send() {
   echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
 }
 
+# The recovery gang already diagnoses, performed as a verified operation rather
+# than described in a refusal. Everything it needs is evidence it already owns:
+# the profile's queue hint says the composer is parked, the profile's own recall
+# key loads the parked body, and the record written when gang watched the
+# harness park it says WHICH body must come back. No record, no hint, or a
+# readback that does not match, and no Enter is pressed.
+cmd_flush() {
+  local name="${1:-}" parked frag box loaded
+  [ -n "$name" ] || usage_die
+  [ $# -eq 1 ] || die "flush: unexpected argument '$2'"
+  resolve "$name"
+  [ -n "$GANG_QUEUED_REGEX" ] \
+    || die "flush: profile '$AGENT_PROFILE' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
+  [ -n "$GANG_QUEUE_RECALL_KEY" ] \
+    || die "flush: profile '$AGENT_PROFILE' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
+  parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
+  [ -n "$parked" ] \
+    || refuse "flush: gang has no record of a message parked in the queue of '$name'. It recovers only a body it watched the harness park, because that record is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
+  frag="${parked%%$'\n'*}"
+  [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
+  lock_pane "$AGENT_ID"
+  ! occupied "$AGENT_ID" \
+    || refuse "flush: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_QUEUE_RECALL_KEY would answer that UI instead of loading the parked message (gang attach)"
+  composer_settled "$AGENT_ID" \
+    || refuse "flush: somebody is typing into '$name' right now — recovering its queue underneath a live draft would submit their line (try again in a moment)"
+  box="$(landing_zone "$AGENT_ID")" \
+    || die "flush: cannot read the input box of $name — the harness is not taking input (gang capture $name)"
+  box_queued "$box" \
+    || refuse "flush: the composer of '$name' shows none of the parked-queue evidence its profile declares, so there is nothing to recover and gang will not press $GANG_QUEUE_RECALL_KEY blindly (gang capture $name)"
+  tmux send-keys -t "$AGENT_ID" "$GANG_QUEUE_RECALL_KEY"
+  # The recall key has to visibly load something before there is anything to
+  # read back. A composer that never changed is not a mismatch and not a
+  # recovery: it is a key that did nothing, and no Enter follows it.
+  local looks=0
+  while :; do
+    sleep 0.4
+    loaded="$(landing_zone "$AGENT_ID")" \
+      || die "flush: the input box of $name stopped reading back after $GANG_QUEUE_RECALL_KEY — whatever that key loaded is sitting in it unsent, and no Enter was pressed (gang capture $name)"
+    [ "$loaded" = "$box" ] || break
+    looks=$((looks + 1))
+    [ "$looks" -lt 5 ] \
+      || die "flush NOT performed: $GANG_QUEUE_RECALL_KEY left the composer of $name unchanged, so nothing was loaded for gang to read back and the Enter was NOT pressed (gang capture $name)"
+  done
+  case "$loaded" in
+    *"$parked"*) ;;
+    *) stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
+       die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when it reads back as the one it watched the harness park (gang attach)" ;;
+  esac
+  submit_verify "$AGENT_ID" "$loaded" "$frag" recall
+  lock_release
+  printf '%s %s\n' \
+    "$(colour "$C_OK" "flushed the parked message of $name")" \
+    "$(colour "$C_DIM" "(recalled with $GANG_QUEUE_RECALL_KEY, read back against gang's record, submitted and verified)")"
+}
+
 cmd_compact() {
   local name="${1:-}" self="" mine=0 busy_rc=0
   [ -n "$name" ] || usage_die
@@ -1440,6 +1542,7 @@ case "$cmd" in
   hitch|spawn) cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
+  flush)    [ $# -ge 1 ] || usage_die; cmd_flush "$@" ;;
   compact)  cmd_compact "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
   status)   [ $# -ge 1 ] || usage_die; cmd_status "$1" ;;

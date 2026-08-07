@@ -84,9 +84,11 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # itself, which reads "❯ Press up to edit queued messages" (nbsp after the
 # glyph, stripped by profile_input like every nbsp). bin/gang matches this
 # against the box reading before pasting and after Enter, and treats a hit as
-# failed delivery with a manual recovery — Up loads the parked body, Enter
-# submits it; a plain Enter does not flush it.
+# failed delivery — recoverable, because the hint also names the keystroke
+# below: Up loads the parked body, Enter submits it; a plain Enter does not
+# flush it.
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
+GANG_QUEUE_RECALL_KEY="Up"
 
 
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
