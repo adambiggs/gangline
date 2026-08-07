@@ -1164,18 +1164,17 @@ clean. Both discriminate; the toplevel does not.
 a temporary directory and never matches that glob, so no exemption is needed.
 
 Per `docs/DECISIONS.md` ("A guard witnesses the artifact, and witnesses it in
-order"), the test is not proven until it has been seen to fail, and each
-assertion has its own red:
+order"), the test is not proven until its provenance assertions have been seen
+to fail against the unmodified `git archive` hook. That hook false-greens on the
+exit status (`rc=0`) under the real leaked `GIT_DIR`, while `gitdir` names the
+main repository's `.git` and `index` contains `main-index-only`; those two failed
+assertions are the witnessed red. A worktree hook written **without** the
+environment unsets is the additional plausible half-fix: it likewise goes green
+on the exit status and red on both provenance assertions.
 
-- the exit-0 assertion against the unmodified `git archive` hook, which goes red
-  with `fatal: not a git repository`;
-- the `gitdir` and `index` assertions against a worktree hook written **without**
-  the environment unsets, which goes green on the exit status and red on both of
-  these. That build is the plausible half-fix, and it is the one the second and
-  third assertions exist to reject.
-
-Record both reds in the commit body. A check that passes both ways is a guard,
-not evidence.
+Record the actual old-mutant evidence — `rc=0`, main-tree `gitdir`, and main-index
+content — in the commit body. A check that passes both ways is a guard, not
+evidence.
 
 ### Documentation
 
