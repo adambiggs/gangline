@@ -275,3 +275,15 @@ The mandatory suite normally completes in seconds and must remain under five
 minutes. Tests do not sleep, poll, or test timeout behaviour; use immediate state,
 event barriers, or fake clocks, and test real harnesses only in separate disposable
 tmux sessions.
+
+## A guard witnesses the artifact, not a proxy for it
+
+Assert the thing a defect actually produces — the text left on the pane, the
+body recorded in the window option — and not a status that merely travels with
+it. A refusal and a delivery that failed after typing both exit non-zero, so an
+exit-status assertion is green on the very defect it was written to catch, and
+a passing count then reports ground nobody covered. The same trap catches the
+fixture that cannot produce the artifact at all: a pane with no busy marker
+cannot paint a turn, so a probe built on one proves nothing about typing into
+live work, however carefully it is run. A guard is proven by reverting its fix
+and watching the evidence come back on screen.
