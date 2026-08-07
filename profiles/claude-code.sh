@@ -79,6 +79,13 @@ print(*levels, sep=\"\\n\")
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
+# Verified on claude-code 2.1.224: /usage opens a full-screen tabbed modal with
+# no composer, and Escape restores an empty composer. The page scrolls; gang
+# returns the visible screen and does not drive the scrollbar.
+GANG_USAGE_CMD="/usage"
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # PARKED INPUT IS NOT A SUBMISSION. The queue strand (observed on 2.1.223)
 # renders a queued body in the transcript styled exactly like a submitted

@@ -296,6 +296,28 @@ readout is visible. claude-code can answer only when lights were enabled at
 hitch, because that launch choice installs its statusline beacon. Adopted
 windows answer only when their required native source is independently present.
 
+### `gang usage <name>`
+
+Drives the usage command declared by the target's harness profile and prints the
+harness's own page raw. The pane is locked for the entire operation. Gangline
+refuses a busy, indeterminate, occupied, changing, or non-empty composer; it
+types only after all five predicates pass. A bare `gang usage` prints help
+because the calling agent is necessarily running in the composer it would have
+to drive.
+
+Modal pages are returned as the visible screen, trailing blank terminal rows
+removed, and then dismissed with the profile's key. A modal that scrolls within
+itself may contain more than Gangline can capture; attach to read that overflow.
+Inline pages are extracted from the difference between the whole scrollback
+before and after the native command, so content taller than the pane is retained.
+If tmux history rolls over and the two captures lose their common origin,
+Gangline refuses instead of printing a plausible but unbounded transcript diff.
+
+After reading either shape, Gangline verifies that the profile can read an empty
+composer again. If restoration fails, the captured content is still printed,
+the command exits non-zero, and `gang attach` is required before more input is
+safe. Profiles without a verified usage declaration refuse the command.
+
 ### `gang roster`
 
 Prints every session window with its profile and current state. Unadopted windows
@@ -424,6 +446,10 @@ there, never in a harness-name branch in the core script.
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
 | `GANG_SESSION_KEY=1` | every hitch records the startup-envelope nonce for context lookup |
+| `GANG_USAGE_CMD` | native command that opens the harness's usage page |
+| `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
+| `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |
+| `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
 | `profile_input target` | print human-authored composer contents, or fail if absent |
 | `profile_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 

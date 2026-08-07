@@ -128,6 +128,23 @@ cannot submit `/compact` into its own composer. The request is one-shot. If the
 native command cannot be submitted, `status` and `roster` retain the failure
 instead of claiming success.
 
+## Reading harness usage without attaching
+
+Ask for each idle agent by name:
+
+```sh
+gang usage worker-a
+gang usage worker-b
+```
+
+The output is the harness's own plan or quota page, not a Gangline summary.
+Gangline will not open it over a running turn, draft, unknown state, or native
+dialog. A full-screen page is limited to what is visibly painted; attach when
+that modal has internal scrollback. Inline output includes content that moved
+into tmux history. If the command reports that the composer was not restored,
+the content already printed is still useful, but inspect that agent with
+`gang attach` before sending it anything else.
+
 ## Optional context lights
 
 Context lights are disabled unless the operator supplies absolute thresholds at

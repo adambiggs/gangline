@@ -103,7 +103,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush interrupt compact context status capture composer drop"
+bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer drop"
 meaningful_bare_commands="up roster attach profiles config cutoff down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -576,6 +576,97 @@ cat > "$RUN_ROOT/profiles/ctx-none.sh" <<SH
 . "$ROOT/profiles/bash.sh"
 unset -f profile_context
 SH
+cat > "$RUN_ROOT/usage-bashrc" <<'SH'
+PS1='❯ '
+u() {
+  printf '\033[1A\r\033[K'
+  local i=1
+  while [ "$i" -le 30 ]; do
+    printf 'USAGE_%02d\n' "$i"
+    i=$((i + 1))
+  done
+}
+SH
+cat > "$RUN_ROOT/usage-confirm-bashrc" <<'SH'
+PS1='❯ '
+c() {
+  IFS= read -r _
+  printf '\033[H\033[2JCONFIRMED_USAGE\n'
+  IFS= read -r -n 1 _
+}
+SH
+cat > "$RUN_ROOT/profiles/usage-inline.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-bashrc'"
+GANG_USAGE_CMD='u'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
+cat > "$RUN_ROOT/profiles/usage-confirm.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-confirm-bashrc'"
+GANG_USAGE_CMD='c'
+GANG_USAGE_CONFIRM_KEY="Enter"
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
+SH
+cat > "$RUN_ROOT/profiles/usage-modal.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_ONE\nMODAL_TWO\n"; IFS= read -r -n 1 _'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
+SH
+cat > "$RUN_ROOT/profiles/usage-stuck.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_STUCK\n"; while :; do IFS= read -r -n 1 _; [ "$_" = q ] && break; done'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="C-g"
+SH
+cat > "$RUN_ROOT/profiles/usage-nochange.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD="clear"
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
+cat > "$RUN_ROOT/profiles/usage-occupied.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+GANG_OCCUPIED_REGEX='OCCUPIED_USAGE'
+_gl_usage_occupied_input="$(declare -f profile_input)"
+eval "usage_occupied_real_input ${_gl_usage_occupied_input#profile_input}"
+profile_input() {
+  tmux capture-pane -pJ -t "$1" | grep -q OCCUPIED_USAGE && return 1
+  usage_occupied_real_input "$1"
+}
+SH
+cat > "$RUN_ROOT/profiles/usage-unknown.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="unknown"
+GANG_USAGE_DISMISS_KEY=""
+SH
 
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked
@@ -631,9 +722,135 @@ refuses "a missing profile_context names the profile" \
   "profile 'ctx-none' declares no profile_context" \
   "$GANG" context ctx-missing
 
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch usage-inline -p usage-inline -d /tmp >/dev/null
+usage_inline_id="$(window_id usage-inline)"
+tmux resize-window -t "$usage_inline_id" -x 80 -y 12
+usage_marker_ready="test-usage-marker-ready-$$"
+printf -v usage_marker_cmd 'printf "INLINE_OLD_MARKER\\n"; tmux wait-for -S %q' \
+  "$usage_marker_ready"
+tmux send-keys -l -t "$usage_inline_id" "$usage_marker_cmd"
+tmux send-keys -t "$usage_inline_id" Enter
+tmux wait-for "$usage_marker_ready"
+expected_usage="$(awk 'BEGIN { for (i=1; i<=30; i++) printf "USAGE_%02d\n", i }')"
+usage_inline_out="$("$GANG" usage usage-inline)"
+equal "inline usage returns every line taller than the pane" \
+  "$expected_usage" "$(printf '%s\n' "$usage_inline_out" | sed 's/[[:space:]]*$//')"
+excludes "inline usage excludes the pre-existing transcript" \
+  "$usage_inline_out" "INLINE_OLD_MARKER"
+equal "inline usage restores an empty composer" "" \
+  "$("$GANG" composer usage-inline)"
+
+"$GANG" hitch usage-modal -p usage-modal -d /tmp >/dev/null
+usage_modal_out="$("$GANG" usage usage-modal)"
+equal "modal usage returns the visible page raw" \
+  $'MODAL_ONE\nMODAL_TWO' \
+  "$(printf '%s\n' "$usage_modal_out" | sed 's/[[:space:]]*$//')"
+equal "modal usage dismisses back to an empty composer" "" \
+  "$("$GANG" composer usage-modal)"
+
+"$GANG" hitch usage-confirm -p usage-confirm -d /tmp >/dev/null
+usage_confirm_out="$("$GANG" usage usage-confirm)"
+equal "usage presses the profile's confirmation key before capture" \
+  "CONFIRMED_USAGE" \
+  "$(printf '%s\n' "$usage_confirm_out" | sed 's/[[:space:]]*$//')"
+equal "confirmed modal usage restores an empty composer" "" \
+  "$("$GANG" composer usage-confirm)"
+
+"$GANG" hitch usage-stuck -p usage-stuck -d /tmp >/dev/null
+usage_stuck_stdout="$RUN_ROOT/usage-stuck.stdout"
+usage_stuck_stderr="$RUN_ROOT/usage-stuck.stderr"
+if "$GANG" usage usage-stuck >"$usage_stuck_stdout" 2>"$usage_stuck_stderr"; then
+  fail "usage refuses when its dismissal does not restore the composer" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses when its dismissal does not restore the composer"
+fi
+contains "failed usage restoration still prints the captured content" \
+  "$(<"$usage_stuck_stdout")" "MODAL_STUCK"
+contains "failed usage restoration names the key and gang attach" \
+  "$(<"$usage_stuck_stderr")" "after C-g"
+contains "failed usage restoration points at gang attach" \
+  "$(<"$usage_stuck_stderr")" "gang attach"
+
+usage_before_refusals="$(pane usage-inline)"
+tmux set-option -w -t "$usage_inline_id" @gl_turn "open $(date +%s)"
+refuses "usage refuses a busy target" "is mid-turn" \
+  "$GANG" usage usage-inline
+tmux set-option -w -t "$usage_inline_id" @gl_turn broken
+refuses "usage refuses a could-not-determine target" \
+  "cannot determine whether 'usage-inline' is mid-turn" \
+  "$GANG" usage usage-inline
+tmux set-option -uw -t "$usage_inline_id" @gl_turn
+equal "usage readiness refusals type nothing" \
+  "$usage_before_refusals" "$(pane usage-inline)"
+
+"$GANG" hitch usage-occupied -p usage-occupied -d /tmp >/dev/null
+usage_occupied_id="$(window_id usage-occupied)"
+usage_occupied_ready="test-usage-occupied-ready-$$"
+printf -v usage_occupied_cmd 'printf OCCUPIED_USAGE; tmux wait-for -S %q; IFS= read -r _' \
+  "$usage_occupied_ready"
+tmux send-keys -l -t "$usage_occupied_id" "$usage_occupied_cmd"
+tmux send-keys -t "$usage_occupied_id" Enter
+tmux wait-for "$usage_occupied_ready"
+usage_occupied_before="$(pane usage-occupied)"
+refuses "usage refuses an occupied target" "occupied (authority unknown)" \
+  "$GANG" usage usage-occupied
+equal "an occupied usage refusal types nothing" \
+  "$usage_occupied_before" "$(pane usage-occupied)"
+
+refuses "a profile with no GANG_USAGE_CMD refuses usage" \
+  "declares no GANG_USAGE_CMD" "$GANG" usage alpha
+
+"$GANG" hitch usage-nochange -p usage-nochange -d /tmp >/dev/null
+usage_nochange_id="$(window_id usage-nochange)"
+usage_nochange_ready="test-usage-nochange-ready-$$"
+printf -v usage_nochange_cmd \
+  'PROMPT_COMMAND=%q; clear' "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
+tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
+tmux send-keys -t "$usage_nochange_id" Enter
+tmux wait-for "$usage_nochange_ready"
+usage_nochange_stdout="$RUN_ROOT/usage-nochange.stdout"
+usage_nochange_stderr="$RUN_ROOT/usage-nochange.stderr"
+if "$GANG" usage usage-nochange \
+    >"$usage_nochange_stdout" 2>"$usage_nochange_stderr"; then
+  fail "usage refuses when the native screen never changes" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses when the native screen never changes"
+fi
+contains "an unchanged usage screen names the command" \
+  "$(<"$usage_nochange_stderr")" "after clear"
+equal "an unchanged usage screen prints no content" "" \
+  "$(<"$usage_nochange_stdout")"
+equal "an unchanged usage screen leaves the composer empty" "" \
+  "$("$GANG" composer usage-nochange)"
+
+tmux set-option -g history-limit 5
+"$GANG" hitch usage-rollover -p usage-inline -d /tmp >/dev/null
+tmux set-option -g history-limit 2000
+usage_rollover_id="$(window_id usage-rollover)"
+tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
+usage_rollover_stdout="$RUN_ROOT/usage-rollover.stdout"
+usage_rollover_stderr="$RUN_ROOT/usage-rollover.stderr"
+if "$GANG" usage usage-rollover \
+    >"$usage_rollover_stdout" 2>"$usage_rollover_stderr"; then
+  fail "usage refuses a rolled-over inline scrollback" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses a rolled-over inline scrollback"
+fi
+contains "a rolled-over usage read names the lost origin" \
+  "$(<"$usage_rollover_stderr")" "scrollback of 'usage-rollover' rolled over"
+equal "a rolled-over usage read prints no content" "" \
+  "$(<"$usage_rollover_stdout")"
+
+"$GANG" hitch usage-unknown -p usage-unknown -d /tmp >/dev/null
+refuses "usage refuses an unknown render declaration" \
+  "unknown GANG_USAGE_RENDER 'unknown'" "$GANG" usage usage-unknown
+
 alpha_before_bare_help="$(pane alpha)"
 alpha_composer_before_bare_help="$($GANG composer alpha)"
-for incoherent_bare in hitch adopt send flush interrupt drop; do
+for incoherent_bare in hitch adopt send flush interrupt usage drop; do
   if incoherent_output="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$incoherent_bare" 2>&1)"; then
     fail "bare gang $incoherent_bare refuses inside an agent" \
       "command unexpectedly succeeded: [$incoherent_output]"
@@ -649,6 +866,14 @@ equal "incoherent bare commands leave the composer untouched" \
 "$GANG" drop ctx-agent >/dev/null
 "$GANG" drop ctx-failing >/dev/null
 "$GANG" drop ctx-missing >/dev/null
+"$GANG" drop usage-inline >/dev/null
+"$GANG" drop usage-modal >/dev/null
+"$GANG" drop usage-confirm >/dev/null
+"$GANG" drop usage-stuck >/dev/null
+"$GANG" drop usage-occupied >/dev/null
+"$GANG" drop usage-nochange >/dev/null
+"$GANG" drop usage-rollover >/dev/null
+"$GANG" drop usage-unknown >/dev/null
 
 outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
 contains "bare status outside an agent prints its synopsis" \

@@ -30,7 +30,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
-GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY'
+GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -254,6 +254,7 @@ gang — drive native CLI agents in tmux
   interrupt stop an agent's current turn
   compact   ask an agent to compact context
   context   read an agent's context
+  usage     read an agent's usage page
   cutoff    set or show the team cutoff
   status    inspect one agent's state
   roster    list the team and its state
@@ -334,6 +335,13 @@ gang context
   Read an agent's context.
 
   gang context [name]
+EOF
+      ;;
+    usage) cat <<'EOF'
+gang usage
+  Read a harness usage page.
+
+  gang usage <name>
 EOF
       ;;
     cutoff) cat <<'EOF'
@@ -466,6 +474,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
+  GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
@@ -485,11 +494,17 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   # arrive in the composer as characters instead of as the keystroke the
   # profile meant.
   local declared key
-  for declared in GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY; do
+  for declared in GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_USAGE_DISMISS_KEY; do
     key="${!declared}"
     case "$key" in
       ''|*[!A-Za-z0-9-]*) [ -z "$key" ] \
         || die "profile '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
+    esac
+  done
+  for key in $GANG_USAGE_CONFIRM_KEY; do
+    case "$key" in
+      *[!A-Za-z0-9-]*)
+        die "profile '$1' declares GANG_USAGE_CONFIRM_KEY '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
 }
@@ -1638,12 +1653,16 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   stage_forget "$1"
 }
 
-inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningful
-  local buf="gang-$$" frag before after tname
+inject() { # $1 window, $2 text, $3 head, $4 locked, $5 screen if UI proves submit
+  local buf="gang-$$" frag before after tname keep_lock=0
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   tname="$(agent_name_of "$1")"
-  lock_pane "$1"
+  case "${4:-}" in
+    '') lock_pane "$1" ;;
+    locked) [ -n "$LOCK_PATH" ] || die "internal: inject called locked without a pane lock"; keep_lock=1 ;;
+    *) die "internal: inject received unknown lock mode '$4'" ;;
+  esac
   ! occupied "$1" \
     || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
   composer_settled "$1" \
@@ -1685,8 +1704,16 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
-  submit_verify "$1" "$after" "$frag" paste
-  lock_release
+  if [ "${5:-}" = screen ]; then
+    # A modal removes the composer that ordinary delivery reads after Enter.
+    # The usage caller retains this lock and proves the native screen changed
+    # before extracting or dismissing anything, so that screen is the submit
+    # witness; every pre-Enter paste and authority guard above remains shared.
+    tmux send-keys -t "$1" Enter
+  else
+    submit_verify "$1" "$after" "$frag" paste
+  fi
+  [ "$keep_lock" -eq 1 ] || lock_release
 }
 
 # THE POST-ENTER HALF OF A VERIFIED SUBMISSION, shared by the paste path and by
@@ -2383,6 +2410,104 @@ cmd_context() { # print the profile's native context reading, unparsed
   context_now "$AGENT_ID"
 }
 
+cmd_usage() { # drive and return the harness's own usage UI
+  local name="${1:-}" busy_rc=0 before after content="" key looks=0
+  local diff_rc=0 before_nonempty=0 restored=0 box="" restore_key
+  [ -n "$name" ] || { cmd_help usage; exit 1; }
+  [ $# -eq 1 ] || die "usage: expected exactly one agent name"
+  resolve "$name"
+  [ -n "$GANG_USAGE_CMD" ] \
+    || die "usage: profile '$AGENT_PROFILE' declares no GANG_USAGE_CMD, so gang does not know this harness's usage command"
+  case "$GANG_USAGE_RENDER" in
+    modal|inline) ;;
+    *) die "usage: profile '$AGENT_PROFILE' declares unknown GANG_USAGE_RENDER '$GANG_USAGE_RENDER' (expected modal or inline)" ;;
+  esac
+  declare -F profile_input >/dev/null \
+    || die "usage: profile '$AGENT_PROFILE' declares no profile_input, so gang cannot verify that '$name' restores its composer"
+
+  lock_pane "$AGENT_ID"
+  ! occupied "$AGENT_ID" \
+    || refuse "usage: '$name' is occupied (authority unknown) — a UI owns its input box, so gang will not type $GANG_USAGE_CMD into it (gang attach)"
+  busy "$AGENT_ID" || busy_rc=$?
+  case "$busy_rc" in
+    0) refuse "usage: '$name' is mid-turn, so gang will not type $GANG_USAGE_CMD into its active composer" ;;
+    1) ;;
+    2) refuse "usage: cannot determine whether '$name' is mid-turn, so gang will not type $GANG_USAGE_CMD" ;;
+    *) die "internal: busy returned unknown verdict $busy_rc" ;;
+  esac
+  composer_settled "$AGENT_ID" \
+    || refuse "usage: somebody is typing into '$name' right now, so gang will not interleave $GANG_USAGE_CMD with their draft"
+  input_clear "$AGENT_ID" \
+    || refuse "usage: the input box of '$name' is not provably empty, so gang will not append $GANG_USAGE_CMD to a draft"
+
+  before="$(tmux capture-pane -pJ -S - -t "$AGENT_ID")" \
+    || die "usage: cannot capture the scrollback of '$name' before $GANG_USAGE_CMD"
+  inject "$AGENT_ID" "$GANG_USAGE_CMD" head locked screen
+  for key in $GANG_USAGE_CONFIRM_KEY; do
+    tmux send-keys -t "$AGENT_ID" "$key" \
+      || die "usage: could not send confirmation key $key to '$name'"
+  done
+
+  while :; do
+    after="$(tmux capture-pane -pJ -S - -t "$AGENT_ID")" \
+      || die "usage: cannot capture the scrollback of '$name' after $GANG_USAGE_CMD"
+    [ "$after" = "$before" ] || break
+    looks=$((looks + 1))
+    [ "$looks" -lt 5 ] \
+      || die "usage: the screen of '$name' never changed after $GANG_USAGE_CMD, so gang has no usage content to report and pressed nothing further"
+    sleep 0.4
+  done
+
+  case "$GANG_USAGE_RENDER" in
+    modal)
+      content="$(tmux capture-pane -pJ -t "$AGENT_ID" |
+        awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}')" \
+        || die "usage: cannot capture the visible usage page of '$name'"
+      ;;
+    inline)
+      [ -z "$before" ] || before_nonempty=1
+      content="$(awk -v before_nonempty="$before_nonempty" '
+        FILENAME==ARGV[1] { b[FNR]=$0; nb=FNR; next }
+        { a[FNR]=$0; na=FNR }
+        END {
+          p=0; while (p<nb && p<na && b[p+1]==a[p+1]) p++
+          if (before_nonempty && p==0) exit 42
+          s=0; while (s<nb-p && s<na-p && b[nb-s]==a[na-s]) s++
+          for (i=p+1; i<=na-s; i++) print a[i]
+        }' <(printf '%s\n' "$before") <(printf '%s\n' "$after"))" || diff_rc=$?
+      case "$diff_rc" in
+        0) ;;
+        42) die "usage: the scrollback of '$name' rolled over while gang was reading it, so gang cannot tell the usage content from the transcript around it" ;;
+        *) die "usage: could not compare the scrollback of '$name' (awk status $diff_rc)" ;;
+      esac
+      ;;
+  esac
+
+  if [ -n "$GANG_USAGE_DISMISS_KEY" ]; then
+    tmux send-keys -t "$AGENT_ID" "$GANG_USAGE_DISMISS_KEY" \
+      || die "usage: could not send dismissal key $GANG_USAGE_DISMISS_KEY to '$name'"
+  fi
+
+  looks=0
+  while [ "$looks" -lt 5 ]; do
+    if box="$(profile_input "$AGENT_ID")" && ! grep -q '[^[:space:]]' <<<"$box"; then
+      restored=1
+      break
+    fi
+    looks=$((looks + 1))
+    [ "$looks" -ge 5 ] || sleep 0.4
+  done
+  if [ "$restored" -ne 1 ]; then
+    printf '%s\n' "$content"
+    restore_key="${GANG_USAGE_DISMISS_KEY:-no dismissal key}"
+    lock_release
+    die "usage: '$name' did not restore an empty composer after $restore_key; the usage content was printed, but gang cannot safely type there again (gang attach)"
+  fi
+
+  lock_release
+  printf '%s\n' "$content"
+}
+
 state_now() { # $1 = window id, profile loaded -> the state, in words
   if occupied "$1"; then
     activity_hold_clear "$1"
@@ -2665,7 +2790,7 @@ if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
 fi
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|spawn|adopt|send|flush|interrupt|drop)
+    hitch|spawn|adopt|send|flush|interrupt|usage|drop)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -2680,6 +2805,7 @@ case "$cmd" in
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
+  usage)    cmd_usage "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
   status)   cmd_status "$@" ;;
   hook)     cmd_hook ;;
