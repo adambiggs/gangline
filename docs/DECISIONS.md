@@ -172,10 +172,11 @@ is re-derived per action. A hookless window without mid-turn input whose
 pane keeps a frozen busy marker therefore stays refused until the marker
 scrolls off or the agent is renewed — fail-closed by intent.
 
-A turn fact nobody will ever close decays instead of standing indeterminate for
+A turn fact nobody will ever edit decays instead of standing indeterminate for
 the life of the window. An interruption typed straight into the pane is reported
-by no harness, so only `gang interrupt` closes the fact it ended; the bracket a
-raw keystroke abandons stays open forever. Once it passes its bound the tiers
+by no harness, and `gang interrupt`, which drops the bracket, is the only
+command that touches it; the bracket a raw keystroke abandons stays open
+forever. Once it passes its bound the tiers
 beneath it answer: a quiet pty, a stable pane, and the harness's own input box
 on screen and provably empty are the positive readiness evidence idle is defined
 by, so the state is idle rather than a permanent could-not-determine. Decay

@@ -618,8 +618,9 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   [ "$undetermined" -eq 0 ] || moved="$(decay_witness "$1")"
   # An abandoned turn's bracket is stale owned state, and it is the only thing
   # still claiming a turn. A turn ended by RAW keys in the pane — the operator's
-  # own Escape, which no harness reports and `gang interrupt` is the only path
-  # that closes explicitly — leaves it open forever, so could-not-determine
+  # own Escape, which no harness reports and which bypasses `gang interrupt`,
+  # the only command that edits the fact — leaves it open forever, so
+  # could-not-determine
   # would be this agent's permanent verdict. It is not undeterminable: the tiers
   # under the expired event positively witness readiness, which is what
   # `idle (slack tug)` means everywhere else. Decay needs all of them — the

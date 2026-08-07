@@ -155,9 +155,9 @@ evidence the composer is ready. `occupied` means a native UI owns the composer.
 `expired` means the available evidence can no longer answer truthfully.
 
 An abandoned turn decays rather than standing indeterminate forever. A turn
-stopped by keys typed straight into the pane is one no harness reports and
-`gang interrupt` is the only path that closes explicitly, so its turn bracket
-stays open and only grows older. Once that bracket passes `GANG_TURN_LIMIT`,
+stopped by keys typed straight into the pane is one no harness reports, and
+`gang interrupt` — the only command that edits the fact, by dropping it — was
+never involved, so its turn bracket stays open and only grows older. Once that bracket passes `GANG_TURN_LIMIT`,
 the tiers under the expired event decide: with nothing painting a turn, the pty
 past its quiet window, a stable pane, the harness's own input box on screen and
 empty, and neither the pty clock nor the screen having moved while Gangline read
