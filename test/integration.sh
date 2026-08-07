@@ -115,6 +115,68 @@ contains "the environment session outranks the config file" \
 excludes "the overridden config session is not addressed" \
   "$config_env_roster" "from-file"
 
+mkdir -p "$CONFIG_CASES/literal-command"
+printf 'GANG_SESSION=$(touch "%s")\n' "$CONFIG_CASES/was-executed" \
+  > "$CONFIG_CASES/literal-command/config"
+literal_command_report="$(env -u GANG_SESSION \
+  GANG_CONFIG_DIR="$CONFIG_CASES/literal-command" "$GANG" config)"
+if [ ! -e "$CONFIG_CASES/was-executed" ]; then
+  pass "the config file is parsed and never executed"
+else
+  fail "the config file is parsed and never executed" \
+    "the command substitution created $CONFIG_CASES/was-executed"
+fi
+contains "the unexecuted command text remains the literal configured value" \
+  "$literal_command_report" \
+  "GANG_SESSION=\$(touch \"$CONFIG_CASES/was-executed\")"
+
+mkdir -p "$CONFIG_CASES/literal-metacharacters"
+literal_meta_marker="$CONFIG_CASES/metacharacters-executed"
+printf '%s\n' "GANG_LOCK_DIR=space # quote ' double \" backtick \` \$(touch $literal_meta_marker) equals=a=b" \
+  > "$CONFIG_CASES/literal-metacharacters/config"
+literal_meta_report="$(env -u GANG_LOCK_DIR \
+  GANG_CONFIG_DIR="$CONFIG_CASES/literal-metacharacters" "$GANG" config)"
+contains "quotes, backticks, command text, hashes, spaces, and equals stay literal" \
+  "$literal_meta_report" \
+  "GANG_LOCK_DIR=space # quote ' double \" backtick \` \$(touch $literal_meta_marker) equals=a=b"
+if [ ! -e "$literal_meta_marker" ]; then
+  pass "literal config metacharacters execute nothing"
+else
+  fail "literal config metacharacters execute nothing" \
+    "the literal value created $literal_meta_marker"
+fi
+
+mkdir -p "$CONFIG_CASES/report"
+printf '%s\n' 'GANG_SESSION=file-report' 'GANG_PROFILE=codex' \
+  > "$CONFIG_CASES/report/config"
+config_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
+  GANG_SESSION=env-report "$GANG" config)"
+contains "gang config attributes an environment override to both layers" \
+  "$config_report" \
+  $'GANG_SESSION=env-report\tenvironment (overriding config line 1)'
+contains "gang config attributes a file-layer value to its line" \
+  "$config_report" \
+  $'GANG_PROFILE=codex\t'"$CONFIG_CASES/report/config line 2"
+contains "gang config attributes an untouched built-in value to the default" \
+  "$config_report" $'GANG_CLEAR_PRESSES=40\tdefault'
+
+config_escape=$'safe\033unsafe'
+sanitised_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/env" \
+  GANG_SESSION="$config_escape" "$GANG" config)"
+contains "gang config makes an environment control byte visible" \
+  "$sanitised_report" "GANG_SESSION=safe?unsafe"
+excludes "gang config never writes the raw environment control byte" \
+  "$sanitised_report" "$config_escape"
+
+mkdir -p "$CONFIG_CASES/doctrine-present" "$CONFIG_CASES/doctrine-absent"
+printf '%s\n' 'placeholder' > "$CONFIG_CASES/doctrine-present/DOCTRINE.md"
+contains "gang config reports a present doctrine slot" \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/doctrine-present" "$GANG" config)" \
+  $'doctrine\t'"$CONFIG_CASES/doctrine-present/DOCTRINE.md"$'\tpresent'
+contains "gang config reports an absent doctrine slot" \
+  "$(GANG_CONFIG_DIR="$CONFIG_CASES/doctrine-absent" "$GANG" config)" \
+  $'doctrine\t'"$CONFIG_CASES/doctrine-absent/DOCTRINE.md"$'\tabsent'
+
 mkdir -p "$CONFIG_CASES/unknown"
 printf '%s\n' 'GANG_NOPE=value' > "$CONFIG_CASES/unknown/config"
 refuses "an unknown config key names its file, line, and key" \

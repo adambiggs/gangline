@@ -261,13 +261,9 @@ gang — drive native CLI agents in tmux
   gang drop <name>
   gang down
   gang profiles
+  gang config
 
-Environment:
-  GANG_PROFILE         default profile (claude-code)
-  GANG_SESSION         tmux session (gangline)
-  GANG_CONTEXT_LIGHTS  off, or absolute yellow,red token thresholds
-  GANG_PROFILES        custom profile directory
-  GANG_BOOT_TIMEOUT    harness startup timeout in seconds
+Configuration: gang config (full contract: docs/reference.md)
 EOF
 }
 
@@ -2369,6 +2365,60 @@ cmd_attach() { exec tmux attach -t "=$SESSION"; }
 
 cmd_profiles() { list_profiles; }
 
+config_sanitize() { # stdin -> terminal-safe, single-line text
+  LC_ALL=C tr '\000-\010\012-\037\177' '?' | tr '\011' ' '
+}
+
+config_effective() { # $1 settable key -> the value its consumers read
+  case "$1" in
+    GANG_PROFILE) printf '%s' "${GANG_PROFILE:-claude-code}" ;;
+    GANG_SESSION) printf '%s' "$SESSION" ;;
+    GANG_PROFILES) printf '%s' "${GANG_PROFILES:-}" ;;
+    GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
+    GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
+    GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
+    GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
+    GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
+    GANG_ACTIVITY_LIMIT) printf '%s' "$GANG_ACTIVITY_LIMIT" ;;
+    GANG_TURN_LIMIT) printf '%s' "$GANG_TURN_LIMIT" ;;
+    GANG_OCCUPIED_LIMIT) printf '%s' "$GANG_OCCUPIED_LIMIT" ;;
+    GANG_CLEAR_PRESSES) printf '%s' "${GANG_CLEAR_PRESSES:-40}" ;;
+    *) die "internal: no effective config value for $1" ;;
+  esac
+}
+
+cmd_config() {
+  local k value record key origin line source file doctrine state
+  [ $# -eq 0 ] || die "config: takes no arguments"
+  for k in $GANG_CONFIG_KEYS; do
+    value="$(config_effective "$k" | config_sanitize)"
+    if record="$(config_origin "$k")"; then
+      IFS=$'\t' read -r key origin line <<<"$record"
+      case "$origin" in
+        env)
+          if [ -n "$line" ]; then
+            source="environment (overriding config line $line)"
+          else
+            source="environment"
+          fi
+          ;;
+        config)
+          file="$(config_path "$CONFIG_FILE" | config_sanitize)"
+          source="$file line $line"
+          ;;
+      esac
+    else
+      source="default"
+    fi
+    source="$(printf '%s' "$source" | config_sanitize)"
+    printf '%s=%s\t%s\n' "$k" "$value" "$source"
+  done
+  doctrine="$CONFIG_DIR/DOCTRINE.md"
+  if [ -e "$doctrine" ] || [ -L "$doctrine" ]; then state=present; else state=absent; fi
+  doctrine="$(config_path "$doctrine" | config_sanitize)"
+  printf 'doctrine\t%s\t%s\n' "$doctrine" "$state"
+}
+
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
 case "$cmd" in
   up)       cmd_up "$@" ;;
@@ -2388,6 +2438,7 @@ case "$cmd" in
   drop)     [ $# -ge 1 ] || usage_die; cmd_drop "$1" ;;
   down)     cmd_down ;;
   profiles) cmd_profiles ;;
+  config)   cmd_config "$@" ;;
   -h|--help|help) usage ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
 esac
