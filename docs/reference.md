@@ -1,4 +1,4 @@
-# Command and environment reference
+# Command and configuration reference
 
 `gang --help` is the authoritative command synopsis.
 
@@ -12,9 +12,17 @@ current tmux client to it. `GANG_PROFILE` selects the harness.
 ### `gang hitch <name> [-p profile] [-d dir] [-m model] [-e effort] [--resume]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
-The launch environment carries the exact `GANG_SESSION` plus any custom profile
-and lock paths, so harness commands cannot drift to another session on the same
-tmux server.
+That contract tells the agent to choose a model and reasoning effort deliberately
+when hitching teammates. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
+valid UTF-8 prose within its category-error ceiling, the contract attributes and
+appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
+which caller is the operator. `adopt` still injects no startup text.
+
+The launch environment carries the exact `GANG_SESSION`, the absolute resolved
+`GANG_CONFIG_DIR`, and any custom profile and lock paths, so harness commands
+cannot drift to another session or configuration layer on the same tmux server.
+File-layer settings therefore reach nested hitches. Other per-invocation
+environment overrides do not become sticky inside the agent.
 
 If a first-run prompt owns the screen before the composer appears, `hitch`
 directs the operator to `gang attach` once the profile's occupied pattern
@@ -192,9 +200,11 @@ a native dialog reads as an answer.
 Submits the profile's native compaction command through the same verified input
 path. An external request refuses a busy or indeterminate target.
 
-When a Codex agent requests its own compaction, Gangline records a one-shot
-request. Its native Stop hook submits `/compact` after the active turn releases
-the composer. `status` and `roster` expose pending or failed self-compaction.
+When a hooked Codex or claude-code agent requests its own compaction, Gangline
+records a one-shot request. Its native Stop hook submits `/compact` after the
+active turn releases the composer. `status` and `roster` expose pending or failed
+self-compaction. A guarded claude-code launch that cannot install hooks declares
+neither Stop support nor deferred self-compaction.
 
 ### `gang cutoff [<duration|HH:MM>|clear]`
 
@@ -275,6 +285,14 @@ declares no `profile_input`.
 Lists shipped and custom harness profiles. The Bash substrate fixture is hidden
 unless `GANG_TEST_PROFILES=1`.
 
+### `gang config`
+
+Prints every effective operator setting with its origin: built-in default,
+config file and line, or environment, including when the environment overrides
+a file line. It also reports whether the doctrine slot is present. Dynamic text
+is terminal-safe: control bytes are rendered visibly rather than written raw.
+The command takes no arguments and needs no tmux server.
+
 ### `gang hook`
 
 Internal endpoint for native harness events. It reads one JSON payload from
@@ -285,24 +303,61 @@ Hooks are silent unless an enabled context light or declared team-time light
 crosses an edge. Context-source warm-up is silent until the first native turn
 completes; an unreadable source after that boundary fails visibly.
 
-## Environment
+## Configuration
 
-| Variable | Meaning |
-|---|---|
-| `GANG_PROFILE` | default profile for `up` and `hitch` |
-| `GANG_SESSION` | exact tmux session Gangline addresses |
-| `GANG_CONTEXT_LIGHTS` | `off`, or absolute `yellow,red` token thresholds |
-| `GANG_PROFILES` | custom profile directory searched before shipped profiles |
-| `GANG_BOOT_TIMEOUT` | harness startup readiness bound |
-| `GANG_LOCK_DIR` | shared per-pane delivery-lock directory; per-target spools live under it |
+The precedence is environment variable, then config file, then built-in default.
+An environment variable that is set but empty still outranks the file. Values
+read from the file are shell variables, not exported into harnesses or helper
+commands.
 
-Operational evidence bounds also use `GANG_CHURN_WAIT`,
-`GANG_ACTIVITY_WINDOW`, `GANG_ACTIVITY_LIMIT`, `GANG_TURN_LIMIT`,
-and `GANG_OCCUPIED_LIMIT`. Their defaults live once in
-`bin/gang`; change them only with evidence about the native harness surface.
+`GANG_CONFIG_DIR` is environment-only and defaults to
+`${XDG_CONFIG_HOME:-$HOME/.config}/gangline`. The resolved directory must be
+absolute. It contains:
+
+- `config`, the optional settings file;
+- `DOCTRINE.md`, optional operator prose delivered in every hitch contract.
+
+The settings file is parsed, never sourced. Blank lines and lines whose first
+non-blank character is `#` are ignored. Every other line is `NAME=VALUE`: leading
+blanks are ignored, the first `=` separates the exact key, and trailing spaces
+and tabs are removed from the literal value. Quotes, `#`, backticks, `$`, and
+further `=` characters have no special meaning. Empty values, duplicate or
+unknown keys, blanks in a key, NUL bytes, and control characters other than tab
+and newline are fatal. A missing final newline is accepted.
+
+Exactly these keys are settable:
+
+| Key | Built-in default | Meaning |
+|---|---|---|
+| `GANG_PROFILE` | `claude-code` | default profile for `up` and `hitch` |
+| `GANG_SESSION` | `gangline` | exact tmux session Gangline addresses |
+| `GANG_PROFILES` | unset | custom profile directory searched before shipped profiles |
+| `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
+| `GANG_CONTEXT_LIGHTS` | `off` | `off`, or absolute `yellow,red` token thresholds |
+| `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
+| `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
+| `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
+| `GANG_ACTIVITY_LIMIT` | `300` | activity-only evidence bound |
+| `GANG_TURN_LIMIT` | `300` | native turn-fact bound |
+| `GANG_OCCUPIED_LIMIT` | `900` | native occupancy-fact bound |
+| `GANG_CLEAR_PRESSES` | `40` | maximum verified composer-clear attempts |
+
+Profile declarations are refused because `load_profile` clears them before
+sourcing the selected profile; put those values in a custom profile and point
+`GANG_PROFILES` at it. `GANG_TEST_PROFILES` is suite-only,
+`GANG_CONFIG_DIR` cannot set the file that is already being read, and internal
+variables are refused. Any malformed file refuses every command, including
+native hooks; recovery is in `docs/operations.md`.
+
+Doctrine is never written by Gangline. It must be a readable regular file with
+no NUL, no controls other than tab and newline, valid UTF-8, and no more than
+8192 bytes. That ceiling catches a log, binary, or document tree placed in the
+prose slot; it is not a deliverability bound. Actual delivery is bounded by the
+target composer's rendering and pane geometry and remains verified at hitch.
+Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_PROFILES`,
-and `GANG_LOCK_DIR`.
+`GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.
 
 ## Profile contract
 

@@ -161,6 +161,26 @@ cheap place: harnesses either warn and run at a default nobody chose or open a
 window whose first turn the provider refuses. The append sits below the resume
 swap so both launch forms carry the effort by construction.
 
+## Configuration is parsed, never sourced
+
+Mirror the existing environment names in one strict scalar file, keep a set
+environment variable authoritative, and refuse unknown or duplicated keys.
+Sourcing would execute operator text on every command and native hook; silently
+ignoring a typo would claim a setting Gangline did not apply.
+
+## Doctrine is the operator's, and every hitch carries it
+
+Core owns one optional doctrine slot and ships no content. Deliver its validated
+prose in every hitch contract because Gangline cannot observe which caller is an
+operator; scope belongs in the operator's words, not an inferred role. Adoption
+still injects no startup text.
+
+## A hitch states its model and its effort
+
+Require the startup contract to tell agents to choose both deliberately when
+hitching teammates. Gangline requires the choice, never its content: model names,
+effort levels, and policy remain the profile's and operator's words.
+
 ## Evidence is selected per predicate
 
 For each fact, prefer the freshest owned event, then owned file state, then pane

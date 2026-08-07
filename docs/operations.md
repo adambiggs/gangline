@@ -10,6 +10,7 @@ operator can observe them, and agents compact at natural checkpoints.
 Check the direct surfaces:
 
 ```sh
+gang config
 gang roster
 gang status lead
 gang capture lead
@@ -31,8 +32,10 @@ For Codex, this commonly means the tmux socket and Gangline checkout need to be
 inside paths its sandbox permits. Fix that in the operator's Codex configuration;
 shipped profiles never disable sandboxing or bypass approvals.
 
-Use a stable `GANG_SESSION`, `GANG_PROFILES`, and `GANG_LOCK_DIR` for every shell
-that addresses the team.
+Use a stable `GANG_SESSION`, `GANG_PROFILES`, `GANG_LOCK_DIR`, and absolute
+`GANG_CONFIG_DIR` for every shell that addresses the team. A hitch pins the
+resolved config root into its agent so nested hitches read the same file and
+doctrine.
 
 ## Sending messages safely
 
@@ -199,6 +202,39 @@ delete the exact smoke session afterward. Mandatory tests use a private tmux
 server and stand-in profile; they do not spend real harness turns.
 
 ## Recovery
+
+### Every command and native hook refuses after a config edit
+
+Gangline parses the config before dispatch. An unknown or duplicated key, empty
+value, malformed line, or forbidden byte therefore refuses every command,
+including `gang hook`; agents can surface hook errors and temporarily lose turn
+facts, Stop-driven work, occupancy events, and lights. This is a single loud
+failure, not a fallback to defaults.
+
+Read the error: it names the file, line, offending key, and settable keys, then
+edit that line. To remove the file layer immediately at the default or selected
+config root, move it aside and confirm the remaining layers:
+
+```sh
+config_dir="${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}"
+mv "$config_dir/config" "$config_dir/config.disabled"
+gang config
+```
+
+The environment remains authoritative, so `gang config` is also the check for
+an override that still masks the repaired file.
+
+### A larger startup contract cannot be delivered to the target pane
+
+Operator doctrine can make the startup contract larger than the target
+composer can render in the current pane. The doctrine byte ceiling catches a
+category error, not this geometry-dependent bound. Hitch reports that the
+startup contract was not delivered and leaves the exact window for inspection.
+
+Use `gang capture NAME` or `gang attach` to inspect it. Then run `gang roster`
+before the destructive step, `gang drop NAME`, shorten the doctrine or enlarge
+the target pane, and hitch the agent again. Do not treat the pre-launch doctrine
+ceiling as evidence that a target can render the body.
 
 ### A harness is blocked on a dialog
 
