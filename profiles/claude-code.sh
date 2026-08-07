@@ -19,6 +19,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       esac
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
+      GANG_STOP_HOOK=1
+      GANG_SELF_COMPACT=deferred
       unset _gl_cc_cmd _gl_cc_esc _gl_cc_json
       ;;
   esac
@@ -92,12 +94,6 @@ GANG_QUEUE_RECALL_KEY="Up"
 # Escape stops an active turn; the harness paints "esc to interrupt" while one
 # is in flight.
 GANG_INTERRUPT_KEY="Escape"
-# The launch above composes a native Stop hook into --settings, so this harness
-# announces its own turn boundaries to gang — which is what a spool needs to
-# drain.
-GANG_STOP_HOOK=1
-
-
 profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   local m
   m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \

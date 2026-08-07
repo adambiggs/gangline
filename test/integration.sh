@@ -338,6 +338,21 @@ claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
 contains "enabled Claude lights wire their context source" \
   "$claude_on" 'statusLine'
+claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
+  fixture "$claude_profile")"
+equal "a hooked Claude launch declares Stop and deferred self-compaction together" \
+  "1|deferred" "$claude_hook_declarations"
+claude_unhooked_root="$RUN_ROOT/claude'guard"
+mkdir -p "$claude_unhooked_root/bin"
+printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: Apache-2.0' \
+  > "$claude_unhooked_root/bin/gang"
+chmod +x "$claude_unhooked_root/bin/gang"
+claude_unhooked_declarations="$(ROOT="$claude_unhooked_root" GANG_CONTEXT_LIGHTS=off bash -c \
+  'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
+  fixture "$claude_profile")"
+equal "an unhooked Claude launch claims neither Stop nor deferred compaction" \
+  "|" "$claude_unhooked_declarations"
 claude_midturn="$(ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
 equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
@@ -2685,27 +2700,44 @@ contains "compact submits the profile's native command" \
 # submits the profile command and exits. Both waits below are tmux event barriers,
 # not clocks or polling loops.
 self_executed="test-self-compact-executed-$$"
+self_busy="$RUN_ROOT/self-compact-busy"
 cat > "$RUN_ROOT/profiles/deferred.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
 GANG_COMPACT_CMD="printf SELF_COMPACT; tmux wait-for -S $self_executed"
 GANG_SELF_COMPACT=deferred
+GANG_BUSY_REGEX='BUSY_DEFERRED'
+_gl_self_input="\$(declare -f profile_input)"
+eval "self_real_input \${_gl_self_input#profile_input}"
+profile_input() {
+  [ ! -e "$self_busy" ] || { printf ''; return; }
+  self_real_input "\$1"
+}
 SH
 "$GANG" hitch selfable -p deferred -d /tmp >/dev/null
 self_id="$(window_id selfable)"
 self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
 self_requested="test-self-compact-requested-$$"
-printf -v self_command 'GANG_SESSION=%q GANG_PROFILES=%q %q compact selfable; tmux wait-for -S %q' \
-  "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested"
+self_release="test-self-compact-release-$$"
+self_released="test-self-compact-released-$$"
+printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact selfable; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+  "$self_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested" \
+  "$self_release" "$self_busy" "$self_released"
 tmux send-keys -l -t "$self_id" "$self_command"
 tmux send-keys -t "$self_id" Enter
 tmux wait-for "$self_requested"
 self_request="$(tmux show-options -wqv -t "$self_id" @gl_self_compact_requested)"
+contains "the deferred self-compaction request is made while the pane paints busy" \
+  "$(pane selfable)" "BUSY_DEFERRED"
+equal "deferred self-compaction leaves the busy composer's reading empty" \
+  "" "$("$GANG" composer selfable)"
 contains "self-compaction records one request inside the running agent" \
   "$(pane selfable)" "self-compaction scheduled for the end of this turn"
 excludes "self-compaction does not submit before Stop" \
   "$(pane selfable)" "SELF_COMPACT"
+tmux wait-for -S "$self_release"
+tmux wait-for "$self_released"
 
 if [ -n "$self_request" ]; then
   tmux wait-for "gang-self-compact-$self_request" &
@@ -2724,6 +2756,39 @@ else
   fail "self-compaction records one request inside the running agent" \
     "@gl_self_compact_requested is empty"
 fi
+
+# Without the deferred declaration, the same self-call takes the direct path
+# and puts the native command into the tty while the caller's turn is active.
+nodeferred_busy="$RUN_ROOT/nodeferred-compact-busy"
+cat > "$RUN_ROOT/profiles/nodeferred.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_COMPACT_CMD="/compact"
+GANG_BUSY_REGEX='BUSY_NODEFERRED_COMPACT'
+_gl_nodeferred_input="\$(declare -f profile_input)"
+eval "nodeferred_real_input \${_gl_nodeferred_input#profile_input}"
+profile_input() {
+  [ ! -e "$nodeferred_busy" ] || { printf ''; return; }
+  nodeferred_real_input "\$1"
+}
+SH
+"$GANG" hitch nodeferred -p nodeferred -d /tmp >/dev/null
+nodeferred_id="$(window_id nodeferred)"
+nodeferred_observed="test-nodeferred-compact-observed-$$"
+nodeferred_release="test-nodeferred-compact-release-$$"
+printf -v nodeferred_command ': > %q; printf BUSY_NODEFERRED_COMPACT; GANG_SESSION=%q GANG_PROFILES=%q %q compact nodeferred >/dev/null 2>&1 || :; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q' \
+  "$nodeferred_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" \
+  "$nodeferred_observed" "$nodeferred_release" "$nodeferred_busy"
+tmux send-keys -l -t "$nodeferred_id" "$nodeferred_command"
+tmux send-keys -t "$nodeferred_id" Enter
+tmux wait-for "$nodeferred_observed"
+contains "without deferral the same self-call types the compact command mid-turn" \
+  "$(pane nodeferred)" "/compact"
+equal "the undeferred path stamps no pending self-compaction request" "" \
+  "$(tmux show-options -wqv -t "$nodeferred_id" @gl_self_compact_requested)"
+tmux wait-for -S "$nodeferred_release"
+"$GANG" drop nodeferred >/dev/null
 
 # The universal hook endpoint records immediately against the firing pane.
 alpha_id="$(window_id alpha)"
