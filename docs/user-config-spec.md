@@ -86,8 +86,26 @@ reasons that `XDG_CONFIG_HOME` cannot serve:
   harness that honours XDG, which is not Gangline's business.
 - **Suite isolation (§5.1)** without perturbing fixture harnesses the same way.
 
+**The resolved root must be an absolute path.** Whichever of the three sources
+supplies it — `GANG_CONFIG_DIR`, `XDG_CONFIG_HOME`, or `$HOME` — a root that does
+not begin with `/` is fatal, in one check on the resolved value:
+
+```sh
+case "$CONFIG_DIR" in /*) ;; *) die "… must be an absolute path, got '…'" ;; esac
+```
+
+A relative root does not name one directory; it names a different directory per
+working directory, and `cmd_hitch` launches its child with `-d` in a working
+directory that is frequently not the caller's. Pinning a relative string into the
+launch line would therefore hand the child a *different* config file and doctrine
+— the exact failure §1.7 exists to prevent. Refused rather than normalised,
+because normalising is only meaningful once the directory exists, and this
+directory legitimately may not: resolving `.` and `..` by hand for a path that
+cannot be `cd`'d into is code for a case that should not exist.
+
 Absent config file means no config layer, silently — absence is the default
-state, not a failure.
+state, not a failure. An absent *directory* is the same thing; only a malformed
+root is fatal.
 
 ### 1.3 Precedence
 
@@ -261,11 +279,13 @@ launch_env="$launch_env GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR")"
 [ -z "${GANG_LOCK_DIR:-}" ] || launch_env="$launch_env GANG_LOCK_DIR=…"
 ```
 
-`CONFIG_DIR` is the resolved directory, whether it came from `GANG_CONFIG_DIR` or
-from the XDG default. The child therefore reads the same file as its parent and
-resolves the same config layer — so a lead whose `GANG_PROFILE=codex` came from
-the file hitches teammates on codex, and configured lights and boot bounds reach
-nested hitches.
+`CONFIG_DIR` is the **absolute** resolved directory of §1.2, whether it came from
+`GANG_CONFIG_DIR` or from the XDG default. Absoluteness is what makes the pin a
+pin: the child runs in the `-d` working directory, not the caller's, so a
+relative root would name a different file on the other side of the launch. With
+it, the child reads the same file as its parent and resolves the same config
+layer — so a lead whose `GANG_PROFILE=codex` came from the file hitches teammates
+on codex, and configured lights and boot bounds reach nested hitches.
 
 The three team-identity keys stay pinned as today, because `docs/reference.md`
 requires that *"every process addressing one team must agree on `GANG_SESSION`,
@@ -702,11 +722,18 @@ is the first change the implementer should make. `GANG_CONFIG_DIR` rather than
     `default`.
 17. **`gang config` sanitises a control byte** in an environment-layer value: the
     raw ESC does not reach stdout.
-18. **A nested hitch resolves the same config layer.** Hitch the `bash` fixture
-    with `GANG_PROFILE` and `GANG_SESSION` supplied by the file only; then from
-    that agent's pane hitch a second one, and assert the second window's profile
-    is the file's profile and it joined the file's session. This is the §1.7
-    coherence claim, and it fails if only `GANG_SESSION` is pinned.
+18. **A nested hitch resolves the same config layer, from a different working
+    directory.** Hitch the `bash` fixture with `GANG_PROFILE` and `GANG_SESSION`
+    supplied by the file only and with `-d` pointing somewhere other than the
+    suite's own working directory; then from that agent's pane hitch a second
+    one, again with a different `-d`, and assert the second window's profile is
+    the file's profile and it joined the file's session. This is the §1.7
+    coherence claim. **The differing `-d` is load-bearing:** with parent and child
+    sharing a working directory the assertion passes even when the pinned root is
+    relative, which is precisely the hole this guard exists to cover.
+19. **A relative config root refuses**, in all three sources: `GANG_CONFIG_DIR`
+    set to a relative path; `XDG_CONFIG_HOME` relative with `GANG_CONFIG_DIR`
+    unset; `HOME` relative with both unset. Each names the offending variable.
 
 ### 5.3 Doctrine
 
@@ -725,9 +752,26 @@ is the first change the implementer should make. `GANG_CONFIG_DIR` rather than
    counterexample that killed the membership predicate, kept as a guard.
 5. **Multi-line doctrine lands whole**, with distinct markers on the first and
    last lines and **both** asserted.
-6. **Trailing newlines are preserved.** A doctrine ending in blank lines still
-   delivers, and the `End this turn.` terminator is still last on the pane —
-   proving the sentinel read, since `$(cat)` would silently reshape it.
+6. **Trailing newlines are preserved, counted.** Delivery plus an unchanged final
+   terminator does **not** prove this: a `doctrine="$(cat "$file")"`
+   implementation still delivers and still ends with `End this turn.`, so an
+   assertion on those two facts is green on the very defect it was written to
+   catch. The guard must count.
+
+   Give the doctrine a `TAIL_MARK` final line followed by two blank lines, and
+   assert the **number of blank rows between `TAIL_MARK` and the terminator** in
+   the body Gangline recorded. Measured 2026-08-07 against the assembly of §2.5:
+   the sentinel read yields 4, command substitution yields 1.
+
+   Read that count off `@gl_parked` rather than the pane, by hitching a fixture
+   profile that parks its input — the recording the suite already trusts for
+   exactly this question, where it asserts that a parked multi-line body records
+   *"every line of it … not just the first"*. The hitch fails, which is expected
+   and asserted; the window option is stamped regardless.
+
+   **This test is not accepted until it has been watched going red against a
+   `$(cat)` implementation** — the repo's own standard, and the reason the
+   original version of this assertion was worthless.
 7. **Tag-shaped doctrine is neutralised**: the pane shows `(gang:` and not a
    second `[gang:` opener.
 8. **Invalid UTF-8 refuses** — a lone `0xff` — **before the window opens**.
