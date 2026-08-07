@@ -2774,7 +2774,6 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   [ -n "$event" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
   prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
   [ -n "$prof" ] || exit 0
-  load_profile "$prof"
   if [ "$event" = Notification ]; then
     kind="$(printf '%s' "$payload" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
@@ -2790,9 +2789,12 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           spool_stop "$TMUX_PANE" "$prof" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        stall_note "$TMUX_PANE" permission_prompt ;;
-    Notification) case " $GANG_STALL_TYPES " in
-                    *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
-                  esac ;;
+    Notification) [ -n "$kind" ] || exit 0
+                  ( load_profile "$prof"
+                    case " $GANG_STALL_TYPES " in
+                      *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
+                    esac
+                  ) || true ;;
   esac
   case "$event" in
     UserPromptSubmit|PostToolUse)
