@@ -920,12 +920,17 @@ PROMPT_COMMAND='if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRA
 if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
+_flush_probe() {   # what the composer holds, read where input ordering places it
+  printf '%s' "$READLINE_LINE" > "$FLUSH_PROBE"
+  tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
+}
+bind -x '"\C-t": _flush_probe'
 RC
 cat > "$RUN_ROOT/profiles/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 profile_input() { # a composer that spans lines, and reads as the hint when empty
@@ -958,6 +963,27 @@ parked_id="$(window_id parked)"
 # file empty and cannot fire it early, so the wait returns after the settling
 # command's own hook and nothing is left in flight to type into the composer
 # later. Its leading space keeps it out of the history the recall key reads.
+# What the composer holds, observed in ORDER rather than at a moment. Capturing
+# the pane straight after flush returns is timing luck: tmux send-keys returns
+# once the key is enqueued, so a mutant Enter may not have been consumed, nor
+# the new prompt painted, when the capture happens — and the world would report
+# the still-edited line and pass. The probe key travels the same input path
+# behind anything flush sent, so by the time it runs, that Enter has either been
+# processed or never existed. It reads the line without submitting it, so the
+# correct case is not disturbed by being watched.
+flush_probed=0
+flush_probe() {
+  flush_probed=$((flush_probed + 1))
+  local chan="test-flush-probe-$flush_probed-$$"
+  printf '%s' "$chan" > "$RUN_ROOT/flush-probe-chan"
+  : > "$RUN_ROOT/flush-probe"
+  tmux wait-for "$chan" &
+  local waiter=$!
+  tmux send-keys -t "$parked_id" C-t
+  wait "$waiter"
+  cat "$RUN_ROOT/flush-probe" 2>/dev/null || true
+}
+
 flush_settled=0
 flush_settle() {
   flush_settled=$((flush_settled + 1))
@@ -1057,6 +1083,11 @@ contains "the recalled body is recorded against the window" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
+# THE COMPOSER, not gang's account of it. Everything above is gang reporting on
+# itself; only the line still sitting there says the Enter was withheld, because
+# a submitted line leaves it.
+contains "the recalled body is still sitting in the composer, unsent" \
+  "$(flush_probe)" "EXTRA_WORDS_NOBODY_SENT"
 tmux send-keys -t "$parked_id" C-u
 
 # AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
@@ -1098,6 +1129,8 @@ contains "refused by the readback, not by anything downstream of it" \
   "$ts_out" "flush NOT performed"
 contains "and the body is recorded as sitting unsent, never as submitted" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
+contains "with the composer agreeing: it is still sitting there" \
+  "$(flush_probe)" "MARK_TS head"
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 
@@ -1147,12 +1180,24 @@ fi
 contains "naming that declaration too" "$badstop_out" "GANG_INTERRUPT_KEY"
 equal "and it leaves no window behind either" "" "$(window_id badstop)"
 
+# A TARGET THAT WITNESSES THE KEYSTROKE. Every other assertion about interrupt
+# reads something gang wrote — its own report, its own tmux option — so all of
+# them hold just as well when no key leaves at all. This fixture binds the
+# declared key to a mark of its own, which is the only artifact in the world
+# that cannot exist unless the key arrived at the pane. It is also what pins the
+# key to the PROFILE's declaration rather than to anything hard-coded in core:
+# the bound key is C-g, so an interrupt that sent Escape would leave no mark.
+cat > "$RUN_ROOT/interrupt-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+bind -x '"\C-g": printf "INTERRUPT_KEY_RECEIVED\n"'
+RC
 cat > "$RUN_ROOT/profiles/interruptible.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-GANG_INTERRUPT_KEY='Escape'
+GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/interrupt-rc' fixture"
+GANG_INTERRUPT_KEY='C-g'
 GANG_BUSY_REGEX='STILL_WORKING'
 SH
 "$GANG" hitch stoppable -p interruptible -d /tmp >/dev/null
@@ -1161,7 +1206,24 @@ tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
 contains "an open turn bracket answers busy" \
   "$("$GANG" status stoppable)" "busy"
 contains "interrupt reports the key it sent" \
-  "$("$GANG" interrupt stoppable)" "Escape"
+  "$("$GANG" interrupt stoppable)" "C-g"
+# Ordering barrier, not a wait on the thing under test: the pane consumes its
+# input in order, so a command that runs at all runs after the keystroke ahead
+# of it was processed. A missing or wrong keystroke therefore fails the mark
+# below rather than hanging here — which it did until these two Enters existed.
+# A line editor reads Escape as the start of a sequence and swallows whatever
+# arrives next, so an interrupt key that leaves the pane mid-prefix would eat
+# the first byte of this barrier's own command and the suite would wait forever
+# on a signal that could never come.
+tmux send-keys -t "$stop_id" Enter Enter
+stop_settled="test-interrupt-settled-$$"
+tmux wait-for "$stop_settled" &
+stop_waiter=$!
+tmux send-keys -l -t "$stop_id" "tmux wait-for -S $stop_settled"
+tmux send-keys -t "$stop_id" Enter
+wait "$stop_waiter"
+contains "and the declared key actually reached the pane" \
+  "$(pane stoppable)" "INTERRUPT_KEY_RECEIVED"
 equal "an interrupt drops the bracket nothing else will close" "" \
   "$(tmux show-options -wqv -t "$stop_id" @gl_turn)"
 contains "so the keystroke cannot strand a false busy" \
@@ -1186,12 +1248,18 @@ contains "a target still painting work stays busy after the interrupt" \
   "$stubborn_state" "busy"
 excludes "the interrupt never invents an idle the pane contradicts" \
   "$stubborn_state" "idle"
-if printf 'MARK_MIDTURN' |
-  "$GANG" send --to stubborn --from tester --stdin >/dev/null 2>&1; then
+if midturn_out="$(printf 'MARK_MIDTURN' |
+  "$GANG" send --to stubborn --from tester --stdin 2>&1)"; then
   fail "and it stays unreachable while that work is painted" "send entered mid-turn"
 else
   pass "and it stays unreachable while that work is painted"
 fi
+# Refused FOR THAT REASON. A bare non-zero exit is satisfied by any refusal this
+# pane could raise — a draft, a lock, an occupied composer — so on its own it
+# stops pinning the interrupt's consequence the moment anything else refuses.
+contains "refused because the turn is still running, not for some other reason" \
+  "$midturn_out" "not safely reachable mid-turn"
+excludes "and nothing was typed into it" "$(pane stubborn)" "MARK_MIDTURN"
 "$GANG" drop stubborn >/dev/null
 
 # The shipped harnesses that stop on Escape say so themselves; the ones whose
@@ -1396,7 +1464,38 @@ else
 fi
 contains "and says what would have to happen instead" \
   "$identityless_out" "re-hitch or re-adopt"
+# Refusing is only half of it. Minting on the way past is the race the identity
+# exists to avoid, so the refusal must also leave nothing behind — a window that
+# came out of this with a token would have been given one at exactly the moment
+# two senders could each give it a different one.
+equal "and the refusal mints nothing on its way out" "" \
+  "$(tmux show-options -wqv -t "$(window_id identityless)" @gl_spool)"
 "$GANG" drop identityless >/dev/null
+
+# ADOPTION MINTS IT TOO, and nothing tested that. An adopted window is an agent
+# by every other measure, so a spool identity it never received would make
+# --spool refuse a target the operator had just enrolled.
+tmux new-window -d -t "=$GANG_SESSION" -n taken -c /tmp \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+"$GANG" adopt taken -p spoolable >/dev/null
+taken_id="$(window_id taken)"
+taken_token="$(tmux show-options -wqv -t "$taken_id" @gl_spool)"
+if [ -n "$taken_token" ]; then
+  pass "an adopted agent receives the spool identity a sender will need"
+else
+  fail "an adopted agent receives the spool identity a sender will need" \
+    "@gl_spool is empty"
+fi
+# And it is a usable one, not merely a present one.
+tmux send-keys -l -t "$taken_id" 'HUMAN_DRAFT'
+# Tolerated rather than asserted here so a missing identity reports as the two
+# red checks it is, instead of aborting the run under set -e and taking every
+# later world with it.
+printf 'MARK_ADOPTED' |
+  "$GANG" send --to taken --from tester --spool --stdin >/dev/null 2>&1 || true
+contains "and it can park a refused message under it" \
+  "$("$GANG" status taken)" "spooled: 1"
+"$GANG" drop taken >/dev/null
 
 # A body that was already typed has an unknown fate, so it is NOT parked: a
 # second copy of a message that may have landed is worse than one that failed
@@ -1473,6 +1572,13 @@ for wedged_entry in "$wedged_spool"/failed-*; do
 done
 equal "the unverified body is kept where a person can read it" "1" \
   "$wedged_quarantined"
+# READ IT. A file of the right name is not a kept message: the promise gang
+# makes when it holds a body instead of re-sending it is that the body is still
+# there, and only reading it says so.
+wedged_body="$(cat "$wedged_spool"/failed-* 2>/dev/null)" || wedged_body=""
+contains "the body itself, not just a file with the right name" \
+  "$wedged_body" "MARK_WEDGED"
+contains "and the sender it was parked under" "$wedged_body" "tester"
 # READ OUT OF THE REPORT ITSELF, not recomputed beside it. Holding a message
 # instead of re-sending it is only honest if the report says where it went, and
 # a check that derives the path independently cannot see the report naming an
