@@ -991,6 +991,13 @@ spool_count() { # $1 = window id -> how many entries are waiting
   printf '%s' "$n"
 }
 
+spool_dir_of() { # $1 = window id -> its spool directory on stdout, nothing if it has none
+  # PRINTED, not left in SPOOL_DIR. Every caller that wants this from a command
+  # substitution is a subshell, and a global set there dies with it — which is
+  # how the held-message report came to name an empty directory.
+  spool_existing "$1" && printf '%s' "$SPOOL_DIR"
+}
+
 spool_held() { # $1 = window id -> entries a drain claimed and never retired
   # Claimed but not delivered-and-removed: a drain that died mid-flight, or one
   # whose delivery could not be verified. Counted and reported because nothing
@@ -1854,16 +1861,23 @@ cmd_flush() {
     [ "$looks" -lt 5 ] \
       || die "flush NOT performed: $GANG_QUEUE_RECALL_KEY left the composer of $name unchanged, so nothing was loaded for gang to read back and the Enter was NOT pressed (gang capture $name)"
   done
-  # WHOLE, AND EQUAL. Containment would accept a recalled body that merely
-  # starts with the recorded one, so a remainder that was truncated, altered or
-  # appended to would be submitted as verified. Both sides are readings taken
-  # by the same profile parser from the same composer, so the only difference
-  # worth allowing is trailing blank space, which a composer may or may not
-  # paint after the last character.
-  [ "$(printf '%s' "$loaded" | sed -E 's/[[:space:]]+$//')" \
-    = "$(printf '%s' "$parked" | sed -E 's/[[:space:]]+$//')" ] \
+  # WHOLE, AND BYTE-EQUAL. Containment would accept a recalled body that merely
+  # starts with the recorded one, so a truncated, altered or appended remainder
+  # would be submitted as verified — and NO normalization is applied either,
+  # because every normalization discards content that some body means. Trimming
+  # trailing blank space is line-oriented in every tool that offers it, so it
+  # erases the difference between "first  \nsecond" and "first\nsecond": two
+  # spaces that are a hard line break in Markdown, and a different message.
+  #
+  # Both sides are readings the same profile parser took from the same composer,
+  # which is exactly the comparison the delivery path already trusts byte-for-
+  # byte — the paste's before/after, and stage_clear's recorded rendering. A
+  # reading that differs for reasons of its own is therefore evidence gang
+  # cannot tell a recovery from a substitution, and refusing is the safe half of
+  # that: nothing is pressed, and the manual recovery is where it always was.
+  [ "$loaded" = "$parked" ] \
     || { stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
-         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when the whole of it reads back as the one it watched the harness park (gang attach)"; }
+         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when the whole of it reads back, byte for byte, as the one it watched the harness park (gang attach)"; }
   submit_verify "$AGENT_ID" "$loaded" "$frag" recall
   lock_release
   printf '%s %s\n' \
@@ -1988,7 +2002,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc spooled held spool_failed skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed skew="" current
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -2017,8 +2031,15 @@ cmd_status() {
   [ "$spooled" -eq 0 ] \
     || printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
   held="$(spool_held "$AGENT_ID")"
-  [ "$held" -eq 0 ] \
-    || printf '%s\n' "$(colour "$C_BAD" "spool: $held held after an interrupted or unverified delivery — gang will not send them again; read them under $SPOOL_DIR")"
+  if [ "$held" -ne 0 ]; then
+    held_dir="$(spool_dir_of "$AGENT_ID")"
+    # The whole promise of holding rather than re-sending is that a person can
+    # go and read the body, so the place has to be in the report or the report
+    # is worse than silence: it says the message was kept and does not say where.
+    [ -n "$held_dir" ] \
+      || die "$held message(s) are held for '$1' and gang cannot name where: this window's spool identity is gone, so the directory holding them can no longer be resolved. Look for them under $(spool_root_of)"
+    printf '%s\n' "$(colour "$C_BAD" "spool: $held held after an interrupted or unverified delivery — gang will not send them again; read them under $held_dir")"
+  fi
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "spool drain NOT verified: $spool_failed")"
