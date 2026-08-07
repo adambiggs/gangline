@@ -121,11 +121,16 @@ composer back against the body it recorded when it watched the harness park the
 message, submits it, and verifies the submission the way any delivery is
 verified.
 
+The readback is byte-for-byte against the whole recorded reading, with nothing
+normalized away: every normalization discards content that some body means, and
+trailing-space trimming is line-oriented in every tool that offers it, so it
+cannot tell a line ending in two spaces from one that does not.
+
 It refuses before pressing anything when the profile declares no queue evidence
 or no recall key, when the composer shows no parked-queue evidence, and when
 Gangline holds no record of the parked body. It refuses after the recall key
-when that key loaded nothing, or when the readback is not the recorded message;
-the Enter is not pressed in either case.
+when that key loaded nothing, or when the readback is not exactly the recorded
+message; the Enter is not pressed in either case.
 
 ### `gang interrupt <name>`
 

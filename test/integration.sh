@@ -753,7 +753,8 @@ profile_input() { # a composer that spans lines, and reads as the hint when empt
       if (!start) exit 1
       s = line[start]; sub(/^.*❯/, "", s); print s
       for (i = start + 1; i <= last; i++) print line[i]
-    }' | sed 's/[[:space:]]*\$//')" || return 1
+    }' | sed 's/[[:space:]]*\$//' \\
+       | sed '/\[TS\]/{ s/\[TS\]//; s/\$/ /; }')" || return 1
   if [ -f "$RUN_ROOT/flush-strand" ] && ! printf '%s' "\$box" | grep -q '[^[:space:]]'; then
     printf 'Press up to edit queued messages'
     return 0
@@ -871,6 +872,47 @@ contains "the recalled body is recorded against the window" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
+tmux send-keys -t "$parked_id" C-u
+
+# AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
+# space is line-oriented in every tool that offers it, so it erases the
+# difference between a line that ends in two spaces and one that does not —
+# a hard line break in Markdown, and a different message. A pane capture pads
+# every line to the pane width, so trailing whitespace cannot survive one at
+# all; this fixture's composer carries it through a token instead, which is
+# what lets the world state the difference the comparison must not discard.
+: > "$RUN_ROOT/flush-drain"
+flush_settle
+: > "$RUN_ROOT/flush-arm"
+if printf 'MARK_TS head[TS]' |
+  "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "a body whose line ends in blank space parks like any other" \
+    "send reported success"
+else
+  pass "a body whose line ends in blank space parks like any other"
+fi
+ts_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+case "$ts_record" in
+  *"] ") pass "and the blank space is part of what gang recorded" ;;
+  *) fail "and the blank space is part of what gang recorded" "got [$ts_record]" ;;
+esac
+# The same body with that line ending stripped: byte-different, and identical
+# under any per-line trailing-space normalization.
+ts_tampered="${ts_record# }"
+ts_tampered="${ts_tampered% }"
+tmux send-keys -l -t "$parked_id" "$ts_tampered"
+tmux send-keys -t "$parked_id" Enter
+flush_settle
+if ts_out="$("$GANG" flush parked 2>&1)"; then
+  fail "a recalled body differing only in a line's trailing space is not flushed" \
+    "flush reported success"
+else
+  pass "a recalled body differing only in a line's trailing space is not flushed"
+fi
+contains "refused by the readback, not by anything downstream of it" \
+  "$ts_out" "flush NOT performed"
+contains "and the body is recorded as sitting unsent, never as submitted" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 

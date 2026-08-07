@@ -96,7 +96,12 @@ Gangline already owns every piece of evidence the manual recovery uses, so it
 performs the recovery instead of printing the keystrokes. The profile declares
 the key that loads the parked body, the record written when Gangline watched the
 harness park it says which body must come back, and the loaded composer is read
-back against that record before any Enter. Missing evidence, a key that loads
+back against that record, byte for byte and whole, before any Enter. Nothing is
+normalized first: both sides are readings the same parser took from the same
+composer, which is the comparison the delivery path already trusts exactly, and
+every normalization discards content that some body means — trailing-space
+trimming is line-oriented, so it cannot tell a Markdown hard line break from its
+absence. Missing evidence, a key that loads
 nothing, and a readback that does not match are all refusals with nothing
 pressed. The post-Enter proof is one shared implementation, because two copies
 of it would drift and the drifted one would report a submission nobody saw.
