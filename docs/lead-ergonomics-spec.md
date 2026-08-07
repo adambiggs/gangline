@@ -248,6 +248,70 @@ status alone.
    with `--supersede` and no other flag, assert `status parker` reports one.
 6. **`--supersede --live-only` is refused**, naming `--live-only`.
 
+### `--supersede` is sender-scoped, not topic-scoped
+
+`--supersede` drops **every** message the same sender has waiting for that
+target, not only ones on the same subject. That is what the code does and what
+`docs/DECISIONS.md` says; what is missing is the operator-facing caution, and
+its absence has already cost a message — an amendment batch was destroyed by a
+later `--supersede` from the same sender on an unrelated topic.
+
+Add to `docs/reference.md` §`gang send`, beside the existing `--supersede`
+sentence:
+
+> It is scoped to the sender, not to a subject: a sender with two unrelated
+> messages waiting for one target loses the first when the second carries the
+> flag. Pass it only when the newer message genuinely replaces everything that
+> sender has parked.
+
+**Do not add topic scoping.** A subject, thread, or topic key would be a
+coordination schema, and `docs/DECISIONS.md` §"Gangline is substrate, not
+coordination" forbids exactly that: Gangline defines no reporting protocol and
+no message taxonomy. The sender knows which of its own messages are still
+relevant; the substrate does not and should not learn.
+
+### A held entry is unverified, not undelivered
+
+Observed in the live session: a spool drain pasted a body, watched the composer
+change, pressed Enter, and the harness parked the submission in its own input
+queue rather than submitting it. `submit_verify`'s post-Enter queue check caught
+that correctly, the entry was held rather than re-sent, and `gang flush` later
+refused because the parked-body record was gone. The harness then drained its
+own queue, so the message **did** reach its target while Gangline was reporting
+it as not verified.
+
+Every step of that was right, and the spec changes no mechanism:
+
+- Holding rather than re-sending is the rule (`docs/DECISIONS.md`: Gangline
+  never sends a message a second time on the chance the first did not arrive).
+  A false negative in this direction is the safe one; a second copy is not.
+- `flush` refusing was right too. By the time it ran, the harness had drained
+  its own queue, so the recorded body had been retired by `stage_clear` and
+  there was nothing to recall. Pressing the recall key on that composer would
+  have submitted whatever happened to be there.
+
+What is wrong is only the **words**. "Held" and "not verified" are read by an
+operator as "not delivered", and they do not mean that. Fix the reporting:
+
+- `gang status <name>` — the held-entry line reads
+  `held (delivery NOT verified — it may still have arrived): <fragment>`
+  rather than any phrasing that asserts non-delivery.
+- `docs/reference.md` §`gang send` — state that a held entry means Gangline
+  could not verify the delivery, not that the message failed to arrive: a
+  harness that parks a submission in its own queue may drain it later.
+- `docs/operations.md` — the recovery is to read the target before re-sending
+  by hand. Gangline will not decide that for the operator, and the reason it
+  will not is that it cannot see the harness's internal queue.
+
+**Fixture.** Add a suite case that reproduces the whole sequence against the
+existing `spoolable` fixture: arm the fixture to paint queue evidence after
+Enter, drive a drain, assert the entry is held and that the reported wording
+says unverified rather than undelivered, then clear the queue evidence to
+simulate the harness draining itself and fire another Stop event. **Assert that
+nothing is re-sent** — the held entry stays held and the target's pane gains no
+second copy. That last assertion is the point of the fixture: the arrival must
+not become a reason to deliver again.
+
 ### Documentation
 
 - `bin/gang` `usage()` — the `gang send` line.
@@ -820,6 +884,90 @@ with `Closes #106` in the footer and the red-first evidence in the body.
 
 ---
 
+## 6. On-demand context query
+
+### Problem
+
+Gangline already computes per-agent context for `GANG_CONTEXT_LIGHTS` and the
+band ladder, but that computation is reachable only when a threshold crosses.
+An agent deciding whether to compact, or an operator sizing a team's remaining
+room, has no way to ask.
+
+### Surface: `gang context [name]`, and no roster column
+
+Both halves are decided on mechanism.
+
+**The query is a command.** `context_now()` already is the one computation; the
+threshold path (`context_light_read`) and the query become its two readers.
+Nothing is measured twice, cached, or reconciled.
+
+**There is no roster column, and `profile_context` is why.** That function is
+built to die when it cannot read its native source: `claude-code` dies with
+`no ctx beacon in pane` for any window whose lights were not enabled at hitch
+and for every adopted window; `codex` dies without the `@gl_key` that only a
+hitch mints, which adopted windows never have. `cmd_roster` fails loudly when a
+row cannot be observed — the suite guards that with
+`roster fails when an agent row cannot be observed`. A context column would
+therefore kill `gang roster` for ordinary, correctly-configured teams, and
+`roster` is the one command that has to answer when everything else is
+uncertain. It stays as it is.
+
+### `cmd_context`
+
+1. `resolve "$name"`, then `context_now "$AGENT_ID"`, then print its output
+   raw — the profile's own `<used>k/<window>k (<pct>%)` format, unparsed.
+2. **Do not route through `context_light_read`.** That function returns early
+   when `GANG_CONTEXT_LIGHTS` is off, and a query that only answers when
+   notifications are enabled is not an on-demand query. Lights are the
+   notification; this is the read.
+3. A profile declaring no `profile_context` refuses, naming the profile.
+4. `profile_context`'s own `die` message stands and the command exits non-zero.
+   Absent evidence is reported as absent; no value is fabricated and no fallback
+   is invented.
+
+### The availability is not uniform, and that is stated
+
+With lights off, `gang context` answers on `codex` (its source is the rollout
+file, needing only the hitch-time `@gl_key`), on `opencode`, and on `pi` (both
+read the pane). It cannot answer on `claude-code`, whose source is a statusline
+beacon that only an enabled-lights hitch wires. The existing refusal already
+says exactly that, and it is left to say it rather than being softened.
+`docs/reference.md` records the per-profile availability so an operator is not
+surprised by a refusal that is really a launch choice.
+
+### Self-targeting
+
+Bare `gang context` targets the window it runs in, per item 8. This is the
+canonical use — an agent asking its own remaining room before deciding to
+compact — so it joins that item's table.
+
+### Tests
+
+1. A fixture profile with a `profile_context` returning a known reading: bare
+   and named invocations both print it, byte-equal.
+2. A fixture whose `profile_context` dies: the command exits non-zero and the
+   profile's own message reaches stderr, with no value on stdout.
+3. A fixture declaring no `profile_context`: refused, naming the profile.
+4. **Lights off still answers.** Same fixture with `GANG_CONTEXT_LIGHTS` unset;
+   assert the reading is printed. This is the assertion that the query did not
+   inherit the notification gate.
+5. `gang roster` output contains no context column — a guard against a future
+   change reintroducing the failure mode above.
+
+### Documentation
+
+`docs/reference.md` — the command, the raw-output guarantee, per-profile
+availability, and why roster carries no column. `docs/DECISIONS.md` §"Context
+lights are optional and minimal" gains one sentence: the same computation is
+exposed on demand as a query, which reads whether or not lights are enabled,
+because signalling and asking are different acts.
+
+### Commit
+
+`feat(gang): expose the context computation as an on-demand query`
+
+---
+
 ## 7. `gang usage <name>`
 
 ### Problem
@@ -1016,6 +1164,7 @@ command prints its own help with one line saying so — not an error.
 | `gang composer` | self | Reading your own input box. |
 | `gang compact` | self | Self-compaction is already a first-class path. |
 | `gang usage` | self | Reading your own plan usage. |
+| `gang context` | self | An agent asking its own remaining room before compacting is the canonical use. |
 | `gang interrupt` | help | Incoherent: it would run inside the turn it drops, and the bracket it edits is your own. |
 | `gang flush` | help | Incoherent: recovering your own parked queue needs your harness idle, which it is not while you are running. |
 | `gang drop` | help | Destructive, and self-targeting makes it destructive *by omission*. |
@@ -1200,16 +1349,9 @@ narrates the change that produced it.
 1 and 5 are independent and can land first. 2 must land before 3, which reuses
 `spool_available` for a refused stall note. 4 is independent of all of them but
 should follow 3, so an unrecognized dialog already has a stall light to fall back
-to. 7 is independent. 9 must land before 8, which routes bare invocations through
-`cmd_help`; landing 8 first would mean writing that router twice. Land each as
-its own commit with the suite green at every checkpoint.
-
-## Open input
-
-Item 6, "context query", is referenced by the lead's amendment as unchanged but
-its definition never reached this window. Everything else in the charter and both
-amendments is specified above. Item 6 is the one lane parked; it blocks nothing
-else and will be specified as soon as its text arrives.
+to. 6 and 7 are independent. 9 must land before 8, which routes bare invocations
+through `cmd_help`; landing 8 first would mean writing that router twice. Land
+each as its own commit with the suite green at every checkpoint.
 
 ---
 
