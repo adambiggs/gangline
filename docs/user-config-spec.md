@@ -497,6 +497,7 @@ instruction:
 You are <name> in Gangline. Peer messages name their sender in the gang
 envelope. To message a peer: gang send --to NAME --stdin. At natural
 checkpoints compact with: gang compact <name>. <hitch-discipline line, §3>
+<marathon rule, §3>
 
 Operator doctrine (~/.config/gangline/DOCTRINE.md):
 
@@ -569,6 +570,17 @@ One line, in every hitch's contract:
 
 It enforces that a choice is made, never which choice — no model names, no effort
 levels, no tiering policy. That belongs in DOCTRINE.md.
+
+Operator-authorized post-approval scope delta: every lead/adopt startup contract
+also carries this sentence alongside the hitch-discipline line:
+
+> Marathon rule: never halt the session to wait on the operator — resolve forks
+> by doctrine and report decisions past-tense; when a fork genuinely needs the
+> operator (irreversible, outside doctrine), state it in your report, park that
+> one lane, and keep every other lane moving.
+
+This bans the turn-blocking mechanism in an operator-absent marathon while
+preserving a reporting path for the narrow class of forks doctrine cannot settle.
 
 This belongs in core because it is the prose form of a refusal core already
 implements. `cmd_hitch` refuses an effort it cannot validate, and says why —
@@ -794,7 +806,8 @@ assertion whose truth depends on render timing is the wall-clock evidence
 
 ### 5.4 Hitch discipline
 
-The hitched pane's contract contains the line, and `End this turn.` is still
+The hitched pane's contract contains the hitch-discipline line and the exact
+operator-authorized marathon-rule sentence, and `End this turn.` is still
 present — the existing assertion at that site is not edited.
 
 ### 5.5 Deferred self-compaction

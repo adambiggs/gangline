@@ -701,6 +701,9 @@ contains "startup ends instead of polling for work" \
 contains "startup requires deliberate model and effort choices when hitching" \
   "$(pane alpha)" \
   "When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e"
+contains "startup carries the operator-authorized marathon rule" \
+  "$(pane alpha)" \
+  "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
