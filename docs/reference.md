@@ -95,18 +95,23 @@ after anything was typed is never spooled, because that body's fate is unknown
 and a second copy would be a second message.
 
 The target's own native Stop event drains its spool, oldest first, through the
-verified delivery path. A refused drain leaves the entry spooled for the next
-turn boundary. A drain that cannot verify quarantines that entry, keeps the
-body on disk, and reports the failure through `status` and `roster`; it is
-never sent again. `--supersede` drops the same sender's earlier spooled
-messages before parking this one, and applies to that sender only.
+verified delivery path. Each entry is claimed before it is delivered, so no
+later drain can send a body this one may already have landed. A refused drain
+returns its entry to the spool for the next turn boundary. A drain that cannot
+verify, or one that dies between the submission and the entry's retirement,
+leaves that entry held: `status` and `roster` report how many are held, the
+bodies stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again.
+`--supersede` drops the same sender's earlier spooled messages before parking
+this one, and applies to that sender only.
 
 A profile that declares no `GANG_STOP_HOOK` refuses `--spool`: nothing else
 drains a spool.
 
-Spool entries live under `GANG_LOCK_DIR`, keyed to a token in the target's
-window options. They die with the window: `gang drop` and `gang down` delete
-them.
+Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
+target's window options at `hitch` or `adopt` — never later, so that senders
+arriving together cannot mint competing ones. A window without that identity
+refuses `--spool`. Entries die with the window: `gang drop` and `gang down`
+delete them.
 
 ### `gang flush <name>`
 
@@ -125,8 +130,10 @@ the Enter is not pressed in either case.
 ### `gang interrupt <name>`
 
 Sends the keystroke the profile declares as its harness's turn-stop key and
-closes Gangline's turn fact, so the interrupted turn cannot leave a bracket
-that answers busy until its bound expires. Whether the harness stops remains
+drops Gangline's turn bracket, so the interrupted turn neither leaves a bracket
+answering busy until its bound expires nor a written one answering idle. State
+then comes from the pane: a harness that stopped goes idle, and one that
+ignored the key stays busy and unreachable. Whether the harness stops remains
 the harness's verdict. A profile that declares no interrupt key refuses the
 command, and an occupied composer refuses it too — that keystroke is often what
 a native dialog reads as an answer.

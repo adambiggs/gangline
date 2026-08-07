@@ -450,8 +450,8 @@ turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2
   [[ "$TURN_AT" =~ ^[0-9]+$ ]] || { TURN_STATE=""; return 2; }
 }
 
-turn_state_write() { # $1 = window id, $2 = open|closed, $3 = optional reason
-  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)${3:+ $3}" 2>/dev/null || true
+turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
+  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
 }
 
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
@@ -728,12 +728,22 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name path err
+  local base holder name path err me
+  # Read OUT HERE. $BASHPID inside the command substitution below would be the
+  # substitution's own fork, which dies the moment ln returns — a lock that is
+  # stale by construction.
+  me="$BASHPID"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
   path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
-  err="$(ln -s "$$" "$path" 2>&1)" \
+  # BASHPID, NOT $$. The lock's whole staleness protocol is "is the holder still
+  # alive", and $$ keeps the ORIGINAL shell's pid inside a subshell — so a
+  # delivery running in a backgrounded worker or a command substitution would
+  # write down a pid that dies while the lock is still held, and the next
+  # process would read the lock as stale, delete it, and paste into the same
+  # composer concurrently. BASHPID is the process that actually holds it.
+  err="$(ln -s "$me" "$path" 2>&1)" \
     && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
   [ -L "$path" ] \
     || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
@@ -744,7 +754,7 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   kill -0 "$holder" 2>/dev/null \
     && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
   rm -f -- "$path"
-  err="$(ln -s "$$" "$path" 2>&1)" \
+  err="$(ln -s "$me" "$path" 2>&1)" \
     || refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
   LOCK_PATH="$path"
   trap 'on_exit' EXIT
@@ -782,15 +792,25 @@ spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had
   SPOOL_DIR="$(spool_root_of)/$token"
 }
 
+spool_mint() { # $1 = window id; the spool identity, minted where nothing races it
+  # AT HITCH AND ADOPT, never at send. Two refused --spool sends arriving
+  # together would each see no token, mint their own, and overwrite the window
+  # option: only the last one stays reachable, so the other sender is told its
+  # message is waiting while it sits in a directory nothing points at and no
+  # drop or down will ever delete. Minting it once, before the window can have
+  # a second writer, removes the race rather than narrowing it.
+  local token
+  token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
+  [ -z "$token" ] || return 0
+  tmux set-option -w -t "$1" @gl_spool "$(mint_nonce)" \
+    || die "cannot record the spool identity for this window"
+}
+
 spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
-  local base token
+  local base
+  spool_existing "$1" \
+    || die "this window has no spool identity, and gang will not mint one on the way to parking a message: two senders arriving together would mint two, and one message would be accepted into a directory nothing points at. It is minted at hitch and adopt — re-hitch or re-adopt this agent"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
-  if ! spool_existing "$1"; then
-    token="$(mint_nonce)"
-    tmux set-option -w -t "$1" @gl_spool "$token" \
-      || die "cannot record the spool token on pane $1 — refusing to park a message in a directory that would have no deletion path"
-    SPOOL_DIR="$base/spool/$token"
-  fi
   lock_base "$base"
   lock_base "$base/spool"
   lock_base "$SPOOL_DIR"
@@ -804,6 +824,20 @@ spool_count() { # $1 = window id -> how many entries are waiting
   local e n=0
   if spool_existing "$1"; then
     for e in "$SPOOL_DIR"/[0-9]*; do
+      [ -f "$e" ] && n=$((n + 1))
+    done
+  fi
+  printf '%s' "$n"
+}
+
+spool_held() { # $1 = window id -> entries a drain claimed and never retired
+  # Claimed but not delivered-and-removed: a drain that died mid-flight, or one
+  # whose delivery could not be verified. Counted and reported because nothing
+  # will ever pick them up again — an entry gang has stopped acting on and does
+  # not name is a message lost quietly.
+  local e n=0
+  if spool_existing "$1"; then
+    for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
       [ -f "$e" ] && n=$((n + 1))
     done
   fi
@@ -855,27 +889,40 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
 }
 
 spool_drain() { # $1 = window id; oldest first, each through the verified path
-  local e rc err failed
+  local e claim rc err failed
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
-    spool_read "$e"
+    # CLAIMED BEFORE IT IS DELIVERED, and the rename is what makes the claim
+    # atomic. Ownership has to span delivery AND retirement, not just the
+    # delivery: the pane lock is released inside inject, so an entry still
+    # sitting in the live glob afterwards is one a second drain could read and
+    # deliver again, and a death anywhere between the Enter and the removal
+    # would leave it live for the next turn boundary to re-send. Claimed, it is
+    # out of every later drain's glob whatever happens next, because a body
+    # that may already have landed must never be sent a second time.
+    claim="$SPOOL_DIR/sending-${e##*/}"
+    mv -- "$e" "$claim" 2>/dev/null || continue   # another drain took it first
+    spool_read "$claim"
     rc=0
     err="$(inject "$1" "$SPOOL_BODY" 2>&1)" || rc=$?
     case "$rc" in
-      0) rm -f -- "$e" \
-           || die "delivered the spooled '$SPOOL_FRAG' and could not remove $e — refusing to leave behind an entry that would be delivered a second time" ;;
-      3) # Refused, so nothing was typed: the entry stays exactly where it is,
-         # and the next turn boundary is the next attempt. Nothing here waits.
+      0) rm -f -- "$claim" \
+           || die "delivered the spooled '$SPOOL_FRAG' and could not remove $claim — it stays claimed rather than live, so nothing will deliver it twice, but the file has to go by hand" ;;
+      3) # Refused, so nothing was typed: the body is still the sender's and the
+         # entry goes back in line under its own stamp. The next turn boundary
+         # is the next attempt, and nothing here waits for it.
+         mv -- "$claim" "$e" 2>/dev/null \
+           || printf 'the refused %s could not be returned to the spool and is held at %s\n' \
+                "$SPOOL_FRAG" "$claim" >&2
          printf 'spool drain stopped at %s: %s\n' "$SPOOL_FRAG" "${err##*$'\n'}" >&2
          return 3 ;;
       *) # Unverified: the body may or may not have landed, so the entry is
-         # quarantined out of the glob rather than sent again. Gangline never
-         # sends a message a second time on the chance the first never arrived.
+         # held where a person can read it rather than sent again.
          failed="$SPOOL_DIR/failed-${e##*/}"
-         mv -- "$e" "$failed" || failed="$e"
-         printf "the spooled '%s' was not verified and is quarantined at %s: %s\n" \
+         mv -- "$claim" "$failed" || failed="$claim"
+         printf "the spooled '%s' was not verified and is held at %s: %s\n" \
            "$SPOOL_FRAG" "$failed" "${err##*$'\n'}" >&2
          return 1 ;;
     esac
@@ -1051,7 +1098,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
-  submit_verify "$1" "$after" "$frag" paste "${2%%$'\n'*}"
+  submit_verify "$1" "$after" "$frag" paste
   lock_release
 }
 
@@ -1066,7 +1113,7 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall, $5 = the body's first line (paste only)
+                  # $4 paste|recall
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
   tname="$(agent_name_of "$1")"
   case "$4" in
@@ -1104,7 +1151,7 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   if [ -n "$GANG_QUEUED_REGEX" ]; then
     local qlooks=0
     while :; do
-      ! box_queued "$posted" || submit_parked "$1" "$3" "$4" "${5:-}"
+      ! box_queued "$posted" || submit_parked "$1" "$3" "$4" "$2"
       qlooks=$((qlooks + 1))
       [ "$qlooks" -lt 3 ] || break
       sleep 0.4
@@ -1128,13 +1175,20 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   stage_forget "$1"
 }
 
-submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the body's first line
+submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the Enter went against
   local tname
   tname="$(agent_name_of "$1")"
   if [ "$3" = paste ]; then
-    # What `flush` will read the composer back against. Recorded HERE and only
-    # here: this is the one moment gang knows both that the harness parked
-    # something and exactly which body it parked.
+    # What `flush` will read the composer back against, and it is the WHOLE
+    # composer reading rather than the body's first line: a record that stops
+    # at the first line can be satisfied by a recalled message whose remainder
+    # was truncated, altered or extended, and flush would submit that while
+    # reporting the readback verified. The reading is what the profile's own
+    # parser saw with the body in the box, which is the same thing the recalled
+    # composer produces, so the two are directly comparable.
+    #
+    # Recorded HERE and only here: this is the one moment gang knows both that
+    # the harness parked something and exactly which body it parked.
     [ -z "$4" ] || tmux set-option -w -t "$1" @gl_parked "$4" 2>/dev/null || true
     stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
     die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname, which loads the parked message, reads it back against what gang recorded, and submits it — or by hand: gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
@@ -1402,6 +1456,7 @@ cmd_hitch() {
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
+  spool_mint "$id"
   if [ -n "$lights" ]; then
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
   fi
@@ -1556,11 +1611,16 @@ cmd_flush() {
     [ "$looks" -lt 5 ] \
       || die "flush NOT performed: $GANG_QUEUE_RECALL_KEY left the composer of $name unchanged, so nothing was loaded for gang to read back and the Enter was NOT pressed (gang capture $name)"
   done
-  case "$loaded" in
-    *"$parked"*) ;;
-    *) stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
-       die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when it reads back as the one it watched the harness park (gang attach)" ;;
-  esac
+  # WHOLE, AND EQUAL. Containment would accept a recalled body that merely
+  # starts with the recorded one, so a remainder that was truncated, altered or
+  # appended to would be submitted as verified. Both sides are readings taken
+  # by the same profile parser from the same composer, so the only difference
+  # worth allowing is trailing blank space, which a composer may or may not
+  # paint after the last character.
+  [ "$(printf '%s' "$loaded" | sed -E 's/[[:space:]]+$//')" \
+    = "$(printf '%s' "$parked" | sed -E 's/[[:space:]]+$//')" ] \
+    || { stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
+         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when the whole of it reads back as the one it watched the harness park (gang attach)"; }
   submit_verify "$AGENT_ID" "$loaded" "$frag" recall
   lock_release
   printf '%s %s\n' \
@@ -1582,17 +1642,25 @@ cmd_interrupt() {
     || refuse "interrupt: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_INTERRUPT_KEY would answer that UI rather than stop a turn (gang attach)"
   tmux send-keys -t "$AGENT_ID" "$GANG_INTERRUPT_KEY" \
     || die "interrupt: could not send $GANG_INTERRUPT_KEY to $name"
-  # The interrupted turn is one the harness will never close for itself, so the
-  # bracket it opened would keep answering busy until its bound expired.
-  # Closing it here is what keeps the keystroke from stranding a false busy.
-  # The reason rides the fact's third field, which turn_state_read already
-  # reads past: the seam for whatever consumes interrupts later, at no new
-  # surface and no second record to keep in step with this one.
-  turn_state_write "$AGENT_ID" closed interrupt
+  # CLEARED, NOT CLOSED. The interrupted turn is one the harness will never
+  # close for itself, so leaving the bracket open strands a busy nothing will
+  # end — but WRITING a closed one is worse, because turn_witness reads a fresh
+  # closed bracket as definitive idle and returns before it ever looks at busy
+  # paint or pane activity. A harness that ignored or has not yet acted on the
+  # keystroke would then read idle, and the next send would enter mid-turn on
+  # gang's own say-so. Gang saw a keystroke leave; it did not see a turn end.
+  # Removing the fact is the only honest edit: the paint and activity tiers
+  # answer from what the harness is actually doing, so a stopped turn goes idle
+  # and one still running stays busy.
+  #
+  # THE SEAM: how an interrupt is RECORDED is gl-state's to design. There is no
+  # truthful place to hang it in today's two-valued turn fact, and inventing a
+  # third value here would be redesigning the state this arc was told not to.
+  turn_state_clear "$AGENT_ID"
   lock_release
   printf '%s %s\n' \
     "$(colour "$C_OK" "interrupted $name with $GANG_INTERRUPT_KEY")" \
-    "$(colour "$C_DIM" "(the turn fact is closed; whether the harness stops remains its own verdict)")"
+    "$(colour "$C_DIM" "(the turn bracket is dropped; whether the turn ended is now the pane's evidence to answer, and the stop remains the harness's verdict)")"
 }
 
 cmd_compact() {
@@ -1677,7 +1745,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged spooled spool_failed
+  local state self_failed self_pending staged spooled held spool_failed
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1699,6 +1767,9 @@ cmd_status() {
   spooled="$(spool_count "$AGENT_ID")"
   [ "$spooled" -eq 0 ] \
     || printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+  held="$(spool_held "$AGENT_ID")"
+  [ "$held" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_BAD" "spool: $held held after an interrupted or unverified delivery — gang will not send them again; read them under $SPOOL_DIR")"
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "spool drain NOT verified: $spool_failed")"
@@ -1718,7 +1789,7 @@ EOF
 }
 
 roster_row() { # $1 window, $2 name
-  local prof state detail="" spooled
+  local prof state detail="" spooled held
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -1731,8 +1802,8 @@ roster_row() { # $1 window, $2 name
     || detail="$detail self-compact-failed"
   spooled="$(spool_count "$1")"
   [ "$spooled" -eq 0 ] || detail="$detail spooled=$spooled"
-  [ -z "$(tmux show-options -wqv -t "$1" @gl_spool_failed)" ] \
-    || detail="$detail spool-drain-failed"
+  held="$(spool_held "$1")"
+  [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
 }
@@ -1784,6 +1855,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
+  spool_mint "$id"
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
 

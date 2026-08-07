@@ -77,11 +77,18 @@ second copy of a message that may have landed is worse than one loud failure.
 Spooling is opt-in per send, drains only on the target's own native Stop event,
 and delivers through the ordinary verified path — no poller, scheduler, or
 watcher, and a profile whose harness announces no turn boundary refuses the flag
-rather than holding a message nothing would drain. An unverifiable drain
-quarantines its entry and reports; it never re-sends. Supersession is the
-sender's explicit flag and reaches only that sender's own earlier messages.
-Entries are keyed to a token in the target's window options and die with the
-window.
+rather than holding a message nothing would drain. An entry is claimed out of
+the spool before it is delivered, because ownership has to span the submission
+AND the retirement: the pane lock is released inside the delivery, so anything
+still live afterwards could be sent again by the next drain or the next
+boundary. An entry whose delivery could not be verified, or whose drain died
+mid-flight, is held and counted rather than re-sent; Gangline never sends a
+message a second time on the chance the first did not arrive, and never holds
+one without naming it. Supersession is the sender's explicit flag and reaches
+only that sender's own earlier messages. A window's spool identity is minted at
+hitch and adopt, where nothing can race it — minting it when a message needs
+parking would let two senders mint two and strand one of their messages in a
+directory nothing points at.
 
 ## A parked queue is recovered, not narrated
 
@@ -97,11 +104,15 @@ of it would drift and the drifted one would report a submission nobody saw.
 ## An interrupt is a profile keystroke and a fact Gangline owns
 
 The key that stops a turn is harness knowledge, declared per profile; an
-undeclared profile refuses. Gangline closes the turn fact it opened, because a
-turn stopped by a keystroke is one the harness will never close, and the
-abandoned bracket would answer busy until its bound expired. The command claims
-the keystroke and the fact, never that the harness stopped. Occupancy refuses
-the command: that key is often what a native dialog reads as an answer.
+undeclared profile refuses. Gangline drops the turn bracket rather than closing
+it. Leaving it open strands a busy the harness will never end, but writing a
+closed one is worse: a fresh closed bracket reads as definitive idle before any
+evidence from the pane is consulted, so a harness that ignored the key would be
+declared reachable and the next send would enter mid-turn. Gang saw a keystroke
+leave; it did not see a turn end, and removing the fact is the only edit that
+says so. How an interrupt is recorded belongs with whatever redesigns the turn
+state, not here. Occupancy refuses the command: that key is often what a native
+dialog reads as an answer.
 
 ## Occupancy is not authority
 

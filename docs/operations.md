@@ -75,10 +75,11 @@ not have to, and a loop that re-sends after a failure — as opposed to a refusa
 — can deliver a message twice.
 
 `gang status` and `gang roster` report how many messages are waiting for a
-target and whether a drain failed to verify. A drain that could not be verified
-keeps its message on disk under `GANG_LOCK_DIR` and never re-sends it; read it
-there and decide. Spools die with their window, so `gang drop` and `gang down`
-remove them.
+target and how many are held. A message is held when its delivery could not be
+verified, or when the drain died between submitting it and retiring it. Either
+way its fate is unknown, so Gangline stops acting on it: the body stays readable
+under `GANG_LOCK_DIR`, and it is never sent again. Read it there and decide.
+Spools die with their window, so `gang drop` and `gang down` remove them.
 
 Harnesses whose native Stop event does not reach Gangline refuse `--spool`
 outright — nothing would drain the message.
@@ -197,10 +198,11 @@ re-send what the queue swallowed.
 gang interrupt worker
 ```
 
-This sends the profile's declared turn-stop keystroke and closes Gangline's turn
-fact so the stopped turn does not keep reading as busy. Whether the harness
-stops is still the harness's decision — check with `gang status` and
-`gang capture`. Gangline refuses to interrupt an occupied composer, because that
+This sends the profile's declared turn-stop keystroke and drops Gangline's turn
+bracket, so the stopped turn neither keeps reading as busy nor is declared idle
+on Gangline's say-so. `gang status` then answers from the pane itself: a harness
+that stopped reads idle, and one that ignored the key stays busy and refuses
+delivery. Gangline refuses to interrupt an occupied composer, because that
 keystroke is often what a native dialog reads as an answer.
 
 ### The tmux server was lost
