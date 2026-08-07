@@ -61,6 +61,18 @@ gang_root() { # $1 = path to this script; the install tree it lives in
 ROOT="$(gang_root "${BASH_SOURCE[0]}")"
 [ -d "$ROOT/profiles" ] \
   || die "no profiles/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
+
+binary_id() { # executable content witness, or an explicit unavailable value
+  local output checksum size
+  output="$(cksum "$ROOT/bin/gang" 2>/dev/null)" \
+    || { printf 'unavailable'; return; }
+  read -r checksum size _ <<<"$output"
+  if [[ "$checksum" =~ ^[0-9]+$ ]] && [[ "$size" =~ ^[0-9]+$ ]]; then
+    printf 'cksum:%s:%s' "$checksum" "$size"
+  else
+    printf 'unavailable'
+  fi
+}
 GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
@@ -681,6 +693,28 @@ wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
   return 1
 }
 
+stamp_binary_id() { # $1 = window id
+  local current
+  current="$(binary_id)"
+  tmux set-option -w -t "$1" @gl_binary_id "$current" \
+    || die "could not stamp Gangline binary identity on window $1"
+}
+
+binary_skew_note() { # $1 = window, $2 = current id; print an identity warning
+  local stamped current="$2"
+  stamped="$(tmux show-options -wqv -t "$1" @gl_binary_id)"
+  if [ "$current" = unavailable ] || [ "$stamped" = unavailable ]; then
+    printf 'binary-identity unavailable (window %s; current %s)' \
+      "${stamped:-unstamped}" "$current"
+  elif [ -z "$stamped" ]; then
+    printf 'binary-skew (window unstamped; current %s)' "$current"
+  elif [ "$stamped" != "$current" ]; then
+    printf 'binary-skew (%s != current %s)' "$stamped" "$current"
+  else
+    return 1
+  fi
+}
+
 on_exit() { lock_release; }
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
@@ -1185,6 +1219,7 @@ cmd_hitch() {
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
+  stamp_binary_id "$id"
   if [ -n "$lights" ]; then
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
   fi
@@ -1336,7 +1371,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged
+  local state self_failed self_pending staged skew="" current
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1355,23 +1390,27 @@ cmd_status() {
   # gone, never that the recorded body was retroactively delivered.
   [ -z "$staged" ] \
     || printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+  current="$(binary_id)"
+  skew="$(binary_skew_note "$AGENT_ID" "$current")" || skew=""
+  [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
 }
 
 cmd_roster() {
   session_live \
     || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
-  local id name wins
+  local id name wins current
+  current="$(binary_id)"
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
   while read -r id name; do
     [ -n "$id" ] || continue
-    ( roster_row "$id" "$name" )
+    ( roster_row "$id" "$name" "$current" )
   done <<EOF
 $wins
 EOF
 }
 
-roster_row() { # $1 window, $2 name
-  local prof state detail=""
+roster_row() { # $1 window, $2 name, $3 current binary id
+  local prof state detail="" skew=""
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -1382,6 +1421,8 @@ roster_row() { # $1 window, $2 name
   [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
+  skew="$(binary_skew_note "$1" "$3")" || skew=""
+  [ -z "$skew" ] || detail="$detail $skew"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
 }
@@ -1432,6 +1473,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_profile "$prof"
+  stamp_binary_id "$id"
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
 

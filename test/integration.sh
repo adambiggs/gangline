@@ -331,6 +331,74 @@ contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
+alpha_id="$(window_id alpha)"
+binary_stamp="$(tmux show-options -wqv -t "$alpha_id" @gl_binary_id)"
+if [[ "$binary_stamp" =~ ^cksum:[0-9]+:[0-9]+$ ]]; then
+  pass "hitch stamps the documented binary identity"
+else
+  fail "hitch stamps the documented binary identity" "got [$binary_stamp]"
+fi
+excludes "status is quiet when the stamped binary is current" \
+  "$("$GANG" status alpha)" "binary-skew"
+excludes "roster is quiet when the stamped binary is current" \
+  "$("$GANG" roster)" "binary-skew"
+tmux set-option -w -t "$alpha_id" @gl_binary_id cksum:1:2
+contains "status warns when the running window has another binary identity" \
+  "$("$GANG" status alpha)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+contains "roster warns when the running window has another binary identity" \
+  "$("$GANG" roster)" "binary-skew (cksum:1:2 != current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+installed_root="$RUN_ROOT/installed"
+mkdir -p "$installed_root/bin"
+cp -R "$ROOT/profiles" "$installed_root/profiles"
+cp "$GANG" "$installed_root/bin/gang"
+installed_gang="$installed_root/bin/gang"
+excludes "byte-identical Gangline copies compare as current" \
+  "$("$installed_gang" status alpha)" "binary-skew"
+printf '\n# fixture changes the executable bytes\n' >> "$installed_gang"
+changed_stamp="$(cksum "$installed_gang" | awk '{ print "cksum:" $1 ":" $2 }')"
+contains "an uncommitted executable change produces binary skew" \
+  "$("$installed_gang" status alpha)" \
+  "binary-skew ($binary_stamp != current $changed_stamp)"
+
+tmux set-option -uw -t "$alpha_id" @gl_binary_id
+contains "status warns when a pre-witness window is unstamped" \
+  "$("$GANG" status alpha)" "binary-skew (window unstamped; current $binary_stamp)"
+contains "roster warns when a pre-witness window is unstamped" \
+  "$("$GANG" roster)" "binary-skew (window unstamped; current $binary_stamp)"
+tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
+
+mkdir -p "$RUN_ROOT/no-identity"
+cat > "$RUN_ROOT/no-identity/git" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/git"
+contains "a broken git command cannot abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" "alpha"
+cat > "$RUN_ROOT/no-identity/cksum" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 127
+SH
+chmod +x "$RUN_ROOT/no-identity/cksum"
+unavailable_status="$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" status alpha)"
+contains "an unavailable witness is explicit without aborting status" \
+  "$unavailable_status" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+contains "an unavailable witness does not abort roster" \
+  "$(PATH="$RUN_ROOT/no-identity:$PATH" "$GANG" roster)" \
+  "binary-identity unavailable (window $binary_stamp; current unavailable)"
+
+adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n adopted "PS1='❯ ' bash --norc")"
+"$GANG" adopt adopted -p bash >/dev/null
+equal "adopt stamps the current binary identity" "$binary_stamp" \
+  "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
+"$GANG" drop adopted >/dev/null
+
 mkdir -p "$RUN_ROOT/profiles"
 export GANG_PROFILES="$RUN_ROOT/profiles"
 modal_observed="test-boot-modal-observed-$$"

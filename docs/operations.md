@@ -124,6 +124,13 @@ expired, or contradictory evidence produces an explicit indeterminate state.
 evidence the composer is ready. `occupied` means a native UI owns the composer.
 `expired` means the available evidence can no longer answer truthfully.
 
+`binary-skew` means the window was hitched or adopted from different `bin/gang`
+bytes than the observation command. Finish or checkpoint work using the agent's
+existing context, then drop and re-hitch it with the intended binary; changing a
+live checkout does not retrofit hooks or profiles already loaded into a running
+window. `binary-identity unavailable` means the snapshot could not checksum one
+side; repair the invoked Gangline installation before using the witness.
+
 Profiles contain the only harness-specific regexes and parsers. A native TUI
 update can invalidate them. The intended repair loop is direct: reproduce the
 wrong observation in a disposable team, inspect the actual pane, update the
