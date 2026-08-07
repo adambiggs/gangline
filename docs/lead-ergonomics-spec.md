@@ -16,8 +16,12 @@ binaries, not from memory or vendor prose.
 
 | Harness | Version observed | How it was read |
 |---|---|---|
-| claude-code | 2.1.224 | hook registry and Notification construction site in the bundled executable |
-| codex | 0.145.0 | embedded per-hook JSON schemas and the `HookEventNameWire` enum in the executable |
+| claude-code | 2.1.224 | hook registry and Notification construction site in the bundled executable; `/usage` driven live in a disposable session |
+| codex | 0.145.0 | embedded per-hook JSON schemas and the `HookEventNameWire` enum in the executable; `/usage` driven live in a disposable session |
+
+The live captures were taken in a separately named disposable session
+(`ergo-probe-claude`, `ergo-probe-codex`) on an explicit private tmux socket, and
+only those exact sessions were deleted afterwards.
 
 **claude-code 2.1.224** exposes a `Notification` hook. Its matcher field is
 `notification_type`, whose complete value set is `permission_prompt`,
@@ -505,18 +509,36 @@ registered:
 ### Registry
 
 Harness knowledge, so it lives in the profile as data (law 4). One newline-
-separated record per dialog in `GANG_DIALOGS`, five `|`-separated fields:
+separated record per dialog in `GANG_DIALOGS`, six `|`-separated fields:
 
 ```
-id|anchor|rows|safe-label|keys
+id|anchor|footer|labels|safe-label|keys
 ```
 
 - `id` — a short slug for messages.
-- `anchor` — a literal line from the dialog that identifies it.
-- `rows` — how many selectable rows the dialog has.
-- `safe-label` — the literal label of the row to select.
+- `anchor` — a literal line that opens the dialog and identifies it.
+- `footer` — a literal line that closes it. Anchor and footer bound the region
+  the fingerprint is taken over.
+- `labels` — every selectable row label, comma-separated, in painted order.
+- `safe-label` — which of those labels carries no authority and is the one to
+  select. Must appear in `labels`.
 - `keys` — the `tmux send-keys` key names, space-separated, that select
   `safe-label` from the dialog's initial state.
+
+**A row count would not work, and observation is why.** In the live codex
+0.145.0 capture below, the selection marker *and* the row number are painted
+only on the currently-selected row; every other row is blank-prefixed:
+
+```
+› 1. Show usage                View recent account token usage.
+     Redeem usage limit reset  No usage limit resets available.
+```
+
+Counting lines that match `GANG_OCCUPIED_REGEX` therefore returns 1 for a
+two-row dialog and would return 1 for a dialog that grew a third option — the
+exact change the fingerprint exists to catch. Bounding the region and accounting
+for every line in it is what actually detects a dialog that is no longer the one
+the profile enumerated.
 
 `load_profile` refuses a malformed record: wrong field count, an empty field, a
 `|` inside a field, or a non-numeric `rows`.
@@ -554,10 +576,12 @@ dialog_triage() { # $1 = window id; 0 = a known dialog was answered and cleared
 
 1. `[ -n "${GANG_DIALOGS:-}" ]` or return 1.
 2. Capture the pane once (`capture_joined`).
-3. For each record: the `anchor` must appear, the `safe-label` must appear, and
-   the number of rows matching `GANG_OCCUPIED_REGEX` must equal `rows` exactly.
-   All three or no match. The row count is the fingerprint: a reworded dialog,
-   or the same dialog grown a third option, does not match and is not answered.
+3. For each record, all of the following or no match: the `anchor` line appears;
+   the `footer` line appears after it; every declared label appears exactly once
+   in the region strictly between them; and every non-blank line in that region
+   contains one of the declared labels. The last clause is the fingerprint — an
+   unaccounted line in the region means the dialog is not the one enumerated,
+   whether it was reworded or grew an option, and it is not answered.
 4. More than one record matching is ambiguity — `die`, naming both ids.
 5. `lock_pane` is already held by the caller on the `send_live` path; on the
    `wait_ready` path take it. Never press a key on an unlocked pane.
@@ -573,12 +597,19 @@ dialog_triage() { # $1 = window id; 0 = a known dialog was answered and cleared
 
 ### The codex entry — capture required before landing
 
-The entry's `rows`, `safe-label`, and `keys` fields must be pinned to an
-observed rendering. The dialog's strings are verified above; **its on-screen row
-layout and the key sequence that selects the second option are not**, and this
-document will not invent them. `CONTRIBUTING.md` already requires this: "Marker
-changes must name the harness version that was observed and add it to the
-profile's verified pins."
+The entry's `footer`, `labels`, and `keys` fields must be pinned to an observed
+rendering of **this** dialog. Its strings are verified above; its painted layout
+is not, and this document will not invent it. `CONTRIBUTING.md` already requires
+this: "Marker changes must name the harness version that was observed and add it
+to the profile's verified pins."
+
+Corroborating evidence from a different codex 0.145.0 dialog, captured live (the
+`/usage` selection menu, reproduced in item 7): row 1 carries the selection
+marker on first paint, and the footer reads
+`Press enter to confirm or esc to go back`. If the slow-response menu paints the
+same way, `keys` is `Down Enter` and the labels are
+`Retry with a faster model,Dismiss and keep waiting`. Expect that; verify it
+anyway, because a different dialog is corroboration and not observation.
 
 Procedure:
 
@@ -588,15 +619,15 @@ Procedure:
 2. Hitch a codex agent and drive it until the menu appears (a long,
    heavily-reasoning request is the reliable trigger).
 3. `tmux capture-pane -pJ -e` the pane and record it verbatim in the commit body.
-4. From that capture, read: how many rows match `GANG_OCCUPIED_REGEX`, which row
-   carries the selection marker on first paint, and therefore whether
-   `Dismiss and keep waiting` is reached by `Down Enter`, by `Enter` alone, or by
-   a digit.
+4. From that capture, read: the line that closes the dialog, every row label in
+   painted order, which row carries the selection marker on first paint, and
+   therefore whether `Dismiss and keep waiting` is reached by `Down Enter`, by
+   `Enter` alone, or by a digit.
 5. Write the record, expected shape:
 
    ```sh
    # Verified against codex 0.145.0 — capture in the commit body.
-   GANG_DIALOGS='safety-buffering|Our systems are thinking a bit more about this request before responding.|<rows>|Dismiss and keep waiting|<keys>'
+   GANG_DIALOGS='safety-buffering|Our systems are thinking a bit more about this request before responding.|<footer>|Retry with a faster model,Dismiss and keep waiting|Dismiss and keep waiting|<keys>'
    ```
 
 6. Confirm the answer clears the menu in that same disposable session before
@@ -615,9 +646,11 @@ pane painted to look like a numbered menu. No real harness.
 
 1. **A known dialog is answered and the send proceeds.** Paint the fixture
    dialog, send, assert the body reached the pane and stderr named the id.
-2. **A dialog with one extra row is not answered.** Same anchor, `rows + 1` rows
-   painted, assert the send refuses as occupied and that the pane still shows
-   the dialog — the artifact, not the exit status.
+2. **A dialog that grew a row is not answered.** Same anchor and footer, one
+   undeclared non-blank line painted in the region between them; assert the send
+   refuses as occupied and that the pane still shows the dialog — the artifact,
+   not the exit status. This is the assertion the row-count design would have
+   passed while pressing a key.
 3. **A dialog whose safe label is absent is not answered**, same assertions.
 4. **Keys that do not clear the dialog fail loud.** A fixture whose declared
    `keys` do nothing; assert the command dies naming the id and `gang attach`.
@@ -787,6 +820,342 @@ with `Closes #106` in the footer and the red-first evidence in the body.
 
 ---
 
+## 7. `gang usage <name>`
+
+### Problem
+
+Plan and quota usage sits behind an interactive command in each harness. Reading
+it means attaching to a window, typing, reading, and dismissing — per agent, by
+hand.
+
+### What was observed
+
+Both harnesses were driven live in a disposable session. The two renderings are
+not the same shape, and the difference is the whole design.
+
+**claude-code 2.1.224 — `/usage` is a full-screen modal.** Submitting it
+replaces the pane with a tabbed page (`Settings  Status  Config  Usage  Stats`)
+carrying session cost, session and weekly limit bars with reset times, and a
+contributing-factors section. No composer is on screen. `Escape` dismisses it,
+and the composer returns reading empty through the profile's own `profile_input`
+parser — verified by running that parser over the post-dismissal capture. The
+page is scrollable: the capture ends with a `↓` marker and more content below.
+
+**codex 0.145.0 — `/usage` is a two-step, and it renders inline.** Submitting it
+opens a selection menu:
+
+```
+  Usage
+  View account usage or redeem an earned reset.
+
+› 1. Show usage                View recent account token usage.
+     Redeem usage limit reset  No usage limit resets available.
+
+  Press enter to confirm or esc to go back
+```
+
+`Show usage` is preselected, so a further `Enter` confirms it. The content then
+lands **in the transcript**, not in an overlay, and the composer is already
+restored with no key pressed. There is nothing to dismiss.
+
+The command name is verified: typing `/us` in codex 0.145.0 matches exactly one
+command, `/usage  view account usage or use a usage limit reset`.
+
+This refutes the charter's "dismiss the UI (profile-declared key, e.g. Esc)" as a
+universal step. It is right for claude-code and wrong for codex, so dismissal is
+per-profile data that may legitimately be empty.
+
+### Profile surface
+
+```sh
+GANG_USAGE_CMD          # the command to type, e.g. /usage
+GANG_USAGE_CONFIRM_KEY  # keys pressed after submit to reach the content; may be empty
+GANG_USAGE_RENDER       # modal | inline
+GANG_USAGE_DISMISS_KEY  # key that closes it; empty when the harness self-restores
+```
+
+`profiles/claude-code.sh`:
+
+```sh
+# Verified on claude-code 2.1.224: /usage opens a full-screen tabbed modal with
+# no composer, and Escape restores an empty composer. The page scrolls; gang
+# returns the visible screen and does not drive the scrollbar.
+GANG_USAGE_CMD="/usage"
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
+```
+
+`profiles/codex.sh`:
+
+```sh
+# Verified on codex 0.145.0: /usage opens a selection menu with "Show usage"
+# preselected; one Enter confirms it and the content is appended to the
+# transcript with the composer already restored, so nothing dismisses it.
+GANG_USAGE_CMD="/usage"
+GANG_USAGE_CONFIRM_KEY="Enter"
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+```
+
+`profiles/opencode.sh`, `profiles/pi.sh`, `profiles/bash.sh` declare none.
+`gang usage` refuses for them, naming the missing declaration — the same shape
+`gang flush` and `gang interrupt` already use for an undeclared profile.
+
+### `cmd_usage`
+
+1. `resolve "$name"`. Refuse if `GANG_USAGE_CMD` is empty:
+   `usage: profile '<p>' declares no GANG_USAGE_CMD, so gang does not know this harness's usage command`.
+   Refuse an unknown `GANG_USAGE_RENDER`.
+2. `lock_pane`. Every keystroke below is under the pane lock.
+3. **Same predicates as a send, and no weaker.** `occupied` refuses.
+   `busy` refuses on 0 and on could-not-determine — note that this is *stricter*
+   than `send_live`, which falls through could-not-determine to a provably empty
+   box. Typing a UI command mid-turn cannot be verified the way a message
+   delivery can: there is no envelope to read back, so the fall-through's
+   residual-risk argument does not carry here. `composer_settled` refuses.
+   `input_clear` must be true.
+4. Capture the pane as `before`.
+5. `inject "$AGENT_ID" "$GANG_USAGE_CMD" head` — the same path `gang compact`
+   uses to submit a native command.
+6. Press each key in `GANG_USAGE_CONFIRM_KEY`, if any.
+7. **Prove the screen changed.** Bounded look loop, the shape `cmd_flush`
+   already uses for its recall readback: capture, compare with `before`, break on
+   difference, and after the bound refuse with
+   `usage: the screen of '<name>' never changed after <cmd>, so gang has no usage content to report and pressed nothing further`.
+   No new timing primitive; `cmd_flush`'s loop is the precedent and `bin/gang`
+   is not bound by the suite's no-sleep rule.
+8. Extract the content:
+   - `modal` — the whole after-capture, trailing blank rows trimmed, exactly as
+     `cmd_capture` trims.
+   - `inline` — the after-capture's lines beyond the last non-blank line of
+     `before`. The transcript appended; the answer is what it appended.
+9. Dismiss: press `GANG_USAGE_DISMISS_KEY` if non-empty.
+10. **Restore is part of the contract.** Re-read: `profile_input` must read a
+    box, and `input_clear` must be true. If either fails, `die` naming the
+    agent, the key pressed, and `gang attach` — and print the captured content
+    anyway on stdout before dying, because the content was already read and
+    withholding it helps nobody. Exit non-zero.
+11. `lock_release`, print the content raw to stdout, nothing else on stdout.
+
+The content is the harness's own UI text, unparsed. Gangline does not summarize
+it, extract numbers from it, or decide anything from it: parsing and pacing
+policy are the operator's.
+
+Known limitation, stated rather than engineered around: on a harness whose page
+scrolls, `gang usage` returns the visible screen. Driving a scrollbar to
+reassemble a page would be a second product, and the operator can attach.
+`docs/reference.md` says so.
+
+### Tests
+
+Fixture profile over `profiles/bash.sh` whose `GANG_USAGE_CMD` is a shell line
+that paints a known block, exercising both `modal` and `inline` extraction with
+two fixtures. No real harness.
+
+1. **Content is returned raw**, byte-equal to the painted block.
+2. **`inline` returns only the appended lines**, not the pre-existing transcript.
+3. **Restoration is verified.** After a successful run the fixture's composer
+   reads empty through `profile_input`.
+4. **A mutant that skips dismissal fails.** Fixture whose declared dismiss key
+   does nothing; assert the command exits non-zero, names `gang attach`, and
+   **still printed the content**. This is the test the amendment names
+   explicitly, and it is the one that proves restoration is a contract rather
+   than a hope.
+5. **A screen that never changes refuses**, naming the command, with nothing
+   further pressed and the composer left empty.
+6. **A busy target refuses**, and a could-not-determine target refuses — the
+   assertion that `cmd_usage` is stricter than `send_live` and did not
+   accidentally inherit the fall-through.
+7. **An occupied target refuses.**
+8. **A profile declaring no `GANG_USAGE_CMD` refuses**, naming the variable.
+
+### Documentation
+
+`docs/reference.md` — the command, the four profile variables in the profile
+contract table, the predicates, the raw-output guarantee, and the scrolling
+limitation. `docs/operations.md` — reading usage across a team without
+attaching.
+
+### Commit
+
+`feat(gang): report a harness's own usage page without attaching`, with both
+live captures in the body.
+
+---
+
+## 8. Self-targeting defaults
+
+### Problem
+
+An agent asking about itself must know and type its own name, and a bare
+invocation answers with a naked error instead of help.
+
+### Rule
+
+**Bare invocation only.** A command invoked with zero arguments, where the only
+missing argument is a target name and self-targeting is coherent, targets the
+window it runs in. Any argument at all selects the existing signature unchanged.
+
+The bare-only rule exists to kill an ambiguity rather than to be terse.
+`gang capture <name> [lines]` with one numeric argument could mean a window
+named `40` or forty lines of self; `valid_name` permits a numeric name, so
+inferring would be a silent fallback and law 8 forbids it. Zero arguments is the
+one form that cannot be misread.
+
+Self is resolved exactly as `send_sender` resolves sender identity: `self_window`
+then `agent_name_of`. Outside a Gangline window there is no self, and the
+command prints its own help with one line saying so — not an error.
+
+### Verdicts
+
+| Command | Bare | Reason |
+|---|---|---|
+| `gang status` | self | An agent reading its own state is the common case. |
+| `gang capture` | self | Reading your own pane; default line count applies. |
+| `gang composer` | self | Reading your own input box. |
+| `gang compact` | self | Self-compaction is already a first-class path. |
+| `gang usage` | self | Reading your own plan usage. |
+| `gang interrupt` | help | Incoherent: it would run inside the turn it drops, and the bracket it edits is your own. |
+| `gang flush` | help | Incoherent: recovering your own parked queue needs your harness idle, which it is not while you are running. |
+| `gang drop` | help | Destructive, and self-targeting makes it destructive *by omission*. |
+| `gang hitch` | help | The name argument is a new agent's, so there is no self to default to. |
+| `gang adopt` | help | Names a window that is not yet an agent; self already is one. |
+| `gang send` | help | `--to` is the message's destination; sending to yourself is incoherent. |
+| `gang up`, `roster`, `attach`, `profiles`, `config`, `cutoff`, `notify`, `down` | unchanged | Already meaningful bare; none of them is a bare-error case today. |
+
+`gang down` ends the whole team and takes no target, so it is not a
+self-targeting question. It keeps its current behaviour.
+
+### Implementation
+
+One helper:
+
+```sh
+self_name() { # -> this window's agent name; nonzero outside a Gangline window
+```
+
+built on `self_window` and `agent_name_of`. Each self-targeting command, on zero
+arguments, calls it and falls back to `cmd_help <command>` plus the line
+`(no target given, and this shell is not a Gangline agent window)` when it fails.
+
+`usage_die` is replaced at every bare-invocation site by `cmd_help <command>` and
+exit 1. **No command may answer a bare invocation with a naked error.** That is
+the acceptance criterion, and it is testable: invoke every command in the usage
+list bare, and assert each one's output contains its own synopsis.
+
+### Tests
+
+1. Bare `gang status`, `capture`, `composer`, `usage` inside a fixture agent
+   window each report on that window. Drive them with `TMUX_PANE` set to the
+   fixture's pane, as the suite already does for `gang hook`.
+2. Bare `gang compact` inside a fixture window compacts that window.
+3. Bare `gang interrupt`, `flush`, `drop`, `hitch`, `adopt`, `send` each print
+   their own synopsis and exit non-zero, and — the real assertion — leave the
+   fixture window untouched.
+4. Bare `gang status` outside any Gangline window prints the synopsis and the
+   not-an-agent line.
+5. **Sweep:** every command name in `usage()` invoked bare produces output
+   containing that command's synopsis line. This is the no-naked-error rule as
+   one assertion, and it fails for any command a future change adds without help.
+
+### Documentation
+
+`docs/reference.md` — a short section stating the bare-only rule, the table
+above, and that self resolves the way a sender does.
+
+### Commit
+
+`feat(gang): default a bare command to the window it runs in`
+
+---
+
+## 9. Narrow-terminal help
+
+### Problem
+
+The operator reads help over SSH on a phone. Wide single-line usage blocks wrap
+mid-token and the output becomes unreadable.
+
+### Width budget: 48 columns
+
+Argued, not asserted. Phone-SSH portrait sits near 40 columns on common
+terminals, and 80 is the floor everywhere else. The two directions of error are
+not symmetric: too wide turns a synopsis into hash across a wrap boundary, which
+is unrecoverable by the reader; too narrow only costs vertical lines, which
+scroll. So the budget is set by the narrow case with a small margin — 48 — which
+soft-wraps at most one line at 40 while keeping each synopsis fragment long
+enough to still read as a command. The longest unavoidable fragment,
+`gang hitch <name> [-p <profile>] [-d <dir>]`, is 42 columns with a two-space
+indent, so 48 accommodates the real content rather than being chosen to fit a
+number.
+
+### Shape
+
+`gang --help` lists commands one per line, name and one-line purpose, no
+column-aligned table:
+
+```
+gang — drive native CLI agents in tmux
+
+  up        start a team and join it
+  hitch     add an agent
+  send      deliver a message to an agent
+  ...
+
+gang <command> --help for one command.
+```
+
+Per-command help stacks its synopsis, one form per line, optional groups on
+their own lines:
+
+```
+gang send
+  Deliver a message to one agent.
+
+  gang send --to <name> --stdin
+    [--from <sender>]
+    [--live-only]
+    [--supersede]
+
+  Parks on refusal. --live-only never parks.
+```
+
+Every subcommand gets `--help`, routed through the same `cmd_help <command>`
+that item 8 reuses for bare invocations with no self default. `cmd_help` with no
+argument prints the top-level list.
+
+Help text lives in one place — a single `case` in `cmd_help` — so a command
+cannot gain a synopsis in one place and not the other.
+
+### Test
+
+Assert that no line of `gang --help`, and no line of `gang <cmd> --help` for
+every command in the list, exceeds 48 columns.
+
+**Measure in characters, not bytes.** Local `awk` is mawk and CI's is gawk, and
+`length($0)` on a line containing `—` or `❯` differs between them: mawk counts
+bytes, gawk counts characters. A byte-counting assertion would pass locally and
+fail in CI, or worse, pass in both while measuring the wrong thing. Measure with
+`python3 -c 'import sys; …len(line)…'`, which the suite already depends on
+elsewhere, and have the failure print the offending command, line, and its
+width.
+
+Add the same sweep as item 8's test 5 — every command in the list has help — so
+the two acceptance criteria are checked over one enumeration.
+
+### Documentation
+
+`docs/reference.md` keeps the full syntax; help stays a pointer to it, and the
+budget is recorded beside the help section so a future edit knows the constraint
+is deliberate.
+
+### Commit
+
+`feat(gang): make help legible at phone-SSH widths`
+
+---
+
 ## Cross-cutting requirements
 
 ### Portability
@@ -831,7 +1200,16 @@ narrates the change that produced it.
 1 and 5 are independent and can land first. 2 must land before 3, which reuses
 `spool_available` for a refused stall note. 4 is independent of all of them but
 should follow 3, so an unrecognized dialog already has a stall light to fall back
-to. Land each as its own commit with the suite green at every checkpoint.
+to. 7 is independent. 9 must land before 8, which routes bare invocations through
+`cmd_help`; landing 8 first would mean writing that router twice. Land each as
+its own commit with the suite green at every checkpoint.
+
+## Open input
+
+Item 6, "context query", is referenced by the lead's amendment as unchanged but
+its definition never reached this window. Everything else in the charter and both
+amendments is specified above. Item 6 is the one lane parked; it blocks nothing
+else and will be specified as soon as its text arrives.
 
 ---
 
