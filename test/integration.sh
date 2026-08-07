@@ -87,6 +87,7 @@ window_id() { # $1 exact window name
 }
 
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
+pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 
 # Help coverage is derived from the dispatcher, so missing help cannot hide by
 # also being absent from a hand-maintained help inventory. The exclusions are
@@ -798,6 +799,9 @@ contains "startup requires deliberate model and effort choices when hitching" \
 contains "startup carries the operator-authorized marathon rule" \
   "$(pane alpha)" \
   "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."
+contains "startup states the complement of envelope attribution" \
+  "$(pane alpha)" \
+  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
@@ -891,9 +895,12 @@ printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" \
   "$GANG" hitch doctrine-present -p bash -d /tmp >/dev/null
 contains "a doctrine-bearing hitch still carries its base identity contract" \
-  "$(pane doctrine-present)" "You are doctrine-present in Gangline"
+  "$(pane_all doctrine-present)" "You are doctrine-present in Gangline"
 contains "a present operator doctrine is injected into the startup contract" \
   "$(pane doctrine-present)" "MARK_DOCTRINE_PRESENT binds this hitch."
+contains "a doctrine-bearing startup states the complement of envelope attribution" \
+  "$(pane_all doctrine-present)" \
+  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \

@@ -33,7 +33,11 @@ current tmux client to it. `GANG_PROFILE` selects the harness.
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract tells the agent to choose a model and reasoning effort deliberately
-when hitching teammates. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
+when hitching teammates. Peer messages name their sender in the gang envelope.
+Gangline never delivers a message without one — the only unenveloped text it
+ever types into a pane is your harness's own compaction command — so any other
+unenveloped text arrived from the session keyboard, and Gangline cannot
+attribute it further. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose within its category-error ceiling, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
