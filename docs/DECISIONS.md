@@ -69,15 +69,16 @@ no session-record machinery is built unless a reworded hint supplies the
 evidence to reopen that choice. A cleared staged record is evidence the
 obstruction is gone, never retroactive proof the recorded body was delivered.
 
-## A refused delivery may be spooled, a failed one may not
+## A refused delivery is parked, a failed one is not
 
 A refusal happens before any keystroke, so the body is still the sender's and
 parking it loses nothing; a failure after a paste has an unknown fate, and a
 second copy of a message that may have landed is worse than one loud failure.
-Spooling is opt-in per send, drains only on the target's own native Stop event,
-and delivers through the ordinary verified path — no poller, scheduler, or
-watcher, and a profile whose harness announces no turn boundary refuses the flag
-rather than holding a message nothing would drain. An entry is claimed out of
+Parking is the default and `--live-only` is the explicit probe. It drains only
+on the target's own native Stop event and delivers through the ordinary verified
+path — no poller, scheduler, or watcher. A profile whose harness announces no
+turn boundary degrades to live-only and names the missing declaration rather
+than holding a message nothing would drain. An entry is claimed out of
 the spool before it is delivered, because ownership has to span the submission
 AND the retirement: the pane lock is released inside the delivery, so anything
 still live afterwards could be sent again by the next drain or the next

@@ -107,7 +107,7 @@ spool first.
 
 ## Delivery and compaction
 
-### `gang send --to <name> [--from <sender>] [--spool [--supersede]] --stdin`
+### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
 Reads the full message body from standard input. Inside the team, Gangline derives
 the sender from the calling window and refuses `--from`. Calls from outside the
@@ -165,29 +165,42 @@ version gate.
 A cleared staged record means the obstruction is gone — it is never
 retroactive proof that the recorded body was delivered.
 
-`--spool` changes what a refusal does, never what a delivery proves. The live
-delivery is attempted first; if it is refused, the nonce-bound envelope is
-written to a per-target spool and reported as parked, not delivered. A failure
-after anything was typed is never spooled, because that body's fate is unknown
-and a second copy would be a second message.
+A refused delivery parks by default. The live delivery is attempted first; if
+it is refused, the nonce-bound envelope is written to a per-target spool and
+reported as parked, not delivered. A failure after anything was typed is never
+parked, because that body's fate is unknown and a second copy would be a second
+message. Pass `--live-only` for an availability probe that must return a refusal
+to its caller instead of parking it. The deprecated `--spool` flag is accepted
+as an announced no-op.
 
 The target's own native Stop event drains its spool, oldest first, through the
 verified delivery path. Each entry is claimed before it is delivered, so no
 later drain can send a body this one may already have landed. A refused drain
 returns its entry to the spool for the next turn boundary. A drain that cannot
 verify, or one that dies between the submission and the entry's retirement,
-leaves that entry held: `status` and `roster` report how many are held, the
-bodies stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again.
-`--supersede` drops the same sender's earlier spooled messages before parking
-this one, and applies to that sender only.
+leaves that entry held: `status` says its delivery was not verified and may
+still have arrived, `status` and `roster` report how many are held, the bodies
+stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
+harness may accept a submission into its own queue and drain it later; read the
+target before re-sending by hand.
 
-A profile that declares no `GANG_STOP_HOOK` refuses `--spool`: nothing else
-drains a spool.
+`--supersede` retires the same sender's earlier waiting messages after the newer
+message is accepted, whether the newer one parks or is delivered live. It is
+scoped to the sender, not to a subject: a sender with two unrelated messages
+waiting for one target loses the first when the second carries the flag, whether
+that second message parks or is delivered live. Pass it only when the newer
+message genuinely replaces everything that sender has parked.
+
+A profile that declares no `GANG_STOP_HOOK` still receives the ordinary live
+attempt. If that attempt is refused, Gangline exits with the refusal, says the
+message was not parked, and names the missing declaration because nothing else
+would drain its spool.
 
 Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
-arriving together cannot mint competing ones. A window without that identity
-refuses `--spool`. Entries die with the window: `gang drop` and `gang down`
+arriving together cannot mint competing ones. After a live refusal, a window
+without that identity says the message was not parked and names re-hitch or
+re-adopt as the repair. Entries die with the window: `gang drop` and `gang down`
 delete them.
 
 ### `gang flush <name>`

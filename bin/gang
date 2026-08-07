@@ -303,10 +303,10 @@ gang send
 
   gang send --to <name> --stdin
     [--from <sender>]
-    [--spool]
+    [--live-only]
     [--supersede]
 
-  --spool parks a refused delivery.
+  A refused delivery parks by default.
 EOF
       ;;
     flush) cat <<'EOF'
@@ -1302,16 +1302,15 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 
 # THE SPOOL. A refused delivery is a live target that cannot take input YET:
 # every refusal on the delivery path happens before a single keystroke, so
-# nothing was typed and the body is still the sender's. `send --spool` parks
-# that exact nonce-bound envelope beside the delivery locks, and the target's
+# nothing was typed and the body is still the sender's. `send` parks that exact
+# nonce-bound envelope beside the delivery locks by default, and the target's
 # own native Stop event carries it through the same verified path at the next
 # turn boundary.
 #
 # This is not a retry manager: nothing polls, nothing schedules, and nothing
 # watches the target. The only thing that ever drains a spool is a turn
-# boundary the harness itself announces, which is why a profile with no Stop
-# hook refuses the flag at send time rather than accepting a message that would
-# sit there forever.
+# boundary the harness itself announces. A profile with no Stop hook still gets
+# a live attempt, but a refusal cannot be parked where nothing would drain it.
 #
 # Entries are named by a fixed-width nanosecond stamp, so the glob that reads
 # them is already oldest-first. They live under a token minted into the target's
@@ -1332,8 +1331,22 @@ spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had
   SPOOL_DIR="$(spool_root_of)/$token"
 }
 
+SPOOL_UNAVAILABLE_WHY=""
+spool_available() { # $1 = window id, $2 = target name; 0 = a parked message would drain
+  SPOOL_UNAVAILABLE_WHY=""
+  if [ "${GANG_STOP_HOOK:-}" != 1 ]; then
+    SPOOL_UNAVAILABLE_WHY="profile '$AGENT_PROFILE' declares no GANG_STOP_HOOK, so no native turn boundary reaches Gangline and nothing would ever drain a spool for '$2'"
+    return 1
+  fi
+  if ! spool_existing "$1"; then
+    SPOOL_UNAVAILABLE_WHY="the window of '$2' carries no spool identity — it is minted at hitch and adopt, so re-hitch or re-adopt '$2' before a refused message can park"
+    return 1
+  fi
+  return 0
+}
+
 spool_mint() { # $1 = window id; the spool identity, minted where nothing races it
-  # AT HITCH AND ADOPT, never at send. Two refused --spool sends arriving
+  # AT HITCH AND ADOPT, never at send. Two refused sends arriving
   # together would each see no token, mint their own, and overwrite the window
   # option: only the last one stays reachable, so the other sender is told its
   # message is waiting while it sits in a directory nothing points at and no
@@ -1391,6 +1404,17 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
   printf '%s' "$n"
 }
 
+spool_held_report() { # $1 = window id; one truthful line per held entry
+  local e
+  spool_existing "$1" || return 0
+  for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    printf 'held (delivery NOT verified — it may still have arrived): %s\n' \
+      "$SPOOL_FRAG"
+  done
+}
+
 SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY=""
 spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes on the wire
   SPOOL_SENDER=""; SPOOL_FRAG=""; SPOOL_BODY=""
@@ -1400,24 +1424,25 @@ spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes 
     || die "the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"
 }
 
-spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment, $5 = 1 to supersede
-  local stamp entry tmp e
+spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting entries
+  local e
+  spool_existing "$1" || return 0
+  [ -d "$SPOOL_DIR" ] || return 0
+  for e in "$SPOOL_DIR"/[0-9]*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    [ "$SPOOL_SENDER" = "$2" ] || continue
+    rm -f -- "$e" || die "cannot supersede the spooled message $e"
+  done
+}
+
+spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
+  local stamp entry tmp
   spool_establish "$1"
   stamp="$(spool_stamp)"
   case "$stamp" in
     ''|*[!0-9]*) die "cannot stamp a spool entry — python3 has to run for gang to order a spool oldest-first, and a message it could not then deliver in order will not be parked" ;;
   esac
-  # Supersession is the sender's explicit choice, never gang's: two messages
-  # from one sender are two messages unless the sender says the newer one
-  # replaces the older.
-  if [ "$5" = 1 ]; then
-    for e in "$SPOOL_DIR"/[0-9]*; do
-      [ -f "$e" ] || continue
-      spool_read "$e"
-      [ "$SPOOL_SENDER" = "$2" ] || continue
-      rm -f -- "$e" || die "cannot supersede the spooled message $e"
-    done
-  fi
   tmp="$SPOOL_DIR/.writing-$$-$stamp"
   printf '%s\n%s\n%s\n' "$2" "$4" "$3" > "$tmp" \
     || die "cannot write a spooled message into $SPOOL_DIR"
@@ -2126,7 +2151,7 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
   # A UI owning the composer is the same condition inject refuses with, and it
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
-  # disagreement decided whether --spool parked a message or dropped it.
+  # disagreement decided whether the default parked a message or dropped it.
   ! occupied "$AGENT_ID" \
     || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
   busy "$AGENT_ID" || busy_rc=$?
@@ -2176,7 +2201,7 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" spool=0 supersede=0 rc=0 err="" frag
+  local name="" from="" use_stdin=0 body="" live_only=0 spool=0 supersede=0 rc=0 err="" frag
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -2184,28 +2209,24 @@ cmd_send() {
     --from) [ $# -ge 2 ] || die "send: --from needs a value"; from="$2"; shift 2 ;;
     --stdin) [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
              use_stdin=1; shift ;;
+    --live-only) live_only=1; shift ;;
     --spool) spool=1; shift ;;
     --supersede) supersede=1; shift ;;
     *) die "send: unknown argument '$1'" ;;
   esac; done
   [ -n "$name" ] || die "send: target required (--to <name>)"
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
-  [ "$supersede" -eq 0 ] || [ "$spool" -eq 1 ] \
-    || die "send: --supersede replaces an older message in the spool, so it means nothing without --spool"
+  [ "$supersede" -eq 0 ] || [ "$live_only" -eq 0 ] \
+    || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
+  if [ "$spool" -eq 1 ]; then
+    printf '%s\n' "send: --spool is the default now and does nothing; drop it, and use --live-only for a delivery that must not park." >&2
+  fi
   send_sender "$from"
   stdin_body "send"
   body="$STDIN_BODY"
   resolve "$name"
-  if [ "$spool" -eq 1 ]; then
-    # Refused at send time rather than accepted and left to sit: the only thing
-    # that drains a spool is the target's own native Stop event, so a harness
-    # gang hears nothing from would hold this message forever while its sender
-    # believed it was on its way.
-    [ "${GANG_STOP_HOOK:-}" = 1 ] \
-      || die "send: --spool needs a harness whose native Stop event reaches gang, and profile '$AGENT_PROFILE' declares no GANG_STOP_HOOK — nothing would ever drain a message parked for '$name'"
-  fi
   envelope "$SEND_FROM" "$body"
-  if [ "$spool" -eq 0 ]; then
+  if [ "$live_only" -eq 1 ]; then
     send_live "$name"
     echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
@@ -2216,15 +2237,23 @@ cmd_send() {
   # queue a second copy of a message that may already have landed.
   err="$(send_live "$name" 2>&1)" || rc=$?
   case "$rc" in
-    0) echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+       echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
     *) [ -z "$err" ] || printf '%s\n' "$err" >&2
        exit "$rc" ;;
   esac
+  if ! spool_available "$AGENT_ID" "$name"; then
+    [ -z "$err" ] || printf '%s\n' "$err" >&2
+    printf 'send: NOT parked — %s. Send again when '\''%s'\'' is idle.\n' \
+      "$SPOOL_UNAVAILABLE_WHY" "$name" >&2
+    exit 3
+  fi
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-  spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" "$supersede"
+  [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+  spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
   printf '%s %s\n' \
     "$(colour "$C_WORK" "spooled for $name as [gang:$SEND_FROM] — NOT delivered")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting; the next turn boundary in $name drains them) refused: ${err##*$'\n'}")"
@@ -2578,7 +2607,10 @@ cmd_status() {
     # is worse than silence: it says the message was kept and does not say where.
     [ -n "$held_dir" ] \
       || die "$held message(s) are held for '$name' and gang cannot name where: this window's spool identity is gone, so the directory holding them can no longer be resolved. Look for them under $(spool_root_of)"
-    printf '%s\n' "$(colour "$C_BAD" "spool: $held held after an interrupted or unverified delivery — gang will not send them again; read them under $held_dir")"
+    spool_held_report "$AGENT_ID" | while IFS= read -r held_line; do
+      printf '%s\n' "$(colour "$C_BAD" "$held_line")"
+    done
+    printf '%s\n' "$(colour "$C_BAD" "spool: $held held; gang will not send them again; read them under $held_dir")"
   fi
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
