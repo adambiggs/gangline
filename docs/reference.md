@@ -73,8 +73,9 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 When context lights are enabled, their thresholds are copied to the new window.
-Codex also binds that window to the useful startup envelope's nonce so later
-token events can be found without a marker turn.
+Any profile declaring `GANG_SESSION_KEY=1` also binds the window to the useful
+startup envelope's nonce, whether or not lights are enabled, so later context
+queries can find the matching native session without a marker turn.
 Operators normally place both thresholds high in the native window so lights do
 not impose an artificial context disadvantage, but below the harness's observed
 automatic-compaction boundary so the lights remain reachable.
@@ -280,13 +281,30 @@ It also reports staged input, pending or failed self-compaction, how many
 messages are spooled for that target, and a spool drain that could not be
 verified.
 
+### `gang context [name]`
+
+Prints the target profile's native context reading raw, in its own
+`usedk/windowk (percent%)` format. The query reads the profile source whether or
+not context lights are enabled; asking and edge-triggered signalling are
+separate acts. A missing or unreadable source fails loudly and no value is
+fabricated.
+
+Codex context is available for hitched windows because every Codex hitch records
+the startup-envelope nonce; adopted Codex windows have no such identity.
+opencode and Pi read their panes and can answer with lights off when their native
+readout is visible. claude-code can answer only when lights were enabled at
+hitch, because that launch choice installs its statusline beacon. Adopted
+windows answer only when their required native source is independently present.
+
 ### `gang roster`
 
 Prints every session window with its profile and current state. Unadopted windows
-are shown but not treated as agents. Context usage belongs to each agent and is
-not reported to the lead or operator. Each row compares the window's binary
-stamp with the invoked `gang` binary and visibly marks skew; the comparison runs
-only for this snapshot.
+are shown but not treated as agents. Context is deliberately not a roster
+column: ordinary adopted windows and lights-off claude-code windows have no
+readable source, and one absent value must not make the team inventory fail.
+Use `gang context <name>` when a reading is wanted. Each row compares the
+window's binary stamp with the invoked `gang` binary and visibly marks skew; the
+comparison runs only for this snapshot.
 
 ### `gang capture <name> [lines]`
 
@@ -405,7 +423,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
-| `GANG_SESSION_KEY=1` | context lookup needs the startup-envelope nonce |
+| `GANG_SESSION_KEY=1` | every hitch records the startup-envelope nonce for context lookup |
 | `profile_input target` | print human-authored composer contents, or fail if absent |
 | `profile_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 

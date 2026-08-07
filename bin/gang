@@ -253,6 +253,7 @@ gang — drive native CLI agents in tmux
   flush     recover a harness-queued message
   interrupt stop an agent's current turn
   compact   ask an agent to compact context
+  context   read an agent's context
   cutoff    set or show the team cutoff
   status    inspect one agent's state
   roster    list the team and its state
@@ -326,6 +327,13 @@ gang compact
   Ask an agent to compact its context.
 
   gang compact <name>
+EOF
+      ;;
+    context) cat <<'EOF'
+gang context
+  Read an agent's context.
+
+  gang context [name]
 EOF
       ;;
     cutoff) cat <<'EOF'
@@ -2064,7 +2072,7 @@ cmd_hitch() {
     *) die "'$name' is running but its input box did not become ready, so its startup message was not delivered — it may still be booting or a first-run prompt may own the screen. Inspect it with 'gang attach' or 'gang capture $name'; if you clear a prompt after this timeout, run 'gang drop $name' and hitch again." ;;
   esac
   envelope hitch "$msg"
-  if [ -n "$lights" ] && [ "${GANG_SESSION_KEY:-}" = 1 ]; then
+  if [ "${GANG_SESSION_KEY:-}" = 1 ]; then
     tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
   fi
   delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)" || delivery_rc=$?
@@ -2357,6 +2365,22 @@ cmd_cutoff() { # declare, show, or clear one optional team cutoff
     || die "cutoff: could not store the declaration for session '$SESSION'"
   CUTOFF_AT="$CUTOFF_PARSED" CUTOFF_DECLARED="$now"
   cutoff_summary "$now"; printf '\n'
+}
+
+cmd_context() { # print the profile's native context reading, unparsed
+  local name="${1:-}"
+  [ $# -le 1 ] || die "context: expected at most one agent name"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help context
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  resolve "$name"
+  declare -F profile_context >/dev/null \
+    || die "context: profile '$AGENT_PROFILE' declares no profile_context, so gang cannot read context for '$name'"
+  context_now "$AGENT_ID"
 }
 
 state_now() { # $1 = window id, profile loaded -> the state, in words
@@ -2655,6 +2679,7 @@ case "$cmd" in
   flush)    cmd_flush "$@" ;;
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
+  context)  cmd_context "$@" ;;
   cutoff)   cmd_cutoff "$@" ;;
   status)   cmd_status "$@" ;;
   hook)     cmd_hook ;;

@@ -173,7 +173,7 @@ profile_context() { # $1 = tmux target; file-based — reads the rollout, never 
   local key file
   key="$(tmux show-options -wqv -t "$1" @gl_key)"
   [ -n "$key" ] \
-    || die "window has no @gl_key — Codex context lights require a hitch-time startup-envelope nonce; adopted windows have none"
+    || die "window has no @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
   file="$(tmux show-options -wqv -t "$1" @gl_session)"
   if [ -z "$file" ] || [ ! -f "$file" ]; then
     file="$(codex_session_for "$key")"

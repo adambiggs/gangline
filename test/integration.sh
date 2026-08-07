@@ -103,7 +103,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush interrupt compact status capture composer drop"
+bare_error_commands="hitch adopt send flush interrupt compact context status capture composer drop"
 meaningful_bare_commands="up roster attach profiles config cutoff down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -555,6 +555,28 @@ codex_context="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
 equal "Codex context reads the newest native token record" \
   "120k/300k (40%)" "$codex_context"
 
+mkdir -p "$RUN_ROOT/profiles"
+export GANG_PROFILES="$RUN_ROOT/profiles"
+cat > "$RUN_ROOT/profiles/ctx-known.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_SESSION_KEY=1
+profile_context() { printf '42k/200k (21%%)\n'; }
+SH
+cat > "$RUN_ROOT/profiles/ctx-fail.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+profile_context() { die 'fixture context unavailable'; }
+SH
+cat > "$RUN_ROOT/profiles/ctx-none.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+unset -f profile_context
+SH
+
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked
 # below has been established.
@@ -574,6 +596,41 @@ contains "bare capture targets the calling agent window" \
 equal "bare composer targets the calling agent window" "" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
 
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch ctx-agent -p ctx-known -d /tmp >/dev/null
+ctx_agent_id="$(window_id ctx-agent)"
+ctx_agent_pane="$(tmux list-panes -t "$ctx_agent_id" -F '#{pane_id}')"
+equal "named context prints the profile reading byte-for-byte" \
+  "42k/200k (21%)" "$("$GANG" context ctx-agent)"
+equal "bare context targets the calling agent window" \
+  "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
+equal "context answers while context lights are off" \
+  "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
+if [ -n "$(tmux show-options -wqv -t "$ctx_agent_id" @gl_key)" ]; then
+  pass "a session-key profile mints @gl_key even with context lights off"
+else
+  fail "a session-key profile mints @gl_key even with context lights off" \
+    "@gl_key was empty"
+fi
+"$GANG" hitch ctx-failing -p ctx-fail -d /tmp >/dev/null
+excludes "roster carries no context reading column" \
+  "$("$GANG" roster)" "42k/200k"
+
+ctx_fail_stdout="$RUN_ROOT/context-fail.stdout"
+ctx_fail_stderr="$RUN_ROOT/context-fail.stderr"
+if "$GANG" context ctx-failing >"$ctx_fail_stdout" 2>"$ctx_fail_stderr"; then
+  fail "a profile context failure stays non-zero" "context unexpectedly succeeded"
+else
+  pass "a profile context failure stays non-zero"
+fi
+equal "a profile context failure fabricates no reading" "" "$(<"$ctx_fail_stdout")"
+contains "a profile context failure keeps its own diagnostic" \
+  "$(<"$ctx_fail_stderr")" "fixture context unavailable"
+
+"$GANG" hitch ctx-missing -p ctx-none -d /tmp >/dev/null
+refuses "a missing profile_context names the profile" \
+  "profile 'ctx-none' declares no profile_context" \
+  "$GANG" context ctx-missing
+
 alpha_before_bare_help="$(pane alpha)"
 alpha_composer_before_bare_help="$($GANG composer alpha)"
 for incoherent_bare in hitch adopt send flush interrupt drop; do
@@ -589,6 +646,9 @@ equal "incoherent bare commands leave the calling pane untouched" \
   "$alpha_before_bare_help" "$(pane alpha)"
 equal "incoherent bare commands leave the composer untouched" \
   "$alpha_composer_before_bare_help" "$($GANG composer alpha)"
+"$GANG" drop ctx-agent >/dev/null
+"$GANG" drop ctx-failing >/dev/null
+"$GANG" drop ctx-missing >/dev/null
 
 outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
 contains "bare status outside an agent prints its synopsis" \
