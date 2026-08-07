@@ -1140,7 +1140,8 @@ composer_settled() { # $1 = window id; nobody is typing into the box right now
   [ "$a" = "$b" ]
 }
 
-box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name
+box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
+              # $4 = that reading's status (non-zero = the box could not be read)
   # What is in that box, in one word, with the look that settles it. `gang
   # capture` hands back the raw pane, where a harness's dim suggested-prompt
   # placeholder reads exactly like a half-written line — that misreading has
@@ -1152,8 +1153,17 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name
       "${AGENT_PROFILE:-loaded}" "$3"
     return
   fi
-  if [ -z "$2" ]; then
+  if [ "${4:-0}" -ne 0 ]; then
     printf 'unreadable: the harness is not taking input (gang capture %s)' "$3"
+    return
+  fi
+  # A successful read of an empty box. The classification look is taken after
+  # the decision it names, so it can catch the obstruction leaving between the
+  # two — an operator's C-u, a queue draining. Reporting that as a box gang
+  # could not read would diagnose a healthy harness as a broken one on the
+  # strength of it having become reachable.
+  if [ -z "$2" ]; then
+    printf 'cleared: empty when gang looked again, so the obstruction has gone (gang status %s)' "$3"
     return
   fi
   if box_queued "$2"; then
@@ -1272,13 +1282,15 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered (gang flush $tname; or by hand: gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
   fi
   if ! input_clear "$1"; then
-    local onlyhead="" seen
+    local onlyhead="" seen seen_rc=0
     [ "${3:-}" != head ] \
       || onlyhead=", and this text is only a command at the head of an empty one, so appended to a draft it would be literal text and would never run"
     # A second look, taken only to name what was refused. It decides nothing:
-    # the refusal is already settled by the read above.
-    seen="$(landing_zone "$1")" || seen=""
-    refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty [$(box_class "$1" "$seen" "$tname")], so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear"
+    # the refusal is already settled by the read above. Its status is carried
+    # separately, because a read that fails and a read that succeeds on an
+    # emptied box are opposite findings and only one of them is a sick harness.
+    seen="$(landing_zone "$1")" || seen_rc=$?
+    refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty [$(box_class "$1" "$seen" "$tname" "$seen_rc")], so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear"
   fi
   before="$(landing_zone "$1")" \
     || refuse "cannot read the input box of $tname — the harness is not taking input (gang capture $tname)"
@@ -1971,7 +1983,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box spooled held spool_failed skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled held spool_failed skew="" current
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1992,8 +2004,9 @@ cmd_status() {
     printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
     # The record says what gang did; this says what is in that box now, so the
     # operator is not left to read a raw capture and guess.
-    staged_box="$(landing_zone "$AGENT_ID")" || staged_box=""
-    printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$1")")"
+    staged_box_rc=0
+    staged_box="$(landing_zone "$AGENT_ID")" || staged_box_rc=$?
+    printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$1" "$staged_box_rc")")"
   fi
   spooled="$(spool_count "$AGENT_ID")"
   [ "$spooled" -eq 0 ] \

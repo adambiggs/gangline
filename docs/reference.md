@@ -93,7 +93,10 @@ to the rendering it recorded), `unattributed` (Gangline recorded an undelivered
 paste here but cannot match it to this box, so the author is exactly what is
 unknown), `parked` (the harness's declared queue evidence), `whole-pane` (the
 profile declares no input reader, so the reading is the pane rather than a box),
-or `unreadable`. A suggested-prompt placeholder is not among
+`cleared` (the box read empty when Gangline looked again, so the obstruction
+left between the decision and its naming), or `unreadable`. The classifying
+look is taken after the decision it names and changes nothing about it; a
+refusal stands even when the box clears underneath it. A suggested-prompt placeholder is not among
 them: the profile's styled reading strips it, so it never reaches a refusal —
 `gang capture` is where it looks like a draft, and `gang composer` is the reading
 that settles it.

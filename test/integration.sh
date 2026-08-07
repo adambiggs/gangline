@@ -1676,6 +1676,52 @@ excludes "the refused vanished-box body never landed" \
   "$(pane vanish)" "MARK_VANISH"
 "$GANG" drop vanish >/dev/null
 
+# The classification look is taken AFTER the decision it names, so the
+# obstruction can leave in the gap between them — an operator's C-u, a queue
+# draining at a turn boundary. That look then reads an empty box successfully,
+# which is the opposite finding from a box that cannot be read, and only one of
+# the two is a harness in trouble. This profile serves the draft for exactly the
+# reads a refusal takes to settle and hands the naming look an empty box after
+# it; a change in that count fails this check rather than quietly retargeting
+# it, because the class named is asserted exactly.
+cat > "$RUN_ROOT/profiles/emptied.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_emptied_real="\$(declare -f profile_input)"
+eval "emptied_real_input \${_gl_emptied_real#profile_input}"
+profile_input() { # the draft per ticket once the flag is set, then an empty box
+  local n
+  if [ ! -f "$RUN_ROOT/emptied-flag" ]; then emptied_real_input "\$1"; return; fi
+  n="\$(cat "$RUN_ROOT/emptied-tickets" 2>/dev/null)"
+  if [ "\${n:-0}" -gt 0 ]; then
+    printf '%s' "\$((n - 1))" > "$RUN_ROOT/emptied-tickets"
+    emptied_real_input "\$1"
+    return
+  fi
+  printf ''
+}
+SH
+"$GANG" hitch emptied -p emptied -d /tmp >/dev/null
+tmux send-keys -l -t "$(window_id emptied)" 'MARK_LEAVING'
+# Six: the box reads a refused send takes to settle — the busy verdict's
+# composer and emptiness pair, the settled-composer pair, the parked-queue
+# preflight, and the emptiness read that refuses. The seventh is the naming
+# look, and it gets an empty box.
+printf '6' > "$RUN_ROOT/emptied-tickets"
+touch "$RUN_ROOT/emptied-flag"
+if emptied_out="$(printf 'MARK_EMPTIED' |
+  "$GANG" send --to emptied --from tester --stdin 2>&1)"; then
+  fail "a box emptying under the refusal is still a refusal" "send succeeded"
+else
+  pass "a box emptying under the refusal is still a refusal"
+fi
+contains "and the naming look reports the box gone, not a harness that cannot be read" \
+  "$emptied_out" "[cleared:"
+excludes "the refused body never landed" "$(pane emptied)" "MARK_EMPTIED"
+"$GANG" drop emptied >/dev/null
+
 # A malformed bracket is REPORTED, never repaired: the reader-path clear was
 # the same erase-fresh-evidence race one call deeper — cmd_send reaches
 # turn_witness through busy(), and an unset there can land on top of a fresh

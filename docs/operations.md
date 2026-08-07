@@ -227,9 +227,11 @@ Do not diagnose this from `gang capture`. The raw pane renders a harness's dim
 suggested-prompt placeholder identically to a half-written human line, and that
 reading has been got wrong in public. Refusals and the `box:` line under an
 undelivered-input report already classify it — `draft`, `staged`, `unattributed`,
-`parked`, `whole-pane`, `unreadable` — and each names the look or recovery that
-settles it. `unattributed` means Gangline pasted something here and never saw
-where it went; `gang status` prints the record of what it pasted.
+`parked`, `whole-pane`, `cleared`, `unreadable` — and each names the look or
+recovery that settles it. `unattributed` means Gangline pasted something here and
+never saw where it went; `gang status` prints the record of what it pasted.
+`cleared` means the box emptied while Gangline was naming what it refused on:
+the refusal stands, and the send will go through now.
 To see the box directly:
 
 ```sh
