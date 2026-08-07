@@ -1,6 +1,6 @@
 # Lead-ergonomics spec
 
-Five operator-directed changes, each born from friction observed in a live
+Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
 design decisions open. Where a value must come from a live harness capture
 rather than from this document, the requirement says so explicitly and gives the
@@ -132,9 +132,10 @@ gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin
   and park nothing. Unchanged from today's `--spool`.
 - **`--live-only`** — attempt live delivery and never park. This is today's
   no-flag behaviour, kept for availability probes.
-- **`--supersede`** — drops the same sender's earlier spooled entries before
-  parking this one. Now valid without a companion flag. Refused with
-  `--live-only`, which never parks:
+- **`--supersede`** — retires the same sender's earlier spooled entries for that
+  target once this message's own fate is settled, whether it was delivered live
+  or parked. Now valid without a companion flag. Refused with `--live-only`,
+  which never parks:
   `send: --supersede replaces an older message in the spool, and --live-only never parks one`
 - **`--spool`** — accepted, does nothing, and says so on stderr once:
   `send: --spool is the default now and does nothing; drop it, and use --live-only for a delivery that must not park.`
@@ -180,6 +181,52 @@ spool_available() { # $1 = window id, $2 = target name; 0 = a parked message wou
 `spool_existing` still dies on a token Gangline did not mint. That is an
 unaccountable directory, not an absent one, and it stays fatal.
 
+### `--supersede` must also fire on a live success
+
+Today supersession lives inside `spool_write`, which `cmd_send` reaches only
+after a refusal. Under the old opt-in default that was complete, because
+`--spool` implied the sender expected to park. Under a default that delivers
+first it is a defect, and a reachable one: a sender parks A while the target is
+busy, then sends replacement B with `--supersede` once the target is idle. B
+verifies live, `spool_write` is never called, A stays in the spool, and the next
+turn boundary delivers A **after** the message that was meant to replace it. The
+operator-facing caution below promises the opposite.
+
+Lift supersession out of `spool_write` into its own helper, and call it from
+both outcomes:
+
+```sh
+spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting entries
+  local e
+  spool_existing "$1" || return 0
+  [ -d "$SPOOL_DIR" ] || return 0
+  for e in "$SPOOL_DIR"/[0-9]*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    [ "$SPOOL_SENDER" = "$2" ] || continue
+    rm -f -- "$e" || die "cannot supersede the spooled message $e"
+  done
+}
+```
+
+`spool_write` loses its fifth parameter and its inline loop. `cmd_send` calls
+`spool_supersede "$AGENT_ID" "$SEND_FROM"`:
+
+- on the live-verified path, **after** `send_live` returns 0 and before the
+  delivered line is printed;
+- on the parked path, immediately before `spool_write`, which is where it
+  effectively runs today.
+
+**After, never before.** Retiring a predecessor before the replacement's own fate
+is known would destroy A on the strength of a B that then failed hard, leaving
+the target with neither. The ordering is the whole safety property.
+
+The glob is `[0-9]*`, so an entry a concurrent drain has already claimed as
+`sending-…` is untouched. That is correct: a claimed entry is one whose body may
+already have reached the pane, and `docs/DECISIONS.md` forbids treating such a
+message as recallable. Supersession retires what is still waiting, not what is
+already gone.
+
 ### `cmd_send` control flow
 
 Parse `--live-only` and `--supersede`; accept and warn on `--spool`; reject
@@ -187,8 +234,10 @@ Parse `--live-only` and `--supersede`; accept and warn on `--spool`; reject
 
 1. If `--live-only`: call `send_live "$name"` at statement level so its refusal
    and exit status propagate unchanged, print the delivered line, return 0.
+   `--supersede` cannot reach here; it is refused with `--live-only`.
 2. Otherwise capture: `err="$(send_live "$name" 2>&1)" || rc=$?`.
-   - `rc` 0 — print the delivered line, return 0.
+   - `rc` 0 — if `--supersede`, `spool_supersede "$AGENT_ID" "$SEND_FROM"` now;
+     then print the delivered line and return 0.
    - `rc` not 0 and not 3 — print `$err` to stderr and `exit "$rc"`. Unchanged.
    - `rc` 3 — continue.
 3. On the refusal, evaluate `spool_available "$AGENT_ID" "$name"`. Evaluate it
@@ -197,8 +246,9 @@ Parse `--live-only` and `--supersede`; accept and warn on `--spool`; reject
    - unavailable — print `$err` to stderr, then
      `printf 'send: NOT parked — %s. Send again when '\''%s'\'' is idle.\n' "$SPOOL_UNAVAILABLE_WHY" "$name" >&2`,
      and `exit 3`.
-   - available — `spool_write` as today, print the existing `spooled for …
-     NOT delivered` line.
+   - available — if `--supersede`, `spool_supersede "$AGENT_ID" "$SEND_FROM"`,
+     then `spool_write` (now without its supersede parameter) and print the
+     existing `spooled for … NOT delivered` line.
 
 The `GANG_STOP_HOOK` precondition moves out of the `--spool` branch entirely; it
 now lives only in `spool_available`.
@@ -247,6 +297,16 @@ status alone.
 5. **`--supersede` stands alone.** Park two bodies from one sender, the second
    with `--supersede` and no other flag, assert `status parker` reports one.
 6. **`--supersede --live-only` is refused**, naming `--live-only`.
+7. **A live-verified `--supersede` retires the predecessor.** Draft into
+   `parker` and park A. Clear the draft so the pane is idle, then send B with
+   `--supersede`. Assert B was delivered live (the body reached the pane) and
+   that `status parker` now reports **zero** waiting. Then fire a Stop event and
+   assert the pane never gains A's body. Without the live-path call this test
+   goes red on the last assertion, which is the defect stated exactly: a
+   replaced message arriving after its replacement.
+8. **A hard failure supersedes nothing.** Same setup, but B fails at a
+   non-refusal exit status; assert A is still waiting. This is the guard on the
+   ordering — supersession after the outcome, never before it.
 
 ### `--supersede` is sender-scoped, not topic-scoped
 
@@ -261,8 +321,8 @@ sentence:
 
 > It is scoped to the sender, not to a subject: a sender with two unrelated
 > messages waiting for one target loses the first when the second carries the
-> flag. Pass it only when the newer message genuinely replaces everything that
-> sender has parked.
+> flag, whether that second message parks or is delivered live. Pass it only
+> when the newer message genuinely replaces everything that sender has parked.
 
 **Do not add topic scoping.** A subject, thread, or topic key would be a
 coordination schema, and `docs/DECISIONS.md` §"Gangline is substrate, not
@@ -442,20 +502,48 @@ stall_note() { # $1 = window id, $2 = kind; never fatal
    if the recorded kind equals `$2` **and** `now - epoch < GANG_STALL_REPEAT`. A
    malformed value is treated as absent and overwritten; this option is written
    only here.
-5. Write `@gl_stall "$2 $(date +%s)"`.
-6. Build the body, one line:
+5. Build the body, one line:
    `stall: <raising agent> is awaiting input (<kind>) — inspect with gang capture <raising agent>`
    Envelope it with the raising agent as sender — the fact originates in that
    window, and `agent_name_of` reads the name off the window, so the attribution
    law holds with no claimed identity anywhere.
-7. Deliver through the ordinary path: live delivery, and on a refusal park it if
+6. Deliver through the ordinary path: live delivery, and on a refusal park it if
    `spool_available` says a parked message would drain. This is the same code
    change 2 installs; a stall note is an ordinary message and gets no private
    transport (law 1). **Synchronously — never backgrounded.** A hook that
    returns before its delivery has resolved reports a note nobody saw.
-8. On any failure, record `@gl_stall_failed` on the raising window with the
-   reason and return 0. A hook may not kill its harness; this mirrors
-   `spool_drain_dispatch`, which records `@gl_spool_failed` the same way.
+7. **On success** — delivered live or parked where a drain will reach it — write
+   `@gl_stall "$2 $(date +%s)"` and unset `@gl_stall_failed`. Return 0.
+8. **On failure**, record `@gl_stall_failed` on the raising window with the
+   reason, leave `@gl_stall` untouched, and return 0. A hook may not kill its
+   harness; this mirrors `spool_drain_dispatch`, which records
+   `@gl_spool_failed` the same way.
+
+### The debounce is a record of a note that landed
+
+Steps 7 and 8 are ordered deliberately, and both halves of the ordering are
+load-bearing.
+
+**The stamp is written after the delivery, not before it.** `@gl_stall` exists to
+suppress a duplicate of a note the target already has. A note that failed to
+reach anyone is not a duplicate of anything, so stamping before the attempt would
+buy silence for a fact nobody received and would suppress the retry that repairs
+it. Written afterwards, the option means what its name implies: a note of this
+kind was delivered, and another one is noise until the repeat bound elapses. The
+cost of the failure path having no stamp is that a stalled agent re-attempts
+delivery on each native event until one lands — attempts that are cheap, bounded
+by how often the harness raises the event, and each one a chance for the light to
+start working again.
+
+**A failure is retired only by a later note that landed.** Nothing else clears
+`@gl_stall_failed`: not a movement event, not a roster read, not time. A
+declaration naming a window that does not exist yet is the ordinary case — the
+operator may declare `gang notify lead` before hitching `lead` — and the failure
+must stay visible for exactly as long as it is still true. The moment a note
+gets through, the condition that produced the failure is gone and the light goes
+out on the evidence of a delivery, not on a guess. Movement events clear
+`@gl_stall` and deliberately leave `@gl_stall_failed` alone: an agent moving on
+says nothing about whether its notes can be delivered.
 
 `gang status <name>` and `gang roster` report a set `@gl_stall_failed` beside
 the spool-failure reporting they already do. That is where a silently broken
@@ -505,7 +593,17 @@ assertion depends on timing.
    `@gl_stall_failed` is unset.
 8. `gang notify ghost` (no such window), fire in `alpha`; assert
    `@gl_stall_failed` is set and `gang status alpha` reports it.
-9. `gang notify` with a name `valid_name` rejects is refused.
+9. **A failure does not debounce the repair.** Continuing from 8 without
+   changing the clock: assert `@gl_stall` is unset, hitch `ghost`, fire the same
+   kind again, and assert the note reached `ghost`'s pane, `@gl_stall_failed` is
+   now unset, and `gang status alpha` no longer reports it. This is the
+   failure→success path, and it fails against a build that stamps before
+   delivering (the second fire is swallowed) and against one that never retires
+   the failure (status still reports it).
+10. **Movement does not retire a failure.** From 8, fire `Stop` in `alpha` and
+    assert `@gl_stall_failed` is still set. A light that is still broken keeps
+    saying so.
+11. `gang notify` with a name `valid_name` rejects is refused.
 
 ### Documentation
 
@@ -527,7 +625,8 @@ assertion depends on timing.
   > same kind inside one stall is one note, cleared by the harness's own next
   > move. A harness that reports nothing gets no substitute, and a delivery that
   > fails is recorded on the window for status to surface rather than killing
-  > the hook.
+  > the hook — a record retired only by a later note that landed, because a
+  > light that is still broken has to keep saying so.
 
 ### Commit
 
@@ -561,8 +660,15 @@ registered:
 - **AUTO-ANSWER** — benign transients that carry no authority. The proven case
   is the menu above; the safe option is `Dismiss and keep waiting`, and the
   operator's standing rule is always that option.
-- **STALL-LIGHT** — unknown dialogs. Behaviour is unchanged: occupied, refusal,
-  and change 3 raises a note.
+- **STALL-LIGHT** — unknown dialogs. Behaviour is unchanged: occupied and
+  refused. A stall note follows only where the harness itself raised one of the
+  events change 3 forwards, which is not the same set: on claude-code a
+  permission or elicitation dialog raises `Notification`, but **the codex menu
+  above raises nothing**. It is not a `PermissionRequest`, and codex 0.145.0 has
+  no other awaiting-input event, so an unrecognized codex dialog produces
+  occupancy and a refusal and no light at all. Stating that is the point of the
+  bucket; promising a note here would be the same false claim change 3 was
+  written to avoid.
 - **LOUD-MANUAL** — trust prompts, permission prompts, approval dialogs, and
   anything that grants or widens access. **Never** auto-answered. These are the
   prompt-injection boundary: a dialog's text can be written by whatever the
@@ -572,22 +678,37 @@ registered:
 
 ### Registry
 
-Harness knowledge, so it lives in the profile as data (law 4). One newline-
-separated record per dialog in `GANG_DIALOGS`, six `|`-separated fields:
+Harness knowledge, so it lives in the profile as data (law 4). A dialog is
+declared in two parts: a record naming how it behaves, and a block holding
+exactly what it says.
 
-```
-id|anchor|footer|labels|safe-label|keys
+```sh
+GANG_DIALOGS='<id>|<marker>|<safe>|<move>|<confirm>'      # one record per line
+GANG_DIALOG_LINES_<id> ='<every line of the dialog, in painted order>'
 ```
 
-- `id` — a short slug for messages.
-- `anchor` — a literal line that opens the dialog and identifies it.
-- `footer` — a literal line that closes it. Anchor and footer bound the region
-  the fingerprint is taken over.
-- `labels` — every selectable row label, comma-separated, in painted order.
-- `safe-label` — which of those labels carries no authority and is the one to
-  select. Must appear in `labels`.
-- `keys` — the `tmux send-keys` key names, space-separated, that select
-  `safe-label` from the dialog's initial state.
+- `id` — a short slug, `[a-z0-9-]+`, used in messages and in the block's
+  variable name with `-` written `_`. Read back with `${!var}`, which bash 3.2
+  supports.
+- `marker` — an ERE, anchored at line start, matching the prefix the harness
+  paints on the **selected** row and on no other. Codex 0.145.0: `^› [0-9]+\. `.
+  It is the same shape as `GANG_OCCUPIED_REGEX`, which a profile already writes.
+- `safe` — the label of the option that carries no authority. Must be one of the
+  block's lines.
+- `move` — space-separated `tmux send-keys` key names that move the selection to
+  the safe row. May be empty when nothing needs moving; it is never trusted, only
+  checked (below).
+- `confirm` — the single key name that commits the selection.
+
+The dialog's own text goes in the block rather than in a record field because
+its lines contain commas, and would eventually contain whatever in-field
+separator was chosen instead. A newline-separated block needs no escaping and
+reads in the profile as the thing it is.
+
+**The block holds every line, not only the selectable ones.** A dialog is
+explanatory sentences plus rows plus a footer, and all of it is fingerprint: the
+first line bounds the region above, the last bounds it below, and the lines
+between are what proves the dialog is still the one that was enumerated.
 
 **A row count would not work, and observation is why.** In the live codex
 0.145.0 capture below, the selection marker *and* the row number are painted
@@ -600,17 +721,40 @@ only on the currently-selected row; every other row is blank-prefixed:
 
 Counting lines that match `GANG_OCCUPIED_REGEX` therefore returns 1 for a
 two-row dialog and would return 1 for a dialog that grew a third option — the
-exact change the fingerprint exists to catch. Bounding the region and accounting
-for every line in it is what actually detects a dialog that is no longer the one
-the profile enumerated.
+exact change the fingerprint exists to catch. Matching the whole block as an
+ordered run is what actually detects a dialog that is no longer the one the
+profile enumerated, whether it was reworded, reordered, or grew an option.
 
-`load_profile` refuses a malformed record: wrong field count, an empty field, a
-`|` inside a field, or a non-numeric `rows`.
+### Matching is width-tolerant by construction
 
-**`load_profile` also refuses any record whose `anchor` or `safe-label` matches**
+Before comparing, both the capture and the declared block are normalized: each
+line has runs of whitespace collapsed to one space and its ends trimmed, and
+blank lines are dropped. `capture_joined` already passes `-J`, which rejoins
+lines the terminal soft-wrapped. Between them, the two things that vary with
+pane width — soft wrapping and the padding of a two-column row — are removed
+before any comparison, so a block captured at one width matches at another. This
+matters directly: the operator reads this tool over phone SSH, and a fingerprint
+that only matched at 80 columns would silently stop recognizing dialogs at 48.
+
+### `load_profile` refusals
+
+A malformed registry is refused at load: a record without exactly five fields, an
+empty `id`, `marker`, `safe`, or `confirm` (only `move` may be empty), an `id`
+outside `[a-z0-9-]+` or repeated across records, a missing or empty
+`GANG_DIALOG_LINES_<id>`, or a `safe` that is not one of that block's lines
+after normalization.
+
+**`load_profile` also refuses any registry whose `id`, `safe`, or *any line of
+whose block* matches**
 `(trust|permission|approve|allow|full access|sandbox|credential|token|secret)`
-**case-insensitively.** This is the LOUD-MANUAL bucket made mechanical. It runs
-at `load_profile` rather than in `test/lint.sh` because it must also bind
+**case-insensitively.** This is the LOUD-MANUAL bucket made mechanical. The scan
+covers the whole block rather than the labels alone because the sentence that
+makes a dialog dangerous is usually not its button text — "Do you want to allow
+this tool to run?" carries its authority in the question, not in `Yes`. Refusing
+too much is the safe direction and is loud and fixable; refusing too little
+auto-answers a permission prompt.
+
+It runs at `load_profile` rather than in `test/lint.sh` because it must also bind
 operator-supplied profiles under `GANG_PROFILES`, which lint never reads, and
 because it should fail at the moment a dangerous registry would be consulted.
 
@@ -639,41 +783,73 @@ dialog_triage() { # $1 = window id; 0 = a known dialog was answered and cleared
 ```
 
 1. `[ -n "${GANG_DIALOGS:-}" ]` or return 1.
-2. Capture the pane once (`capture_joined`).
-3. For each record, all of the following or no match: the `anchor` line appears;
-   the `footer` line appears after it; every declared label appears exactly once
-   in the region strictly between them; and every non-blank line in that region
-   contains one of the declared labels. The last clause is the fingerprint — an
-   unaccounted line in the region means the dialog is not the one enumerated,
-   whether it was reworded or grew an option, and it is not answered.
+2. Capture the pane once (`capture_joined`) and normalize it as above.
+3. For each record, match the normalized block as a **contiguous ordered run**
+   in the normalized capture. Every line must be equal, in order, except that
+   exactly one capture line in the run may carry the selected-row prefix: strip
+   `marker` from it before comparing. No match if the run is absent, if any line
+   differs, or if the number of run lines matching `marker` is not exactly one —
+   zero or two means Gangline cannot tell what is selected, and it does not press
+   a key on a dialog it cannot read.
 4. More than one record matching is ambiguity — `die`, naming both ids.
 5. `lock_pane` is already held by the caller on the `send_live` path; on the
    `wait_ready` path take it. Never press a key on an unlocked pane.
-6. Send `keys` with `tmux send-keys -t "$1"`, one key name per call.
-7. **Verify.** Re-read the pane: the `anchor` must be gone **and**
-   `profile_input` must read a composer. If either fails, `die` naming the id,
-   the keys sent, and `gang attach` — the window is now in a state Gangline
-   caused and cannot account for, which is the loudest case there is.
-8. On success, print one line to stderr:
-   `answered the known transient '<id>' in '<name>' with its safe option (<safe-label>)`,
-   so the answer is never invisible, and return 0. The caller re-reads occupancy
-   and proceeds.
+6. Send each key name in `move` with `tmux send-keys -t "$1"`, one call per name.
+   Nothing is committed by this; `move` only changes which row is highlighted.
+7. **Prove the selection before committing it.** Re-capture and normalize. The
+   block must still match by the rule in step 3, and the single line carrying
+   `marker` must, with the marker stripped, equal `safe`. If either fails, `die`
+   naming the id, the keys sent, and `gang attach`. **Do not press `confirm`.**
+8. Send `confirm`.
+9. **Verify it cleared.** Re-read the pane: the block's first line must be gone
+   **and** `profile_input` must read a composer. If either fails, `die` naming
+   the id, the keys sent, and `gang attach` — the window is now in a state
+   Gangline caused and cannot account for, which is the loudest case there is.
+10. On success, print one line to stderr:
+    `answered the known transient '<id>' in '<name>' with its safe option (<safe>)`,
+    so the answer is never invisible, and return 0. The caller re-reads occupancy
+    and proceeds.
+
+### Why the selection is read rather than assumed
+
+Steps 6–8 are split — move, read, then confirm — and the split is the security
+property of this whole item.
+
+Pinning the initial selection in the record and trusting `move` to walk from it
+would make the answer only as good as an assumption written from a single
+capture. A menu that reopens with a different row highlighted, or whose options
+are reordered in a later harness version, satisfies every static predicate while
+`move` lands somewhere else: with `Down Enter` pinned against a two-row menu that
+happens to open on row 2, the `Down` wraps to row 1 and the `Enter` confirms
+`Retry with a faster model` — the option that is not the safe one. The pane is
+the only thing that knows what is actually highlighted, so the pane is asked,
+after the move and before the commit.
+
+Step 9 cannot substitute for this. Confirming the *wrong* option also clears the
+dialog and also restores a composer, so a post-confirm check reports success
+either way. **The only place a wrong answer can be caught is before the confirm
+key**, which is why the confirm key is reached exclusively through step 7.
+
+The same split removes the need to reason about wrap-around, key repeat, or
+whether a `Down` at the bottom stops or cycles. Those become observations
+instead of assumptions: a move that lands wrong is a loud refusal, not a
+keystroke.
 
 ### The codex entry — capture required before landing
 
-The entry's `footer`, `labels`, and `keys` fields must be pinned to an observed
-rendering of **this** dialog. Its strings are verified above; its painted layout
-is not, and this document will not invent it. `CONTRIBUTING.md` already requires
-this: "Marker changes must name the harness version that was observed and add it
-to the profile's verified pins."
+The block and the `marker`, `move`, and `confirm` fields must be pinned to an
+observed rendering of **this** dialog. Its strings are verified above; its
+painted layout is not, and this document will not invent it.
+`CONTRIBUTING.md` already requires this: "Marker changes must name the harness
+version that was observed and add it to the profile's verified pins."
 
 Corroborating evidence from a different codex 0.145.0 dialog, captured live (the
-`/usage` selection menu, reproduced in item 7): row 1 carries the selection
-marker on first paint, and the footer reads
+`/usage` selection menu, reproduced in item 7): the selected row is painted
+`› <n>. <label>` and the footer reads
 `Press enter to confirm or esc to go back`. If the slow-response menu paints the
-same way, `keys` is `Down Enter` and the labels are
-`Retry with a faster model,Dismiss and keep waiting`. Expect that; verify it
-anyway, because a different dialog is corroboration and not observation.
+same way, `marker` is `^› [0-9]+\. `, `move` is `Down`, and `confirm` is `Enter`.
+Expect that; verify it anyway, because a different dialog is corroboration and
+not observation.
 
 Procedure:
 
@@ -683,25 +859,54 @@ Procedure:
 2. Hitch a codex agent and drive it until the menu appears (a long,
    heavily-reasoning request is the reliable trigger).
 3. `tmux capture-pane -pJ -e` the pane and record it verbatim in the commit body.
-4. From that capture, read: the line that closes the dialog, every row label in
-   painted order, which row carries the selection marker on first paint, and
-   therefore whether `Dismiss and keep waiting` is reached by `Down Enter`, by
-   `Enter` alone, or by a digit.
-5. Write the record, expected shape:
+4. From that capture, read: every line of the dialog in painted order, the
+   prefix the harness paints on the selected row, and which key or keys move the
+   selection to `Dismiss and keep waiting`.
+5. Write the record and its block, expected shape:
 
    ```sh
    # Verified against codex 0.145.0 — capture in the commit body.
-   GANG_DIALOGS='safety-buffering|Our systems are thinking a bit more about this request before responding.|<footer>|Retry with a faster model,Dismiss and keep waiting|Dismiss and keep waiting|<keys>'
+   GANG_DIALOGS='safety-buffering|^› [0-9]+\. |Dismiss and keep waiting|<move>|<confirm>'
+   GANG_DIALOG_LINES_safety_buffering='Our systems are thinking a bit more about this request before responding.
+   Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
+   Retry with a faster model
+   Dismiss and keep waiting
+   <footer line as painted>'
    ```
+
+   Written with no leading indentation in the profile; the indentation above is
+   this document's.
 
 6. Confirm the answer clears the menu in that same disposable session before
    landing.
 
-If the menu cannot be reproduced, land everything else in this change — the
-mechanism, the `load_profile` refusals, the status naming, the tests against
-fixture profiles — with `GANG_DIALOGS` unset in `profiles/codex.sh`, and say so
-in the commit body. An empty registry is inert, and law 5 is satisfied by the
-fixture consumer plus a registry entry that lands the moment it is observed.
+Checked against the forbidden-word scan: none of `safety-buffering`,
+`Dismiss and keep waiting`, or the five block lines above contains
+`trust`, `permission`, `approve`, `allow`, `full access`, `sandbox`,
+`credential`, `token`, or `secret`, so this entry loads. If the observed footer
+differs from the one recorded above and introduces one of those words, the scan
+refuses the profile and the entry does not land — that is the scan working, and
+it is not to be relaxed to accommodate a specific dialog.
+
+### The capture is a precondition, not an extra
+
+**If the menu cannot be reproduced, item 4 does not land.** Not the mechanism,
+not the `load_profile` refusals, not the status naming.
+
+Landing the machinery with `GANG_DIALOGS` unset in every shipped profile would
+put a keystroke-pressing component into `bin/gang` that nothing shipped can
+reach, which is exactly what law 5 forbids, and the suite fixtures do not rescue
+it: a fixture profile is a test of a consumer, not a consumer. The live consumer
+for this item is the codex registry entry, because the friction this item exists
+to remove is a real menu blocking real sends on the operator's real harness.
+Without that entry there is no consumer at all.
+
+The menu is not rare — it is why this item is in the charter — so the ordinary
+outcome is that the capture is taken during the arc. If it cannot be, item 4
+defers to the next release and the other eight land without it. That costs one
+feature; landing inert machinery costs the law that keeps `bin/gang` small, and
+it costs it permanently, because nothing ever deletes a surface that was already
+merged.
 
 ### Tests
 
@@ -709,34 +914,60 @@ Fixture profiles under `$RUN_ROOT/profiles`, sourcing `profiles/bash.sh`, with a
 pane painted to look like a numbered menu. No real harness.
 
 1. **A known dialog is answered and the send proceeds.** Paint the fixture
-   dialog, send, assert the body reached the pane and stderr named the id.
-2. **A dialog that grew a row is not answered.** Same anchor and footer, one
-   undeclared non-blank line painted in the region between them; assert the send
-   refuses as occupied and that the pane still shows the dialog — the artifact,
-   not the exit status. This is the assertion the row-count design would have
-   passed while pressing a key.
-3. **A dialog whose safe label is absent is not answered**, same assertions.
-4. **Keys that do not clear the dialog fail loud.** A fixture whose declared
-   `keys` do nothing; assert the command dies naming the id and `gang attach`.
-5. **`load_profile` refuses a registry naming a security surface.** A fixture
-   with `Trust this folder?` as its anchor; assert `gang roster` fails naming the
-   profile file and the forbidden word.
-6. **`load_profile` refuses a malformed record** — four fields, and a
-   non-numeric `rows`.
-7. **Two matching records are ambiguity**; assert the die names both ids.
-8. **`gang status` names a known dialog and presses nothing.** Paint the dialog,
-   run `status`, assert `known transient` in the output and that the pane is
-   byte-identical afterwards.
+   dialog with the marker on the unsafe row, send, assert the body reached the
+   pane and stderr named the id.
+2. **A dialog that grew a row is not answered.** The same block plus one
+   undeclared non-blank line inside it; assert the send refuses as occupied and
+   that the pane still shows the dialog — the artifact, not the exit status.
+   This is the assertion the row-count design would have passed while pressing a
+   key, and the explanatory lines of the block are what it walks over.
+3. **A reordered dialog is not answered.** The same lines, two of them swapped;
+   assert the same. Ordered-run matching is what this proves, and a set-membership
+   match would pass it.
+4. **A dialog whose safe label is absent is not answered**, same assertions.
+5. **The selection is read before the confirm key.** Fixture whose `move` key
+   moves the marker to the *wrong* row. Assert the command dies naming the id and
+   `gang attach`, that the dialog is still on screen, and — the load-bearing
+   assertion — that **the confirm key was never pressed**, witnessed by a fixture
+   that records each key it receives to a file. This is the finding-1 exploit as
+   a guard: it must go red against a build that pins the initial selection and
+   trusts `move`.
+6. **Two markers, or none, is not a match.** Two fixtures, one painting the
+   marker on both rows and one on neither; assert both refuse as occupied with no
+   key pressed.
+7. **Confirm keys that do not clear the dialog fail loud.** A fixture whose
+   `confirm` does nothing; assert the command dies naming the id and
+   `gang attach`.
+8. **The match survives a width change.** Paint the fixture dialog in a pane
+   resized narrow enough to soft-wrap its longest line and to change the padding
+   of its two-column row; assert it is still answered. This is the normalization
+   rule, and it goes red against a build that compares raw capture lines.
+9. **`load_profile` refuses a registry naming a security surface.** Two fixtures:
+   one with a forbidden word in `safe`, one where the only occurrence is in an
+   explanatory line of the block (`Do you want to allow this tool to run?` with
+   `Yes`/`No` rows). Assert `gang roster` fails naming the profile file and the
+   forbidden word. The second fixture is the one that proves the scan covers the
+   block and not just the labels.
+10. **`load_profile` refuses a malformed record** — four fields; an `id`
+    outside `[a-z0-9-]+`; a `safe` absent from the block; a record whose
+    `GANG_DIALOG_LINES_<id>` is unset.
+11. **Two matching records are ambiguity**; assert the die names both ids.
+12. **`gang status` names a known dialog and presses nothing.** Paint the
+    dialog, run `status`, assert `known transient` in the output and that the
+    pane is byte-identical afterwards.
 
 Guard-order requirement (`docs/DECISIONS.md`, "A guard witnesses the artifact"):
-tests 2, 3, and 8 must be shown to go red against a build that answers
-unconditionally, not merely against the pre-feature build. Record that in the
-commit body.
+tests 2, 3, 5, 8, and 12 must be shown to go red against a build that has the
+defect each one names — for 5, a build that confirms without re-reading the
+marker — and not merely against the pre-feature build. Record that in the commit
+body.
 
 ### Documentation
 
-- `docs/reference.md` — the `GANG_DIALOGS` record format, the `load_profile`
-  refusals, where triage runs, and the verification that follows a keystroke.
+- `docs/reference.md` — the `GANG_DIALOGS` record format and its
+  `GANG_DIALOG_LINES_<id>` block, the `load_profile` refusals, where triage runs,
+  and both verifications: the selection read before the confirm key, and the
+  cleared dialog read after it.
 - `docs/operations.md` — replace `Gangline never answers permission dialogs.`
   with the precise current rule: Gangline answers only dialogs a profile
   enumerates as carrying no authority, verifies the answer cleared them, and
@@ -748,10 +979,11 @@ commit body.
   rewritten, not annotated. Replacement for that sentence:
 
   > A profile may enumerate transient dialogs that carry no authority at all,
-  > naming each one's whole shape and the keystrokes that pick its safe option;
-  > Gangline answers such a dialog only where it is already about to write to
-  > that pane, only on a whole-shape match, and only if the pane afterwards
-  > proves the dialog gone and a composer present. A dialog that grants,
+  > naming each one's whole painted shape and the keystrokes that pick its safe
+  > option; Gangline answers such a dialog only where it is already about to
+  > write to that pane, only on a whole-shape match, only once the pane itself
+  > shows the safe option selected, and only if the pane afterwards proves the
+  > dialog gone and a composer present. A dialog that grants,
   > widens, or trusts is never enumerable — a registry matched against on-screen
   > text must not be able to answer the one dialog whose text an agent's own
   > reading can influence — and an unrecognized dialog stays occupied, refused,
@@ -759,9 +991,10 @@ commit body.
 
 ### Commit
 
-Two: `feat(gang): answer enumerated benign dialogs where gang already writes`
-and `feat(codex): register the slow-response transient` (the latter carrying the
-pane capture in its body, and omitted if the menu could not be reproduced).
+One: `feat(gang): answer enumerated benign dialogs where gang already writes`,
+carrying both the mechanism and the codex registry entry, with the live pane
+capture in its body. They do not split: the mechanism without the entry is a
+surface with no consumer, and the entry without the mechanism does nothing.
 
 ---
 
@@ -831,12 +1064,22 @@ Backstop for an interrupted run, replacing the existing trap:
 trap '( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
         for w in "$tmp"/tree-*; do
           [ -d "$w" ] && git worktree remove --force "$w" 2>/dev/null
-        done
-        git worktree prune 2>/dev/null ) || true
+        done ) || true
       rm -rf "$tmp"' EXIT
 ```
 
 The `[ -d "$w" ]` guard absorbs the unmatched glob.
+
+**No `git worktree prune`.** The trap removes the exact directories this hook
+created, by name, which is the whole of its own mess. `prune` is
+repository-wide: it deregisters *any* worktree whose directory it cannot see,
+including one belonging to a different checkout that happens to be on an
+unmounted volume, a detached external drive, or a path temporarily unavailable
+for any other reason. This repository is developed across linked worktrees, so
+that is a live hazard and not a theoretical one — a push from one worktree
+would quietly deregister another. Exact creation gets exact removal, and a
+worktree this hook could not remove stays registered and visible rather than
+being swept up along with someone else's.
 
 Everything else in the hook is unchanged: the missing-`lint.sh` refusal, the
 conventional-commits range, and the PII scan extracted with `git show` all keep
@@ -850,27 +1093,64 @@ In `test/integration.sh`, under `$RUN_ROOT`:
    and no remotes.
 2. Copy in `.githooks/pre-push`, `.githooks/commit-msg`, and `tools/pii-scan`
    from `$ROOT`, preserving the executable bit.
-3. Plant `test/lint.sh` as a stub that is executable and whose body is
-   `git ls-files >/dev/null` — the exact shape issue #106 names — and
-   `test/integration.sh` as an executable stub that exits 0.
-4. Commit with a conforming Conventional Commits message.
-5. Run the hook from the repository root with a fabricated ref line on stdin:
-   `printf 'refs/heads/main %s refs/heads/main %s\n' "$sha" "$zero" | ./.githooks/pre-push`
-6. Assert it exits 0.
+3. Plant `test/lint.sh` as a stub that is executable and whose body is three
+   lines — `git ls-files >/dev/null`, the exact shape issue #106 names, plus
+   `git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"` and
+   `git ls-files main-index-only > "$PROBE_DIR/index"` — and
+   `test/integration.sh` as an executable stub that exits 0. `PROBE_DIR` is
+   passed in through the environment and sits outside the worktree, so the
+   evidence survives the worktree's removal.
+4. Commit with a conforming Conventional Commits message; record the SHA.
+5. **Diverge the main index from the pushed commit.** Create `main-index-only`
+   and `git add` it without committing. It is now in the main repository's index
+   and absent from the pushed tree, so it is a single file whose visibility
+   answers which index was read.
+6. **Run the hook with the environment git actually gives a hook.** Export
+   `GIT_DIR` pointing at the throwaway repository's `.git` for the invocation:
+
+   ```sh
+   ( cd "$repo" && GIT_DIR="$repo/.git" PROBE_DIR="$probe" \
+       printf 'refs/heads/main %s refs/heads/main %s\n' "$sha" "$zero" \
+       | ./.githooks/pre-push )
+   ```
+
+   A hand invocation without `GIT_DIR` tests a friendlier environment than the
+   real one, and that difference is not cosmetic: it is the difference between
+   the old archive hook failing red because there is no `.git` at all, and a
+   worktree hook silently reading the main repository's index and reporting a
+   pass. The hostile environment is the environment under test.
+
+Assertions:
+
+- The hook exits 0. This is issue #106 proper.
+- `$PROBE_DIR/gitdir` ends in `.git/worktrees/…`, and is **not** the main
+  repository's `.git`.
+- `$PROBE_DIR/index` is empty — `main-index-only` was invisible to the lint run.
+
+**Not `git rev-parse --show-toplevel`.** Verified in a scratch repository: with
+`GIT_DIR` leaked to the main repository from inside a detached worktree,
+`--show-toplevel` still prints the worktree, so an assertion on it passes in
+exactly the broken case it was meant to catch. `--absolute-git-dir` prints the
+main `.git` when leaked and `.git/worktrees/<name>` when clean, and
+`git ls-files main-index-only` prints the entry when leaked and nothing when
+clean. Both discriminate; the toplevel does not.
 
 `test/lint.sh` bans wall-time constructs in `test/*.sh`; the stub is written to
 a temporary directory and never matches that glob, so no exemption is needed.
 
 Per `docs/DECISIONS.md` ("A guard witnesses the artifact, and witnesses it in
-order"), the test is not proven until it has been seen to fail. Run it against
-the unmodified `git archive` hook, confirm it goes red with
-`fatal: not a git repository`, and record that in the commit body. A check that
-passes both ways is a guard, not evidence.
+order"), the test is not proven until it has been seen to fail, and each
+assertion has its own red:
 
-Add a second assertion, at the same cost, that the fix is doing what it claims:
-make the stub write `git rev-parse --show-toplevel` to a file and assert the
-recorded path is the worktree, not the main repository. That is the `GIT_DIR`
-leak, caught directly.
+- the exit-0 assertion against the unmodified `git archive` hook, which goes red
+  with `fatal: not a git repository`;
+- the `gitdir` and `index` assertions against a worktree hook written **without**
+  the environment unsets, which goes green on the exit status and red on both of
+  these. That build is the plausible half-fix, and it is the one the second and
+  third assertions exist to reject.
+
+Record both reds in the commit body. A check that passes both ways is a guard,
+not evidence.
 
 ### Documentation
 
@@ -925,13 +1205,48 @@ uncertain. It stays as it is.
    Absent evidence is reported as absent; no value is fabricated and no fallback
    is invented.
 
+### One hitch-time gate has to move, and it is named
+
+`cmd_hitch` mints the startup-envelope nonce under a compound condition:
+
+```sh
+if [ -n "$lights" ] && [ "${GANG_SESSION_KEY:-}" = 1 ]; then
+  tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
+fi
+```
+
+Codex's `profile_context` dies without `@gl_key`. So a codex agent hitched with
+lights **off** cannot answer `gang context` at all — the query would inherit the
+notification gate through the back door, at hitch time, which is precisely the
+gate this item exists to remove.
+
+**Drop the `[ -n "$lights" ]` half of that condition.** Mint `@gl_key` whenever
+the profile declares `GANG_SESSION_KEY=1`. The nonce is not a lights artifact: it
+is the startup envelope's own nonce, already written into the pane by the brief
+that was just delivered, and recording it on the window states which conversation
+this window is. That is a fact about the window, true whether or not anyone asked
+for notifications.
+
+Audit of the existing semantics, since broadening an option's meaning is the
+risky half of this: `@gl_key` is written at exactly this one site and read at
+exactly one — `codex_session_for` inside `profiles/codex.sh`'s
+`profile_context`. Nothing branches on its absence except that function's own
+`die`, and nothing infers "lights are on" from its presence. Widening it from
+"this window was hitched with lights" to "this window was hitched" therefore
+changes one thing only: codex context becomes readable on demand without lights,
+which is the change being asked for. Adopted windows still have no key, still
+have no startup envelope to take one from, and their refusal is unchanged.
+
 ### The availability is not uniform, and that is stated
 
-With lights off, `gang context` answers on `codex` (its source is the rollout
-file, needing only the hitch-time `@gl_key`), on `opencode`, and on `pi` (both
-read the pane). It cannot answer on `claude-code`, whose source is a statusline
-beacon that only an enabled-lights hitch wires. The existing refusal already
-says exactly that, and it is left to say it rather than being softened.
+With lights off and the gate above removed, `gang context` answers on `codex`
+(its source is the rollout file, needing only the hitch-time `@gl_key`), on
+`opencode`, and on `pi` (both read the pane). It cannot answer on `claude-code`,
+whose source is a statusline beacon that only an enabled-lights hitch wires —
+that one is a launch flag, not a gate that can be lifted here, and no amount of
+option-minting substitutes for a statusline that was never installed. The
+existing refusal already says exactly that, and it is left to say it rather than
+being softened. It also cannot answer for any adopted window on either harness.
 `docs/reference.md` records the per-profile availability so an operator is not
 surprised by a refusal that is really a launch choice.
 
@@ -949,15 +1264,23 @@ compact — so it joins that item's table.
    profile's own message reaches stderr, with no value on stdout.
 3. A fixture declaring no `profile_context`: refused, naming the profile.
 4. **Lights off still answers.** Same fixture with `GANG_CONTEXT_LIGHTS` unset;
-   assert the reading is printed. This is the assertion that the query did not
-   inherit the notification gate.
-5. `gang roster` output contains no context column — a guard against a future
+   assert the reading is printed. This is the assertion that `cmd_context` did
+   not route through `context_light_read`.
+5. **The hitch-time gate is gone, proven at the real site.** Hitch a fixture
+   profile that declares `GANG_SESSION_KEY=1` with `GANG_CONTEXT_LIGHTS` unset,
+   and assert the window option `@gl_key` is non-empty afterwards. This exercises
+   `cmd_hitch`'s own condition rather than a synthetic `profile_context`, which
+   is the difference that matters: test 4 alone passes against a build that
+   still gates the mint, because a fixture profile that never reads `@gl_key`
+   cannot notice it is missing. This one goes red against that build.
+6. `gang roster` output contains no context column — a guard against a future
    change reintroducing the failure mode above.
 
 ### Documentation
 
 `docs/reference.md` — the command, the raw-output guarantee, per-profile
-availability, and why roster carries no column. `docs/DECISIONS.md` §"Context
+availability, why roster carries no column, and `@gl_key` described as minted by
+any hitch of a profile declaring `GANG_SESSION_KEY`. `docs/DECISIONS.md` §"Context
 lights are optional and minimal" gains one sentence: the same computation is
 exposed on demand as a query, which reads whether or not lights are enabled,
 because signalling and asking are different acts.
@@ -1063,21 +1386,24 @@ GANG_USAGE_DISMISS_KEY=""
    delivery can: there is no envelope to read back, so the fall-through's
    residual-risk argument does not carry here. `composer_settled` refuses.
    `input_clear` must be true.
-4. Capture the pane as `before`.
+4. Capture `before` as the **whole buffer**, history included:
+   `tmux capture-pane -pJ -S - -t "$AGENT_ID"`.
 5. `inject "$AGENT_ID" "$GANG_USAGE_CMD" head` — the same path `gang compact`
    uses to submit a native command.
 6. Press each key in `GANG_USAGE_CONFIRM_KEY`, if any.
 7. **Prove the screen changed.** Bounded look loop, the shape `cmd_flush`
-   already uses for its recall readback: capture, compare with `before`, break on
-   difference, and after the bound refuse with
+   already uses for its recall readback: capture the whole buffer, compare with
+   `before`, break on difference, and after the bound refuse with
    `usage: the screen of '<name>' never changed after <cmd>, so gang has no usage content to report and pressed nothing further`.
    No new timing primitive; `cmd_flush`'s loop is the precedent and `bin/gang`
    is not bound by the suite's no-sleep rule.
 8. Extract the content:
-   - `modal` — the whole after-capture, trailing blank rows trimmed, exactly as
-     `cmd_capture` trims.
-   - `inline` — the after-capture's lines beyond the last non-blank line of
-     `before`. The transcript appended; the answer is what it appended.
+   - `modal` — the whole after-capture's **visible pane**
+     (`tmux capture-pane -pJ`, no `-S`), trailing blank rows trimmed, exactly as
+     `cmd_capture` trims. A modal replaces the screen; the screen is the answer.
+   - `inline` — the difference between the two whole-buffer captures: strip
+     their longest common leading run of lines, then their longest common
+     trailing run, and print what remains of `after`.
 9. Dismiss: press `GANG_USAGE_DISMISS_KEY` if non-empty.
 10. **Restore is part of the contract.** Re-read: `profile_input` must read a
     box, and `input_clear` must be true. If either fails, `die` naming the
@@ -1086,14 +1412,61 @@ GANG_USAGE_DISMISS_KEY=""
     withholding it helps nobody. Exit non-zero.
 11. `lock_release`, print the content raw to stdout, nothing else on stdout.
 
+### Why `inline` is a buffer difference and not row arithmetic
+
+An inline TUI does not append at the bottom of the screen. It inserts above a
+composer box that stays pinned to the last rows, and once the transcript is
+taller than the pane it also pushes lines off the top into tmux's history. Both
+of those break any rule phrased in visible-row positions. Measured live on codex
+0.145.0 at 80×24: submitting `/usage` moved the pane's last non-blank transcript
+row and left the usage block spanning most of the screen with the composer below
+it, while earlier content scrolled into history. "Everything after the old last
+line" returns the tail of the answer and drops its header and totals — the
+extraction loses most of what the operator asked for, and loses it silently.
+
+The difference is taken over the **whole buffer** because that is the one
+coordinate system nothing shifts. tmux history is append-only and indexed from
+its own start, so a line that scrolls off the visible pane keeps its position in
+`-S -` output; capturing a fixed window like `-S -50` would slide by however many
+lines scrolled and destroy the alignment the comparison depends on.
+
+The trailing-run trim is what removes the redrawn composer: at rest, before and
+after, the box is byte-identical, so it falls inside the common suffix and never
+reaches stdout. If the harness redraws it differently — a hint line, a changed
+placeholder — the trim stops earlier and a row or two of chrome is printed. That
+is the right direction to fail: chrome is noise the operator can ignore, and
+missing content is an answer they cannot recover.
+
+Pure awk, mawk-safe (no `length()` over multibyte text):
+
+```sh
+awk 'NR==FNR { b[FNR]=$0; nb=FNR; next }
+     { a[FNR]=$0; na=FNR }
+     END {
+       p=0; while (p<nb && p<na && b[p+1]==a[p+1]) p++
+       s=0; while (s<nb-p && s<na-p && b[nb-s]==a[na-s]) s++
+       for (i=p+1; i<=na-s; i++) print a[i]
+     }' "$before" "$after"
+```
+
+**One bound.** If `before` was non-empty and the common prefix is zero lines, the
+history evicted its oldest lines between the two captures and the buffers no
+longer share an origin. Refuse with
+`usage: the scrollback of '<name>' rolled over while gang was reading it, so gang cannot tell the usage content from the transcript around it`
+rather than printing an unbounded diff. Loud and rare beats plausible and wrong.
+
 The content is the harness's own UI text, unparsed. Gangline does not summarize
 it, extract numbers from it, or decide anything from it: parsing and pacing
 policy are the operator's.
 
-Known limitation, stated rather than engineered around: on a harness whose page
-scrolls, `gang usage` returns the visible screen. Driving a scrollbar to
-reassemble a page would be a second product, and the operator can attach.
-`docs/reference.md` says so.
+Known limitation, stated rather than engineered around and specific to `modal`:
+a full-screen page that scrolls **within itself** is returned as its visible
+screen only. Its overflow is not in tmux's history — the modal painted over the
+pane rather than scrolling through it — so there is nothing captured to
+reassemble, and driving a scrollbar to make some would be a second product. The
+operator can attach. `inline` has no such limit: content that scrolls off the
+pane is in history, and the extraction reads history. `docs/reference.md` says
+both.
 
 ### Tests
 
@@ -1103,20 +1476,59 @@ two fixtures. No real harness.
 
 1. **Content is returned raw**, byte-equal to the painted block.
 2. **`inline` returns only the appended lines**, not the pre-existing transcript.
-3. **Restoration is verified.** After a successful run the fixture's composer
+   Paint a distinctive marker line into the transcript before running, and assert
+   it is absent from the output while every line of the block is present in order.
+3. **`inline` survives a block taller than the pane.** The geometry case, and
+   the one the row-arithmetic design fails. Size the fixture window small
+   (`tmux resize-window`), paint a numbered block of more lines than the pane has
+   rows so that the earlier ones are pushed into history, and assert **every**
+   line of the block is returned, first line included. A build that extracts
+   "lines beyond the last non-blank line of before" returns only the tail and
+   goes red here; so does one that captures a fixed `-S -N` window.
+4. **A rolled-over scrollback refuses.** Same fixture with `history-limit` set
+   small enough that the block evicts the whole prior buffer; assert the refusal
+   naming the rollover, and that nothing was printed to stdout.
+5. **Restoration is verified.** After a successful run the fixture's composer
    reads empty through `profile_input`.
-4. **A mutant that skips dismissal fails.** Fixture whose declared dismiss key
+6. **A mutant that skips dismissal fails.** Fixture whose declared dismiss key
    does nothing; assert the command exits non-zero, names `gang attach`, and
    **still printed the content**. This is the test the amendment names
    explicitly, and it is the one that proves restoration is a contract rather
    than a hope.
-5. **A screen that never changes refuses**, naming the command, with nothing
+7. **A screen that never changes refuses**, naming the command, with nothing
    further pressed and the composer left empty.
-6. **A busy target refuses**, and a could-not-determine target refuses — the
+8. **A busy target refuses**, and a could-not-determine target refuses — the
    assertion that `cmd_usage` is stricter than `send_live` and did not
    accidentally inherit the fall-through.
-7. **An occupied target refuses.**
-8. **A profile declaring no `GANG_USAGE_CMD` refuses**, naming the variable.
+9. **An occupied target refuses.**
+10. **A profile declaring no `GANG_USAGE_CMD` refuses**, naming the variable.
+11. **Bare `gang usage` inside an agent window prints its own help**, presses
+    nothing, and leaves the composer empty — see below.
+
+### `gang usage` has no self form
+
+Step 3 refuses a busy target, and an agent invoking `gang usage` with no name is
+running a turn — its own composer is occupied by the shell command asking the
+question. Bare self `gang usage` would therefore refuse every time it was used
+for its stated purpose, and the only way to write a passing test for it would be
+a fixture with no turn in flight, which is not the live consumer.
+
+Weakening step 3 for the self case is not available: the predicates exist because
+typing a UI command into a busy composer cannot be verified, and self is the one
+target guaranteed to be busy.
+
+Deferring it the way `gang compact` defers self-compaction does not work either,
+and for a reason particular to this command rather than a matter of effort.
+`GANG_SELF_COMPACT=deferred` records a *request* and lets a one-shot worker
+submit it after the Stop hook, which is enough because compaction's result is a
+state change in the harness. `gang usage`'s entire result is text on the
+caller's stdout, and the caller's stdout is gone by the time the turn ends. A
+deferred usage run would read a page and have nowhere to put it.
+
+So `gang usage` is a `help` verdict in item 8's table, with the same shape as
+`interrupt` and `flush`: incoherent for self, printing its own synopsis rather
+than an error. An agent reading its own plan usage asks a peer to run
+`gang usage <its own name>`, or the operator does.
 
 ### Documentation
 
@@ -1162,9 +1574,9 @@ command prints its own help with one line saying so — not an error.
 | `gang status` | self | An agent reading its own state is the common case. |
 | `gang capture` | self | Reading your own pane; default line count applies. |
 | `gang composer` | self | Reading your own input box. |
-| `gang compact` | self | Self-compaction is already a first-class path. |
-| `gang usage` | self | Reading your own plan usage. |
-| `gang context` | self | An agent asking its own remaining room before compacting is the canonical use. |
+| `gang compact` | self | Self-compaction is already a first-class path, with its own deferred handling per profile. |
+| `gang context` | self | An agent asking its own remaining room before compacting is the canonical use, and it reads a file or a beacon rather than typing. |
+| `gang usage` | help | Incoherent: it types into the composer that is running the command, so its own predicates refuse, and its result is stdout the turn no longer has. |
 | `gang interrupt` | help | Incoherent: it would run inside the turn it drops, and the bracket it edits is your own. |
 | `gang flush` | help | Incoherent: recovering your own parked queue needs your harness idle, which it is not while you are running. |
 | `gang drop` | help | Destructive, and self-targeting makes it destructive *by omission*. |
@@ -1189,24 +1601,59 @@ arguments, calls it and falls back to `cmd_help <command>` plus the line
 `(no target given, and this shell is not a Gangline agent window)` when it fails.
 
 `usage_die` is replaced at every bare-invocation site by `cmd_help <command>` and
-exit 1. **No command may answer a bare invocation with a naked error.** That is
-the acceptance criterion, and it is testable: invoke every command in the usage
-list bare, and assert each one's output contains its own synopsis.
+exit 1. **No command may answer a bare invocation with a naked error.**
+
+### The acceptance criterion is scoped, because the sweep is not universal
+
+The commands divide in two, and only one half is swept.
+
+**Bare-error commands** — those that reach `usage_die` today, or would once
+self-targeting is added and self is unavailable: `hitch`, `adopt`, `send`,
+`flush`, `interrupt`, `compact`, `status`, `capture`, `composer`, `context`,
+`usage`, `drop`. Each must answer a bare invocation with its own synopsis and a
+non-zero exit. This list lives in the suite as an explicit array.
+
+**Meaningful-bare commands** — `up`, `roster`, `attach`, `profiles`, `config`,
+`cutoff`, `notify`, `down`. A bare invocation is their ordinary form and does
+work; they must **not** print help, and asserting a synopsis for them would be
+asserting a regression. They are excluded from the sweep by name, and `attach`
+and `down` are excluded from being invoked by it at all: `attach` replaces the
+process, and `down` ends the entire team, including the fixture the rest of the
+suite is running in. Their bare behaviour is already covered by the tests that
+exist for them.
+
+Sweeping "every command in `usage()`" would therefore both fail on the second
+group and destroy the run while failing. The two groups are named separately
+because they are different claims.
 
 ### Tests
 
-1. Bare `gang status`, `capture`, `composer`, `usage` inside a fixture agent
+1. Bare `gang status`, `capture`, `composer`, `context` inside a fixture agent
    window each report on that window. Drive them with `TMUX_PANE` set to the
    fixture's pane, as the suite already does for `gang hook`.
 2. Bare `gang compact` inside a fixture window compacts that window.
-3. Bare `gang interrupt`, `flush`, `drop`, `hitch`, `adopt`, `send` each print
-   their own synopsis and exit non-zero, and — the real assertion — leave the
-   fixture window untouched.
+3. Bare `gang interrupt`, `flush`, `usage`, `drop`, `hitch`, `adopt`, `send`
+   each print their own synopsis and exit non-zero, and — the real assertion —
+   leave the fixture window untouched: same pane bytes, same composer.
 4. Bare `gang status` outside any Gangline window prints the synopsis and the
    not-an-agent line.
-5. **Sweep:** every command name in `usage()` invoked bare produces output
-   containing that command's synopsis line. This is the no-naked-error rule as
-   one assertion, and it fails for any command a future change adds without help.
+5. **Sweep of the bare-error list.** Every command in that array, invoked bare,
+   produces output containing its own synopsis line and exits non-zero. This is
+   the no-naked-error rule as one assertion.
+6. **The meaningful-bare list does not print help.** For `roster`, `profiles`,
+   `config`, `cutoff`, and `notify`, assert a bare invocation exits 0 and does
+   **not** contain the top-level synopsis. This is the guard that a future
+   refactor does not "fix" them into printing help. `up`, `attach`, and `down`
+   are not invoked here; they are covered where they already are.
+7. **Every dispatched command is in one list or the other.** Extract the
+   dispatcher's case-arm names from `bin/gang` and the help list's names, and
+   assert the two agree once an explicit allowlist is subtracted: `hook`, which
+   is the harness callback and deliberately undocumented, `spawn`, an alias of
+   `hitch`, and `-h`/`--help`/`help`. A sweep enumerated from the help list
+   alone cannot notice a command that was added to the dispatcher and never
+   written into help — `hook` is proof that arms and help already diverge — so
+   the inventories are compared rather than one of them trusted. The allowlist is
+   a literal in the test, so adding to it is a visible edit.
 
 ### Documentation
 
@@ -1234,10 +1681,19 @@ not symmetric: too wide turns a synopsis into hash across a wrap boundary, which
 is unrecoverable by the reader; too narrow only costs vertical lines, which
 scroll. So the budget is set by the narrow case with a small margin — 48 — which
 soft-wraps at most one line at 40 while keeping each synopsis fragment long
-enough to still read as a command. The longest unavoidable fragment,
-`gang hitch <name> [-p <profile>] [-d <dir>]`, is 42 columns with a two-space
-indent, so 48 accommodates the real content rather than being chosen to fit a
-number.
+enough to still read as a command.
+
+The budget is set by the reader, and the content is then made to fit it — not
+the other way round. Today's longest help line,
+`  gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]`,
+is far past any phone width, which is the complaint. Under the stacked shape
+below it is not a line at all: it decomposes into a base form and one optional
+group per line, and the widest fragment that cannot be broken further is a single
+flag group like `    [-p <profile>]` or a base form like
+`  gang send --to <name> --stdin`. Both sit well inside 48, so the budget
+constrains the prose written around them rather than forcing the syntax to be
+abbreviated. Any future line that cannot fit is a line that should have been
+split.
 
 ### Shape
 
@@ -1290,8 +1746,11 @@ fail in CI, or worse, pass in both while measuring the wrong thing. Measure with
 elsewhere, and have the failure print the offending command, line, and its
 width.
 
-Add the same sweep as item 8's test 5 — every command in the list has help — so
-the two acceptance criteria are checked over one enumeration.
+Enumerate the commands for this sweep the way item 8's test 7 does — from the
+dispatcher's case arms, minus the documented allowlist — not from the help list.
+Measuring only the help text that exists cannot notice help that is missing, and
+the two acceptance criteria (every command has help; no help line is too wide)
+are then checked over the same, complete enumeration.
 
 ### Documentation
 
@@ -1347,9 +1806,14 @@ narrates the change that produced it.
 ### Order
 
 1 and 5 are independent and can land first. 2 must land before 3, which reuses
-`spool_available` for a refused stall note. 4 is independent of all of them but
-should follow 3, so an unrecognized dialog already has a stall light to fall back
-to. 6 and 7 are independent. 9 must land before 8, which routes bare invocations
+`spool_available` for a refused stall note. 4 is independent of all of them and
+carries no ordering claim against 3: on codex, the harness that has the dialog,
+an unrecognized one raises no native event and therefore has no stall light to
+fall back to. 4 lands only with its live capture, and if that capture cannot be
+taken it defers without blocking anything else. 6 and 7 are independent, except
+that 6 edits `cmd_hitch`'s key-minting condition and should be checkpointed
+against the full suite for that reason. 9 must land before 8, which routes bare
+invocations
 through `cmd_help`; landing 8 first would mean writing that router twice. Land
 each as its own commit with the suite green at every checkpoint.
 
@@ -1369,7 +1833,7 @@ the branch `release-please--branches--main--components--gangline` carrying a
 pull request is what tags and cuts the GitHub Release. Every prior release in
 this repository followed exactly that path.
 
-Steps for the implementer, after the five changes are merged to `main`:
+Steps for the implementer, after all nine changes are merged to `main`:
 
 1. Confirm the release pull request updated itself to include this work.
    `bump-minor-pre-major` is set and change 2 carries a `BREAKING CHANGE:`
