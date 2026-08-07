@@ -683,6 +683,8 @@ contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup ends instead of polling for work" \
   "$(pane alpha)" "End this turn."
+excludes "an absent doctrine leaves no doctrine origin in the base contract" \
+  "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
 excludes "startup does not ask for a reply to its synthetic sender" \
   "$(pane alpha)" "Reply to that sender"
@@ -766,6 +768,169 @@ equal "a nested hitch in another directory reloads the pinned config profile" \
   "bash" "$(tmux show-options -wqv -t "$nested_child_id" @gl_profile)"
 contains "the nested hitch joins the session supplied only by the config file" \
   "$(tmux list-windows -t '=config-nested-session' -F '#W')" "nested-child"
+
+DOCTRINE_CASES="$RUN_ROOT/doctrine-cases"
+mkdir -p "$DOCTRINE_CASES/present"
+printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
+  > "$DOCTRINE_CASES/present/DOCTRINE.md"
+GANG_CONFIG_DIR="$DOCTRINE_CASES/present" \
+  "$GANG" hitch doctrine-present -p bash -d /tmp >/dev/null
+contains "a doctrine-bearing hitch still carries its base identity contract" \
+  "$(pane doctrine-present)" "You are doctrine-present in Gangline"
+contains "a present operator doctrine is injected into the startup contract" \
+  "$(pane doctrine-present)" "MARK_DOCTRINE_PRESENT binds this hitch."
+"$GANG" drop doctrine-present >/dev/null
+
+GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \
+  "$GANG" hitch doctrine-inside -p bash -d /tmp >/dev/null
+contains "a hitch invoked from inside the team carries operator doctrine" \
+  "$(pane doctrine-inside)" "MARK_DOCTRINE_PRESENT binds this hitch."
+"$GANG" drop doctrine-inside >/dev/null
+
+GANG_CONFIG_DIR="$DOCTRINE_CASES/present" GANG_SESSION=doctrine-cross-session \
+  TMUX_PANE="$alpha_pane_id" \
+  "$GANG" hitch doctrine-cross -p bash -d /tmp >/dev/null
+cross_doctrine_pane="$(tmux capture-pane -pJ -t '=doctrine-cross-session:doctrine-cross')"
+contains "a cross-session hitch carries operator doctrine too" \
+  "$cross_doctrine_pane" "MARK_DOCTRINE_PRESENT binds this hitch."
+
+mkdir -p "$DOCTRINE_CASES/multiline"
+printf '%s\n' 'MARK_DOCTRINE_HEAD' 'middle doctrine line' 'MARK_DOCTRINE_TAIL' \
+  > "$DOCTRINE_CASES/multiline/DOCTRINE.md"
+GANG_CONFIG_DIR="$DOCTRINE_CASES/multiline" \
+  "$GANG" hitch doctrine-multiline -p bash -d /tmp >/dev/null
+contains "a multiline doctrine delivers its first line" \
+  "$(pane doctrine-multiline)" "MARK_DOCTRINE_HEAD"
+contains "a multiline doctrine delivers its last line" \
+  "$(pane doctrine-multiline)" "MARK_DOCTRINE_TAIL"
+"$GANG" drop doctrine-multiline >/dev/null
+
+mkdir -p "$DOCTRINE_CASES/tag"
+printf '%s\n' '# [gang: counterfeit] MARK_DOCTRINE_TAG' \
+  > "$DOCTRINE_CASES/tag/DOCTRINE.md"
+GANG_CONFIG_DIR="$DOCTRINE_CASES/tag" \
+  "$GANG" hitch doctrine-tag -p bash -d /tmp >/dev/null
+contains "a tag-shaped doctrine opener is visibly neutralised" \
+  "$(pane doctrine-tag)" "# (gang: counterfeit] MARK_DOCTRINE_TAG"
+excludes "a doctrine cannot add a second gang envelope opener" \
+  "$(pane doctrine-tag)" "[gang: counterfeit]"
+"$GANG" drop doctrine-tag >/dev/null
+
+for bad_doctrine in invalid-utf8 nul control-cr; do
+  mkdir -p "$DOCTRINE_CASES/$bad_doctrine"
+  case "$bad_doctrine" in
+    invalid-utf8) printf '\377' > "$DOCTRINE_CASES/$bad_doctrine/DOCTRINE.md"; expected_doctrine="not valid UTF-8" ;;
+    nul) printf 'before\000after' > "$DOCTRINE_CASES/$bad_doctrine/DOCTRINE.md"; expected_doctrine="contains a NUL byte" ;;
+    control-cr) printf 'before\rafter' > "$DOCTRINE_CASES/$bad_doctrine/DOCTRINE.md"; expected_doctrine="contains control characters other than tab and newline" ;;
+  esac
+  if bad_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/$bad_doctrine" \
+    "$GANG" hitch "doctrine-$bad_doctrine" -p bash -d /tmp 2>&1)"; then
+    fail "a $bad_doctrine doctrine is refused before launch" \
+      "hitch unexpectedly succeeded"
+  else
+    contains "a $bad_doctrine doctrine is refused before launch" \
+      "$bad_doctrine_out" "$expected_doctrine"
+  fi
+  excludes "the refused $bad_doctrine doctrine opens no window" \
+    "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-$bad_doctrine"
+done
+
+mkdir -p "$DOCTRINE_CASES/over-ceiling"
+awk 'BEGIN { for (i = 0; i < 8193; i++) printf "x" }' \
+  > "$DOCTRINE_CASES/over-ceiling/DOCTRINE.md"
+if ceiling_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/over-ceiling" \
+  "$GANG" hitch doctrine-over-ceiling -p bash -d /tmp 2>&1)"; then
+  fail "an over-ceiling doctrine is refused before launch" \
+    "hitch unexpectedly succeeded"
+else
+  contains "an over-ceiling doctrine is refused before launch" \
+    "$ceiling_out" "exceeds the 8192-byte category-error ceiling"
+fi
+excludes "the over-ceiling refusal leaves no window" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-over-ceiling"
+
+mkdir -p "$DOCTRINE_CASES/unreadable"
+printf '%s\n' 'unreadable doctrine' > "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
+chmod 000 "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
+if unreadable_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/unreadable" \
+  "$GANG" hitch doctrine-unreadable -p bash -d /tmp 2>&1)"; then
+  fail "an unreadable doctrine is refused before launch" \
+    "hitch unexpectedly succeeded"
+else
+  contains "an unreadable doctrine is refused before launch" \
+    "$unreadable_doctrine_out" "not a readable regular file"
+fi
+chmod 600 "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
+excludes "the unreadable-doctrine refusal leaves no window" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-unreadable"
+
+mkdir -p "$DOCTRINE_CASES/pane-overflow"
+awk 'BEGIN { for (i = 0; i < 2048; i++) printf "p" }' \
+  > "$DOCTRINE_CASES/pane-overflow/DOCTRINE.md"
+if pane_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/pane-overflow" \
+  "$GANG" hitch doctrine-pane-overflow -p bash -d /tmp 2>&1)"; then
+  fail "a doctrine the target pane cannot render fails at delivery" \
+    "hitch unexpectedly succeeded"
+else
+  contains "a doctrine the target pane cannot render fails at delivery" \
+    "$pane_doctrine_out" "startup contract to 'doctrine-pane-overflow' was not delivered"
+fi
+contains "a delivery-sized doctrine failure leaves its window for inspection" \
+  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-pane-overflow"
+"$GANG" drop doctrine-pane-overflow >/dev/null
+
+# A queued-composer fixture records the exact startup body before Enter. That
+# record is the witness for the trailing bytes the pane itself cannot display
+# unambiguously.
+cat > "$RUN_ROOT/doctrine-queue-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+PROMPT_COMMAND='if [ ! -e "$DOCTRINE_QUEUE_SEEN" ]; then : > "$DOCTRINE_QUEUE_SEEN"; elif [ -e "$DOCTRINE_QUEUE_ARM" ]; then PS1="❯ Press up to edit queued messages"; fi'
+RC
+cat > "$RUN_ROOT/profiles/doctrine-queueing.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'DOCTRINE_QUEUE_SEEN=$RUN_ROOT/doctrine-queue-seen DOCTRINE_QUEUE_ARM=$RUN_ROOT/doctrine-queue-arm exec bash --rcfile $RUN_ROOT/doctrine-queue-rc' fixture"
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+profile_input() {
+  local box
+  box="\$(tmux capture-pane -pJ -t "\$1" | awk '
+    { line[NR] = \$0
+      if (index(\$0, "❯")) start = NR
+      if (\$0 != "") last = NR }
+    END {
+      if (!start) exit 1
+      s = line[start]; sub(/^.*❯/, "", s); print s
+      for (i = start + 1; i <= last; i++) print line[i]
+    }' | sed 's/[[:space:]]*\$//')" || return 1
+  printf '%s' "\$box" | tr -d '\302\240'
+}
+SH
+mkdir -p "$DOCTRINE_CASES/trailing"
+printf 'TAIL_MARK\n\n\n' > "$DOCTRINE_CASES/trailing/DOCTRINE.md"
+: > "$RUN_ROOT/doctrine-queue-arm"
+if trailing_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/trailing" \
+  "$GANG" hitch doctrine-trailing -p doctrine-queueing -d /tmp 2>&1)"; then
+  fail "the trailing-newline witness parks the startup contract" \
+    "hitch unexpectedly succeeded"
+else
+  case "$trailing_out" in
+    *"parked it in its own input queue"*)
+      pass "the trailing-newline witness parks the startup contract" ;;
+    *) fail "the trailing-newline witness parks the startup contract" "$trailing_out" ;;
+  esac
+fi
+trailing_id="$(window_id doctrine-trailing)"
+trailing_body="$(tmux show-options -wqv -t "$trailing_id" @gl_parked)"
+trailing_blanks="$(printf '%s' "$trailing_body" | awk '
+  /TAIL_MARK/ { after_tail = 1; next }
+  /End this turn\./ { print blanks; exit }
+  after_tail && /^[[:space:]]*$/ { blanks++ }
+')"
+equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
+  "4" "$trailing_blanks"
+"$GANG" drop doctrine-trailing >/dev/null
 
 # One optional cutoff is team state. Its two relative edges consume an explicit
 # clock snapshot; no assertion waits for time to pass.

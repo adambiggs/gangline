@@ -406,9 +406,43 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
     || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
 }
 
-startup_brief() { # $1 = agent name
-  printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. To message a peer: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s. End this turn.' \
-    "$1" "$1"
+DOCTRINE=""
+doctrine_read() { # populate DOCTRINE from the operator slot, byte-exact
+  local file="$CONFIG_DIR/DOCTRINE.md" bytes without_nul marked sentinel=$'\034' probe rc
+  DOCTRINE=""
+  [ -e "$file" ] || [ -L "$file" ] || return 0
+  [ -f "$file" ] && [ -r "$file" ] \
+    || die "operator doctrine $file exists but is not a readable regular file"
+  bytes="$(wc -c < "$file")" || die "cannot read operator doctrine $file"
+  without_nul="$(LC_ALL=C tr -d '\000' < "$file" | wc -c)" \
+    || die "cannot read operator doctrine $file"
+  [ "$bytes" = "$without_nul" ] || die "operator doctrine $file contains a NUL byte"
+  marked="$(cat "$file" || { rc=$?; exit "$rc"; }; printf '\034')" \
+    || die "cannot read operator doctrine $file"
+  case "$marked" in
+    *"$sentinel") DOCTRINE="${marked%"$sentinel"}" ;;
+    *) die "internal: the doctrine sentinel was lost while reading $file" ;;
+  esac
+  probe="$(printf '%s' "$DOCTRINE" | tr -d '\11\12')"
+  case "$probe" in
+    *[[:cntrl:]]*) die "operator doctrine $file contains control characters other than tab and newline" ;;
+  esac
+  python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file" \
+    || die "operator doctrine $file is not valid UTF-8"
+  # This catches a document-tree, log, or binary put in the prose slot. It is
+  # a category-error guard, not a bound on what a target composer can render.
+  [ "$bytes" -le 8192 ] \
+    || die "operator doctrine $file exceeds the 8192-byte category-error ceiling"
+}
+
+startup_brief() { # $1 = agent name, $2 = doctrine body or empty
+  if [ -n "$2" ]; then
+    printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. To message a peer: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s.\n\nOperator doctrine (%s):\n\n%s\n\nEnd this turn.' \
+      "$1" "$1" "$(config_path "$CONFIG_DIR/DOCTRINE.md")" "$2"
+  else
+    printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. To message a peer: gang send --to NAME --stdin. At natural checkpoints compact with: gang compact %s. End this turn.' \
+      "$1" "$1"
+  fi
 }
 
 win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
@@ -1840,6 +1874,10 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
   fi
 
+  command -v python3 >/dev/null 2>&1 \
+    || die "python3 is required for native hook payloads, context lights, and operator doctrine validation"
+  doctrine_read
+
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
   launch_env="$launch_env GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR")"
   [ -z "${GANG_PROFILES:-}" ] \
@@ -1866,11 +1904,9 @@ cmd_hitch() {
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
   fi
   exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
-  local msg
-  msg="$(startup_brief "$name")"
+  local msg delivery_err=""
+  msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
-  command -v python3 >/dev/null 2>&1 \
-    || die "python3 is required for native hook payloads and context lights"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
@@ -1885,7 +1921,10 @@ cmd_hitch() {
   if [ -n "$lights" ] && [ "${GANG_SESSION_KEY:-}" = 1 ]; then
     tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
   fi
-  inject "$id" "$ENVELOPE"
+  if ! delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)"; then
+    delivery_err="${delivery_err##*$'\n'}"
+    die "startup contract to '$name' was not delivered: ${delivery_err:-delivery failed without an error}"
+  fi
   printf '%s\n' "$(colour "$C_OK" "delivered startup contract to $name")"
 }
 
