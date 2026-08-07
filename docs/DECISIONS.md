@@ -172,6 +172,19 @@ is re-derived per action. A hookless window without mid-turn input whose
 pane keeps a frozen busy marker therefore stays refused until the marker
 scrolls off or the agent is renewed — fail-closed by intent.
 
+A turn fact nobody will ever close decays instead of standing indeterminate for
+the life of the window. An interruption typed straight into the pane is reported
+by no harness, so only `gang interrupt` closes the fact it ended; the bracket a
+raw keystroke abandons stays open forever. Once it passes its bound the tiers
+beneath it answer: a quiet pty, a stable pane, and the harness's own input box
+on screen and provably empty are the positive readiness evidence idle is defined
+by, so the state is idle rather than a permanent could-not-determine. Decay
+requires every leg, measured rather than assumed, and applies only to a readable
+open bracket past its bound — an unreadable or future-stamped one is unknown,
+not abandoned. It widens no guard: inside its bound the bracket still outranks
+the tiers beneath it, and delivery already reached a provably empty box through
+the indeterminate fall-through.
+
 ## Server loss is a relaunch, not restoration
 
 Do not persist a Gangline roster. `--resume` asks a profile's verified,

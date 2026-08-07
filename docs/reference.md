@@ -199,6 +199,16 @@ Prints one current state:
 - `occupied (authority unknown)` — a native UI owns the composer;
 - `expired (...)` — the available evidence can no longer determine the answer.
 
+A turn bracket left open by an interruption the harness never reported decays
+once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
+whose input box is on screen and provably empty reads `idle`, because that is
+the same positive evidence idle means everywhere else. A drafted box, a frozen
+busy marker, or a pty whose quietness cannot be measured keeps it `expired`, and
+an unreadable or future-stamped bracket is unknown rather than abandoned. This
+narrows no delivery guard: within its bound the bracket still outranks the tiers
+beneath it, and a provably empty box already accepted delivery while the state
+read `expired`.
+
 It also reports staged input, pending or failed self-compaction, and binary skew
 when the window has no hitch/adopt stamp or its executable-byte witness differs
 from the invoked `gang` binary. An unavailable witness is reported explicitly

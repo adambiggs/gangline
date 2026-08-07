@@ -493,8 +493,16 @@ turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to no
   [ $(( now - stamped )) -lt "$GANG_ACTIVITY_WINDOW" ]
 }
 
+TURN_ABANDONED=0
+
 turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no event tier
   local rc=0 now
+  # Set only where a READABLE open bracket reached its bound: the one expiry
+  # that says a turn began and its owner never spoke again. An unreadable
+  # value, a future stamp, or a closed bracket under a written-to pane are all
+  # could-not-determine for reasons that do not describe an abandoned turn, and
+  # nothing may read them as one.
+  TURN_ABANDONED=0
   turn_state_read "$1" || rc=$?
   case "$rc" in
     0) ;;
@@ -519,20 +527,24 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   [ "$TURN_AT" -le "$now" ] \
     || { BUSY_EXPIRED_WHAT="turn-bracket stamped in the future"; return 2; }
   [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] \
-    || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; return 2; }
+    || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; TURN_ABANDONED=1; return 2; }
   return 0
 }
 
 BUSY_EXPIRED_WHAT="pty activity bound reached"
 
+composer_ready() { # $1 = window id; the harness's own box is on screen and empty
+  composer_live "$1" && input_clear "$1"
+}
+
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
-  local turn_rc=0 undetermined=0
+  local turn_rc=0 undetermined=0 stale_turn=0
   BUSY_EXPIRED_WHAT="pty activity bound reached"
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
     0) activity_hold_clear "$1"; return 0 ;;
     1) activity_hold_clear "$1"; return 1 ;;
-    2) undetermined=1 ;;
+    2) undetermined=1; stale_turn="$TURN_ABANDONED" ;;
     3) ;;
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
   esac
@@ -566,17 +578,40 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
+  # An abandoned turn's bracket is stale owned state, and it is the only thing
+  # still claiming a turn. A turn ended by RAW keys in the pane — the operator's
+  # own Escape, which no harness reports and `gang interrupt` is the only path
+  # that closes explicitly — leaves it open forever, so could-not-determine
+  # would be this agent's permanent verdict. It is not undeterminable: the tiers
+  # under the expired event positively witness readiness, which is what
+  # `idle (slack tug)` means everywhere else. Decay needs all of them — the
+  # bracket readable, open, and past its bound (TURN_ABANDONED: an unreadable
+  # or future-stamped one is unknown, not abandoned), nothing painting a turn,
+  # the pty past its quiet window
+  # (measured, never assumed: only verdict 1 counts, an unknown one does not),
+  # a byte-stable pane where the snapshot can afford to look, and the harness's
+  # own input box on screen and provably empty. A working-but-quiet harness
+  # fails at least one, and none of this widens delivery: send already reaches a
+  # provably empty box through the could-not-determine fall-through.
   case "${2:-}" in
     snapshot)
       if composer_live "$1"; then
-        [ "$undetermined" -eq 1 ] && return 2
+        if [ "$undetermined" -eq 1 ]; then
+          [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
+            && input_clear "$1" && return 1
+          return 2
+        fi
         return 1
       fi
       BUSY_EXPIRED_WHAT="no current busy witness or composer"
       return 2 ;;
   esac
   if pane_stable "$1"; then
-    [ "$undetermined" -eq 1 ] && return 2
+    if [ "$undetermined" -eq 1 ]; then
+      [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] \
+        && composer_ready "$1" && return 1
+      return 2
+    fi
     return 1
   fi
   activity_hold_clear "$1"

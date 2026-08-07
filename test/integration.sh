@@ -1729,6 +1729,74 @@ equal "the fossil's bracket is left to its native owner, byte-identical" \
   "$(tmux show-options -wqv -t "$(window_id fossil)" @gl_turn)"
 "$GANG" drop fossil >/dev/null
 
+# The other half of the issue-#102 shape, on the path no harness reports: a turn
+# ended by RAW keys in the pane. `gang interrupt` closes the fact it ended, and
+# an Escape typed straight into the pane closes nothing — the bracket stays open
+# and only ever gets older, so could-not-determine would be that agent's
+# permanent verdict while it sits provably ready. The tiers under the expired
+# event decide it instead. Time is an input here, never a wait: the bracket's
+# age and the activity window are injected.
+cat > "$RUN_ROOT/profiles/abandoned.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_BUSY_REGEX='Retrying in [0-9]+s'
+GANG_QUIET_AT_REST=1
+SH
+"$GANG" hitch abandoned -p abandoned -d /tmp >/dev/null
+abandoned_bracket="open $(( $(date +%s) - 400 ))"
+tmux set-option -w -t "$(window_id abandoned)" @gl_turn "$abandoned_bracket"
+# The guard the decay must not stomp, asserted first: an UNEXPIRED bracket is
+# fresh owned state and outranks every quiet tier under it. Nothing about a
+# still-bounded turn changes, however ready the pane looks.
+equal "an unexpired bracket over the same quiet box is still a live turn" \
+  "busy (tight tug)" \
+  "$(GANG_TURN_LIMIT=100000 GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+equal "an abandoned turn decays to idle once its bracket expires" \
+  "idle (slack tug)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+contains "roster's snapshot decays with it — reading the box costs no churn wait" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "idle (slack tug)"
+# Not a free pass over anything the box refutes: a draft sitting in the composer
+# is the state the busy verdict exists to protect, and it keeps the answer
+# could-not-determine on both readings.
+tmux send-keys -l -t "$(window_id abandoned)" 'half a thought'
+equal "a drafted box refuses the decay" \
+  "expired (turn-bracket bound reached)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+contains "roster's snapshot refuses it on the same evidence" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "expired"
+tmux send-keys -t "$(window_id abandoned)" C-u
+equal "clearing the draft restores the decayed verdict" \
+  "idle (slack tug)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+# Quiet must be MEASURED, never assumed. Hold the activity-only bound open past
+# its limit with the pty credited as recent: the activity tier then reports
+# could-not-determine, and an unknown tier cannot witness readiness.
+tmux set-option -w -t "$(window_id abandoned)" @gl_activity_only_since \
+  "$(( $(date +%s) - 400 ))"
+equal "an unmeasurable pty keeps the answer could-not-determine" \
+  "expired (turn-bracket bound reached)" \
+  "$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status abandoned | head -1)"
+tmux set-option -uw -t "$(window_id abandoned)" @gl_activity_only_since
+# The decay widens nothing: this send already landed through the
+# could-not-determine fall-through, and the bracket is still not a reader's to
+# write.
+if printf 'MARK_DECAYED' | GANG_ACTIVITY_WINDOW=0 \
+  "$GANG" send --to abandoned --from tester --stdin >/dev/null 2>&1; then
+  pass "delivery to a decayed agent lands as an ordinary idle delivery"
+else
+  abandoned_rc=$?
+  fail "delivery to a decayed agent lands as an ordinary idle delivery" \
+    "send refused rc $abandoned_rc"
+fi
+contains "and that delivery landed" "$(pane abandoned)" "MARK_DECAYED"
+equal "the decayed verdict leaves the bracket to its native owner, byte-identical" \
+  "$abandoned_bracket" \
+  "$(tmux show-options -wqv -t "$(window_id abandoned)" @gl_turn)"
+"$GANG" drop abandoned >/dev/null
+
 # Positive control for the stability leg: a churning pane preserves painted
 # busy even with the activity credit forced off. The verdict is asserted
 # EXACTLY: the broken state reads "expired (busy paint frozen…)", whose
