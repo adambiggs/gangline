@@ -606,6 +606,13 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     return 0
   fi
   local activity_rc=0 moved=""
+  # BEFORE the activity tier, not after it. The quiet stamp recently_active
+  # reads is itself one of the readings a decay is assembled from, so it has to
+  # sit INSIDE the guarded interval: a write landing between that read and this
+  # capture would otherwise be present in both witnesses, agree with itself, and
+  # pass as if nothing had moved — the pty observed quiet at the instant it was
+  # not.
+  [ "$undetermined" -eq 0 ] || moved="$(decay_witness "$1")"
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
     0) return 0 ;;
@@ -613,9 +620,6 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
-  # Taken as close to the activity reading as it can be, so the pair spans
-  # every tier read a decay is assembled from.
-  [ "$undetermined" -eq 0 ] || moved="$(decay_witness "$1")"
   # An abandoned turn's bracket is stale owned state, and it is the only thing
   # still claiming a turn. A turn ended by RAW keys in the pane — the operator's
   # own Escape, which no harness reports and which bypasses `gang interrupt`,

@@ -1918,6 +1918,38 @@ contains "and roster's snapshot refuses it on the same witness" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "expired"
 "$GANG" drop moving >/dev/null
 
+# The earlier seam, and the one the moving fixture cannot reach: the quiet stamp
+# is read INSIDE recently_active, so a witness captured after that call leaves
+# the reading it rests on outside the guarded interval. A write landing there is
+# present in both witnesses, agrees with itself, and passes as if nothing moved —
+# the pty accepted as quiet at the instant it was not. Deterministic through a
+# tmux shim that writes to the pane exactly when the inactive path clears its
+# activity-only bound: after the stamp was read, before any witness could be.
+mkdir -p "$RUN_ROOT/bin-seam"
+{ printf '#!/usr/bin/env bash\nreal=%s\n' "$(command -v tmux)"; cat <<'SH'
+seen=0; target=""; prev=""
+for a in "$@"; do
+  [ "$a" != @gl_activity_only_since ] || seen=1
+  [ "$prev" != -t ] || target="$a"
+  prev="$a"
+done
+if [ "$seen" = 1 ] && [ -n "$target" ]; then
+  "$real" "$@"; rc=$?
+  tty="$("$real" display-message -p -t "$target" '#{pane_tty}' 2>/dev/null)"
+  [ -z "$tty" ] || printf '\ntick-after-quiet-read\n' > "$tty" 2>/dev/null
+  exit "$rc"
+fi
+exec "$real" "$@"
+SH
+} > "$RUN_ROOT/bin-seam/tmux"
+chmod +x "$RUN_ROOT/bin-seam/tmux"
+"$GANG" hitch seam -p abandoned -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
+equal "a write between the quiet reading and the witness refuses the decay" \
+  "expired (turn-bracket bound reached)" \
+  "$(PATH="$RUN_ROOT/bin-seam:$PATH" GANG_ACTIVITY_WINDOW=0 "$GANG" status seam | head -1)"
+"$GANG" drop seam >/dev/null
+
 # A profile that declares no input reader has no box for gang to measure:
 # landing_zone falls back to the whole pane, which is never empty, so the
 # expired-witness refusal fires on a transcript rather than on a composer.
