@@ -1176,8 +1176,11 @@ contains "and the messages behind it are not lost with it" \
 [ -f "$parker_inflight" ] \
   && pass "it stays on disk where a person can read it" \
   || fail "it stays on disk where a person can read it" "$parker_inflight is gone"
+parker_held_status="$("$GANG" status parker)"
 contains "and status names it rather than losing it quietly" \
-  "$("$GANG" status parker)" "held after an interrupted or unverified delivery"
+  "$parker_held_status" "held after an interrupted or unverified delivery"
+contains "naming the directory it is readable in, not an empty one" \
+  "$parker_held_status" "read them under $parker_spool_dir"
 rm -f "$parker_inflight"
 
 # Everything gang parks has a deletion path, and this is it.
@@ -1272,11 +1275,12 @@ wedged_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$wedged_pane_id" "$GANG" hook >/dev/null
 wait "$wedged_drain_waiter"
+wedged_status="$("$GANG" status wedged)"
 contains "an unverified drain is reported, not swallowed" \
-  "$("$GANG" status wedged)" "spool drain NOT verified"
+  "$wedged_status" "spool drain NOT verified"
 contains "roster carries that verdict too" "$("$GANG" roster)" "spool-held=1"
 excludes "and the entry is not left where it would be sent a second time" \
-  "$("$GANG" status wedged)" "spooled:"
+  "$wedged_status" "spooled:"
 wedged_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$wedged_id" @gl_spool)"
 wedged_quarantined=0
 for wedged_entry in "$wedged_spool"/failed-*; do
@@ -1284,6 +1288,12 @@ for wedged_entry in "$wedged_spool"/failed-*; do
 done
 equal "the unverified body is kept where a person can read it" "1" \
   "$wedged_quarantined"
+# READ OUT OF THE REPORT ITSELF, not recomputed beside it. Holding a message
+# instead of re-sending it is only honest if the report says where it went, and
+# a check that derives the path independently cannot see the report naming an
+# empty one.
+contains "and the report hands over the directory it is readable in" \
+  "$wedged_status" "read them under $wedged_spool"
 "$GANG" drop wedged >/dev/null
 
 # One spool is deliberately left alive for the teardown below to account for.
