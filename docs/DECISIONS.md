@@ -185,6 +185,20 @@ not abandoned. It widens no guard: inside its bound the bracket still outranks
 the tiers beneath it, and delivery already reached a provably empty box through
 the indeterminate fall-through.
 
+## A refusal names what was read, not just that it refused
+
+An obstruction gang can classify is classified: draft, staged, parked,
+whole-pane, unreadable, each with the look or recovery that settles it. The
+alternative is what happened — operators diagnosing a blocked box by eye from a
+raw capture, where a dim suggested-prompt placeholder is indistinguishable from
+a half-written line, and getting it wrong publicly. Classification uses only
+evidence gang already owns: the profile's styled reading, its declared queue
+evidence, and the box rendering gang recorded when it staged its own body. A
+placeholder is deliberately not a class — the styled reading strips it, so it
+never blocks a delivery and cannot be what a refusal saw. Inspection pointers
+name the styled reading rather than the raw pane, because the raw pane is where
+the question was got wrong.
+
 ## Server loss is a relaunch, not restoration
 
 Do not persist a Gangline roster. `--resume` asks a profile's verified,

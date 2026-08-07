@@ -813,13 +813,19 @@ if draft_refusal="$(printf 'MARK_DRAFT' |
 else
   pass "delivery refuses a human draft"
 fi
+# The command a refusal names is the one that answers the question it raises.
+# That was `gang capture`, whose raw pane renders a dim suggested-prompt
+# placeholder identically to a half-written line — the reading that produced a
+# public misdiagnosis. `gang composer` is the profile's styled reading, so what
+# it prints is what a human typed; the next check spends it on this very box.
 contains "a delivery refusal names a runnable inspection command" \
-  "$draft_refusal" "gang capture 1"
-if "$GANG" capture 1 >/dev/null; then
+  "$draft_refusal" "gang composer 1"
+if "$GANG" composer 1 >/dev/null; then
   pass "the inspection command named by the refusal runs"
 else
-  fail "the inspection command named by the refusal runs" "gang capture 1 failed"
+  fail "the inspection command named by the refusal runs" "gang composer 1 failed"
 fi
+contains "and classifies what it refused on" "$draft_refusal" "[draft:"
 # the refusal above is the barrier proving the draft is on screen
 contains "composer prints what a human typed" \
   "$("$GANG" composer 1)" "HUMAN_DRAFT"
@@ -861,6 +867,15 @@ contains "the failure names the parked queue" \
 contains "and hands over the manual recovery" "$strand_out" "press Up"
 contains "the parked message is recorded against the window" \
   "$(tmux show-options -wqv -t "$(window_id strand)" @gl_staged)" "queue"
+# The record says what gang did; the status line says what is in the box now.
+# An operator reading a raw capture here sees the harness's queue hint and has
+# to know what it means — the classification says it, with the verb that fixes
+# it, so a parked queue is never diagnosed as somebody's half-written line.
+strand_status="$("$GANG" status strand)"
+contains "status classifies the parked box, not just the record" \
+  "$strand_status" "box: parked:"
+contains "and points at the recovery for that class" \
+  "$strand_status" "gang flush strand"
 # With the queue still parked, the NEXT delivery is refused before anything is
 # typed, named as the queue rather than blamed on a half-written draft.
 if strand_more="$(printf 'MARK_SECOND' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
@@ -1437,6 +1452,15 @@ tmux set-option -w -t "$(window_id 1)" @gl_staged \
 tmux send-keys -l -t "$(window_id 1)" 'MARK_HELD draft'
 contains "a non-empty box keeps the record and the report" \
   "$("$GANG" status 1)" "undelivered input"
+contains "and classifies that box as a human line gang did not write" \
+  "$("$GANG" status 1)" "box: draft:"
+# Same box, now byte-identical to the rendering gang recorded when it staged
+# its OWN body — the one comparison that separates gang's text from a person's,
+# and the same equality stage_clear retires a record on.
+tmux set-option -w -t "$(window_id 1)" @gl_staged_box "$("$GANG" composer 1)"
+contains "a box matching gang's recorded rendering is classified as its own" \
+  "$("$GANG" status 1)" "box: staged:"
+tmux set-option -uw -t "$(window_id 1)" @gl_staged_box
 contains "roster carries the same verdict" "$("$GANG" roster)" "undelivered-input"
 tmux send-keys -t "$(window_id 1)" C-u
 tmux set-option -uw -t "$(window_id 1)" @gl_staged
@@ -1796,6 +1820,33 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
   "$abandoned_bracket" \
   "$(tmux show-options -wqv -t "$(window_id abandoned)" @gl_turn)"
 "$GANG" drop abandoned >/dev/null
+
+# A profile that declares no input reader has no box for gang to measure:
+# landing_zone falls back to the whole pane, which is never empty, so the
+# expired-witness refusal fires on a transcript rather than on a composer.
+# Calling that "its input box" blames a draft nobody wrote — the class says
+# what gang actually read.
+cat > "$RUN_ROOT/profiles/noreader.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+unset -f profile_input
+SH
+"$GANG" hitch noreader -p noreader -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id noreader)" @gl_turn \
+  "open $(( $(date +%s) - 400 ))"
+if noreader_out="$(printf 'MARK_NOREADER' | GANG_ACTIVITY_WINDOW=0 \
+  "$GANG" send --to noreader --from tester --stdin 2>&1)"; then
+  fail "an expired witness over a profile with no input reader refuses" \
+    "send succeeded"
+else
+  pass "an expired witness over a profile with no input reader refuses"
+fi
+contains "and names the whole pane it actually measured" \
+  "$noreader_out" "whole-pane:"
+excludes "the refused body never landed" "$(pane noreader)" "MARK_NOREADER"
+"$GANG" drop noreader >/dev/null
 
 # Positive control for the stability leg: a churning pane preserves painted
 # busy even with the activity credit forced off. The verdict is asserted

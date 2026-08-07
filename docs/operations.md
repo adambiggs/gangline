@@ -218,6 +218,24 @@ pressing Enter. If the flush reports that the harness parked the message again,
 the queue is hard-stuck: `gang drop` that agent, hitch it with `--resume`, and
 re-send what the queue swallowed.
 
+### Something is in the input box and it is not clear what
+
+Do not diagnose this from `gang capture`. The raw pane renders a harness's dim
+suggested-prompt placeholder identically to a half-written human line, and that
+reading has been got wrong in public. Refusals and the `box:` line under an
+undelivered-input report already classify it — `draft`, `staged`, `parked`,
+`whole-pane`, `unreadable` — and each names the look or recovery that settles it.
+To see the box directly:
+
+```sh
+gang composer worker
+```
+
+This prints the profile's styled reading: what a human typed, and nothing else.
+Empty output is an empty box, so text on a `gang capture` that `gang composer`
+does not show is the harness's own placeholder, not a stuck draft. A placeholder
+never blocks delivery for the same reason.
+
 ### A turn has to be stopped
 
 ```sh

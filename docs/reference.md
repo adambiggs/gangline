@@ -86,6 +86,16 @@ Gangline refuses a missing or occupied composer, a human draft, indeterminate
 state, and unsafe mid-turn input. A profile may declare that its native harness
 accepts ordinary mid-turn input.
 
+A refusal on a box that is not provably empty classifies what Gangline read, in
+one word with the look or recovery that settles it: `draft` (a human line
+Gangline did not write), `staged` (Gangline's own undelivered body, byte-identical
+to the rendering it recorded), `parked` (the harness's declared queue evidence),
+`whole-pane` (the profile declares no input reader, so the reading is the pane
+rather than a box), or `unreadable`. A suggested-prompt placeholder is not among
+them: the profile's styled reading strips it, so it never reaches a refusal —
+`gang capture` is where it looks like a draft, and `gang composer` is the reading
+that settles it.
+
 An expired busy witness alone does not veto delivery: could-not-determine
 falls through to direct box evidence, a provably empty composer proceeds
 under the full submission verification, and anything less refuses naming both
@@ -208,6 +218,10 @@ an unreadable or future-stamped bracket is unknown rather than abandoned. This
 narrows no delivery guard: within its bound the bracket still outranks the tiers
 beneath it, and a provably empty box already accepted delivery while the state
 read `expired`.
+
+An undelivered-input report is followed by a `box:` line classifying what is in
+that box now, in the same vocabulary a refusal uses. The record says what
+Gangline did; the `box:` line says what is there at reading time.
 
 It also reports staged input, pending or failed self-compaction, and binary skew
 when the window has no hitch/adopt stamp or its executable-byte witness differs

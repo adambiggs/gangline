@@ -1099,6 +1099,35 @@ composer_settled() { # $1 = window id; nobody is typing into the box right now
   [ "$a" = "$b" ]
 }
 
+box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name
+  # What is in that box, in one word, with the look that settles it. `gang
+  # capture` hands back the raw pane, where a harness's dim suggested-prompt
+  # placeholder reads exactly like a half-written line — that misreading has
+  # been made in public. `gang composer` prints the profile's styled reading:
+  # what a human typed and nothing else. A placeholder never reaches a refusal
+  # at all, because that same reading strips it before delivery ever looks.
+  if ! declare -F profile_input >/dev/null; then
+    printf 'whole-pane: profile %s declares no input reader, so this is the pane, not a box (gang capture %s)' \
+      "${AGENT_PROFILE:-loaded}" "$3"
+    return
+  fi
+  if [ -z "$2" ]; then
+    printf 'unreadable: the harness is not taking input (gang capture %s)' "$3"
+    return
+  fi
+  if box_queued "$2"; then
+    printf 'parked: the harness queued earlier input (gang flush %s)' "$3"
+    return
+  fi
+  local want
+  want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
+  if [ -n "$want" ] && [ "$want" = "$2" ]; then
+    printf "staged: gang's own undelivered body (gang composer %s)" "$3"
+    return
+  fi
+  printf 'draft: a human line gang did not write (gang composer %s)' "$3"
+}
+
 staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste there
   tmux show-options -wqv -t "$1" @gl_staged
 }
@@ -1191,10 +1220,13 @@ inject() { # $1 = window id, $2 = text, $3 = "head" if the text is only meaningf
     refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered (gang flush $tname; or by hand: gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
   fi
   if ! input_clear "$1"; then
-    local onlyhead=""
+    local onlyhead="" seen
     [ "${3:-}" != head ] \
       || onlyhead=", and this text is only a command at the head of an empty one, so appended to a draft it would be literal text and would never run"
-    refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty, so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear (gang capture $tname to see it)"
+    # A second look, taken only to name what was refused. It decides nothing:
+    # the refusal is already settled by the read above.
+    seen="$(landing_zone "$1")" || seen=""
+    refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty [$(box_class "$1" "$seen" "$tname")], so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear"
   fi
   before="$(landing_zone "$1")" \
     || refuse "cannot read the input box of $tname — the harness is not taking input (gang capture $tname)"
@@ -1638,7 +1670,7 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
          box="$(landing_zone "$AGENT_ID")" \
            || refuse "'$1' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box cannot be read — neither work nor idleness is provable; inspect with gang capture $1"
          if grep -q '[^[:space:]]' <<<"$box"; then
-           refuse "'$1' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box is not provably empty — gang cannot tell a stale bracket from live work with a draft sitting there; inspect with gang capture $1"
+           refuse "'$1' has no usable busy witness ($BUSY_EXPIRED_WHAT) and its input box is not provably empty [$(box_class "$AGENT_ID" "$box" "$1")] — gang cannot tell a stale bracket from live work with that sitting there"
          fi
        fi ;;
     1) ;;
@@ -1887,7 +1919,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged spooled held spool_failed skew="" current
+  local state self_failed self_pending staged staged_box spooled held spool_failed skew="" current
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1904,8 +1936,13 @@ cmd_status() {
   # harness's own queue, or in a state gang could not read — the note carries
   # what is actually known, and its later clearing means the obstruction is
   # gone, never that the recorded body was retroactively delivered.
-  [ -z "$staged" ] \
-    || printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+  if [ -n "$staged" ]; then
+    printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+    # The record says what gang did; this says what is in that box now, so the
+    # operator is not left to read a raw capture and guess.
+    staged_box="$(landing_zone "$AGENT_ID")" || staged_box=""
+    printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$1")")"
+  fi
   spooled="$(spool_count "$AGENT_ID")"
   [ "$spooled" -eq 0 ] \
     || printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
