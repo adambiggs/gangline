@@ -12,7 +12,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]}"
+      _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]}"
       case "${GANG_CONTEXT_LIGHTS:-off}" in
         off|'') _gl_cc_json="$_gl_cc_json}" ;;
         *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
@@ -26,6 +27,15 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 GANG_MODEL_OPT="--model"
+# AWAITING INPUT IS THE HARNESS'S OWN WORD. Observed on claude-code 2.1.224:
+# the Notification hook matches on notification_type, whose complete value set
+# is permission_prompt, idle_prompt, auth_success, elicitation_dialog,
+# elicitation_complete, elicitation_response, agent_needs_input,
+# agent_completed. These four are the ones that mean a person is being waited
+# on; the other four report something that finished. A value not in this list
+# is not a stall — a renamed one stops raising notes rather than raising wrong
+# ones, and re-verifying this list is what a version bump costs.
+GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
 # REASONING EFFORT. The option includes its separator because bin/gang joins it
 # to the level with no space; the joined --effort=<level> form is accepted by
 # the observed harness. An unknown level is NOT an error there — claude warns,
@@ -79,6 +89,13 @@ print(*levels, sep=\"\\n\")
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
+# Verified on claude-code 2.1.224: /usage opens a full-screen tabbed modal with
+# no composer, and Escape restores an empty composer. The page scrolls; gang
+# returns the visible screen and does not drive the scrollbar.
+GANG_USAGE_CMD="/usage"
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # PARKED INPUT IS NOT A SUBMISSION. The queue strand (observed on 2.1.223)
 # renders a queued body in the transcript styled exactly like a submitted

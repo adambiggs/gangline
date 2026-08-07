@@ -1,6 +1,26 @@
 # Command and configuration reference
 
-`gang --help` is the authoritative command synopsis.
+`gang --help` is the authoritative command inventory, and
+`gang <command> --help` prints that command's synopsis. Help has a deliberate
+48-character line budget so it remains legible in narrow phone-SSH terminals;
+this reference carries the complete command contract.
+
+When a command's only missing argument is an agent name, a bare invocation from
+inside a Gangline window targets that window. This applies only with zero
+arguments, so a numeric argument to `capture`, for example, remains an agent
+name rather than becoming a self-targeted line count. Self is resolved from the
+calling tmux pane in the same way as a message sender.
+
+| Bare command | Result |
+|---|---|
+| `status`, `capture`, `composer`, `compact`, `context` | Target the calling agent. |
+| `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
+| `drop` | Print help; destructive commands never target by omission. |
+| `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
+| `up`, `roster`, `attach`, `profiles`, `config`, `cutoff`, `notify`, `down` | Keep their ordinary bare meaning. |
+
+Outside a Gangline window, a bare self-targeting command prints its synopsis and
+states that no target or Gangline agent window was available.
 
 ## Lifecycle
 
@@ -13,7 +33,11 @@ current tmux client to it. `GANG_PROFILE` selects the harness.
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract tells the agent to choose a model and reasoning effort deliberately
-when hitching teammates. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
+when hitching teammates. Peer messages name their sender in the gang envelope.
+Gangline never delivers a message without one — the only unenveloped text it
+ever types into a pane is your harness's own compaction command — so any other
+unenveloped text arrived from the session keyboard, and Gangline cannot
+attribute it further. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose within its category-error ceiling, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
@@ -49,8 +73,9 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 When context lights are enabled, their thresholds are copied to the new window.
-Codex also binds that window to the useful startup envelope's nonce so later
-token events can be found without a marker turn.
+Any profile declaring `GANG_SESSION_KEY=1` also binds the window to the useful
+startup envelope's nonce, whether or not lights are enabled, so later context
+queries can find the matching native session without a marker turn.
 Operators normally place both thresholds high in the native window so lights do
 not impose an artificial context disadvantage, but below the harness's observed
 automatic-compaction boundary so the lights remain reachable.
@@ -82,7 +107,7 @@ spool first.
 
 ## Delivery and compaction
 
-### `gang send --to <name> [--from <sender>] [--spool [--supersede]] --stdin`
+### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
 Reads the full message body from standard input. Inside the team, Gangline derives
 the sender from the calling window and refuses `--from`. Calls from outside the
@@ -140,29 +165,42 @@ version gate.
 A cleared staged record means the obstruction is gone — it is never
 retroactive proof that the recorded body was delivered.
 
-`--spool` changes what a refusal does, never what a delivery proves. The live
-delivery is attempted first; if it is refused, the nonce-bound envelope is
-written to a per-target spool and reported as parked, not delivered. A failure
-after anything was typed is never spooled, because that body's fate is unknown
-and a second copy would be a second message.
+A refused delivery parks by default. The live delivery is attempted first; if
+it is refused, the nonce-bound envelope is written to a per-target spool and
+reported as parked, not delivered. A failure after anything was typed is never
+parked, because that body's fate is unknown and a second copy would be a second
+message. Pass `--live-only` for an availability probe that must return a refusal
+to its caller instead of parking it. The deprecated `--spool` flag is accepted
+as an announced no-op.
 
 The target's own native Stop event drains its spool, oldest first, through the
 verified delivery path. Each entry is claimed before it is delivered, so no
 later drain can send a body this one may already have landed. A refused drain
 returns its entry to the spool for the next turn boundary. A drain that cannot
 verify, or one that dies between the submission and the entry's retirement,
-leaves that entry held: `status` and `roster` report how many are held, the
-bodies stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again.
-`--supersede` drops the same sender's earlier spooled messages before parking
-this one, and applies to that sender only.
+leaves that entry held: `status` says its delivery was not verified and may
+still have arrived, `status` and `roster` report how many are held, the bodies
+stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
+harness may accept a submission into its own queue and drain it later; read the
+target before re-sending by hand.
 
-A profile that declares no `GANG_STOP_HOOK` refuses `--spool`: nothing else
-drains a spool.
+`--supersede` retires the same sender's earlier waiting messages after the newer
+message is accepted, whether the newer one parks or is delivered live. It is
+scoped to the sender, not to a subject: a sender with two unrelated messages
+waiting for one target loses the first when the second carries the flag, whether
+that second message parks or is delivered live. Pass it only when the newer
+message genuinely replaces everything that sender has parked.
+
+A profile that declares no `GANG_STOP_HOOK` still receives the ordinary live
+attempt. If that attempt is refused, Gangline exits with the refusal, says the
+message was not parked, and names the missing declaration because nothing else
+would drain its spool.
 
 Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
-arriving together cannot mint competing ones. A window without that identity
-refuses `--spool`. Entries die with the window: `gang drop` and `gang down`
+arriving together cannot mint competing ones. After a live refusal, a window
+without that identity says the message was not parked and names re-hitch or
+re-adopt as the repair. Entries die with the window: `gang drop` and `gang down`
 delete them.
 
 ### `gang flush <name>`
@@ -205,6 +243,22 @@ records a one-shot request. Its native Stop hook submits `/compact` after the
 active turn releases the composer. `status` and `roster` expose pending or failed
 self-compaction. A guarded claude-code launch that cannot install hooks declares
 neither Stop support nor deferred self-compaction.
+
+### `gang notify [<name>|clear]`
+
+Declares, shows, or clears the optional agent that receives stall notes. The
+target is stored as the session option `@gl_notify`; it need not exist when
+declared, and no target is inferred. `gang notify clear` removes the declaration
+sooner, and ending the tmux session deletes it with the rest of the team state.
+
+When a profile's native hook witnesses an awaiting-input event, Gangline sends
+one ordinary attributed message:
+`stall: <agent> is awaiting input (<kind>) — inspect with gang capture <agent>`.
+Repeated events of the same kind within 600 seconds are one note. A native
+prompt, tool, or Stop event clears that debounce because it proves movement; an
+older stamp permits a fresh note without any patrol or timer. A delivery failure
+is recorded on the raising window for `status` and `roster`, and is retired only
+after a later note is accepted live or parked.
 
 ### `gang cutoff [<duration|HH:MM>|clear]`
 
@@ -253,16 +307,55 @@ when the window has no hitch/adopt stamp or its executable-byte witness differs
 from the invoked `gang` binary. An unavailable witness is reported explicitly
 instead of treated as either match or mismatch.
 It also reports staged input, pending or failed self-compaction, how many
-messages are spooled for that target, and a spool drain that could not be
-verified.
+messages are spooled for that target, a spool drain that could not be verified,
+and a stall note that could not be accepted.
+
+### `gang context [name]`
+
+Prints the target profile's native context reading raw, in its own
+`usedk/windowk (percent%)` format. The query reads the profile source whether or
+not context lights are enabled; asking and edge-triggered signalling are
+separate acts. A missing or unreadable source fails loudly and no value is
+fabricated.
+
+Codex context is available for hitched windows because every Codex hitch records
+the startup-envelope nonce; adopted Codex windows have no such identity.
+opencode and Pi read their panes and can answer with lights off when their native
+readout is visible. claude-code can answer only when lights were enabled at
+hitch, because that launch choice installs its statusline beacon. Adopted
+windows answer only when their required native source is independently present.
+
+### `gang usage <name>`
+
+Drives the usage command declared by the target's harness profile and prints the
+harness's own page raw. The pane is locked for the entire operation. Gangline
+refuses a busy, indeterminate, occupied, changing, or non-empty composer; it
+types only after all five predicates pass. A bare `gang usage` prints help
+because the calling agent is necessarily running in the composer it would have
+to drive.
+
+Modal pages are returned as the visible screen, trailing blank terminal rows
+removed, and then dismissed with the profile's key. A modal that scrolls within
+itself may contain more than Gangline can capture; attach to read that overflow.
+Inline pages are extracted from the difference between the whole scrollback
+before and after the native command, so content taller than the pane is retained.
+If tmux history rolls over and the two captures lose their common origin,
+Gangline refuses instead of printing a plausible but unbounded transcript diff.
+
+After reading either shape, Gangline verifies that the profile can read an empty
+composer again. If restoration fails, the captured content is still printed,
+the command exits non-zero, and `gang attach` is required before more input is
+safe. Profiles without a verified usage declaration refuse the command.
 
 ### `gang roster`
 
 Prints every session window with its profile and current state. Unadopted windows
-are shown but not treated as agents. Context usage belongs to each agent and is
-not reported to the lead or operator. Each row compares the window's binary
-stamp with the invoked `gang` binary and visibly marks skew; the comparison runs
-only for this snapshot.
+are shown but not treated as agents. Context is deliberately not a roster
+column: ordinary adopted windows and lights-off claude-code windows have no
+readable source, and one absent value must not make the team inventory fail.
+Use `gang context <name>` when a reading is wanted. Each row compares the
+window's binary stamp with the invoked `gang` binary and visibly marks skew; the
+comparison runs only for this snapshot.
 
 ### `gang capture <name> [lines]`
 
@@ -299,6 +392,8 @@ Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction and a spool drain, and permission requests
 raise occupancy.
+Awaiting-input events listed by `GANG_STALL_TYPES`, plus permission requests,
+raise a stall note only when `gang notify` has declared a target.
 Hooks are silent unless an enabled context light or declared team-time light
 crosses an edge. Context-source warm-up is silent until the first native turn
 completes; an unreadable source after that boundary fails visibly.
@@ -377,11 +472,16 @@ there, never in a harness-name branch in the core script.
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
+| `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
-| `GANG_SESSION_KEY=1` | context lookup needs the startup-envelope nonce |
+| `GANG_SESSION_KEY=1` | every hitch records the startup-envelope nonce for context lookup |
+| `GANG_USAGE_CMD` | native command that opens the harness's usage page |
+| `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
+| `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |
+| `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
 | `profile_input target` | print human-authored composer contents, or fail if absent |
 | `profile_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 

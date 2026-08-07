@@ -30,6 +30,7 @@ trap cleanup EXIT HUP INT TERM
 
 export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_CONFIG_DIR="$RUN_ROOT/config"
+export XDG_CONFIG_HOME="$RUN_ROOT/xdg"
 export GANG_SESSION="gangtest-$$"
 export GANG_TEST_PROFILES=1
 export GANG_CHURN_WAIT=0
@@ -87,6 +88,61 @@ window_id() { # $1 exact window name
 }
 
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
+pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
+
+# Help coverage is derived from the dispatcher, so missing help cannot hide by
+# also being absent from a hand-maintained help inventory. The exclusions are
+# deliberate non-operator routes: the native callback, the hitch alias, and
+# help's own dispatcher arms.
+dispatch_commands="$({
+  sed -n '/^case "$cmd" in$/,/^esac$/p' "$GANG" |
+    awk '
+      /^  [^*].*\)/ {
+        arm=$1; sub(/\).*/, "", arm)
+        n=split(arm, names, "|")
+        for (i=1; i<=n; i++) print names[i]
+      }
+    '
+} | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer drop"
+meaningful_bare_commands="up roster attach profiles config cutoff notify down"
+classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
+
+help_width_failure() { # stdin = help; prints every line wider than 48 chars
+  python3 -c 'import sys
+for number, line in enumerate(sys.stdin.read().splitlines(), 1):
+    if len(line) > 48:
+        print(f"line {number} ({len(line)}): {line}")'
+}
+
+top_help="$($GANG --help)"
+top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
+equal "top-level help fits the phone-SSH width" "" "$top_wide"
+equal "every dispatched operator command has a bare classification" \
+  "$dispatch_commands" "$classified_commands"
+help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
+equal "help names the classified command inventory" \
+  "$classified_commands" "$help_inventory"
+while read -r help_command; do
+  [ -n "$help_command" ] || continue
+  if command_help="$($GANG "$help_command" --help 2>&1)"; then
+    contains "help exists for gang $help_command" "$command_help" "gang $help_command"
+  else
+    fail "help exists for gang $help_command" "$command_help"
+  fi
+  command_wide="$(printf '%s\n' "$command_help" | help_width_failure)"
+  equal "gang $help_command help fits the phone-SSH width" "" "$command_wide"
+done <<<"$dispatch_commands"
+
+for bare_command in $bare_error_commands; do
+  if bare_output="$(env -u TMUX_PANE "$GANG" "$bare_command" 2>&1)"; then
+    fail "bare gang $bare_command prints help and refuses outside an agent" \
+      "command unexpectedly succeeded: [$bare_output]"
+  else
+    contains "bare gang $bare_command prints its own synopsis" \
+      "$bare_output" "gang $bare_command"
+  fi
+done
 
 # Start the private tmux server with the wrong session in its global environment.
 # Hitched harnesses must receive the exact team identity in their launch command,
@@ -97,6 +153,9 @@ GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 profiles="$(GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ')"
 equal "the public profile list is the supported harness set" \
   "claude-code codex opencode pi " "$profiles"
+xdg_config_report="$(env -u GANG_CONFIG_DIR "$GANG" config)"
+contains "the fallback config root stays inside the isolated run root" \
+  "$xdg_config_report" "$RUN_ROOT/xdg/gangline"
 
 # User configuration is parsed as a lower-precedence layer, never executed or
 # sourced. Each case names its own root so malformed fixtures cannot poison the
@@ -338,6 +397,23 @@ claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
 contains "enabled Claude lights wire their context source" \
   "$claude_on" 'statusLine'
+claude_hook_events="$(python3 - "$claude_off" <<'PY'
+import json
+import sys
+
+launch = sys.argv[1]
+settings = launch.split("--settings '", 1)[1].rsplit("'", 1)[0]
+print(*sorted(json.loads(settings)["hooks"]), sep=" ")
+PY
+)"
+equal "Claude installs every native event Gangline consumes" \
+  "Notification PermissionRequest PostToolUse Stop UserPromptSubmit" \
+  "$claude_hook_events"
+claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' fixture "$claude_profile")"
+equal "Claude declares only native kinds that await a person" \
+  "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
+  "$claude_stall_types"
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
   fixture "$claude_profile")"
@@ -452,6 +528,11 @@ codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
 equal "the Codex profile defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_stall_types="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+  'unset GANG_STALL_TYPES; . "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' \
+  fixture "$codex_profile")"
+equal "Codex invents no Notification kinds its hook set cannot raise" \
+  "" "$codex_stall_types"
 codex_effort_opt="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_profile")"
 equal "the Codex profile spells effort as one joinable config option" \
@@ -500,6 +581,119 @@ codex_context="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
 equal "Codex context reads the newest native token record" \
   "120k/300k (40%)" "$codex_context"
 
+mkdir -p "$RUN_ROOT/profiles"
+export GANG_PROFILES="$RUN_ROOT/profiles"
+cat > "$RUN_ROOT/profiles/ctx-known.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_SESSION_KEY=1
+profile_context() { printf '42k/200k (21%%)\n'; }
+SH
+cat > "$RUN_ROOT/profiles/ctx-fail.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+profile_context() { die 'fixture context unavailable'; }
+SH
+cat > "$RUN_ROOT/profiles/ctx-none.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+unset -f profile_context
+SH
+cat > "$RUN_ROOT/usage-bashrc" <<'SH'
+PS1='❯ '
+u() {
+  printf '\033[1A\r\033[K'
+  local i=1
+  while [ "$i" -le 30 ]; do
+    printf 'USAGE_%02d\n' "$i"
+    i=$((i + 1))
+  done
+}
+SH
+cat > "$RUN_ROOT/usage-confirm-bashrc" <<'SH'
+PS1='❯ '
+c() {
+  IFS= read -r _
+  printf '\033[H\033[2JCONFIRMED_USAGE\n'
+  IFS= read -r -n 1 _
+}
+SH
+cat > "$RUN_ROOT/profiles/usage-inline.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-bashrc'"
+GANG_USAGE_CMD='u'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
+cat > "$RUN_ROOT/profiles/usage-confirm.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-confirm-bashrc'"
+GANG_USAGE_CMD='c'
+GANG_USAGE_CONFIRM_KEY="Enter"
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
+SH
+cat > "$RUN_ROOT/profiles/usage-modal.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_ONE\nMODAL_TWO\n"; IFS= read -r -n 1 _'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="Escape"
+SH
+cat > "$RUN_ROOT/profiles/usage-stuck.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_STUCK\n"; while :; do IFS= read -r -n 1 _; [ "$_" = q ] && break; done'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="modal"
+GANG_USAGE_DISMISS_KEY="C-g"
+SH
+cat > "$RUN_ROOT/profiles/usage-nochange.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD="clear"
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
+cat > "$RUN_ROOT/profiles/usage-occupied.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+GANG_OCCUPIED_REGEX='OCCUPIED_USAGE'
+_gl_usage_occupied_input="$(declare -f profile_input)"
+eval "usage_occupied_real_input ${_gl_usage_occupied_input#profile_input}"
+profile_input() {
+  tmux capture-pane -pJ -t "$1" | grep -q OCCUPIED_USAGE && return 1
+  usage_occupied_real_input "$1"
+}
+SH
+cat > "$RUN_ROOT/profiles/usage-unknown.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="unknown"
+GANG_USAGE_DISMISS_KEY=""
+SH
+
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked
 # below has been established.
@@ -510,6 +704,218 @@ contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
 alpha_id="$(window_id alpha)"
+alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
+contains "bare status targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "idle"
+contains "bare capture targets the calling agent window" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" capture)" \
+  "You are alpha in Gangline"
+equal "bare composer targets the calling agent window" "" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
+
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch ctx-agent -p ctx-known -d /tmp >/dev/null
+ctx_agent_id="$(window_id ctx-agent)"
+ctx_agent_pane="$(tmux list-panes -t "$ctx_agent_id" -F '#{pane_id}')"
+equal "named context prints the profile reading byte-for-byte" \
+  "42k/200k (21%)" "$("$GANG" context ctx-agent)"
+equal "bare context targets the calling agent window" \
+  "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
+equal "context answers while context lights are off" \
+  "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
+if [ -n "$(tmux show-options -wqv -t "$ctx_agent_id" @gl_key)" ]; then
+  pass "a session-key profile mints @gl_key even with context lights off"
+else
+  fail "a session-key profile mints @gl_key even with context lights off" \
+    "@gl_key was empty"
+fi
+"$GANG" hitch ctx-failing -p ctx-fail -d /tmp >/dev/null
+excludes "roster carries no context reading column" \
+  "$("$GANG" roster)" "42k/200k"
+
+ctx_fail_stdout="$RUN_ROOT/context-fail.stdout"
+ctx_fail_stderr="$RUN_ROOT/context-fail.stderr"
+if "$GANG" context ctx-failing >"$ctx_fail_stdout" 2>"$ctx_fail_stderr"; then
+  fail "a profile context failure stays non-zero" "context unexpectedly succeeded"
+else
+  pass "a profile context failure stays non-zero"
+fi
+equal "a profile context failure fabricates no reading" "" "$(<"$ctx_fail_stdout")"
+contains "a profile context failure keeps its own diagnostic" \
+  "$(<"$ctx_fail_stderr")" "fixture context unavailable"
+
+"$GANG" hitch ctx-missing -p ctx-none -d /tmp >/dev/null
+refuses "a missing profile_context names the profile" \
+  "profile 'ctx-none' declares no profile_context" \
+  "$GANG" context ctx-missing
+
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch usage-inline -p usage-inline -d /tmp >/dev/null
+usage_inline_id="$(window_id usage-inline)"
+tmux resize-window -t "$usage_inline_id" -x 80 -y 12
+usage_marker_ready="test-usage-marker-ready-$$"
+printf -v usage_marker_cmd 'printf "INLINE_OLD_MARKER\\n"; tmux wait-for -S %q' \
+  "$usage_marker_ready"
+tmux send-keys -l -t "$usage_inline_id" "$usage_marker_cmd"
+tmux send-keys -t "$usage_inline_id" Enter
+tmux wait-for "$usage_marker_ready"
+expected_usage="$(awk 'BEGIN { for (i=1; i<=30; i++) printf "USAGE_%02d\n", i }')"
+usage_inline_out="$("$GANG" usage usage-inline)"
+equal "inline usage returns every line taller than the pane" \
+  "$expected_usage" "$(printf '%s\n' "$usage_inline_out" | sed 's/[[:space:]]*$//')"
+excludes "inline usage excludes the pre-existing transcript" \
+  "$usage_inline_out" "INLINE_OLD_MARKER"
+equal "inline usage restores an empty composer" "" \
+  "$("$GANG" composer usage-inline)"
+
+"$GANG" hitch usage-modal -p usage-modal -d /tmp >/dev/null
+usage_modal_out="$("$GANG" usage usage-modal)"
+equal "modal usage returns the visible page raw" \
+  $'MODAL_ONE\nMODAL_TWO' \
+  "$(printf '%s\n' "$usage_modal_out" | sed 's/[[:space:]]*$//')"
+equal "modal usage dismisses back to an empty composer" "" \
+  "$("$GANG" composer usage-modal)"
+
+"$GANG" hitch usage-confirm -p usage-confirm -d /tmp >/dev/null
+usage_confirm_out="$("$GANG" usage usage-confirm)"
+equal "usage presses the profile's confirmation key before capture" \
+  "CONFIRMED_USAGE" \
+  "$(printf '%s\n' "$usage_confirm_out" | sed 's/[[:space:]]*$//')"
+equal "confirmed modal usage restores an empty composer" "" \
+  "$("$GANG" composer usage-confirm)"
+
+"$GANG" hitch usage-stuck -p usage-stuck -d /tmp >/dev/null
+usage_stuck_stdout="$RUN_ROOT/usage-stuck.stdout"
+usage_stuck_stderr="$RUN_ROOT/usage-stuck.stderr"
+if "$GANG" usage usage-stuck >"$usage_stuck_stdout" 2>"$usage_stuck_stderr"; then
+  fail "usage refuses when its dismissal does not restore the composer" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses when its dismissal does not restore the composer"
+fi
+contains "failed usage restoration still prints the captured content" \
+  "$(<"$usage_stuck_stdout")" "MODAL_STUCK"
+contains "failed usage restoration names the key and gang attach" \
+  "$(<"$usage_stuck_stderr")" "after C-g"
+contains "failed usage restoration points at gang attach" \
+  "$(<"$usage_stuck_stderr")" "gang attach"
+
+usage_before_refusals="$(pane usage-inline)"
+tmux set-option -w -t "$usage_inline_id" @gl_turn "open $(date +%s)"
+refuses "usage refuses a busy target" "is mid-turn" \
+  "$GANG" usage usage-inline
+tmux set-option -w -t "$usage_inline_id" @gl_turn broken
+refuses "usage refuses a could-not-determine target" \
+  "cannot determine whether 'usage-inline' is mid-turn" \
+  "$GANG" usage usage-inline
+tmux set-option -uw -t "$usage_inline_id" @gl_turn
+equal "usage readiness refusals type nothing" \
+  "$usage_before_refusals" "$(pane usage-inline)"
+
+"$GANG" hitch usage-occupied -p usage-occupied -d /tmp >/dev/null
+usage_occupied_id="$(window_id usage-occupied)"
+usage_occupied_ready="test-usage-occupied-ready-$$"
+printf -v usage_occupied_cmd 'printf OCCUPIED_USAGE; tmux wait-for -S %q; IFS= read -r _' \
+  "$usage_occupied_ready"
+tmux send-keys -l -t "$usage_occupied_id" "$usage_occupied_cmd"
+tmux send-keys -t "$usage_occupied_id" Enter
+tmux wait-for "$usage_occupied_ready"
+usage_occupied_before="$(pane usage-occupied)"
+refuses "usage refuses an occupied target" "occupied (authority unknown)" \
+  "$GANG" usage usage-occupied
+equal "an occupied usage refusal types nothing" \
+  "$usage_occupied_before" "$(pane usage-occupied)"
+
+refuses "a profile with no GANG_USAGE_CMD refuses usage" \
+  "declares no GANG_USAGE_CMD" "$GANG" usage alpha
+
+"$GANG" hitch usage-nochange -p usage-nochange -d /tmp >/dev/null
+usage_nochange_id="$(window_id usage-nochange)"
+usage_nochange_ready="test-usage-nochange-ready-$$"
+printf -v usage_nochange_cmd \
+  'PROMPT_COMMAND=%q; clear' "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
+tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
+tmux send-keys -t "$usage_nochange_id" Enter
+tmux wait-for "$usage_nochange_ready"
+usage_nochange_stdout="$RUN_ROOT/usage-nochange.stdout"
+usage_nochange_stderr="$RUN_ROOT/usage-nochange.stderr"
+if "$GANG" usage usage-nochange \
+    >"$usage_nochange_stdout" 2>"$usage_nochange_stderr"; then
+  fail "usage refuses when the native screen never changes" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses when the native screen never changes"
+fi
+contains "an unchanged usage screen names the command" \
+  "$(<"$usage_nochange_stderr")" "after clear"
+equal "an unchanged usage screen prints no content" "" \
+  "$(<"$usage_nochange_stdout")"
+equal "an unchanged usage screen leaves the composer empty" "" \
+  "$("$GANG" composer usage-nochange)"
+
+tmux set-option -g history-limit 5
+"$GANG" hitch usage-rollover -p usage-inline -d /tmp >/dev/null
+tmux set-option -g history-limit 2000
+usage_rollover_id="$(window_id usage-rollover)"
+tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
+usage_rollover_stdout="$RUN_ROOT/usage-rollover.stdout"
+usage_rollover_stderr="$RUN_ROOT/usage-rollover.stderr"
+if "$GANG" usage usage-rollover \
+    >"$usage_rollover_stdout" 2>"$usage_rollover_stderr"; then
+  fail "usage refuses a rolled-over inline scrollback" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses a rolled-over inline scrollback"
+fi
+contains "a rolled-over usage read names the lost origin" \
+  "$(<"$usage_rollover_stderr")" "scrollback of 'usage-rollover' rolled over"
+equal "a rolled-over usage read prints no content" "" \
+  "$(<"$usage_rollover_stdout")"
+
+"$GANG" hitch usage-unknown -p usage-unknown -d /tmp >/dev/null
+refuses "usage refuses an unknown render declaration" \
+  "unknown GANG_USAGE_RENDER 'unknown'" "$GANG" usage usage-unknown
+
+alpha_before_bare_help="$(pane alpha)"
+alpha_composer_before_bare_help="$($GANG composer alpha)"
+for incoherent_bare in hitch adopt send flush interrupt usage drop; do
+  if incoherent_output="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$incoherent_bare" 2>&1)"; then
+    fail "bare gang $incoherent_bare refuses inside an agent" \
+      "command unexpectedly succeeded: [$incoherent_output]"
+  else
+    contains "bare gang $incoherent_bare prints help inside an agent" \
+      "$incoherent_output" "gang $incoherent_bare"
+  fi
+done
+equal "incoherent bare commands leave the calling pane untouched" \
+  "$alpha_before_bare_help" "$(pane alpha)"
+equal "incoherent bare commands leave the composer untouched" \
+  "$alpha_composer_before_bare_help" "$($GANG composer alpha)"
+"$GANG" drop ctx-agent >/dev/null
+"$GANG" drop ctx-failing >/dev/null
+"$GANG" drop ctx-missing >/dev/null
+"$GANG" drop usage-inline >/dev/null
+"$GANG" drop usage-modal >/dev/null
+"$GANG" drop usage-confirm >/dev/null
+"$GANG" drop usage-stuck >/dev/null
+"$GANG" drop usage-occupied >/dev/null
+"$GANG" drop usage-nochange >/dev/null
+"$GANG" drop usage-rollover >/dev/null
+"$GANG" drop usage-unknown >/dev/null
+
+outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
+contains "bare status outside an agent prints its synopsis" \
+  "$outside_status" "gang status"
+contains "bare status outside an agent explains why self is unavailable" \
+  "$outside_status" "this shell is not a Gangline agent window"
+
+for meaningful_command in roster profiles config cutoff notify; do
+  if meaningful_output="$($GANG "$meaningful_command" 2>&1)"; then
+    excludes "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output" "gang — drive native CLI agents in tmux"
+  else
+    fail "bare gang $meaningful_command keeps its ordinary meaning" \
+      "$meaningful_output"
+  fi
+done
 binary_stamp="$(tmux show-options -wqv -t "$alpha_id" @gl_binary_id)"
 if [[ "$binary_stamp" =~ ^cksum:[0-9]+:[0-9]+$ ]]; then
   pass "hitch stamps the documented binary identity"
@@ -704,6 +1110,9 @@ contains "startup requires deliberate model and effort choices when hitching" \
 contains "startup carries the operator-authorized marathon rule" \
   "$(pane alpha)" \
   "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."
+contains "startup states the complement of envelope attribution" \
+  "$(pane alpha)" \
+  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
@@ -797,9 +1206,12 @@ printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" \
   "$GANG" hitch doctrine-present -p bash -d /tmp >/dev/null
 contains "a doctrine-bearing hitch still carries its base identity contract" \
-  "$(pane doctrine-present)" "You are doctrine-present in Gangline"
+  "$(pane_all doctrine-present)" "You are doctrine-present in Gangline"
 contains "a present operator doctrine is injected into the startup contract" \
   "$(pane doctrine-present)" "MARK_DOCTRINE_PRESENT binds this hitch."
+contains "a doctrine-bearing startup states the complement of envelope attribution" \
+  "$(pane_all doctrine-present)" \
+  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \
@@ -1733,22 +2145,37 @@ done
 # sender's and can be parked. Nothing in this world polls or schedules: the only
 # thing that drains a spool is a native Stop event, which the world fires by
 # hand exactly as a harness would.
+cat > "$RUN_ROOT/profiles/nodrain.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+SH
+"$GANG" hitch nodrain -p nodrain -d /tmp >/dev/null
+nodrain_id="$(window_id nodrain)"
+nodrain_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$nodrain_id" @gl_spool)"
+tmux send-keys -l -t "$nodrain_id" 'HUMAN_DRAFT'
 if nohook_out="$(printf 'MARK_NOHOOK' |
-  "$GANG" send --to alpha --from tester --spool --stdin 2>&1)"; then
-  fail "a harness that announces no turn boundary refuses the spool" \
-    "send accepted --spool"
+  "$GANG" send --to nodrain --from tester --stdin 2>&1)"; then
+  fail "a target with no turn boundary does not park a refusal" \
+    "send reported success"
 else
-  pass "a harness that announces no turn boundary refuses the spool"
+  equal "a target with no turn boundary keeps refusal status" "3" "$?"
 fi
 contains "naming the declaration a drain would need" "$nohook_out" "GANG_STOP_HOOK"
-excludes "and refusing the flag delivers nothing" "$(pane alpha)" "MARK_NOHOOK"
+contains "and says the message was not parked" "$nohook_out" "NOT parked"
+excludes "the refusing target received no body" "$(pane nodrain)" "MARK_NOHOOK"
+[ ! -d "$nodrain_spool" ] \
+  && pass "nothing undrainable was put on disk" \
+  || fail "nothing undrainable was put on disk" "$nodrain_spool exists"
+"$GANG" drop nodrain >/dev/null
 if super_out="$(printf 'MARK_LONE_SUPERSEDE' |
-  "$GANG" send --to alpha --from tester --supersede --stdin 2>&1)"; then
-  fail "superseding without a spool is refused" "send accepted --supersede alone"
+  "$GANG" send --to alpha --from tester --supersede --live-only --stdin 2>&1)"; then
+  fail "superseding a live-only send is refused" "send accepted incompatible flags"
 else
-  pass "superseding without a spool is refused"
+  pass "superseding a live-only send is refused"
 fi
-contains "because there is nothing for it to replace" "$super_out" "without --spool"
+contains "because live-only never parks" "$super_out" "--live-only never parks"
 
 cat > "$RUN_ROOT/profiles/spoolable.sh" <<SH
 # shellcheck shell=bash
@@ -1785,7 +2212,7 @@ else
 fi
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 spool_out="$(printf 'MARK_SPOOLED' |
-  "$GANG" send --to parker --from tester --spool --stdin)"
+  "$GANG" send --to parker --from tester --stdin)"
 contains "a refused delivery is parked rather than lost" "$spool_out" "spooled for parker"
 contains "and says plainly that it was not delivered" "$spool_out" "NOT delivered"
 excludes "nothing was typed into the refusing target" "$(pane parker)" "MARK_SPOOLED"
@@ -1793,15 +2220,34 @@ contains "status reports what is waiting for that target" \
   "$("$GANG" status parker)" "spooled: 1"
 contains "roster carries the same count" "$("$GANG" roster)" "spooled=1"
 
+if live_only_out="$(printf 'MARK_LIVE_ONLY' |
+  "$GANG" send --to parker --from tester --live-only --stdin 2>&1)"; then
+  fail "live-only refuses instead of parking" "send unexpectedly succeeded"
+else
+  pass "live-only refuses instead of parking"
+fi
+contains "live-only reports the original refusal" "$live_only_out" "draft"
+contains "live-only leaves the waiting count unchanged" \
+  "$("$GANG" status parker)" "spooled: 1"
+excludes "live-only typed nothing into the target" "$(pane parker)" "MARK_LIVE_ONLY"
+
+spool_noop_out="$(printf 'MARK_ANNOUNCED' |
+  "$GANG" send --to parker --from tester --spool --supersede --stdin 2>&1)"
+contains "the deprecated spool flag announces its no-op" \
+  "$spool_noop_out" "is the default now"
+contains "and the deprecated form still parks" "$spool_noop_out" "spooled for parker"
+contains "its supersession leaves one replacement waiting" \
+  "$("$GANG" status parker)" "spooled: 1"
+
 # Two messages from one sender are two messages. Only the sender's explicit
 # flag makes a newer one replace an older, and it replaces only its OWN.
 printf 'MARK_OTHER_SENDER' |
-  "$GANG" send --to parker --from other --spool --stdin >/dev/null
-printf 'MARK_STALE' | "$GANG" send --to parker --from tester --spool --stdin >/dev/null
+  "$GANG" send --to parker --from other --stdin >/dev/null
+printf 'MARK_STALE' | "$GANG" send --to parker --from tester --stdin >/dev/null
 contains "a second message from one sender does not replace the first" \
   "$("$GANG" status parker)" "spooled: 3"
 printf 'MARK_LATEST' |
-  "$GANG" send --to parker --from tester --spool --supersede --stdin >/dev/null
+  "$GANG" send --to parker --from tester --supersede --stdin >/dev/null
 contains "until the sender says the newer one supersedes them" \
   "$("$GANG" status parker)" "spooled: 2"
 
@@ -1834,12 +2280,30 @@ contains "each drained message keeps its own sender's attribution" \
   "$parker_drained" "[gang:other#"
 excludes "a superseded message is never delivered" "$parker_drained" "MARK_STALE"
 excludes "nor the one it superseded" "$parker_drained" "MARK_SPOOLED"
+excludes "nor the deprecated-form predecessor" "$parker_drained" "MARK_ANNOUNCED"
 drain_order="$(printf '%s\n' "$parker_drained" |
   grep -oE 'MARK_OTHER_SENDER|MARK_LATEST' | awk '!seen[$0]++' | tr '\n' ' ')"
 equal "and the spool drains oldest first" "MARK_OTHER_SENDER MARK_LATEST " \
   "$drain_order"
 excludes "a drained spool reports nothing waiting" \
   "$("$GANG" status parker)" "spooled:"
+
+# Supersession follows the replacement's settled outcome. A verified live B
+# retires waiting A; a later Stop has no predecessor left to deliver.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_LIVE_PREDECESSOR' |
+  "$GANG" send --to parker --from tester --stdin >/dev/null
+tmux send-keys -t "$parker_id" C-u
+printf 'MARK_LIVE_REPLACEMENT' |
+  "$GANG" send --to parker --from tester --supersede --stdin >/dev/null
+contains "a live superseding replacement is delivered" \
+  "$(pane parker)" "MARK_LIVE_REPLACEMENT"
+excludes "its predecessor is no longer waiting" \
+  "$("$GANG" status parker)" "spooled:"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+excludes "a retired predecessor never arrives after its replacement" \
+  "$(pane parker)" "MARK_LIVE_PREDECESSOR"
 
 # WHAT THE DRAIN LOOKED LIKE FROM INSIDE THE PANE, read by the fixture the first
 # time gang asked it for the composer while holding the delivery lock. Both
@@ -1863,7 +2327,7 @@ printf '%s\n%s\n%s\n' tester MARK_INTERRUPTED \
   > "$parker_inflight"
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 printf 'MARK_BEHIND_IT' |
-  "$GANG" send --to parker --from tester --spool --stdin >/dev/null
+  "$GANG" send --to parker --from tester --stdin >/dev/null
 tmux send-keys -t "$parker_id" C-u
 tmux wait-for "gang-spool-drain-$parker_id" &
 parker_second_waiter=$!
@@ -1880,7 +2344,7 @@ contains "and the messages behind it are not lost with it" \
   || fail "it stays on disk where a person can read it" "$parker_inflight is gone"
 parker_held_status="$("$GANG" status parker)"
 contains "and status names it rather than losing it quietly" \
-  "$parker_held_status" "held after an interrupted or unverified delivery"
+  "$parker_held_status" "held (delivery NOT verified — it may still have arrived): MARK_INTERRUPTED"
 contains "naming the directory it is readable in, not an empty one" \
   "$parker_held_status" "read them under $parker_spool_dir"
 rm -f "$parker_inflight"
@@ -1888,7 +2352,7 @@ rm -f "$parker_inflight"
 # Everything gang parks has a deletion path, and this is it.
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 printf 'MARK_DIES_WITH_WINDOW' |
-  "$GANG" send --to parker --from tester --spool --stdin >/dev/null
+  "$GANG" send --to parker --from tester --stdin >/dev/null
 parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_spool)"
 [ -d "$parker_spool" ] \
   && pass "a spooled message is on disk beside the delivery locks" \
@@ -1905,7 +2369,7 @@ parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_
 tmux set-option -uw -t "$(window_id identityless)" @gl_spool
 tmux send-keys -l -t "$(window_id identityless)" 'HUMAN_DRAFT'
 if identityless_out="$(printf 'MARK_NO_IDENTITY' |
-  "$GANG" send --to identityless --from tester --spool --stdin 2>&1)"; then
+  "$GANG" send --to identityless --from tester --stdin 2>&1)"; then
   fail "a window with no spool identity refuses to park a message" \
     "send reported the message parked"
 else
@@ -1923,7 +2387,7 @@ equal "and the refusal mints nothing on its way out" "" \
 
 # ADOPTION MINTS IT TOO, and nothing tested that. An adopted window is an agent
 # by every other measure, so a spool identity it never received would make
-# --spool refuse a target the operator had just enrolled.
+# a refused send fail to park for a target the operator had just enrolled.
 tmux new-window -d -t "=$GANG_SESSION" -n taken -c /tmp \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 "$GANG" adopt taken -p spoolable >/dev/null
@@ -1941,7 +2405,7 @@ tmux send-keys -l -t "$taken_id" 'HUMAN_DRAFT'
 # red checks it is, instead of aborting the run under set -e and taking every
 # later world with it.
 printf 'MARK_ADOPTED' |
-  "$GANG" send --to taken --from tester --spool --stdin >/dev/null 2>&1 || true
+  "$GANG" send --to taken --from tester --stdin >/dev/null 2>&1 || true
 contains "and it can park a refused message under it" \
   "$("$GANG" status taken)" "spooled: 1"
 "$GANG" drop taken >/dev/null
@@ -1963,7 +2427,7 @@ else
   pass "a composer that never changes cannot complete a hitch"
 fi
 if unverified_out="$(printf 'MARK_UNVERIFIED' |
-  "$GANG" send --to unverified --from tester --spool --stdin 2>&1)"; then
+  "$GANG" send --to unverified --from tester --stdin 2>&1)"; then
   fail "an unverified delivery is not spooled" "send reported success"
 else
   pass "an unverified delivery is not spooled"
@@ -1999,10 +2463,22 @@ SH
 : > "$RUN_ROOT/wedge-block"
 wedged_id="$(window_id wedged)"
 wedged_pane_id="$(tmux list-panes -t "$wedged_id" -F '#{pane_id}')"
-printf 'MARK_WEDGED' | "$GANG" send --to wedged --from tester --spool --stdin >/dev/null
+printf 'MARK_WEDGED' | "$GANG" send --to wedged --from tester --stdin >/dev/null
 contains "the blocked message is waiting" "$("$GANG" status wedged)" "spooled: 1"
 rm -f "$RUN_ROOT/wedge-block"
 : > "$RUN_ROOT/wedge-stuck"
+if hard_supersede_out="$(printf 'MARK_HARD_REPLACEMENT' |
+  "$GANG" send --to wedged --from tester --supersede --stdin 2>&1)"; then
+  fail "a hard-failed replacement does not report success" \
+    "send unexpectedly succeeded"
+else
+  pass "a hard-failed replacement does not report success"
+fi
+contains "the replacement failed after typing" \
+  "$hard_supersede_out" "delivery NOT verified"
+contains "a hard failure supersedes nothing" \
+  "$("$GANG" status wedged)" "spooled: 1"
+tmux send-keys -t "$wedged_id" C-u
 tmux wait-for "gang-spool-drain-$wedged_id" &
 wedged_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
@@ -2034,6 +2510,19 @@ contains "and the sender it was parked under" "$wedged_body" "tester"
 # empty one.
 contains "and the report hands over the directory it is readable in" \
   "$wedged_status" "read them under $wedged_spool"
+
+# A harness may accept the submission into its own queue after Gangline's
+# verification failed and drain it later. The held record is therefore not a
+# reason to send a second copy on another Stop event.
+tmux send-keys -t "$wedged_id" Enter
+rm -f "$RUN_ROOT/wedge-stuck"
+wedged_arrived="$(pane wedged)"
+wedged_before_count="$(printf '%s\n' "$wedged_arrived" | grep -o 'MARK_WEDGED' | wc -l | tr -d ' ')"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$wedged_pane_id" "$GANG" hook >/dev/null
+wedged_after_count="$(pane wedged | grep -o 'MARK_WEDGED' | wc -l | tr -d ' ')"
+equal "a later native boundary never re-sends an unverified held entry" \
+  "$wedged_before_count" "$wedged_after_count"
 "$GANG" drop wedged >/dev/null
 
 # One spool is deliberately left alive for the teardown below to account for.
@@ -2041,7 +2530,7 @@ contains "and the report hands over the directory it is readable in" \
 lingering_id="$(window_id lingering)"
 tmux send-keys -l -t "$lingering_id" 'HUMAN_DRAFT'
 printf 'MARK_LINGERS' |
-  "$GANG" send --to lingering --from tester --spool --stdin >/dev/null
+  "$GANG" send --to lingering --from tester --stdin >/dev/null
 lingering_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lingering_id" @gl_spool)"
 
 # A staged record is state; the box is fresher evidence. Staged input can
@@ -2746,7 +3235,7 @@ self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
 self_requested="test-self-compact-requested-$$"
 self_release="test-self-compact-release-$$"
 self_released="test-self-compact-released-$$"
-printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact selfable; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
   "$self_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested" \
   "$self_release" "$self_busy" "$self_released"
 tmux send-keys -l -t "$self_id" "$self_command"
@@ -2827,6 +3316,216 @@ printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null
 turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
 contains "a native stop hook closes the turn record" "$turn_closed" "closed"
+
+# Stall lights forward only native awaiting-input witnesses to one optional
+# declared target. Every outcome is synchronous: the hook returns after the
+# note is accepted live, parked, or recorded as failed.
+cat > "$RUN_ROOT/profiles/stallable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_STOP_HOOK=1
+GANG_STALL_TYPES="idle_prompt agent_needs_input"
+SH
+equal "a team starts without an inferred notify target" \
+  "no notify target declared" "$("$GANG" notify)"
+"$GANG" hitch stall-raise -p stallable -d /tmp >/dev/null
+"$GANG" hitch stall-target -p stallable -d /tmp >/dev/null
+stall_raise_id="$(window_id stall-raise)"
+stall_raise_pane="$(tmux list-panes -t "$stall_raise_id" -F '#{pane_id}')"
+stall_target_id="$(window_id stall-target)"
+stall_target_pane="$(tmux list-panes -t "$stall_target_id" -F '#{pane_id}')"
+equal "a notify target may be declared without inference" \
+  "notify target: stall-target" "$("$GANG" notify stall-target)"
+equal "the notify declaration is readable" \
+  "notify target: stall-target" "$("$GANG" notify)"
+
+# A profile with no declared stall kinds has no Notification witness. In
+# particular, an absent notification_type must not match an empty declaration.
+cat > "$RUN_ROOT/profiles/no-stalls.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_STOP_HOOK=1
+SH
+"$GANG" hitch stall-silent -p no-stalls -d /tmp >/dev/null
+stall_silent_id="$(window_id stall-silent)"
+stall_silent_pane="$(tmux list-panes -t "$stall_silent_id" -F '#{pane_id}')"
+stall_silent_before="$(pane_all stall-target)"
+printf '%s' '{"hook_event_name":"Notification"}' |
+  TMUX_PANE="$stall_silent_pane" "$GANG" hook >/dev/null
+equal "a profile without a declared stall source raises no empty-kind note" \
+  "$stall_silent_before" "$(pane_all stall-target)"
+"$GANG" drop stall-silent >/dev/null
+
+# Stop owns the universal turn boundary even when the window's old profile no
+# longer resolves. Profile loading belongs only to profile-dependent work.
+"$GANG" hitch stall-vanished -p stallable -d /tmp >/dev/null
+stall_vanished_id="$(window_id stall-vanished)"
+stall_vanished_pane="$(tmux list-panes -t "$stall_vanished_id" -F '#{pane_id}')"
+tmux set-option -w -t "$stall_vanished_id" @gl_turn open
+tmux set-option -w -t "$stall_vanished_id" @gl_profile vanished
+if vanished_stop="$(printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$stall_vanished_pane" "$GANG" hook 2>&1)"; then
+  pass "a native Stop closes the turn after its profile vanishes"
+else
+  fail "a native Stop closes the turn after its profile vanishes" \
+    "hook failed before the universal boundary: [$vanished_stop]"
+fi
+contains "the profile-independent Stop boundary is recorded" \
+  "$(tmux show-options -wqv -t "$stall_vanished_id" @gl_turn)" "closed"
+"$GANG" drop stall-vanished >/dev/null
+
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_first="$(pane_all stall-target)"
+contains "a native awaiting-input witness reaches the declared target" \
+  "$stall_first" "stall: stall-raise is awaiting input (idle_prompt)"
+contains "the stall note keeps the raising window's attribution" \
+  "$stall_first" "[gang:stall-raise#"
+stall_first_count="$(printf '%s\n' "$stall_first" | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_repeat_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "the same native stall inside the debounce is one note" \
+  "$stall_first_count" "$stall_repeat_count"
+
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_after_move_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "a native movement event opens a new stall epoch" \
+  "$(( stall_first_count + 1 ))" "$stall_after_move_count"
+
+stall_old_now="$(date +%s)"
+tmux set-option -w -t "$stall_raise_id" @gl_stall \
+  "idle_prompt $(( stall_old_now - 601 ))"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_old_count="$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+equal "an old debounce stamp permits another native note" \
+  "$(( stall_after_move_count + 1 ))" "$stall_old_count"
+
+printf '%s' '{"hook_event_name":"Notification","notification_type":"auth_success"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "a notification kind outside the profile declaration raises nothing" \
+  "$stall_old_count" "$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
+
+printf '%s' '{"hook_event_name":"PermissionRequest"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a native permission request is an awaiting-input witness" \
+  "$(pane_all stall-target)" "awaiting input (permission_prompt)"
+
+"$GANG" notify clear >/dev/null
+stall_cleared_before="$(pane_all stall-target)"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "no declaration is the silent off state" \
+  "$stall_cleared_before" "$(pane_all stall-target)"
+equal "clear removes the session declaration" \
+  "no notify target declared" "$("$GANG" notify)"
+
+"$GANG" notify stall-raise >/dev/null
+stall_self_before="$(pane_all stall-raise)"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "a stall note is never sent into the raising pane" \
+  "$stall_self_before" "$(pane_all stall-raise)"
+equal "self-target suppression records no delivery failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+
+# An existing tmux window that has not been adopted reaches the attempted
+# delivery region and fails there. That failure must not stamp the debounce:
+# adopting the same window makes an immediate retry observable.
+tmux new-window -d -t "=$GANG_SESSION" -n stall-unadopted -c /tmp \
+  "PS1='❯ ' bash --norc"
+"$GANG" notify stall-unadopted >/dev/null
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_unaccepted_before="$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "an unadopted notify target fails inside the delivery attempt" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)" \
+  "exists but is not a gang agent"
+equal "an unaccepted note leaves the debounce stamp unchanged" \
+  "$stall_unaccepted_before" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
+"$GANG" adopt stall-unadopted -p stallable >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "adoption lets the unaccepted note retry without advancing time" \
+  "$(pane_all stall-unadopted)" "awaiting input (agent_needs_input)"
+equal "the accepted retry retires the attempted-delivery failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+"$GANG" drop stall-unadopted >/dev/null
+
+"$GANG" notify ghost >/dev/null
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a missing notify target is visible in status" \
+  "$("$GANG" status stall-raise)" "stall note NOT accepted"
+contains "roster carries a failed stall light" \
+  "$("$GANG" roster)" "stall-note-failed"
+equal "a missing target writes no debounce stamp" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
+
+"$GANG" hitch ghost -p stallable -d /tmp >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a failed note retries once its target exists" \
+  "$(pane_all ghost)" "awaiting input (agent_needs_input)"
+equal "an accepted repair retires the delivery failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+excludes "status no longer reports the repaired stall light" \
+  "$("$GANG" status stall-raise)" "stall note NOT accepted"
+
+"$GANG" drop ghost >/dev/null
+"$GANG" notify ghost >/dev/null
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+stall_failure_before="$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "movement does not retire a still-broken stall light" \
+  "$stall_failure_before" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+
+"$GANG" notify stall-target >/dev/null
+tmux send-keys -l -t "$stall_target_id" 'HUMAN_DRAFT'
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a refused stall note is accepted into a drainable target's spool" \
+  "$("$GANG" status stall-target)" "spooled: 1"
+contains "parking a stall note records the debounce" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)" "agent_needs_input"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a parked stall note is debounced without a duplicate" \
+  "$("$GANG" status stall-target)" "spooled: 1"
+tmux send-keys -t "$stall_target_id" C-u
+tmux wait-for "gang-spool-drain-$stall_target_id" &
+stall_target_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$stall_target_pane" "$GANG" hook >/dev/null
+wait "$stall_target_waiter"
+contains "the parked stall note drains through the ordinary delivery path" \
+  "$(pane_all stall-target)" "awaiting input (agent_needs_input)"
+
+if "$GANG" notify 'bad name' >/dev/null 2>&1; then
+  fail "notify rejects a name outside the agent-name contract" \
+    "invalid name was accepted"
+else
+  pass "notify rejects a name outside the agent-name contract"
+fi
+"$GANG" notify clear >/dev/null
+"$GANG" drop stall-raise >/dev/null
+"$GANG" drop stall-target >/dev/null
 
 # Optional context guidance has two edge-triggered states and no clock path.
 cat > "$RUN_ROOT/profiles/lights.sh" <<SH
@@ -3025,6 +3724,66 @@ git --git-dir="$blob_mirror" cat-file -e "$blob_oid" 2>/dev/null && mirror_prese
 equal "the repository gate refuses a mirror carrying a blob ref" \
   "blocked absent" \
   "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([ "$mirror_present" -eq 0 ] && printf absent || printf received)"
+
+# The pre-push gate must run git-aware lint from the pushed tree even when Git
+# gives the hook a GIT_DIR pointing at the main repository. A staged-only file
+# makes a leaked main index distinguishable from the detached worktree's index.
+hook_repo="$RUN_ROOT/pre-push-repo"
+hook_probe="$RUN_ROOT/pre-push-probe"
+mkdir -p "$hook_repo/.githooks" "$hook_repo/tools" "$hook_repo/test" "$hook_probe"
+cp "$ROOT/.githooks/pre-push" "$ROOT/.githooks/commit-msg" \
+  "$hook_repo/.githooks/"
+cp "$ROOT/tools/pii-scan" "$hook_repo/tools/"
+chmod +x "$hook_repo/.githooks/pre-push" "$hook_repo/.githooks/commit-msg" \
+  "$hook_repo/tools/pii-scan"
+cat > "$hook_repo/test/lint.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+: "${PROBE_DIR:?}"
+git ls-files >/dev/null
+git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"
+git ls-files main-index-only > "$PROBE_DIR/index"
+SH
+cat > "$hook_repo/test/integration.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 0
+SH
+chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh"
+git -C "$hook_repo" init -q
+git -C "$hook_repo" config user.name 'Gangline Test'
+git -C "$hook_repo" config user.email 'gangline-test@example.invalid'
+git -C "$hook_repo" add .
+git -C "$hook_repo" commit -q -m 'test: seed hook worktree'
+hook_sha="$(git -C "$hook_repo" rev-parse HEAD)"
+touch "$hook_repo/main-index-only"
+git -C "$hook_repo" add main-index-only
+hook_zero=0000000000000000000000000000000000000000
+if hook_out="$({
+  cd "$hook_repo"
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
+    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
+      PROBE_DIR="$hook_probe" \
+      ./.githooks/pre-push
+} 2>&1)"; then
+  pass "pre-push lints the pushed commit under Git's hook environment"
+else
+  fail "pre-push lints the pushed commit under Git's hook environment" "$hook_out"
+fi
+hook_gitdir="$(<"$hook_probe/gitdir")"
+case "$hook_gitdir" in
+  "$hook_repo/.git/worktrees/"*)
+    pass "pre-push lint reads a detached-worktree git directory" ;;
+  *) fail "pre-push lint reads a detached-worktree git directory" "$hook_gitdir" ;;
+esac
+if [ "$hook_gitdir" != "$hook_repo/.git" ]; then
+  pass "pre-push lint does not read the main repository git directory"
+else
+  fail "pre-push lint does not read the main repository git directory" "$hook_gitdir"
+fi
+equal "pre-push lint does not read the main repository index" \
+  "" "$(<"$hook_probe/index")"
 
 "$GANG" down >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then

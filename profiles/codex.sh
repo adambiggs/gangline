@@ -75,6 +75,13 @@ GANG_BUSY_REGEX="esc to interrupt"
 GANG_QUIET_AT_REST=1
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 GANG_COMPACT_CMD="/compact"
+# Verified on codex 0.145.0: /usage opens a selection menu with "Show usage"
+# preselected; one Enter confirms it and the content is appended to the
+# transcript with the composer already restored, so nothing dismisses it.
+GANG_USAGE_CMD="/usage"
+GANG_USAGE_CONFIRM_KEY="Enter"
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
 GANG_SELF_COMPACT=deferred
 GANG_MIDTURN_INPUT=1
 GANG_SESSION_KEY=1
@@ -85,6 +92,10 @@ GANG_INTERRUPT_KEY="Escape"
 # its own turn boundaries to gang — which is what a spool needs to drain, and
 # what deferred self-compaction already relies on.
 GANG_STOP_HOOK=1
+# Verified on codex 0.145.0: the native hook set contains no Notification
+# event. legacy_notify / agent-turn-complete reports turn completion, which the
+# Stop hook above already delivers; it is not an awaiting-input witness and is
+# deliberately not wired. PermissionRequest is this profile's only stall source.
 
 codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
 
@@ -173,7 +184,7 @@ profile_context() { # $1 = tmux target; file-based — reads the rollout, never 
   local key file
   key="$(tmux show-options -wqv -t "$1" @gl_key)"
   [ -n "$key" ] \
-    || die "window has no @gl_key — Codex context lights require a hitch-time startup-envelope nonce; adopted windows have none"
+    || die "window has no @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
   file="$(tmux show-options -wqv -t "$1" @gl_session)"
   if [ -z "$file" ] || [ ! -f "$file" ]; then
     file="$(codex_session_for "$key")"

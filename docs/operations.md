@@ -37,6 +37,20 @@ Use a stable `GANG_SESSION`, `GANG_PROFILES`, `GANG_LOCK_DIR`, and absolute
 resolved config root into its agent so nested hitches read the same file and
 doctrine.
 
+## Forwarding native stall witnesses
+
+Declare one optional receiver with `gang notify <name>`. Gangline forwards only
+events the native harness itself reports as awaiting a person; it never infers a
+stall from a quiet pane and runs no patrol. Claude Code can witness its declared
+`Notification` kinds and permission requests. Codex has no `Notification` hook,
+so its shipped profile witnesses only permission requests. opencode and Pi
+declare no stall source, so they raise no notes.
+
+A note accepted live or parked is debounced until the raising harness reports
+movement or the repeat bound expires. `gang status` and `gang roster` expose a
+delivery failure until a later note is accepted. Use `gang notify clear` to turn
+the forwarding off; the declaration also dies with the team session.
+
 ## Sending messages safely
 
 Pass message prose on standard input so shell syntax remains data:
@@ -63,13 +77,12 @@ A failure after a paste may leave staged text in the composer. `gang status` and
 safe delivery clears only a staged rendering that still exactly matches what
 Gangline recorded.
 
-## Spooling a message a busy target refused
+## Parking a message a busy target refused
 
-Add `--spool` when the message should wait for the target rather than come back
-to the sender:
+No extra flag is needed when a message should wait for a drainable target:
 
 ```sh
-gang send --to worker --spool --stdin <<'TASK'
+gang send --to worker --stdin <<'TASK'
 When you surface, the parser fix needs a second reviewer.
 TASK
 ```
@@ -77,7 +90,9 @@ TASK
 The live delivery is tried first. If it is refused, the message is parked and
 reported as parked; the target's own native turn boundary drains it through the
 same verified path. Add `--supersede` when the newer message should replace the
-sender's earlier waiting ones.
+sender's earlier waiting ones. An unattended sender does not have to re-send a
+bounced message by hand. Pass `--live-only` only when a caller needs a refusal
+to come back rather than park.
 
 Do not write a retry loop around `gang send`. Spooling exists so that loop does
 not have to, and a loop that re-sends after a failure — as opposed to a refusal
@@ -87,11 +102,14 @@ not have to, and a loop that re-sends after a failure — as opposed to a refusa
 target and how many are held. A message is held when its delivery could not be
 verified, or when the drain died between submitting it and retiring it. Either
 way its fate is unknown, so Gangline stops acting on it: the body stays readable
-under `GANG_LOCK_DIR`, and it is never sent again. Read it there and decide.
+under `GANG_LOCK_DIR`, and it is never sent again. A harness may have accepted
+it into an internal queue and drained that queue later, so read the target before
+re-sending it by hand.
 Spools die with their window, so `gang drop` and `gang down` remove them.
 
-Harnesses whose native Stop event does not reach Gangline refuse `--spool`
-outright — nothing would drain the message.
+For a harness whose native Stop event does not reach Gangline, an ordinary send
+still tries live delivery. A refusal is not parked, and names the missing
+`GANG_STOP_HOOK`, because nothing would drain the message.
 
 ## Working in the shared checkout
 
@@ -127,6 +145,23 @@ Codex self-compaction is deferred to its Stop event because its active turn
 cannot submit `/compact` into its own composer. The request is one-shot. If the
 native command cannot be submitted, `status` and `roster` retain the failure
 instead of claiming success.
+
+## Reading harness usage without attaching
+
+Ask for each idle agent by name:
+
+```sh
+gang usage worker-a
+gang usage worker-b
+```
+
+The output is the harness's own plan or quota page, not a Gangline summary.
+Gangline will not open it over a running turn, draft, unknown state, or native
+dialog. A full-screen page is limited to what is visibly painted; attach when
+that modal has internal scrollback. Inline output includes content that moved
+into tmux history. If the command reports that the composer was not restored,
+the content already printed is still useful, but inspect that agent with
+`gang attach` before sending it anything else.
 
 ## Optional context lights
 
