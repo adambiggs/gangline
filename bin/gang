@@ -1166,6 +1166,17 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name
     printf "staged: gang's own undelivered body (gang composer %s)" "$3"
     return
   fi
+  # Human authorship is not the leftover case. The legs that record a paste
+  # whose fate gang never saw — the box unreadable after the paste, unreadable
+  # after the Enter, the harness parking it — deliberately record no rendering
+  # to match, because there was none to read. A staged note beside a box gang
+  # cannot match is gang's own text as plausibly as anybody's, and naming it a
+  # human draft is the invented-provenance mistake this whole classification
+  # exists to stop making. The note says what gang put there; status prints it.
+  if [ -n "$(tmux show-options -wqv -t "$1" @gl_staged)" ]; then
+    printf 'unattributed: gang recorded an undelivered paste here and cannot match it to this box (gang status %s)' "$3"
+    return
+  fi
   printf 'draft: a human line gang did not write (gang composer %s)' "$3"
 }
 

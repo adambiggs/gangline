@@ -89,9 +89,11 @@ accepts ordinary mid-turn input.
 A refusal on a box that is not provably empty classifies what Gangline read, in
 one word with the look or recovery that settles it: `draft` (a human line
 Gangline did not write), `staged` (Gangline's own undelivered body, byte-identical
-to the rendering it recorded), `parked` (the harness's declared queue evidence),
-`whole-pane` (the profile declares no input reader, so the reading is the pane
-rather than a box), or `unreadable`. A suggested-prompt placeholder is not among
+to the rendering it recorded), `unattributed` (Gangline recorded an undelivered
+paste here but cannot match it to this box, so the author is exactly what is
+unknown), `parked` (the harness's declared queue evidence), `whole-pane` (the
+profile declares no input reader, so the reading is the pane rather than a box),
+or `unreadable`. A suggested-prompt placeholder is not among
 them: the profile's styled reading strips it, so it never reaches a refusal —
 `gang capture` is where it looks like a draft, and `gang composer` is the reading
 that settles it.

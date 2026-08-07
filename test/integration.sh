@@ -1447,13 +1447,22 @@ excludes "an empty box retires a staged record at status time" \
   "$("$GANG" status 1)" "undelivered input"
 equal "and the retired record is gone" "" \
   "$(tmux show-options -wqv -t "$(window_id 1)" @gl_staged)"
+# The wording of a real no-rendering leg: the box could not be read after the
+# paste, so there is nothing to match it against later. Calling what turns up in
+# that box a human draft would invent the one fact gang is missing, and would
+# invent it against gang's own adjacent record of having pasted there.
 tmux set-option -w -t "$(window_id 1)" @gl_staged \
-  "'MARK_HELD' is staged unsent in this box"
+  "'MARK_HELD' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent"
 tmux send-keys -l -t "$(window_id 1)" 'MARK_HELD draft'
 contains "a non-empty box keeps the record and the report" \
   "$("$GANG" status 1)" "undelivered input"
-contains "and classifies that box as a human line gang did not write" \
-  "$("$GANG" status 1)" "box: draft:"
+contains "a staged record gang cannot match to the box claims no author" \
+  "$("$GANG" status 1)" "box: unattributed:"
+# A rendering that exists and does not match is the same missing fact: the box
+# has moved since gang recorded it, and who moved it is exactly what is unknown.
+tmux set-option -w -t "$(window_id 1)" @gl_staged_box "MARK_HELD something else"
+contains "and a rendering that does not match settles nothing either" \
+  "$("$GANG" status 1)" "box: unattributed:"
 # Same box, now byte-identical to the rendering gang recorded when it staged
 # its OWN body — the one comparison that separates gang's text from a person's,
 # and the same equality stage_clear retires a record on.

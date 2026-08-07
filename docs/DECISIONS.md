@@ -193,8 +193,12 @@ the indeterminate fall-through.
 
 ## A refusal names what was read, not just that it refused
 
-An obstruction gang can classify is classified: draft, staged, parked,
-whole-pane, unreadable, each with the look or recovery that settles it. The
+An obstruction gang can classify is classified: draft, staged, unattributed,
+parked, whole-pane, unreadable, each with the look or recovery that settles it.
+Human authorship is never the leftover case — the delivery legs that record a
+paste whose fate gang never saw record no rendering to match, so a box beside
+one of those records is gang's own text as plausibly as anybody's and is named
+unattributed rather than blamed on a person. The
 alternative is what happened — operators diagnosing a blocked box by eye from a
 raw capture, where a dim suggested-prompt placeholder is indistinguishable from
 a half-written line, and getting it wrong publicly. Classification uses only
