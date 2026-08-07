@@ -895,6 +895,174 @@ for unstopping_profile in opencode pi; do
     "" "$unstopping_key"
 done
 
+# SPOOLED DELIVERY. A refused delivery is a live target that cannot take input
+# yet, and every refusal happens before a keystroke — so the body is still the
+# sender's and can be parked. Nothing in this world polls or schedules: the only
+# thing that drains a spool is a native Stop event, which the world fires by
+# hand exactly as a harness would.
+if nohook_out="$(printf 'MARK_NOHOOK' |
+  "$GANG" send --to alpha --from tester --spool --stdin 2>&1)"; then
+  fail "a harness that announces no turn boundary refuses the spool" \
+    "send accepted --spool"
+else
+  pass "a harness that announces no turn boundary refuses the spool"
+fi
+contains "naming the declaration a drain would need" "$nohook_out" "GANG_STOP_HOOK"
+excludes "and refusing the flag delivers nothing" "$(pane alpha)" "MARK_NOHOOK"
+if super_out="$(printf 'MARK_LONE_SUPERSEDE' |
+  "$GANG" send --to alpha --from tester --supersede --stdin 2>&1)"; then
+  fail "superseding without a spool is refused" "send accepted --supersede alone"
+else
+  pass "superseding without a spool is refused"
+fi
+contains "because there is nothing for it to replace" "$super_out" "without --spool"
+
+cat > "$RUN_ROOT/profiles/spoolable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_STOP_HOOK=1
+SH
+"$GANG" hitch parker -p spoolable -d /tmp >/dev/null
+parker_id="$(window_id parker)"
+parker_pane_id="$(tmux list-panes -t "$parker_id" -F '#{pane_id}')"
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+spool_out="$(printf 'MARK_SPOOLED' |
+  "$GANG" send --to parker --from tester --spool --stdin)"
+contains "a refused delivery is parked rather than lost" "$spool_out" "spooled for parker"
+contains "and says plainly that it was not delivered" "$spool_out" "NOT delivered"
+excludes "nothing was typed into the refusing target" "$(pane parker)" "MARK_SPOOLED"
+contains "status reports what is waiting for that target" \
+  "$("$GANG" status parker)" "spooled: 1"
+contains "roster carries the same count" "$("$GANG" roster)" "spooled=1"
+
+# Two messages from one sender are two messages. Only the sender's explicit
+# flag makes a newer one replace an older, and it replaces only its OWN.
+printf 'MARK_OTHER_SENDER' |
+  "$GANG" send --to parker --from other --spool --stdin >/dev/null
+printf 'MARK_STALE' | "$GANG" send --to parker --from tester --spool --stdin >/dev/null
+contains "a second message from one sender does not replace the first" \
+  "$("$GANG" status parker)" "spooled: 3"
+printf 'MARK_LATEST' |
+  "$GANG" send --to parker --from tester --spool --supersede --stdin >/dev/null
+contains "until the sender says the newer one supersedes them" \
+  "$("$GANG" status parker)" "spooled: 2"
+
+tmux send-keys -t "$parker_id" C-u
+tmux wait-for "gang-spool-drain-$parker_id" &
+parker_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$parker_drain_waiter"
+parker_drained="$(pane parker)"
+contains "the target's own Stop drains what was parked for it" \
+  "$parker_drained" "MARK_LATEST"
+contains "including the message from the other sender" \
+  "$parker_drained" "MARK_OTHER_SENDER"
+contains "each drained message keeps its own sender's attribution" \
+  "$parker_drained" "[gang:other#"
+excludes "a superseded message is never delivered" "$parker_drained" "MARK_STALE"
+excludes "nor the one it superseded" "$parker_drained" "MARK_SPOOLED"
+drain_order="$(printf '%s\n' "$parker_drained" |
+  grep -oE 'MARK_OTHER_SENDER|MARK_LATEST' | awk '!seen[$0]++' | tr '\n' ' ')"
+equal "and the spool drains oldest first" "MARK_OTHER_SENDER MARK_LATEST " \
+  "$drain_order"
+excludes "a drained spool reports nothing waiting" \
+  "$("$GANG" status parker)" "spooled:"
+
+# Everything gang parks has a deletion path, and this is it.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_DIES_WITH_WINDOW' |
+  "$GANG" send --to parker --from tester --spool --stdin >/dev/null
+parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_spool)"
+[ -d "$parker_spool" ] \
+  && pass "a spooled message is on disk beside the delivery locks" \
+  || fail "a spooled message is on disk beside the delivery locks" "$parker_spool is absent"
+"$GANG" drop parker >/dev/null
+[ ! -d "$parker_spool" ] \
+  && pass "dropping an agent deletes its spool" \
+  || fail "dropping an agent deletes its spool" "$parker_spool survived"
+
+# A body that was already typed has an unknown fate, so it is NOT parked: a
+# second copy of a message that may have landed is worse than one that failed
+# loudly. This composer never changes, so the paste is unverifiable.
+cat > "$RUN_ROOT/profiles/unverifiable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_STOP_HOOK=1
+profile_input() { printf ''; }
+SH
+if "$GANG" hitch unverified -p unverifiable -d /tmp >/dev/null 2>&1; then
+  fail "a composer that never changes cannot complete a hitch" "hitch reported success"
+else
+  pass "a composer that never changes cannot complete a hitch"
+fi
+if unverified_out="$(printf 'MARK_UNVERIFIED' |
+  "$GANG" send --to unverified --from tester --spool --stdin 2>&1)"; then
+  fail "an unverified delivery is not spooled" "send reported success"
+else
+  pass "an unverified delivery is not spooled"
+fi
+contains "it failed rather than refused" "$unverified_out" "delivery NOT verified"
+equal "so nothing was parked for a body that may already have landed" "" \
+  "$(tmux show-options -wqv -t "$(window_id unverified)" @gl_spool)"
+"$GANG" drop unverified >/dev/null
+
+# A drain that cannot verify its delivery quarantines that entry out of the
+# glob and says so. It never sends it again on the chance the first attempt
+# missed, and the entries behind it are not lost with it.
+cat > "$RUN_ROOT/profiles/wedging.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_STOP_HOOK=1
+_gl_wedge_real="\$(declare -f profile_input)"
+eval "wedge_real_input \${_gl_wedge_real#profile_input}"
+profile_input() { # the real box, then a draft that refuses, then one that never changes
+  if [ -f "$RUN_ROOT/wedge-block" ]; then printf 'BLOCKING_DRAFT'; return 0; fi
+  if [ -f "$RUN_ROOT/wedge-stuck" ]; then printf ''; return 0; fi
+  wedge_real_input "\$1"
+}
+SH
+"$GANG" hitch wedged -p wedging -d /tmp >/dev/null
+: > "$RUN_ROOT/wedge-block"
+wedged_id="$(window_id wedged)"
+wedged_pane_id="$(tmux list-panes -t "$wedged_id" -F '#{pane_id}')"
+printf 'MARK_WEDGED' | "$GANG" send --to wedged --from tester --spool --stdin >/dev/null
+contains "the blocked message is waiting" "$("$GANG" status wedged)" "spooled: 1"
+rm -f "$RUN_ROOT/wedge-block"
+: > "$RUN_ROOT/wedge-stuck"
+tmux wait-for "gang-spool-drain-$wedged_id" &
+wedged_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$wedged_pane_id" "$GANG" hook >/dev/null
+wait "$wedged_drain_waiter"
+contains "an unverified drain is reported, not swallowed" \
+  "$("$GANG" status wedged)" "spool drain NOT verified"
+contains "roster carries that verdict too" "$("$GANG" roster)" "spool-drain-failed"
+excludes "and the entry is not left where it would be sent a second time" \
+  "$("$GANG" status wedged)" "spooled:"
+wedged_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$wedged_id" @gl_spool)"
+wedged_quarantined=0
+for wedged_entry in "$wedged_spool"/failed-*; do
+  [ -f "$wedged_entry" ] && wedged_quarantined=$((wedged_quarantined + 1))
+done
+equal "the unverified body is kept where a person can read it" "1" \
+  "$wedged_quarantined"
+"$GANG" drop wedged >/dev/null
+
+# One spool is deliberately left alive for the teardown below to account for.
+"$GANG" hitch lingering -p spoolable -d /tmp >/dev/null
+lingering_id="$(window_id lingering)"
+tmux send-keys -l -t "$lingering_id" 'HUMAN_DRAFT'
+printf 'MARK_LINGERS' |
+  "$GANG" send --to lingering --from tester --spool --stdin >/dev/null
+lingering_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lingering_id" @gl_spool)"
+
 # A staged record is state; the box is fresher evidence. Staged input can
 # flush outside gang's sight — an operator's Enter, a queue draining at a
 # turn boundary — and status/roster must not report a paste the empty box
@@ -1156,6 +1324,9 @@ if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
 else
   pass "down removes the exact test session"
 fi
+[ ! -d "$lingering_spool" ] \
+  && pass "and takes the spool of every window in it" \
+  || fail "and takes the spool of every window in it" "$lingering_spool survived"
 
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
 [ "$fails" -eq 0 ]

@@ -82,7 +82,7 @@ gang — drive native CLI agents in tmux
   gang up [name] [hitch flags]
   gang hitch <name> [-p <profile>] [-d <dir>] [-m <model>] [-e <effort>] [--resume]
   gang adopt <name> -p <profile>
-  gang send --to <name> [--from <sender>] --stdin
+  gang send --to <name> [--from <sender>] [--spool [--supersede]] --stdin
   gang flush <name>
   gang interrupt <name>
   gang compact <name>
@@ -154,7 +154,7 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
-  GANG_INTERRUPT_KEY=""
+  GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
   unset -f profile_context profile_input 2>/dev/null || true
@@ -164,6 +164,10 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
   case "$GANG_SELF_COMPACT" in
     ''|deferred) ;;
     *) die "profile '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
+  esac
+  case "$GANG_STOP_HOOK" in
+    ''|1) ;;
+    *) die "profile '$1' sets unknown GANG_STOP_HOOK '$GANG_STOP_HOOK' (expected 1 or unset)" ;;
   esac
   # A key gang sends by NAME, never as literal text: tmux resolves Up, Escape
   # and C-c from this word, and anything outside the key-name alphabet would
@@ -746,6 +750,181 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   trap 'on_exit' EXIT
 }
 
+# THE SPOOL. A refused delivery is a live target that cannot take input YET:
+# every refusal on the delivery path happens before a single keystroke, so
+# nothing was typed and the body is still the sender's. `send --spool` parks
+# that exact nonce-bound envelope beside the delivery locks, and the target's
+# own native Stop event carries it through the same verified path at the next
+# turn boundary.
+#
+# This is not a retry manager: nothing polls, nothing schedules, and nothing
+# watches the target. The only thing that ever drains a spool is a turn
+# boundary the harness itself announces, which is why a profile with no Stop
+# hook refuses the flag at send time rather than accepting a message that would
+# sit there forever.
+#
+# Entries are named by a fixed-width nanosecond stamp, so the glob that reads
+# them is already oldest-first. They live under a token minted into the target's
+# own window options, so a directory nothing points at can never be adopted by a
+# later window that reuses a tmux id, and they die with the window: `drop` and
+# `down` delete them.
+spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
+
+SPOOL_DIR=""
+spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had one
+  local token
+  SPOOL_DIR=""
+  token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
+  [ -n "$token" ] || return 1
+  case "$token" in
+    *[!a-f0-9]*) die "the spool token recorded on pane $1 is '$token', which is not one gang minted — refusing to read or delete a directory it cannot account for" ;;
+  esac
+  SPOOL_DIR="$(spool_root_of)/$token"
+}
+
+spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
+  local base token
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  if ! spool_existing "$1"; then
+    token="$(mint_nonce)"
+    tmux set-option -w -t "$1" @gl_spool "$token" \
+      || die "cannot record the spool token on pane $1 — refusing to park a message in a directory that would have no deletion path"
+    SPOOL_DIR="$base/spool/$token"
+  fi
+  lock_base "$base"
+  lock_base "$base/spool"
+  lock_base "$SPOOL_DIR"
+}
+
+spool_stamp() { # fixed width, so the entry glob reads oldest-first with no sort
+  python3 -c 'import time; print("%020d" % time.time_ns())' 2>/dev/null
+}
+
+spool_count() { # $1 = window id -> how many entries are waiting
+  local e n=0
+  if spool_existing "$1"; then
+    for e in "$SPOOL_DIR"/[0-9]*; do
+      [ -f "$e" ] && n=$((n + 1))
+    done
+  fi
+  printf '%s' "$n"
+}
+
+SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY=""
+spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes on the wire
+  SPOOL_SENDER=""; SPOOL_FRAG=""; SPOOL_BODY=""
+  { read -r SPOOL_SENDER; read -r SPOOL_FRAG; SPOOL_BODY="$(cat)"; } < "$1" \
+    || die "cannot read the spooled message $1 — refusing to guess at a message body"
+  [ -n "$SPOOL_BODY" ] \
+    || die "the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"
+}
+
+spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment, $5 = 1 to supersede
+  local stamp entry tmp e
+  spool_establish "$1"
+  stamp="$(spool_stamp)"
+  case "$stamp" in
+    ''|*[!0-9]*) die "cannot stamp a spool entry — python3 has to run for gang to order a spool oldest-first, and a message it could not then deliver in order will not be parked" ;;
+  esac
+  # Supersession is the sender's explicit choice, never gang's: two messages
+  # from one sender are two messages unless the sender says the newer one
+  # replaces the older.
+  if [ "$5" = 1 ]; then
+    for e in "$SPOOL_DIR"/[0-9]*; do
+      [ -f "$e" ] || continue
+      spool_read "$e"
+      [ "$SPOOL_SENDER" = "$2" ] || continue
+      rm -f -- "$e" || die "cannot supersede the spooled message $e"
+    done
+  fi
+  tmp="$SPOOL_DIR/.writing-$$-$stamp"
+  printf '%s\n%s\n%s\n' "$2" "$4" "$3" > "$tmp" \
+    || die "cannot write a spooled message into $SPOOL_DIR"
+  entry="$SPOOL_DIR/$stamp-$(mint_nonce)"
+  # Committed by rename, so a drain can never read a half-written entry.
+  mv -- "$tmp" "$entry" \
+    || die "cannot commit a spooled message into $SPOOL_DIR"
+}
+
+spool_forget() { # $1 = window id; the spool dies with the window it belongs to
+  spool_existing "$1" || return 0
+  [ ! -d "$SPOOL_DIR" ] \
+    || rm -rf -- "$SPOOL_DIR" \
+    || die "cannot delete the spool directory $SPOOL_DIR"
+  tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
+}
+
+spool_drain() { # $1 = window id; oldest first, each through the verified path
+  local e rc err failed
+  spool_existing "$1" || return 0
+  [ -d "$SPOOL_DIR" ] || return 0
+  for e in "$SPOOL_DIR"/[0-9]*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    rc=0
+    err="$(inject "$1" "$SPOOL_BODY" 2>&1)" || rc=$?
+    case "$rc" in
+      0) rm -f -- "$e" \
+           || die "delivered the spooled '$SPOOL_FRAG' and could not remove $e — refusing to leave behind an entry that would be delivered a second time" ;;
+      3) # Refused, so nothing was typed: the entry stays exactly where it is,
+         # and the next turn boundary is the next attempt. Nothing here waits.
+         printf 'spool drain stopped at %s: %s\n' "$SPOOL_FRAG" "${err##*$'\n'}" >&2
+         return 3 ;;
+      *) # Unverified: the body may or may not have landed, so the entry is
+         # quarantined out of the glob rather than sent again. Gangline never
+         # sends a message a second time on the chance the first never arrived.
+         failed="$SPOOL_DIR/failed-${e##*/}"
+         mv -- "$e" "$failed" || failed="$e"
+         printf "the spooled '%s' was not verified and is quarantined at %s: %s\n" \
+           "$SPOOL_FRAG" "$failed" "${err##*$'\n'}" >&2
+         return 1 ;;
+    esac
+  done
+}
+
+spool_drain_after_stop() { # $1 window id, $2 profile
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  load_profile "$2"
+  require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  wait_ready "$1" "$boot" || ready=$?
+  # A composer that never came back is not a failure here: nothing was typed,
+  # so the spool waits for the next boundary rather than reporting a delivery
+  # problem gang has no evidence of.
+  [ "$ready" -eq 0 ] || return 3
+  spool_drain "$1"
+}
+
+spool_drain_dispatch() { # $1 window id, $2 profile; called only by Stop
+  [ "$(spool_count "$1")" -gt 0 ] || return 0
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_spool_draining 2>/dev/null)" ] || return 0
+  tmux set-option -w -t "$1" @gl_spool_draining 1 2>/dev/null || return 0
+  (
+    trap '' HUP INT TERM
+    local err="" rc=0
+    err="$(spool_drain_after_stop "$1" "$2" 2>&1)" || rc=$?
+    case "$rc" in
+      0) tmux set-option -uw -t "$1" @gl_spool_failed 2>/dev/null || true ;;
+      3) ;;
+      *) err="${err##*$'\n'}"
+         [ -n "$err" ] || err="the spool drain failed"
+         tmux set-option -w -t "$1" @gl_spool_failed "$err" 2>/dev/null || true ;;
+    esac
+    tmux set-option -uw -t "$1" @gl_spool_draining 2>/dev/null || true
+    tmux wait-for -S "gang-spool-drain-$1" 2>/dev/null || true
+  ) </dev/null >/dev/null 2>&1 &
+  disown
+}
+
+spool_stop() { # $1 = the pane a native Stop fired in, $2 = profile
+  local win
+  # The drain delivers, and delivery serializes on the WINDOW's lock. A drain
+  # holding a lock named after the firing pane would not exclude an ordinary
+  # send holding the one named after its window.
+  win="$(tmux display-message -p -t "$1" '#{window_id}' 2>/dev/null)" || return 0
+  [ -n "$win" ] || return 0
+  spool_drain_dispatch "$win" "$2"
+}
+
 composer_settled() { # $1 = window id; nobody is typing into the box right now
   declare -F profile_input >/dev/null || return 0
   local a b
@@ -1258,8 +1437,26 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
+send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothing typed
+  local busy_rc=0
+  # A UI owning the composer is the same condition inject refuses with, and it
+  # carries the same verdict: nothing was typed, the body is still the sender's,
+  # and later is a different answer from never. Where these two disagreed, the
+  # disagreement decided whether --spool parked a message or dropped it.
+  ! occupied "$AGENT_ID" \
+    || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+  busy "$AGENT_ID" || busy_rc=$?
+  case "$busy_rc" in
+    0|2) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+           || refuse "'$1' is not safely reachable mid-turn; wait for it to become idle" ;;
+    1) ;;
+    *) die "internal: busy returned unknown verdict $busy_rc" ;;
+  esac
+  inject "$AGENT_ID" "$ENVELOPE"
+}
+
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" busy_rc=0
+  local name="" from="" use_stdin=0 body="" spool=0 supersede=0 rc=0 err="" frag
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -1267,26 +1464,50 @@ cmd_send() {
     --from) [ $# -ge 2 ] || die "send: --from needs a value"; from="$2"; shift 2 ;;
     --stdin) [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
              use_stdin=1; shift ;;
+    --spool) spool=1; shift ;;
+    --supersede) supersede=1; shift ;;
     *) die "send: unknown argument '$1'" ;;
   esac; done
   [ -n "$name" ] || die "send: target required (--to <name>)"
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
+  [ "$supersede" -eq 0 ] || [ "$spool" -eq 1 ] \
+    || die "send: --supersede replaces an older message in the spool, so it means nothing without --spool"
   send_sender "$from"
   stdin_body "send"
   body="$STDIN_BODY"
   resolve "$name"
-  ! occupied "$AGENT_ID" \
-    || die "'$name' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
-  busy "$AGENT_ID" || busy_rc=$?
-  case "$busy_rc" in
-    0|2) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-           || refuse "'$name' is not safely reachable mid-turn; wait for it to become idle" ;;
-    1) ;;
-    *) die "internal: busy returned unknown verdict $busy_rc" ;;
-  esac
+  if [ "$spool" -eq 1 ]; then
+    # Refused at send time rather than accepted and left to sit: the only thing
+    # that drains a spool is the target's own native Stop event, so a harness
+    # gang hears nothing from would hold this message forever while its sender
+    # believed it was on its way.
+    [ "${GANG_STOP_HOOK:-}" = 1 ] \
+      || die "send: --spool needs a harness whose native Stop event reaches gang, and profile '$AGENT_PROFILE' declares no GANG_STOP_HOOK — nothing would ever drain a message parked for '$name'"
+  fi
   envelope "$SEND_FROM" "$body"
-  inject "$AGENT_ID" "$ENVELOPE"
-  echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+  if [ "$spool" -eq 0 ]; then
+    send_live "$name"
+    echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    return 0
+  fi
+  # Only a REFUSAL is spoolable. Every refusal on this path happens before a
+  # keystroke, so the body is provably still the sender's; a hard failure means
+  # something was already typed and its fate is unknown, and parking that would
+  # queue a second copy of a message that may already have landed.
+  err="$(send_live "$name" 2>&1)" || rc=$?
+  case "$rc" in
+    0) echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+       return 0 ;;
+    3) ;;
+    *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+       exit "$rc" ;;
+  esac
+  frag="${body%%$'\n'*}"
+  [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
+  spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" "$supersede"
+  printf '%s %s\n' \
+    "$(colour "$C_WORK" "spooled for $name as [gang:$SEND_FROM] — NOT delivered")" \
+    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting; the next turn boundary in $name drains them) refused: ${err##*$'\n'}")"
 }
 
 # The recovery gang already diagnoses, performed as a verified operation rather
@@ -1453,7 +1674,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged
+  local state self_failed self_pending staged spooled spool_failed
   resolve "$1"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
@@ -1472,6 +1693,12 @@ cmd_status() {
   # gone, never that the recorded body was retroactively delivered.
   [ -z "$staged" ] \
     || printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+  spooled="$(spool_count "$AGENT_ID")"
+  [ "$spooled" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+  spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
+  [ -z "$spool_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "spool drain NOT verified: $spool_failed")"
 }
 
 cmd_roster() {
@@ -1488,7 +1715,7 @@ EOF
 }
 
 roster_row() { # $1 window, $2 name
-  local prof state detail=""
+  local prof state detail="" spooled
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -1499,6 +1726,10 @@ roster_row() { # $1 window, $2 name
   [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
+  spooled="$(spool_count "$1")"
+  [ "$spooled" -eq 0 ] || detail="$detail spooled=$spooled"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_spool_failed)" ] \
+    || detail="$detail spool-drain-failed"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
 }
@@ -1516,7 +1747,8 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     UserPromptSubmit|PostToolUse) turn_state_write "$TMUX_PANE" open ;;
     Stop) turn_state_write "$TMUX_PANE" closed
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
-          self_compact_dispatch "$TMUX_PANE" "$prof" ;;
+          self_compact_dispatch "$TMUX_PANE" "$prof"
+          spool_stop "$TMUX_PANE" "$prof" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE" ;;
   esac
   case "$event" in
@@ -1555,6 +1787,9 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 cmd_drop() {
   local id
   id="$(win_id "$1")" || die "no agent '$1'"
+  # A spool would outlive its window on disk, which is not a design: this is
+  # its deletion path.
+  spool_forget "$id"
   tmux kill-window -t "$id"
   printf '%s\n' "$(colour "$C_OK" "dropped $1")"
 }
@@ -1562,6 +1797,11 @@ cmd_drop() {
 cmd_down() { # inverse of up: end the whole team's session
   session_live || die "no session '$SESSION' running"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
+  local id
+  while read -r id; do
+    [ -n "$id" ] || continue
+    spool_forget "$id"
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
   tmux kill-session -t "=$SESSION"
 }
 
