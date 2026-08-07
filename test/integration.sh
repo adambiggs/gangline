@@ -767,8 +767,10 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 _gl_drain_real="\$(declare -f profile_input)"
 eval "drain_real_input \${_gl_drain_real#profile_input}"
 profile_input() { # a parked reading per ticket, then the real drained box
-  if [ -s "$RUN_ROOT/drain-tickets" ]; then
-    sed -i '\$d' "$RUN_ROOT/drain-tickets"
+  local n
+  n="\$(cat "$RUN_ROOT/drain-tickets" 2>/dev/null)"
+  if [ "\${n:-0}" -gt 0 ]; then
+    printf '%s' "\$((n - 1))" > "$RUN_ROOT/drain-tickets"
     printf '%s<%s\n' "\${FUNCNAME[1]}" "\${FUNCNAME[2]}" >> "$RUN_ROOT/drain-reads.log"
     printf 'PARKED_OBSTRUCTION'
     return 0
@@ -776,12 +778,12 @@ profile_input() { # a parked reading per ticket, then the real drained box
   drain_real_input "\$1"
 }
 SH
-: > "$RUN_ROOT/drain-tickets"
+printf '0' > "$RUN_ROOT/drain-tickets"
 "$GANG" hitch drain -p drain -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id drain)" @gl_staged \
   "'MARK_OLD' is staged unsent in this box"
 tmux set-option -w -t "$(window_id drain)" @gl_staged_box "BOXMEMO_NOT_MATCHING"
-printf 'x\nx\nx\nx\nx\nx\nx\nx\n' > "$RUN_ROOT/drain-tickets"
+printf '8' > "$RUN_ROOT/drain-tickets"
 if drain_out="$(printf 'MARK_DRAIN' | "$GANG" send --to drain --from tester --stdin 2>&1)"; then
   pass "a delivery whose prior obstruction drained mid-send still verifies"
 else
@@ -895,9 +897,11 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 _gl_vanish_real="\$(declare -f profile_input)"
 eval "vanish_real_input \${_gl_vanish_real#profile_input}"
 profile_input() { # readable per ticket once the vanish flag is set, then not
+  local n
   if [ ! -f "$RUN_ROOT/vanish-flag" ]; then vanish_real_input "\$1"; return; fi
-  if [ -s "$RUN_ROOT/vanish-tickets" ]; then
-    sed -i '\$d' "$RUN_ROOT/vanish-tickets"
+  n="\$(cat "$RUN_ROOT/vanish-tickets" 2>/dev/null)"
+  if [ "\${n:-0}" -gt 0 ]; then
+    printf '%s' "\$((n - 1))" > "$RUN_ROOT/vanish-tickets"
     vanish_real_input "\$1"
     return
   fi
@@ -906,7 +910,7 @@ profile_input() { # readable per ticket once the vanish flag is set, then not
 SH
 "$GANG" hitch vanish -p vanish -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id vanish)" @gl_turn "open $(( $(date +%s) - 400 ))"
-printf 'x\n' > "$RUN_ROOT/vanish-tickets"
+printf '1' > "$RUN_ROOT/vanish-tickets"
 touch "$RUN_ROOT/vanish-flag"
 if vanish_out="$(printf 'MARK_VANISH' | "$GANG" send --to vanish --from tester --stdin 2>&1)"; then
   fail "a box that vanishes before the fall-through's read still refuses" \
