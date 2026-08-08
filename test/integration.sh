@@ -842,9 +842,13 @@ printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
   "$GANG" hitch alpha -c bash -d /tmp >/dev/null
 alpha_id="$(window_id alpha)"
+equal "a hitched first turn writes the raw busy window glyph" \
+  "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "Bash 3.2 can lock and deliver the startup contract" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
+equal "an idle observation writes the raw slack window glyph" \
+  "~alpha~" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "roster lists the hitched collar" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
@@ -2314,6 +2318,8 @@ contains "an unreadable team declaration fails visibly to its agents" \
   "$unavailable_time" "Time lights unavailable"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook >/dev/null
+equal "a Stop hook writes the raw idle window glyph" "~alpha~" \
+  "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 equal "the operator can remove the team curfew" "curfew cleared" \
   "$("$GANG" curfew clear)"
 equal "clearing a curfew restores silence" "no curfew declared" \
@@ -2345,6 +2351,67 @@ alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
 contains "the delivered message is attributed" "$alpha_pane" "[gang:tester#"
 
+"$GANG" hitch inside-target -c bash -d /tmp >/dev/null
+printf 'MARK_INSIDE_SENDER' | TMUX_PANE="$alpha_tmux_pane" \
+  "$GANG" send --to inside-target --stdin >/dev/null
+contains "a sender in a glyphed window is attributed by its bare name" \
+  "$(pane inside-target)" "[gang:alpha#"
+"$GANG" drop inside-target >/dev/null
+
+# Addressing strips one paired glyph and no more. Exercise every wrapper, the
+# minimum three-byte wrapped name, a valid bare name ending in dash, and an
+# unpaired human name that must remain literal.
+strip_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n '-a-' "printf WRAPPER_TARGET; exec bash")"
+for wrapped_name in '-a-' '~a~' '!a!' '?a?'; do
+  tmux rename-window -t "$strip_id" -- "$wrapped_name"
+  contains "bare addressing resolves wrapper $wrapped_name" \
+    "$("$GANG" capture a)" "WRAPPER_TARGET"
+done
+tmux rename-window -t "$strip_id" -- '-foo--'
+contains "paired stripping preserves a bare trailing dash" \
+  "$("$GANG" capture foo-)" "WRAPPER_TARGET"
+tmux rename-window -t "$strip_id" -- '-notes'
+contains "an unpaired leading glyph remains part of the name" \
+  "$("$GANG" capture -notes)" "WRAPPER_TARGET"
+if unpaired_out="$("$GANG" capture notes 2>&1)"; then
+  fail "an unpaired human name is not over-stripped" "resolved as notes"
+else
+  contains "the unpaired-name miss names the requested bare text" \
+    "$unpaired_out" "no window 'notes'"
+fi
+tmux kill-window -t "$strip_id"
+
+residue_plain_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n residue-plain "printf RESIDUE_PLAIN; exec bash")"
+tmux set-option -w -t "$residue_plain_id" @gl_collar bash
+residue_roster="$("$GANG" roster)"
+contains "the unowned collar-residue window reaches roster observation" \
+  "$residue_roster" "residue-plain"
+equal "observation never renames a window Gangline does not own" \
+  "residue-plain" \
+  "$(tmux display-message -p -t "$residue_plain_id" '#{window_name}')"
+tmux kill-window -t "$residue_plain_id"
+
+amb_a_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n '-amb-' "printf AMBIGUOUS_A; exec bash")"
+amb_b_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n '~amb~' "printf AMBIGUOUS_B; exec bash")"
+if ambiguous_status="$("$GANG" status amb 2>&1)"; then
+  fail "two windows with one bare address refuse" "status succeeded"
+else
+  contains "the ambiguity refusal names both raw windows" \
+    "$ambiguous_status" "windows -amb- and ~amb~ both address it"
+  excludes "ambiguity does not act on either window" "$ambiguous_status" "-busy-"
+fi
+"$GANG" notify amb >/dev/null
+printf '%s\n' '{"hook_event_name":"PermissionRequest"}' \
+  | TMUX_PANE="$alpha_tmux_pane" "$GANG" hook \
+    > "$RUN_ROOT/ambiguous-hook.out" 2> "$RUN_ROOT/ambiguous-hook.err"
+equal "an ambiguous notify target keeps the hook byte-silent" "" \
+  "$(<"$RUN_ROOT/ambiguous-hook.err")"
+contains "the silent hook records that the notify target is ambiguous" \
+  "$(tmux show-options -wqv -t "$alpha_id" @gl_stall_failed)" "ambiguous"
 cat > "$RUN_ROOT/collars/occupied-state.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -2358,7 +2425,11 @@ equal "permission occupancy emits the exact snagged state token" \
   "!occupied! (authority unknown)" \
   "$("$GANG" status alpha | head -1)"
 tmux set-option -w -t "$alpha_id" @gl_collar bash
+"$GANG" notify clear >/dev/null
 tmux set-option -uw -t "$alpha_id" @gl_occupied
+tmux set-option -uw -t "$alpha_id" @gl_stall_failed
+tmux kill-window -t "$amb_a_id"
+tmux kill-window -t "$amb_b_id"
 
 if printf 'MARK_GHOST' | "$GANG" send --to ghost --from tester --stdin >/dev/null 2>&1; then
   fail "an unknown target is refused" "send exited successfully"

@@ -767,7 +767,7 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
     [ -z "$claimed" ] \
       || die "send: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity (inspect it with gang whoami)"
     SEND_WINDOW="$self"
-    SEND_FROM="$(tmux display-message -p -t "$self" '#W' 2>/dev/null)" \
+    SEND_FROM="$(agent_name_of "$self")" \
       || die "send: cannot read this Gangline window's identity"
   else
     [ -n "$claimed" ] \
@@ -855,6 +855,16 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty
   fi
 }
 
+bare_name() { # $1 = a window name -> the bare agent name
+  local n="$1" first last
+  [ "${#n}" -ge 3 ] || { printf '%s' "$n"; return; }
+  first="${n:0:1}"; last="${n: -1}"
+  case "$first" in
+    -|'~'|'!'|'?') [ "$first" = "$last" ] && n="${n:1:${#n}-2}" ;;
+  esac
+  printf '%s' "$n"
+}
+
 collar_read() { # $1 window id, optional $2 operator-facing name
   local current legacy name="${2:-}"
   current="$(tmux show-options -wqv -t "$1" @gl_collar 2>/dev/null)" || current=""
@@ -872,15 +882,30 @@ collar_read() { # $1 window id, optional $2 operator-facing name
   printf '%s' "$current"
 }
 
-win_id() { # $1 = agent name -> @id on stdout; nonzero if no window has that name
-  local id name
+win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous
+  local id name bare count=0 match="" raw_a="" raw_b=""
   while read -r id name; do   # `read id name` keeps spaces in the name
-    [ "$name" = "$1" ] && { printf '%s' "$id"; return 0; }
+    bare="$(bare_name "$name")"
+    [ "$bare" = "$1" ] || continue
+    count=$((count + 1))
+    [ "$count" -ne 1 ] || { match="$id"; raw_a="$name"; }
+    [ "$count" -ne 2 ] || raw_b="$name"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W' 2>/dev/null)
-  return 1
+  case "$count" in
+    0) return 1 ;;
+    1) printf '%s' "$match" ;;
+    *) printf "'%s' is ambiguous in session '%s': windows %s and %s both address it. Rename one (tmux rename-window).\n" \
+         "$1" "$SESSION" "$raw_a" "$raw_b" >&2
+       return 2 ;;
+  esac
 }
 
-exists() { win_id "$1" >/dev/null; }
+win_id_missing() { # $1 = win_id status, $2 = not-found message
+  [ "$1" -eq 2 ] && exit 1
+  die "$2"
+}
+
+exists() { win_id "$1" >/dev/null; return $?; }
 
 self_window() { # -> the window id this process is running in; nonzero if not in one
   [ -n "${TMUX_PANE:-}" ] || return 1
@@ -900,7 +925,8 @@ self_name() { # -> this window's agent name; nonzero outside a Gangline window
 AGENT_ID="" AGENT_COLLAR=""
 
 resolve() { # $1 = agent name; sets AGENT_ID + AGENT_COLLAR and loads the collar
-  AGENT_ID="$(win_id "$1")" || die "no agent '$1' (see: gang roster)"
+  local rc=0
+  AGENT_ID="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1' (see: gang roster)"; }
   AGENT_COLLAR="$(collar_read "$AGENT_ID" "$1")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$1' exists but is not a gang agent (gang adopt $1 -c <collar>)"
@@ -1118,7 +1144,10 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 
 agent_name_of() { # $1 = window id; its CLI name on stdout
-  tmux display-message -p -t "$1" '#W' 2>/dev/null || printf 'COULD-NOT-DETERMINE'
+  local name
+  name="$(tmux display-message -p -t "$1" '#W' 2>/dev/null)" \
+    || { printf 'COULD-NOT-DETERMINE'; return; }
+  bare_name "$name"
 }
 
 turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to now
@@ -1974,8 +2003,13 @@ stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
   [ -n "$notify" ] || return 0
   raising_win="$(tmux display-message -p -t "$raising" '#{window_id}' 2>/dev/null)" || raising_win=""
   [ -n "$raising_win" ] || return 0
-  target="$(win_id "$notify")" || {
-    stall_failed_write "$raising_win" "notify target '$notify' does not exist"
+  target="$(win_id "$notify" 2>/dev/null)" || {
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+      stall_failed_write "$raising_win" "notify target '$notify' is ambiguous"
+    else
+      stall_failed_write "$raising_win" "notify target '$notify' does not exist"
+    fi
     return 0
   }
   [ "$target" != "$raising_win" ] || return 0
@@ -2502,10 +2536,17 @@ cmd_hitch() {
       || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
   fi
   load_collar "$prof"
+  if session_live; then
+    id="$(win_id "$name")" || {
+      lookup_rc=$?
+      [ "$lookup_rc" -eq 1 ] || win_id_missing "$lookup_rc" "no agent '$name'"
+      id=""
+    }
+  fi
   if [ "$resume" -eq 1 ]; then
     [ -n "$GANG_RESUME_LAUNCH" ] \
       || die "hitch: collar '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume; inspect the target identity with gang whoami"
-    if session_live && id="$(win_id "$name")"; then
+    if [ -n "$id" ]; then
       registered_identity_guard "$id" "$name" hitch
     elif [ -z "$resume_id" ]; then
       die "hitch: bare --resume for '$name' has no still-existing registered window whose @gl_session_id can be read. Use the exact 'gang hitch $name --resume <session-id>' line printed by gang drop, or inspect a surviving pane with gang whoami"
@@ -2521,7 +2562,7 @@ cmd_hitch() {
     fi
     case "$resume_id" in ''|*[!A-Za-z0-9._:-]*) die "hitch: session id '$resume_id' has characters Gangline will not place in a launch command" ;; esac
     GANG_LAUNCH="${GANG_RESUME_LAUNCH//'{{session_id}}'/$resume_id}"
-  elif session_live && id="$(win_id "$name")"; then
+  elif [ -n "$id" ]; then
     registered_identity_guard "$id" "$name" hitch
     die "agent '$name' already exists"
   fi
@@ -2603,7 +2644,10 @@ cmd_hitch() {
   if [ -n "$lights" ]; then
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
   fi
-  exists "$name" || die "'$name' died at launch (cmd: $GANG_LAUNCH)"
+  exists "$name" || {
+    lookup_rc=$?
+    win_id_missing "$lookup_rc" "'$name' died at launch (cmd: $GANG_LAUNCH)"
+  }
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
@@ -2626,14 +2670,15 @@ cmd_hitch() {
     delivery_err="${delivery_err#gang: }"
     fail "$delivery_rc" "startup contract to '$name' was not delivered: ${delivery_err:-delivery failed without an error}"
   fi
+  glyph_write "$id" "-busy-"
   printf '%s\n' "$(colour "$C_OK" "delivered startup contract to $name")"
 }
 
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
-  local name="lead" id
+  local name="lead" id rc=0
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   cmd_hitch "$name" "$@"
-  id="$(win_id "$name")" || die "up: '$name' vanished between hitch and attach"
+  id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "up: '$name' vanished between hitch and attach"; }
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
   fi
@@ -3066,6 +3111,23 @@ cmd_usage() { # drive and return the harness's own usage UI
   printf '%s\n' "$content"
 }
 
+glyph_write() { # $1 = window id, $2 = state phrase
+  local id="$1" state="$2" glyph="" bare current target
+  case "$state" in
+    -busy-*) glyph=- ;;
+    '~idle~'*) glyph='~' ;;
+    '!occupied!'*) glyph='!' ;;
+    '?unknown?'*) glyph='?' ;;
+    *) return 0 ;;
+  esac
+  bare="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || bare=""
+  [ -n "$bare" ] || return 0
+  current="$(tmux display-message -p -t "$id" '#W' 2>/dev/null)" || return 0
+  target="$glyph$bare$glyph"
+  [ "$current" = "$target" ] && return 0
+  tmux rename-window -t "$id" -- "$target" 2>/dev/null || true
+}
+
 state_now() { # $1 = window id, collar loaded -> the state, in words
   local state busy_rc=0
   if occupied "$1"; then
@@ -3075,6 +3137,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     else
       state="!occupied! (authority unknown)"
     fi
+    glyph_write "$1" "$state"
     printf '%s\n' "$state"
     return 0
   fi
@@ -3085,6 +3148,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     2) state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
+  glyph_write "$1" "$state"
   printf '%s\n' "$state"
 }
 
@@ -3187,7 +3251,7 @@ cmd_roster() {
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
   while read -r id name; do
     [ -n "$id" ] || continue
-    ( roster_row "$id" "$name" "$current" )
+    ( roster_row "$id" "$(bare_name "$name")" "$current" )
   done <<EOF
 $wins
 EOF
@@ -3267,13 +3331,16 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   fi
   case "$event" in
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
-                                  turn_state_write "$TMUX_PANE" open ;;
+                                  turn_state_write "$TMUX_PANE" open
+                                  glyph_write "$TMUX_PANE" "-busy-" ;;
     Stop) turn_state_write "$TMUX_PANE" closed
           stall_clear "$TMUX_PANE"
+          glyph_write "$TMUX_PANE" "~idle~"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$prof"
           spool_stop "$TMUX_PANE" "$prof" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
+                       glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;
     Notification) [ -n "$kind" ] || exit 0
                   ( load_collar "$prof"
@@ -3290,7 +3357,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
 }
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
-  local id name="${1:-}"
+  local id name="${1:-}" rc=0
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help capture
@@ -3298,13 +3365,13 @@ cmd_capture() { # trailing blank pane rows are dead space, not content
       exit 1
     }
   fi
-  id="$(win_id "$name")" || die "no window '$name' in session '$SESSION'"
+  id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION'"; }
   capture "$id" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
 }
 
 cmd_composer() { # what a human actually typed — capture shows the raw pane,
   # where a harness's dim suggested-prompt placeholder is indistinguishable from
-  # a real draft; the profile's reading strips styling, so placeholders vanish
+  # a real draft; the collar's reading strips styling, so placeholders vanish
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -3346,7 +3413,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   ! test_only_collar "$prof" \
     || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
   load_collar "$prof"
-  id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
+  id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
   registered_identity_guard "$id" "$name" adopt "$prof"
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
@@ -3354,12 +3421,13 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" @gl_collar "$prof"
   stamp_binary_id "$id"
   spool_mint "$id"
+  state_now "$id" >/dev/null
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
 }
 
 cmd_drop() {
-  local id stamped
-  id="$(win_id "$1")" || die "no agent '$1'"
+  local id stamped rc=0
+  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1'"; }
   stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
   if [ -n "$stamped" ]; then
     printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$1" "$stamped"
@@ -3375,8 +3443,11 @@ cmd_drop() {
 
 cmd_down() { # inverse of up: end the whole team's session
   session_live || die "no session '$SESSION' running"
-  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$(tmux list-windows -t "=$SESSION" -F '#W' | tr '\n' ' ')")"
-  local id
+  local id raw names=""
+  while IFS= read -r raw; do
+    names="$names$(bare_name "$raw") "
+  done < <(tmux list-windows -t "=$SESSION" -F '#W')
+  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
     spool_forget "$id"
