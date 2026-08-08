@@ -120,7 +120,9 @@ tmux-owned state and spool die with it.
 
 Kills the exact team session and every window in it, deleting each window's
 pending spool first. The session name is required and must match the team this
-shell is pointed at; `down` refuses a name that does not match.
+shell is pointed at; `down` refuses a name that does not match, and refuses
+outright when it is run from a pane inside that session. There is no override:
+an agent must not be able to end the team it is running in.
 
 ## Delivery and compaction
 

@@ -561,6 +561,8 @@ gang down
   End the whole team.
 
   gang down <session>
+
+  Refused from inside the session.
 EOF
       ;;
     collars|profiles) cat <<'EOF'
@@ -3609,11 +3611,18 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw names=""
+  local named="${1:-}" id raw names="" self=""
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
   session_live || die "no session '$SESSION' running"
+  if self="$(self_window)"; then
+    refuse "down: this pane is agent '$(agent_name_of "$self")' inside '$SESSION' — a window cannot end the session it is running in, and Gangline offers no override for it. Detach (prefix-d, or run this from a shell outside tmux) and end the team from there"
+  fi
+  if [ -z "${TMUX_PANE:-}" ] && [ -n "${TMUX:-}" ] \
+     && [ "${TMUX%%,*}" = "$(tmux display-message -p '#{socket_path}' 2>/dev/null)" ]; then
+    refuse "down: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether it is running inside the team it would end. Run it from a shell outside tmux"
+  fi
   while IFS= read -r raw; do
     names="$names$(bare_name "$raw") "
   done < <(tmux list-windows -t "=$SESSION" -F '#W')

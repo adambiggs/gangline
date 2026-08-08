@@ -4880,10 +4880,30 @@ if tmux has-session -t "=$teardown_session" 2>/dev/null; then
 else
   fail "and the mismatched session is still running" "session is gone"
 fi
+teardown_pane="$(tmux list-panes -t "=$teardown_session" -F '#{pane_id}' | head -1)"
+refuses "an agent cannot end the session it is running in" \
+  "cannot end the session it is running in" \
+  env GANG_SESSION="$teardown_session" TMUX_PANE="$teardown_pane" \
+  "$GANG" down "$teardown_session"
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  pass "and the session its agent could not end is still running"
+else
+  fail "and the session its agent could not end is still running" "session is gone"
+fi
+teardown_socket="$(tmux display-message -p '#{socket_path}')"
+refuses "a scrubbed pane cannot end a session on its own server" \
+  "cannot tell whether it is running inside the team" \
+  env -u TMUX_PANE GANG_SESSION="$teardown_session" \
+  TMUX="$teardown_socket,1,0" "$GANG" down "$teardown_session"
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  pass "and the scrubbed pane left the session running"
+else
+  fail "and the scrubbed pane left the session running" "session is gone"
+fi
 refuses "gang down refuses a second argument" \
   "down: unexpected argument 'extra'" \
   env GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session" extra
-env GANG_SESSION="$teardown_session" TMUX="/nonexistent-socket,1,0" \
+env -u TMUX -u TMUX_PANE GANG_SESSION="$teardown_session" \
   "$GANG" down "$teardown_session" >/dev/null
 if tmux has-session -t "=$teardown_session" 2>/dev/null; then
   fail "a named teardown from outside the session still ends it" \
@@ -4891,6 +4911,20 @@ if tmux has-session -t "=$teardown_session" 2>/dev/null; then
 else
   pass "a named teardown from outside the session still ends it"
 fi
+tmux new-session -d -s "$teardown_session" -n bystander \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+observer_session="${teardown_session}-obs"
+tmux new-session -d -s "$observer_session" -n observer \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+observer_pane="$(tmux list-panes -t "=$observer_session" -F '#{pane_id}' | head -1)"
+env GANG_SESSION="$teardown_session" TMUX="$teardown_socket,1,0" \
+  TMUX_PANE="$observer_pane" "$GANG" down "$teardown_session" >/dev/null
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  fail "a pane in another session can end the named team" "session still exists"
+else
+  pass "a pane in another session can end the named team"
+fi
+tmux kill-session -t "=$observer_session"
 
 "$GANG" down "$GANG_SESSION" >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
