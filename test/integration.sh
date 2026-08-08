@@ -519,6 +519,10 @@ contains "Codex resume declares an explicit native session slot" \
 excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
 
 claude_collar="$ROOT/collars/claude-code.sh"
+claude_role_prompt_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_ROLE_PROMPT_OPT:-}"' fixture "$claude_collar")"
+equal "Claude declares the system-prompt option used for role briefs" \
+  "--append-system-prompt" "$claude_role_prompt_opt"
 claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_collar")"
 excludes "disabled lights do not paint Claude context output" \

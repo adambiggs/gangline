@@ -619,17 +619,18 @@ EOF
 }
 
 role_status() { # $1 path, $2 basename stem; populate ROLE_STATUS and PROSE
-  local file="$1" name="$2"
+  local file="$1" name="$2" display
   if ! valid_role_name "$name"; then
     ROLE_STATUS="role name must use only letters, digits, dot, dash and underscore, and must not start with dash or dot"
     return 1
   fi
-  if ! prose_check "$file" "role brief"; then
+  display="$(config_path "$file" | config_sanitize)"
+  if ! prose_check "$file" "role brief" "$display"; then
     ROLE_STATUS="$PROSE_ERROR"
     return 1
   fi
   if [ ! -s "$file" ]; then
-    ROLE_STATUS="role brief $file is empty"
+    ROLE_STATUS="role brief $display is empty"
     return 1
   fi
   ROLE_STATUS=ok
@@ -638,7 +639,7 @@ role_status() { # $1 path, $2 basename stem; populate ROLE_STATUS and PROSE
 role_rows_in() { # $1 directory, $2 operator|shipped; print resolved rows
   local dir="$1" origin_kind="$2" file base name winning origin status
   [ -d "$dir" ] || return 0
-  for file in "$dir"/*.md; do
+  for file in "$dir"/*.md "$dir"/.*.md; do
     [ -e "$file" ] || [ -L "$file" ] || continue
     base="${file##*/}"
     name="${base%.md}"
@@ -904,54 +905,54 @@ send_identity_guard() { # a pane with a contradicted native identity may not spe
 }
 
 PROSE="" PROSE_ERROR=""
-prose_check() { # $1 path, $2 label; populate PROSE byte-exact or PROSE_ERROR
-  local file="$1" label="$2" bytes without_nul marked sentinel=$'\034' probe rc
+prose_check() { # $1 path, $2 label, optional display path; populate PROSE or PROSE_ERROR
+  local file="$1" label="$2" display="${3:-$1}" bytes without_nul marked sentinel=$'\034' probe rc
   PROSE="" PROSE_ERROR=""
   if ! { [ -f "$file" ] && [ -r "$file" ]; }; then
-    PROSE_ERROR="$label $file exists but is not a readable regular file"
+    PROSE_ERROR="$label $display exists but is not a readable regular file"
     return 1
   fi
   bytes="$(wc -c < "$file")" || {
-    PROSE_ERROR="cannot read $label $file"
+    PROSE_ERROR="cannot read $label $display"
     return 1
   }
   without_nul="$(LC_ALL=C tr -d '\000' < "$file" | wc -c)" || {
-    PROSE_ERROR="cannot read $label $file"
+    PROSE_ERROR="cannot read $label $display"
     return 1
   }
   if [ "$bytes" != "$without_nul" ]; then
-    PROSE_ERROR="$label $file contains a NUL byte"
+    PROSE_ERROR="$label $display contains a NUL byte"
     return 1
   fi
   marked="$(cat "$file" || { rc=$?; exit "$rc"; }; printf '\034')" || {
-    PROSE_ERROR="cannot read $label $file"
+    PROSE_ERROR="cannot read $label $display"
     return 1
   }
   case "$marked" in
     *"$sentinel") PROSE="${marked%"$sentinel"}" ;;
-    *) PROSE_ERROR="internal: the prose sentinel was lost while reading $file"; return 1 ;;
+    *) PROSE_ERROR="internal: the prose sentinel was lost while reading $display"; return 1 ;;
   esac
   probe="$(printf '%s' "$PROSE" | tr -d '\11\12')"
   case "$probe" in
     *[[:cntrl:]]*)
-      PROSE_ERROR="$label $file contains control characters other than tab and newline"
+      PROSE_ERROR="$label $display contains control characters other than tab and newline"
       return 1
       ;;
   esac
   if ! python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file"; then
-    PROSE_ERROR="$label $file is not valid UTF-8"
+    PROSE_ERROR="$label $display is not valid UTF-8"
     return 1
   fi
   # This catches a document-tree, log, or binary put in a prose slot. It is a
   # category-error guard, not a bound on what a target composer can render.
   if [ "$bytes" -gt 8192 ]; then
-    PROSE_ERROR="$label $file exceeds the 8192-byte category-error ceiling"
+    PROSE_ERROR="$label $display exceeds the 8192-byte category-error ceiling"
     return 1
   fi
 }
 
-prose_read() { # $1 path, $2 label; populate PROSE or fail with its exact defect
-  prose_check "$1" "$2" || die "$PROSE_ERROR"
+prose_read() { # $1 path, $2 label, optional display path; populate PROSE or fail
+  prose_check "$1" "$2" "${3:-$1}" || die "$PROSE_ERROR"
 }
 
 DOCTRINE=""
@@ -2648,7 +2649,7 @@ effort_levels() { # print the levels the collar says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" role="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -2688,8 +2689,9 @@ cmd_hitch() {
       || die "hitch: role '$role' is not usable — use only letters, digits, dot, dash and underscore; do not start with dash or dot"
     ROLE_FILE="$(role_file "$role")" \
       || die "hitch: no role '$role' (usable roles: $(list_usable_roles | tr '\n' ' '))"
-    prose_read "$ROLE_FILE" "role brief"
-    [ -s "$ROLE_FILE" ] || die "role brief $ROLE_FILE is empty"
+    role_path="$(config_path "$ROLE_FILE" | config_sanitize)"
+    prose_read "$ROLE_FILE" "role brief" "$role_path"
+    [ -s "$ROLE_FILE" ] || die "role brief $role_path is empty"
     ROLE_NAME="$role"
     ROLE_BODY="$PROSE"
     [ -z "$GANG_ROLE_PROMPT_OPT" ] || ROLE_SYSTEM=1

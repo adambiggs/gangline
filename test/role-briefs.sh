@@ -82,7 +82,7 @@ tmux set-option -g default-size 200x100
 tmux resize-window -t '=role-grid-fixture:grid' -x 200 -y 100
 
 ac1() {
-  GANG_CONFIG_DIR="$TEST_ROOT/ac1-config" "$GANG" hitch role-ac1 -c bash -d /tmp --role lead >/dev/null 2>&1 || true
+  GANG_CONFIG_DIR="$TEST_ROOT/ac1-config" "$GANG" hitch role-ac1 -c bash -d /tmp -r lead >/dev/null 2>&1 || true
   contains "AC1 message-level pane contract carries the role body" "$(pane_all role-ac1)" "Your product is a team that finished the"
   drop_agent role-ac1
 }
@@ -336,7 +336,7 @@ SH
   cat > "$root/collars/state.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$PRODUCT_ROOT/collars/bash.sh"
+. "$TEST_ROOT/collars/bash.sh"
 GANG_LAUNCH="python3 '$TEST_ROOT/argv-witness.py' '$root/state-argv' state"
 GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 GANG_SESSION_KEY=1
@@ -403,29 +403,39 @@ ac17() {
   printf 'OPERATOR_LEAD\n' > "$config/roles/lead.md"
   awk 'BEGIN { for (i=0; i<8193; i++) printf "x" }' > "$config/roles/shadow.md"
   printf 'INVALID_NAME\n' > "$config/roles/bad:name.md"
+  printf 'INVALID_HIDDEN_NAME\n' > "$config/roles/.hidden.md"
+  printf 'HITCH_ROLE_BODY\n' > "$config/roles/hitch.md"
   out="$(GANG_CONFIG_DIR="$config" "$tree/bin/gang" roles)"
   equal "AC17 operator override appears once" 1 "$(printf '%s\n' "$out" | awk -F '\t' '$1=="lead" {n++} END {print n+0}')"
   contains "AC17 operator origin is reported" "$out" "$config/roles/lead.md"
   contains "AC17 invalid shadow winner is reported" "$out" $'shadow\t'
   contains "AC17 shadow defect is reported" "$out" "exceeds the 8192-byte category-error ceiling"
   contains "AC17 invalid basename is not hidden" "$out" "bad:name"
+  contains "AC17 leading-dot basename is not hidden" "$out" ".hidden"
   contains "AC17 basename status names the law" "$out" "role name must use only"
+  contains "AC17 identity-reserved word is a usable role" "$out" $'hitch\t'"$config/roles/hitch.md"$'\tok'
   refusal="$(GANG_CONFIG_DIR="$config" GANG_TEST_COLLARS=1 "$tree/bin/gang" hitch role-ac17 -c bash -d /tmp --role shadow 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] && pass "AC17 unusable override refuses" || fail "AC17 unusable override refuses" "$refusal"
   advertised="$(GANG_CONFIG_DIR="$config" GANG_TEST_COLLARS=1 "$tree/bin/gang" hitch role-ac17-miss -c bash -d /tmp --role absent 2>&1 || true)"
   advertised="${advertised##*usable roles: }"
   excludes "AC17 invalid winner is not advertised" "$advertised" "shadow"
   excludes "AC17 invalid basename is not advertised" "$advertised" "bad:name"
+  excludes "AC17 leading-dot basename is not advertised" "$advertised" ".hidden"
+  GANG_CONFIG_DIR="$config" GANG_TEST_COLLARS=1 "$tree/bin/gang" hitch role-ac17-hitch -c bash -d /tmp --role hitch >/dev/null
+  contains "AC17 identity-reserved role attaches" "$(pane_all role-ac17-hitch)" "HITCH_ROLE_BODY"
+  drop_agent role-ac17-hitch
 }
 
 ac18() {
-  local config="$TEST_ROOT/hostile-A"$'\t'"B"$'\n'"C"$'\033'"D" out report msg system prefix="$TEST_ROOT/ac18-argv"
+  local config="$TEST_ROOT/hostile-A"$'\t'"B"$'\n'"C"$'\033'"D" out report msg system refusal rc prefix="$TEST_ROOT/ac18-argv"
   mkdir -p "$config/roles"
   printf 'INVALID_HOSTILE\n' > "$config/roles/bad"$'\t'"name"$'\n'"part"$'\033'"tail.md"
   printf 'SAFE_BODY\n' > "$config/roles/safe.md"
+  : > "$config/roles/empty.md"
+  printf 'before\rafter' > "$config/roles/control.md"
   out="$(GANG_CONFIG_DIR="$config" "$GANG" roles)"
-  equal "AC18 listing keeps one row per discovered role" 3 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
-  equal "AC18 rows keep three fields" 3 "$(printf '%s\n' "$out" | awk -F '\t' 'NF==3 {n++} END {print n+0}')"
+  equal "AC18 listing keeps one row per discovered role" 5 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  equal "AC18 rows keep three fields" 5 "$(printf '%s\n' "$out" | awk -F '\t' 'NF==3 {n++} END {print n+0}')"
   excludes "AC18 listing removes hostile tab sequence" "$out" $'hostile-A\tB'
   excludes "AC18 listing removes hostile newline sequence" "$out" $'B\nC'
   excludes "AC18 listing removes hostile escape sequence" "$out" $'C\033D'
@@ -441,6 +451,16 @@ ac18() {
   contains "AC18 system attribution is sanitized" "$system" "hostile-A B?C?D/roles/safe.md"
   excludes "AC18 system attribution removes escape" "$system" $'C\033D'
   drop_agent role-ac18-system
+  rc=0
+  refusal="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac18-empty -c bash -d /tmp --role empty 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC18 empty role still refuses" || fail "AC18 empty role still refuses" "$refusal"
+  contains "AC18 empty-role refusal sanitizes its path" "$refusal" "hostile-A B?C?D/roles/empty.md is empty"
+  excludes "AC18 empty-role refusal removes path escape" "$refusal" $'C\033D'
+  rc=0
+  refusal="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac18-control -c bash -d /tmp --role control 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC18 invalid role still refuses" || fail "AC18 invalid role still refuses" "$refusal"
+  contains "AC18 prose refusal sanitizes its path" "$refusal" "hostile-A B?C?D/roles/control.md contains control characters"
+  excludes "AC18 prose refusal removes path escape" "$refusal" $'C\033D'
 }
 
 ac19() {
