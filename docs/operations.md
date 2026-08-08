@@ -110,8 +110,9 @@ verified, or when the drain died between submitting it and retiring it. Either
 way its fate is unknown, so Gangline stops acting on it: the body stays readable
 under `GANG_LOCK_DIR`, and it is never sent again. A harness may have accepted
 it into an internal queue and drained that queue later, so read the target before
-re-sending it by hand.
-Spools die with their window, so `gang drop` and `gang down` remove them.
+re-sending it by hand. Spools die with their window: `gang drop` and `gang down`
+archive any waiting or held entries under `GANG_ARCHIVE_DIR`, then forget the
+spool.
 
 For a harness whose native Stop event does not reach Gangline, an ordinary send
 still tries live delivery. A refusal is not parked, and names the missing
@@ -266,7 +267,7 @@ Use an explicitly named, disposable session:
 ```sh
 GANG_SESSION=gangline-smoke-codex gang hitch probe -c codex -d "$PWD"
 GANG_SESSION=gangline-smoke-codex gang capture probe
-GANG_SESSION=gangline-smoke-codex gang down
+GANG_SESSION=gangline-smoke-codex gang down gangline-smoke-codex
 ```
 
 Drive only the native behavior under test, inspect the pane and tmux options, and
