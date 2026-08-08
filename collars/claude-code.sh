@@ -27,6 +27,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 GANG_MODEL_OPT="--model"
+GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 # AWAITING INPUT IS THE HARNESS'S OWN WORD. Observed on claude-code 2.1.224:
 # the Notification hook matches on notification_type, whose complete value set
 # is permission_prompt, idle_prompt, auth_success, elicitation_dialog,
