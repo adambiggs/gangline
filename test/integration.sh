@@ -846,7 +846,7 @@ equal "a hitched first turn writes the raw busy window glyph" \
   "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "Bash 3.2 can lock and deliver the startup contract" \
   "$(pane alpha)" "You are alpha in Gangline"
-contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
+contains "hitch creates an observable idle agent" "$($GANG status alpha)" "~idle~"
 equal "an idle observation writes the raw slack window glyph" \
   "~alpha~" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "roster lists the hitched collar" "$($GANG roster)" "alpha"
@@ -857,7 +857,7 @@ alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
 contains "whoami prints the collar field under its 1.0 name" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" whoami)" "collar: bash"
 contains "bare status targets the calling agent window" \
-  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "idle"
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "~idle~"
 contains "bare capture targets the calling agent window" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" capture)" \
   "You are alpha in Gangline"
@@ -985,7 +985,7 @@ equal "the migrated old window option is removed" "" \
   "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
 tmux set-option -w -t "$legacy_option_id" @gl_profile bash
 contains "equal old and new window options resolve normally" \
-  "$("$GANG" status legacy-option)" "busy"
+  "$("$GANG" status legacy-option)" "-busy-"
 tmux set-option -w -t "$legacy_option_id" @gl_profile codex
 refuses "unequal old and new window options refuse without guessing" \
   "carries @gl_collar 'bash' and @gl_profile 'codex'" \
