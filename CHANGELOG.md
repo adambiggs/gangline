@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.8.0](https://github.com/adambiggs/gangline/compare/gangline-v0.7.0...gangline-v0.8.0) (2026-08-08)
+
+
+### Features
+
+* **identity:** bind panes to native sessions ([4b35387](https://github.com/adambiggs/gangline/commit/4b35387b200fcde1ce94f6d164e209237d8b97eb))
+
+
+### Bug Fixes
+
+* **identity:** close review round one gaps ([243cb6e](https://github.com/adambiggs/gangline/commit/243cb6e64bd19a5905610152ee84093533e8c525))
+* **lock:** support the macOS Bash 3.2 cell ([7603984](https://github.com/adambiggs/gangline/commit/7603984e05c9ccfb194ca7ed5bb9b26ea4b5ccaa))
+* **security:** close repository gate bypasses ([db3cff7](https://github.com/adambiggs/gangline/commit/db3cff7e4f903782d67a1e18dcf7ba20fb6f2f92))
+
 ## [0.7.0](https://github.com/adambiggs/gangline/compare/gangline-v0.6.0...gangline-v0.7.0) (2026-08-08)
 
 
