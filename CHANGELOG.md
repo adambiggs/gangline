@@ -1,5 +1,38 @@
 # Changelog
 
+## [0.7.0](https://github.com/adambiggs/gangline/compare/gangline-v0.6.0...gangline-v0.7.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **send:** a refused send to a drainable target now exits 0 as parked; pass --live-only for the old refusal behavior. --spool is deprecated and accepted as an announced no-op.
+
+### Features
+
+* **config:** load strict user configuration ([89cc406](https://github.com/adambiggs/gangline/commit/89cc4069de7f7e2ebcaa71a10635b696425263ab))
+* **config:** report effective configuration ([d895228](https://github.com/adambiggs/gangline/commit/d89522886c83faa0e59cb9b0a477140b85490539))
+* **gang:** default a bare command to the window it runs in ([9b21da0](https://github.com/adambiggs/gangline/commit/9b21da0f68b4b61b3b3e7a5c6c464d72e501874a))
+* **gang:** expose the context computation as an on-demand query ([02aa06d](https://github.com/adambiggs/gangline/commit/02aa06de10abd15ec33069c4353116a7a07dbaab))
+* **gang:** make help legible at phone-SSH widths ([a78eba0](https://github.com/adambiggs/gangline/commit/a78eba0129999a310b9950a4897f353ca176aabf))
+* **gang:** report a harness's own usage page without attaching ([80b6dea](https://github.com/adambiggs/gangline/commit/80b6dea5ba7fe5f40233faa6293112afbc19be6d))
+* **hitch:** add marathon startup rule ([132bfd6](https://github.com/adambiggs/gangline/commit/132bfd60f3732ff72be169143bb8c1c7e6212c98))
+* **hitch:** inject operator doctrine ([9dee928](https://github.com/adambiggs/gangline/commit/9dee928cacd6c29e192f702a52fb05f0af28b547))
+* **hitch:** require deliberate model choices ([ffc85b7](https://github.com/adambiggs/gangline/commit/ffc85b7da0c0c9add4f4d5ec6c69f69d925b77bc))
+* **hitch:** state the complement of envelope attribution ([8cc9aef](https://github.com/adambiggs/gangline/commit/8cc9aef1e641e0e91da25da58b0ca40e26a2b8ec))
+* **hook:** forward native awaiting-input events as stall notes ([583a68b](https://github.com/adambiggs/gangline/commit/583a68b0c9bd9cfdcd0996f07d78bd44e023be88))
+* merge lead ergonomics ([96982ca](https://github.com/adambiggs/gangline/commit/96982ca67afd6869e6115a3635b26124db47f9ac))
+* **profiles:** wire the claude-code Notification hook ([4bdd2d6](https://github.com/adambiggs/gangline/commit/4bdd2d6502fec024f17e8a4fa2189ed50e33b961))
+* **send:** park a refused message by default ([38ecdc7](https://github.com/adambiggs/gangline/commit/38ecdc71fa6c8d55e023d6c3f207aad8b413f54c))
+
+
+### Bug Fixes
+
+* **claude-code:** defer hooked self-compaction ([00407f8](https://github.com/adambiggs/gangline/commit/00407f805d569a073a16bf61e2a4179f940f7b63))
+* **githooks:** delegate to the host-global gate ([ce2e587](https://github.com/adambiggs/gangline/commit/ce2e58708a0fafc09cdf550ec97e676ddb7d6b3f))
+* **githooks:** lint the pushed commit in a worktree, not a git-less export ([6e6c4c9](https://github.com/adambiggs/gangline/commit/6e6c4c925e3de397df2915d4331398ba3fe1bdff))
+* **hitch:** preserve startup delivery refusals ([3e33fbe](https://github.com/adambiggs/gangline/commit/3e33fbee6e571dead64040aeb70e06d8b515807e))
+* **hook:** preserve universal turn boundaries ([985cfcd](https://github.com/adambiggs/gangline/commit/985cfcd928b1ba3b881fbd7a0b2b582a40103477))
+
 ## [0.6.0](https://github.com/adambiggs/gangline/compare/gangline-v0.5.0...gangline-v0.6.0) (2026-08-07)
 
 
