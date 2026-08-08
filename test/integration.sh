@@ -152,6 +152,10 @@ contains "gang collars help prints the new synopsis" \
   "$("$GANG" collars --help)" "gang collars"
 contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
+refuses "gang attach refuses a stray argument" \
+  "attach: takes no arguments" "$GANG" attach stray
+refuses "gang collars refuses a stray argument" \
+  "collars: takes no arguments" "$GANG" collars stray
 equal "every dispatched operator command has a bare classification" \
   "$dispatch_commands" "$classified_commands"
 help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"

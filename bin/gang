@@ -3452,9 +3452,15 @@ cmd_down() { # inverse of up: end the whole team's session
   tmux kill-session -t "=$SESSION"
 }
 
-cmd_attach() { exec tmux attach -t "=$SESSION"; }
+cmd_attach() {
+  [ $# -eq 0 ] || die "attach: takes no arguments"
+  exec tmux attach -t "=$SESSION"
+}
 
-cmd_collars() { list_collars; }
+cmd_collars() {
+  [ $# -eq 0 ] || die "collars: takes no arguments"
+  list_collars
+}
 
 config_sanitize() { # stdin -> terminal-safe, single-line text
   LC_ALL=C tr '\000-\010\012-\037\177' '?' | tr '\011' ' '
@@ -3551,10 +3557,10 @@ case "$cmd" in
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;
   roster)   cmd_roster ;;
-  attach)   cmd_attach ;;
+  attach)   cmd_attach "$@" ;;
   drop)     cmd_drop "$1" ;;
   down)     cmd_down ;;
-  collars|profiles) cmd_collars ;;
+  collars|profiles) cmd_collars "$@" ;;
   config)   cmd_config "$@" ;;
   -h|--help|help) cmd_help "${1:-}" ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
