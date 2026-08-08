@@ -15,9 +15,9 @@ If it resolves into this checkout, every save changes the executable used by
 attached agents immediately. There is no daemon or build step. Keep the script
 parseable and make small green checkpoints.
 
-Collars are read at hitch time. Existing agents retain the copy already in their
-context. Model selection is also a launch choice: drop the old window and hitch
-a new one to change it.
+Collars and role briefs are read at hitch time. Existing agents retain the copy
+already in their context. Model selection is also a launch choice: drop the old
+window and hitch a new one to change it.
 
 ## Preserve guards
 
@@ -32,8 +32,9 @@ before asserting state.
 ## Keep the agent surface small
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
-observation, collars, native hooks, native compaction, and optional yellow/red
-context and team-time lights. It does not coordinate work or supervise agents.
+observation, collars, shipped prose in `roles/`, native hooks, native compaction,
+and optional yellow/red context and team-time lights. It does not coordinate
+work or supervise agents.
 
 - Harness-specific knowledge belongs in `collars/`, not harness-name branches
   in `bin/gang`.
