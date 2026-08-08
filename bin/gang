@@ -1276,7 +1276,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # could-not-determine
   # would be this agent's permanent verdict. It is not undeterminable: the tiers
   # under the expired event positively witness readiness, which is what
-  # `idle (slack tug)` means everywhere else. Decay needs all of them — the
+  # `~idle~` means everywhere else. Decay needs all of them — the
   # bracket readable, open, and past its bound (TURN_ABANDONED: an unreadable
   # or future-stamped one is unknown, not abandoned), nothing painting a turn,
   # the pty past its quiet window
@@ -3066,31 +3066,33 @@ cmd_usage() { # drive and return the harness's own usage UI
   printf '%s\n' "$content"
 }
 
-state_now() { # $1 = window id, profile loaded -> the state, in words
+state_now() { # $1 = window id, collar loaded -> the state, in words
+  local state busy_rc=0
   if occupied "$1"; then
     activity_hold_clear "$1"
     if dialog_find "$1"; then
-      echo "occupied (known transient: $DIALOG_MATCH_ID)"
+      state="!occupied! (known transient: $DIALOG_MATCH_ID)"
     else
-      echo "occupied (authority unknown)"
+      state="!occupied! (authority unknown)"
     fi
-    return
+    printf '%s\n' "$state"
+    return 0
   fi
-  local busy_rc=0
   busy "$1" "${2:-}" || busy_rc=$?
   case "$busy_rc" in
-    0) echo "busy (tight tug)" ;;
-    1) echo "idle (slack tug)" ;;
-    2) echo "expired ($BUSY_EXPIRED_WHAT)" ;;
+    0) state="-busy-" ;;
+    1) state="~idle~" ;;
+    2) state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
+  printf '%s\n' "$state"
 }
 
 paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
-    occupied*) colour "$C_BAD"  "$1" ;;
-    expired*) colour "$C_BAD" "$1" ;;
-    busy*)  colour "$C_WORK" "$1" ;;
+    '!occupied!'*) colour "$C_BAD" "$1" ;;
+    '?unknown?'*) colour "$C_BAD" "$1" ;;
+    '-busy-'*) colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
   esac
 }

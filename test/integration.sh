@@ -1736,7 +1736,7 @@ dialog_start dialog-status known dialog
 status_dialog_before="$(pane dialog-status)"
 contains "status names a known transient without answering it" \
   "$("$GANG" status dialog-status)" \
-  "occupied (known transient: safety-buffering-prompt)"
+  "!occupied! (known transient: safety-buffering-prompt)"
 equal "status is read-only even for a recognized dialog" \
   "$status_dialog_before" "$(pane dialog-status)"
 equal "status presses no dialog key" "" "$(<"$RUN_ROOT/dialog-status.keys")"
@@ -2344,6 +2344,21 @@ printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
 contains "the delivered message is attributed" "$alpha_pane" "[gang:tester#"
+
+cat > "$RUN_ROOT/collars/occupied-state.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_input() { return 1; }
+SH
+tmux set-option -w -t "$alpha_id" @gl_collar occupied-state
+printf '%s\n' '{"hook_event_name":"PermissionRequest"}' \
+  | TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null 2>&1
+equal "permission occupancy emits the exact snagged state token" \
+  "!occupied! (authority unknown)" \
+  "$("$GANG" status alpha | head -1)"
+tmux set-option -w -t "$alpha_id" @gl_collar bash
+tmux set-option -uw -t "$alpha_id" @gl_occupied
 
 if printf 'MARK_GHOST' | "$GANG" send --to ghost --from tester --stdin >/dev/null 2>&1; then
   fail "an unknown target is refused" "send exited successfully"
@@ -2962,7 +2977,7 @@ SH
 stop_id="$(window_id stoppable)"
 tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
 contains "an open turn bracket answers busy" \
-  "$("$GANG" status stoppable)" "busy (tight tug)"
+  "$("$GANG" status stoppable)" "-busy-"
 contains "interrupt reports the key it sent" \
   "$("$GANG" interrupt stoppable)" "C-g"
 # Ordering barrier, not a wait on the thing under test: the pane consumes its
@@ -2985,7 +3000,7 @@ contains "and the declared key actually reached the pane" \
 equal "an interrupt drops the bracket nothing else will close" "" \
   "$(tmux show-options -wqv -t "$stop_id" @gl_turn)"
 contains "so the keystroke cannot strand a false busy" \
-  "$("$GANG" status stoppable)" "idle (slack tug)"
+  "$("$GANG" status stoppable)" "~idle~"
 "$GANG" drop stoppable >/dev/null
 
 # AND IT MUST NOT MANUFACTURE THE OPPOSITE LIE. Gang saw a keystroke leave; it
@@ -3003,9 +3018,9 @@ equal "the bracket is dropped there too" "" \
   "$(tmux show-options -wqv -t "$stubborn_id" @gl_turn)"
 stubborn_state="$("$GANG" status stubborn)"
 contains "a target still painting work stays busy after the interrupt" \
-  "$stubborn_state" "busy (tight tug)"
+  "$stubborn_state" "-busy-"
 excludes "the interrupt never invents an idle the pane contradicts" \
-  "$stubborn_state" "idle (slack tug)"
+  "$stubborn_state" "~idle~"
 if midturn_out="$(printf 'MARK_MIDTURN' |
   "$GANG" send --to stubborn --from tester --stdin 2>&1)"; then
   fail "and it stays unreachable while that work is painted" "send entered mid-turn"
@@ -3771,7 +3786,7 @@ tmux set-option -w -t "$(window_id fossil)" @gl_turn "$fossil_bracket"
 # demotion must not fire while the pty leg credits the fresh paint.
 fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil | head -1)"
 equal "recent pty activity keeps the busy verdict itself, not its explanation" \
-  "busy (tight tug)" "$fossil_active"
+  "-busy-" "$fossil_active"
 if printf 'MARK_ACTIVE' | GANG_ACTIVITY_WINDOW=100000 \
   "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
   fail "recent pty activity keeps refusing delivery mid-turn" "send succeeded"
@@ -3781,11 +3796,11 @@ fi
 excludes "the refused active-pane body never landed" \
   "$(pane fossil)" "MARK_ACTIVE"
 contains "roster's immediate snapshot keeps the painted verdict" \
-  "$("$GANG" roster)" "busy (tight tug)"
+  "$("$GANG" roster)" "-busy-"
 # The fossil verdict: no recent write, byte-stable pane, expired bracket.
 fossil_status="$(GANG_ACTIVITY_WINDOW=0 "$GANG" status fossil)"
 contains "frozen busy paint over an expired bracket reads expired, not busy" \
-  "$fossil_status" "expired"
+  "$fossil_status" "?unknown?"
 contains "naming the frozen paint beside the bracket's reason" \
   "$fossil_status" "busy paint frozen"
 if printf 'MARK_FOSSIL' | GANG_ACTIVITY_WINDOW=0 \
@@ -3824,25 +3839,25 @@ tmux set-option -w -t "$(window_id abandoned)" @gl_turn "$abandoned_bracket"
 # fresh owned state and outranks every quiet tier under it. Nothing about a
 # still-bounded turn changes, however ready the pane looks.
 equal "an unexpired bracket over the same quiet box is still a live turn" \
-  "busy (tight tug)" \
+  "-busy-" \
   "$(GANG_TURN_LIMIT=100000 GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
 equal "an abandoned turn decays to idle once its bracket expires" \
-  "idle (slack tug)" \
+  "~idle~" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
 contains "roster's snapshot decays with it — reading the box costs no churn wait" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "idle (slack tug)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "~idle~"
 # Not a free pass over anything the box refutes: a draft sitting in the composer
 # is the state the busy verdict exists to protect, and it keeps the answer
 # could-not-determine on both readings.
 tmux send-keys -l -t "$(window_id abandoned)" 'half a thought'
 equal "a drafted box refuses the decay" \
-  "expired (turn-bracket bound reached)" \
+  "?unknown? (turn-bracket bound reached)" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
 contains "roster's snapshot refuses it on the same evidence" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "expired"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "?unknown?"
 tmux send-keys -t "$(window_id abandoned)" C-u
 equal "clearing the draft restores the decayed verdict" \
-  "idle (slack tug)" \
+  "~idle~" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
 # Quiet must be MEASURED, never assumed. Hold the activity-only bound open past
 # its limit with the pty credited as recent: the activity tier then reports
@@ -3850,7 +3865,7 @@ equal "clearing the draft restores the decayed verdict" \
 tmux set-option -w -t "$(window_id abandoned)" @gl_activity_only_since \
   "$(( $(date +%s) - 400 ))"
 equal "an unmeasurable pty keeps the answer could-not-determine" \
-  "expired (turn-bracket bound reached)" \
+  "?unknown? (turn-bracket bound reached)" \
   "$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status abandoned | head -1)"
 tmux set-option -uw -t "$(window_id abandoned)" @gl_activity_only_since
 # The decay widens nothing: this send already landed through the
@@ -3878,7 +3893,7 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
 "$GANG" hitch assumed -c bash -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id assumed)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a collar that never measures the pty cannot witness the quiet a decay needs" \
-  "expired (turn-bracket bound reached)" \
+  "?unknown? (turn-bracket bound reached)" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status assumed | head -1)"
 "$GANG" drop assumed >/dev/null
 
@@ -3906,10 +3921,10 @@ SH
 tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400 ))"
 : > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
 equal "a pane that moves while gang is deciding refuses the decay" \
-  "expired (the pane was written to while gang was deciding)" \
+  "?unknown? (the pane was written to while gang was deciding)" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status moving | head -1)"
 contains "and roster's snapshot refuses it on the same witness" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "expired"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "?unknown?"
 "$GANG" drop moving >/dev/null
 
 # The earlier seam, and the one the moving fixture cannot reach: the quiet stamp
@@ -3940,7 +3955,7 @@ chmod +x "$RUN_ROOT/bin-seam/tmux"
 "$GANG" hitch seam -c abandoned -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a write between the quiet reading and the witness refuses the decay" \
-  "expired (the pane was written to while gang was deciding)" \
+  "?unknown? (the pane was written to while gang was deciding)" \
   "$(PATH="$RUN_ROOT/bin-seam:$PATH" GANG_ACTIVITY_WINDOW=0 "$GANG" status seam | head -1)"
 "$GANG" drop seam >/dev/null
 
@@ -4005,7 +4020,7 @@ excludes "the refused body never landed" "$(pane noreader)" "MARK_NOREADER"
 
 # Positive control for the stability leg: a churning pane preserves painted
 # busy even with the activity credit forced off. The verdict is asserted
-# EXACTLY: the broken state reads "expired (busy paint frozen…)", whose
+# EXACTLY: the broken state reads "?unknown? (busy paint frozen…)", whose
 # explanation contains the word busy, so a substring check would false-green
 # on the feature's own text. Two determinism traps solved here: the tick
 # lines are UNIQUE (a periodic screen scrolls into byte-identical captures
@@ -4049,7 +4064,7 @@ tmux set-option -w -t "$(window_id ticker)" @gl_turn "open $(( $(date +%s) - 400
 tmux wait-for "gltick-$GANG_SESSION"
 CHURN_PANE="$(tmux list-panes -t "$(window_id ticker)" -F '#{pane_id}')"
 equal "a churning pane keeps the busy verdict itself, not its explanation" \
-  "busy (tight tug)" \
+  "-busy-" \
   "$(CHURN_PANE="$CHURN_PANE" PATH="$RUN_ROOT/churn-bin:$PATH" \
      GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker | head -1)"
 if ticker_out="$(printf 'MARK_TICKER' | CHURN_PANE="$CHURN_PANE" \
