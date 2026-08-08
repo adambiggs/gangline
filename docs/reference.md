@@ -329,13 +329,13 @@ An undelivered-input report is followed by a `box:` line classifying what is in
 that box now, in the same vocabulary a refusal uses. The record says what
 Gangline did; the `box:` line says what is there at reading time.
 
-It also reports staged input, pending or failed self-compaction, and binary skew
-when the window has no hitch/adopt stamp or its executable-byte witness differs
-from the invoked `gang` binary. An unavailable witness is reported explicitly
-instead of treated as either match or mismatch.
-It also reports staged input, pending or failed self-compaction, how many
-messages are spooled for that target, a spool drain that could not be verified,
-and a stall note that could not be accepted.
+It also reports staged input and the current box reading, pending or failed
+self-compaction, the number of messages spooled for that target, held-message
+details and their directory, a spool drain that could not be verified, a stall
+note that could not be accepted, native-session identity mismatch, and binary
+skew when the window has no hitch/adopt stamp or its executable-byte witness
+differs from the invoked `gang` binary. An unavailable witness is reported
+explicitly instead of treated as either match or mismatch.
 
 ### `gang whoami`
 
