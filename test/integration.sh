@@ -1144,6 +1144,36 @@ equal "identity absence types nothing into the claimed target" \
   "$unadopted_target_before" "$(pane alpha)"
 tmux kill-window -t "$unadopted_id"
 
+residue_recovery_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n residue-recovery "PS1='❯ ' bash --norc")"
+residue_recovery_pane="$(tmux list-panes -t "$residue_recovery_id" -F '#{pane_id}')"
+tmux set-option -w -t "$residue_recovery_id" @gl_profile identity
+refuses "profile residue without @gl_agent cannot send under a bare window name" \
+  "no registered Gangline agent/profile identity" bash -c \
+  'printf RESIDUE_BEFORE_ADOPT | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
+  fixture "$residue_recovery_pane" "$GANG"
+if residue_adopt_out="$("$GANG" adopt residue-recovery -p identity 2>&1)"; then
+  pass "the deliberate adopt remedy claims a profile-residue window"
+else
+  fail "the deliberate adopt remedy claims a profile-residue window" \
+    "$residue_adopt_out"
+fi
+equal "adopt stamps the claimed residue window with its named identity" \
+  "residue-recovery" \
+  "$(tmux show-options -wqv -t "$residue_recovery_id" @gl_agent)"
+if printf 'RESIDUE_AFTER_ADOPT' | TMUX_PANE="$residue_recovery_pane" \
+    "$GANG" send --to alpha --stdin >/dev/null 2>&1; then
+  pass "the named adopt remedy resolves the send refusal"
+else
+  fail "the named adopt remedy resolves the send refusal" \
+    "send still refused after deliberate adoption"
+fi
+contains "the recovered pane's attributed message reaches its peer" \
+  "$(pane alpha)" "RESIDUE_AFTER_ADOPT"
+excludes "the pre-adoption refused body never reached the peer" \
+  "$(pane alpha)" "RESIDUE_BEFORE_ADOPT"
+"$GANG" drop residue-recovery >/dev/null
+
 residue_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n displaced "PS1='❯ ' bash --norc")"
 tmux set-option -w -t "$residue_id" @gl_agent lead
@@ -1172,6 +1202,7 @@ ready = os.environ["DIALOG_READY"]
 selected = 0
 composer = False
 draft = bytearray()
+answered = 0
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
@@ -1234,13 +1265,25 @@ while True:
     elif char in (b"\r", b"\n"):
         record("Enter")
         if selected == 1 and variant != "confirm-stuck":
-            composer = True
-            sys.stdout.write("\x1b[2J\x1b[H❯ ")
-            sys.stdout.flush()
+            answered += 1
+            if variant == "recurring" and answered < 5:
+                sys.stdout.write("\x1b[2J\x1b[H❯ ")
+                sys.stdout.flush()
+                subprocess.run(
+                    ["tmux", "wait-for", os.environ["DIALOG_RECUR_SIGNAL"]],
+                    check=True,
+                )
+                selected = 0
+                paint()
+            else:
+                composer = True
+                sys.stdout.write("\x1b[2J\x1b[H❯ ")
+                sys.stdout.flush()
         else:
             paint()
 PY
 chmod +x "$RUN_ROOT/dialog-fixture.py"
+dialog_recurring_signal="dialog-recurring-next-$$"
 
 cat > "$RUN_ROOT/profiles/dialog.sh" <<SH
 # shellcheck shell=bash
@@ -1261,6 +1304,12 @@ cat > "$RUN_ROOT/profiles/dialog-wrong.sh" <<SH
 # shellcheck disable=SC2034
 . "$RUN_ROOT/profiles/dialog.sh"
 GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Up|Enter'
+SH
+cat > "$RUN_ROOT/profiles/dialog-recurring.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/profiles/dialog.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=recurring DIALOG_KEY_LOG='$RUN_ROOT/dialog-recurring.keys' DIALOG_READY='dialog-recurring-ready-$$' DIALOG_RECUR_SIGNAL='$dialog_recurring_signal' '$RUN_ROOT/dialog-fixture.py'"
 SH
 
 dialog_start() { # $1 agent, $2 variant, $3 profile
@@ -1384,6 +1433,33 @@ refuses "load_profile mechanically rejects an authority-shaped dialog registry" 
   "forbidden authority word" "$GANG" hitch dialog-danger -p dialog-danger -d /tmp
 equal "a refused authority registry opens no window" "" "$(window_id dialog-danger)"
 
+authority_probe_cases='approval|Approval required to continue
+access|Grant access to your files
+authorize|Authorize this device
+admin|Grant admin rights to the agent
+denial|Denial of safeguards is disabled
+ask-again|Yes, and do not ask again
+bypass|Bypass all safety checks
+write-access|Enable write access to disk'
+while IFS='|' read -r authority_slug authority_line; do
+  [ -n "$authority_slug" ] || continue
+  cat > "$RUN_ROOT/profiles/dialog-authority-$authority_slug.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='authority-$authority_slug|^› [0-9]+\. |No||Enter'
+GANG_DIALOG_LINES_authority_${authority_slug//-/_}='$authority_line
+Yes
+No'
+SH
+  refuses "authority registry rejects $authority_slug language" \
+    "forbidden authority word" \
+    "$GANG" hitch "authority-$authority_slug" \
+      -p "dialog-authority-$authority_slug" -d /tmp
+  equal "the $authority_slug authority refusal opens no window" "" \
+    "$(window_id "authority-$authority_slug")"
+done <<<"$authority_probe_cases"
+
 cat > "$RUN_ROOT/profiles/dialog-four-fields.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1421,6 +1497,32 @@ refuses "a safe label absent from its declared block is refused at profile load"
 refuses "an unset dialog block is refused at profile load" \
   "has no non-empty GANG_DIALOG_LINES_block_missing" \
   "$GANG" hitch dialog-block-missing -p dialog-block-missing -d /tmp
+
+: > "$RUN_ROOT/dialog-recurring.keys"
+mkdir -p "$RUN_ROOT/recurring-bin"
+cat > "$RUN_ROOT/recurring-bin/sleep" <<'SH'
+#!/bin/sh
+[ "${1:-}" != 1 ] || tmux wait-for -S "$DIALOG_RECUR_SIGNAL"
+exit 0
+SH
+chmod +x "$RUN_ROOT/recurring-bin/sleep"
+if recurring_out="$(DIALOG_RECUR_SIGNAL="$dialog_recurring_signal" \
+    PATH="$RUN_ROOT/recurring-bin:$PATH" GANG_BOOT_TIMEOUT=2 \
+    "$GANG" hitch dialog-recurring \
+    -p dialog-recurring -d /tmp 2>&1)"; then
+  fail "a recurring known transient consumes the hitch boot budget" \
+    "hitch unexpectedly answered every recurrence and succeeded"
+else
+  contains "recurring known-transient exhaustion fails loud" \
+    "$recurring_out" "startup message was not delivered"
+fi
+case "$(<"$RUN_ROOT/dialog-recurring.keys")" in
+  $'Down\nEnter'|$'Down\nEnter\nDown\nEnter')
+    pass "recurring dialogs cannot answer beyond the hitch boot budget" ;;
+  *) fail "recurring dialogs cannot answer beyond the hitch boot budget" \
+       "unexpected key sequence [$(<"$RUN_ROOT/dialog-recurring.keys")]" ;;
+esac
+"$GANG" drop dialog-recurring >/dev/null
 
 modal_observed="test-boot-modal-observed-$$"
 modal_painted="test-boot-modal-painted-$$"

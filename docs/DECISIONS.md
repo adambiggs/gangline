@@ -127,8 +127,9 @@ not infer who may clear it. UI recognition belongs in profiles, unknown authorit
 fails closed, and Gangline answers only a profile-enumerated, whole-block
 fingerprint whose safe row carries no authority. Re-read the selected row before
 every key and the cleared composer after confirmation. Permission, trust,
-approval, access, credential, token, secret, and sandbox language is never an
-auto-answer surface. The live Codex `safety-buffering-prompt` capture is the
+approval, authorization, access, elevation, grant, administration, denial,
+bypass, credential, token, secret, privilege, and sandbox language is never
+an auto-answer surface. The live Codex `safety-buffering-prompt` capture is the
 record: installed-binary string extraction undercounted its options and omitted
 `Learn more`.
 

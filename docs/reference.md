@@ -523,8 +523,9 @@ option label; `move` is zero or more tmux key names; and `confirm` is one key.
 The associated block contains the whole dialog, not a subset. Load refuses
 malformed or duplicate records, absent blocks, safe labels absent from their
 block, invalid key names, and any id, safe label, or block line containing
-authority language such as permission, trust, approval, access, credentials,
-tokens, secrets, or sandboxing.
+authority language such as permission, trust, approval, authorization, access,
+elevation, grants, administration, denial, bypass, credentials, tokens, secrets,
+privileges, or sandboxing.
 
 Before a send, or while hitch is already waiting for a composer, Gangline may
 answer one unambiguous full-block match. Whitespace and soft wraps are

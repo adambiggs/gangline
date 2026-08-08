@@ -577,10 +577,10 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
       esac
     done
     forbidden="$(printf '%s\n%s\n%s\n' "$id" "$safe" "$block" \
-      | grep -Eio '(trust|permission|approve|allow|full access|sandbox|credential|token|secret)' \
+      | grep -Eio '(trust|permi|approv|authori|allow|access|sandbox|credential|token|secret|elevat|escalat|grant|admin|den(y|i)|bypass|ask[[:space:]]+again|privileg)' \
       | head -n 1)" || forbidden=""
     [ -z "$forbidden" ] \
-      || die "profile '$1' dialog '$id' contains forbidden authority word '$forbidden' — Gangline never auto-answers permission, trust, approval, access, credential, token, secret, or sandbox surfaces"
+      || die "profile '$1' dialog '$id' contains forbidden authority word '$forbidden' — Gangline never auto-answers permission, trust, approval, authorization, access, elevation, grant, admin, denial, bypass, credential, token, secret, privilege, or sandbox surfaces"
   done <<<"$GANG_DIALOGS"
 }
 
@@ -645,7 +645,7 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
     || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
 }
 
-registered_identity_guard() { # $1 window, $2 requested name, $3 action
+registered_identity_guard() { # $1 window, $2 requested name, $3 action, optional $4 requested profile
   local registered profile stamped
   registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
   profile="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || profile=""
@@ -654,6 +654,11 @@ registered_identity_guard() { # $1 window, $2 requested name, $3 action
     die "$3: window '$2' is registered to Gangline agent '$registered'; refusing to replace that identity with '$2'"
   fi
   if [ -z "$registered" ] && { [ -n "$profile" ] || [ -n "$stamped" ]; }; then
+    if [ "$3" = adopt ]; then
+      [ -z "$profile" ] || [ "$profile" = "${4:-}" ] \
+        || die "adopt: window '$2' carries profile residue '$profile', not requested profile '${4:-}'; refusing to rewrite its profile identity"
+      return 0
+    fi
     die "$3: window '$2' carries Gangline profile/session residue but no attributable @gl_agent identity; refusing to claim it as '$2' (inspect it before clearing the residue)"
   fi
 }
@@ -671,7 +676,7 @@ send_identity_guard() { # a pane with a contradicted native identity may not spe
   registered="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_agent 2>/dev/null)" || registered=""
   profile="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_profile 2>/dev/null)" || profile=""
   [ -n "$registered" ] && [ -n "$profile" ] \
-    || refuse "send: this pane has no registered Gangline agent/profile identity; a window name alone cannot attribute a message (gang whoami; then re-hitch or re-adopt the pane)"
+    || refuse "send: this pane has no registered Gangline agent/profile identity; a window name alone cannot attribute a message (gang whoami; then gang adopt <window-name> -p <profile>)"
   [ "$registered" = "$SEND_FROM" ] \
     || refuse "send: this pane is registered as '$registered' but its window is named '$SEND_FROM'; refusing misattributed delivery (gang whoami)"
   mismatch="$(identity_mismatch_read "$SEND_WINDOW")" || return 0
@@ -1395,6 +1400,7 @@ wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
   local t=0 modal_reported=0
   while [ "$t" -lt "$2" ]; do
     if [ -n "${3:-}" ] && dialog_triage "$1" "$3" unlocked; then
+      sleep 1; t=$((t + 1))
       continue
     fi
     if input_painted "$1"; then
@@ -3155,7 +3161,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
   id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
-  registered_identity_guard "$id" "$name" adopt
+  registered_identity_guard "$id" "$name" adopt "$prof"
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
