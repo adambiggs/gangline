@@ -971,6 +971,10 @@ contains "an uncommitted executable change produces binary skew" \
 
 dirty_root="$RUN_ROOT/dirty-checkout"
 mkdir -p "$dirty_root/bin"
+# gang_root resolves the executing checkout physically. Keep this fixture's
+# expected path in the same identity domain when TMPDIR traverses a symlink
+# (macOS exposes /var/folders through /private/var/folders).
+dirty_root="$(cd -P "$dirty_root" && pwd)"
 cp -R "$ROOT/profiles" "$dirty_root/profiles"
 cp "$GANG" "$dirty_root/bin/gang"
 git -C "$dirty_root" init -q
