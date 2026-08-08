@@ -1283,8 +1283,17 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   local base holder name path err me
   # Read OUT HERE. $BASHPID inside the command substitution below would be the
   # substitution's own fork, which dies the moment ln returns — a lock that is
-  # stale by construction.
-  me="$BASHPID"
+  # stale by construction. macOS still ships Bash 3.2, which has no BASHPID:
+  # there, a process-substitution child asks ps for its wrapper's parent (this
+  # shell), and read keeps the result in this process rather than another fork.
+  if [ -n "${BASHPID:-}" ]; then
+    me="$BASHPID"
+  else
+    read -r me < <(sh -c 'ps -o ppid= -p "$PPID"') || me=""
+    case "$me" in
+      ''|*[!0-9]*) die "cannot identify the Bash process holding a delivery lock — ps returned '${me:-nothing}'" ;;
+    esac
+  fi
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   name="$(agent_name_of "$1")"

@@ -697,7 +697,11 @@ SH
 # Real tmux substrate: lifecycle, observation, verified attributed delivery and
 # exact-name addressing. Gangline's command returns only after the state checked
 # below has been established.
-"$GANG" hitch alpha -p bash -d /tmp >/dev/null
+printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
+BASH_ENV="$RUN_ROOT/no-bashpid" \
+  "$GANG" hitch alpha -p bash -d /tmp >/dev/null
+contains "Bash 3.2 can lock and deliver the startup contract" \
+  "$(pane alpha)" "You are alpha in Gangline"
 contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
 contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
@@ -2269,7 +2273,8 @@ tmux send-keys -t "$parker_id" C-u
 tmux wait-for "gang-spool-drain-$parker_id" &
 parker_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
-  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+  BASH_ENV="$RUN_ROOT/no-bashpid" TMUX_PANE="$parker_pane_id" \
+    "$GANG" hook >/dev/null
 wait "$parker_drain_waiter"
 parker_drained="$(pane parker)"
 contains "the target's own Stop drains what was parked for it" \
