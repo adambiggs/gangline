@@ -2257,11 +2257,23 @@ else
   esac
 fi
 trailing_id="$(window_id doctrine-trailing)"
-trailing_body="$(tmux show-options -wqv -t "$trailing_id" @gl_parked)"
-trailing_blanks="$(printf '%s' "$trailing_body" | awk '
-  /TAIL_MARK/ { after_tail = 1; next }
-  /End this turn\./ { print blanks; exit }
-  after_tail && /^[[:space:]]*$/ { blanks++ }
+trailing_marked="$(
+  tmux show-options -wqv -t "$trailing_id" @gl_parked || exit
+  printf '\034'
+)" || trailing_marked=""
+case "$trailing_marked" in
+  *$'\034') trailing_body="${trailing_marked%$'\034'}" ;;
+  *) fail "the parked doctrine body is readable byte-exactly" \
+       "the tmux option read lost its sentinel"; trailing_body="" ;;
+esac
+trailing_blanks="$(printf '%s' "$trailing_body" | python3 -c '
+import sys
+
+body = sys.stdin.buffer.read().decode("utf-8")
+_, head, after = body.partition("TAIL_MARK\n")
+between, tail, _ = after.partition("End this turn.")
+if head and tail:
+    print(sum(not line.strip() for line in between.splitlines()))
 ')"
 equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
