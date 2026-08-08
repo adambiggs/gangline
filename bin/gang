@@ -1653,13 +1653,7 @@ landing_zone() { # $1 = window id; the input box, or the whole pane if none is d
 # body that merely quotes the hint can never trip it.
 box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a queue
   [ -n "$GANG_QUEUED_REGEX" ] || return 1
-  local rc=0
-  printf '%s\n' "$1" | grep -Eq -- "$GANG_QUEUED_REGEX" || rc=$?
-  case "$rc" in
-    0) return 0 ;;
-    1) return 1 ;;
-    *) die "GANG_QUEUED_REGEX in $GANG_COLLAR_FILE is not a pattern grep -E accepts (exit $rc) — queue evidence cannot be read, so delivery cannot be verified" ;;
-  esac
+  re_match GANG_QUEUED_REGEX "$1"
 }
 
 LOCK_PATH=""
