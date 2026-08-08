@@ -116,10 +116,11 @@ Prints the window's stamped native session id and the exact
 agent window. If the collar has not supplied a stamp, it says so instead. Its
 tmux-owned state and spool die with it.
 
-### `gang down`
+### `gang down <session>`
 
 Kills the exact team session and every window in it, deleting each window's
-spool first.
+pending spool first. The session name is required and must match the team this
+shell is pointed at; `down` refuses a name that does not match.
 
 ## Delivery and compaction
 

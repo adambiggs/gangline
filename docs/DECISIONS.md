@@ -385,6 +385,15 @@ minutes. Tests do not sleep, poll, or test timeout behaviour; use immediate stat
 event barriers, or fake clocks, and test real harnesses only in separate disposable
 tmux sessions.
 
+## The irreversible verb is the one that demands an argument
+
+`gang down` requires the session it ends. Every other argument-taking command
+answers a bare invocation with its usage; `down` did not, so the reflex that
+reads the manual — run it bare and see what it wants — executed the teardown
+instead. A gesture that asks what a command does must never be the gesture that
+performs it, and the command with no undo is the one that must cost an argument
+rather than the one that costs none.
+
 ## A guard witnesses the artifact, and witnesses it in order
 
 Assert the thing a defect actually produces — the text left on the pane, the

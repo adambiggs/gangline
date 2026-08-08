@@ -130,8 +130,8 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop"
-meaningful_bare_commands="up roster attach collars roles config curfew notify down"
+bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop down"
+meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -976,7 +976,7 @@ GANG_SESSION="$new_roster_session" "$GANG" roster \
   > "$RUN_ROOT/new-roster.out" 2> "$RUN_ROOT/new-roster.err"
 excludes "new contract collars calibrate the roster announcement" \
   "$(<"$RUN_ROOT/new-roster.err")" "declares profile_input"
-GANG_SESSION="$new_roster_session" "$GANG" down >/dev/null
+GANG_SESSION="$new_roster_session" "$GANG" down "$new_roster_session" >/dev/null
 
 # A running pre-rename window is healed by the hook itself, with no stderr
 # announcement: internal tmux residue is Gangline's state, not operator input.
@@ -4860,7 +4860,39 @@ fi
 equal "pre-push lint does not read the main repository index" \
   "" "$(<"$hook_probe/index")"
 
-"$GANG" down >/dev/null
+# GATED TEARDOWN. `down` is the one irreversible verb, so it is exercised
+# against a session of its own: a guard that is missing must not end this run.
+teardown_session="teardown-probe-$$"
+tmux new-session -d -s "$teardown_session" -n bystander \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+refuses "bare gang down names the session it would end" \
+  "gang down" env GANG_SESSION="$teardown_session" "$GANG" down
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  pass "and the session it refused to end is still running"
+else
+  fail "and the session it refused to end is still running" "session is gone"
+fi
+refuses "gang down refuses a session name that is not this team" \
+  "refusing to end a session you did not name" \
+  env GANG_SESSION="$teardown_session" "$GANG" down some-other-name
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  pass "and the mismatched session is still running"
+else
+  fail "and the mismatched session is still running" "session is gone"
+fi
+refuses "gang down refuses a second argument" \
+  "down: unexpected argument 'extra'" \
+  env GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session" extra
+env GANG_SESSION="$teardown_session" TMUX="/nonexistent-socket,1,0" \
+  "$GANG" down "$teardown_session" >/dev/null
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  fail "a named teardown from outside the session still ends it" \
+    "session still exists"
+else
+  pass "a named teardown from outside the session still ends it"
+fi
+
+"$GANG" down "$GANG_SESSION" >/dev/null
 if tmux has-session -t "=$GANG_SESSION" 2>/dev/null; then
   fail "down removes the exact test session" "session still exists"
 else

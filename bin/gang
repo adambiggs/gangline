@@ -560,7 +560,7 @@ EOF
 gang down
   End the whole team.
 
-  gang down
+  gang down <session>
 EOF
       ;;
     collars|profiles) cat <<'EOF'
@@ -3609,8 +3609,11 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
+  local named="${1:-}" id raw names=""
+  [ $# -le 1 ] || die "down: unexpected argument '$2'"
+  [ "$named" = "$SESSION" ] \
+    || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
   session_live || die "no session '$SESSION' running"
-  local id raw names=""
   while IFS= read -r raw; do
     names="$names$(bare_name "$raw") "
   done < <(tmux list-windows -t "=$SESSION" -F '#W')
@@ -3707,7 +3710,7 @@ if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
 fi
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|spawn|adopt|send|flush|interrupt|usage|drop)
+    hitch|spawn|adopt|send|flush|interrupt|usage|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -3733,7 +3736,7 @@ case "$cmd" in
   roster)   cmd_roster ;;
   attach)   cmd_attach "$@" ;;
   drop)     cmd_drop "$1" ;;
-  down)     cmd_down ;;
+  down)     cmd_down "$@" ;;
   collars|profiles) cmd_collars "$@" ;;
   roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
