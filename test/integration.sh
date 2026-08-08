@@ -1180,11 +1180,19 @@ refuses "a collar with no GANG_USAGE_CMD refuses usage" \
 "$GANG" hitch usage-nochange -c usage-nochange -d /tmp >/dev/null
 usage_nochange_id="$(window_id usage-nochange)"
 usage_nochange_ready="test-usage-nochange-ready-$$"
-printf -v usage_nochange_cmd \
-  'PROMPT_COMMAND=%q; clear' "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
+usage_nochange_marker="READY_USAGE_NOCHANGE_$$"
+printf -v usage_nochange_cmd 'PROMPT_COMMAND=; PS1=%q""%q; clear' \
+  "READY_USAGE_" "NOCHANGE_$$❯ "
+printf -v usage_nochange_pipe \
+  'needle=%q; event=%q; seen=; while IFS= read -r -n 1 char; do seen="${seen}${char}"; case "$seen" in *"$needle") tmux wait-for -S "$event"; exit 0;; esac; if [ "${#seen}" -gt 256 ]; then seen="${seen: -256}"; fi; done' \
+  "$usage_nochange_marker❯ " "$usage_nochange_ready"
+printf -v usage_nochange_pipe_shell '%q' "$usage_nochange_pipe"
+tmux pipe-pane -O -t "$usage_nochange_id" \
+  "bash -c $usage_nochange_pipe_shell"
 tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
 tmux send-keys -t "$usage_nochange_id" Enter
 tmux wait-for "$usage_nochange_ready"
+tmux pipe-pane -t "$usage_nochange_id"
 usage_nochange_stdout="$RUN_ROOT/usage-nochange.stdout"
 usage_nochange_stderr="$RUN_ROOT/usage-nochange.stderr"
 if "$GANG" usage usage-nochange \
@@ -2294,7 +2302,6 @@ elif r"TAIL_MARK\n" in body:
 equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
 "$GANG" drop doctrine-trailing >/dev/null
-tmux set-option -g default-size 80x24
 
 # One optional curfew is team state. Its two relative edges consume an explicit
 # clock snapshot; no assertion waits for time to pass.
