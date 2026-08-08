@@ -11,6 +11,9 @@ GANG="$ROOT/bin/gang"
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
+export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
+export GIT_CONFIG_SYSTEM=/dev/null
+
 # The Bash fixture establishes every transition synchronously. Production waits
 # are inputs here, not evidence, so replace their clock with an immediate one.
 mkdir -p "$RUN_ROOT/bin"
