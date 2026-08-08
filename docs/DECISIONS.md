@@ -8,9 +8,29 @@ the rule and the reason it exists; implementation history belongs in git.
 Provide local harness lifecycle, transport, observation, and compaction
 primitives. Do not manage roles, work allocation, or agent behaviour;
 those policies belong to the operator and the native harnesses.
-Coordination is declarative: express goals, roles, status, handoffs, and lead
-heuristics through prose or native harness features. Gangline defines no
-coordination schema, reporting protocol, or lead state machine.
+Coordination is declarative: express goals, roles, status, handoffs, and
+lead heuristics through prose or native harness features. Gangline
+defines no coordination schema, reporting protocol, or lead state
+machine.
+
+Role briefs are that prose, shipped. `roles/<name>.md` is text attached
+to the one hitch that asked for it, replaceable file-for-file by an
+operator file of the same name, on the same footing as the harness
+knowledge a collar carries. Gangline validates a brief as prose and
+delivers it — at system-prompt level where a collar declares the option,
+at message level otherwise — and never parses it.
+
+Attachment is a launch choice like a model or an effort level, and
+Gangline builds no coordination state around it: no role or brief
+identity is recorded in a window or session option, no later command
+reads one, no output varies by it, and nothing checks whether an agent
+behaved as its brief describes. Delivery necessarily leaves the brief
+where delivery put it — in the agent's transcript or system prompt, in
+the launched process's arguments, and in the launch string tmux retains
+for the pane. Those are artifacts of having delivered it, readable by
+anyone who can already read the pane; they are not a record Gangline
+keeps or consults. A role is a thing an agent was told, not a thing
+Gangline knows.
 
 ## tmux is the transport
 

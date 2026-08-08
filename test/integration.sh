@@ -131,7 +131,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop"
-meaningful_bare_commands="up roster attach collars config curfew notify down"
+meaningful_bare_commands="up roster attach collars roles config curfew notify down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -523,6 +523,10 @@ contains "Codex resume declares an explicit native session slot" \
 excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
 
 claude_collar="$ROOT/collars/claude-code.sh"
+claude_role_prompt_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_ROLE_PROMPT_OPT:-}"' fixture "$claude_collar")"
+equal "Claude declares the system-prompt option used for role briefs" \
+  "--append-system-prompt" "$claude_role_prompt_opt"
 claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_collar")"
 excludes "disabled lights do not paint Claude context output" \
@@ -846,6 +850,11 @@ printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
   "$GANG" hitch alpha -c bash -d /tmp >/dev/null
 alpha_id="$(window_id alpha)"
+# The shipped startup contract now includes the delegation sentence. Keep the
+# Bash stand-in's composer immediately observable for ordinary doctrine-sized
+# contracts while leaving the explicit pane-overflow fixture far beyond the
+# grid below.
+tmux resize-window -t "$alpha_id" -x 80 -y 30
 equal "a hitched first turn writes the raw busy window glyph" \
   "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "Bash 3.2 can lock and deliver the startup contract" \
@@ -1179,11 +1188,19 @@ refuses "a collar with no GANG_USAGE_CMD refuses usage" \
 "$GANG" hitch usage-nochange -c usage-nochange -d /tmp >/dev/null
 usage_nochange_id="$(window_id usage-nochange)"
 usage_nochange_ready="test-usage-nochange-ready-$$"
-printf -v usage_nochange_cmd \
-  'PROMPT_COMMAND=%q; clear' "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
+usage_nochange_marker="READY_USAGE_NOCHANGE_$$"
+printf -v usage_nochange_cmd 'PROMPT_COMMAND=; PS1=%q""%q; clear' \
+  "READY_USAGE_" "NOCHANGE_$$❯ "
+printf -v usage_nochange_pipe \
+  'needle=%q; event=%q; seen=; while IFS= read -r -n 1 char; do seen="${seen}${char}"; case "$seen" in *"$needle") tmux wait-for -S "$event"; exit 0;; esac; if [ "${#seen}" -gt 256 ]; then seen="${seen: -256}"; fi; done' \
+  "$usage_nochange_marker❯ " "$usage_nochange_ready"
+printf -v usage_nochange_pipe_shell '%q' "$usage_nochange_pipe"
+tmux pipe-pane -O -t "$usage_nochange_id" \
+  "bash -c $usage_nochange_pipe_shell"
 tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
 tmux send-keys -t "$usage_nochange_id" Enter
 tmux wait-for "$usage_nochange_ready"
+tmux pipe-pane -t "$usage_nochange_id"
 usage_nochange_stdout="$RUN_ROOT/usage-nochange.stdout"
 usage_nochange_stderr="$RUN_ROOT/usage-nochange.stderr"
 if "$GANG" usage usage-nochange \
@@ -2089,6 +2106,11 @@ contains "the nested hitch joins the session supplied only by the config file" \
   "$(window_names config-nested-session)" "nested-child"
 
 DOCTRINE_CASES="$RUN_ROOT/doctrine-cases"
+# S9 makes the ordinary doctrine contract taller than the Bash stand-in's
+# original 80x24 composer while the explicit overflow world below remains much
+# taller still. Size only this fixture lane; dialog fingerprints above retain
+# their calibrated grid.
+tmux set-option -g default-size 80x30
 mkdir -p "$DOCTRINE_CASES/present"
 printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
   > "$DOCTRINE_CASES/present/DOCTRINE.md"
@@ -4847,6 +4869,10 @@ fi
 [ ! -d "$lingering_spool" ] \
   && pass "and takes the spool of every window in it" \
   || fail "and takes the spool of every window in it" "$lingering_spool survived"
+
+# The focused role instrument is mandatory here and independently selectable so
+# mutation calibration can run the exact AC that must turn red.
+"$ROOT/test/role-briefs.sh"
 
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
 [ "$fails" -eq 0 ]

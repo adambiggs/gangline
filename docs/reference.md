@@ -17,7 +17,7 @@ calling tmux pane in the same way as a message sender.
 | `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `config`, `curfew`, `notify`, `down` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify`, `down` | Keep their ordinary bare meaning. |
 
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
@@ -29,7 +29,7 @@ states that no target or Gangline agent window was available.
 Hitches one agent, named `lead` when omitted, then attaches or switches the
 current tmux client to it. `GANG_COLLAR` selects the harness.
 
-### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [--resume [session-id]]`
+### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract tells the agent to choose a model and reasoning effort deliberately
@@ -65,6 +65,9 @@ and re-hitch recovery.
   refused before any window opens. A collar that declares no effort spelling
   refuses the flag, and a vocabulary that cannot be determined is refused as a
   broken declaration rather than a bad value.
+- `-r`, `--role` attaches the named role brief to this hitch only. There is no
+  default or inference from the agent name. Role names use letters, digits,
+  dot, dash, and underscore and may not begin with dot or dash.
 - `--resume <session-id>` substitutes that exact native session identity into
   the collar's resume template. Bare `--resume` is only valid when a dead,
   still-existing window registered to the same agent carries `@gl_session_id`.
@@ -414,11 +417,21 @@ declares no `collar_input`.
 Lists shipped and custom harness collars. The Bash substrate fixture is hidden
 unless `GANG_TEST_COLLARS=1`.
 
+### `gang roles`
+
+Lists every discovered Markdown role file as three tab-separated columns:
+name, origin, and status. Operator roles show their terminal-safe path; shipped
+roles use the stable origin `shipped`. A winning file is `ok` only when it is a
+nonempty usable role at that instant. Invalid names and unusable files remain
+visible with their specific defect, and only `ok` names appear in an unknown
+role refusal's accepted-value list.
+
 ### `gang config`
 
 Prints every effective operator setting with its origin: built-in default,
 config file and line, or environment, including when the environment overrides
-a file line. It also reports whether the doctrine slot is present. Dynamic text
+a file line. It also reports whether the doctrine file and operator roles
+directory are present, with the terminal-safe path to each slot. Dynamic text
 is terminal-safe: control bytes are rendered visibly rather than written raw.
 The command takes no arguments and needs no tmux server.
 
@@ -446,7 +459,9 @@ commands.
 absolute. It contains:
 
 - `config`, the optional settings file;
-- `DOCTRINE.md`, optional operator prose delivered in every hitch contract.
+- `DOCTRINE.md`, optional operator prose delivered in every hitch contract;
+- `roles/`, optional operator role briefs that replace shipped roles
+  file-for-file by name.
 
 The settings file is parsed, never sourced. Blank lines and lines whose first
 non-blank character is `#` are ignored. Every other line is `NAME=VALUE`: leading
@@ -487,6 +502,16 @@ prose slot; it is not a deliverability bound. Actual delivery is bounded by the
 target composer's rendering and pane geometry and remains verified at hitch.
 Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 
+Role briefs use the same prose validation. Resolution checks
+`$GANG_CONFIG_DIR/roles/<name>.md` before the shipped `roles/<name>.md`; an
+operator file replaces the shipped file whole, and an unusable override refuses
+instead of falling back. A named role must be nonempty. Where the selected
+collar declares `GANG_ROLE_PROMPT_OPT`, Gangline passes the validated bytes by
+value through that launch option and puts only an attribution pointer in the
+startup contract. Otherwise it puts the body in the startup contract before
+operator doctrine. The system-prompt form includes Gangline's own preamble
+stating that later operator doctrine governs any disagreement.
+
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_COLLARS`,
 `GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.
 
@@ -526,6 +551,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_MODEL_OPT` | optional native model flag |
 | `GANG_EFFORT_OPT` | optional native effort option, declared whole with its separator; the level joins with no space |
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
+| `GANG_ROLE_PROMPT_OPT` | optional native option whose next argument is a system-prompt addition passed by value |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
