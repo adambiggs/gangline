@@ -29,7 +29,7 @@ states that no target or Gangline agent window was available.
 Hitches one agent, named `lead` when omitted, then attaches or switches the
 current tmux client to it. `GANG_PROFILE` selects the harness.
 
-### `gang hitch <name> [-p profile] [-d dir] [-m model] [-e effort] [--resume]`
+### `gang hitch <name> [-p profile] [-d dir] [-m model] [-e effort] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract tells the agent to choose a model and reasoning effort deliberately
@@ -65,8 +65,12 @@ and re-hitch recovery.
   refused before any window opens. A profile that declares no effort spelling
   refuses the flag, and a vocabulary that cannot be determined is refused as a
   broken declaration rather than a bad value.
-- `--resume` uses the profile's directory-scoped native resume command. Profiles
-  without a safe resume command refuse it.
+- `--resume <session-id>` substitutes that exact native session identity into
+  the profile's resume template. Bare `--resume` is only valid when a dead,
+  still-existing window registered to the same agent carries `@gl_session_id`.
+  A missing id refuses with `gang whoami` and the explicit-id remedy; there is
+  no latest/continue fallback. Profiles without an explicit-id resume template
+  refuse either form.
 
 Names use letters, digits, dot, dash, and underscore, may not begin with dot or
 dash, and must be unique in the team. `hitch` is reserved as the startup-envelope
@@ -86,11 +90,16 @@ Registers an existing window in `GANG_SESSION`. Adoption does not inject startup
 text or retroactively add launch-time native hooks. A profile whose context
 source requires hitch-time identity may therefore report context unavailable.
 
-Both hitch and adopt stamp `@gl_binary_id` on the window. The identity is
+Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
+identity in `@gl_binary_id`. Reusing a window whose recorded identity names
+another agent refuses. The binary identity is
 `cksum:` plus the POSIX checksum and byte size of the invoked `bin/gang`, in a
 checkout or an installed tree alike. It therefore witnesses the executable
 bytes rather than repository metadata. If the checksum cannot be read, the
 stamp is `unavailable`; identity evidence never blocks lifecycle commands.
+When the invoked `bin/gang` is tracked in a git checkout but differs from HEAD,
+every command prints one stderr warning naming the path and HEAD. Restoring the
+file to HEAD removes the warning; the live symlink/install path is unchanged.
 
 ### `gang attach`
 
@@ -98,7 +107,10 @@ Attaches to `GANG_SESSION`.
 
 ### `gang drop <name>`
 
-Kills the exact agent window. Its tmux-owned state and its spool die with it.
+Prints the window's stamped native session id and the exact
+`gang hitch <name> --resume <session-id>` relaunch command, then kills the exact
+agent window. If the profile has not supplied a stamp, it says so instead. Its
+tmux-owned state and spool die with it.
 
 ### `gang down`
 
@@ -110,8 +122,11 @@ spool first.
 ### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
 Reads the full message body from standard input. Inside the team, Gangline derives
-the sender from the calling window and refuses `--from`. Calls from outside the
-team must supply `--from`. Gangline wraps the body in a nonce-bound envelope,
+the sender from the calling window and refuses `--from`, but only when the pane
+carries matching `@gl_agent` and profile registration and no recorded native
+session mismatch. An unadopted window name is not an identity. Self-send to the
+same pane also refuses. Calls from outside the team must supply `--from`.
+Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
@@ -281,6 +296,8 @@ Prints one current state:
   witnesses active work;
 - `idle (slack tug)` — the evidence positively witnesses readiness;
 - `occupied (authority unknown)` — a native UI owns the composer;
+- `occupied (known transient: <id>)` — a profile-enumerated benign dialog is
+  visible; observation names it but presses no key;
 - `expired (...)` — the available evidence can no longer determine the answer.
 
 A turn bracket left open by an interruption the harness never reported decays
@@ -309,6 +326,15 @@ instead of treated as either match or mismatch.
 It also reports staged input, pending or failed self-compaction, how many
 messages are spooled for that target, a spool drain that could not be verified,
 and a stall note that could not be accepted.
+
+### `gang whoami`
+
+From inside an agent pane, prints the Gangline agent name, pane id, profile,
+stamped harness session id, latest live hook-payload id, team session, and any
+recorded identity mismatch. A native hook stamps `@gl_session_id` on first
+sighting and compares every later live id against it. A mismatch is visible in
+status and roster and blocks sends from that pane until a matching hook repairs
+the record.
 
 ### `gang context [name]`
 
@@ -462,7 +488,7 @@ there, never in a harness-name branch in the core script.
 | Declaration | Purpose |
 |---|---|
 | `GANG_LAUNCH` | required native launch command |
-| `GANG_RESUME_LAUNCH` | optional safe native resume command |
+| `GANG_RESUME_LAUNCH` | optional explicit native resume template containing exactly one `{{session_id}}` slot |
 | `GANG_MODEL_OPT` | optional native model flag |
 | `GANG_EFFORT_OPT` | optional native effort option, declared whole with its separator; the level joins with no space |
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
@@ -473,6 +499,8 @@ there, never in a harness-name branch in the core script.
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
+| `GANG_DIALOGS` | newline-separated `id|marker|safe|move|confirm` known-transient records |
+| `GANG_DIALOG_LINES_<id>` | every painted line of one dialog, in order; dashes in `id` become underscores |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |
@@ -484,6 +512,26 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
 | `profile_input target` | print human-authored composer contents, or fail if absent |
 | `profile_context target` | print `usedk/windowk (percent%)`, or fail loudly |
+| `profile_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 
 Profiles may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
+
+Each dialog record has five fields. `id` is `[a-z0-9-]+`; `marker` is a
+line-start-anchored ERE for the selected numeric row; `safe` is one declared
+option label; `move` is zero or more tmux key names; and `confirm` is one key.
+The associated block contains the whole dialog, not a subset. Load refuses
+malformed or duplicate records, absent blocks, safe labels absent from their
+block, invalid key names, and any id, safe label, or block line containing
+authority language such as permission, trust, approval, access, credentials,
+tokens, secrets, or sandboxing.
+
+Before a send, or while hitch is already waiting for a composer, Gangline may
+answer one unambiguous full-block match. Whitespace and soft wraps are
+normalized; numeric row prefixes move with the selection and are excluded from
+the fingerprint, while every label, body line, footer, and their order must
+match. Gangline re-captures after every movement key, verifies the selected
+label is `safe` immediately before confirmation, and then verifies both that
+the dialog disappeared and a composer returned. Any failed proof refuses and
+does not confirm. `status` and `roster` only name a recognized transient and
+never press a key.

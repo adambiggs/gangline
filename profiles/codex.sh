@@ -7,7 +7,7 @@ for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
   _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
 done
 GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"
-GANG_RESUME_LAUNCH="codex resume --last -c check_for_update_on_startup=false$_gl_codex_hook_flags"
+GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false$_gl_codex_hook_flags"
 unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
 GANG_MODEL_OPT="-m"
 # REASONING EFFORT IS MODEL-SCOPED. The option includes its separator because
@@ -97,6 +97,17 @@ GANG_STOP_HOOK=1
 # Stop hook above already delivers; it is not an awaiting-input witness and is
 # deliberately not wired. PermissionRequest is this profile's only stall source.
 
+# Verified against codex 0.145.0 from the live capture cited in the landing
+# commit. Numeric prefixes move with the selection and are normalized by core;
+# all three option labels and every explanatory line remain fingerprint bytes.
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
+GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
+Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
+Retry with a faster model
+Dismiss and keep waiting
+Learn more
+No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
+
 codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
 
 codex_session_for() { # $1 = marker -> the one rollout that recorded it as user input
@@ -131,6 +142,33 @@ if len(mine) != 1:
     sys.exit(1)
 print(mine[0])
 ' "$1" || die "cannot bind this agent to a codex rollout"
+}
+
+codex_session_file() { # $1 = tmux target -> this window's bound rollout path
+  local key file
+  key="$(tmux show-options -wqv -t "$1" @gl_key)"
+  [ -n "$key" ] || return 1
+  file="$(tmux show-options -wqv -t "$1" @gl_session)"
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    file="$(codex_session_for "$key")" || return 1
+    tmux set-option -w -t "$1" @gl_session "$file"
+  fi
+  printf '%s' "$file"
+}
+
+profile_session_id() { # $1 = tmux target; rollout metadata is the native id contract
+  local file
+  file="$(codex_session_file "$1")" || return 1
+  python3 -c '
+import json, sys
+with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
+    record = json.loads(next(stream))
+payload = record.get("payload") or {}
+value = payload.get("id") or payload.get("session_id")
+if record.get("type") != "session_meta" or not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+' "$file"
 }
 
 codex_context_read() { # $1 = rollout path; prints "<used>k/<win>k (<pct>%)"
@@ -181,15 +219,9 @@ print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 }
 
 profile_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
-  local key file
-  key="$(tmux show-options -wqv -t "$1" @gl_key)"
-  [ -n "$key" ] \
-    || die "window has no @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
-  file="$(tmux show-options -wqv -t "$1" @gl_session)"
-  if [ -z "$file" ] || [ ! -f "$file" ]; then
-    file="$(codex_session_for "$key")"
-    tmux set-option -w -t "$1" @gl_session "$file"
-  fi
+  local file
+  file="$(codex_session_file "$1")" \
+    || die "window has no usable @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
   codex_context_read "$file"
 }
 

@@ -2,7 +2,7 @@
 # shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="claude"
-GANG_RESUME_LAUNCH="claude --continue"
+GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   case "$ROOT" in
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
@@ -19,7 +19,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
         *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
       esac
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
-      GANG_RESUME_LAUNCH="claude --continue --settings '$_gl_cc_json'"
+      GANG_RESUME_LAUNCH="claude --resume {{session_id}} --settings '$_gl_cc_json'"
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
       unset _gl_cc_cmd _gl_cc_esc _gl_cc_json
@@ -36,6 +36,16 @@ GANG_MODEL_OPT="--model"
 # is not a stall — a renamed one stops raising notes rather than raising wrong
 # ones, and re-verifying this list is what a version bump costs.
 GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
+
+profile_session_id() { # $1 = tmux target, $2 = native hook payload
+  printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("session_id", "")
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+'
+}
 # REASONING EFFORT. The option includes its separator because bin/gang joins it
 # to the level with no space; the joined --effort=<level> form is accepted by
 # the observed harness. An unknown level is NOT an error there — claude warns,

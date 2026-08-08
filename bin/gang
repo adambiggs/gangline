@@ -30,7 +30,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
-GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_PROFILE_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -227,6 +227,18 @@ binary_id() { # executable content witness, or an explicit unavailable value
     printf 'unavailable'
   fi
 }
+
+dirty_execution_warn() { # a checkout executable that differs from HEAD is live evidence
+  local top rel head rc=0
+  top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  case "$ROOT/bin/gang" in "$top"/*) ;; *) return 0 ;; esac
+  rel="${ROOT#"$top"/}/bin/gang"
+  head="$(git -C "$top" rev-parse HEAD 2>/dev/null)" || return 0
+  git -C "$top" diff --quiet HEAD -- "$rel" 2>/dev/null || rc=$?
+  case "$rc" in 0) return 0 ;; 1) ;; *) return 0 ;; esac
+  printf 'gang: WARNING: executing dirty %s; its bytes diverge from HEAD %s\n' \
+    "$ROOT/bin/gang" "$head" >&2
+}
 GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
@@ -262,6 +274,7 @@ gang — drive native CLI agents in tmux
   roster    list the team and its state
   capture   read an agent's pane
   composer  read an agent's input box
+  whoami    read this pane's Gangline identity
   attach    join the team in tmux
   drop      remove one agent
   down      end the team
@@ -288,7 +301,7 @@ gang hitch
     [-d <dir>]
     [-m <model>]
     [-e <effort>]
-    [--resume]
+    [--resume [session-id]]
 EOF
       ;;
     adopt) cat <<'EOF'
@@ -393,6 +406,13 @@ gang composer
   gang composer <name>
 EOF
       ;;
+    whoami) cat <<'EOF'
+gang whoami
+  Read this pane's Gangline identity.
+
+  gang whoami
+EOF
+      ;;
     attach) cat <<'EOF'
 gang attach
   Join the team in tmux.
@@ -478,21 +498,31 @@ profile_file() { # $1 = profile name -> path on stdout; yours wins over the ship
 }
 
 load_profile() { # $1 = profile name; sets the GANG_* strategy surface
-  local f
+  local f record pipes id marker safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc
   f="$(profile_file "$1")" \
     || die "unknown profile '$1' (have: $(list_profiles | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
-  GANG_STALL_TYPES=""
+  GANG_STALL_TYPES="" GANG_DIALOGS=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_PROFILE_FILE="$f"
-  unset -f profile_context profile_input 2>/dev/null || true
+  unset -f profile_context profile_input profile_session_id 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   [ -n "$GANG_LAUNCH" ] || die "profile '$1' sets no GANG_LAUNCH"
+  if [ -n "$GANG_RESUME_LAUNCH" ]; then
+    case "$GANG_RESUME_LAUNCH" in
+      *'{{session_id}}'*) ;;
+      *) die "profile '$1' declares GANG_RESUME_LAUNCH without the required {{session_id}} slot — recency is not identity" ;;
+    esac
+    resume_tail="${GANG_RESUME_LAUNCH#*'{{session_id}}'}"
+    case "$resume_tail" in
+      *'{{session_id}}'*) die "profile '$1' declares GANG_RESUME_LAUNCH with more than one {{session_id}} slot" ;;
+    esac
+  fi
   case "$GANG_SELF_COMPACT" in
     ''|deferred) ;;
     *) die "profile '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
@@ -519,6 +549,39 @@ load_profile() { # $1 = profile name; sets the GANG_* strategy surface
         die "profile '$1' declares GANG_USAGE_CONFIRM_KEY '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
+  while IFS= read -r record || [ -n "$record" ]; do
+    [ -n "$record" ] || continue
+    pipes="${record//[!|]/}"
+    [ "${#pipes}" -eq 4 ] \
+      || die "profile '$1' has a GANG_DIALOGS record without exactly five fields: '$record'"
+    IFS='|' read -r id marker safe move confirm <<<"$record"
+    case "$id" in ''|*[!a-z0-9-]*) die "profile '$1' has invalid dialog id '$id' (expected [a-z0-9-]+)" ;; esac
+    [ -n "$marker" ] || die "profile '$1' dialog '$id' has an empty marker"
+    case "$marker" in ^*) ;; *) die "profile '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
+    [ -n "$safe" ] || die "profile '$1' dialog '$id' has an empty safe option"
+    [ -n "$confirm" ] || die "profile '$1' dialog '$id' has an empty confirm key"
+    case " $seen_ids " in *" $id "*) die "profile '$1' repeats dialog id '$id'" ;; esac
+    seen_ids="$seen_ids $id"
+    block_var="GANG_DIALOG_LINES_${id//-/_}"
+    block="${!block_var:-}"
+    [ -n "$block" ] || die "profile '$1' dialog '$id' has no non-empty $block_var"
+    marker_rc=0
+    printf '' | grep -Eq -- "$marker" 2>/dev/null || marker_rc=$?
+    [ "$marker_rc" -le 1 ] \
+      || die "profile '$1' dialog '$id' marker is not an ERE grep can evaluate: '$marker'"
+    printf '%s\n' "$block" | awk '{$1=$1; if (length) print}' | grep -Fx -- "$safe" >/dev/null \
+      || die "profile '$1' dialog '$id' safe option '$safe' is not one of $block_var's normalized lines"
+    for key in $move $confirm; do
+      case "$key" in *[!A-Za-z0-9-]*)
+        die "profile '$1' dialog '$id' declares key '$key', which is not a tmux key name" ;;
+      esac
+    done
+    forbidden="$(printf '%s\n%s\n%s\n' "$id" "$safe" "$block" \
+      | grep -Eio '(trust|permission|approve|allow|full access|sandbox|credential|token|secret)' \
+      | head -n 1)" || forbidden=""
+    [ -z "$forbidden" ] \
+      || die "profile '$1' dialog '$id' contains forbidden authority word '$forbidden' — Gangline never auto-answers permission, trust, approval, access, credential, token, secret, or sandbox surfaces"
+  done <<<"$GANG_DIALOGS"
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -563,13 +626,14 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
   [ -n "$STDIN_BODY" ] || die "$1: empty body on stdin"
 }
 
-SEND_FROM=""
+SEND_FROM="" SEND_WINDOW=""
 send_sender() { # $1 = optional outside identity; derive identity inside the team
   local claimed="$1" self
-  SEND_FROM=""
+  SEND_FROM="" SEND_WINDOW=""
   if self="$(self_window)"; then
     [ -z "$claimed" ] \
-      || die "send: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity"
+      || die "send: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity (inspect it with gang whoami)"
+    SEND_WINDOW="$self"
     SEND_FROM="$(tmux display-message -p -t "$self" '#W' 2>/dev/null)" \
       || die "send: cannot read this Gangline window's identity"
   else
@@ -579,6 +643,39 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
   fi
   valid_name "$SEND_FROM" \
     || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
+}
+
+registered_identity_guard() { # $1 window, $2 requested name, $3 action
+  local registered profile stamped
+  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
+  profile="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || profile=""
+  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
+  if [ -n "$registered" ] && [ "$registered" != "$2" ]; then
+    die "$3: window '$2' is registered to Gangline agent '$registered'; refusing to replace that identity with '$2'"
+  fi
+  if [ -z "$registered" ] && { [ -n "$profile" ] || [ -n "$stamped" ]; }; then
+    die "$3: window '$2' carries Gangline profile/session residue but no attributable @gl_agent identity; refusing to claim it as '$2' (inspect it before clearing the residue)"
+  fi
+}
+
+identity_mismatch_read() { # $1 window; print the recorded mismatch, or nonzero
+  local mismatch
+  mismatch="$(tmux show-options -wqv -t "$1" @gl_session_mismatch 2>/dev/null)" || mismatch=""
+  [ -n "$mismatch" ] || return 1
+  printf '%s' "$mismatch"
+}
+
+send_identity_guard() { # a pane with a contradicted native identity may not speak
+  local mismatch registered profile
+  [ -n "$SEND_WINDOW" ] || return 0
+  registered="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_agent 2>/dev/null)" || registered=""
+  profile="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_profile 2>/dev/null)" || profile=""
+  [ -n "$registered" ] && [ -n "$profile" ] \
+    || refuse "send: this pane has no registered Gangline agent/profile identity; a window name alone cannot attribute a message (gang whoami; then re-hitch or re-adopt the pane)"
+  [ "$registered" = "$SEND_FROM" ] \
+    || refuse "send: this pane is registered as '$registered' but its window is named '$SEND_FROM'; refusing misattributed delivery (gang whoami)"
+  mismatch="$(identity_mismatch_read "$SEND_WINDOW")" || return 0
+  refuse "send: this pane has a harness session identity mismatch ($mismatch); nothing from it can be attributed safely until that is resolved (gang whoami)"
 }
 
 DOCTRINE=""
@@ -1150,6 +1247,108 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
   return 0
 }
 
+dialog_normalize() { # width/padding normalization; option numbering is not fingerprint
+  awk '
+    {
+      gsub(/[[:space:]]+/, " ")
+      sub(/^ /, ""); sub(/ $/, "")
+      if (!length) next
+      print
+    }
+  '
+}
+
+DIALOG_MATCH_ID="" DIALOG_MATCH_SAFE="" DIALOG_MATCH_MOVE=""
+DIALOG_MATCH_CONFIRM="" DIALOG_MATCH_BLOCK="" DIALOG_MATCH_SELECTED=""
+dialog_record_matches() { # $1 normalized capture, $2 id, $3 marker, $4 block
+  local capture="$1" id="$2" marker="$3" block="$4" line prefix stripped
+  local -a cap_lines=() block_lines=()
+  local j start markers selected="" matched=0
+  while IFS= read -r line; do cap_lines[${#cap_lines[@]}]="$line"; done <<<"$capture"
+  while IFS= read -r line; do block_lines[${#block_lines[@]}]="$line"; done \
+    < <(printf '%s\n' "$block" | dialog_normalize)
+  [ "${#block_lines[@]}" -gt 0 ] || return 1
+  [ "${#cap_lines[@]}" -ge "${#block_lines[@]}" ] || return 1
+  for ((start=0; start<=${#cap_lines[@]}-${#block_lines[@]}; start++)); do
+    markers=0 selected="" matched=1
+    for ((j=0; j<${#block_lines[@]}; j++)); do
+      line="${cap_lines[start+j]}" stripped="$line"
+      prefix="$(printf '%s\n' "$line" | grep -Eo -- "$marker" | head -n 1)" || prefix=""
+      if [ -n "$prefix" ]; then
+        markers=$((markers + 1))
+        stripped="${line#"$prefix"}"
+        selected="$stripped"
+      elif [[ "$line" =~ ^[0-9]+\.\  ]]; then
+        stripped="${line#*'. '}"
+      elif [[ "$line" == '›'* ]]; then
+        matched=0; break
+      fi
+      [ "$stripped" = "${block_lines[j]}" ] || { matched=0; break; }
+    done
+    [ "$matched" -eq 1 ] && [ "$markers" -eq 1 ] || continue
+    DIALOG_MATCH_SELECTED="$selected"
+    return 0
+  done
+  return 1
+}
+
+dialog_find() { # $1 window; set DIALOG_MATCH_* for exactly one full-block match
+  local pane normalized record id marker safe move confirm block_var block
+  local hits="" hit_count=0 selected=""
+  DIALOG_MATCH_ID="" DIALOG_MATCH_SAFE="" DIALOG_MATCH_MOVE=""
+  DIALOG_MATCH_CONFIRM="" DIALOG_MATCH_BLOCK="" DIALOG_MATCH_SELECTED=""
+  [ -n "${GANG_DIALOGS:-}" ] || return 1
+  pane="$(capture_joined "$1")" || die "cannot read pane $1 while checking known dialogs"
+  normalized="$(printf '%s\n' "$pane" | dialog_normalize)"
+  while IFS= read -r record || [ -n "$record" ]; do
+    [ -n "$record" ] || continue
+    IFS='|' read -r id marker safe move confirm <<<"$record"
+    block_var="GANG_DIALOG_LINES_${id//-/_}"; block="${!block_var}"
+    if dialog_record_matches "$normalized" "$id" "$marker" "$block"; then
+      hit_count=$((hit_count + 1)); hits="${hits:+$hits, }$id"; selected="$DIALOG_MATCH_SELECTED"
+      DIALOG_MATCH_ID="$id" DIALOG_MATCH_SAFE="$safe" DIALOG_MATCH_MOVE="$move"
+      DIALOG_MATCH_CONFIRM="$confirm" DIALOG_MATCH_BLOCK="$block" DIALOG_MATCH_SELECTED="$selected"
+    fi
+  done <<<"$GANG_DIALOGS"
+  [ "$hit_count" -le 1 ] || die "known-dialog registry is ambiguous in $(agent_name_of "$1"): $hits all match"
+  [ "$hit_count" -eq 1 ]
+}
+
+dialog_first_line_present() { # $1 window, $2 declared block
+  local first pane
+  first="$(printf '%s\n' "$2" | dialog_normalize | head -n 1)"
+  pane="$(capture_joined "$1")" || return 0
+  printf '%s\n' "$pane" | dialog_normalize | grep -Fx -- "$first" >/dev/null
+}
+
+dialog_triage() { # $1 window, $2 name, $3 locked|unlocked; 0 answered, 1 unknown
+  local wanted safe move confirm block key lock_mode="$3"
+  dialog_find "$1" || return 1
+  wanted="$DIALOG_MATCH_ID" safe="$DIALOG_MATCH_SAFE" move="$DIALOG_MATCH_MOVE"
+  confirm="$DIALOG_MATCH_CONFIRM" block="$DIALOG_MATCH_BLOCK"
+  case "$lock_mode" in locked) ;; unlocked) lock_pane "$1" ;; *) die "internal: unknown dialog lock mode '$lock_mode'" ;; esac
+  dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] || {
+    [ "$lock_mode" = locked ] || lock_release
+    return 1
+  }
+  for key in $move; do
+    tmux send-keys -t "$1" "$key"
+    dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] \
+      || die "known transient '$wanted' changed after key '$key'; confirm was NOT pressed (gang attach)"
+  done
+  dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] \
+    || die "known transient '$wanted' changed before confirm; confirm was NOT pressed (gang attach)"
+  [ "$DIALOG_MATCH_SELECTED" = "$safe" ] \
+    || die "known transient '$wanted' did not select safe row '$safe' after keys '${move:-<none>}'; confirm was NOT pressed (gang attach)"
+  tmux send-keys -t "$1" "$confirm"
+  ! dialog_first_line_present "$1" "$block" && composer_live "$1" \
+    || die "known transient '$wanted' did not clear to a readable composer after keys '${move:-<none>} $confirm' (gang attach)"
+  printf "answered the known transient '%s' in '%s' with its safe option (%s)\n" \
+    "$wanted" "$2" "$safe" >&2
+  [ "$lock_mode" = locked ] || lock_release
+  return 0
+}
+
 occupied() { # $1 = window id, profile loaded; exit 0 if a UI owns the input box
   if occupied_witness "$1"; then return 0; fi
   local pane
@@ -1195,6 +1394,9 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
 wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
   local t=0 modal_reported=0
   while [ "$t" -lt "$2" ]; do
+    if [ -n "${3:-}" ] && dialog_triage "$1" "$3" unlocked; then
+      continue
+    fi
     if input_painted "$1"; then
       if pane_stable "$1"; then
         [ "$modal_reported" -eq 0 ] \
@@ -2101,7 +2303,7 @@ effort_levels() { # print the levels the profile says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id resume=0 launch_env profile_arg=0
+  local name="" prof="${GANG_PROFILE:-claude-code}" dir="$PWD" model="" effort="" id="" resume=0 resume_id="" resume_stamped="" launch_env profile_arg=0 pane_dead
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -2111,7 +2313,8 @@ cmd_hitch() {
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
-    --resume)     resume=1; shift ;;
+    --resume)     resume=1; shift
+                  if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
@@ -2125,8 +2328,26 @@ cmd_hitch() {
   load_profile "$prof"
   if [ "$resume" -eq 1 ]; then
     [ -n "$GANG_RESUME_LAUNCH" ] \
-      || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume. Either its harness has no resume form gang can drive, or its sessions are not scoped to a working directory — resuming there would pick up whichever conversation was last anywhere on this machine, including another agent's (docs/DECISIONS.md#server-loss-is-a-relaunch-not-restoration)"
-    GANG_LAUNCH="$GANG_RESUME_LAUNCH"
+      || die "hitch: profile '$prof' declares no GANG_RESUME_LAUNCH, so it cannot take --resume; inspect the target identity with gang whoami"
+    if session_live && id="$(win_id "$name")"; then
+      registered_identity_guard "$id" "$name" hitch
+    elif [ -z "$resume_id" ]; then
+      die "hitch: bare --resume for '$name' has no still-existing registered window whose @gl_session_id can be read. Use the exact 'gang hitch $name --resume <session-id>' line printed by gang drop, or inspect a surviving pane with gang whoami"
+    fi
+    if [ -z "$resume_id" ]; then
+      resume_id="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || resume_id=""
+      [ -n "$resume_id" ] \
+        || die "hitch: '$name' has no @gl_session_id; use the exact explicit-id relaunch line printed by gang drop, or inspect the surviving pane with gang whoami"
+    elif [ -n "$id" ]; then
+      resume_stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || resume_stamped=""
+      [ -z "$resume_stamped" ] || [ "$resume_stamped" = "$resume_id" ] \
+        || die "hitch: window '$name' is stamped for harness session '$resume_stamped', not requested session '$resume_id'; refusing to replace its registered native identity"
+    fi
+    case "$resume_id" in ''|*[!A-Za-z0-9._:-]*) die "hitch: session id '$resume_id' has characters Gangline will not place in a launch command" ;; esac
+    GANG_LAUNCH="${GANG_RESUME_LAUNCH//'{{session_id}}'/$resume_id}"
+  elif session_live && id="$(win_id "$name")"; then
+    registered_identity_guard "$id" "$name" hitch
+    die "agent '$name' already exists"
   fi
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: profile '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
@@ -2186,14 +2407,20 @@ cmd_hitch() {
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not start session '$SESSION' for '$name'"
+  elif [ -n "$id" ]; then
+    pane_dead="$(tmux display-message -p -t "$id" '#{pane_dead}' 2>/dev/null)" || pane_dead=""
+    [ "$resume" -eq 1 ] && [ "$pane_dead" = 1 ] \
+      || die "agent '$name' already exists and its pane is live; refusing to replace it with a resumed harness"
+    tmux respawn-window -k -t "$id" -c "$dir" "$GANG_LAUNCH" \
+      || die "could not resume '$name' in its registered window"
   else
-    exists "$name" && die "agent '$name' already exists"
     id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not open a window for '$name' in session '$SESSION'"
   fi
   [ -n "$id" ] || die "'$name' never appeared in session '$SESSION'"
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
+  tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_profile "$prof"
   stamp_binary_id "$id"
   spool_mint "$id"
@@ -2239,12 +2466,17 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
 
 send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothing typed
   local busy_rc=0 box=""
+  lock_pane "$AGENT_ID"
   # A UI owning the composer is the same condition inject refuses with, and it
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
   # disagreement decided whether the default parked a message or dropped it.
-  ! occupied "$AGENT_ID" \
-    || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+  if occupied "$AGENT_ID"; then
+    dialog_triage "$AGENT_ID" "$1" locked \
+      || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+    ! occupied "$AGENT_ID" \
+      || die "known-dialog triage returned success for '$1', but its input is still occupied"
+  fi
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
     0) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
@@ -2280,7 +2512,8 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
-  inject "$AGENT_ID" "$ENVELOPE"
+  inject "$AGENT_ID" "$ENVELOPE" "" locked
+  lock_release
   # No @gl_turn write exists anywhere on this path — not here, and not in the
   # witnesses it consults (turn_witness reports a malformed value without
   # repairing it). Native hooks write the bracket lock-free, tmux offers no
@@ -2313,9 +2546,12 @@ cmd_send() {
     printf '%s\n' "send: --spool is the default now and does nothing; drop it, and use --live-only for a delivery that must not park." >&2
   fi
   send_sender "$from"
+  send_identity_guard
   stdin_body "send"
   body="$STDIN_BODY"
   resolve "$name"
+  [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
+    || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
   envelope "$SEND_FROM" "$body"
   if [ "$live_only" -eq 1 ]; then
     send_live "$name"
@@ -2329,6 +2565,7 @@ cmd_send() {
   err="$(send_live "$name" 2>&1)" || rc=$?
   case "$rc" in
     0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+       [ -z "$err" ] || printf '%s\n' "$err" >&2
        echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
@@ -2653,7 +2890,11 @@ cmd_usage() { # drive and return the harness's own usage UI
 state_now() { # $1 = window id, profile loaded -> the state, in words
   if occupied "$1"; then
     activity_hold_clear "$1"
-    echo "occupied (authority unknown)"
+    if dialog_find "$1"; then
+      echo "occupied (known transient: $DIALOG_MATCH_ID)"
+    else
+      echo "occupied (authority unknown)"
+    fi
     return
   fi
   local busy_rc=0
@@ -2676,7 +2917,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed stall_failed skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed stall_failed mismatch skew="" current
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -2731,9 +2972,30 @@ cmd_status() {
   stall_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_stall_failed)"
   [ -z "$stall_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "stall note NOT accepted: $stall_failed")"
+  mismatch="$(identity_mismatch_read "$AGENT_ID")" || mismatch=""
+  [ -z "$mismatch" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "harness session identity MISMATCH: $mismatch")"
   current="$(binary_id)"
   skew="$(binary_skew_note "$AGENT_ID" "$current")" || skew=""
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
+}
+
+cmd_whoami() {
+  local id name profile stamped live mismatch
+  [ $# -eq 0 ] || die "whoami: takes no arguments"
+  id="$(self_window)" || {
+    cmd_help whoami
+    printf "(this shell is not in a Gangline agent window of team '%s')\n" "$SESSION"
+    exit 1
+  }
+  name="$(agent_name_of "$id")"
+  profile="$(tmux show-options -wqv -t "$id" @gl_profile 2>/dev/null)" || profile=""
+  stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
+  live="$(tmux show-options -wqv -t "$id" @gl_session_live_id 2>/dev/null)" || live=""
+  mismatch="$(identity_mismatch_read "$id")" || mismatch=""
+  printf 'agent: %s\npane: %s\nprofile: %s\nharness session id: %s\nlive payload id: %s\nteam session: %s\nmismatch: %s\n' \
+    "$name" "${TMUX_PANE:-COULD-NOT-DETERMINE}" "${profile:-UNSTAMPED}" \
+    "${stamped:-UNSTAMPED}" "${live:-NOT-IN-A-HOOK-YET}" "$SESSION" "${mismatch:-none}"
 }
 
 cmd_roster() {
@@ -2751,7 +3013,7 @@ EOF
 }
 
 roster_row() { # $1 window, $2 name, $3 current binary id
-  local prof state detail="" spooled held skew=""
+  local prof state detail="" spooled held skew="" mismatch
   prof="$(tmux show-options -wqv -t "$1" @gl_profile)"
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -2768,10 +3030,42 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
+  mismatch="$(identity_mismatch_read "$1")" || mismatch=""
+  [ -z "$mismatch" ] || detail="$detail identity-mismatch=[$mismatch]"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
   [ -z "$skew" ] || detail="$detail $skew"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
+}
+
+hook_identity_assert() { # $1 pane, $2 profile, $3 native payload; never kills a harness
+  local live stamped registered name
+  live="$(
+    load_profile "$2"
+    declare -F profile_session_id >/dev/null || exit 1
+    profile_session_id "$1" "$3"
+  )" 2>/dev/null || return 0
+  case "$live" in ''|*[!A-Za-z0-9._:-]*) return 0 ;; esac
+  tmux set-option -w -t "$1" @gl_session_live_id "$live" 2>/dev/null || return 0
+  name="$(agent_name_of "$1")"
+  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
+  if [ -z "$registered" ]; then
+    tmux set-option -w -t "$1" @gl_agent "$name" 2>/dev/null || return 0
+  elif [ "$registered" != "$name" ]; then
+    tmux set-option -w -t "$1" @gl_session_mismatch \
+      "agent '$registered' != window '$name'" 2>/dev/null || true
+    return 0
+  fi
+  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
+  if [ -z "$stamped" ]; then
+    tmux set-option -w -t "$1" @gl_session_id "$live" 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
+  elif [ "$stamped" != "$live" ]; then
+    tmux set-option -w -t "$1" @gl_session_mismatch \
+      "stamped '$stamped' != live '$live'" 2>/dev/null || true
+  else
+    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
+  fi
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
@@ -2783,6 +3077,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   [ -n "$event" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
   prof="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_profile 2>/dev/null)" || exit 0
   [ -n "$prof" ] || exit 0
+  hook_identity_assert "$TMUX_PANE" "$prof" "$payload"
   if [ "$event" = Notification ]; then
     kind="$(printf '%s' "$payload" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
@@ -2860,8 +3155,10 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_PROFILES=1 if you are testing gang itself)"
   load_profile "$prof"
   id="$(win_id "$name")" || die "no window '$name' in session '$SESSION' to adopt"
+  registered_identity_guard "$id" "$name" adopt
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
+  tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_profile "$prof"
   stamp_binary_id "$id"
   spool_mint "$id"
@@ -2869,8 +3166,14 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 }
 
 cmd_drop() {
-  local id
+  local id stamped
   id="$(win_id "$1")" || die "no agent '$1'"
+  stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
+  if [ -n "$stamped" ]; then
+    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$1" "$stamped"
+  else
+    printf 'session id: UNSTAMPED — this profile has not supplied an identity Gangline can resume\n'
+  fi
   # A spool would outlive its window on disk, which is not a design: this is
   # its deletion path.
   spool_forget "$id"
@@ -2948,6 +3251,7 @@ cmd_config() {
 }
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
+dirty_execution_warn
 if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
   cmd_help "$cmd"
   exit 0
@@ -2976,6 +3280,7 @@ case "$cmd" in
   hook)     cmd_hook ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
+  whoami)   cmd_whoami "$@" ;;
   roster)   cmd_roster ;;
   attach)   cmd_attach ;;
   drop)     cmd_drop "$1" ;;

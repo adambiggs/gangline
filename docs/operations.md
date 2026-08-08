@@ -17,9 +17,15 @@ gang capture lead
 ```
 
 Confirm that each harness has already completed first-run setup, authentication,
-and repository trust prompts. Gangline never answers permission dialogs. An
-occupied dialog appears as `occupied (authority unknown)` and blocks input until
-the operator resolves it in `gang attach`.
+and repository trust prompts. Gangline answers only dialogs a profile enumerates
+as carrying no authority, with the selected safe row verified before confirm and
+the restored composer verified afterwards. It never answers permission, trust,
+approval, or access surfaces; those remain `occupied (authority unknown)` until
+the operator resolves them in `gang attach`. A stall note follows only when a
+native harness hook witnesses a configured event: Claude Code can report its
+declared notifications and permission requests, while Codex has no Notification
+hook and reports only permission requests. An unknown Codex dialog can therefore
+refuse delivery without raising a stall note.
 
 During hitch, a first-run prompt is reported as soon as Gangline has positive
 pane evidence rather than a merely blank startup screen. Leave hitch running,
@@ -296,8 +302,11 @@ ceiling as evidence that a target can render the body.
 
 ### A harness is blocked on a dialog
 
-Run `gang attach`, answer it in the native TUI, then re-run `gang status`. Do not
-send prose into a dialog and do not teach Gangline to answer it.
+Run `gang status`. A profile-enumerated benign transient is named and will be
+answered only when a send or hitch already needs to write there. Any unknown or
+authority-bearing dialog remains `occupied (authority unknown)`; run
+`gang attach`, answer it in the native TUI, then re-run status. Do not send prose
+into an unknown dialog or widen the registry to include an access decision.
 
 ### The harness parked a message in its own input queue
 
@@ -312,8 +321,8 @@ against the message it recorded as parked, and submits it only if they match.
 It refuses when the composer no longer shows queue evidence, when it holds no
 record of the parked body, or when the readback does not match — without
 pressing Enter. If the flush reports that the harness parked the message again,
-the queue is hard-stuck: `gang drop` that agent, hitch it with `--resume`, and
-re-send what the queue swallowed.
+the queue is hard-stuck: `gang drop` that agent, copy its printed explicit-id
+relaunch line, run that line, and re-send what the queue swallowed.
 
 ### Something is in the input box and it is not clear what
 
@@ -355,13 +364,14 @@ keystroke is often what a native dialog reads as an answer.
 Gangline persists no roster. Recreate only the agents the operator chooses:
 
 ```sh
-gang hitch lead -p claude-code -d "$PWD" --resume
-gang hitch worker -p codex -d "$PWD" --resume
+gang hitch lead -p claude-code -d "$PWD" --resume <lead-session-id>
+gang hitch worker -p codex -d "$PWD" --resume <worker-session-id>
 ```
 
-`--resume` uses the profile's native, directory-scoped continuation command and
-refuses profiles that cannot make that request safely. This is relaunch, not a
-claim that Gangline reconstructed the old team.
+Use ids copied from each agent's earlier `gang drop` output or native transcript.
+`--resume` substitutes the exact id into the profile's native command and
+refuses profiles that cannot do so. There is no latest-session fallback. This is
+relaunch, not a claim that Gangline reconstructed the old team.
 
 ### A profile no longer recognizes its TUI
 

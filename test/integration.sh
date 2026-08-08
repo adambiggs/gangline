@@ -107,7 +107,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer drop"
+bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop"
 meaningful_bare_commands="up roster attach profiles config cutoff notify down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -133,7 +133,8 @@ while read -r help_command; do
   else
     fail "help exists for gang $help_command" "$command_help"
   fi
-  command_wide="$(printf '%s\n' "$command_help" | help_width_failure)"
+  command_wide="$(printf '%s\n' "$command_help" \
+    | grep -v '^gang: WARNING: executing dirty ' | help_width_failure)"
   equal "gang $help_command help fits the phone-SSH width" "" "$command_wide"
 done <<<"$dispatch_commands"
 
@@ -390,6 +391,10 @@ done
 equal "Codex native hooks survive fresh and resumed launch paths" \
   "plain/GANG_LAUNCH=hook  | plain/GANG_RESUME_LAUNCH=hook  | has space/GANG_LAUNCH=hook  | has space/GANG_RESUME_LAUNCH=hook " \
   "$hook_receipts"
+codex_resume="$(codex_launch "$ROOT" GANG_RESUME_LAUNCH)"
+contains "Codex resume declares an explicit native session slot" \
+  "$codex_resume" "codex resume {{session_id}}"
+excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
 
 claude_profile="$ROOT/profiles/claude-code.sh"
 claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
@@ -417,6 +422,17 @@ claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
 equal "Claude declares only native kinds that await a person" \
   "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
   "$claude_stall_types"
+claude_resume="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_profile")"
+contains "Claude resume declares an explicit native session slot" \
+  "$claude_resume" "claude --resume {{session_id}}"
+excludes "Claude resume never resolves by directory recency" \
+  "$claude_resume" "--continue"
+codex_dialog_block="$(env ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_DIALOG_LINES_safety_buffering_prompt"' \
+  fixture "$ROOT/profiles/codex.sh")"
+contains "the shipped Codex fingerprint includes the third captured option" \
+  "$codex_dialog_block" "Learn more"
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
   fixture "$claude_profile")"
@@ -953,6 +969,27 @@ contains "an uncommitted executable change produces binary skew" \
   "$("$installed_gang" status alpha)" \
   "binary-skew ($binary_stamp != current $changed_stamp)"
 
+dirty_root="$RUN_ROOT/dirty-checkout"
+mkdir -p "$dirty_root/bin"
+cp -R "$ROOT/profiles" "$dirty_root/profiles"
+cp "$GANG" "$dirty_root/bin/gang"
+git -C "$dirty_root" init -q
+git -C "$dirty_root" add -- bin/gang profiles
+git -C "$dirty_root" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: clean executable witness'
+dirty_head="$(git -C "$dirty_root" rev-parse HEAD)"
+excludes "a clean checkout executable emits no dirty-execution warning" \
+  "$("$dirty_root/bin/gang" profiles 2>&1)" "executing dirty"
+printf '\n# named dirty-execution mutant\n' >> "$dirty_root/bin/gang"
+dirty_warning="$("$dirty_root/bin/gang" profiles 2>&1)"
+contains "a dirty live executable warns on ordinary command dispatch" \
+  "$dirty_warning" "WARNING: executing dirty $dirty_root/bin/gang"
+contains "the dirty warning names the HEAD its bytes diverged from" \
+  "$dirty_warning" "$dirty_head"
+git -C "$dirty_root" checkout -q -- bin/gang
+excludes "restoring the executable to HEAD removes the warning" \
+  "$("$dirty_root/bin/gang" profiles 2>&1)" "executing dirty"
+
 tmux set-option -uw -t "$alpha_id" @gl_binary_id
 contains "status warns when a pre-witness window is unstamped" \
   "$("$GANG" status alpha)" "binary-skew (window unstamped; current $binary_stamp)"
@@ -997,6 +1034,394 @@ equal "composer prints nothing for an empty box" \
 
 mkdir -p "$RUN_ROOT/profiles"
 export GANG_PROFILES="$RUN_ROOT/profiles"
+
+# Native session identity is a window fact, and every renewal consumes that
+# exact fact rather than directory recency. This fixture exposes the common
+# hook payload shape without launching a real harness.
+cat > "$RUN_ROOT/profiles/identity.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fresh-identity"
+GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
+profile_session_id() {
+  printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])'
+}
+SH
+"$GANG" hitch identity -p identity -d /tmp >/dev/null
+identity_id="$(window_id identity)"
+identity_pane="$(tmux list-panes -t "$identity_id" -F '#{pane_id}')"
+printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook
+equal "the first native hook stamps its exact harness session id" \
+  "native-identity-123" \
+  "$(tmux show-options -wqv -t "$identity_id" @gl_session_id)"
+equal "hitch records the window's Gangline agent identity" "identity" \
+  "$(tmux show-options -wqv -t "$identity_id" @gl_agent)"
+identity_report="$(TMUX_PANE="$identity_pane" "$GANG" whoami)"
+contains "whoami names the agent" "$identity_report" "agent: identity"
+contains "whoami names the pane" "$identity_report" "pane: $identity_pane"
+contains "whoami names the profile" "$identity_report" "profile: identity"
+contains "whoami names the stamped native session" "$identity_report" \
+  "harness session id: native-identity-123"
+contains "whoami names the latest live payload id" "$identity_report" \
+  "live payload id: native-identity-123"
+contains "whoami names the team" "$identity_report" "team session: $GANG_SESSION"
+
+self_before="$(pane identity)"
+refuses "a self-send is refused under the intent it violates" \
+  "a message that returns to its author is never intended" \
+  bash -c 'printf SELF_RETURN | TMUX_PANE="$1" "$2" send --to identity --stdin' \
+  fixture "$identity_pane" "$GANG"
+equal "a refused self-send types nothing" "$self_before" "$(pane identity)"
+
+tmux set-option -w -t "$identity_id" @gl_session_id bogus-native-id
+printf '%s' '{"hook_event_name":"PostToolUse","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook
+contains "status exposes a native session identity mismatch" \
+  "$("$GANG" status identity)" \
+  "stamped 'bogus-native-id' != live 'native-identity-123'"
+contains "roster exposes a native session identity mismatch" \
+  "$("$GANG" roster)" "identity-mismatch="
+mismatch_before="$(pane alpha)"
+refuses "a mismatched pane cannot send under the window's authority" \
+  "identity mismatch" bash -c \
+  'printf MISMATCH_SPOKE | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
+  fixture "$identity_pane" "$GANG"
+equal "the mismatch refusal types nothing into its target" \
+  "$mismatch_before" "$(pane alpha)"
+tmux set-option -w -t "$identity_id" @gl_session_id native-identity-123
+printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
+  | TMUX_PANE="$identity_pane" "$GANG" hook
+excludes "a matching next hook repairs the visible mismatch" \
+  "$("$GANG" roster)" "identity-mismatch="
+
+drop_identity_out="$("$GANG" drop identity)"
+contains "drop prints the parting native session id before destroying its window" \
+  "$drop_identity_out" "session id: native-identity-123"
+contains "drop prints the exact explicit-id relaunch line" "$drop_identity_out" \
+  "gang hitch identity --resume native-identity-123"
+"$GANG" hitch identity -p identity -d "$RUN_ROOT" \
+  --resume native-identity-123 >/dev/null
+contains "explicit resume substitutes the quoted identity from any cwd" \
+  "$(tmux display-message -p -t "$(window_id identity)" '#{pane_start_command}')" \
+  "resume-native-identity-123"
+"$GANG" drop identity >/dev/null
+refuses "bare resume without a surviving stamped window refuses loudly" \
+  "gang hitch identity --resume <session-id>" \
+  "$GANG" hitch identity -p identity -d /tmp --resume
+equal "a refused stamp-less resume launches nothing" "" "$(window_id identity)"
+
+"$GANG" hitch survivor -p identity -d /tmp >/dev/null
+survivor_id="$(window_id survivor)"
+survivor_pane="$(tmux list-panes -t "$survivor_id" -F '#{pane_id}')"
+printf '%s' '{"hook_event_name":"Stop","session_id":"surviving-native-id"}' \
+  | TMUX_PANE="$survivor_pane" "$GANG" hook
+refuses "explicit resume refuses a different session over a stamped window" \
+  "stamped for harness session 'surviving-native-id', not requested session 'other-native-id'" \
+  "$GANG" hitch survivor -p identity -d /tmp --resume other-native-id
+tmux set-option -w -t "$survivor_id" remain-on-exit on
+survivor_dead="test-survivor-dead-$$"
+printf -v survivor_exit 'trap %q EXIT; exit' "tmux wait-for -S $survivor_dead"
+tmux send-keys -l -t "$survivor_id" "$survivor_exit"
+tmux send-keys -t "$survivor_id" Enter
+tmux wait-for "$survivor_dead"
+"$GANG" hitch survivor -p identity -d /tmp --resume >/dev/null
+contains "bare resume reads the stamp from a surviving dead window" \
+  "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
+  "resume-surviving-native-id"
+"$GANG" drop survivor >/dev/null
+
+unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n unadopted "PS1='❯ ' bash --norc")"
+unadopted_pane="$(tmux list-panes -t "$unadopted_id" -F '#{pane_id}')"
+unadopted_target_before="$(pane alpha)"
+refuses "an unadopted pane cannot send under its bare window name" \
+  "no registered Gangline agent/profile identity" bash -c \
+  'printf IDENTITY_ABSENT | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
+  fixture "$unadopted_pane" "$GANG"
+equal "identity absence types nothing into the claimed target" \
+  "$unadopted_target_before" "$(pane alpha)"
+tmux kill-window -t "$unadopted_id"
+
+residue_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n displaced "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$residue_id" @gl_agent lead
+refuses "hitch refuses a target window registered to another identity" \
+  "registered to Gangline agent 'lead'" \
+  "$GANG" hitch displaced -p identity -d /tmp
+refuses "adopt refuses a window registered to another Gangline identity" \
+  "registered to Gangline agent 'lead'" "$GANG" adopt displaced -p bash
+contains "the mismatch refusal names the requested window identity too" \
+  "$("$GANG" adopt displaced -p bash 2>&1 || true)" "displaced"
+tmux kill-window -t "$residue_id"
+
+# A synchronous tty fixture paints the captured Codex menu and records every
+# key Gangline sends. Each mutant changes one load-bearing observation.
+cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+import os
+import subprocess
+import sys
+import tty
+
+variant = os.environ.get("DIALOG_VARIANT", "known")
+log_path = os.environ["DIALOG_KEY_LOG"]
+ready = os.environ["DIALOG_READY"]
+selected = 0
+composer = False
+draft = bytearray()
+body = [
+    "Our systems are thinking a bit more about this request before responding.",
+    "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
+]
+labels = ["Retry with a faster model", "Dismiss and keep waiting", "Learn more"]
+footer = "No action is required. Codex will keep waiting, and this menu will close when the response is ready."
+if variant == "changed-byte":
+    body[0] = body[0].replace("systems", "system")
+if variant == "reordered":
+    body[0], body[1] = body[1], body[0]
+if variant == "authority":
+    body = ["Permission required before this command can run.", "Do you want to allow full access?"]
+    labels = ["Allow", "Deny", "Learn more"]
+    footer = "Choose whether to approve this permission."
+if variant == "extra-option":
+    labels.insert(2, "Open diagnostics")
+
+def paint():
+    sys.stdout.write("\x1b[2J\x1b[H")
+    for line in body:
+        print("  " + line)
+    print()
+    for index, label in enumerate(labels):
+        glyph = "›" if index == selected or (variant == "two-glyph" and index == 1) else " "
+        print(f"{glyph} {index + 1}. {label}")
+    print()
+    print("  " + footer)
+    sys.stdout.flush()
+
+def record(key):
+    with open(log_path, "a", encoding="utf-8") as stream:
+        stream.write(key + "\n")
+
+tty.setraw(sys.stdin.fileno())
+paint()
+subprocess.run(["tmux", "wait-for", "-S", ready], check=True)
+while True:
+    char = os.read(sys.stdin.fileno(), 1)
+    if composer:
+        if char in (b"\r", b"\n"):
+            sys.stdout.write("\r\n" + draft.decode("utf-8") + "\r\n❯ ")
+            sys.stdout.flush()
+            draft.clear()
+        else:
+            draft.extend(char)
+            os.write(sys.stdout.fileno(), char)
+        continue
+    if char == b"\x1b":
+        tail = os.read(sys.stdin.fileno(), 2)
+        if tail == b"[B":
+            record("Down")
+            if variant != "wrong-move":
+                selected = min(selected + 1, len(labels) - 1)
+            paint()
+        elif tail == b"[A":
+            record("Up")
+            if variant != "wrong-move":
+                selected = max(selected - 1, 0)
+            paint()
+    elif char in (b"\r", b"\n"):
+        record("Enter")
+        if selected == 1 and variant != "confirm-stuck":
+            composer = True
+            sys.stdout.write("\x1b[2J\x1b[H❯ ")
+            sys.stdout.flush()
+        else:
+            paint()
+PY
+chmod +x "$RUN_ROOT/dialog-fixture.py"
+
+cat > "$RUN_ROOT/profiles/dialog.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog"
+GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
+GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
+Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
+Retry with a faster model
+Dismiss and keep waiting
+Learn more
+No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
+SH
+cat > "$RUN_ROOT/profiles/dialog-wrong.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/profiles/dialog.sh"
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Up|Enter'
+SH
+
+dialog_start() { # $1 agent, $2 variant, $3 profile
+  local name="$1" variant="$2" profile="$3" id command
+  "$GANG" hitch "$name" -p "$profile" -d /tmp >/dev/null
+  id="$(window_id "$name")"
+  case "$name" in dialog-known) tmux resize-window -t "$id" -x 48 -y 24 ;; esac
+  : > "$RUN_ROOT/$name.keys"
+  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q %q' \
+    "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" "$RUN_ROOT/dialog-fixture.py"
+  tmux send-keys -l -t "$id" "$command"
+  tmux send-keys -t "$id" Enter
+  tmux wait-for "dialog-ready-$name-$$"
+}
+
+dialog_start dialog-known known dialog
+dialog_known_err="$RUN_ROOT/dialog-known.err"
+if printf 'DIALOG_BODY_REACHED' | "$GANG" send --to dialog-known --from tester \
+    --live-only --stdin >/dev/null 2>"$dialog_known_err"; then
+  pass "a fully fingerprinted known dialog is auto-answered"
+else
+  fail "a fully fingerprinted known dialog is auto-answered" \
+    "$(<"$dialog_known_err")"
+fi
+contains "the full-block match survives a narrow soft-wrapped pane and sends" \
+  "$(pane dialog-known)" "DIALOG_BODY_REACHED"
+contains "known-dialog triage names the exact registry id" \
+  "$(<"$dialog_known_err")" "safety-buffering-prompt"
+equal "known-dialog triage moves once and confirms only after verification" \
+  $'Down\nEnter' "$(<"$RUN_ROOT/dialog-known.keys")"
+"$GANG" drop dialog-known >/dev/null
+
+for mutant in extra-option reordered changed-byte two-glyph authority; do
+  dialog_start "dialog-$mutant" "$mutant" dialog
+  mutant_before="$(pane "dialog-$mutant")"
+  mutant_keys="$(<"$RUN_ROOT/dialog-$mutant.keys")"
+  if printf "MUTANT_$mutant" | "$GANG" send --to "dialog-$mutant" \
+      --from tester --live-only --stdin >/dev/null 2>&1; then
+    fail "$mutant known-dialog mutant is refused" "send unexpectedly succeeded"
+  else
+    pass "$mutant known-dialog mutant is refused"
+  fi
+  equal "$mutant mutant leaves the dialog byte-for-byte on screen" \
+    "$mutant_before" "$(pane "dialog-$mutant")"
+  equal "$mutant mutant receives no auto-answer key" "$mutant_keys" \
+    "$(<"$RUN_ROOT/dialog-$mutant.keys")"
+  "$GANG" drop "dialog-$mutant" >/dev/null
+done
+
+dialog_start dialog-wrong wrong-move dialog-wrong
+if wrong_out="$(printf WRONG_SELECTION | "$GANG" send --to dialog-wrong \
+    --from tester --live-only --stdin 2>&1)"; then
+  fail "confirm never fires while the glyph is on a non-safe row" \
+    "send unexpectedly succeeded"
+else
+  contains "the wrong-selection refusal names the dialog" \
+    "$wrong_out" "safety-buffering-prompt"
+  contains "the wrong-selection refusal points at direct inspection" \
+    "$wrong_out" "gang attach"
+fi
+equal "the wrong-selection mutant records its move but no confirm" \
+  "Up" "$(<"$RUN_ROOT/dialog-wrong.keys")"
+"$GANG" drop dialog-wrong >/dev/null
+
+dialog_start dialog-confirm-stuck confirm-stuck dialog
+if stuck_out="$(printf STUCK_CONFIRM | "$GANG" send --to dialog-confirm-stuck \
+    --from tester --live-only --stdin 2>&1)"; then
+  fail "a confirm key that does not clear the dialog fails loud" \
+    "send unexpectedly succeeded"
+else
+  contains "the uncleared-dialog refusal names the registry id" \
+    "$stuck_out" "safety-buffering-prompt"
+  contains "the uncleared-dialog refusal points at gang attach" \
+    "$stuck_out" "gang attach"
+fi
+equal "the stuck-confirm fixture received only the verified move and confirm" \
+  $'Down\nEnter' "$(<"$RUN_ROOT/dialog-confirm-stuck.keys")"
+"$GANG" drop dialog-confirm-stuck >/dev/null
+
+dialog_start dialog-status known dialog
+status_dialog_before="$(pane dialog-status)"
+contains "status names a known transient without answering it" \
+  "$("$GANG" status dialog-status)" \
+  "occupied (known transient: safety-buffering-prompt)"
+equal "status is read-only even for a recognized dialog" \
+  "$status_dialog_before" "$(pane dialog-status)"
+equal "status presses no dialog key" "" "$(<"$RUN_ROOT/dialog-status.keys")"
+"$GANG" drop dialog-status >/dev/null
+
+cat > "$RUN_ROOT/profiles/dialog-ambiguous.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/profiles/dialog.sh"
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
+same-bytes|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
+GANG_DIALOG_LINES_same_bytes="\$GANG_DIALOG_LINES_safety_buffering_prompt"
+SH
+dialog_start dialog-ambiguous known dialog-ambiguous
+if ambiguous_out="$("$GANG" status dialog-ambiguous 2>&1)"; then
+  fail "two matching dialog records are refused as ambiguity" \
+    "status unexpectedly succeeded"
+else
+  contains "ambiguity names the first matching id" \
+    "$ambiguous_out" "safety-buffering-prompt"
+  contains "ambiguity names the second matching id" "$ambiguous_out" "same-bytes"
+fi
+equal "an ambiguous registry presses no key" "" \
+  "$(<"$RUN_ROOT/dialog-ambiguous.keys")"
+"$GANG" drop dialog-ambiguous >/dev/null
+
+cat > "$RUN_ROOT/profiles/dialog-danger.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='permission-surface|^› [0-9]+\. |Allow||Enter'
+GANG_DIALOG_LINES_permission_surface='Do you want to allow this tool to run?
+Allow
+Deny'
+SH
+refuses "load_profile mechanically rejects an authority-shaped dialog registry" \
+  "forbidden authority word" "$GANG" hitch dialog-danger -p dialog-danger -d /tmp
+equal "a refused authority registry opens no window" "" "$(window_id dialog-danger)"
+
+cat > "$RUN_ROOT/profiles/dialog-four-fields.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='broken|^› [0-9]+\. |Safe|Enter'
+SH
+cat > "$RUN_ROOT/profiles/dialog-bad-id.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='Bad_ID|^› [0-9]+\. |Safe||Enter'
+GANG_DIALOG_LINES_Bad_ID='Safe'
+SH
+cat > "$RUN_ROOT/profiles/dialog-safe-absent.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='safe-absent|^› [0-9]+\. |Missing||Enter'
+GANG_DIALOG_LINES_safe_absent='Present'
+SH
+cat > "$RUN_ROOT/profiles/dialog-block-missing.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_DIALOGS='block-missing|^› [0-9]+\. |Safe||Enter'
+SH
+refuses "a four-field dialog record is refused at profile load" \
+  "without exactly five fields" \
+  "$GANG" hitch dialog-four-fields -p dialog-four-fields -d /tmp
+refuses "a dialog id outside the slug alphabet is refused at profile load" \
+  "invalid dialog id" "$GANG" hitch dialog-bad-id -p dialog-bad-id -d /tmp
+refuses "a safe label absent from its declared block is refused at profile load" \
+  "is not one of" \
+  "$GANG" hitch dialog-safe-absent -p dialog-safe-absent -d /tmp
+refuses "an unset dialog block is refused at profile load" \
+  "has no non-empty GANG_DIALOG_LINES_block_missing" \
+  "$GANG" hitch dialog-block-missing -p dialog-block-missing -d /tmp
+
 modal_observed="test-boot-modal-observed-$$"
 modal_painted="test-boot-modal-painted-$$"
 modal_clear="test-boot-modal-clear-$$"
@@ -1534,7 +1959,7 @@ cat > "$RUN_ROOT/profiles/efforted.sh" <<SH
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-fixture"
+GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
 GANG_EFFORT_OPT='--effort='
 GANG_EFFORT_CMD="printf 'low\nmedium\nxhigh\n'"
 SH
@@ -1565,9 +1990,9 @@ contains "the declared spelling joins the effort into the launch, with no space"
 # flag by construction. Asserted anyway — construction is a reason to believe,
 # not a receipt, and a flag surviving hitch and lost on the other form would
 # be a renewal that quietly changed the agent.
-"$GANG" hitch effres -p efforted -d /tmp --resume -e low >/dev/null
+"$GANG" hitch effres -p efforted -d /tmp --resume fixture-session -e low >/dev/null
 effres_line="$(tmux display-message -p -t "$(window_id effres)" '#{pane_start_command}')"
-contains "the resume launch form is the one that ran" "$effres_line" "resume-fixture"
+contains "the resume launch form is the one that ran" "$effres_line" "resume-fixture-session"
 contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null

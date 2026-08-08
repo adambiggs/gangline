@@ -124,7 +124,13 @@ dialog reads as an answer.
 
 Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
 not infer who may clear it. UI recognition belongs in profiles, unknown authority
-fails closed, and Gangline does not autonomously answer native dialogs.
+fails closed, and Gangline answers only a profile-enumerated, whole-block
+fingerprint whose safe row carries no authority. Re-read the selected row before
+every key and the cleared composer after confirmation. Permission, trust,
+approval, access, credential, token, secret, and sandbox language is never an
+auto-answer surface. The live Codex `safety-buffering-prompt` capture is the
+record: installed-binary string extraction undercounted its options and omitted
+`Learn more`.
 
 At hitch, positive evidence of a prompt without a composer is an operator
 outcome before it is a launch failure: report `gang attach` once and spend the
@@ -140,6 +146,9 @@ skew. Compute and compare that witness only when stamping, status, or roster
 needs it; unavailability is visible but never blocks lifecycle commands. Skew
 does not justify a patrol or an attempt to retrofit launch-time context,
 profiles, or hooks.
+When that script lives in a git checkout and differs from HEAD, warn on every
+command dispatch with the exact path and HEAD; keep live-by-path installation,
+because a merge can intentionally upgrade a running team.
 
 ## Context lights are optional and minimal
 
@@ -253,9 +262,9 @@ the question was got wrong.
 ## Server loss is a relaunch, not restoration
 
 Do not persist a Gangline roster. `--resume` asks a profile's verified,
-directory-scoped native command for the latest conversation and fails when the
-profile cannot make that request safely; the operator supplies which agents to
-relaunch.
+explicit-id native command for the session stamped in `@gl_session_id`, read
+from a surviving registered window or quoted from `gang drop`'s parting output,
+and refuses without one; the operator supplies which agents and ids to relaunch.
 
 ## A team cutoff is an optional declaration
 
