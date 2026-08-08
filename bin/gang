@@ -3281,10 +3281,12 @@ roster_row() { # $1 window, $2 name, $3 current binary id
 hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a harness
   local live stamped registered name
   live="$(
-    load_collar "$2"
-    declare -F collar_session_id >/dev/null || exit 1
-    collar_session_id "$1" "$3"
-  )" 2>/dev/null || return 0
+    {
+      load_collar "$2"
+      declare -F collar_session_id >/dev/null || exit 1
+      collar_session_id "$1" "$3"
+    } 2>/dev/null
+  )" || return 0
   case "$live" in ''|*[!A-Za-z0-9._:-]*) return 0 ;; esac
   tmux set-option -w -t "$1" @gl_session_live_id "$live" 2>/dev/null || return 0
   name="$(agent_name_of "$1")"

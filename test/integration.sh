@@ -1392,14 +1392,20 @@ cat > "$RUN_ROOT/collars/identity.sh" <<SH
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fresh-identity"
 GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
 collar_session_id() {
+  [ ! -e "$RUN_ROOT/identity-stderr-on" ] || printf 'COLLAR-IDENTITY-STDERR\n' >&2
   printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])'
 }
 SH
 "$GANG" hitch identity -c identity -d /tmp >/dev/null
 identity_id="$(window_id identity)"
 identity_pane="$(tmux list-panes -t "$identity_id" -F '#{pane_id}')"
+: > "$RUN_ROOT/identity-stderr-on"
 printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
-  | TMUX_PANE="$identity_pane" "$GANG" hook
+  | TMUX_PANE="$identity_pane" "$GANG" hook \
+    2> "$RUN_ROOT/identity-hook.err"
+rm -f -- "$RUN_ROOT/identity-stderr-on"
+equal "a hook suppresses collar identity diagnostics" "" \
+  "$(<"$RUN_ROOT/identity-hook.err")"
 equal "the first native hook stamps its exact harness session id" \
   "native-identity-123" \
   "$(tmux show-options -wqv -t "$identity_id" @gl_session_id)"
