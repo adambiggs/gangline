@@ -38,6 +38,7 @@ export GANG_SESSION="gangtest-$$"
 export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
+export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
 
 checks=0
 fails=0
@@ -3398,10 +3399,71 @@ parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_
 [ -d "$parker_spool" ] \
   && pass "a spooled message is on disk beside the delivery locks" \
   || fail "a spooled message is on disk beside the delivery locks" "$parker_spool is absent"
+parker_failed="$parker_spool/failed-00000000000000000002-deadbeef"
+printf '%s\n%s\n%s\n' other MARK_ARCHIVED_HELD \
+  '[gang:other#deadbeef] MARK_ARCHIVED_HELD [/gang:other#deadbeef]' \
+  > "$parker_failed"
+parker_archive_names="$(cd "$parker_spool" && ls)"
+parker_live_entry=""
+for parker_entry in "$parker_spool"/[0-9]*; do
+  [ -f "$parker_entry" ] || continue
+  parker_live_entry="$parker_entry"
+  break
+done
+[ -n "$parker_live_entry" ] \
+  && cp "$parker_live_entry" "$RUN_ROOT/pre-archive-body"
 "$GANG" drop parker >/dev/null
 [ ! -d "$parker_spool" ] \
   && pass "dropping an agent deletes its spool" \
   || fail "dropping an agent deletes its spool" "$parker_spool survived"
+parker_archive_count=0
+parker_archive_dir=""
+for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
+  [ -d "$archive_dir" ] || continue
+  parker_archive_count=$((parker_archive_count + 1))
+  parker_archive_dir="$archive_dir"
+done
+equal "dropping mail creates exactly one teardown archive" "1" \
+  "$parker_archive_count"
+[ -d "$parker_archive_dir/parker" ] \
+  && pass "the teardown archive groups entries under the agent name" \
+  || fail "the teardown archive groups entries under the agent name" \
+    "$parker_archive_dir/parker is absent"
+equal "the teardown archive preserves every entry filename" \
+  "$parker_archive_names" "$(cd "$parker_archive_dir/parker" && ls)"
+if cmp "$RUN_ROOT/pre-archive-body" \
+  "$parker_archive_dir/parker/${parker_live_entry##*/}"; then
+  pass "the archived entry preserves the composed body byte for byte"
+else
+  fail "the archived entry preserves the composed body byte for byte" \
+    "archived bytes differ"
+fi
+[ -f "$parker_archive_dir/parker/${parker_failed##*/}" ] \
+  && pass "a held failed entry is archived with waiting mail" \
+  || fail "a held failed entry is archived with waiting mail" \
+    "${parker_failed##*/} is absent"
+
+"$GANG" hitch archive-second -c spoolable -d /tmp >/dev/null
+archive_second_id="$(window_id archive-second)"
+tmux send-keys -l -t "$archive_second_id" 'HUMAN_DRAFT'
+printf 'MARK_SECOND_ARCHIVE' |
+  "$GANG" send --to archive-second --from tester --stdin >/dev/null
+"$GANG" drop archive-second >/dev/null
+archive_count=0
+for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
+  [ -d "$archive_dir" ] && archive_count=$((archive_count + 1))
+done
+equal "a second teardown claims a distinct archive directory" "2" \
+  "$archive_count"
+
+"$GANG" hitch archive-empty -c spoolable -d /tmp >/dev/null
+"$GANG" drop archive-empty >/dev/null
+archive_count_after_empty=0
+for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
+  [ -d "$archive_dir" ] && archive_count_after_empty=$((archive_count_after_empty + 1))
+done
+equal "dropping an empty queue creates no archive directory" \
+  "$archive_count" "$archive_count_after_empty"
 
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists
@@ -4903,13 +4965,44 @@ fi
 refuses "gang down refuses a second argument" \
   "down: unexpected argument 'extra'" \
   env GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session" extra
-env -u TMUX -u TMUX_PANE GANG_SESSION="$teardown_session" \
-  "$GANG" down "$teardown_session" >/dev/null
+env GANG_SESSION="$teardown_session" "$GANG" hitch spoolable \
+  -c spoolable -d /tmp >/dev/null
+teardown_spoolable_id="$(window_id_in "$teardown_session" spoolable)"
+tmux send-keys -l -t "$teardown_spoolable_id" 'HUMAN_DRAFT'
+printf 'MARK_TEARDOWN_ARCHIVE' |
+  env GANG_SESSION="$teardown_session" "$GANG" send \
+    --to spoolable --from tester --stdin >/dev/null
+teardown_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$teardown_spoolable_id" @gl_spool)"
+teardown_entry=""
+for spool_entry in "$teardown_spool"/[0-9]*; do
+  [ -f "$spool_entry" ] || continue
+  teardown_entry="$spool_entry"
+  break
+done
+[ -n "$teardown_entry" ] && cp "$teardown_entry" "$RUN_ROOT/pre-down-body"
+teardown_down_out="$(env -u TMUX -u TMUX_PANE \
+  GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session")"
+contains "the named teardown reports where it archived pending mail" \
+  "$teardown_down_out" "$GANG_ARCHIVE_DIR"
 if tmux has-session -t "=$teardown_session" 2>/dev/null; then
   fail "a named teardown from outside the session still ends it" \
     "session still exists"
 else
   pass "a named teardown from outside the session still ends it"
+fi
+teardown_archived_entry=""
+for archived_entry in "$GANG_ARCHIVE_DIR"/*/spoolable/${teardown_entry##*/}; do
+  [ -f "$archived_entry" ] || continue
+  teardown_archived_entry="$archived_entry"
+  break
+done
+if [ -n "$teardown_archived_entry" ] \
+   && cmp "$RUN_ROOT/pre-down-body" "$teardown_archived_entry"; then
+  pass "a whole-team teardown preserves its pending message in the archive"
+else
+  fail "a whole-team teardown preserves its pending message in the archive" \
+    "${teardown_archived_entry:-archived entry is absent}"
 fi
 tmux new-session -d -s "$teardown_session" -n bystander \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"

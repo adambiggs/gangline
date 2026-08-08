@@ -51,7 +51,7 @@ deprecation_flush() {
   DEPRECATION_NOTES=""
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
@@ -1886,6 +1886,10 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # `down` delete them.
 spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
 
+archive_root() { # where a message goes when its window dies
+  printf '%s' "${GANG_ARCHIVE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive}"
+}
+
 SPOOL_DIR=""
 spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had one
   local token
@@ -2017,6 +2021,37 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
   # Committed by rename, so a drain can never read a half-written entry.
   mv -- "$tmp" "$entry" \
     || die "cannot commit a spooled message into $SPOOL_DIR"
+}
+
+ARCHIVE_DIR=""
+archive_establish() { # $1 = a label for this teardown; ARCHIVE_DIR = its directory
+  local root
+  [ -z "$ARCHIVE_DIR" ] || return 0
+  root="$(archive_root)"
+  mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing to end anything while the mail has nowhere to go"
+  ARCHIVE_DIR="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
+  mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
+}
+
+spool_archive() { # $1 = window id; move every entry somewhere a person can read it
+  local e name dest moved=0
+  spool_existing "$1" || return 0
+  [ -d "$SPOOL_DIR" ] || return 0
+  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
+    [ -f "$e" ] || continue
+    if [ "$moved" -eq 0 ]; then
+      archive_establish "$SESSION"
+      name="$(agent_name_of "$1" 2>/dev/null)" || name=""
+      [ -n "$name" ] || name="${1#@}"
+      dest="$ARCHIVE_DIR/$name"
+      mkdir -p "$dest" || die "cannot create $dest for the pending messages of this window"
+    fi
+    mv -- "$e" "$dest/${e##*/}" \
+      || die "cannot archive the pending message $e to $dest — nothing further has been ended, and the message is still where it was"
+    moved=$((moved + 1))
+  done
+  [ "$moved" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_WORK" "archived $moved undelivered message(s) to $dest")"
 }
 
 spool_forget() { # $1 = window id; the spool dies with the window it belongs to
@@ -3604,7 +3639,8 @@ cmd_drop() {
     printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
   fi
   # A spool would outlive its window on disk, which is not a design: this is
-  # its deletion path.
+  # its deletion path — but a composed message is archived out of it first.
+  spool_archive "$id"
   spool_forget "$id"
   tmux kill-window -t "$id"
   printf '%s\n' "$(colour "$C_OK" "dropped $1")"
@@ -3629,6 +3665,7 @@ cmd_down() { # inverse of up: end the whole team's session
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
+    spool_archive "$id"
     spool_forget "$id"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
   tmux kill-session -t "=$SESSION"
@@ -3654,6 +3691,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
+    GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;

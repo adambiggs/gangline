@@ -394,6 +394,13 @@ executed the teardown instead. A gesture that asks what a command does must neve
 be the gesture that performs it, and the command with no undo is the one that
 must cost an argument rather than the one that costs none.
 
+## Teardown archives mail before deleting its spool
+
+A composed message is not teardown state. `gang drop` and `gang down` move every
+waiting or held entry into a human-readable archive before deleting its window's
+spool, and refuse to end anything if that archive cannot be written. The archive
+is created only when mail exists and its printed path is the handoff to a person.
+
 ## A guard witnesses the artifact, and witnesses it in order
 
 Assert the thing a defect actually produces — the text left on the pane, the

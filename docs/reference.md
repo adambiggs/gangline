@@ -114,11 +114,11 @@ Attaches to `GANG_SESSION`.
 Prints the window's stamped native session id and the exact
 `gang hitch <name> --resume <session-id>` relaunch command, then kills the exact
 agent window. If the collar has not supplied a stamp, it says so instead. Its
-tmux-owned state and spool die with it.
+tmux-owned state and spool die with it after any pending messages are archived.
 
 ### `gang down <session>`
 
-Kills the exact team session and every window in it, deleting each window's
+Kills the exact team session and every window in it, archiving each window's
 pending spool first. The session name is required and must match the team this
 shell is pointed at; `down` refuses a name that does not match, and refuses
 outright when it is run from a pane inside that session. There is no override:
@@ -222,8 +222,9 @@ Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
 arriving together cannot mint competing ones. After a live refusal, a window
 without that identity says the message was not parked and names re-hitch or
-re-adopt as the repair. Entries die with the window: `gang drop` and `gang down`
-delete them.
+re-adopt as the repair. When a window dies, `gang drop` and `gang down` move
+waiting and held entries under `GANG_ARCHIVE_DIR`, grouped by teardown and
+agent, before deleting the spool. Empty queues create no archive directory.
 
 ### `gang flush <name>`
 
@@ -482,6 +483,7 @@ Exactly these keys are settable:
 | `GANG_SESSION` | `gangline` | exact tmux session Gangline addresses |
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
+| `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
