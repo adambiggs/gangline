@@ -3581,6 +3581,11 @@ contains "mail exits cleanly on an empty queue" \
   "$empty_mail_out" "no mail waiting for empty-mailbox"
 "$GANG" drop empty-mailbox >/dev/null
 
+# The legacy-contract fixtures finished their assertions above. Retire them so
+# this roster probe's stderr belongs only to the age world under test.
+"$GANG" drop legacy-contract-a >/dev/null
+"$GANG" drop legacy-contract-b >/dev/null
+
 # QUEUE AGE COMES FROM THE OLDEST LIVE ENTRY'S FIXED-WIDTH STAMP. The chosen
 # time is immediate input, not a wall-clock wait; prefix matching tolerates the
 # one second in which the command itself runs.
@@ -3590,29 +3595,39 @@ agebox_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
   -t "$agebox_id" @gl_spool)"
 mkdir -p "$agebox_spool"
 age_now="$(date +%s)"
-one_hour_stamp="$(printf '%010d%010d' "$(( age_now - 3600 ))" 0)"
+one_hour_stamp="$(printf '%011d%09d' "$(( age_now - 3600 ))" 0)"
 printf '%s\n%s\n%s\n' tester MARK_AGE_ONE_HOUR \
   '[gang:tester#aaaabbbb] MARK_AGE_ONE_HOUR [/gang:tester#aaaabbbb]' \
   > "$agebox_spool/$one_hour_stamp-aaaabbbb"
+age_roster_out="$("$GANG" roster 2> "$RUN_ROOT/age-roster.err")"
 contains "roster reports how long the oldest message has waited" \
-  "$("$GANG" roster)" "oldest=1h"
+  "$age_roster_out" "oldest=1h"
+equal "roster parses a real padded stamp without stderr noise" "" \
+  "$(<"$RUN_ROOT/age-roster.err")"
 contains "status reports the same oldest-message age" \
   "$("$GANG" status agebox)" "the oldest has waited 1h"
-two_hour_stamp="$(printf '%010d%010d' "$(( age_now - 7200 ))" 0)"
+two_hour_stamp="$(printf '%011d%09d' "$(( age_now - 7200 ))" 0)"
 printf '%s\n%s\n%s\n' other MARK_AGE_TWO_HOURS \
   '[gang:other#ccccdddd] MARK_AGE_TWO_HOURS [/gang:other#ccccdddd]' \
   > "$agebox_spool/$two_hour_stamp-ccccdddd"
 contains "queue age follows the older of two waiting entries" \
   "$("$GANG" roster)" "oldest=2h"
+"$GANG" drop agebox >/dev/null
+
+"$GANG" hitch agebad -c spoolable -d /tmp >/dev/null
+agebad_id="$(window_id agebad)"
+agebad_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$agebad_id" @gl_spool)"
+mkdir -p "$agebad_spool"
 printf '%s\n%s\n%s\n' tester MARK_BAD_STAMP \
   '[gang:tester#eeeeffff] MARK_BAD_STAMP [/gang:tester#eeeeffff]' \
-  > "$agebox_spool/12345-abc"
-agebox_row="$("$GANG" roster | grep '^agebox')"
+  > "$agebad_spool/12345-abc"
+agebad_row="$("$GANG" roster | grep '^agebad')"
 contains "a malformed oldest stamp still reports known queue depth" \
-  "$agebox_row" "spooled=3"
+  "$agebad_row" "spooled=1"
 excludes "a malformed oldest stamp does not fabricate an age" \
-  "$agebox_row" "oldest="
-"$GANG" drop agebox >/dev/null
+  "$agebad_row" "oldest="
+"$GANG" drop agebad >/dev/null
 
 # PREEMPTION CARRIES ITS REASON THROUGH THE BOUNDARY IT CREATES. The fixture
 # witnesses the collar-declared key independently and keeps a normal spool so

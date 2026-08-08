@@ -1973,13 +1973,14 @@ spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has wa
     [ -f "$e" ] || continue
     stamp="${e##*/}"
     stamp="${stamp%%-*}"
-    # The stamp is a fixed-width nanosecond count, so its first ten digits are
-    # epoch seconds and arithmetic never has to touch a 20-digit integer.
-    stamp="${stamp:0:10}"
-    # Exactly ten digits or nothing: a real nanosecond stamp always truncates to
-    # ten, and a shorter run of digits would otherwise read as a 1970-epoch age.
-    [ "${#stamp}" -eq 10 ] || return 1
-    case "$stamp" in ''|*[!0-9]*) return 1 ;; esac
+    # spool_stamp is printf %020d of a nanosecond count: fixed-width twenty
+    # digits, zero-padded. Validate the full width, drop the nine nanosecond
+    # digits, and force base 10 — the pad zero otherwise reads as octal, and
+    # the eleven digits that remain fit where twenty would not.
+    [ "${#stamp}" -eq 20 ] || return 1
+    case "$stamp" in *[!0-9]*) return 1 ;; esac
+    stamp="${stamp%?????????}"
+    stamp="$((10#$stamp))"
     now="$(date +%s)"
     case "$now" in ''|*[!0-9]*) return 1 ;; esac
     [ "$now" -ge "$stamp" ] || return 1
