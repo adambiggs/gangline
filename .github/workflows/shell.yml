@@ -3,6 +3,7 @@ name: shell
 on: [push, pull_request]
 
 # Linux and macOS cover the GNU and BSD userlands Gangline supports.
+# Remaining macOS fixture evidence: https://github.com/adambiggs/gangline/issues/110
 
 jobs:
   check:
