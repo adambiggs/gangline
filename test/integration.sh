@@ -9,6 +9,7 @@ unset TMUX TMUX_PANE
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"
+RUN_ROOT="$(cd -P "$RUN_ROOT" && pwd)"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
 # The Bash fixture establishes every transition synchronously. Production waits
@@ -663,7 +664,7 @@ cat > "$RUN_ROOT/profiles/usage-nochange.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_USAGE_CMD="clear"
+GANG_USAGE_CMD='printf "\033[H\033[2J\033[3J"'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
@@ -835,7 +836,8 @@ refuses "a profile with no GANG_USAGE_CMD refuses usage" \
 usage_nochange_id="$(window_id usage-nochange)"
 usage_nochange_ready="test-usage-nochange-ready-$$"
 printf -v usage_nochange_cmd \
-  'PROMPT_COMMAND=%q; clear' "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
+  'PROMPT_COMMAND=%q; printf "\\033[H\\033[2J\\033[3J"' \
+  "tmux wait-for -S $usage_nochange_ready; PROMPT_COMMAND="
 tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
 tmux send-keys -t "$usage_nochange_id" Enter
 tmux wait-for "$usage_nochange_ready"
@@ -849,20 +851,54 @@ else
   pass "usage refuses when the native screen never changes"
 fi
 contains "an unchanged usage screen names the command" \
-  "$(<"$usage_nochange_stderr")" "after clear"
+  "$(<"$usage_nochange_stderr")" "never changed after printf"
 equal "an unchanged usage screen prints no content" "" \
   "$(<"$usage_nochange_stdout")"
 equal "an unchanged usage screen leaves the composer empty" "" \
   "$("$GANG" composer usage-nochange)"
 
+usage_rollover_rendered="test-usage-rollover-rendered-$$"
+cat > "$RUN_ROOT/usage-rollover-bashrc" <<SH
+PS1='❯ '
+r() {
+  local i=1
+  : > "$RUN_ROOT/usage-rollover-armed"
+  while [ "\$i" -le 2100 ]; do
+    printf 'ROLLOVER_%04d\n' "\$i"
+    i=\$((i + 1))
+  done
+  tmux wait-for -S "$usage_rollover_rendered"
+}
+SH
+mkdir -p "$RUN_ROOT/usage-rollover-bin"
+cat > "$RUN_ROOT/usage-rollover-bin/sleep" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+if [ -e "$RUN_ROOT/usage-rollover-armed" ] &&
+   [ ! -e "$RUN_ROOT/usage-rollover-sleep-used" ]; then
+  : > "$RUN_ROOT/usage-rollover-sleep-used"
+  tmux wait-for "$usage_rollover_rendered"
+fi
+SH
+chmod +x "$RUN_ROOT/usage-rollover-bin/sleep"
+cat > "$RUN_ROOT/profiles/usage-rollover.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-rollover-bashrc'"
+GANG_USAGE_CMD='r'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
 tmux set-option -g history-limit 5
-"$GANG" hitch usage-rollover -p usage-inline -d /tmp >/dev/null
+"$GANG" hitch usage-rollover -p usage-rollover -d /tmp >/dev/null
 tmux set-option -g history-limit 2000
 usage_rollover_id="$(window_id usage-rollover)"
 tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
 usage_rollover_stdout="$RUN_ROOT/usage-rollover.stdout"
 usage_rollover_stderr="$RUN_ROOT/usage-rollover.stderr"
-if "$GANG" usage usage-rollover \
+if PATH="$RUN_ROOT/usage-rollover-bin:$PATH" "$GANG" usage usage-rollover \
     >"$usage_rollover_stdout" 2>"$usage_rollover_stderr"; then
   fail "usage refuses a rolled-over inline scrollback" \
     "usage unexpectedly succeeded"
@@ -1304,13 +1340,33 @@ excludes "the unreadable-doctrine refusal leaves no window" \
 mkdir -p "$DOCTRINE_CASES/pane-overflow"
 awk 'BEGIN { for (i = 0; i < 2048; i++) printf "p" }' \
   > "$DOCTRINE_CASES/pane-overflow/DOCTRINE.md"
+cat > "$RUN_ROOT/profiles/doctrine-unreadable-input.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/profiles/bash.sh"
+profile_input() {
+  local line box
+  line="\$(tmux capture-pane -pJ -t "\$1" |
+    awk '{ i = index(\$0, "❯")
+           if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \\t]/)) line = \$0 }
+         END { print line }')" || return 1
+  case "\$line" in *❯*) ;; *) return 1 ;; esac
+  box="\$(printf '%s' "\${line#*❯}" | tr -d '\\302\\240')"
+  case "\$box" in *[![:space:]]*) return 1 ;; esac
+  printf '%s' "\$box"
+}
+SH
 if pane_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/pane-overflow" \
-  "$GANG" hitch doctrine-pane-overflow -p bash -d /tmp 2>&1)"; then
-  fail "a doctrine the target pane cannot render fails at delivery" \
+  "$GANG" hitch doctrine-pane-overflow -p doctrine-unreadable-input -d /tmp 2>&1)"; then
+  fail "a doctrine the target composer cannot read fails at delivery" \
     "hitch unexpectedly succeeded"
 else
-  contains "a doctrine the target pane cannot render fails at delivery" \
-    "$pane_doctrine_out" "startup contract to 'doctrine-pane-overflow' was not delivered"
+  case "$pane_doctrine_out" in
+    *"startup contract to 'doctrine-pane-overflow' was not delivered"*)
+      pass "a doctrine the target composer cannot read fails at delivery" ;;
+    *) fail "a doctrine the target composer cannot read fails at delivery" \
+         "$pane_doctrine_out" ;;
+  esac
 fi
 contains "a delivery-sized doctrine failure leaves its window for inspection" \
   "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-pane-overflow"
@@ -1382,11 +1438,15 @@ else
 fi
 trailing_id="$(window_id doctrine-trailing)"
 trailing_body="$(tmux show-options -wqv -t "$trailing_id" @gl_parked)"
-trailing_blanks="$(printf '%s' "$trailing_body" | awk '
-  /TAIL_MARK/ { after_tail = 1; next }
-  /End this turn\./ { print blanks; exit }
-  after_tail && /^[[:space:]]*$/ { blanks++ }
-')"
+trailing_blanks="$(printf '%s' "$trailing_body" | python3 -c '
+import sys
+text = sys.stdin.read()
+if "TAIL_MARK" not in text or "End this turn." not in text:
+    raise SystemExit(1)
+between = text.split("TAIL_MARK", 1)[1].split("End this turn.", 1)[0]
+lines = between.splitlines()
+print(sum(not line.strip() for line in lines[1:]))
+')" || trailing_blanks=""
 equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
 "$GANG" drop doctrine-trailing >/dev/null
@@ -1786,7 +1846,6 @@ if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
 _flush_probe() {   # what the composer holds, read where input ordering places it
-  printf '%s' "$READLINE_LINE" > "$FLUSH_PROBE"
   tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
 }
 bind -x '"\C-t": _flush_probe'
@@ -1795,7 +1854,7 @@ cat > "$RUN_ROOT/profiles/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/profiles/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 profile_input() { # a composer that spans lines, and reads as the hint when empty
@@ -1841,12 +1900,11 @@ flush_probe() {
   flush_probed=$((flush_probed + 1))
   local chan="test-flush-probe-$flush_probed-$$"
   printf '%s' "$chan" > "$RUN_ROOT/flush-probe-chan"
-  : > "$RUN_ROOT/flush-probe"
   tmux wait-for "$chan" &
   local waiter=$!
   tmux send-keys -t "$parked_id" C-t
   wait "$waiter"
-  cat "$RUN_ROOT/flush-probe" 2>/dev/null || true
+  "$GANG" composer parked
 }
 
 flush_settled=0

@@ -598,12 +598,12 @@ doctrine_read() { # populate DOCTRINE from the operator slot, byte-exact
     *"$sentinel") DOCTRINE="${marked%"$sentinel"}" ;;
     *) die "internal: the doctrine sentinel was lost while reading $file" ;;
   esac
+  python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file" \
+    || die "operator doctrine $file is not valid UTF-8"
   probe="$(printf '%s' "$DOCTRINE" | tr -d '\11\12')"
   case "$probe" in
     *[[:cntrl:]]*) die "operator doctrine $file contains control characters other than tab and newline" ;;
   esac
-  python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file" \
-    || die "operator doctrine $file is not valid UTF-8"
   # This catches a document-tree, log, or binary put in the prose slot. It is
   # a category-error guard, not a bound on what a target composer can render.
   [ "$bytes" -le 8192 ] \
