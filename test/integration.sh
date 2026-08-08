@@ -2270,10 +2270,16 @@ trailing_blanks="$(printf '%s' "$trailing_body" | python3 -c '
 import sys
 
 body = sys.stdin.buffer.read().decode("utf-8")
-_, head, after = body.partition("TAIL_MARK\n")
-between, tail, _ = after.partition("End this turn.")
-if head and tail:
-    print(sum(not line.strip() for line in between.splitlines()))
+if "TAIL_MARK\n" in body:
+    after = body.partition("TAIL_MARK\n")[2]
+    between, tail, _ = after.partition("End this turn.")
+    if tail:
+        print(sum(not line.strip() for line in between.splitlines()))
+elif r"TAIL_MARK\n" in body:
+    after = body.partition(r"TAIL_MARK\n")[2]
+    between, tail, _ = after.partition("End this turn.")
+    if tail:
+        print(between.count(r"\n"))
 ')"
 equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
