@@ -110,9 +110,12 @@ verified, or when the drain died between submitting it and retiring it. Either
 way its fate is unknown, so Gangline stops acting on it: the body stays readable
 under `GANG_LOCK_DIR`, and it is never sent again. A harness may have accepted
 it into an internal queue and drained that queue later, so read the target before
-re-sending it by hand. Spools die with their window: `gang drop` and `gang down`
-archive any waiting or held entries under `GANG_ARCHIVE_DIR`, then forget the
-spool.
+re-sending it by hand.
+Held entries outlive their window. `gang drop` and `gang down` print and remove
+waiting entries, preserve held and unaccounted evidence, and name the deliberate
+`gang spool retire` recovery. Use `gang spool` to inventory reservations across
+every session on the reachable tmux server; its ownership claims explicitly stop
+at that server and it never deletes anything.
 
 For a harness whose native Stop event does not reach Gangline, an ordinary send
 still tries live delivery. A refusal is not parked, and names the missing

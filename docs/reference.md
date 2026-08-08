@@ -15,9 +15,9 @@ calling tmux pane in the same way as a message sender.
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context` | Target the calling agent. |
 | `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
-| `drop` | Print help; destructive commands never target by omission. |
+| `drop`, `down` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify`, `down` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `spool`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
@@ -108,18 +108,27 @@ Attaches to `GANG_SESSION`.
 
 ### `gang drop <name>`
 
-Prints the window's stamped native session id and the exact
-`gang hitch <name> --resume <session-id>` relaunch command, then kills the exact
-agent window. If the collar has not supplied a stamp, it says so instead. Its
-tmux-owned state and spool die with it after any pending messages are archived.
+Takes the target's delivery lock and reports its spool before any other output.
+Every waiting entry is printed with its sender, fragment, and full stored body,
+then removed because the window it addressed is ending. Held entries, unaccepted
+fragments, and unaccounted children are named and preserved; the spool directory
+is removed only when it is empty. A missing reservation is reported and does not
+prevent recovery.
+
+It then prints the window's stamped native session id and the exact
+`gang hitch <name> --resume <session-id>` relaunch command, and kills the exact
+agent window. If the collar has not supplied a stamp, it says so instead.
 
 ### `gang down <session>`
 
-Kills the exact team session and every window in it, archiving each window's
-pending spool first. The session name is required and must match the team this
-shell is pointed at; `down` refuses a name that does not match, and refuses
-outright when it is run from a pane inside that session. There is no override:
-an agent must not be able to end the team it is running in.
+Takes every agent window's delivery lock before changing any spool or window. If
+one lock is held, it refuses without pruning any spool or killing any window.
+Under those locks it gives every window the same report-and-preserve treatment
+as `drop`, prefixing each report line with the agent name, then kills the exact
+team session.
+The session name is required and must match the team this shell is pointed at;
+`down` refuses a mismatch and refuses outright from a pane inside that session.
+There is no override: an agent must not be able to end the team it is running in.
 
 ## Delivery and compaction
 
@@ -199,7 +208,9 @@ returns its entry to the spool for the next turn boundary. A drain that cannot
 verify, or one that dies between the submission and the entry's retirement,
 leaves that entry held: `status` says its delivery was not verified and may
 still have arrived, `status` and `roster` report how many are held, the bodies
-stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
+stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. Held
+entries outlive the target window: routine teardown cannot erase the evidence
+behind a recovery pointer. Retirement is a separate, deliberate operator act. A
 harness may accept a submission into its own queue and drain it later; read the
 target before re-sending by hand.
 
@@ -217,11 +228,41 @@ would drain its spool.
 
 Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
-arriving together cannot mint competing ones. After a live refusal, a window
-without that identity says the message was not parked and names re-hitch or
-re-adopt as the repair. When a window dies, `gang drop` and `gang down` move
-waiting and held entries under `GANG_ARCHIVE_DIR`, grouped by teardown and
-agent, before deleting the spool. Empty queues create no archive directory.
+arriving together cannot mint competing ones. Mint atomically creates the token
+directory before publishing the identity; that directory is the token's durable
+reservation, even while empty. A fresh mint therefore never reuses a surviving
+directory. Parking asserts that the reservation still exists and never recreates
+a missing one: after a refusal in that state, recover with `gang drop <name>` and
+the new `gang hitch ... --resume ...` command it prints. Re-adopting preserves the
+broken identity and is not a repair.
+
+### `gang spool`
+
+Lists the whole spool root without creating or changing it. An absent root says
+nothing has ever been parked or reserved. An unsafe root is refused without
+following it. Every directory is classified against every window on the
+reachable tmux server, across all sessions, as owned, contested, unattributed,
+or unaccountable; root debris is named separately. Counts include waiting,
+held, and unaccepted fragments, and empty unattributed reservations are listed
+rather than collected. If no tmux server is reachable there are no local
+carriers, so directories are unattributed. Every ownership report explicitly
+says that its scope is this tmux server. The command never deletes anything.
+
+### `gang spool retire <name|token> [--assume-unowned]`
+
+The live-agent form takes that window's delivery lock, prints each held entry
+with its sender, fragment, and full body, removes it only after the report write
+succeeds, and reconciles the held ledger. Waiting entries remain deliverable.
+Unaccounted children are named and preserved. It refuses when nothing is held,
+so an agent typo cannot look like successful recovery.
+
+The token form acts only on a directory unattributed on this tmux server, and
+requires `--assume-unowned` because another tmux server may still carry it. It
+refuses owned, contested, or unaccountable directories. With the flag, every
+accounted entry and unaccepted fragment is printed before removal, then the now
+empty reservation is removed. An empty directory still requires the flag: its
+reservation is the state being deliberately retired.
+
 
 ### `gang flush <name>`
 
@@ -423,8 +464,14 @@ word: `busy`, `idle`, `occupied`, or `unknown` for the four human glyph states;
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
 `spooled` is an integer. `oldest_age_s` is integer seconds or `-` for an empty
 queue or an unreadable age. `session_id` is the exact stamp or `UNSTAMPED`.
-With no running session it prints no rows and exits successfully, like the human
-roster.
+With no running session it prints no rows and exits successfully.
+
+After the human-readable rows, a non-empty unattributed spool, a contested token,
+or an unaccountable directory adds one footer pointing to `gang spool`. Roster
+scans and removes nothing. The same footer scan runs after the human no-team line
+when the configured session is absent, because surviving directories are most
+relevant then. An unsafe spool root is named without hiding otherwise readable
+rows or changing roster's exit status. Porcelain output remains TSV rows only.
 
 ### `gang capture <name> [lines]`
 
@@ -509,7 +556,6 @@ Exactly these keys are settable:
 | `GANG_SESSION` | `gangline` | exact tmux session Gangline addresses |
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
-| `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |

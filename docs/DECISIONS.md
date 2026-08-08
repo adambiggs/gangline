@@ -398,13 +398,6 @@ executed the teardown instead. A gesture that asks what a command does must neve
 be the gesture that performs it, and the command with no undo is the one that
 must cost an argument rather than the one that costs none.
 
-## Teardown archives mail before deleting its spool
-
-A composed message is not teardown state. `gang drop` and `gang down` move every
-waiting or held entry into a human-readable archive before deleting its window's
-spool, and refuse to end anything if that archive cannot be written. The archive
-is created only when mail exists and its printed path is the handoff to a person.
-
 ## A queue drains as one message
 
 When a turn boundary drains a spool, every waiting entry is delivered as one
@@ -442,3 +435,19 @@ acted goes green for no reason anyone chose. Order the observation behind the
 same input path the work travels, so that when the probe reports, what is being
 tested has either happened or never will. A guard that is right about what to
 look at and undefined about when is still luck.
+
+## Spool identity is a durable reservation
+
+Mint reserves a token by atomically creating its directory before publishing it
+to a window. An empty or unattributed directory is therefore state, not garbage,
+and only deliberate retirement releases it. Held entries outlive their window
+because they are the readable evidence behind a promise that delivery may already
+have happened; teardown reports and removes waiting entries but preserves held
+and unaccounted evidence.
+
+The pane lock serializes mutation of a live window and its published spool. A
+separate root lock closes mint publication against unattributed-directory
+retirement, and no path holds both. Ownership means ownership among windows on
+the reachable tmux server; every report names that scope rather than claiming a
+cross-server fact Gangline cannot observe. No patrol or automatic collector is
+added.
