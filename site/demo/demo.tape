@@ -13,7 +13,7 @@ Set WaitTimeout 300s
 Set TypingSpeed 28ms
 
 Env GANG_SESSION "gangline-demo"
-Env GANG_PROFILE "codex"
+Env GANG_COLLAR "codex"
 
 Hide
 Type "unset TMUX TMUX_PANE; PS1='$ '; cd /tmp/gangline-demo-run; clear"
@@ -21,11 +21,11 @@ Enter
 Show
 
 # Native harnesses become ordinary named tmux windows.
-Type "gang hitch lead -p codex -d /tmp"
+Type "gang hitch lead -c codex -d /tmp"
 Enter
 Wait+Screen@120s /delivered startup contract to lead/
 Sleep 2s
-Type "gang hitch worker -p codex -d /tmp"
+Type "gang hitch worker -c codex -d /tmp"
 Enter
 Wait+Screen@120s /delivered startup contract to worker/
 Sleep 2s
