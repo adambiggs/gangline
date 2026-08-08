@@ -131,7 +131,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop"
-meaningful_bare_commands="up roster attach collars config curfew notify down"
+meaningful_bare_commands="up roster attach collars roles config curfew notify down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -842,6 +842,11 @@ printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
   "$GANG" hitch alpha -c bash -d /tmp >/dev/null
 alpha_id="$(window_id alpha)"
+# The shipped startup contract now includes the delegation sentence. Keep the
+# Bash stand-in's composer immediately observable for ordinary doctrine-sized
+# contracts while leaving the explicit pane-overflow fixture far beyond the
+# grid below.
+tmux resize-window -t "$alpha_id" -x 80 -y 30
 equal "a hitched first turn writes the raw busy window glyph" \
   "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
 contains "Bash 3.2 can lock and deliver the startup contract" \
@@ -2079,6 +2084,11 @@ contains "the nested hitch joins the session supplied only by the config file" \
   "$(window_names config-nested-session)" "nested-child"
 
 DOCTRINE_CASES="$RUN_ROOT/doctrine-cases"
+# S9 makes the ordinary doctrine contract taller than the Bash stand-in's
+# original 80x24 composer while the explicit overflow world below remains much
+# taller still. Size only this fixture lane; dialog fingerprints above retain
+# their calibrated grid.
+tmux set-option -g default-size 80x30
 mkdir -p "$DOCTRINE_CASES/present"
 printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
   > "$DOCTRINE_CASES/present/DOCTRINE.md"
@@ -2284,6 +2294,7 @@ elif r"TAIL_MARK\n" in body:
 equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
 "$GANG" drop doctrine-trailing >/dev/null
+tmux set-option -g default-size 80x24
 
 # One optional curfew is team state. Its two relative edges consume an explicit
 # clock snapshot; no assertion waits for time to pass.

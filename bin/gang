@@ -53,7 +53,7 @@ deprecation_flush() {
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line, $4 alias
@@ -314,8 +314,12 @@ require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractio
 }
 
 shell_quote() { # one POSIX-shell word
-  local value
-  value="$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  local value marked sentinel=$'\034'
+  marked="$(printf '%s\034' "$1" | sed "s/'/'\\\\''/g")"
+  case "$marked" in
+    *"$sentinel") value="${marked%"$sentinel"}" ;;
+    *) die "internal: the shell-quote sentinel was lost" ;;
+  esac
   printf "'%s'" "$value"
 }
 
@@ -395,6 +399,7 @@ gang — drive native CLI agents in tmux
   drop      remove one agent
   down      end the team
   collars   list available harness collars
+  roles     list available role briefs
   config    show effective configuration
 
 gang <command> --help for one command.
@@ -417,6 +422,7 @@ gang hitch
     [-d <dir>]
     [-m <model>]
     [-e <effort>]
+    [-r|--role <role>]
     [--resume [session-id]]
 EOF
       ;;
@@ -557,6 +563,13 @@ gang collars
   gang collars
 EOF
       ;;
+    roles) cat <<'EOF'
+gang roles
+  List available role briefs.
+
+  gang roles
+EOF
+      ;;
     config) cat <<'EOF'
 gang config
   Show effective configuration.
@@ -605,6 +618,58 @@ EOF
   printf '%s' "$out"
 }
 
+role_status() { # $1 path, $2 basename stem; populate ROLE_STATUS and PROSE
+  local file="$1" name="$2"
+  if ! valid_role_name "$name"; then
+    ROLE_STATUS="role name must use only letters, digits, dot, dash and underscore, and must not start with dash or dot"
+    return 1
+  fi
+  if ! prose_check "$file" "role brief"; then
+    ROLE_STATUS="$PROSE_ERROR"
+    return 1
+  fi
+  if [ ! -s "$file" ]; then
+    ROLE_STATUS="role brief $file is empty"
+    return 1
+  fi
+  ROLE_STATUS=ok
+}
+
+role_rows_in() { # $1 directory, $2 operator|shipped; print resolved rows
+  local dir="$1" origin_kind="$2" file base name winning origin status
+  [ -d "$dir" ] || return 0
+  for file in "$dir"/*.md; do
+    [ -e "$file" ] || [ -L "$file" ] || continue
+    base="${file##*/}"
+    name="${base%.md}"
+    if [ "$origin_kind" = shipped ]; then
+      winning="$CONFIG_DIR/roles/$base"
+      [ ! -e "$winning" ] && [ ! -L "$winning" ] || continue
+      origin=shipped
+    else
+      origin="$(config_path "$file" | config_sanitize)"
+    fi
+    role_status "$file" "$name" || true
+    name="$(printf '%s' "$name" | config_sanitize)"
+    status="$(printf '%s' "$ROLE_STATUS" | config_sanitize)"
+    printf '%s\t%s\t%s\n' "$name" "$origin" "$status"
+  done
+}
+
+role_rows() {
+  role_rows_in "$CONFIG_DIR/roles" operator
+  role_rows_in "$ROOT/roles" shipped
+}
+
+list_usable_roles() {
+  role_rows | awk -F '\t' '$3 == "ok" { print $1 }'
+}
+
+cmd_roles() {
+  [ $# -eq 0 ] || die "roles: takes no arguments"
+  role_rows
+}
+
 collar_file() { # $1 = collar name -> path on stdout; yours wins over the shipped one
   local d
   for d in ${GANG_COLLARS:+"$GANG_COLLARS"} "$ROOT/collars"; do
@@ -624,6 +689,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_STALL_TYPES="" GANG_DIALOGS=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
+  GANG_ROLE_PROMPT_OPT=""
   GANG_COLLAR_FILE="$f"
   unset -f collar_context collar_input collar_session_id \
     profile_context profile_input profile_session_id 2>/dev/null || true
@@ -725,6 +791,27 @@ valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON 
   esac
 }
 
+valid_role_name() { # $1 = a role filename stem; no identity-only reservations
+  case "$1" in
+    ''|-*|.*) return 1 ;;
+    *[!A-Za-z0-9._-]*) return 1 ;;
+  esac
+}
+
+role_file() { # $1 = role name -> winning path on stdout, operator first
+  local file="$CONFIG_DIR/roles/$1.md"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    printf '%s' "$file"
+    return 0
+  fi
+  file="$ROOT/roles/$1.md"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    printf '%s' "$file"
+    return 0
+  fi
+  return 1
+}
+
 mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
 ENVELOPE="" ENVELOPE_NONCE=""
@@ -816,42 +903,100 @@ send_identity_guard() { # a pane with a contradicted native identity may not spe
   refuse "send: this pane has a harness session identity mismatch ($mismatch); nothing from it can be attributed safely until that is resolved (gang whoami)"
 }
 
+PROSE="" PROSE_ERROR=""
+prose_check() { # $1 path, $2 label; populate PROSE byte-exact or PROSE_ERROR
+  local file="$1" label="$2" bytes without_nul marked sentinel=$'\034' probe rc
+  PROSE="" PROSE_ERROR=""
+  if ! { [ -f "$file" ] && [ -r "$file" ]; }; then
+    PROSE_ERROR="$label $file exists but is not a readable regular file"
+    return 1
+  fi
+  bytes="$(wc -c < "$file")" || {
+    PROSE_ERROR="cannot read $label $file"
+    return 1
+  }
+  without_nul="$(LC_ALL=C tr -d '\000' < "$file" | wc -c)" || {
+    PROSE_ERROR="cannot read $label $file"
+    return 1
+  }
+  if [ "$bytes" != "$without_nul" ]; then
+    PROSE_ERROR="$label $file contains a NUL byte"
+    return 1
+  fi
+  marked="$(cat "$file" || { rc=$?; exit "$rc"; }; printf '\034')" || {
+    PROSE_ERROR="cannot read $label $file"
+    return 1
+  }
+  case "$marked" in
+    *"$sentinel") PROSE="${marked%"$sentinel"}" ;;
+    *) PROSE_ERROR="internal: the prose sentinel was lost while reading $file"; return 1 ;;
+  esac
+  probe="$(printf '%s' "$PROSE" | tr -d '\11\12')"
+  case "$probe" in
+    *[[:cntrl:]]*)
+      PROSE_ERROR="$label $file contains control characters other than tab and newline"
+      return 1
+      ;;
+  esac
+  if ! python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file"; then
+    PROSE_ERROR="$label $file is not valid UTF-8"
+    return 1
+  fi
+  # This catches a document-tree, log, or binary put in a prose slot. It is a
+  # category-error guard, not a bound on what a target composer can render.
+  if [ "$bytes" -gt 8192 ]; then
+    PROSE_ERROR="$label $file exceeds the 8192-byte category-error ceiling"
+    return 1
+  fi
+}
+
+prose_read() { # $1 path, $2 label; populate PROSE or fail with its exact defect
+  prose_check "$1" "$2" || die "$PROSE_ERROR"
+}
+
 DOCTRINE=""
-doctrine_read() { # populate DOCTRINE from the operator slot, byte-exact
-  local file="$CONFIG_DIR/DOCTRINE.md" bytes without_nul marked sentinel=$'\034' probe rc
+doctrine_read() { # populate DOCTRINE from the ambient operator prose slot
+  local file="$CONFIG_DIR/DOCTRINE.md"
   DOCTRINE=""
   [ -e "$file" ] || [ -L "$file" ] || return 0
-  [ -f "$file" ] && [ -r "$file" ] \
-    || die "operator doctrine $file exists but is not a readable regular file"
-  bytes="$(wc -c < "$file")" || die "cannot read operator doctrine $file"
-  without_nul="$(LC_ALL=C tr -d '\000' < "$file" | wc -c)" \
-    || die "cannot read operator doctrine $file"
-  [ "$bytes" = "$without_nul" ] || die "operator doctrine $file contains a NUL byte"
-  marked="$(cat "$file" || { rc=$?; exit "$rc"; }; printf '\034')" \
-    || die "cannot read operator doctrine $file"
-  case "$marked" in
-    *"$sentinel") DOCTRINE="${marked%"$sentinel"}" ;;
-    *) die "internal: the doctrine sentinel was lost while reading $file" ;;
-  esac
-  probe="$(printf '%s' "$DOCTRINE" | tr -d '\11\12')"
-  case "$probe" in
-    *[[:cntrl:]]*) die "operator doctrine $file contains control characters other than tab and newline" ;;
-  esac
-  python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file" \
-    || die "operator doctrine $file is not valid UTF-8"
-  # This catches a document-tree, log, or binary put in the prose slot. It is
-  # a category-error guard, not a bound on what a target composer can render.
-  [ "$bytes" -le 8192 ] \
-    || die "operator doctrine $file exceeds the 8192-byte category-error ceiling"
+  prose_read "$file" "operator doctrine"
+  DOCTRINE="$PROSE"
+}
+
+ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 ROLE_PROMPT=""
+
+role_prompt_build() { # populate the system-prompt-level composite byte-exact
+  local role path
+  role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
+  path="$(config_path "$ROLE_FILE" | config_sanitize)"
+  printf -v ROLE_PROMPT '%s\n%s\n%s\n%s\n%s\n\n--- role brief: %s (%s) ---\n%s' \
+    'You are running inside a Gangline team. The role brief below was attached' \
+    'by Gangline when this session launched. Operator doctrine, where the' \
+    'operator has any, reaches you as part of your first message; where that' \
+    'doctrine and this brief disagree, the doctrine governs and this brief' \
+    'yields to it. Nothing below overrides it.' \
+    "$role" "$path" "$ROLE_BODY"
 }
 
 startup_brief() { # $1 = agent name, $2 = doctrine body or empty
+  local role path
+  printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness\047s own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further. To message a peer: gang send --to NAME --stdin. Use that peer\047s Gangline name. At natural checkpoints compact with: gang compact %s. When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e; where the collar declares no such option gang refuses the flag, so that choice is the collar\047s rather than a default\047s. Never let an unexamined default stand in for a decision. When you delegate a piece of work, spend your own context choosing, briefing, and judging it rather than producing it: reading far enough to write the brief is your work, and reading far enough to author the deliverable is a hitch you did not make. Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving.' "$1" "$1"
+  if [ -n "$ROLE_NAME" ]; then
+    role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
+    path="$(config_path "$ROLE_FILE" | config_sanitize)"
+    if [ "$ROLE_SYSTEM" -eq 1 ]; then
+      printf '\n\nYour role in this team is %s. Its brief was attached to this harness\nsession at launch from %s, together with a Gangline note subordinating\nit to operator doctrine.' "$role" "$path"
+    else
+      printf '\n\nYour role in this team is %s. Its brief follows; operator doctrine,\nwhere present, outranks it.\n\nRole brief (%s):\n\n%s' "$role" "$path" "$ROLE_BODY"
+    fi
+  fi
   if [ -n "$2" ]; then
-    printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness\047s own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further. To message a peer: gang send --to NAME --stdin. Use that peer\047s Gangline name. At natural checkpoints compact with: gang compact %s. When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e; where the collar declares no such option gang refuses the flag, so that choice is the collar\047s rather than a default\047s. Never let an unexamined default stand in for a decision. Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving.\n\nOperator doctrine (%s):\n\n%s\n\nEnd this turn.' \
-      "$1" "$1" "$(config_path "$CONFIG_DIR/DOCTRINE.md")" "$2"
+    printf '\n\nOperator doctrine (%s):\n\n%s\n\nEnd this turn.' \
+      "$(config_path "$CONFIG_DIR/DOCTRINE.md")" "$2"
+  elif [ -n "$ROLE_NAME" ]; then
+    printf '\n\nEnd this turn.'
   else
-    printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness\047s own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further. To message a peer: gang send --to NAME --stdin. Use that peer\047s Gangline name. At natural checkpoints compact with: gang compact %s. When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e; where the collar declares no such option gang refuses the flag, so that choice is the collar\047s rather than a default\047s. Never let an unexamined default stand in for a decision. Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving. End this turn.' \
-      "$1" "$1"
+    printf ' End this turn.'
   fi
 }
 
@@ -2503,7 +2648,7 @@ effort_levels() { # print the levels the collar says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" role="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -2522,6 +2667,7 @@ cmd_hitch() {
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
+    -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     --resume)     resume=1; shift
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
     *) die "hitch: unknown argument '$1'" ;;
@@ -2536,6 +2682,18 @@ cmd_hitch() {
       || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
   fi
   load_collar "$prof"
+  ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 ROLE_PROMPT=""
+  if [ -n "$role" ]; then
+    valid_role_name "$role" \
+      || die "hitch: role '$role' is not usable — use only letters, digits, dot, dash and underscore; do not start with dash or dot"
+    ROLE_FILE="$(role_file "$role")" \
+      || die "hitch: no role '$role' (usable roles: $(list_usable_roles | tr '\n' ' '))"
+    prose_read "$ROLE_FILE" "role brief"
+    [ -s "$ROLE_FILE" ] || die "role brief $ROLE_FILE is empty"
+    ROLE_NAME="$role"
+    ROLE_BODY="$PROSE"
+    [ -z "$GANG_ROLE_PROMPT_OPT" ] || ROLE_SYSTEM=1
+  fi
   if session_live; then
     id="$(win_id "$name")" || {
       lookup_rc=$?
@@ -2612,6 +2770,11 @@ cmd_hitch() {
   command -v python3 >/dev/null 2>&1 \
     || die "python3 is required for native hook payloads, context lights, and operator doctrine validation"
   doctrine_read
+
+  if [ "$ROLE_SYSTEM" -eq 1 ]; then
+    role_prompt_build
+    GANG_LAUNCH="$GANG_LAUNCH $GANG_ROLE_PROMPT_OPT $(shell_quote "$ROLE_PROMPT")"
+  fi
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
   launch_env="$launch_env GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR")"
@@ -3482,7 +3645,7 @@ config_effective() { # $1 settable key -> the value its consumers read
 }
 
 cmd_config() {
-  local k value record key origin line alias source file doctrine state
+  local k value record key origin line alias source file doctrine roles state
   [ $# -eq 0 ] || die "config: takes no arguments"
   for k in $GANG_CONFIG_KEYS; do
     value="$(config_effective "$k" | config_sanitize)"
@@ -3513,6 +3676,10 @@ cmd_config() {
   if [ -e "$doctrine" ] || [ -L "$doctrine" ]; then state=present; else state=absent; fi
   doctrine="$(config_path "$doctrine" | config_sanitize)"
   printf 'doctrine\t%s\t%s\n' "$doctrine" "$state"
+  roles="$CONFIG_DIR/roles"
+  if [ -e "$roles" ] || [ -L "$roles" ]; then state=present; else state=absent; fi
+  roles="$(config_path "$roles" | config_sanitize)"
+  printf 'roles\t%s\t%s\n' "$roles" "$state"
 }
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
@@ -3558,6 +3725,7 @@ case "$cmd" in
   drop)     cmd_drop "$1" ;;
   down)     cmd_down ;;
   collars|profiles) cmd_collars ;;
+  roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
   -h|--help|help) cmd_help "${1:-}" ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
