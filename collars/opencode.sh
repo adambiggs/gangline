@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
+# shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
 GANG_MODEL_OPT="-m"
@@ -11,7 +11,7 @@ GANG_OCCUPIED_REGEX='△ Permission required| {2,}esc *$'
 
 opencode_models_json() { printf '%s/opencode/models.json' "${XDG_CACHE_HOME:-$HOME/.cache}"; }
 
-profile_context() { # $1 = tmux target; hint row carries used+percent, catalog carries the window
+collar_context() { # $1 = tmux target; hint row carries used+percent, catalog carries the window
   local cap row badge names
   cap="$(tmux capture-pane -pJ -t "$1")" || die "cannot read pane $1"
   row="$(printf '%s\n' "$cap" | grep -Eo '[0-9]+(\.[0-9]+)?[KM]? \([0-9]+%\)' | tail -1)" \
@@ -63,7 +63,7 @@ print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 PY
 }
 
-profile_input() { # $1 = tmux target; prints the composer, fails if it has no keyboard
+collar_input() { # $1 = tmux target; prints the composer, fails if it has no keyboard
   local cap cur
   cap="$(tmux capture-pane -pJ -t "$1")" || return 1
   cur="$(tmux display-message -p -t "$1" '#{cursor_y}')" || return 1

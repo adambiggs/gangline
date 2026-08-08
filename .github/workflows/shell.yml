@@ -65,7 +65,7 @@ jobs:
         run: |
           GANGLINE_REPO="$PWD" GANGLINE_HOME="$RUNNER_TEMP/gangline" \
             GANGLINE_BIN="$RUNNER_TEMP/bin" sh install.sh
-          "$RUNNER_TEMP/bin/gang" profiles
+          "$RUNNER_TEMP/bin/gang" collars
 
       - name: Integration test
         timeout-minutes: 5

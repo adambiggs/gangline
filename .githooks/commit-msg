@@ -47,10 +47,10 @@ commit-msg: subject is not a Conventional Commit
 Expected: <type>[(scope)][!]: <description>
   type   ${types//|/, }
   scope  optional, lowercase — a command or component
-         (send, compact, up, down, profiles, installer)
+         (send, compact, up, down, collars, installer)
   !      breaking change; add a BREAKING CHANGE: footer alongside it
 
-  fix(profiles): refuse an occupied composer
+  fix(collars): refuse an occupied composer
   feat(down): tear the whole team down
   refactor!: rename executable and protocol from gl to gang
 EOF

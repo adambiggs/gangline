@@ -31,7 +31,7 @@ minor="${ver#*.}"; minor="${minor%%.*}"
 python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
   || die "working python3 with JSON support required — native hook payloads and optional context lights use it"
 
-# The whole tree is the tool: bin/gang reads profiles/ relative to itself.
+# The whole tree is the tool: bin/gang reads collars/ relative to itself.
 if [ -d "$HOME_DIR/.git" ]; then
   echo "updating $HOME_DIR"
   git -C "$HOME_DIR" pull --ff-only --quiet \
@@ -47,11 +47,11 @@ mkdir -p "$BIN_DIR"
 ln -sf "$HOME_DIR/bin/gang" "$BIN_DIR/gang"
 
 # Execute the installed tree before reporting success.
-"$BIN_DIR/gang" profiles >/dev/null || die "installed, but 'gang profiles' failed"
+"$BIN_DIR/gang" collars >/dev/null || die "installed, but 'gang collars' failed"
 
 echo
 echo "gang installed -> $BIN_DIR/gang"
-echo "  harnesses: $("$BIN_DIR/gang" profiles | tr '\n' ' ')"
+echo "  harnesses: $("$BIN_DIR/gang" collars | tr '\n' ' ')"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo

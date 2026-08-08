@@ -35,7 +35,7 @@ export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_CONFIG_DIR="$RUN_ROOT/config"
 export XDG_CONFIG_HOME="$RUN_ROOT/xdg"
 export GANG_SESSION="gangtest-$$"
-export GANG_TEST_PROFILES=1
+export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
 
@@ -85,9 +85,32 @@ refuses() { # $1 description, $2 expected message, rest = command
   fi
 }
 
-window_id() { # $1 exact window name
-  tmux list-windows -t "=$GANG_SESSION" -F '#{window_id} #{window_name}' |
-    awk -v wanted="$1" '$2 == wanted { print $1; exit }'
+bare_window_name() { # $1 raw tmux window name
+  local n="$1" first last
+  [ "${#n}" -ge 3 ] || { printf '%s' "$n"; return; }
+  first="${n:0:1}"; last="${n: -1}"
+  case "$first" in
+    -|'~'|'!'|'?') [ "$first" = "$last" ] && n="${n:1:${#n}-2}" ;;
+  esac
+  printf '%s' "$n"
+}
+
+window_id_in() { # $1 session, $2 bare window name
+  local id name
+  while read -r id name; do
+    [ "$(bare_window_name "$name")" = "$2" ] && { printf '%s' "$id"; return; }
+  done < <(tmux list-windows -t "=$1" -F '#{window_id} #{window_name}')
+  return 1
+}
+
+window_id() { # $1 bare window name
+  window_id_in "$GANG_SESSION" "$1"
+}
+
+window_names() { # optional $1 session -> bare names, one per line
+  local session="${1:-$GANG_SESSION}" name
+  while IFS= read -r name; do bare_window_name "$name"; printf '\n'; done \
+    < <(tmux list-windows -t "=$session" -F '#W')
 }
 
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
@@ -95,8 +118,8 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 
 # Help coverage is derived from the dispatcher, so missing help cannot hide by
 # also being absent from a hand-maintained help inventory. The exclusions are
-# deliberate non-operator routes: the native callback, the hitch alias, and
-# help's own dispatcher arms.
+# deliberate non-operator routes: the native callback, the hitch alias, the
+# announced deprecated command aliases, and help's own dispatcher arms.
 dispatch_commands="$({
   sed -n '/^case "$cmd" in$/,/^esac$/p' "$GANG" |
     awk '
@@ -106,9 +129,9 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "spawn" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+} | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop"
-meaningful_bare_commands="up roster attach profiles config cutoff notify down"
+meaningful_bare_commands="up roster attach collars config curfew notify down"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -121,6 +144,14 @@ for number, line in enumerate(sys.stdin.read().splitlines(), 1):
 top_help="$($GANG --help)"
 top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
 equal "top-level help fits the phone-SSH width" "" "$top_wide"
+contains "top-level help names the collar command" "$top_help" "collars"
+contains "top-level help names the curfew command" "$top_help" "curfew"
+excludes "top-level help omits the deprecated profiles name" "$top_help" "profiles"
+excludes "top-level help omits the deprecated cutoff name" "$top_help" "cutoff"
+contains "gang collars help prints the new synopsis" \
+  "$("$GANG" collars --help)" "gang collars"
+contains "gang curfew help prints the new synopsis" \
+  "$("$GANG" curfew --help)" "gang curfew"
 equal "every dispatched operator command has a bare classification" \
   "$dispatch_commands" "$classified_commands"
 help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
@@ -153,10 +184,25 @@ done
 # rather than inheriting whichever session started the shared server.
 GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 
-# Public profile surface: the bash fixture remains test-only.
-profiles="$(GANG_TEST_PROFILES='' "$GANG" profiles | tr '\n' ' ')"
-equal "the public profile list is the supported harness set" \
-  "claude-code codex opencode pi " "$profiles"
+# Public collar surface: the bash fixture remains test-only.
+collars="$(GANG_TEST_COLLARS='' "$GANG" collars | tr '\n' ' ')"
+equal "the public collar list is the supported harness set" \
+  "claude-code codex opencode pi " "$collars"
+"$GANG" profiles > "$RUN_ROOT/profiles-alias.out" 2> "$RUN_ROOT/profiles-alias.err"
+equal "gang profiles aliases the collar list on stdout" \
+  "$("$GANG" collars)" "$(<"$RUN_ROOT/profiles-alias.out")"
+contains "gang profiles announces only on stderr" \
+  "$(<"$RUN_ROOT/profiles-alias.err")" \
+  "gang profiles is now gang collars; the old name still works and will be removed in 2.0."
+excludes "the gang profiles announcement does not contaminate stdout" \
+  "$(<"$RUN_ROOT/profiles-alias.out")" "removed in 2.0"
+env -u GANG_TEST_COLLARS GANG_TEST_PROFILES=1 "$GANG" collars \
+  > "$RUN_ROOT/test-profiles-alias.out" 2> "$RUN_ROOT/test-profiles-alias.err"
+contains "the suite switch alias still exposes its concrete fixture" \
+  "$(<"$RUN_ROOT/test-profiles-alias.out")" "bash"
+contains "the suite switch alias announces its replacement" \
+  "$(<"$RUN_ROOT/test-profiles-alias.err")" \
+  "GANG_TEST_PROFILES is now GANG_TEST_COLLARS"
 xdg_config_report="$(env -u GANG_CONFIG_DIR "$GANG" config)"
 contains "the fallback config root stays inside the isolated run root" \
   "$xdg_config_report" "$RUN_ROOT/xdg/gangline"
@@ -210,7 +256,7 @@ else
 fi
 
 mkdir -p "$CONFIG_CASES/report"
-printf '%s\n' 'GANG_SESSION=file-report' 'GANG_PROFILE=codex' \
+printf '%s\n' 'GANG_SESSION=file-report' 'GANG_COLLAR=codex' \
   > "$CONFIG_CASES/report/config"
 config_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/report" \
   GANG_SESSION=env-report "$GANG" config)"
@@ -219,9 +265,78 @@ contains "gang config attributes an environment override to both layers" \
   $'GANG_SESSION=env-report\tenvironment (overriding config line 1)'
 contains "gang config attributes a file-layer value to its line" \
   "$config_report" \
-  $'GANG_PROFILE=codex\t'"$CONFIG_CASES/report/config line 2"
+  $'GANG_COLLAR=codex\t'"$CONFIG_CASES/report/config line 2"
 contains "gang config attributes an untouched built-in value to the default" \
   "$config_report" $'GANG_CLEAR_PRESSES=40\tdefault'
+
+# Published config names stay live for 1.x, but two names for one setting are
+# never silently normalized. Exercise every reachable layer arrangement in
+# both directions with identical values; an unequal-only conflict check cannot
+# satisfy these fixtures.
+config_alias_root="$CONFIG_CASES/aliases"
+mkdir -p "$config_alias_root"
+config_pair_case() { # $1 new, $2 old, $3 arrangement
+  local new="$1" old="$2" arrangement="$3" root="$config_alias_root/$1-$3" out=""
+  mkdir -p "$root"
+  case "$arrangement" in
+    file-new-old)
+      printf '%s\n' "$new=same" "$old=same" > "$root/config"
+      out="$(env -u "$new" -u "$old" GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
+    file-old-new)
+      printf '%s\n' "$old=same" "$new=same" > "$root/config"
+      out="$(env -u "$new" -u "$old" GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
+    env-both)
+      out="$(env -u "$new" -u "$old" "$new=same" "$old=same" \
+        GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
+    env-new-file-old)
+      printf '%s\n' "$old=same" > "$root/config"
+      out="$(env -u "$new" -u "$old" "$new=same" GANG_CONFIG_DIR="$root" \
+        "$GANG" config 2>&1 || true)" ;;
+    env-old-file-new)
+      printf '%s\n' "$new=same" > "$root/config"
+      out="$(env -u "$new" -u "$old" "$old=same" GANG_CONFIG_DIR="$root" \
+        "$GANG" config 2>&1 || true)" ;;
+  esac
+  contains "$new/$old $arrangement refuses both names" "$out" \
+    "$new"
+  contains "$new/$old $arrangement names the deprecated alias" "$out" \
+    "deprecated alias $old"
+  contains "$new/$old $arrangement is a two-name refusal" "$out" \
+    "both set"
+}
+for config_pair in 'GANG_COLLAR GANG_PROFILE' 'GANG_COLLARS GANG_PROFILES'; do
+  read -r config_new config_old <<<"$config_pair"
+  for config_arrangement in file-new-old file-old-new env-both \
+    env-new-file-old env-old-file-new; do
+    config_pair_case "$config_new" "$config_old" "$config_arrangement"
+  done
+  differing_alias_out="$(env -u "$config_new" -u "$config_old" \
+    "$config_new=new-value" "$config_old=old-value" \
+    GANG_CONFIG_DIR="$config_alias_root/differing-$config_new" \
+    "$GANG" config 2>&1 || true)"
+  contains "$config_new/$config_old differing values still refuse" \
+    "$differing_alias_out" "both set"
+done
+empty_alias_out="$(env -u GANG_COLLAR -u GANG_PROFILE GANG_COLLAR= \
+  GANG_PROFILE= GANG_CONFIG_DIR="$config_alias_root/empty-env" \
+  "$GANG" config 2>&1 || true)"
+contains "empty-but-set config aliases still conflict" "$empty_alias_out" \
+  "GANG_COLLAR"
+contains "the empty-but-set conflict names the old spelling" "$empty_alias_out" \
+  "GANG_PROFILE"
+
+old_config_root="$config_alias_root/old-file"
+mkdir -p "$old_config_root"
+printf '%s\n' 'GANG_PROFILE=bash' > "$old_config_root/config"
+env -u GANG_COLLAR -u GANG_PROFILE GANG_CONFIG_DIR="$old_config_root" \
+  "$GANG" config > "$old_config_root/out" 2> "$old_config_root/err"
+contains "gang config prints only the new key for an old file spelling" \
+  "$(<"$old_config_root/out")" $'GANG_COLLAR=bash\t'
+contains "gang config identifies the alias in the origin column" \
+  "$(<"$old_config_root/out")" "deprecated alias GANG_PROFILE"
+contains "a file config alias announces its replacement" \
+  "$(<"$old_config_root/err")" \
+  "GANG_PROFILE is now GANG_COLLAR (from $old_config_root/config line 1)"
 
 config_escape=$'safe\033unsafe'
 sanitised_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/env" \
@@ -244,55 +359,62 @@ mkdir -p "$CONFIG_CASES/unknown"
 printf '%s\n' 'GANG_NOPE=value' > "$CONFIG_CASES/unknown/config"
 refuses "an unknown config key names its file, line, and key" \
   "$CONFIG_CASES/unknown/config line 1 has unknown key GANG_NOPE" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/unknown" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/unknown" "$GANG" collars
 
-mkdir -p "$CONFIG_CASES/profile-declaration"
-printf '%s\n' 'GANG_LAUNCH=claude' > "$CONFIG_CASES/profile-declaration/config"
-profile_decl_out="$(env GANG_CONFIG_DIR="$CONFIG_CASES/profile-declaration" "$GANG" profiles 2>&1 || true)"
-contains "a profile declaration is refused under its own name" \
-  "$profile_decl_out" "GANG_LAUNCH is a profile declaration, not operator configuration"
-contains "the profile-declaration refusal points at the supported escape hatch" \
-  "$profile_decl_out" "point GANG_PROFILES at its directory"
+mkdir -p "$CONFIG_CASES/collar-declaration"
+printf '%s\n' 'GANG_LAUNCH=claude' > "$CONFIG_CASES/collar-declaration/config"
+collar_decl_out="$(env GANG_CONFIG_DIR="$CONFIG_CASES/collar-declaration" "$GANG" collars 2>&1 || true)"
+contains "a collar declaration is refused under its own name" \
+  "$collar_decl_out" "GANG_LAUNCH is a collar declaration, not operator configuration"
+contains "the collar-declaration refusal points at the supported escape hatch" \
+  "$collar_decl_out" "point GANG_COLLARS at its directory"
 
 mkdir -p "$CONFIG_CASES/test-switch"
+printf '%s\n' 'GANG_TEST_COLLARS=1' > "$CONFIG_CASES/test-switch/config"
+refuses "the suite-only collar switch cannot be persisted" \
+  "GANG_TEST_COLLARS is a per-invocation switch" \
+  env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" collars
 printf '%s\n' 'GANG_TEST_PROFILES=1' > "$CONFIG_CASES/test-switch/config"
-refuses "the suite-only profile switch cannot be persisted" \
+refuses "the old suite-only collar switch has its own unpersistable refusal" \
   "GANG_TEST_PROFILES is a per-invocation switch" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" collars
+refuses "both suite switch spellings in the environment conflict" \
+  "GANG_TEST_COLLARS" env GANG_TEST_COLLARS=1 GANG_TEST_PROFILES=1 \
+  GANG_CONFIG_DIR="$CONFIG_CASES/env" "$GANG" config
 
 mkdir -p "$CONFIG_CASES/bootstrap"
 printf '%s\n' 'GANG_CONFIG_DIR=/tmp/elsewhere' > "$CONFIG_CASES/bootstrap/config"
 refuses "the config root cannot bootstrap itself from inside the file" \
   "GANG_CONFIG_DIR bootstraps the config file being read" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/bootstrap" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/bootstrap" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/duplicate"
 printf '%s\n' 'GANG_SESSION=first' 'GANG_SESSION=second' > "$CONFIG_CASES/duplicate/config"
 refuses "a duplicated config key names both lines" \
   "duplicates GANG_SESSION on lines 1 and 2" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/duplicate" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/duplicate" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/empty"
 printf '%s\n' 'GANG_SESSION=' > "$CONFIG_CASES/empty/config"
 refuses "an empty config value says to delete the line" \
   "a key with no value states nothing — delete the line to take the default" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/empty" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/empty" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/nul"
 printf 'GANG_SESSION=alpha\000omega\n' > "$CONFIG_CASES/nul/config"
 refuses "a NUL byte is refused instead of silently disappearing" \
   "contains a NUL byte" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/nul" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/nul" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/crlf" "$CONFIG_CASES/escape"
 printf 'GANG_BOOT_TIMEOUT=30\r\n' > "$CONFIG_CASES/crlf/config"
 refuses "a CRLF config line is refused as control-bearing" \
   "contains control characters other than tab and newline" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/crlf" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/crlf" "$GANG" collars
 printf 'GANG_SESSION=alpha\033omega\n' > "$CONFIG_CASES/escape/config"
 refuses "a bare escape in a config value is refused" \
   "contains control characters other than tab and newline" \
-  env GANG_CONFIG_DIR="$CONFIG_CASES/escape" "$GANG" profiles
+  env GANG_CONFIG_DIR="$CONFIG_CASES/escape" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/no-final-newline"
 printf 'GANG_SESSION=config-file-session   ' > "$CONFIG_CASES/no-final-newline/config"
@@ -303,11 +425,11 @@ contains "a newline-free final value parses after trailing blanks are stripped" 
 for root_source in GANG_CONFIG_DIR XDG_CONFIG_HOME HOME; do
   case "$root_source" in
     GANG_CONFIG_DIR)
-      relative_out="$(GANG_CONFIG_DIR=relative "$GANG" profiles 2>&1 || true)" ;;
+      relative_out="$(GANG_CONFIG_DIR=relative "$GANG" collars 2>&1 || true)" ;;
     XDG_CONFIG_HOME)
-      relative_out="$(env -u GANG_CONFIG_DIR XDG_CONFIG_HOME=relative "$GANG" profiles 2>&1 || true)" ;;
+      relative_out="$(env -u GANG_CONFIG_DIR XDG_CONFIG_HOME=relative "$GANG" collars 2>&1 || true)" ;;
     HOME)
-      relative_out="$(env -u GANG_CONFIG_DIR -u XDG_CONFIG_HOME HOME=relative "$GANG" profiles 2>&1 || true)" ;;
+      relative_out="$(env -u GANG_CONFIG_DIR -u XDG_CONFIG_HOME HOME=relative "$GANG" collars 2>&1 || true)" ;;
   esac
   contains "a relative root from $root_source is refused under that source" \
     "$relative_out" "$root_source must resolve Gangline's config root to an absolute path"
@@ -330,10 +452,10 @@ SH
 chmod +x "$CODEX_STUB/bin/codex"
 
 codex_launch() { # $1 fake install root, $2 GANG_LAUNCH|GANG_RESUME_LAUNCH
-  local fake_root="$1" launch_name="$2" profile_file="$ROOT/profiles/codex.sh"
-  GANG_TEST_PROFILES='' ROOT="$fake_root" bash -c \
+  local fake_root="$1" launch_name="$2" collar_file="$ROOT/collars/codex.sh"
+  GANG_TEST_COLLARS='' ROOT="$fake_root" bash -c \
     'set -euo pipefail; . "$1"; printf "%s" "${!2}"' \
-    fixture "$profile_file" "$launch_name"
+    fixture "$collar_file" "$launch_name"
 }
 
 codex_hook_command() { # $1 launch line, $2 captured -c options
@@ -396,13 +518,13 @@ contains "Codex resume declares an explicit native session slot" \
   "$codex_resume" "codex resume {{session_id}}"
 excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
 
-claude_profile="$ROOT/profiles/claude-code.sh"
+claude_collar="$ROOT/collars/claude-code.sh"
 claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_collar")"
 excludes "disabled lights do not paint Claude context output" \
   "$claude_off" 'statusLine'
 claude_on="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=100000,200000 bash -c \
-  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_collar")"
 contains "enabled Claude lights wire their context source" \
   "$claude_on" 'statusLine'
 claude_hook_events="$(python3 - "$claude_off" <<'PY'
@@ -418,24 +540,24 @@ equal "Claude installs every native event Gangline consumes" \
   "Notification PermissionRequest PostToolUse Stop UserPromptSubmit" \
   "$claude_hook_events"
 claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' fixture "$claude_collar")"
 equal "Claude declares only native kinds that await a person" \
   "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
   "$claude_stall_types"
 claude_resume="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_collar")"
 contains "Claude resume declares an explicit native session slot" \
   "$claude_resume" "claude --resume {{session_id}}"
 excludes "Claude resume never resolves by directory recency" \
   "$claude_resume" "--continue"
 codex_dialog_block="$(env ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_DIALOG_LINES_safety_buffering_prompt"' \
-  fixture "$ROOT/profiles/codex.sh")"
+  fixture "$ROOT/collars/codex.sh")"
 contains "the shipped Codex fingerprint includes the third captured option" \
   "$codex_dialog_block" "Learn more"
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
-  fixture "$claude_profile")"
+  fixture "$claude_collar")"
 equal "a hooked Claude launch declares Stop and deferred self-compaction together" \
   "1|deferred" "$claude_hook_declarations"
 claude_unhooked_root="$RUN_ROOT/claude'guard"
@@ -445,18 +567,18 @@ printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: Apache-2.0' \
 chmod +x "$claude_unhooked_root/bin/gang"
 claude_unhooked_declarations="$(ROOT="$claude_unhooked_root" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
-  fixture "$claude_profile")"
+  fixture "$claude_collar")"
 equal "an unhooked Claude launch claims neither Stop nor deferred compaction" \
   "|" "$claude_unhooked_declarations"
 claude_midturn="$(ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "${GANG_MIDTURN_INPUT:-}"' fixture "$claude_collar")"
 equal "Claude delivery waits for an idle composer" "" "$claude_midturn"
 claude_queued="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "${GANG_QUEUED_REGEX:-}"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "${GANG_QUEUED_REGEX:-}"' fixture "$claude_collar")"
 if [ -n "$claude_queued" ]; then
-  pass "the Claude profile declares its parked-queue evidence"
+  pass "the Claude collar declares its parked-queue evidence"
 else
-  fail "the Claude profile declares its parked-queue evidence" \
+  fail "the Claude collar declares its parked-queue evidence" \
     "GANG_QUEUED_REGEX is empty"
 fi
 if printf '%s\n' 'Press up to edit queued messages   ' | grep -Eq -- "$claude_queued"; then
@@ -473,11 +595,11 @@ else
   pass "a line quoting the hint is not parked-queue evidence"
 fi
 claude_effort_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$claude_profile")"
-equal "the Claude profile spells effort as one joinable word" \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$claude_collar")"
+equal "the Claude collar spells effort as one joinable word" \
   "--effort=" "$claude_effort_opt"
 claude_effort_cmd="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$claude_profile")"
+  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$claude_collar")"
 CLAUDE_STUB="$RUN_ROOT/claude-stub"
 mkdir -p "$CLAUDE_STUB/bin"
 cat > "$CLAUDE_STUB/bin/claude" <<'SH'
@@ -539,25 +661,25 @@ claude_failed="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
 equal "correct help from a failed producer yields nothing rather than a vocabulary" \
   "" "$claude_failed"
 
-codex_profile="$ROOT/profiles/codex.sh"
-codex_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_profile")"
-equal "the Codex profile keeps native compaction" "/compact" "$codex_compact"
-codex_self_compact="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_profile")"
-equal "the Codex profile defers self-compaction to its native Stop hook" \
+codex_collar="$ROOT/collars/codex.sh"
+codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"
+equal "the Codex collar keeps native compaction" "/compact" "$codex_compact"
+codex_self_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_collar")"
+equal "the Codex collar defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
-codex_stall_types="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+codex_stall_types="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   'unset GANG_STALL_TYPES; . "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' \
-  fixture "$codex_profile")"
+  fixture "$codex_collar")"
 equal "Codex invents no Notification kinds its hook set cannot raise" \
   "" "$codex_stall_types"
-codex_effort_opt="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_profile")"
-equal "the Codex profile spells effort as one joinable config option" \
+codex_effort_opt="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$codex_collar")"
+equal "the Codex collar spells effort as one joinable config option" \
   "-c model_reasoning_effort=" "$codex_effort_opt"
-codex_effort_cmd="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$codex_profile")"
+codex_effort_cmd="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$codex_collar")"
 CODEX_CATALOG_STUB="$RUN_ROOT/codex-catalog-stub"
 mkdir -p "$CODEX_CATALOG_STUB/bin"
 cat > "$CODEX_CATALOG_STUB/bin/codex" <<'SH'
@@ -582,11 +704,11 @@ equal "a model the catalog cannot bind yields nothing rather than a guess" \
   "" "$codex_unbound"
 # opencode and pi refuse -e by declaring nothing: their native effort forms
 # are unverified, and an unverified spelling must not reach a launch line.
-for unverified_profile in opencode pi; do
-  unverified_file="$ROOT/profiles/$unverified_profile.sh"
-  unverified_effort="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+for unverified_collar in opencode pi; do
+  unverified_file="$ROOT/collars/$unverified_collar.sh"
+  unverified_effort="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
     '. "$1"; printf "%s" "${GANG_EFFORT_OPT:-}"' fixture "$unverified_file")"
-  equal "the $unverified_profile profile declares no effort spelling until one is verified" \
+  equal "the $unverified_collar collar declares no effort spelling until one is verified" \
     "" "$unverified_effort"
 done
 codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
@@ -595,31 +717,31 @@ cat > "$codex_context_fixture" <<'JSONL'
 {"payload":{"type":"message","role":"assistant","content":"later non-token event"}}
 {"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":120000},"model_context_window":300000}}}
 JSONL
-codex_context="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
-  '. "$1"; codex_context_read "$2"' fixture "$codex_profile" "$codex_context_fixture")"
+codex_context="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; codex_context_read "$2"' fixture "$codex_collar" "$codex_context_fixture")"
 equal "Codex context reads the newest native token record" \
   "120k/300k (40%)" "$codex_context"
 
-mkdir -p "$RUN_ROOT/profiles"
-export GANG_PROFILES="$RUN_ROOT/profiles"
-cat > "$RUN_ROOT/profiles/ctx-known.sh" <<SH
+mkdir -p "$RUN_ROOT/collars"
+export GANG_COLLARS="$RUN_ROOT/collars"
+cat > "$RUN_ROOT/collars/ctx-known.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_SESSION_KEY=1
-profile_context() { printf '42k/200k (21%%)\n'; }
+collar_context() { printf '42k/200k (21%%)\n'; }
 SH
-cat > "$RUN_ROOT/profiles/ctx-fail.sh" <<SH
+cat > "$RUN_ROOT/collars/ctx-fail.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
-profile_context() { die 'fixture context unavailable'; }
+. "$ROOT/collars/bash.sh"
+collar_context() { die 'fixture context unavailable'; }
 SH
-cat > "$RUN_ROOT/profiles/ctx-none.sh" <<SH
+cat > "$RUN_ROOT/collars/ctx-none.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
-unset -f profile_context
+. "$ROOT/collars/bash.sh"
+unset -f collar_context
 SH
 cat > "$RUN_ROOT/usage-bashrc" <<'SH'
 PS1='❯ '
@@ -640,73 +762,73 @@ c() {
   IFS= read -r -n 1 _
 }
 SH
-cat > "$RUN_ROOT/profiles/usage-inline.sh" <<SH
+cat > "$RUN_ROOT/collars/usage-inline.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-bashrc'"
 GANG_USAGE_CMD='u'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
 SH
-cat > "$RUN_ROOT/profiles/usage-confirm.sh" <<SH
+cat > "$RUN_ROOT/collars/usage-confirm.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-confirm-bashrc'"
 GANG_USAGE_CMD='c'
 GANG_USAGE_CONFIRM_KEY="Enter"
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="Escape"
 SH
-cat > "$RUN_ROOT/profiles/usage-modal.sh" <<'SH'
+cat > "$RUN_ROOT/collars/usage-modal.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_ONE\nMODAL_TWO\n"; IFS= read -r -n 1 _'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="Escape"
 SH
-cat > "$RUN_ROOT/profiles/usage-stuck.sh" <<'SH'
+cat > "$RUN_ROOT/collars/usage-stuck.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_STUCK\n"; while :; do IFS= read -r -n 1 _; [ "$_" = q ] && break; done'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="C-g"
 SH
-cat > "$RUN_ROOT/profiles/usage-nochange.sh" <<'SH'
+cat > "$RUN_ROOT/collars/usage-nochange.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_USAGE_CMD="clear"
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
 SH
-cat > "$RUN_ROOT/profiles/usage-occupied.sh" <<'SH'
+cat > "$RUN_ROOT/collars/usage-occupied.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
 GANG_OCCUPIED_REGEX='OCCUPIED_USAGE'
-_gl_usage_occupied_input="$(declare -f profile_input)"
-eval "usage_occupied_real_input ${_gl_usage_occupied_input#profile_input}"
-profile_input() {
+_gl_usage_occupied_input="$(declare -f collar_input)"
+eval "usage_occupied_real_input ${_gl_usage_occupied_input#collar_input}"
+collar_input() {
   tmux capture-pane -pJ -t "$1" | grep -q OCCUPIED_USAGE && return 1
   usage_occupied_real_input "$1"
 }
 SH
-cat > "$RUN_ROOT/profiles/usage-unknown.sh" <<'SH'
+cat > "$RUN_ROOT/collars/usage-unknown.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="unknown"
@@ -718,16 +840,18 @@ SH
 # below has been established.
 printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
-  "$GANG" hitch alpha -p bash -d /tmp >/dev/null
+  "$GANG" hitch alpha -c bash -d /tmp >/dev/null
+alpha_id="$(window_id alpha)"
 contains "Bash 3.2 can lock and deliver the startup contract" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "hitch creates an observable idle agent" "$($GANG status alpha)" "idle"
-contains "roster lists the hitched profile" "$($GANG roster)" "alpha"
+contains "roster lists the hitched collar" "$($GANG roster)" "alpha"
 contains "roster is an immediate snapshot" \
   "$(GANG_CHURN_WAIT=not-a-duration $GANG roster)" "alpha"
 
-alpha_id="$(window_id alpha)"
 alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
+contains "whoami prints the collar field under its 1.0 name" \
+  "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" whoami)" "collar: bash"
 contains "bare status targets the calling agent window" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" status)" "idle"
 contains "bare capture targets the calling agent window" \
@@ -736,42 +860,236 @@ contains "bare capture targets the calling agent window" \
 equal "bare composer targets the calling agent window" "" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
 
-GANG_CONTEXT_LIGHTS=off "$GANG" hitch ctx-agent -p ctx-known -d /tmp >/dev/null
+"$GANG" hitch legacy-flag -p bash -d /tmp \
+  > "$RUN_ROOT/legacy-flag.out" 2> "$RUN_ROOT/legacy-flag.err"
+contains "the hitch flag alias still opens a registered window" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$(window_id legacy-flag)" -F '#{pane_id}')" \
+    "$GANG" whoami)" "collar: bash"
+contains "the hitch flag alias announces its replacement" \
+  "$(<"$RUN_ROOT/legacy-flag.err")" \
+  "hitch: -p/--profile is now -c/--collar"
+"$GANG" drop legacy-flag >/dev/null
+if both_flag_out="$("$GANG" hitch two-flags -c bash -p bash -d /tmp 2>&1)"; then
+  fail "two spellings of the hitch collar flag refuse" "hitch succeeded"
+else
+  contains "the two-spelling refusal names both flags" "$both_flag_out" \
+    "-c/--collar and -p/--profile"
+fi
+excludes "the two-spelling refusal opens no window" "$(window_names)" "two-flags"
+
+# Calibrate custom-directory precedence against a state with no shadow file,
+# then make the custom bash collar emit a marker the shipped fixture cannot.
+shadow_dir="$RUN_ROOT/shadow-collars"
+mkdir -p "$shadow_dir"
+excludes "the shipped bash collar cannot emit the shadow marker" \
+  "$(GANG_COLLARS="$shadow_dir" "$GANG" composer alpha)" "CUSTOM_COLLAR_MARKER"
+cat > "$shadow_dir/bash.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+_shadow_real="\$(declare -f collar_input)"
+eval "shadow_real_input \${_shadow_real#collar_input}"
+collar_input() {
+  [ ! -e "$RUN_ROOT/shadow-marker-on" ] || { printf 'CUSTOM_COLLAR_MARKER'; return; }
+  shadow_real_input "\$1"
+}
+SH
+GANG_COLLARS="$shadow_dir" "$GANG" hitch shadowed -c bash -d /tmp >/dev/null
+: > "$RUN_ROOT/shadow-marker-on"
+equal "a custom collar directory shadows the shipped collar" \
+  "CUSTOM_COLLAR_MARKER" \
+  "$(GANG_COLLARS="$shadow_dir" "$GANG" composer shadowed)"
+"$GANG" drop shadowed >/dev/null
+
+# Custom collars may keep the published 0.x function spelling through 1.x.
+# The ordinary command calibrates that there is a real announcement for the
+# hook-silence check below.
+cat > "$RUN_ROOT/collars/legacy-contract.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+_legacy_input="\$(declare -f collar_input)"
+eval "profile_input \${_legacy_input#collar_input}"
+unset -f collar_input
+SH
+cat > "$RUN_ROOT/collars/dual-contract.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+profile_input() { printf 'legacy'; }
+SH
+"$GANG" hitch legacy-contract-a -c legacy-contract -d /tmp \
+  > "$RUN_ROOT/legacy-contract-hitch.out" 2> "$RUN_ROOT/legacy-contract-hitch.err"
+contains "a legacy collar function is announced during ordinary loading" \
+  "$(<"$RUN_ROOT/legacy-contract-hitch.err")" \
+  "collar 'legacy-contract' declares profile_input"
+tmux send-keys -l -t "$(window_id legacy-contract-a)" LEGACY_INPUT
+"$GANG" composer legacy-contract-a \
+  > "$RUN_ROOT/legacy-contract-composer.out" \
+  2> "$RUN_ROOT/legacy-contract-composer.err"
+contains "profile_input forwards into the collar_input contract" \
+  "$(<"$RUN_ROOT/legacy-contract-composer.out")" "LEGACY_INPUT"
+contains "an ordinary composer command announces the legacy contract" \
+  "$(<"$RUN_ROOT/legacy-contract-composer.err")" \
+  "collar 'legacy-contract' declares profile_input"
+tmux send-keys -t "$(window_id legacy-contract-a)" C-u
+printf '%s\n' '{"hook_event_name":"Notification","notification_type":"fixture"}' \
+  | TMUX_PANE="$(tmux list-panes -t "$(window_id legacy-contract-a)" -F '#{pane_id}')" \
+    "$GANG" hook > "$RUN_ROOT/legacy-contract-hook.out" \
+    2> "$RUN_ROOT/legacy-contract-hook.err"
+equal "hook output stays silent for a legacy contract function" "" \
+  "$(<"$RUN_ROOT/legacy-contract-hook.err")"
+if dual_out="$("$GANG" hitch dual-contract -c dual-contract -d /tmp 2>&1)"; then
+  fail "a collar defining both contract spellings refuses" "hitch succeeded"
+else
+  contains "the dual-contract refusal names its collar" "$dual_out" \
+    "collar 'dual-contract' defines both collar_input and profile_input"
+fi
+excludes "the dual-contract refusal opens no window" "$(window_names)" "dual-contract"
+
+"$GANG" hitch legacy-contract-b -c legacy-contract -d /tmp >/dev/null 2>&1
+"$GANG" roster > "$RUN_ROOT/legacy-roster.out" 2> "$RUN_ROOT/legacy-roster.err"
+contains "a roster over shared legacy collars announces at least once" \
+  "$(<"$RUN_ROOT/legacy-roster.err")" \
+  "collar 'legacy-contract' declares profile_input"
+new_roster_session="gangtest-new-contract-$$"
+GANG_SESSION="$new_roster_session" "$GANG" hitch new-contract-a -c bash -d /tmp >/dev/null
+GANG_SESSION="$new_roster_session" "$GANG" hitch new-contract-b -c bash -d /tmp >/dev/null
+GANG_SESSION="$new_roster_session" "$GANG" roster \
+  > "$RUN_ROOT/new-roster.out" 2> "$RUN_ROOT/new-roster.err"
+excludes "new contract collars calibrate the roster announcement" \
+  "$(<"$RUN_ROOT/new-roster.err")" "declares profile_input"
+GANG_SESSION="$new_roster_session" "$GANG" down >/dev/null
+
+# A running pre-rename window is healed by the hook itself, with no stderr
+# announcement: internal tmux residue is Gangline's state, not operator input.
+"$GANG" hitch legacy-option -c bash -d /tmp >/dev/null
+legacy_option_id="$(window_id legacy-option)"
+legacy_option_pane="$(tmux list-panes -t "$legacy_option_id" -F '#{pane_id}')"
+tmux set-option -w -t "$legacy_option_id" @gl_profile bash
+tmux set-option -uw -t "$legacy_option_id" @gl_collar
+printf '%s\n' '{"hook_event_name":"UserPromptSubmit"}' \
+  | TMUX_PANE="$legacy_option_pane" "$GANG" hook \
+    > "$RUN_ROOT/legacy-option-hook.out" 2> "$RUN_ROOT/legacy-option-hook.err"
+equal "a hook over @gl_profile residue is byte-silent on stderr" "" \
+  "$(<"$RUN_ROOT/legacy-option-hook.err")"
+contains "the residue-reading hook still writes the turn bracket" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_turn)" "open "
+equal "the hook migrates the collar value before erasing residue" "bash" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_collar)"
+equal "the migrated old window option is removed" "" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
+tmux set-option -w -t "$legacy_option_id" @gl_profile bash
+contains "equal old and new window options resolve normally" \
+  "$("$GANG" status legacy-option)" "busy"
+tmux set-option -w -t "$legacy_option_id" @gl_profile codex
+refuses "unequal old and new window options refuse without guessing" \
+  "carries @gl_collar 'bash' and @gl_profile 'codex'" \
+  "$GANG" status legacy-option
+tmux set-option -uw -t "$legacy_option_id" @gl_profile
+
+# Calibrate the migration-failure instrument before trusting its result. The
+# failed argv is the positive witness that migration was attempted; old-state
+# survival alone would also pass an implementation that never tried.
+migration_bin="$RUN_ROOT/migration-bin"
+migration_record="$RUN_ROOT/migration-tmux.argv"
+mkdir -p "$migration_bin"
+real_tmux="$(command -v tmux)"
+cat > "$migration_bin/tmux" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+real=$(printf '%q' "$real_tmux")
+record="\${TMUX_MIGRATION_RECORD:?}"
+if [ "\${1:-}" = set-option ]; then
+  for migration_arg in "\$@"; do
+    if [ "\$migration_arg" = @gl_collar ]; then
+      first=1
+      for recorded_arg in "\$@"; do
+        [ "\$first" -eq 1 ] || printf '\t' >> "\$record"
+        printf '%s' "\$recorded_arg" >> "\$record"
+        first=0
+      done
+      printf '\n' >> "\$record"
+      exit 97
+    fi
+  done
+fi
+exec "\$real" "\$@"
+SH
+chmod +x "$migration_bin/tmux"
+: > "$migration_record"
+if TMUX_MIGRATION_RECORD="$migration_record" "$migration_bin/tmux" \
+  set-option -w -t "$legacy_option_id" @gl_collar bash; then
+  fail "the migration wrapper's fail branch is calibrated" "intercept succeeded"
+else
+  pass "the migration wrapper's fail branch is calibrated"
+fi
+contains "the calibrated fail branch records its exact argv" \
+  "$(<"$migration_record")" \
+  $'set-option\t-w\t-t\t'"$legacy_option_id"$'\t@gl_collar\tbash'
+TMUX_MIGRATION_RECORD="$migration_record" "$migration_bin/tmux" \
+  set-option -w -t "$legacy_option_id" @gl_migration_forwarded yes
+equal "the migration wrapper forwards its unrelated branch" "yes" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_migration_forwarded)"
+tmux set-option -uw -t "$legacy_option_id" @gl_migration_forwarded
+
+: > "$migration_record"
+tmux set-option -w -t "$legacy_option_id" @gl_profile bash
+tmux set-option -uw -t "$legacy_option_id" @gl_collar
+TMUX_MIGRATION_RECORD="$migration_record" PATH="$migration_bin:$PATH" \
+  "$GANG" status legacy-option >/dev/null
+contains "status attempted the intercepted @gl_collar migration" \
+  "$(<"$migration_record")" \
+  $'set-option\t-w\t-t\t'"$legacy_option_id"$'\t@gl_collar\tbash'
+equal "a failed migration preserves the only old collar identity" "bash" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
+equal "the failed intercepted migration did not fabricate a new value" "" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_collar)"
+tmux set-option -w -t "$legacy_option_id" @gl_collar bash
+tmux set-option -uw -t "$legacy_option_id" @gl_profile
+migration_wrapper_sha="$(shasum -a 256 "$migration_bin/tmux" | awk '{print $1}')"
+sleep_stub_sha="$(shasum -a 256 "$RUN_ROOT/bin/sleep" | awk '{print $1}')"
+printf 'instrument tmux=%s sha256=%s sleep=%s sha256=%s spec-sha256=%s\n' \
+  "$migration_bin/tmux" "$migration_wrapper_sha" "$RUN_ROOT/bin/sleep" \
+  "$sleep_stub_sha" \
+  '52a740a3954c18b82f2b4461d92a38dfb17d8e1655d4e5796c4d0e07f97ac995'
+
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch ctx-agent -c ctx-known -d /tmp >/dev/null
 ctx_agent_id="$(window_id ctx-agent)"
 ctx_agent_pane="$(tmux list-panes -t "$ctx_agent_id" -F '#{pane_id}')"
-equal "named context prints the profile reading byte-for-byte" \
+equal "named context prints the collar reading byte-for-byte" \
   "42k/200k (21%)" "$("$GANG" context ctx-agent)"
 equal "bare context targets the calling agent window" \
   "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
 equal "context answers while context lights are off" \
   "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
 if [ -n "$(tmux show-options -wqv -t "$ctx_agent_id" @gl_key)" ]; then
-  pass "a session-key profile mints @gl_key even with context lights off"
+  pass "a session-key collar mints @gl_key even with context lights off"
 else
-  fail "a session-key profile mints @gl_key even with context lights off" \
+  fail "a session-key collar mints @gl_key even with context lights off" \
     "@gl_key was empty"
 fi
-"$GANG" hitch ctx-failing -p ctx-fail -d /tmp >/dev/null
+"$GANG" hitch ctx-failing -c ctx-fail -d /tmp >/dev/null
 excludes "roster carries no context reading column" \
   "$("$GANG" roster)" "42k/200k"
 
 ctx_fail_stdout="$RUN_ROOT/context-fail.stdout"
 ctx_fail_stderr="$RUN_ROOT/context-fail.stderr"
 if "$GANG" context ctx-failing >"$ctx_fail_stdout" 2>"$ctx_fail_stderr"; then
-  fail "a profile context failure stays non-zero" "context unexpectedly succeeded"
+  fail "a collar context failure stays non-zero" "context unexpectedly succeeded"
 else
-  pass "a profile context failure stays non-zero"
+  pass "a collar context failure stays non-zero"
 fi
-equal "a profile context failure fabricates no reading" "" "$(<"$ctx_fail_stdout")"
-contains "a profile context failure keeps its own diagnostic" \
+equal "a collar context failure fabricates no reading" "" "$(<"$ctx_fail_stdout")"
+contains "a collar context failure keeps its own diagnostic" \
   "$(<"$ctx_fail_stderr")" "fixture context unavailable"
 
-"$GANG" hitch ctx-missing -p ctx-none -d /tmp >/dev/null
-refuses "a missing profile_context names the profile" \
-  "profile 'ctx-none' declares no profile_context" \
+"$GANG" hitch ctx-missing -c ctx-none -d /tmp >/dev/null
+refuses "a missing collar_context names the collar" \
+  "collar 'ctx-none' declares no collar_context" \
   "$GANG" context ctx-missing
 
-GANG_CONTEXT_LIGHTS=off "$GANG" hitch usage-inline -p usage-inline -d /tmp >/dev/null
+GANG_CONTEXT_LIGHTS=off "$GANG" hitch usage-inline -c usage-inline -d /tmp >/dev/null
 usage_inline_id="$(window_id usage-inline)"
 tmux resize-window -t "$usage_inline_id" -x 80 -y 12
 usage_marker_ready="test-usage-marker-ready-$$"
@@ -789,7 +1107,7 @@ excludes "inline usage excludes the pre-existing transcript" \
 equal "inline usage restores an empty composer" "" \
   "$("$GANG" composer usage-inline)"
 
-"$GANG" hitch usage-modal -p usage-modal -d /tmp >/dev/null
+"$GANG" hitch usage-modal -c usage-modal -d /tmp >/dev/null
 usage_modal_out="$("$GANG" usage usage-modal)"
 equal "modal usage returns the visible page raw" \
   $'MODAL_ONE\nMODAL_TWO' \
@@ -797,15 +1115,15 @@ equal "modal usage returns the visible page raw" \
 equal "modal usage dismisses back to an empty composer" "" \
   "$("$GANG" composer usage-modal)"
 
-"$GANG" hitch usage-confirm -p usage-confirm -d /tmp >/dev/null
+"$GANG" hitch usage-confirm -c usage-confirm -d /tmp >/dev/null
 usage_confirm_out="$("$GANG" usage usage-confirm)"
-equal "usage presses the profile's confirmation key before capture" \
+equal "usage presses the collar's confirmation key before capture" \
   "CONFIRMED_USAGE" \
   "$(printf '%s\n' "$usage_confirm_out" | sed 's/[[:space:]]*$//')"
 equal "confirmed modal usage restores an empty composer" "" \
   "$("$GANG" composer usage-confirm)"
 
-"$GANG" hitch usage-stuck -p usage-stuck -d /tmp >/dev/null
+"$GANG" hitch usage-stuck -c usage-stuck -d /tmp >/dev/null
 usage_stuck_stdout="$RUN_ROOT/usage-stuck.stdout"
 usage_stuck_stderr="$RUN_ROOT/usage-stuck.stderr"
 if "$GANG" usage usage-stuck >"$usage_stuck_stdout" 2>"$usage_stuck_stderr"; then
@@ -833,7 +1151,7 @@ tmux set-option -uw -t "$usage_inline_id" @gl_turn
 equal "usage readiness refusals type nothing" \
   "$usage_before_refusals" "$(pane usage-inline)"
 
-"$GANG" hitch usage-occupied -p usage-occupied -d /tmp >/dev/null
+"$GANG" hitch usage-occupied -c usage-occupied -d /tmp >/dev/null
 usage_occupied_id="$(window_id usage-occupied)"
 usage_occupied_ready="test-usage-occupied-ready-$$"
 printf -v usage_occupied_cmd 'printf OCCUPIED_USAGE; tmux wait-for -S %q; IFS= read -r _' \
@@ -847,10 +1165,10 @@ refuses "usage refuses an occupied target" "occupied (authority unknown)" \
 equal "an occupied usage refusal types nothing" \
   "$usage_occupied_before" "$(pane usage-occupied)"
 
-refuses "a profile with no GANG_USAGE_CMD refuses usage" \
+refuses "a collar with no GANG_USAGE_CMD refuses usage" \
   "declares no GANG_USAGE_CMD" "$GANG" usage alpha
 
-"$GANG" hitch usage-nochange -p usage-nochange -d /tmp >/dev/null
+"$GANG" hitch usage-nochange -c usage-nochange -d /tmp >/dev/null
 usage_nochange_id="$(window_id usage-nochange)"
 usage_nochange_ready="test-usage-nochange-ready-$$"
 printf -v usage_nochange_cmd \
@@ -875,7 +1193,7 @@ equal "an unchanged usage screen leaves the composer empty" "" \
   "$("$GANG" composer usage-nochange)"
 
 tmux set-option -g history-limit 5
-"$GANG" hitch usage-rollover -p usage-inline -d /tmp >/dev/null
+"$GANG" hitch usage-rollover -c usage-inline -d /tmp >/dev/null
 tmux set-option -g history-limit 2000
 usage_rollover_id="$(window_id usage-rollover)"
 tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
@@ -893,7 +1211,7 @@ contains "a rolled-over usage read names the lost origin" \
 equal "a rolled-over usage read prints no content" "" \
   "$(<"$usage_rollover_stdout")"
 
-"$GANG" hitch usage-unknown -p usage-unknown -d /tmp >/dev/null
+"$GANG" hitch usage-unknown -c usage-unknown -d /tmp >/dev/null
 refuses "usage refuses an unknown render declaration" \
   "unknown GANG_USAGE_RENDER 'unknown'" "$GANG" usage usage-unknown
 
@@ -930,7 +1248,7 @@ contains "bare status outside an agent prints its synopsis" \
 contains "bare status outside an agent explains why self is unavailable" \
   "$outside_status" "this shell is not a Gangline agent window"
 
-for meaningful_command in roster profiles config cutoff notify; do
+for meaningful_command in roster collars config curfew notify; do
   if meaningful_output="$($GANG "$meaningful_command" 2>&1)"; then
     excludes "bare gang $meaningful_command keeps its ordinary meaning" \
       "$meaningful_output" "gang — drive native CLI agents in tmux"
@@ -958,7 +1276,7 @@ tmux set-option -w -t "$alpha_id" @gl_binary_id "$binary_stamp"
 
 installed_root="$RUN_ROOT/installed"
 mkdir -p "$installed_root/bin"
-cp -R "$ROOT/profiles" "$installed_root/profiles"
+cp -R "$ROOT/collars" "$installed_root/collars"
 cp "$GANG" "$installed_root/bin/gang"
 installed_gang="$installed_root/bin/gang"
 excludes "byte-identical Gangline copies compare as current" \
@@ -975,24 +1293,24 @@ mkdir -p "$dirty_root/bin"
 # expected path in the same identity domain when TMPDIR traverses a symlink
 # (macOS exposes /var/folders through /private/var/folders).
 dirty_root="$(cd -P "$dirty_root" && pwd)"
-cp -R "$ROOT/profiles" "$dirty_root/profiles"
+cp -R "$ROOT/collars" "$dirty_root/collars"
 cp "$GANG" "$dirty_root/bin/gang"
 git -C "$dirty_root" init -q
-git -C "$dirty_root" add -- bin/gang profiles
+git -C "$dirty_root" add -- bin/gang collars
 git -C "$dirty_root" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: clean executable witness'
 dirty_head="$(git -C "$dirty_root" rev-parse HEAD)"
 excludes "a clean checkout executable emits no dirty-execution warning" \
-  "$("$dirty_root/bin/gang" profiles 2>&1)" "executing dirty"
+  "$("$dirty_root/bin/gang" collars 2>&1)" "executing dirty"
 printf '\n# named dirty-execution mutant\n' >> "$dirty_root/bin/gang"
-dirty_warning="$("$dirty_root/bin/gang" profiles 2>&1)"
+dirty_warning="$("$dirty_root/bin/gang" collars 2>&1)"
 contains "a dirty live executable warns on ordinary command dispatch" \
   "$dirty_warning" "WARNING: executing dirty $dirty_root/bin/gang"
 contains "the dirty warning names the HEAD its bytes diverged from" \
   "$dirty_warning" "$dirty_head"
 git -C "$dirty_root" checkout -q -- bin/gang
 excludes "restoring the executable to HEAD removes the warning" \
-  "$("$dirty_root/bin/gang" profiles 2>&1)" "executing dirty"
+  "$("$dirty_root/bin/gang" collars 2>&1)" "executing dirty"
 
 tmux set-option -uw -t "$alpha_id" @gl_binary_id
 contains "status warns when a pre-witness window is unstamped" \
@@ -1026,33 +1344,54 @@ contains "an unavailable witness does not abort roster" \
 
 adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n adopted "PS1='❯ ' bash --norc")"
-"$GANG" adopt adopted -p bash >/dev/null
+"$GANG" adopt adopted -c bash >/dev/null
 equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
 
-# composer reads the box through the profile's styled reading, not the raw
+adopt_alias_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n adopt-alias "PS1='❯ ' bash --norc")"
+"$GANG" adopt adopt-alias -p bash \
+  > "$RUN_ROOT/adopt-alias.out" 2> "$RUN_ROOT/adopt-alias.err"
+contains "the adopt flag alias registers the requested collar" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$adopt_alias_id" -F '#{pane_id}')" \
+    "$GANG" whoami)" "collar: bash"
+contains "the adopt flag alias uses its own deprecation prefix" \
+  "$(<"$RUN_ROOT/adopt-alias.err")" \
+  "adopt: -p/--profile is now -c/--collar"
+"$GANG" drop adopt-alias >/dev/null
+
+adopt_conflict_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-conflict "PS1='❯ ' bash --norc")"
+refuses "both adopt flag spellings refuse before registration" \
+  "-c/--collar and -p/--profile" \
+  "$GANG" adopt adopt-conflict -p bash -c bash
+equal "the refused adopt leaves the window unregistered" "" \
+  "$(tmux show-options -wqv -t "$adopt_conflict_id" @gl_agent)"
+tmux kill-window -t "$adopt_conflict_id"
+
+# composer reads the box through the collar's styled reading, not the raw
 # pane; a freshly hitched agent's box is definitively empty
 equal "composer prints nothing for an empty box" \
   "" "$("$GANG" composer alpha)"
 
-mkdir -p "$RUN_ROOT/profiles"
-export GANG_PROFILES="$RUN_ROOT/profiles"
+mkdir -p "$RUN_ROOT/collars"
+export GANG_COLLARS="$RUN_ROOT/collars"
 
 # Native session identity is a window fact, and every renewal consumes that
 # exact fact rather than directory recency. This fixture exposes the common
 # hook payload shape without launching a real harness.
-cat > "$RUN_ROOT/profiles/identity.sh" <<SH
+cat > "$RUN_ROOT/collars/identity.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fresh-identity"
 GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
-profile_session_id() {
+collar_session_id() {
   printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])'
 }
 SH
-"$GANG" hitch identity -p identity -d /tmp >/dev/null
+"$GANG" hitch identity -c identity -d /tmp >/dev/null
 identity_id="$(window_id identity)"
 identity_pane="$(tmux list-panes -t "$identity_id" -F '#{pane_id}')"
 printf '%s' '{"hook_event_name":"Stop","session_id":"native-identity-123"}' \
@@ -1065,7 +1404,7 @@ equal "hitch records the window's Gangline agent identity" "identity" \
 identity_report="$(TMUX_PANE="$identity_pane" "$GANG" whoami)"
 contains "whoami names the agent" "$identity_report" "agent: identity"
 contains "whoami names the pane" "$identity_report" "pane: $identity_pane"
-contains "whoami names the profile" "$identity_report" "profile: identity"
+contains "whoami names the collar" "$identity_report" "collar: identity"
 contains "whoami names the stamped native session" "$identity_report" \
   "harness session id: native-identity-123"
 contains "whoami names the latest live payload id" "$identity_report" \
@@ -1105,7 +1444,7 @@ contains "drop prints the parting native session id before destroying its window
   "$drop_identity_out" "session id: native-identity-123"
 contains "drop prints the exact explicit-id relaunch line" "$drop_identity_out" \
   "gang hitch identity --resume native-identity-123"
-"$GANG" hitch identity -p identity -d "$RUN_ROOT" \
+"$GANG" hitch identity -c identity -d "$RUN_ROOT" \
   --resume native-identity-123 >/dev/null
 contains "explicit resume substitutes the quoted identity from any cwd" \
   "$(tmux display-message -p -t "$(window_id identity)" '#{pane_start_command}')" \
@@ -1113,24 +1452,24 @@ contains "explicit resume substitutes the quoted identity from any cwd" \
 "$GANG" drop identity >/dev/null
 refuses "bare resume without a surviving stamped window refuses loudly" \
   "gang hitch identity --resume <session-id>" \
-  "$GANG" hitch identity -p identity -d /tmp --resume
+  "$GANG" hitch identity -c identity -d /tmp --resume
 equal "a refused stamp-less resume launches nothing" "" "$(window_id identity)"
 
-"$GANG" hitch survivor -p identity -d /tmp >/dev/null
+"$GANG" hitch survivor -c identity -d /tmp >/dev/null
 survivor_id="$(window_id survivor)"
 survivor_pane="$(tmux list-panes -t "$survivor_id" -F '#{pane_id}')"
 printf '%s' '{"hook_event_name":"Stop","session_id":"surviving-native-id"}' \
   | TMUX_PANE="$survivor_pane" "$GANG" hook
 refuses "explicit resume refuses a different session over a stamped window" \
   "stamped for harness session 'surviving-native-id', not requested session 'other-native-id'" \
-  "$GANG" hitch survivor -p identity -d /tmp --resume other-native-id
+  "$GANG" hitch survivor -c identity -d /tmp --resume other-native-id
 tmux set-option -w -t "$survivor_id" remain-on-exit on
 survivor_dead="test-survivor-dead-$$"
 printf -v survivor_exit 'trap %q EXIT; exit' "tmux wait-for -S $survivor_dead"
 tmux send-keys -l -t "$survivor_id" "$survivor_exit"
 tmux send-keys -t "$survivor_id" Enter
 tmux wait-for "$survivor_dead"
-"$GANG" hitch survivor -p identity -d /tmp --resume >/dev/null
+"$GANG" hitch survivor -c identity -d /tmp --resume >/dev/null
 contains "bare resume reads the stamp from a surviving dead window" \
   "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
   "resume-surviving-native-id"
@@ -1141,7 +1480,7 @@ unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
 unadopted_pane="$(tmux list-panes -t "$unadopted_id" -F '#{pane_id}')"
 unadopted_target_before="$(pane alpha)"
 refuses "an unadopted pane cannot send under its bare window name" \
-  "no registered Gangline agent/profile identity" bash -c \
+  "no registered Gangline agent/collar identity" bash -c \
   'printf IDENTITY_ABSENT | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
   fixture "$unadopted_pane" "$GANG"
 equal "identity absence types nothing into the claimed target" \
@@ -1151,15 +1490,15 @@ tmux kill-window -t "$unadopted_id"
 residue_recovery_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n residue-recovery "PS1='❯ ' bash --norc")"
 residue_recovery_pane="$(tmux list-panes -t "$residue_recovery_id" -F '#{pane_id}')"
-tmux set-option -w -t "$residue_recovery_id" @gl_profile identity
-refuses "profile residue without @gl_agent cannot send under a bare window name" \
-  "no registered Gangline agent/profile identity" bash -c \
+tmux set-option -w -t "$residue_recovery_id" @gl_collar identity
+refuses "collar residue without @gl_agent cannot send under a bare window name" \
+  "no registered Gangline agent/collar identity" bash -c \
   'printf RESIDUE_BEFORE_ADOPT | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
   fixture "$residue_recovery_pane" "$GANG"
-if residue_adopt_out="$("$GANG" adopt residue-recovery -p identity 2>&1)"; then
-  pass "the deliberate adopt remedy claims a profile-residue window"
+if residue_adopt_out="$("$GANG" adopt residue-recovery -c identity 2>&1)"; then
+  pass "the deliberate adopt remedy claims a collar-residue window"
 else
-  fail "the deliberate adopt remedy claims a profile-residue window" \
+  fail "the deliberate adopt remedy claims a collar-residue window" \
     "$residue_adopt_out"
 fi
 equal "adopt stamps the claimed residue window with its named identity" \
@@ -1183,11 +1522,11 @@ residue_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
 tmux set-option -w -t "$residue_id" @gl_agent lead
 refuses "hitch refuses a target window registered to another identity" \
   "registered to Gangline agent 'lead'" \
-  "$GANG" hitch displaced -p identity -d /tmp
+  "$GANG" hitch displaced -c identity -d /tmp
 refuses "adopt refuses a window registered to another Gangline identity" \
-  "registered to Gangline agent 'lead'" "$GANG" adopt displaced -p bash
+  "registered to Gangline agent 'lead'" "$GANG" adopt displaced -c bash
 contains "the mismatch refusal names the requested window identity too" \
-  "$("$GANG" adopt displaced -p bash 2>&1 || true)" "displaced"
+  "$("$GANG" adopt displaced -c bash 2>&1 || true)" "displaced"
 tmux kill-window -t "$residue_id"
 
 # A synchronous tty fixture paints the captured Codex menu and records every
@@ -1289,10 +1628,10 @@ PY
 chmod +x "$RUN_ROOT/dialog-fixture.py"
 dialog_recurring_signal="dialog-recurring-next-$$"
 
-cat > "$RUN_ROOT/profiles/dialog.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog"
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
@@ -1303,22 +1642,22 @@ Dismiss and keep waiting
 Learn more
 No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
 SH
-cat > "$RUN_ROOT/profiles/dialog-wrong.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-wrong.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$RUN_ROOT/profiles/dialog.sh"
+. "$RUN_ROOT/collars/dialog.sh"
 GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Up|Enter'
 SH
-cat > "$RUN_ROOT/profiles/dialog-recurring.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-recurring.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$RUN_ROOT/profiles/dialog.sh"
+. "$RUN_ROOT/collars/dialog.sh"
 GANG_LAUNCH="env DIALOG_VARIANT=recurring DIALOG_KEY_LOG='$RUN_ROOT/dialog-recurring.keys' DIALOG_READY='dialog-recurring-ready-$$' DIALOG_RECUR_SIGNAL='$dialog_recurring_signal' '$RUN_ROOT/dialog-fixture.py'"
 SH
 
-dialog_start() { # $1 agent, $2 variant, $3 profile
-  local name="$1" variant="$2" profile="$3" id command
-  "$GANG" hitch "$name" -p "$profile" -d /tmp >/dev/null
+dialog_start() { # $1 agent, $2 variant, $3 collar
+  local name="$1" variant="$2" collar="$3" id command
+  "$GANG" hitch "$name" -c "$collar" -d /tmp >/dev/null
   id="$(window_id "$name")"
   case "$name" in dialog-known) tmux resize-window -t "$id" -x 48 -y 24 ;; esac
   : > "$RUN_ROOT/$name.keys"
@@ -1403,10 +1742,10 @@ equal "status is read-only even for a recognized dialog" \
 equal "status presses no dialog key" "" "$(<"$RUN_ROOT/dialog-status.keys")"
 "$GANG" drop dialog-status >/dev/null
 
-cat > "$RUN_ROOT/profiles/dialog-ambiguous.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-ambiguous.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$RUN_ROOT/profiles/dialog.sh"
+. "$RUN_ROOT/collars/dialog.sh"
 GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
 same-bytes|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
 GANG_DIALOG_LINES_same_bytes="\$GANG_DIALOG_LINES_safety_buffering_prompt"
@@ -1424,17 +1763,17 @@ equal "an ambiguous registry presses no key" "" \
   "$(<"$RUN_ROOT/dialog-ambiguous.keys")"
 "$GANG" drop dialog-ambiguous >/dev/null
 
-cat > "$RUN_ROOT/profiles/dialog-danger.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-danger.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='permission-surface|^› [0-9]+\. |Allow||Enter'
 GANG_DIALOG_LINES_permission_surface='Do you want to allow this tool to run?
 Allow
 Deny'
 SH
-refuses "load_profile mechanically rejects an authority-shaped dialog registry" \
-  "forbidden authority word" "$GANG" hitch dialog-danger -p dialog-danger -d /tmp
+refuses "load_collar mechanically rejects an authority-shaped dialog registry" \
+  "forbidden authority word" "$GANG" hitch dialog-danger -c dialog-danger -d /tmp
 equal "a refused authority registry opens no window" "" "$(window_id dialog-danger)"
 
 authority_probe_cases='approval|Approval required to continue
@@ -1447,10 +1786,10 @@ bypass|Bypass all safety checks
 write-access|Enable write access to disk'
 while IFS='|' read -r authority_slug authority_line; do
   [ -n "$authority_slug" ] || continue
-  cat > "$RUN_ROOT/profiles/dialog-authority-$authority_slug.sh" <<SH
+  cat > "$RUN_ROOT/collars/dialog-authority-$authority_slug.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='authority-$authority_slug|^› [0-9]+\. |No||Enter'
 GANG_DIALOG_LINES_authority_${authority_slug//-/_}='$authority_line
 Yes
@@ -1459,48 +1798,48 @@ SH
   refuses "authority registry rejects $authority_slug language" \
     "forbidden authority word" \
     "$GANG" hitch "authority-$authority_slug" \
-      -p "dialog-authority-$authority_slug" -d /tmp
+      -c "dialog-authority-$authority_slug" -d /tmp
   equal "the $authority_slug authority refusal opens no window" "" \
     "$(window_id "authority-$authority_slug")"
 done <<<"$authority_probe_cases"
 
-cat > "$RUN_ROOT/profiles/dialog-four-fields.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-four-fields.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='broken|^› [0-9]+\. |Safe|Enter'
 SH
-cat > "$RUN_ROOT/profiles/dialog-bad-id.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-bad-id.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='Bad_ID|^› [0-9]+\. |Safe||Enter'
 GANG_DIALOG_LINES_Bad_ID='Safe'
 SH
-cat > "$RUN_ROOT/profiles/dialog-safe-absent.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-safe-absent.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='safe-absent|^› [0-9]+\. |Missing||Enter'
 GANG_DIALOG_LINES_safe_absent='Present'
 SH
-cat > "$RUN_ROOT/profiles/dialog-block-missing.sh" <<SH
+cat > "$RUN_ROOT/collars/dialog-block-missing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_DIALOGS='block-missing|^› [0-9]+\. |Safe||Enter'
 SH
-refuses "a four-field dialog record is refused at profile load" \
+refuses "a four-field dialog record is refused at collar load" \
   "without exactly five fields" \
-  "$GANG" hitch dialog-four-fields -p dialog-four-fields -d /tmp
-refuses "a dialog id outside the slug alphabet is refused at profile load" \
-  "invalid dialog id" "$GANG" hitch dialog-bad-id -p dialog-bad-id -d /tmp
-refuses "a safe label absent from its declared block is refused at profile load" \
+  "$GANG" hitch dialog-four-fields -c dialog-four-fields -d /tmp
+refuses "a dialog id outside the slug alphabet is refused at collar load" \
+  "invalid dialog id" "$GANG" hitch dialog-bad-id -c dialog-bad-id -d /tmp
+refuses "a safe label absent from its declared block is refused at collar load" \
   "is not one of" \
-  "$GANG" hitch dialog-safe-absent -p dialog-safe-absent -d /tmp
-refuses "an unset dialog block is refused at profile load" \
+  "$GANG" hitch dialog-safe-absent -c dialog-safe-absent -d /tmp
+refuses "an unset dialog block is refused at collar load" \
   "has no non-empty GANG_DIALOG_LINES_block_missing" \
-  "$GANG" hitch dialog-block-missing -p dialog-block-missing -d /tmp
+  "$GANG" hitch dialog-block-missing -c dialog-block-missing -d /tmp
 
 : > "$RUN_ROOT/dialog-recurring.keys"
 mkdir -p "$RUN_ROOT/recurring-bin"
@@ -1513,7 +1852,7 @@ chmod +x "$RUN_ROOT/recurring-bin/sleep"
 if recurring_out="$(DIALOG_RECUR_SIGNAL="$dialog_recurring_signal" \
     PATH="$RUN_ROOT/recurring-bin:$PATH" GANG_BOOT_TIMEOUT=2 \
     "$GANG" hitch dialog-recurring \
-    -p dialog-recurring -d /tmp 2>&1)"; then
+    -c dialog-recurring -d /tmp 2>&1)"; then
   fail "a recurring known transient consumes the hitch boot budget" \
     "hitch unexpectedly answered every recurrence and succeeded"
 else
@@ -1532,15 +1871,15 @@ modal_observed="test-boot-modal-observed-$$"
 modal_painted="test-boot-modal-painted-$$"
 modal_clear="test-boot-modal-clear-$$"
 modal_probe_release="test-boot-modal-probe-release-$$"
-cat > "$RUN_ROOT/profiles/boot-modal.sh" <<SH
+cat > "$RUN_ROOT/collars/boot-modal.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'printf \"FIRST_RUN_MODAL\\n\"; tmux wait-for -S \"$modal_painted\"; tmux wait-for \"$modal_clear\"; PS1=\"❯ \" exec bash --norc' fixture"
 GANG_OCCUPIED_REGEX='FIRST_RUN_MODAL'
-_gl_modal_real="\$(declare -f profile_input)"
-eval "modal_real_input \${_gl_modal_real#profile_input}"
-profile_input() {
+_gl_modal_real="\$(declare -f collar_input)"
+eval "modal_real_input \${_gl_modal_real#collar_input}"
+collar_input() {
   if [ -e "$RUN_ROOT/boot-modal-blocked" ]; then
     if [ -e "$RUN_ROOT/boot-modal-seen" ]; then
       tmux wait-for -S "$modal_observed"
@@ -1556,7 +1895,7 @@ profile_input() {
 SH
 touch "$RUN_ROOT/boot-modal-blocked"
 modal_output="$RUN_ROOT/boot-modal.out"
-GANG_BOOT_TIMEOUT=5 "$GANG" hitch boot-modal -p boot-modal -d /tmp \
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch boot-modal -c boot-modal -d /tmp \
   >"$modal_output" 2>&1 &
 modal_hitch_pid=$!
 tmux wait-for "$modal_observed"
@@ -1582,14 +1921,14 @@ contains "the resumed hitch retracts the first-run warning" \
 late_observed="test-late-composer-observed-$$"
 late_launch="test-late-composer-launch-$$"
 late_probe_release="test-late-composer-probe-release-$$"
-cat > "$RUN_ROOT/profiles/late-composer.sh" <<SH
+cat > "$RUN_ROOT/collars/late-composer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'tmux wait-for \"$late_launch\"; PS1=\"❯ \" exec bash --norc' fixture"
-_gl_late_real="\$(declare -f profile_input)"
-eval "late_real_input \${_gl_late_real#profile_input}"
-profile_input() {
+_gl_late_real="\$(declare -f collar_input)"
+eval "late_real_input \${_gl_late_real#collar_input}"
+collar_input() {
   if [ -e "$RUN_ROOT/late-composer-blocked" ]; then
     if [ -e "$RUN_ROOT/late-composer-seen" ]; then
       tmux wait-for -S "$late_observed"
@@ -1604,7 +1943,7 @@ profile_input() {
 SH
 touch "$RUN_ROOT/late-composer-blocked"
 late_output="$RUN_ROOT/late-composer.out"
-GANG_BOOT_TIMEOUT=5 "$GANG" hitch late-composer -p late-composer -d /tmp \
+GANG_BOOT_TIMEOUT=5 "$GANG" hitch late-composer -c late-composer -d /tmp \
   >"$late_output" 2>&1 &
 late_hitch_pid=$!
 tmux wait-for "$late_observed"
@@ -1622,20 +1961,20 @@ excludes "a completed delayed composer leaves no first-run warning" \
   "$(<"$late_output")" "answer it with 'gang attach'"
 "$GANG" drop late-composer >/dev/null
 
-cat > "$RUN_ROOT/profiles/broken-observer.sh" <<SH
+cat > "$RUN_ROOT/collars/broken-observer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_BUSY_REGEX='['
 SH
-"$GANG" hitch broken-observer -p broken-observer -d /tmp >/dev/null
+"$GANG" hitch broken-observer -c broken-observer -d /tmp >/dev/null
 if broken_roster="$("$GANG" roster 2>&1)"; then
   fail "roster fails when an agent row cannot be observed" "roster exited successfully"
 else
   broken_roster_rc=$?
   equal "roster propagates the observation failure" "1" "$broken_roster_rc"
 fi
-contains "roster names the profile whose observation failed" \
+contains "roster names the collar whose observation failed" \
   "$broken_roster" "broken-observer.sh"
 "$GANG" drop broken-observer >/dev/null
 contains "startup is one useful contract, not a bookkeeping turn" \
@@ -1688,7 +2027,7 @@ fi
 mkdir -p "$CONFIG_CASES/bad-file-value" "$CONFIG_CASES/bad-env-value"
 printf '%s\n' 'GANG_BOOT_TIMEOUT=abc' > "$CONFIG_CASES/bad-file-value/config"
 if bad_file_out="$(env -u GANG_BOOT_TIMEOUT GANG_CONFIG_DIR="$CONFIG_CASES/bad-file-value" \
-  "$GANG" hitch config-bad-file -p bash -d /tmp 2>&1)"; then
+  "$GANG" hitch config-bad-file -c bash -d /tmp 2>&1)"; then
   fail "a bad configured value is blamed on its file line" \
     "hitch unexpectedly succeeded"
 else
@@ -1697,7 +2036,7 @@ else
 fi
 tmux kill-window -t "=$GANG_SESSION:config-bad-file" 2>/dev/null || true
 if bad_env_out="$(GANG_BOOT_TIMEOUT=abc GANG_CONFIG_DIR="$CONFIG_CASES/bad-env-value" \
-  "$GANG" hitch config-bad-env -p bash -d /tmp 2>&1)"; then
+  "$GANG" hitch config-bad-env -c bash -d /tmp 2>&1)"; then
   fail "a bad environment value is blamed on the environment" \
     "hitch unexpectedly succeeded"
 else
@@ -1706,43 +2045,41 @@ else
 fi
 tmux kill-window -t "=$GANG_SESSION:config-bad-env" 2>/dev/null || true
 
-mkdir -p "$CONFIG_CASES/missing-profile"
-printf '%s\n' 'GANG_PROFILE=no-such-profile' > "$CONFIG_CASES/missing-profile/config"
-if missing_profile_out="$(env -u GANG_PROFILE GANG_CONFIG_DIR="$CONFIG_CASES/missing-profile" \
-  "$GANG" hitch config-missing-profile -d /tmp 2>&1)"; then
-  fail "an unknown configured profile is blamed on its file line" \
+mkdir -p "$CONFIG_CASES/missing-collar"
+printf '%s\n' 'GANG_COLLAR=no-such-collar' > "$CONFIG_CASES/missing-collar/config"
+if missing_collar_out="$(env -u GANG_COLLAR GANG_CONFIG_DIR="$CONFIG_CASES/missing-collar" \
+  "$GANG" hitch config-missing-collar -d /tmp 2>&1)"; then
+  fail "an unknown configured collar is blamed on its file line" \
     "hitch unexpectedly succeeded"
 else
-  contains "an unknown configured profile is blamed on its file line" \
-    "$missing_profile_out" "from $CONFIG_CASES/missing-profile/config line 1"
+  contains "an unknown configured collar is blamed on its file line" \
+    "$missing_collar_out" "from $CONFIG_CASES/missing-collar/config line 1"
 fi
-excludes "a refused configured profile opens no window" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "config-missing-profile"
+excludes "a refused configured collar opens no window" \
+  "$(window_names)" "config-missing-collar"
 
 mkdir -p "$CONFIG_CASES/nested" "$RUN_ROOT/nested-parent-dir" "$RUN_ROOT/nested-child-dir"
-printf '%s\n' 'GANG_PROFILE=bash' 'GANG_SESSION=config-nested-session' \
+printf '%s\n' 'GANG_COLLAR=bash' 'GANG_SESSION=config-nested-session' \
   > "$CONFIG_CASES/nested/config"
-env -u GANG_PROFILE -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/nested" \
+env -u GANG_COLLAR -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/nested" \
   "$GANG" hitch nested-parent -d "$RUN_ROOT/nested-parent-dir" >/dev/null
-nested_parent_id="$(tmux list-windows -t '=config-nested-session' \
-  -F '#{window_id} #W' | awk '$2 == "nested-parent" { print $1; exit }')"
+nested_parent_id="$(window_id_in config-nested-session nested-parent)"
 nested_done="test-config-nested-done-$$"
 tmux send-keys -t "$nested_parent_id" \
   "$GANG hitch nested-child -d '$RUN_ROOT/nested-child-dir' >/dev/null; tmux wait-for -S '$nested_done'" Enter
 tmux wait-for "$nested_done"
-nested_child_id="$(tmux list-windows -t '=config-nested-session' \
-  -F '#{window_id} #W' | awk '$2 == "nested-child" { print $1; exit }')"
-equal "a nested hitch in another directory reloads the pinned config profile" \
-  "bash" "$(tmux show-options -wqv -t "$nested_child_id" @gl_profile)"
+nested_child_id="$(window_id_in config-nested-session nested-child)"
+equal "a nested hitch in another directory reloads the pinned config collar" \
+  "bash" "$(tmux show-options -wqv -t "$nested_child_id" @gl_collar)"
 contains "the nested hitch joins the session supplied only by the config file" \
-  "$(tmux list-windows -t '=config-nested-session' -F '#W')" "nested-child"
+  "$(window_names config-nested-session)" "nested-child"
 
 DOCTRINE_CASES="$RUN_ROOT/doctrine-cases"
 mkdir -p "$DOCTRINE_CASES/present"
 printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
   > "$DOCTRINE_CASES/present/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" \
-  "$GANG" hitch doctrine-present -p bash -d /tmp >/dev/null
+  "$GANG" hitch doctrine-present -c bash -d /tmp >/dev/null
 contains "a doctrine-bearing hitch still carries its base identity contract" \
   "$(pane_all doctrine-present)" "You are doctrine-present in Gangline"
 contains "a present operator doctrine is injected into the startup contract" \
@@ -1753,15 +2090,16 @@ contains "a doctrine-bearing startup states the complement of envelope attributi
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \
-  "$GANG" hitch doctrine-inside -p bash -d /tmp >/dev/null
+  "$GANG" hitch doctrine-inside -c bash -d /tmp >/dev/null
 contains "a hitch invoked from inside the team carries operator doctrine" \
   "$(pane doctrine-inside)" "MARK_DOCTRINE_PRESENT binds this hitch."
 "$GANG" drop doctrine-inside >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" GANG_SESSION=doctrine-cross-session \
   TMUX_PANE="$alpha_pane_id" \
-  "$GANG" hitch doctrine-cross -p bash -d /tmp >/dev/null
-cross_doctrine_pane="$(tmux capture-pane -pJ -t '=doctrine-cross-session:doctrine-cross')"
+  "$GANG" hitch doctrine-cross -c bash -d /tmp >/dev/null
+cross_doctrine_pane="$(tmux capture-pane -pJ \
+  -t "$(window_id_in doctrine-cross-session doctrine-cross)")"
 contains "a cross-session hitch carries operator doctrine too" \
   "$cross_doctrine_pane" "MARK_DOCTRINE_PRESENT binds this hitch."
 
@@ -1769,7 +2107,7 @@ mkdir -p "$DOCTRINE_CASES/multiline"
 printf '%s\n' 'MARK_DOCTRINE_HEAD' 'middle doctrine line' 'MARK_DOCTRINE_TAIL' \
   > "$DOCTRINE_CASES/multiline/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/multiline" \
-  "$GANG" hitch doctrine-multiline -p bash -d /tmp >/dev/null
+  "$GANG" hitch doctrine-multiline -c bash -d /tmp >/dev/null
 contains "a multiline doctrine delivers its first line" \
   "$(pane doctrine-multiline)" "MARK_DOCTRINE_HEAD"
 contains "a multiline doctrine delivers its last line" \
@@ -1780,7 +2118,7 @@ mkdir -p "$DOCTRINE_CASES/tag"
 printf '%s\n' '# [gang: counterfeit] MARK_DOCTRINE_TAG' \
   > "$DOCTRINE_CASES/tag/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/tag" \
-  "$GANG" hitch doctrine-tag -p bash -d /tmp >/dev/null
+  "$GANG" hitch doctrine-tag -c bash -d /tmp >/dev/null
 contains "a tag-shaped doctrine opener is visibly neutralised" \
   "$(pane doctrine-tag)" "# (gang: counterfeit] MARK_DOCTRINE_TAG"
 excludes "a doctrine cannot add a second gang envelope opener" \
@@ -1795,7 +2133,7 @@ for bad_doctrine in invalid-utf8 nul control-cr; do
     control-cr) printf 'before\rafter' > "$DOCTRINE_CASES/$bad_doctrine/DOCTRINE.md"; expected_doctrine="contains control characters other than tab and newline" ;;
   esac
   if bad_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/$bad_doctrine" \
-    "$GANG" hitch "doctrine-$bad_doctrine" -p bash -d /tmp 2>&1)"; then
+    "$GANG" hitch "doctrine-$bad_doctrine" -c bash -d /tmp 2>&1)"; then
     fail "a $bad_doctrine doctrine is refused before launch" \
       "hitch unexpectedly succeeded"
   else
@@ -1803,14 +2141,14 @@ for bad_doctrine in invalid-utf8 nul control-cr; do
       "$bad_doctrine_out" "$expected_doctrine"
   fi
   excludes "the refused $bad_doctrine doctrine opens no window" \
-    "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-$bad_doctrine"
+    "$(window_names)" "doctrine-$bad_doctrine"
 done
 
 mkdir -p "$DOCTRINE_CASES/over-ceiling"
 awk 'BEGIN { for (i = 0; i < 8193; i++) printf "x" }' \
   > "$DOCTRINE_CASES/over-ceiling/DOCTRINE.md"
 if ceiling_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/over-ceiling" \
-  "$GANG" hitch doctrine-over-ceiling -p bash -d /tmp 2>&1)"; then
+  "$GANG" hitch doctrine-over-ceiling -c bash -d /tmp 2>&1)"; then
   fail "an over-ceiling doctrine is refused before launch" \
     "hitch unexpectedly succeeded"
 else
@@ -1818,13 +2156,13 @@ else
     "$ceiling_out" "exceeds the 8192-byte category-error ceiling"
 fi
 excludes "the over-ceiling refusal leaves no window" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-over-ceiling"
+  "$(window_names)" "doctrine-over-ceiling"
 
 mkdir -p "$DOCTRINE_CASES/unreadable"
 printf '%s\n' 'unreadable doctrine' > "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
 chmod 000 "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
 if unreadable_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/unreadable" \
-  "$GANG" hitch doctrine-unreadable -p bash -d /tmp 2>&1)"; then
+  "$GANG" hitch doctrine-unreadable -c bash -d /tmp 2>&1)"; then
   fail "an unreadable doctrine is refused before launch" \
     "hitch unexpectedly succeeded"
 else
@@ -1833,13 +2171,13 @@ else
 fi
 chmod 600 "$DOCTRINE_CASES/unreadable/DOCTRINE.md"
 excludes "the unreadable-doctrine refusal leaves no window" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-unreadable"
+  "$(window_names)" "doctrine-unreadable"
 
 mkdir -p "$DOCTRINE_CASES/pane-overflow"
 awk 'BEGIN { for (i = 0; i < 2048; i++) printf "p" }' \
   > "$DOCTRINE_CASES/pane-overflow/DOCTRINE.md"
 if pane_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/pane-overflow" \
-  "$GANG" hitch doctrine-pane-overflow -p bash -d /tmp 2>&1)"; then
+  "$GANG" hitch doctrine-pane-overflow -c bash -d /tmp 2>&1)"; then
   fail "a doctrine the target pane cannot render fails at delivery" \
     "hitch unexpectedly succeeded"
 else
@@ -1847,22 +2185,22 @@ else
     "$pane_doctrine_out" "startup contract to 'doctrine-pane-overflow' was not delivered"
 fi
 contains "a delivery-sized doctrine failure leaves its window for inspection" \
-  "$(tmux list-windows -t "=$GANG_SESSION" -F '#W')" "doctrine-pane-overflow"
+  "$(window_names)" "doctrine-pane-overflow"
 "$GANG" drop doctrine-pane-overflow >/dev/null
 
 # Hitch has the same refusal contract as send. Start a fixture whose composer
-# already carries the profile's parked-queue evidence, so inject refuses before
+# already carries the collar's parked-queue evidence, so inject refuses before
 # pasting and the public hitch boundary must preserve that status and message.
-cat > "$RUN_ROOT/profiles/doctrine-prequeued.sh" <<SH
+cat > "$RUN_ROOT/collars/doctrine-prequeued.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="PS1='❯ Press up to edit queued messages' bash --norc"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 SH
 doctrine_refusal_rc=0
 doctrine_refusal_out="$("$GANG" hitch doctrine-refusal \
-  -p doctrine-prequeued -d /tmp 2>&1)" || doctrine_refusal_rc=$?
+  -c doctrine-prequeued -d /tmp 2>&1)" || doctrine_refusal_rc=$?
 equal "a startup delivery refusal preserves the inject refusal status" \
   "3" "$doctrine_refusal_rc"
 contains "a startup delivery refusal has one diagnostic prefix" \
@@ -1880,13 +2218,13 @@ unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='if [ ! -e "$DOCTRINE_QUEUE_SEEN" ]; then : > "$DOCTRINE_QUEUE_SEEN"; elif [ -e "$DOCTRINE_QUEUE_ARM" ]; then PS1="❯ Press up to edit queued messages"; fi'
 RC
-cat > "$RUN_ROOT/profiles/doctrine-queueing.sh" <<SH
+cat > "$RUN_ROOT/collars/doctrine-queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'DOCTRINE_QUEUE_SEEN=$RUN_ROOT/doctrine-queue-seen DOCTRINE_QUEUE_ARM=$RUN_ROOT/doctrine-queue-arm exec bash --rcfile $RUN_ROOT/doctrine-queue-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
-profile_input() {
+collar_input() {
   local box
   box="\$(tmux capture-pane -pJ -t "\$1" | awk '
     { line[NR] = \$0
@@ -1904,7 +2242,7 @@ mkdir -p "$DOCTRINE_CASES/trailing"
 printf 'TAIL_MARK\n\n\n' > "$DOCTRINE_CASES/trailing/DOCTRINE.md"
 : > "$RUN_ROOT/doctrine-queue-arm"
 if trailing_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/trailing" \
-  "$GANG" hitch doctrine-trailing -p doctrine-queueing -d /tmp 2>&1)"; then
+  "$GANG" hitch doctrine-trailing -c doctrine-queueing -d /tmp 2>&1)"; then
   fail "the trailing-newline witness parks the startup contract" \
     "hitch unexpectedly succeeded"
 else
@@ -1925,14 +2263,14 @@ equal "a doctrine's two trailing blank lines survive byte-exact assembly" \
   "4" "$trailing_blanks"
 "$GANG" drop doctrine-trailing >/dev/null
 
-# One optional cutoff is team state. Its two relative edges consume an explicit
+# One optional curfew is team state. Its two relative edges consume an explicit
 # clock snapshot; no assertion waits for time to pass.
-equal "a team starts without an invented cutoff" "no cutoff declared" \
-  "$("$GANG" cutoff)"
-if "$GANG" cutoff 90 >/dev/null 2>&1; then
-  fail "a cutoff never guesses the unit of a bare number" "cutoff accepted 90"
+equal "a team starts without an invented curfew" "no curfew declared" \
+  "$("$GANG" curfew)"
+if "$GANG" curfew 90 >/dev/null 2>&1; then
+  fail "a curfew never guesses the unit of a bare number" "curfew accepted 90"
 else
-  pass "a cutoff never guesses the unit of a bare number"
+  pass "a curfew never guesses the unit of a bare number"
 fi
 clock_spec="$(python3 - <<'PY'
 from datetime import datetime, timedelta
@@ -1940,19 +2278,19 @@ from datetime import datetime, timedelta
 print((datetime.now() + timedelta(minutes=2)).strftime("%H:%M"))
 PY
 )"
-clock_cutoff="$("$GANG" cutoff "$clock_spec")"
-contains "a local clock time declares its next occurrence" "$clock_cutoff" "remaining"
-declared_cutoff="$("$GANG" cutoff 1h30m)"
-contains "a duration declares the team cutoff" "$declared_cutoff" "remaining"
-cutoff_pair="$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_cutoff)"
-if [[ "$cutoff_pair" =~ ^[0-9]+\ [0-9]+$ ]]; then
-  pass "the cutoff stores one team declaration"
+clock_curfew="$("$GANG" curfew "$clock_spec")"
+contains "a local clock time declares its next occurrence" "$clock_curfew" "remaining"
+declared_curfew="$("$GANG" curfew 1h30m)"
+contains "a duration declares the team curfew" "$declared_curfew" "remaining"
+curfew_pair="$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_curfew)"
+if [[ "$curfew_pair" =~ ^[0-9]+\ [0-9]+$ ]]; then
+  pass "the curfew stores one team declaration"
 else
-  fail "the cutoff stores one team declaration" "got [$cutoff_pair]"
+  fail "the curfew stores one team declaration" "got [$curfew_pair]"
 fi
 
-cutoff_now="$(date +%s)"
-tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$(( cutoff_now + 40 )) $(( cutoff_now - 60 ))"
+curfew_now="$(date +%s)"
+tmux set-option -t "=$GANG_SESSION:" @gl_curfew "$(( curfew_now + 40 )) $(( curfew_now - 60 ))"
 yellow_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 contains "half the declared span exposes a yellow time light" \
@@ -1962,24 +2300,45 @@ excludes "the yellow time light does not prescribe team strategy" \
 repeat_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 equal "a time light is emitted once per declaration edge" "" "$repeat_time"
-tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$(( cutoff_now + 10 )) $(( cutoff_now - 90 ))"
+tmux set-option -t "=$GANG_SESSION:" @gl_curfew "$(( curfew_now + 10 )) $(( curfew_now - 90 ))"
 red_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 contains "four-fifths of the declared span exposes a red time light" \
   "$red_time" "Red time light"
 excludes "the red time light does not prescribe checkpoint strategy" \
   "$red_time" "bank"
-tmux set-option -t "=$GANG_SESSION:" @gl_cutoff unreadable
+tmux set-option -t "=$GANG_SESSION:" @gl_curfew unreadable
 unavailable_time="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook)"
 contains "an unreadable team declaration fails visibly to its agents" \
   "$unavailable_time" "Time lights unavailable"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" "$GANG" hook >/dev/null
-equal "the operator can remove the team cutoff" "cutoff cleared" \
-  "$("$GANG" cutoff clear)"
-equal "clearing a cutoff restores silence" "no cutoff declared" \
-  "$("$GANG" cutoff)"
+equal "the operator can remove the team curfew" "curfew cleared" \
+  "$("$GANG" curfew clear)"
+equal "clearing a curfew restores silence" "no curfew declared" \
+  "$("$GANG" curfew)"
+
+: > "$RUN_ROOT/cutoff-alias.err"
+cutoff_alias_out="$("$GANG" cutoff 90m 2>> "$RUN_ROOT/cutoff-alias.err")"
+contains "gang cutoff still declares the team curfew" "$cutoff_alias_out" \
+  "curfew "
+equal "one cutoff invocation announces exactly once" "1" \
+  "$(grep -c 'gang cutoff is now gang curfew' "$RUN_ROOT/cutoff-alias.err" || true)"
+"$GANG" cutoff clear >/dev/null 2>> "$RUN_ROOT/cutoff-alias.err"
+equal "two cutoff invocations each announce" "2" \
+  "$(grep -c 'gang cutoff is now gang curfew' "$RUN_ROOT/cutoff-alias.err" || true)"
+
+legacy_curfew="$(( $(date +%s) + 600 )) $(( $(date +%s) - 60 ))"
+tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$legacy_curfew"
+tmux set-option -u -t "=$GANG_SESSION:" @gl_curfew
+contains "a pre-rename team curfew survives its first read" \
+  "$("$GANG" curfew)" "curfew "
+equal "the curfew read migrates the declaration byte-exact" "$legacy_curfew" \
+  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_curfew)"
+equal "the migrated cutoff option is removed" "" \
+  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_cutoff)"
+"$GANG" curfew clear >/dev/null
 
 printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
@@ -1997,39 +2356,39 @@ fi
 # own spelling. The refusals are separated the way the code separates them: no
 # spelling at all, a spelling with no way to check a level, a checker that
 # answers nothing, and a level outside the printed vocabulary.
-if "$GANG" hitch effortless -p bash -d /tmp -e high >/dev/null 2>&1; then
-  fail "a profile with no effort spelling refuses -e" "hitch accepted -e"
+if "$GANG" hitch effortless -c bash -d /tmp -e high >/dev/null 2>&1; then
+  fail "a collar with no effort spelling refuses -e" "hitch accepted -e"
 else
-  pass "a profile with no effort spelling refuses -e"
+  pass "a collar with no effort spelling refuses -e"
 fi
 equal "and the refusal leaves no window behind" "" "$(window_id effortless)"
 
-cat > "$RUN_ROOT/profiles/noverify.sh" <<SH
+cat > "$RUN_ROOT/collars/noverify.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_EFFORT_OPT='--effort='
 SH
-if noverify_out="$("$GANG" hitch noverify -p noverify -d /tmp -e low 2>&1)"; then
-  fail "a profile that cannot check a level may not take one" "hitch accepted -e"
+if noverify_out="$("$GANG" hitch noverify -c noverify -d /tmp -e low 2>&1)"; then
+  fail "a collar that cannot check a level may not take one" "hitch accepted -e"
 else
-  pass "a profile that cannot check a level may not take one"
+  pass "a collar that cannot check a level may not take one"
 fi
 contains "and the refusal names the missing declaration" \
   "$noverify_out" "GANG_EFFORT_CMD"
 equal "a refused unverifiable effort leaves no window behind" "" \
   "$(window_id noverify)"
 
-cat > "$RUN_ROOT/profiles/silent.sh" <<SH
+cat > "$RUN_ROOT/collars/silent.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_EFFORT_OPT='--effort='
 GANG_EFFORT_CMD='true'
 SH
-if silent_out="$("$GANG" hitch silent -p silent -d /tmp -e low 2>&1)"; then
+if silent_out="$("$GANG" hitch silent -c silent -d /tmp -e low 2>&1)"; then
   fail "a checker that produces no levels is refused" "hitch accepted -e"
 else
   pass "a checker that produces no levels is refused"
@@ -2041,16 +2400,16 @@ equal "a refused silent checker leaves no window behind" "" \
 
 # A checker that PRINTS a plausible vocabulary and then fails is refused too:
 # output from a failed checker is not a vocabulary, and treating it as one
-# would open a window on evidence the profile itself declared unreliable.
-cat > "$RUN_ROOT/profiles/nonzero.sh" <<SH
+# would open a window on evidence the collar itself declared unreliable.
+cat > "$RUN_ROOT/collars/nonzero.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_EFFORT_OPT='--effort='
 GANG_EFFORT_CMD='printf "high\n"; exit 17'
 SH
-if nonzero_out="$("$GANG" hitch effdied -p nonzero -d /tmp -e high 2>&1)"; then
+if nonzero_out="$("$GANG" hitch effdied -c nonzero -d /tmp -e high 2>&1)"; then
   fail "a checker that fails after printing is refused" "hitch accepted its output"
 else
   pass "a checker that fails after printing is refused"
@@ -2060,26 +2419,26 @@ contains "and the refusal names the status, not the operator's level" \
 equal "a refused failing checker leaves no window behind" "" \
   "$(window_id effdied)"
 
-cat > "$RUN_ROOT/profiles/efforted.sh" <<SH
+cat > "$RUN_ROOT/collars/efforted.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
 GANG_EFFORT_OPT='--effort='
 GANG_EFFORT_CMD="printf 'low\nmedium\nxhigh\n'"
 SH
-if bogus_out="$("$GANG" hitch effbad -p efforted -d /tmp -e bogus 2>&1)"; then
+if bogus_out="$("$GANG" hitch effbad -c efforted -d /tmp -e bogus 2>&1)"; then
   fail "a level outside the vocabulary is refused" "hitch accepted bogus"
 else
   pass "a level outside the vocabulary is refused"
 fi
-contains "naming the levels the profile takes" "$bogus_out" "low medium xhigh"
+contains "naming the levels the collar takes" "$bogus_out" "low medium xhigh"
 equal "a refused bad level leaves no window behind" "" "$(window_id effbad)"
 # The neighbour that makes a substring test look like it works: high is not a
 # level here and xhigh is, so an unanchored match would pass a level this
 # harness never declared.
-if "$GANG" hitch effsub -p efforted -d /tmp -e high >/dev/null 2>&1; then
+if "$GANG" hitch effsub -c efforted -d /tmp -e high >/dev/null 2>&1; then
   fail "a level that is only part of a declared one is refused too" \
     "hitch accepted high"
 else
@@ -2087,7 +2446,7 @@ else
 fi
 equal "a refused partial level leaves no window behind" "" "$(window_id effsub)"
 
-"$GANG" hitch effok -p efforted -d /tmp -e xhigh >/dev/null
+"$GANG" hitch effok -c efforted -d /tmp -e xhigh >/dev/null
 contains "the declared spelling joins the effort into the launch, with no space" \
   "$(tmux display-message -p -t "$(window_id effok)" '#{pane_start_command}')" \
   "--effort=xhigh"
@@ -2096,17 +2455,17 @@ contains "the declared spelling joins the effort into the launch, with no space"
 # flag by construction. Asserted anyway — construction is a reason to believe,
 # not a receipt, and a flag surviving hitch and lost on the other form would
 # be a renewal that quietly changed the agent.
-"$GANG" hitch effres -p efforted -d /tmp --resume fixture-session -e low >/dev/null
+"$GANG" hitch effres -c efforted -d /tmp --resume fixture-session -e low >/dev/null
 effres_line="$(tmux display-message -p -t "$(window_id effres)" '#{pane_start_command}')"
 contains "the resume launch form is the one that ran" "$effres_line" "resume-fixture-session"
 contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null
 
-# The real claude-code profile driven end-to-end through core: the exact -m
+# The real claude-code collar driven end-to-end through core: the exact -m
 # binding and the joined -e must reach the launch line of a window built from
-# the REAL profile's declarations — a core that stopped passing either would
-# stay green against fixture profiles alone. The harness is a stub on PATH,
+# the REAL collar's declarations — a core that stopped passing either would
+# stay green against fixture collars alone. The harness is a stub on PATH,
 # reached two ways: through hitch's own environment for the vocabulary check,
 # and through the tmux global environment for the pane. GANG_BOOT_TIMEOUT=0
 # keeps the world clock-free: the stub never paints a claude composer, so
@@ -2127,7 +2486,7 @@ else
 fi
 tmux set-environment -g PATH "$CLAUDE_STUB/bin:$tmux_path"
 if PATH="$CLAUDE_STUB/bin:$PATH" GANG_BOOT_TIMEOUT=0 \
-  "$GANG" hitch realmodel -p claude-code -d /tmp -m claude-opus-5 -e xhigh \
+  "$GANG" hitch realmodel -c claude-code -d /tmp -m claude-opus-5 -e xhigh \
   >/dev/null 2>&1; then
   fail "a stub that never paints a composer cannot complete a hitch" \
     "hitch reported success"
@@ -2136,7 +2495,7 @@ else
 fi
 tmux set-environment -g PATH "$tmux_path"
 real_launch="$(tmux display-message -p -t "$(window_id realmodel)" '#{pane_start_command}')"
-contains "the real profile's launch command is the one that ran" \
+contains "the real collar's launch command is the one that ran" \
   "$real_launch" "claude --settings"
 contains "the exact model binds into the real launch line" \
   "$real_launch" "--model claude-opus-5"
@@ -2144,7 +2503,7 @@ contains "and the joined effort rides beside it" \
   "$real_launch" "--effort=xhigh"
 "$GANG" drop realmodel >/dev/null
 
-"$GANG" hitch 1 -p bash -d /tmp >/dev/null
+"$GANG" hitch 1 -c bash -d /tmp >/dev/null
 printf 'MARK_NUMERIC' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 contains "a numeric name reaches its exact window" "$(pane 1)" "MARK_NUMERIC"
 excludes "numeric addressing does not fall through to another window" \
@@ -2215,7 +2574,7 @@ fi
 # The command a refusal names is the one that answers the question it raises.
 # That was `gang capture`, whose raw pane renders a dim suggested-prompt
 # placeholder identically to a half-written line — the reading that produced a
-# public misdiagnosis. `gang composer` is the profile's styled reading, so what
+# public misdiagnosis. `gang composer` is the collar's styled reading, so what
 # it prints is what a human typed; the next check spends it on this very box.
 contains "a delivery refusal names a runnable inspection command" \
   "$draft_refusal" "gang composer 1"
@@ -2244,16 +2603,16 @@ unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='[ -f "$QUEUE_STRAND" ] && PS1="❯ Press up to edit queued messages"'
 RC
-mkdir -p "$RUN_ROOT/profiles"
-cat > "$RUN_ROOT/profiles/queueing.sh" <<SH
+mkdir -p "$RUN_ROOT/collars"
+cat > "$RUN_ROOT/collars/queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand exec bash --rcfile $RUN_ROOT/queue-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 SH
-export GANG_PROFILES="$RUN_ROOT/profiles"
-"$GANG" hitch strand -p queueing -d /tmp >/dev/null
+export GANG_COLLARS="$RUN_ROOT/collars"
+"$GANG" hitch strand -c queueing -d /tmp >/dev/null
 touch "$RUN_ROOT/queue-strand"
 if strand_out="$(printf 'MARK_QUEUED' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
   fail "a submission the harness parks in its queue is not a delivery" \
@@ -2285,13 +2644,13 @@ fi
 equal "a parked queue refuses the next delivery without typing" "3" "$strand_more_rc"
 contains "naming the queue it is waiting on" \
   "$strand_more" "parked earlier input in its own queue"
-# Recovery is the profile's word too. This profile declares the evidence and no
+# Recovery is the collar's word too. This collar declares the evidence and no
 # recall key, so gang knows the composer is parked and does not know which
 # keystroke loads the body back — which is a refusal, never a guessed keypress.
 if norecall_out="$("$GANG" flush strand 2>&1)"; then
-  fail "a profile with no declared recall key refuses to flush" "flush reported success"
+  fail "a collar with no declared recall key refuses to flush" "flush reported success"
 else
-  pass "a profile with no declared recall key refuses to flush"
+  pass "a collar with no declared recall key refuses to flush"
 fi
 contains "and the refusal names the missing declaration" \
   "$norecall_out" "GANG_QUEUE_RECALL_KEY"
@@ -2300,7 +2659,7 @@ contains "and the refusal names the missing declaration" \
 # THE PARKED QUEUE, RECOVERED RATHER THAN DESCRIBED. The fixture's composer
 # reads as the queue hint while its strand file exists, and the body the
 # harness "parked" is the last command in the pane's own history — so the
-# profile's declared recall key genuinely loads that body back into the box,
+# collar's declared recall key genuinely loads that body back into the box,
 # the way Up does in claude's composer. The drain flag is what a queue entering
 # the session looks like from outside: the next prompt after it appears clears
 # the strand.
@@ -2308,7 +2667,7 @@ contains "and the refusal names the missing declaration" \
 # the harness swallowed, not as scenery arranged beforehand. Arming the fixture
 # makes the next prompt raise the strand; the composer then reads as the hint
 # while it is empty, and as its own contents once the recall key loads them.
-# That distinction is the whole subject here, so the hint lives in the profile's
+# That distinction is the whole subject here, so the hint lives in the collar's
 # reader rather than in the prompt string, where it would concatenate with the
 # recalled body and make every readback look altered.
 cat > "$RUN_ROOT/flush-rc" <<'RC'
@@ -2325,14 +2684,14 @@ _flush_probe() {   # what the composer holds, read where input ordering places i
 }
 bind -x '"\C-t": _flush_probe'
 RC
-cat > "$RUN_ROOT/profiles/flushable.sh" <<SH
+cat > "$RUN_ROOT/collars/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
-profile_input() { # a composer that spans lines, and reads as the hint when empty
+collar_input() { # a composer that spans lines, and reads as the hint when empty
   local box
   box="\$(tmux capture-pane -pJ -t "\$1" | awk '
     { line[NR] = \$0
@@ -2352,7 +2711,7 @@ profile_input() { # a composer that spans lines, and reads as the hint when empt
 }
 SH
 : > "$RUN_ROOT/flush-signal"
-"$GANG" hitch parked -p flushable -d /tmp >/dev/null
+"$GANG" hitch parked -c flushable -d /tmp >/dev/null
 parked_id="$(window_id parked)"
 
 # The fixture raises and lowers its strand from a prompt hook, so a world that
@@ -2535,14 +2894,14 @@ tmux send-keys -t "$parked_id" C-u
 
 # A keystroke gang cannot send by name is a broken declaration, refused before
 # any window opens: tmux would deliver the letters into the composer instead.
-cat > "$RUN_ROOT/profiles/badkey.sh" <<SH
+cat > "$RUN_ROOT/collars/badkey.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_QUEUE_RECALL_KEY='M-x then y'
 SH
-if badkey_out="$("$GANG" hitch badkey -p badkey -d /tmp 2>&1)"; then
+if badkey_out="$("$GANG" hitch badkey -c badkey -d /tmp 2>&1)"; then
   fail "a recall key that is not a tmux key name is refused" "hitch accepted it"
 else
   pass "a recall key that is not a tmux key name is refused"
@@ -2551,27 +2910,27 @@ contains "naming the declaration rather than the operator" \
   "$badkey_out" "GANG_QUEUE_RECALL_KEY"
 equal "and the refused declaration leaves no window behind" "" "$(window_id badkey)"
 
-# INTERRUPTING IS A PROFILE'S KEYSTROKE AND A FACT GANG OWNS. The keystroke
+# INTERRUPTING IS A COLLAR'S KEYSTROKE AND A FACT GANG OWNS. The keystroke
 # ends a turn the harness will never close for itself, so the bracket it opened
 # has to be closed here or the target reads busy until that bound expires.
 # Whether the harness actually stopped remains its own verdict; the fact does
 # not claim otherwise.
 if nokey_out="$("$GANG" interrupt alpha 2>&1)"; then
-  fail "a profile with no declared interrupt key refuses to interrupt" \
+  fail "a collar with no declared interrupt key refuses to interrupt" \
     "interrupt reported success"
 else
-  pass "a profile with no declared interrupt key refuses to interrupt"
+  pass "a collar with no declared interrupt key refuses to interrupt"
 fi
 contains "naming the declaration it would need" "$nokey_out" "GANG_INTERRUPT_KEY"
 
-cat > "$RUN_ROOT/profiles/badstop.sh" <<SH
+cat > "$RUN_ROOT/collars/badstop.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_INTERRUPT_KEY='ctrl then c'
 SH
-if badstop_out="$("$GANG" hitch badstop -p badstop -d /tmp 2>&1)"; then
+if badstop_out="$("$GANG" hitch badstop -c badstop -d /tmp 2>&1)"; then
   fail "an interrupt key that is not a tmux key name is refused" "hitch accepted it"
 else
   pass "an interrupt key that is not a tmux key name is refused"
@@ -2584,26 +2943,26 @@ equal "and it leaves no window behind either" "" "$(window_id badstop)"
 # them hold just as well when no key leaves at all. This fixture binds the
 # declared key to a mark of its own, which is the only artifact in the world
 # that cannot exist unless the key arrived at the pane. It is also what pins the
-# key to the PROFILE's declaration rather than to anything hard-coded in core:
+# key to the COLLAR's declaration rather than to anything hard-coded in core:
 # the bound key is C-g, so an interrupt that sent Escape would leave no mark.
 cat > "$RUN_ROOT/interrupt-rc" <<'RC'
 unset -f command_not_found_handle
 PS1='❯ '
 bind -x '"\C-g": printf "INTERRUPT_KEY_RECEIVED\n"'
 RC
-cat > "$RUN_ROOT/profiles/interruptible.sh" <<SH
+cat > "$RUN_ROOT/collars/interruptible.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/interrupt-rc' fixture"
 GANG_INTERRUPT_KEY='C-g'
 GANG_BUSY_REGEX='STILL_WORKING'
 SH
-"$GANG" hitch stoppable -p interruptible -d /tmp >/dev/null
+"$GANG" hitch stoppable -c interruptible -d /tmp >/dev/null
 stop_id="$(window_id stoppable)"
 tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
 contains "an open turn bracket answers busy" \
-  "$("$GANG" status stoppable)" "busy"
+  "$("$GANG" status stoppable)" "busy (tight tug)"
 contains "interrupt reports the key it sent" \
   "$("$GANG" interrupt stoppable)" "C-g"
 # Ordering barrier, not a wait on the thing under test: the pane consumes its
@@ -2626,7 +2985,7 @@ contains "and the declared key actually reached the pane" \
 equal "an interrupt drops the bracket nothing else will close" "" \
   "$(tmux show-options -wqv -t "$stop_id" @gl_turn)"
 contains "so the keystroke cannot strand a false busy" \
-  "$("$GANG" status stoppable)" "idle"
+  "$("$GANG" status stoppable)" "idle (slack tug)"
 "$GANG" drop stoppable >/dev/null
 
 # AND IT MUST NOT MANUFACTURE THE OPPOSITE LIE. Gang saw a keystroke leave; it
@@ -2634,7 +2993,7 @@ contains "so the keystroke cannot strand a false busy" \
 # busy marker, and that evidence has to survive the interrupt — writing a fresh
 # closed bracket would answer idle before anything looked at the pane, and the
 # next send would enter mid-turn on gang's own say-so.
-"$GANG" hitch stubborn -p interruptible -d /tmp >/dev/null
+"$GANG" hitch stubborn -c interruptible -d /tmp >/dev/null
 stubborn_id="$(window_id stubborn)"
 tmux send-keys -l -t "$stubborn_id" 'printf STILL_WORKING\\n'
 tmux send-keys -t "$stubborn_id" Enter
@@ -2644,9 +3003,9 @@ equal "the bracket is dropped there too" "" \
   "$(tmux show-options -wqv -t "$stubborn_id" @gl_turn)"
 stubborn_state="$("$GANG" status stubborn)"
 contains "a target still painting work stays busy after the interrupt" \
-  "$stubborn_state" "busy"
+  "$stubborn_state" "busy (tight tug)"
 excludes "the interrupt never invents an idle the pane contradicts" \
-  "$stubborn_state" "idle"
+  "$stubborn_state" "idle (slack tug)"
 if midturn_out="$(printf 'MARK_MIDTURN' |
   "$GANG" send --to stubborn --from tester --stdin 2>&1)"; then
   fail "and it stays unreachable while that work is painted" "send entered mid-turn"
@@ -2663,18 +3022,18 @@ excludes "and nothing was typed into it" "$(pane stubborn)" "MARK_MIDTURN"
 
 # The shipped harnesses that stop on Escape say so themselves; the ones whose
 # interrupt gang has not observed declare nothing and refuse the command.
-for stopping_profile in claude-code codex; do
-  stopping_file="$ROOT/profiles/$stopping_profile.sh"
-  stopping_key="$(GANG_TEST_PROFILES='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+for stopping_collar in claude-code codex; do
+  stopping_file="$ROOT/collars/$stopping_collar.sh"
+  stopping_key="$(GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
     '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$stopping_file")"
-  equal "the $stopping_profile profile declares the key that stops its turn" \
+  equal "the $stopping_collar collar declares the key that stops its turn" \
     "Escape" "$stopping_key"
 done
-for unstopping_profile in opencode pi; do
-  unstopping_file="$ROOT/profiles/$unstopping_profile.sh"
-  unstopping_key="$(GANG_TEST_PROFILES='' ROOT="$ROOT" bash -c \
+for unstopping_collar in opencode pi; do
+  unstopping_file="$ROOT/collars/$unstopping_collar.sh"
+  unstopping_key="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
     '. "$1"; printf "%s" "${GANG_INTERRUPT_KEY:-}"' fixture "$unstopping_file")"
-  equal "the $unstopping_profile profile declares no interrupt key until one is verified" \
+  equal "the $unstopping_collar collar declares no interrupt key until one is verified" \
     "" "$unstopping_key"
 done
 
@@ -2683,13 +3042,13 @@ done
 # sender's and can be parked. Nothing in this world polls or schedules: the only
 # thing that drains a spool is a native Stop event, which the world fires by
 # hand exactly as a harness would.
-cat > "$RUN_ROOT/profiles/nodrain.sh" <<SH
+cat > "$RUN_ROOT/collars/nodrain.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 SH
-"$GANG" hitch nodrain -p nodrain -d /tmp >/dev/null
+"$GANG" hitch nodrain -c nodrain -d /tmp >/dev/null
 nodrain_id="$(window_id nodrain)"
 nodrain_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$nodrain_id" @gl_spool)"
 tmux send-keys -l -t "$nodrain_id" 'HUMAN_DRAFT'
@@ -2715,15 +3074,15 @@ else
 fi
 contains "because live-only never parks" "$super_out" "--live-only never parks"
 
-cat > "$RUN_ROOT/profiles/spoolable.sh" <<SH
+cat > "$RUN_ROOT/collars/spoolable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_STOP_HOOK=1
-_gl_spool_real="\$(declare -f profile_input)"
-eval "spool_real_input \${_gl_spool_real#profile_input}"
-profile_input() { # once per armed drain, report what the spool and the lock look like
+_gl_spool_real="\$(declare -f collar_input)"
+eval "spool_real_input \${_gl_spool_real#collar_input}"
+collar_input() { # once per armed drain, report what the spool and the lock look like
   local lock dir live=no holder="" waiting=0 f
   lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
@@ -2738,7 +3097,7 @@ profile_input() { # once per armed drain, report what the spool and the lock loo
   spool_real_input "\$1"
 }
 SH
-"$GANG" hitch parker -p spoolable -d /tmp >/dev/null
+"$GANG" hitch parker -c spoolable -d /tmp >/dev/null
 parker_id="$(window_id parker)"
 parker_pane_id="$(tmux list-panes -t "$parker_id" -F '#{pane_id}')"
 parker_token="$(tmux show-options -wqv -t "$parker_id" @gl_spool)"
@@ -2904,7 +3263,7 @@ parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists
 # to avoid, so gang says so instead of narrowing the window.
-"$GANG" hitch identityless -p spoolable -d /tmp >/dev/null
+"$GANG" hitch identityless -c spoolable -d /tmp >/dev/null
 tmux set-option -uw -t "$(window_id identityless)" @gl_spool
 tmux send-keys -l -t "$(window_id identityless)" 'HUMAN_DRAFT'
 if identityless_out="$(printf 'MARK_NO_IDENTITY' |
@@ -2929,7 +3288,7 @@ equal "and the refusal mints nothing on its way out" "" \
 # a refused send fail to park for a target the operator had just enrolled.
 tmux new-window -d -t "=$GANG_SESSION" -n taken -c /tmp \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-"$GANG" adopt taken -p spoolable >/dev/null
+"$GANG" adopt taken -c spoolable >/dev/null
 taken_id="$(window_id taken)"
 taken_token="$(tmux show-options -wqv -t "$taken_id" @gl_spool)"
 if [ -n "$taken_token" ]; then
@@ -2952,15 +3311,15 @@ contains "and it can park a refused message under it" \
 # A body that was already typed has an unknown fate, so it is NOT parked: a
 # second copy of a message that may have landed is worse than one that failed
 # loudly. This composer never changes, so the paste is unverifiable.
-cat > "$RUN_ROOT/profiles/unverifiable.sh" <<SH
+cat > "$RUN_ROOT/collars/unverifiable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_STOP_HOOK=1
-profile_input() { printf ''; }
+collar_input() { printf ''; }
 SH
-if "$GANG" hitch unverified -p unverifiable -d /tmp >/dev/null 2>&1; then
+if "$GANG" hitch unverified -c unverifiable -d /tmp >/dev/null 2>&1; then
   fail "a composer that never changes cannot complete a hitch" "hitch reported success"
 else
   pass "a composer that never changes cannot complete a hitch"
@@ -2984,21 +3343,21 @@ equal "so nothing was parked for a body that may already have landed" "0" \
 # A drain that cannot verify its delivery quarantines that entry out of the
 # glob and says so. It never sends it again on the chance the first attempt
 # missed, and the entries behind it are not lost with it.
-cat > "$RUN_ROOT/profiles/wedging.sh" <<SH
+cat > "$RUN_ROOT/collars/wedging.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_STOP_HOOK=1
-_gl_wedge_real="\$(declare -f profile_input)"
-eval "wedge_real_input \${_gl_wedge_real#profile_input}"
-profile_input() { # the real box, then a draft that refuses, then one that never changes
+_gl_wedge_real="\$(declare -f collar_input)"
+eval "wedge_real_input \${_gl_wedge_real#collar_input}"
+collar_input() { # the real box, then a draft that refuses, then one that never changes
   if [ -f "$RUN_ROOT/wedge-block" ]; then printf 'BLOCKING_DRAFT'; return 0; fi
   if [ -f "$RUN_ROOT/wedge-stuck" ]; then printf ''; return 0; fi
   wedge_real_input "\$1"
 }
 SH
-"$GANG" hitch wedged -p wedging -d /tmp >/dev/null
+"$GANG" hitch wedged -c wedging -d /tmp >/dev/null
 : > "$RUN_ROOT/wedge-block"
 wedged_id="$(window_id wedged)"
 wedged_pane_id="$(tmux list-panes -t "$wedged_id" -F '#{pane_id}')"
@@ -3065,7 +3424,7 @@ equal "a later native boundary never re-sends an unverified held entry" \
 "$GANG" drop wedged >/dev/null
 
 # One spool is deliberately left alive for the teardown below to account for.
-"$GANG" hitch lingering -p spoolable -d /tmp >/dev/null
+"$GANG" hitch lingering -c spoolable -d /tmp >/dev/null
 lingering_id="$(window_id lingering)"
 tmux send-keys -l -t "$lingering_id" 'HUMAN_DRAFT'
 printf 'MARK_LINGERS' |
@@ -3146,14 +3505,14 @@ equal "a verified delivery to the same window retires the stale record" "" \
 # so the fixture logs the caller of every parked reading and the world
 # asserts the final ticket was consumed by stage_clear's landing-zone read,
 # the coupling's one load-bearing position.
-cat > "$RUN_ROOT/profiles/drain.sh" <<SH
+cat > "$RUN_ROOT/collars/drain.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-_gl_drain_real="\$(declare -f profile_input)"
-eval "drain_real_input \${_gl_drain_real#profile_input}"
-profile_input() { # a parked reading per ticket, then the real drained box
+_gl_drain_real="\$(declare -f collar_input)"
+eval "drain_real_input \${_gl_drain_real#collar_input}"
+collar_input() { # a parked reading per ticket, then the real drained box
   local n
   n="\$(cat "$RUN_ROOT/drain-tickets" 2>/dev/null)"
   if [ "\${n:-0}" -gt 0 ]; then
@@ -3166,7 +3525,7 @@ profile_input() { # a parked reading per ticket, then the real drained box
 }
 SH
 printf '0' > "$RUN_ROOT/drain-tickets"
-"$GANG" hitch drain -p drain -d /tmp >/dev/null
+"$GANG" hitch drain -c drain -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id drain)" @gl_staged \
   "'MARK_OLD' is staged unsent in this box"
 tmux set-option -w -t "$(window_id drain)" @gl_staged_box "BOXMEMO_NOT_MATCHING"
@@ -3185,7 +3544,7 @@ equal "the final parked reading was stage_clear's own landing-zone read" \
 
 # Once queue evidence is declared, an UNREADABLE verification reread is
 # ambiguity, not proof of submission. The fixture's composer flips to a
-# sentinel after Enter and its profile_input grants exactly one readable look
+# sentinel after Enter and its collar_input grants exactly one readable look
 # at that sentinel: the first reading breaks the change loop as a normal
 # non-queue submission would, and the late queue-evidence reread finds the
 # box unreadable. Falling through to success here is the hole; the send must
@@ -3195,13 +3554,13 @@ unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='[ -f "$FLICKER_FLAG" ] && PS1="❯ POST_SENTINEL"'
 RC
-cat > "$RUN_ROOT/profiles/flicker.sh" <<SH
+cat > "$RUN_ROOT/collars/flicker.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'FLICKER_FLAG=$RUN_ROOT/flicker-flag exec bash --rcfile $RUN_ROOT/flicker-rc' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*QUEUE_HINT_NEVER_SHOWN\$'
-profile_input() { # one readable look at the post-Enter sentinel, then nothing
+collar_input() { # one readable look at the post-Enter sentinel, then nothing
   local line
   line="\$(tmux capture-pane -pJ -t "\$1" | grep '❯' | tail -1)" || return 1
   line="\${line#*❯}"
@@ -3213,7 +3572,7 @@ profile_input() { # one readable look at the post-Enter sentinel, then nothing
   printf '%s' "\$line" | tr -d '\302\240'
 }
 SH
-"$GANG" hitch flicker -p flicker -d /tmp >/dev/null
+"$GANG" hitch flicker -c flicker -d /tmp >/dev/null
 touch "$RUN_ROOT/flicker-flag"
 if flicker_out="$(printf 'MARK_FLICKER' | "$GANG" send --to flicker --from tester --stdin 2>&1)"; then
   fail "an unreadable verification reread is not a delivery" "send reported success"
@@ -3276,14 +3635,14 @@ tmux set-option -uw -t "$(window_id 1)" @gl_turn
 # disappears before the expired fall-through's own read — one readable look,
 # then nothing. The refusal must name the expired witness and the unreadable
 # box rather than claim mid-turn work.
-cat > "$RUN_ROOT/profiles/vanish.sh" <<SH
+cat > "$RUN_ROOT/collars/vanish.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-_gl_vanish_real="\$(declare -f profile_input)"
-eval "vanish_real_input \${_gl_vanish_real#profile_input}"
-profile_input() { # readable per ticket once the vanish flag is set, then not
+_gl_vanish_real="\$(declare -f collar_input)"
+eval "vanish_real_input \${_gl_vanish_real#collar_input}"
+collar_input() { # readable per ticket once the vanish flag is set, then not
   local n
   if [ ! -f "$RUN_ROOT/vanish-flag" ]; then vanish_real_input "\$1"; return; fi
   n="\$(cat "$RUN_ROOT/vanish-tickets" 2>/dev/null)"
@@ -3295,7 +3654,7 @@ profile_input() { # readable per ticket once the vanish flag is set, then not
   return 1
 }
 SH
-"$GANG" hitch vanish -p vanish -d /tmp >/dev/null
+"$GANG" hitch vanish -c vanish -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id vanish)" @gl_turn "open $(( $(date +%s) - 400 ))"
 printf '1' > "$RUN_ROOT/vanish-tickets"
 touch "$RUN_ROOT/vanish-flag"
@@ -3315,18 +3674,18 @@ excludes "the refused vanished-box body never landed" \
 # obstruction can leave in the gap between them — an operator's C-u, a queue
 # draining at a turn boundary. That look then reads an empty box successfully,
 # which is the opposite finding from a box that cannot be read, and only one of
-# the two is a harness in trouble. This profile serves the draft for exactly the
+# the two is a harness in trouble. This collar serves the draft for exactly the
 # reads a refusal takes to settle and hands the naming look an empty box after
 # it; a change in that count fails this check rather than quietly retargeting
 # it, because the class named is asserted exactly.
-cat > "$RUN_ROOT/profiles/emptied.sh" <<SH
+cat > "$RUN_ROOT/collars/emptied.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-_gl_emptied_real="\$(declare -f profile_input)"
-eval "emptied_real_input \${_gl_emptied_real#profile_input}"
-profile_input() { # the draft per ticket once the flag is set, then an empty box
+_gl_emptied_real="\$(declare -f collar_input)"
+eval "emptied_real_input \${_gl_emptied_real#collar_input}"
+collar_input() { # the draft per ticket once the flag is set, then an empty box
   local n
   if [ ! -f "$RUN_ROOT/emptied-flag" ]; then emptied_real_input "\$1"; return; fi
   n="\$(cat "$RUN_ROOT/emptied-tickets" 2>/dev/null)"
@@ -3338,7 +3697,7 @@ profile_input() { # the draft per ticket once the flag is set, then an empty box
   printf ''
 }
 SH
-"$GANG" hitch emptied -p emptied -d /tmp >/dev/null
+"$GANG" hitch emptied -c emptied -d /tmp >/dev/null
 tmux send-keys -l -t "$(window_id emptied)" 'MARK_LEAVING'
 # Six: the box reads a refused send takes to settle — the busy verdict's
 # composer and emptiness pair, the settled-composer pair, the parked-queue
@@ -3394,15 +3753,15 @@ tmux set-option -uw -t "$(window_id 1)" @gl_turn
 # under any load, a zero window makes every stamp old. Roster's immediate
 # snapshot keeps the painted verdict by design — it cannot probe stability
 # without consuming the churn wait.
-cat > "$RUN_ROOT/profiles/fossil.sh" <<SH
+cat > "$RUN_ROOT/collars/fossil.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch fossil -p fossil -d /tmp >/dev/null
+"$GANG" hitch fossil -c fossil -d /tmp >/dev/null
 tmux send-keys -l -t "$(window_id fossil)" \
   'echo "Retrying in 8s left by an interrupted loop"'
 tmux send-keys -t "$(window_id fossil)" Enter
@@ -3422,7 +3781,7 @@ fi
 excludes "the refused active-pane body never landed" \
   "$(pane fossil)" "MARK_ACTIVE"
 contains "roster's immediate snapshot keeps the painted verdict" \
-  "$("$GANG" roster)" "busy"
+  "$("$GANG" roster)" "busy (tight tug)"
 # The fossil verdict: no recent write, byte-stable pane, expired bracket.
 fossil_status="$(GANG_ACTIVITY_WINDOW=0 "$GANG" status fossil)"
 contains "frozen busy paint over an expired bracket reads expired, not busy" \
@@ -3450,15 +3809,15 @@ equal "the fossil's bracket is left to its native owner, byte-identical" \
 # permanent verdict while it sits provably ready. The tiers under the expired
 # event decide it instead. Time is an input here, never a wait: the bracket's
 # age and the activity window are injected.
-cat > "$RUN_ROOT/profiles/abandoned.sh" <<SH
+cat > "$RUN_ROOT/collars/abandoned.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch abandoned -p abandoned -d /tmp >/dev/null
+"$GANG" hitch abandoned -c abandoned -d /tmp >/dev/null
 abandoned_bracket="open $(( $(date +%s) - 400 ))"
 tmux set-option -w -t "$(window_id abandoned)" @gl_turn "$abandoned_bracket"
 # The guard the decay must not stomp, asserted first: an UNEXPIRED bracket is
@@ -3511,14 +3870,14 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
   "$(tmux show-options -wqv -t "$(window_id abandoned)" @gl_turn)"
 "$GANG" drop abandoned >/dev/null
 
-# The quiet leg must be measured, and a profile that does not declare
+# The quiet leg must be measured, and a collar that does not declare
 # quiet-at-rest measures nothing: its harness writes to the pty constantly at
 # rest, so the activity tier reports inactive by abstention rather than by
 # observation. Spending that as the positive evidence a decay requires would
 # decay every abandoned turn on a harness gang cannot hear.
-"$GANG" hitch assumed -p bash -d /tmp >/dev/null
+"$GANG" hitch assumed -c bash -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id assumed)" @gl_turn "open $(( $(date +%s) - 400 ))"
-equal "a profile that never measures the pty cannot witness the quiet a decay needs" \
+equal "a collar that never measures the pty cannot witness the quiet a decay needs" \
   "expired (turn-bracket bound reached)" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status assumed | head -1)"
 "$GANG" drop assumed >/dev/null
@@ -3526,14 +3885,14 @@ equal "a profile that never measures the pty cannot witness the quiet a decay ne
 # Each tier read is a separate moment, and a decay assembled across them can be
 # a state no single instant held: the harness resuming between the quiet
 # reading and the box reading would have its still-open turn discarded on
-# evidence that had already gone stale. This profile writes to its own pty
+# evidence that had already gone stale. This collar writes to its own pty
 # whenever gang reads its box — the harness moving underneath the decision,
 # made deterministic — and the decay must refuse rather than report idle.
-{ printf '. %s\nMOVING_ON=%s\n' "$ROOT/profiles/bash.sh" "$RUN_ROOT/moving.on"; cat <<'SH'
+{ printf '. %s\nMOVING_ON=%s\n' "$ROOT/collars/bash.sh" "$RUN_ROOT/moving.on"; cat <<'SH'
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_QUIET_AT_REST=1
-eval "$(declare -f profile_input | sed '1s/profile_input/moving_read/')"
-profile_input() { # $1 = tmux target; reads the box, then writes below it
+eval "$(declare -f collar_input | sed '1s/collar_input/moving_read/')"
+collar_input() { # $1 = tmux target; reads the box, then writes below it
   local out rc=0
   out="$(moving_read "$1")" || rc=$?
   [ ! -e "$MOVING_ON" ] \
@@ -3542,8 +3901,8 @@ profile_input() { # $1 = tmux target; reads the box, then writes below it
   return $rc
 }
 SH
-} > "$RUN_ROOT/profiles/moving.sh"
-"$GANG" hitch moving -p moving -d /tmp >/dev/null
+} > "$RUN_ROOT/collars/moving.sh"
+"$GANG" hitch moving -c moving -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400 ))"
 : > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
 equal "a pane that moves while gang is deciding refuses the decay" \
@@ -3578,7 +3937,7 @@ exec "$real" "$@"
 SH
 } > "$RUN_ROOT/bin-seam/tmux"
 chmod +x "$RUN_ROOT/bin-seam/tmux"
-"$GANG" hitch seam -p abandoned -d /tmp >/dev/null
+"$GANG" hitch seam -c abandoned -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a write between the quiet reading and the witness refuses the decay" \
   "expired (the pane was written to while gang was deciding)" \
@@ -3591,17 +3950,17 @@ equal "a write between the quiet reading and the witness refuses the decay" \
 # here, where it means gang WATCHED the screen being written to while it
 # decided. A harness paints the opening of a turn with its composer still
 # empty, so an empty box read out of a moving screen proves nothing and the
-# paste lands in live work. The profile's busy marker is what the shim paints,
+# paste lands in live work. The collar's busy marker is what the shim paints,
 # so this is a turn starting mid-decision and not merely noise.
-cat > "$RUN_ROOT/profiles/seamsend.sh" <<SH
+cat > "$RUN_ROOT/collars/seamsend.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='tick-after-quiet-read'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch seamsend -p seamsend -d /tmp >/dev/null
+"$GANG" hitch seamsend -c seamsend -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seamsend)" @gl_turn "open $(( $(date +%s) - 400 ))"
 seamsend_out=""
 if seamsend_out="$(printf 'MARK_LIVE_SEND' | PATH="$RUN_ROOT/bin-seam:$PATH" \
@@ -3617,27 +3976,27 @@ equal "so no paste is left staged there either" "" \
   "$(tmux show-options -wqv -t "$(window_id seamsend)" @gl_staged)"
 "$GANG" drop seamsend >/dev/null
 
-# A profile that declares no input reader has no box for gang to measure:
+# A collar that declares no input reader has no box for gang to measure:
 # landing_zone falls back to the whole pane, which is never empty, so the
 # expired-witness refusal fires on a transcript rather than on a composer.
 # Calling that "its input box" blames a draft nobody wrote — the class says
 # what gang actually read.
-cat > "$RUN_ROOT/profiles/noreader.sh" <<SH
+cat > "$RUN_ROOT/collars/noreader.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-unset -f profile_input
+unset -f collar_input
 SH
-"$GANG" hitch noreader -p noreader -d /tmp >/dev/null
+"$GANG" hitch noreader -c noreader -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id noreader)" @gl_turn \
   "open $(( $(date +%s) - 400 ))"
 if noreader_out="$(printf 'MARK_NOREADER' | GANG_ACTIVITY_WINDOW=0 \
   "$GANG" send --to noreader --from tester --stdin 2>&1)"; then
-  fail "an expired witness over a profile with no input reader refuses" \
+  fail "an expired witness over a collar with no input reader refuses" \
     "send succeeded"
 else
-  pass "an expired witness over a profile with no input reader refuses"
+  pass "an expired witness over a collar with no input reader refuses"
 fi
 contains "and names the whole pane it actually measured" \
   "$noreader_out" "whole-pane:"
@@ -3671,15 +4030,15 @@ done
 exit 0
 SH
 chmod +x "$RUN_ROOT/churn-bin/sleep"
-cat > "$RUN_ROOT/profiles/ticker.sh" <<SH
+cat > "$RUN_ROOT/collars/ticker.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'i=0; while :; do i=\\\$((i + 1)); echo Retrying in 9s tick \\\$i; echo \"❯ \"; tmux wait-for -S \"gltick-\\\$GANG_SESSION\"; done' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
-if GANG_BOOT_TIMEOUT=0 "$GANG" hitch ticker -p ticker -d /tmp >/dev/null 2>&1; then
+if GANG_BOOT_TIMEOUT=0 "$GANG" hitch ticker -c ticker -d /tmp >/dev/null 2>&1; then
   fail "an always-churning ticker cannot complete a hitch" "hitch reported success"
 else
   pass "an always-churning ticker cannot complete a hitch"
@@ -3710,19 +4069,19 @@ excludes "the refused churning-pane body never landed" \
 # settled screen means a UI of unknown authority owns input, and that refusal
 # fires before the bracket is ever weighed. The in-branch unreadable refusal
 # stays as a backstop for a box that vanishes between those two reads.
-cat > "$RUN_ROOT/profiles/blindbox.sh" <<SH
+cat > "$RUN_ROOT/collars/blindbox.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-_gl_blind_real="\$(declare -f profile_input)"
-eval "blind_real_input \${_gl_blind_real#profile_input}"
-profile_input() {
+_gl_blind_real="\$(declare -f collar_input)"
+eval "blind_real_input \${_gl_blind_real#collar_input}"
+collar_input() {
   [ ! -f "$RUN_ROOT/blindbox-flag" ] || return 1
   blind_real_input "\$1"
 }
 SH
-"$GANG" hitch blindbox -p blindbox -d /tmp >/dev/null
+"$GANG" hitch blindbox -c blindbox -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id blindbox)" @gl_turn "open $(( $(date +%s) - 400 ))"
 touch "$RUN_ROOT/blindbox-flag"
 if blind_out="$(printf 'MARK_BLIND' | "$GANG" send --to blindbox --from tester --stdin 2>&1)"; then
@@ -3733,49 +4092,49 @@ fi
 contains "as occupancy of unknown authority" "$blind_out" "authority unknown"
 "$GANG" drop blindbox >/dev/null
 
-# A profile-provided native compaction command uses the same verified injection
+# A collar-provided native compaction command uses the same verified injection
 # primitive. The fixture makes execution immediately visible in its pane.
-mkdir -p "$RUN_ROOT/profiles"
-cat > "$RUN_ROOT/profiles/native.sh" <<SH
+mkdir -p "$RUN_ROOT/collars"
+cat > "$RUN_ROOT/collars/native.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_COMPACT_CMD="printf NATIVE_COMPACT"
 SH
-export GANG_PROFILES="$RUN_ROOT/profiles"
-"$GANG" hitch compactable -p native -d /tmp >/dev/null
+export GANG_COLLARS="$RUN_ROOT/collars"
+"$GANG" hitch compactable -c native -d /tmp >/dev/null
 "$GANG" compact compactable >/dev/null
-contains "compact submits the profile's native command" \
+contains "compact submits the collar's native command" \
   "$(pane compactable)" "NATIVE_COMPACT"
 
 # A self-request made inside an agent's own pane must not submit the native
 # command during that turn. Stop consumes it once, after which a one-shot worker
-# submits the profile command and exits. Both waits below are tmux event barriers,
+# submits the collar command and exits. Both waits below are tmux event barriers,
 # not clocks or polling loops.
 self_executed="test-self-compact-executed-$$"
 self_busy="$RUN_ROOT/self-compact-busy"
-cat > "$RUN_ROOT/profiles/deferred.sh" <<SH
+cat > "$RUN_ROOT/collars/deferred.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_COMPACT_CMD="printf SELF_COMPACT; tmux wait-for -S $self_executed"
 GANG_SELF_COMPACT=deferred
 GANG_BUSY_REGEX='BUSY_DEFERRED'
-_gl_self_input="\$(declare -f profile_input)"
-eval "self_real_input \${_gl_self_input#profile_input}"
-profile_input() {
+_gl_self_input="\$(declare -f collar_input)"
+eval "self_real_input \${_gl_self_input#collar_input}"
+collar_input() {
   [ ! -e "$self_busy" ] || { printf ''; return; }
   self_real_input "\$1"
 }
 SH
-"$GANG" hitch selfable -p deferred -d /tmp >/dev/null
+"$GANG" hitch selfable -c deferred -d /tmp >/dev/null
 self_id="$(window_id selfable)"
 self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
 self_requested="test-self-compact-requested-$$"
 self_release="test-self-compact-release-$$"
 self_released="test-self-compact-released-$$"
-printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_PROFILES=%q %q compact; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
-  "$self_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" "$self_requested" \
+printf -v self_command ': > %q; printf BUSY_DEFERRED; GANG_SESSION=%q GANG_COLLARS=%q %q compact; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+  "$self_busy" "$GANG_SESSION" "$GANG_COLLARS" "$GANG" "$self_requested" \
   "$self_release" "$self_busy" "$self_released"
 tmux send-keys -l -t "$self_id" "$self_command"
 tmux send-keys -t "$self_id" Enter
@@ -3813,25 +4172,25 @@ fi
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
 nodeferred_busy="$RUN_ROOT/nodeferred-compact-busy"
-cat > "$RUN_ROOT/profiles/nodeferred.sh" <<SH
+cat > "$RUN_ROOT/collars/nodeferred.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_COMPACT_CMD="/compact"
 GANG_BUSY_REGEX='BUSY_NODEFERRED_COMPACT'
-_gl_nodeferred_input="\$(declare -f profile_input)"
-eval "nodeferred_real_input \${_gl_nodeferred_input#profile_input}"
-profile_input() {
+_gl_nodeferred_input="\$(declare -f collar_input)"
+eval "nodeferred_real_input \${_gl_nodeferred_input#collar_input}"
+collar_input() {
   [ ! -e "$nodeferred_busy" ] || { printf ''; return; }
   nodeferred_real_input "\$1"
 }
 SH
-"$GANG" hitch nodeferred -p nodeferred -d /tmp >/dev/null
+"$GANG" hitch nodeferred -c nodeferred -d /tmp >/dev/null
 nodeferred_id="$(window_id nodeferred)"
 nodeferred_observed="test-nodeferred-compact-observed-$$"
 nodeferred_release="test-nodeferred-compact-release-$$"
-printf -v nodeferred_command ': > %q; printf BUSY_NODEFERRED_COMPACT; GANG_SESSION=%q GANG_PROFILES=%q %q compact nodeferred >/dev/null 2>&1 || :; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q' \
-  "$nodeferred_busy" "$GANG_SESSION" "$GANG_PROFILES" "$GANG" \
+printf -v nodeferred_command ': > %q; printf BUSY_NODEFERRED_COMPACT; GANG_SESSION=%q GANG_COLLARS=%q %q compact nodeferred >/dev/null 2>&1 || :; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q' \
+  "$nodeferred_busy" "$GANG_SESSION" "$GANG_COLLARS" "$GANG" \
   "$nodeferred_observed" "$nodeferred_release" "$nodeferred_busy"
 tmux send-keys -l -t "$nodeferred_id" "$nodeferred_command"
 tmux send-keys -t "$nodeferred_id" Enter
@@ -3859,17 +4218,17 @@ contains "a native stop hook closes the turn record" "$turn_closed" "closed"
 # Stall lights forward only native awaiting-input witnesses to one optional
 # declared target. Every outcome is synchronous: the hook returns after the
 # note is accepted live, parked, or recorded as failed.
-cat > "$RUN_ROOT/profiles/stallable.sh" <<SH
+cat > "$RUN_ROOT/collars/stallable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_STOP_HOOK=1
 GANG_STALL_TYPES="idle_prompt agent_needs_input"
 SH
 equal "a team starts without an inferred notify target" \
   "no notify target declared" "$("$GANG" notify)"
-"$GANG" hitch stall-raise -p stallable -d /tmp >/dev/null
-"$GANG" hitch stall-target -p stallable -d /tmp >/dev/null
+"$GANG" hitch stall-raise -c stallable -d /tmp >/dev/null
+"$GANG" hitch stall-target -c stallable -d /tmp >/dev/null
 stall_raise_id="$(window_id stall-raise)"
 stall_raise_pane="$(tmux list-panes -t "$stall_raise_id" -F '#{pane_id}')"
 stall_target_id="$(window_id stall-target)"
@@ -3879,39 +4238,39 @@ equal "a notify target may be declared without inference" \
 equal "the notify declaration is readable" \
   "notify target: stall-target" "$("$GANG" notify)"
 
-# A profile with no declared stall kinds has no Notification witness. In
+# A collar with no declared stall kinds has no Notification witness. In
 # particular, an absent notification_type must not match an empty declaration.
-cat > "$RUN_ROOT/profiles/no-stalls.sh" <<SH
+cat > "$RUN_ROOT/collars/no-stalls.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
+. "$ROOT/collars/bash.sh"
 GANG_STOP_HOOK=1
 SH
-"$GANG" hitch stall-silent -p no-stalls -d /tmp >/dev/null
+"$GANG" hitch stall-silent -c no-stalls -d /tmp >/dev/null
 stall_silent_id="$(window_id stall-silent)"
 stall_silent_pane="$(tmux list-panes -t "$stall_silent_id" -F '#{pane_id}')"
 stall_silent_before="$(pane_all stall-target)"
 printf '%s' '{"hook_event_name":"Notification"}' |
   TMUX_PANE="$stall_silent_pane" "$GANG" hook >/dev/null
-equal "a profile without a declared stall source raises no empty-kind note" \
+equal "a collar without a declared stall source raises no empty-kind note" \
   "$stall_silent_before" "$(pane_all stall-target)"
 "$GANG" drop stall-silent >/dev/null
 
-# Stop owns the universal turn boundary even when the window's old profile no
-# longer resolves. Profile loading belongs only to profile-dependent work.
-"$GANG" hitch stall-vanished -p stallable -d /tmp >/dev/null
+# Stop owns the universal turn boundary even when the window's old collar no
+# longer resolves. Collar loading belongs only to collar-dependent work.
+"$GANG" hitch stall-vanished -c stallable -d /tmp >/dev/null
 stall_vanished_id="$(window_id stall-vanished)"
 stall_vanished_pane="$(tmux list-panes -t "$stall_vanished_id" -F '#{pane_id}')"
 tmux set-option -w -t "$stall_vanished_id" @gl_turn open
-tmux set-option -w -t "$stall_vanished_id" @gl_profile vanished
+tmux set-option -w -t "$stall_vanished_id" @gl_collar vanished
 if vanished_stop="$(printf '%s' '{"hook_event_name":"Stop"}' |
     TMUX_PANE="$stall_vanished_pane" "$GANG" hook 2>&1)"; then
-  pass "a native Stop closes the turn after its profile vanishes"
+  pass "a native Stop closes the turn after its collar vanishes"
 else
-  fail "a native Stop closes the turn after its profile vanishes" \
+  fail "a native Stop closes the turn after its collar vanishes" \
     "hook failed before the universal boundary: [$vanished_stop]"
 fi
-contains "the profile-independent Stop boundary is recorded" \
+contains "the collar-independent Stop boundary is recorded" \
   "$(tmux show-options -wqv -t "$stall_vanished_id" @gl_turn)" "closed"
 "$GANG" drop stall-vanished >/dev/null
 
@@ -3948,7 +4307,7 @@ equal "an old debounce stamp permits another native note" \
 
 printf '%s' '{"hook_event_name":"Notification","notification_type":"auth_success"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
-equal "a notification kind outside the profile declaration raises nothing" \
+equal "a notification kind outside the collar declaration raises nothing" \
   "$stall_old_count" "$(pane_all stall-target | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
 
 printf '%s' '{"hook_event_name":"PermissionRequest"}' |
@@ -3991,7 +4350,7 @@ contains "an unadopted notify target fails inside the delivery attempt" \
 equal "an unaccepted note leaves the debounce stamp unchanged" \
   "$stall_unaccepted_before" \
   "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
-"$GANG" adopt stall-unadopted -p stallable >/dev/null
+"$GANG" adopt stall-unadopted -c stallable >/dev/null
 printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
 contains "adoption lets the unaccepted note retry without advancing time" \
@@ -4012,7 +4371,7 @@ contains "roster carries a failed stall light" \
 equal "a missing target writes no debounce stamp" "" \
   "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
 
-"$GANG" hitch ghost -p stallable -d /tmp >/dev/null
+"$GANG" hitch ghost -c stallable -d /tmp >/dev/null
 printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
 contains "a failed note retries once its target exists" \
@@ -4067,15 +4426,15 @@ fi
 "$GANG" drop stall-target >/dev/null
 
 # Optional context guidance has two edge-triggered states and no clock path.
-cat > "$RUN_ROOT/profiles/lights.sh" <<SH
+cat > "$RUN_ROOT/collars/lights.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/profiles/bash.sh"
-profile_context() {
+. "$ROOT/collars/bash.sh"
+collar_context() {
   tmux show-options -wqv -t "\$1" @test_context
 }
 SH
-GANG_CONTEXT_LIGHTS=100000,200000 "$GANG" hitch lit -p lights -d /tmp >/dev/null
+GANG_CONTEXT_LIGHTS=100000,200000 "$GANG" hitch lit -c lights -d /tmp >/dev/null
 lit_id="$(window_id lit)"
 lit_tmux_pane="$(tmux list-panes -t "$lit_id" -F '#{pane_id}')"
 warming="$(printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |

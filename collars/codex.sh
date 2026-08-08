@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
+# shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
 _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
 _gl_codex_hook_flags=""
@@ -95,7 +95,7 @@ GANG_STOP_HOOK=1
 # Verified on codex 0.145.0: the native hook set contains no Notification
 # event. legacy_notify / agent-turn-complete reports turn completion, which the
 # Stop hook above already delivers; it is not an awaiting-input witness and is
-# deliberately not wired. PermissionRequest is this profile's only stall source.
+# deliberately not wired. PermissionRequest is this collar's only stall source.
 
 # Verified against codex 0.145.0 from the live capture cited in the landing
 # commit. Numeric prefixes move with the selection and are normalized by core;
@@ -156,7 +156,7 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   printf '%s' "$file"
 }
 
-profile_session_id() { # $1 = tmux target; rollout metadata is the native id contract
+collar_session_id() { # $1 = tmux target; rollout metadata is the native id contract
   local file
   file="$(codex_session_file "$1")" || return 1
   python3 -c '
@@ -211,21 +211,21 @@ try:
     pct = round(100 * used / win)
 except (KeyError, TypeError, ZeroDivisionError) as e:
     print(f"token_count schema drifted ({e!r} in {path}) — "
-          "re-verify against the installed codex and update profiles/codex.sh",
+          "re-verify against the installed codex and update collars/codex.sh",
           file=sys.stderr)
     sys.exit(1)
 print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 ' "$1" || die "unreadable codex context in $1"
 }
 
-profile_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
+collar_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
   local file
   file="$(codex_session_file "$1")" \
     || die "window has no usable @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
   codex_context_read "$file"
 }
 
-profile_input() { # $1 = tmux target; prints the composer, fails if there is none
+collar_input() { # $1 = tmux target; prints the composer, fails if there is none
   local line
   line="$(tmux capture-pane -pJ -e -t "$1" | awk '
     { # A dim run ends at the next escape, whatever closes it — 0m here, but the

@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# shellcheck disable=SC2034  # consumed by bin/gang load_profile via source
+# shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="claude"
 GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
@@ -37,7 +37,7 @@ GANG_MODEL_OPT="--model"
 # ones, and re-verifying this list is what a version bump costs.
 GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
 
-profile_session_id() { # $1 = tmux target, $2 = native hook payload
+collar_session_id() { # $1 = tmux target, $2 = native hook payload
   printf '%s' "$2" | python3 -c '
 import json, sys
 value = json.load(sys.stdin).get("session_id", "")
@@ -111,7 +111,7 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # renders a queued body in the transcript styled exactly like a submitted
 # prompt and empties the composer; the state is visible only in the composer
 # itself, which reads "❯ Press up to edit queued messages" (nbsp after the
-# glyph, stripped by profile_input like every nbsp). bin/gang matches this
+# glyph, stripped by collar_input like every nbsp). bin/gang matches this
 # against the box reading before pasting and after Enter, and treats a hit as
 # failed delivery — recoverable, because the hint also names the keystroke
 # below: Up loads the parked body, Enter submits it; a plain Enter does not
@@ -121,7 +121,7 @@ GANG_QUEUE_RECALL_KEY="Up"
 # Escape stops an active turn; the harness paints "esc to interrupt" while one
 # is in flight.
 GANG_INTERRUPT_KEY="Escape"
-profile_context() { # $1 = tmux target; reads the gangline statusline beacon
+collar_context() { # $1 = tmux target; reads the gangline statusline beacon
   local m
   m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
     || die "no ctx beacon in pane — enabled lights wire it at hitch; adopted windows must wire statusline/claude-code-context.sh themselves"
@@ -129,7 +129,7 @@ profile_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
-profile_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
+collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
   local box
   box="$(tmux capture-pane -pJ -e -t "$1" | awk '
     { # A dim run ends at the next escape, whatever closes it — 0m here, but the
