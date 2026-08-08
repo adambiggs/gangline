@@ -1,5 +1,8 @@
 # Gangline simplification plan
 
+> Status: Landed at `1aa8140` on 2026-08-04; retained as a dated
+> implementation record.
+
 ## Target
 
 Gangline is the local substrate for long-running, multi-harness coding sessions.

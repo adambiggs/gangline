@@ -1,5 +1,8 @@
 # Lead-ergonomics spec
 
+> Status: Landed at `96982ca` on 2026-08-07; retained as a dated
+> implementation record.
+
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
 design decisions open. Where a value must come from a live harness capture
@@ -1800,7 +1803,7 @@ is deliberate.
 Pure bash 3.2: no associative arrays, no `${var^^}`, no `mapfile`, no `&>`. All
 new registry and list data is newline- or space-separated strings parsed with
 `case`, `read`, or `awk`. `test/lint.sh` runs `bash -n` and
-`shellcheck -S warning` over `bin/gang`, `profiles/*.sh`, and `.githooks/*`, and
+`shellcheck -S warning` over `bin/gang`, `collars/*.sh`, and `.githooks/*`, and
 must stay clean.
 
 ### Suite isolation
