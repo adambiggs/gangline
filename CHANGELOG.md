@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.0](https://github.com/adambiggs/gangline/compare/gangline-v0.8.0...gangline-v1.0.0) (2026-08-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* update -p to -c, GANG_PROFILE to GANG_COLLAR, GANG_PROFILES to GANG_COLLARS, gang profiles to gang collars, gang cutoff to gang curfew, and profile_* contract functions to collar_*. Old spellings remain accepted through 1.x and are removed in 2.0.
+
+### Features
+
+* rename profile to collar and cutoff to curfew ([9b5e96b](https://github.com/adambiggs/gangline/commit/9b5e96baf01952903718754d050fcf8c5bfa573d))
+* **status:** add line-state glyph vocabulary ([9aef751](https://github.com/adambiggs/gangline/commit/9aef751b4638d655e06b92b97d1474528176e15d))
+* **tmux:** show last-witnessed state in window names ([45483c8](https://github.com/adambiggs/gangline/commit/45483c88d0d40e6b9bca8a7ba4d9a7c93a898f5f))
+
 ## [0.8.0](https://github.com/adambiggs/gangline/compare/gangline-v0.7.0...gangline-v0.8.0) (2026-08-08)
 
 
