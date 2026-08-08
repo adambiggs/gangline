@@ -3,14 +3,16 @@ name: shell
 on: [push, pull_request]
 
 # Linux and macOS cover the GNU and BSD userlands Gangline supports.
-# Remaining macOS fixture evidence: https://github.com/adambiggs/gangline/issues/110
+# The macOS cell is disabled pending the suite-portability fixes tracked in
+# https://github.com/adambiggs/gangline/issues/110 — the PR that closes #110
+# re-enables it by restoring macos-latest to the matrix below.
 
 jobs:
   check:
     strategy:
       fail-fast: false   # a macOS flake must not hide a real linux failure
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]   # macos-latest disabled pending #110
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
