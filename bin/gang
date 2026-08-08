@@ -363,6 +363,9 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
+GANG_BOOT_TIMEOUT="${GANG_BOOT_TIMEOUT:-30}"
+GANG_CLEAR_PRESSES="${GANG_CLEAR_PRESSES:-40}"
+GANG_COLLAR="${GANG_COLLAR:-claude-code}"
 GANG_STALL_REPEAT=600
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -1349,7 +1352,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
 }
 
 self_compact_after_stop() { # $1 window id, $2 collar
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  local ready=0 boot="$GANG_BOOT_TIMEOUT"
   load_collar "$2"
   [ "$GANG_SELF_COMPACT" = deferred ] \
     || die "collar '$2' no longer declares deferred self-compaction"
@@ -1922,7 +1925,7 @@ spool_drain() { # $1 = window id; oldest first, each through the verified path
 }
 
 spool_drain_after_stop() { # $1 window id, $2 collar
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  local ready=0 boot="$GANG_BOOT_TIMEOUT"
   load_collar "$2"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$1" "$boot" || ready=$?
@@ -2140,7 +2143,7 @@ stage_forget() { # $1 = window id
 
 clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
   declare -F collar_input >/dev/null || return 1
-  local before after n=0 presses="${GANG_CLEAR_PRESSES:-40}"
+  local before after n=0 presses="$GANG_CLEAR_PRESSES"
   require_whole GANG_CLEAR_PRESSES "$presses" presses
   if [ -n "${2:-}" ] && grep -q '[^[:space:]]' <<<"$2" && input_clear "$1"; then
     return 1
@@ -2505,7 +2508,7 @@ effort_levels() { # print the levels the collar says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
+  local name="" prof="$GANG_COLLAR" dir="$PWD" model="" effort="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -2654,7 +2657,7 @@ cmd_hitch() {
   msg="$(startup_brief "$name" "$DOCTRINE")"
   printf '%s\n' "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  local ready=0 boot="$GANG_BOOT_TIMEOUT"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$id" "$boot" "$name" || ready=$?
   case "$ready" in
@@ -3467,18 +3470,18 @@ config_sanitize() { # stdin -> terminal-safe, single-line text
 
 config_effective() { # $1 settable key -> the value its consumers read
   case "$1" in
-    GANG_COLLAR) printf '%s' "${GANG_COLLAR:-claude-code}" ;;
+    GANG_COLLAR) printf '%s' "$GANG_COLLAR" ;;
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
-    GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
+    GANG_BOOT_TIMEOUT) printf '%s' "$GANG_BOOT_TIMEOUT" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
     GANG_ACTIVITY_LIMIT) printf '%s' "$GANG_ACTIVITY_LIMIT" ;;
     GANG_TURN_LIMIT) printf '%s' "$GANG_TURN_LIMIT" ;;
     GANG_OCCUPIED_LIMIT) printf '%s' "$GANG_OCCUPIED_LIMIT" ;;
-    GANG_CLEAR_PRESSES) printf '%s' "${GANG_CLEAR_PRESSES:-40}" ;;
+    GANG_CLEAR_PRESSES) printf '%s' "$GANG_CLEAR_PRESSES" ;;
     *) die "internal: no effective config value for $1" ;;
   esac
 }
