@@ -1964,6 +1964,29 @@ spool_count() { # $1 = window id -> how many entries are waiting
   printf '%s' "$n"
 }
 
+spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has waited
+  local e stamp now
+  spool_existing "$1" || return 1
+  for e in "$SPOOL_DIR"/[0-9]*; do
+    [ -f "$e" ] || continue
+    stamp="${e##*/}"
+    stamp="${stamp%%-*}"
+    # The stamp is a fixed-width nanosecond count, so its first ten digits are
+    # epoch seconds and arithmetic never has to touch a 20-digit integer.
+    stamp="${stamp:0:10}"
+    # Exactly ten digits or nothing: a real nanosecond stamp always truncates to
+    # ten, and a shorter run of digits would otherwise read as a 1970-epoch age.
+    [ "${#stamp}" -eq 10 ] || return 1
+    case "$stamp" in ''|*[!0-9]*) return 1 ;; esac
+    now="$(date +%s)"
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$now" -ge "$stamp" ] || return 1
+    printf '%s' "$(( now - stamp ))"
+    return 0
+  done
+  return 1
+}
+
 spool_dir_of() { # $1 = window id -> its spool directory on stdout, nothing if it has none
   # PRINTED, not left in SPOOL_DIR. Every caller that wants this from a command
   # substitution is a subshell, and a global set there dies with it — which is
@@ -3390,7 +3413,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc spooled held held_dir spool_failed stall_failed mismatch skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled age held held_dir spool_failed stall_failed mismatch skew="" current
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -3424,8 +3447,13 @@ cmd_status() {
     printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$name" "$staged_box_rc")")"
   fi
   spooled="$(spool_count "$AGENT_ID")"
-  [ "$spooled" -eq 0 ] \
-    || printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+  if [ "$spooled" -ne 0 ]; then
+    if age="$(spool_oldest_age "$AGENT_ID")"; then
+      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary; the oldest has waited $(human_seconds "$age")")"
+    else
+      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+    fi
+  fi
   held="$(spool_held "$AGENT_ID")"
   if [ "$held" -ne 0 ]; then
     held_dir="$(spool_dir_of "$AGENT_ID")"
@@ -3517,7 +3545,7 @@ EOF
 }
 
 roster_row() { # $1 window, $2 name, $3 current binary id
-  local prof state detail="" spooled held skew="" mismatch
+  local prof state detail="" spooled age held skew="" mismatch
   prof="$(collar_read "$1" "$2")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -3529,7 +3557,10 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
   spooled="$(spool_count "$1")"
-  [ "$spooled" -eq 0 ] || detail="$detail spooled=$spooled"
+  if [ "$spooled" -ne 0 ]; then
+    detail="$detail spooled=$spooled"
+    age="$(spool_oldest_age "$1")" && detail="$detail oldest=$(human_seconds "$age")"
+  fi
   held="$(spool_held "$1")"
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \

@@ -345,7 +345,8 @@ that box now, in the same vocabulary a refusal uses. The record says what
 Gangline did; the `box:` line says what is there at reading time.
 
 It also reports staged input and the current box reading, pending or failed
-self-compaction, the number of messages spooled for that target, held-message
+self-compaction, the number of messages spooled for that target and how long
+the oldest has waited, held-message
 details and their directory, a spool drain that could not be verified, a stall
 note that could not be accepted, native-session identity mismatch, and binary
 skew when the window has no hitch/adopt stamp or its executable-byte witness
@@ -406,7 +407,8 @@ column: ordinary adopted windows and lights-off claude-code windows have no
 readable source, and one absent value must not make the team inventory fail.
 Use `gang context <name>` when a reading is wanted. Each row compares the
 window's binary stamp with the invoked `gang` binary and visibly marks skew; the
-comparison runs only for this snapshot.
+comparison runs only for this snapshot. A non-empty queue reports both its depth
+and the age of its oldest waiting entry.
 
 ### `gang capture <name> [lines]`
 

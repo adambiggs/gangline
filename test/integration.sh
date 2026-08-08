@@ -3581,6 +3581,39 @@ contains "mail exits cleanly on an empty queue" \
   "$empty_mail_out" "no mail waiting for empty-mailbox"
 "$GANG" drop empty-mailbox >/dev/null
 
+# QUEUE AGE COMES FROM THE OLDEST LIVE ENTRY'S FIXED-WIDTH STAMP. The chosen
+# time is immediate input, not a wall-clock wait; prefix matching tolerates the
+# one second in which the command itself runs.
+"$GANG" hitch agebox -c spoolable -d /tmp >/dev/null
+agebox_id="$(window_id agebox)"
+agebox_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$agebox_id" @gl_spool)"
+mkdir -p "$agebox_spool"
+age_now="$(date +%s)"
+one_hour_stamp="$(printf '%010d%010d' "$(( age_now - 3600 ))" 0)"
+printf '%s\n%s\n%s\n' tester MARK_AGE_ONE_HOUR \
+  '[gang:tester#aaaabbbb] MARK_AGE_ONE_HOUR [/gang:tester#aaaabbbb]' \
+  > "$agebox_spool/$one_hour_stamp-aaaabbbb"
+contains "roster reports how long the oldest message has waited" \
+  "$("$GANG" roster)" "oldest=1h"
+contains "status reports the same oldest-message age" \
+  "$("$GANG" status agebox)" "the oldest has waited 1h"
+two_hour_stamp="$(printf '%010d%010d' "$(( age_now - 7200 ))" 0)"
+printf '%s\n%s\n%s\n' other MARK_AGE_TWO_HOURS \
+  '[gang:other#ccccdddd] MARK_AGE_TWO_HOURS [/gang:other#ccccdddd]' \
+  > "$agebox_spool/$two_hour_stamp-ccccdddd"
+contains "queue age follows the older of two waiting entries" \
+  "$("$GANG" roster)" "oldest=2h"
+printf '%s\n%s\n%s\n' tester MARK_BAD_STAMP \
+  '[gang:tester#eeeeffff] MARK_BAD_STAMP [/gang:tester#eeeeffff]' \
+  > "$agebox_spool/12345-abc"
+agebox_row="$("$GANG" roster | grep '^agebox')"
+contains "a malformed oldest stamp still reports known queue depth" \
+  "$agebox_row" "spooled=3"
+excludes "a malformed oldest stamp does not fabricate an age" \
+  "$agebox_row" "oldest="
+"$GANG" drop agebox >/dev/null
+
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists
 # to avoid, so gang says so instead of narrowing the window.
