@@ -90,6 +90,7 @@ an operator request.
 | `docs/operations.md` | unattended operation and recovery |
 | `CONTRIBUTING.md` | repository gates, commits, releases, and measurement |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |
+| `docs/benchmarks.md` | external benchmark selection guidance and validity gates |
 | `docs/*-plan.md`, `docs/*-spec.md` | dated implementation records; bodies stay historical and status headers stay current |
 
 `AGENTS.md` is canonical for every harness. `CLAUDE.md` imports it.
