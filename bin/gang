@@ -2062,45 +2062,61 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
   tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
 }
 
-spool_drain() { # $1 = window id; oldest first, each through the verified path
-  local e claim rc err failed
+spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
+  local e claim rc err failed bundle="" frags="" claims="" n=0 nl=$'\n'
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
+  # CLAIMED FIRST, ALL OF THEM. The claim rename is what makes ownership
+  # atomic, and it must span the whole bundle: an entry left live while its
+  # neighbours are being delivered is one a second drain can send again.
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
-    # CLAIMED BEFORE IT IS DELIVERED, and the rename is what makes the claim
-    # atomic. Ownership has to span delivery AND retirement, not just the
-    # delivery: the pane lock is released inside inject, so an entry still
-    # sitting in the live glob afterwards is one a second drain could read and
-    # deliver again, and a death anywhere between the Enter and the removal
-    # would leave it live for the next turn boundary to re-send. Claimed, it is
-    # out of every later drain's glob whatever happens next, because a body
-    # that may already have landed must never be sent a second time.
     claim="$SPOOL_DIR/sending-${e##*/}"
     mv -- "$e" "$claim" 2>/dev/null || continue   # another drain took it first
     spool_read "$claim"
-    rc=0
-    err="$(inject "$1" "$SPOOL_BODY" 2>&1)" || rc=$?
-    case "$rc" in
-      0) rm -f -- "$claim" \
-           || die "delivered the spooled '$SPOOL_FRAG' and could not remove $claim — it stays claimed rather than live, so nothing will deliver it twice, but the file has to go by hand" ;;
-      3) # Refused, so nothing was typed: the body is still the sender's and the
-         # entry goes back in line under its own stamp. The next turn boundary
-         # is the next attempt, and nothing here waits for it.
-         mv -- "$claim" "$e" 2>/dev/null \
-           || printf 'the refused %s could not be returned to the spool and is held at %s\n' \
-                "$SPOOL_FRAG" "$claim" >&2
-         printf 'spool drain stopped at %s: %s\n' "$SPOOL_FRAG" "${err##*$'\n'}" >&2
-         return 3 ;;
-      *) # Unverified: the body may or may not have landed, so the entry is
-         # held where a person can read it rather than sent again.
-         failed="$SPOOL_DIR/failed-${e##*/}"
-         mv -- "$claim" "$failed" || failed="$claim"
-         printf "the spooled '%s' was not verified and is held at %s: %s\n" \
-           "$SPOOL_FRAG" "$failed" "${err##*$'\n'}" >&2
-         return 1 ;;
-    esac
+    bundle="${bundle:+$bundle$nl$nl}$SPOOL_BODY"
+    frags="${frags:+$frags, }$SPOOL_FRAG"
+    claims="${claims:+$claims$nl}$claim"
+    n=$((n + 1))
   done
+  [ "$n" -gt 0 ] || return 0
+  rc=0
+  err="$(inject "$1" "$bundle" 2>&1)" || rc=$?
+  case "$rc" in
+    0) while IFS= read -r claim; do
+         [ -n "$claim" ] || continue
+         rm -f -- "$claim" \
+           || die "delivered $n spooled message(s) and could not remove $claim — it stays claimed rather than live, so nothing will deliver it twice, but the file has to go by hand"
+       done <<EOF
+$claims
+EOF
+       ;;
+    3) # Refused, so nothing was typed: every body is still its sender's and
+       # every entry goes back in line under its own stamp, in its own order.
+       while IFS= read -r claim; do
+         [ -n "$claim" ] || continue
+         e="$SPOOL_DIR/${claim##*/sending-}"
+         mv -- "$claim" "$e" 2>/dev/null \
+           || printf 'a refused spooled message could not be returned to the spool and is held at %s\n' "$claim" >&2
+       done <<EOF
+$claims
+EOF
+       printf 'spool drain stopped with %s message(s) still waiting: %s\n' \
+         "$n" "${err##*$'\n'}" >&2
+       return 3 ;;
+    *) # Unverified: the bundle may or may not have landed, so every entry in it
+       # is held where a person can read it rather than sent again.
+       while IFS= read -r claim; do
+         [ -n "$claim" ] || continue
+         failed="$SPOOL_DIR/failed-${claim##*/sending-}"
+         mv -- "$claim" "$failed" || failed="$claim"
+       done <<EOF
+$claims
+EOF
+       printf "a bundle of %s spooled message(s) was not verified and is held in %s (%s): %s\n" \
+         "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
+       return 1 ;;
+  esac
 }
 
 spool_drain_after_stop() { # $1 window id, $2 collar

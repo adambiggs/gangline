@@ -3359,7 +3359,59 @@ claim_observed="$(cat "$RUN_ROOT/claim-observed" 2>/dev/null)" || claim_observed
 contains "the delivery lock a background drain holds names a live process" \
   "$claim_observed" "holder-alive=yes"
 contains "and the entry it is delivering is already claimed out of the live spool" \
-  "$claim_observed" "claimed=1"
+  "$claim_observed" "claimed=2"
+
+# A larger queue is claimed as one delivery before the target's composer is read.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_BUNDLE_ONE' |
+  "$GANG" send --to parker --from tester --stdin >/dev/null
+printf 'MARK_BUNDLE_TWO' |
+  "$GANG" send --to parker --from other --stdin >/dev/null
+printf 'MARK_BUNDLE_THREE' |
+  "$GANG" send --to parker --from third --stdin >/dev/null
+tmux send-keys -t "$parker_id" C-u
+: > "$RUN_ROOT/claim-watch"
+tmux wait-for "gang-spool-drain-$parker_id" &
+bundle_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$bundle_drain_waiter"
+bundle_claim_observed="$(cat "$RUN_ROOT/claim-observed")"
+contains "one drain claims a three-message queue before reading the composer" \
+  "$bundle_claim_observed" "claimed=3"
+bundle_pane="$(pane parker)"
+bundle_order="$(printf '%s\n' "$bundle_pane" |
+  grep -oE 'MARK_BUNDLE_ONE|MARK_BUNDLE_TWO|MARK_BUNDLE_THREE' |
+  awk '!seen[$0]++' | tr '\n' ' ')"
+equal "the three-message bundle stays in stamp order" \
+  "MARK_BUNDLE_ONE MARK_BUNDLE_TWO MARK_BUNDLE_THREE " "$bundle_order"
+
+# A refused bundle returns every claim to its own live stamp.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_REFUSED_ONE' |
+  "$GANG" send --to parker --from tester --stdin >/dev/null
+printf 'MARK_REFUSED_TWO' |
+  "$GANG" send --to parker --from other --stdin >/dev/null
+printf 'MARK_REFUSED_THREE' |
+  "$GANG" send --to parker --from third --stdin >/dev/null
+tmux wait-for "gang-spool-drain-$parker_id" &
+refused_bundle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$refused_bundle_waiter"
+contains "a refused bundle returns every message to the waiting queue" \
+  "$("$GANG" status parker)" "spooled: 3"
+refused_sending=0
+for refused_entry in "$parker_spool_dir"/sending-*; do
+  [ -f "$refused_entry" ] && refused_sending=$((refused_sending + 1))
+done
+equal "a refused bundle leaves no entry claimed" "0" "$refused_sending"
+tmux send-keys -t "$parker_id" C-u
+tmux wait-for "gang-spool-drain-$parker_id" &
+refused_cleanup_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$refused_cleanup_waiter"
 
 # An entry a drain claimed and never retired — what a killed worker leaves — is
 # never picked up again, and never hides: the ones behind it still drain.
@@ -3567,7 +3619,9 @@ SH
 wedged_id="$(window_id wedged)"
 wedged_pane_id="$(tmux list-panes -t "$wedged_id" -F '#{pane_id}')"
 printf 'MARK_WEDGED' | "$GANG" send --to wedged --from tester --stdin >/dev/null
-contains "the blocked message is waiting" "$("$GANG" status wedged)" "spooled: 1"
+printf 'MARK_HELD_TWO' | "$GANG" send --to wedged --from other --stdin >/dev/null
+printf 'MARK_HELD_THREE' | "$GANG" send --to wedged --from third --stdin >/dev/null
+contains "the blocked messages are waiting" "$("$GANG" status wedged)" "spooled: 3"
 rm -f "$RUN_ROOT/wedge-block"
 : > "$RUN_ROOT/wedge-stuck"
 if hard_supersede_out="$(printf 'MARK_HARD_REPLACEMENT' |
@@ -3580,7 +3634,7 @@ fi
 contains "the replacement failed after typing" \
   "$hard_supersede_out" "delivery NOT verified"
 contains "a hard failure supersedes nothing" \
-  "$("$GANG" status wedged)" "spooled: 1"
+  "$("$GANG" status wedged)" "spooled: 3"
 tmux send-keys -t "$wedged_id" C-u
 tmux wait-for "gang-spool-drain-$wedged_id" &
 wedged_drain_waiter=$!
@@ -3590,7 +3644,7 @@ wait "$wedged_drain_waiter"
 wedged_status="$("$GANG" status wedged)"
 contains "an unverified drain is reported, not swallowed" \
   "$wedged_status" "spool drain NOT verified"
-contains "roster carries that verdict too" "$("$GANG" roster)" "spool-held=1"
+contains "roster carries that verdict too" "$("$GANG" roster)" "spool-held=3"
 excludes "and the entry is not left where it would be sent a second time" \
   "$wedged_status" "spooled:"
 wedged_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$wedged_id" @gl_spool)"
@@ -3598,7 +3652,7 @@ wedged_quarantined=0
 for wedged_entry in "$wedged_spool"/failed-*; do
   [ -f "$wedged_entry" ] && wedged_quarantined=$((wedged_quarantined + 1))
 done
-equal "the unverified body is kept where a person can read it" "1" \
+equal "every body in an unverified bundle is kept where a person can read it" "3" \
   "$wedged_quarantined"
 # READ IT. A file of the right name is not a kept message: the promise gang
 # makes when it holds a body instead of re-sending it is that the body is still
@@ -3606,6 +3660,8 @@ equal "the unverified body is kept where a person can read it" "1" \
 wedged_body="$(cat "$wedged_spool"/failed-* 2>/dev/null)" || wedged_body=""
 contains "the body itself, not just a file with the right name" \
   "$wedged_body" "MARK_WEDGED"
+contains "the second body is named as held" "$wedged_status" "MARK_HELD_TWO"
+contains "the third body is named as held" "$wedged_status" "MARK_HELD_THREE"
 contains "and the sender it was parked under" "$wedged_body" "tester"
 # READ OUT OF THE REPORT ITSELF, not recomputed beside it. Holding a message
 # instead of re-sending it is only honest if the report says where it went, and

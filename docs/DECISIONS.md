@@ -401,6 +401,14 @@ waiting or held entry into a human-readable archive before deleting its window's
 spool, and refuse to end anything if that archive cannot be written. The archive
 is created only when mail exists and its printed path is the handoff to a person.
 
+## A queue drains as one message
+
+When a turn boundary drains a spool, every waiting entry is delivered as one
+chronological bundle under one pane lock, envelopes intact. Delivering them
+one at a time submits the first, which starts a turn, which refuses the second —
+so a target that is never idle for long accumulates exactly the messages that
+would have corrected it. One paste and one Enter cannot race the turn they create.
+
 ## A guard witnesses the artifact, and witnesses it in order
 
 Assert the thing a defect actually produces — the text left on the pane, the
