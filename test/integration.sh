@@ -26,6 +26,10 @@ PATH="$RUN_ROOT/bin:$PATH"
 export PATH
 
 cleanup() {
+  if [ -n "${SPOOL_TMUX_SOCKET:-}" ]; then
+    tmux -S "$SPOOL_TMUX_SOCKET" kill-server 2>/dev/null || true
+    rm -f -- "$SPOOL_TMUX_SOCKET"
+  fi
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
 }
@@ -38,7 +42,6 @@ export GANG_SESSION="gangtest-$$"
 export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
-export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
 
 checks=0
 fails=0
@@ -117,6 +120,31 @@ window_names() { # optional $1 session -> bare names, one per line
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
 pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 
+SPOOL_FIXTURE_ID="" SPOOL_FIXTURE_DIR=""
+spool_fixture_window() { # $1 session, $2 name, $3 token, $4 lock root
+  SPOOL_FIXTURE_ID="$(tmux new-window -d -P -F '#{window_id}' -t "=$1" -n "$2" \
+    "sh -c 'PS1=\"❯ \" exec bash --norc' fixture")"
+  tmux set-option -w -t "$SPOOL_FIXTURE_ID" automatic-rename off
+  tmux set-option -w -t "$SPOOL_FIXTURE_ID" allow-rename off
+  tmux set-option -w -t "$SPOOL_FIXTURE_ID" @gl_agent "$2"
+  tmux set-option -w -t "$SPOOL_FIXTURE_ID" @gl_collar spoolable
+  tmux set-option -w -t "$SPOOL_FIXTURE_ID" @gl_spool "$3"
+  SPOOL_FIXTURE_DIR="$4/spool/$3"
+  mkdir -p "$SPOOL_FIXTURE_DIR"
+}
+
+spool_seed() { # $1 dir, $2 filename, $3 sender, $4 fragment, $5 stored envelope
+  printf '%s\n%s\n%s\n' "$3" "$4" "$5" > "$1/$2"
+}
+
+spool_tree_digest() { # byte/content witness for a seeded spool directory
+  local dir="$1"
+  {
+    find "$dir" -mindepth 1 -printf '%P %y\n' | LC_ALL=C sort
+    find "$dir" -type f ! -type l -exec sha256sum {} + | LC_ALL=C sort
+  } | sha256sum | awk '{print $1}'
+}
+
 # Help coverage is derived from the dispatcher, so missing help cannot hide by
 # also being absent from a hand-maintained help inventory. The exclusions are
 # deliberate non-operator routes: the native callback, the hitch alias, the
@@ -132,7 +160,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush mail interrupt compact context usage status capture composer whoami drop down"
-meaningful_bare_commands="up roster attach collars roles config curfew notify"
+meaningful_bare_commands="up roster spool attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -3342,9 +3370,10 @@ fi
 contains "naming the declaration a drain would need" "$nohook_out" "GANG_STOP_HOOK"
 contains "and says the message was not parked" "$nohook_out" "NOT parked"
 excludes "the refusing target received no body" "$(pane nodrain)" "MARK_NOHOOK"
-[ ! -d "$nodrain_spool" ] \
+nodrain_entries="$(find "$nodrain_spool" -mindepth 1 -maxdepth 1 -print -quit)"
+[ -d "$nodrain_spool" ] && [ -z "$nodrain_entries" ] \
   && pass "nothing undrainable was put on disk" \
-  || fail "nothing undrainable was put on disk" "$nodrain_spool exists"
+  || fail "nothing undrainable was put on disk" "$nodrain_spool is absent or non-empty"
 "$GANG" drop nodrain >/dev/null
 if super_out="$(printf 'MARK_LONE_SUPERSEDE' |
   "$GANG" send --to alpha --from tester --supersede --live-only --stdin 2>&1)"; then
@@ -3388,6 +3417,8 @@ else
     "@gl_spool is empty"
 fi
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+# AC8: send-parks-outside-the-lock. Against that mutant spool_write's
+# production lock assertion turns this success world red with no entry written.
 spool_out="$(printf 'MARK_SPOOLED' |
   "$GANG" send --to parker --from tester --stdin)"
 contains "a refused delivery is parked rather than lost" "$spool_out" "spooled for parker"
@@ -3425,6 +3456,8 @@ contains "a second message from one sender does not replace the first" \
   "$("$GANG" status parker)" "spooled: 3"
 printf 'MARK_LATEST' |
   "$GANG" send --to parker --from tester --supersede --stdin >/dev/null
+# AC9 park side: supersede-unlocked-on-the-park-path. The internal assertion
+# must see the same lock across predecessor removal and replacement commit.
 contains "until the sender says the newer one supersedes them" \
   "$("$GANG" status parker)" "spooled: 2"
 
@@ -3465,8 +3498,19 @@ equal "and the spool drains oldest first" "MARK_OTHER_SENDER MARK_LATEST " \
   "$drain_order"
 excludes "a drained spool reports nothing waiting" \
   "$("$GANG" status parker)" "spooled:"
+# AC30 success side; mutant verified-drain-keeps-claim. The disk assertion is
+# the instrument: retained sending-* is not waiting and cannot be caught by the
+# existing spooled-count assertion above.
+equal "AC30 a verified drain leaves no sending claim on disk" "0" \
+  "$(find "$parker_spool_dir" -maxdepth 1 -type f -name 'sending-*' | wc -l | tr -d ' ')"
+parker_verified_status="$("$GANG" status parker)"
+excludes "AC30 verified status reports no held line" "$parker_verified_status" \
+  "held (delivery NOT verified"
+excludes "AC30 verified status carries no delivered fragment" "$parker_verified_status" \
+  "MARK_LATEST"
 
-# Supersession follows the replacement's settled outcome. A verified live B
+# AC9 live side: supersede-unlocked-on-the-live-path. Supersession follows the
+# replacement's settled outcome. A verified live B
 # retires waiting A; a later Stop has no predecessor left to deliver.
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 printf 'MARK_LIVE_PREDECESSOR' |
@@ -3574,12 +3618,12 @@ contains "and the messages behind it are not lost with it" \
   || fail "it stays on disk where a person can read it" "$parker_inflight is gone"
 parker_held_status="$("$GANG" status parker)"
 contains "and status names it rather than losing it quietly" \
-  "$parker_held_status" "held (delivery NOT verified — it may still have arrived): MARK_INTERRUPTED"
+  "$parker_held_status" "held (delivery NOT verified — it may still have arrived): from tester: 'MARK_INTERRUPTED'"
 contains "naming the directory it is readable in, not an empty one" \
   "$parker_held_status" "read them under $parker_spool_dir"
 rm -f "$parker_inflight"
 
-# Everything gang parks has a deletion path, and this is it.
+# A waiting-only spool is reported, emptied, and releases its reservation here.
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 printf 'MARK_DIES_WITH_WINDOW' |
   "$GANG" send --to parker --from tester --stdin >/dev/null
@@ -3587,71 +3631,10 @@ parker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$parker_id" @gl_
 [ -d "$parker_spool" ] \
   && pass "a spooled message is on disk beside the delivery locks" \
   || fail "a spooled message is on disk beside the delivery locks" "$parker_spool is absent"
-parker_failed="$parker_spool/failed-00000000000000000002-deadbeef"
-printf '%s\n%s\n%s\n' other MARK_ARCHIVED_HELD \
-  '[gang:other#deadbeef] MARK_ARCHIVED_HELD [/gang:other#deadbeef]' \
-  > "$parker_failed"
-parker_archive_names="$(cd "$parker_spool" && ls)"
-parker_live_entry=""
-for parker_entry in "$parker_spool"/[0-9]*; do
-  [ -f "$parker_entry" ] || continue
-  parker_live_entry="$parker_entry"
-  break
-done
-[ -n "$parker_live_entry" ] \
-  && cp "$parker_live_entry" "$RUN_ROOT/pre-archive-body"
 "$GANG" drop parker >/dev/null
 [ ! -d "$parker_spool" ] \
-  && pass "dropping an agent deletes its spool" \
-  || fail "dropping an agent deletes its spool" "$parker_spool survived"
-parker_archive_count=0
-parker_archive_dir=""
-for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
-  [ -d "$archive_dir" ] || continue
-  parker_archive_count=$((parker_archive_count + 1))
-  parker_archive_dir="$archive_dir"
-done
-equal "dropping mail creates exactly one teardown archive" "1" \
-  "$parker_archive_count"
-[ -d "$parker_archive_dir/parker" ] \
-  && pass "the teardown archive groups entries under the agent name" \
-  || fail "the teardown archive groups entries under the agent name" \
-    "$parker_archive_dir/parker is absent"
-equal "the teardown archive preserves every entry filename" \
-  "$parker_archive_names" "$(cd "$parker_archive_dir/parker" && ls)"
-if cmp "$RUN_ROOT/pre-archive-body" \
-  "$parker_archive_dir/parker/${parker_live_entry##*/}"; then
-  pass "the archived entry preserves the composed body byte for byte"
-else
-  fail "the archived entry preserves the composed body byte for byte" \
-    "archived bytes differ"
-fi
-[ -f "$parker_archive_dir/parker/${parker_failed##*/}" ] \
-  && pass "a held failed entry is archived with waiting mail" \
-  || fail "a held failed entry is archived with waiting mail" \
-    "${parker_failed##*/} is absent"
-
-"$GANG" hitch archive-second -c spoolable -d /tmp >/dev/null
-archive_second_id="$(window_id archive-second)"
-tmux send-keys -l -t "$archive_second_id" 'HUMAN_DRAFT'
-printf 'MARK_SECOND_ARCHIVE' |
-  "$GANG" send --to archive-second --from tester --stdin >/dev/null
-"$GANG" drop archive-second >/dev/null
-archive_count=0
-for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
-  [ -d "$archive_dir" ] && archive_count=$((archive_count + 1))
-done
-equal "a second teardown claims a distinct archive directory" "2" \
-  "$archive_count"
-
-"$GANG" hitch archive-empty -c spoolable -d /tmp >/dev/null
-"$GANG" drop archive-empty >/dev/null
-archive_count_after_empty=0
-for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
-  [ -d "$archive_dir" ] && archive_count_after_empty=$((archive_count_after_empty + 1))
-done
-equal "dropping an empty queue creates no archive directory" \
-  "$archive_count" "$archive_count_after_empty"
+  && pass "dropping an agent removes its waiting-only spool reservation" \
+  || fail "dropping an agent removes its waiting-only spool reservation" "$parker_spool survived"
 
 # MAIL READS THE QUEUE AND NOTHING ELSE. It does not load the target's collar,
 # claim entries, take the pane lock, or attempt delivery.
@@ -3898,6 +3881,7 @@ tmux send-keys -t "$preempt_id" C-u
 # at the moment a message needs parking is exactly the race the identity exists
 # to avoid, so gang says so instead of narrowing the window.
 "$GANG" hitch identityless -c spoolable -d /tmp >/dev/null
+identityless_token="$(tmux show-options -wqv -t "$(window_id identityless)" @gl_spool)"
 tmux set-option -uw -t "$(window_id identityless)" @gl_spool
 tmux send-keys -l -t "$(window_id identityless)" 'HUMAN_DRAFT'
 if identityless_out="$(printf 'MARK_NO_IDENTITY' |
@@ -3916,6 +3900,7 @@ contains "and says what would have to happen instead" \
 equal "and the refusal mints nothing on its way out" "" \
   "$(tmux show-options -wqv -t "$(window_id identityless)" @gl_spool)"
 "$GANG" drop identityless >/dev/null
+"$GANG" spool retire "$identityless_token" --assume-unowned >/dev/null
 
 # ADOPTION MINTS IT TOO, and nothing tested that. An adopted window is an agent
 # by every other measure, so a spool identity it never received would make
@@ -4029,6 +4014,9 @@ wedged_quarantined=0
 for wedged_entry in "$wedged_spool"/failed-*; do
   [ -f "$wedged_entry" ] && wedged_quarantined=$((wedged_quarantined + 1))
 done
+# AC30 failure side; mutant unverified-drain-deletes-claim. These assertions
+# reach the failed-* entries the drain actually claimed, unlike the unrelated
+# hand-seeded sending-* fixture used earlier in this section.
 equal "every body in an unverified bundle is kept where a person can read it" "3" \
   "$wedged_quarantined"
 # READ IT. A file of the right name is not a kept message: the promise gang
@@ -4060,6 +4048,7 @@ wedged_after_count="$(pane wedged | grep -o 'MARK_WEDGED' | wc -l | tr -d ' ')"
 equal "a later native boundary never re-sends an unverified held entry" \
   "$wedged_before_count" "$wedged_after_count"
 "$GANG" drop wedged >/dev/null
+"$GANG" spool retire "${wedged_spool##*/}" --assume-unowned >/dev/null
 
 # One spool is deliberately left alive for the teardown below to account for.
 "$GANG" hitch lingering -c spoolable -d /tmp >/dev/null
@@ -4068,6 +4057,1008 @@ tmux send-keys -l -t "$lingering_id" 'HUMAN_DRAFT'
 printf 'MARK_LINGERS' |
   "$GANG" send --to lingering --from tester --stdin >/dev/null
 lingering_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lingering_id" @gl_spool)"
+
+# #111 ACCEPTANCE: destructive accounting, pane locking, retirement, and pure
+# reads. These worlds use a separate lock root and disposable exact sessions
+# on a second private server, keeping the required cross-session scans scoped
+# to fixtures that discriminate them instead of unrelated earlier tests.
+SPOOL_TMUX_TMPDIR="$RUN_ROOT/spool-tmux"
+SPOOL_TMUX_SOCKET="$SPOOL_TMUX_TMPDIR/tmux-$(id -u)/default"
+export TMUX_TMPDIR="$SPOOL_TMUX_TMPDIR"
+SPOOL_AC_LOCK="$RUN_ROOT/spool-ac-locks"
+mkdir -p "$SPOOL_AC_LOCK/spool"
+
+# AC1–AC3: drop-silent-waiting-loss, drop-names-without-body,
+# drop-destroys-held-truth, held-report-anonymises-sender, and
+# drop-preserves-undeliverable-waiting.
+SPOOL_DROP_SESSION="spool-drop-$$"
+tmux new-session -d -s "$SPOOL_DROP_SESSION" -n seed
+spool_fixture_window "$SPOOL_DROP_SESSION" drop-victim a1a1a1a1 "$SPOOL_AC_LOCK"
+drop_victim_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$drop_victim_dir" 00000000000000000001-11111111 alice DROP_ONE \
+  '[gang:alice#11111111] DROP_ONE full body [/gang:alice#11111111]'
+spool_seed "$drop_victim_dir" 00000000000000000002-22222222 carol DROP_TWO \
+  '[gang:carol#22222222] DROP_TWO full body [/gang:carol#22222222]'
+spool_seed "$drop_victim_dir" failed-00000000000000000003-33333333 bob HELD_DROP \
+  '[gang:bob#33333333] HELD_DROP full body [/gang:bob#33333333]'
+drop_accounted_out="$(GANG_SESSION="$SPOOL_DROP_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" drop drop-victim)"
+contains "AC1 drop names the first never-delivered sender and fragment" \
+  "$drop_accounted_out" "never delivered (destroyed with the window): from alice: 'DROP_ONE'"
+contains "AC1 drop prints the first full stored body" \
+  "$drop_accounted_out" "DROP_ONE full body"
+contains "AC1 drop prints the second full stored body" \
+  "$drop_accounted_out" "DROP_TWO full body"
+contains "AC2 drop's held line names its sender and fragment" \
+  "$drop_accounted_out" "held (delivery NOT verified — it may still have arrived): from bob: 'HELD_DROP'"
+contains "AC2 drop names the preserved directory and deliberate recovery" \
+  "$drop_accounted_out" "preserved under $drop_victim_dir: 1 held; retire with gang spool retire a1a1a1a1"
+equal "AC3 drop removes every waiting entry it reported" "0" \
+  "$(find "$drop_victim_dir" -maxdepth 1 -type f -name '[0-9]*' | wc -l | tr -d ' ')"
+equal "AC2 drop preserves exactly the held truth entry" "1" \
+  "$(find "$drop_victim_dir" -maxdepth 1 -type f -name 'failed-*' | wc -l | tr -d ' ')"
+GANG_SESSION="$SPOOL_DROP_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire a1a1a1a1 --assume-unowned >/dev/null
+tmux kill-session -t "=$SPOOL_DROP_SESSION"
+
+# AC4: down-unattributed-loss and down-skips-waiting.
+SPOOL_DOWN_SESSION="spool-down-$$"
+tmux new-session -d -s "$SPOOL_DOWN_SESSION" -n seed
+spool_fixture_window "$SPOOL_DOWN_SESSION" down-a a2a2a2a2 "$SPOOL_AC_LOCK"
+down_a_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$down_a_dir" 00000000000000000001-11111111 alice DOWN_A \
+  '[gang:alice#11111111] DOWN_A full body [/gang:alice#11111111]'
+spool_fixture_window "$SPOOL_DOWN_SESSION" down-b b2b2b2b2 "$SPOOL_AC_LOCK"
+down_b_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$down_b_dir" 00000000000000000002-22222222 bob DOWN_B \
+  '[gang:bob#22222222] DOWN_B full body [/gang:bob#22222222]'
+spool_seed "$down_b_dir" sending-00000000000000000003-33333333 carol DOWN_HELD \
+  '[gang:carol#33333333] DOWN_HELD full body [/gang:carol#33333333]'
+spool_fixture_window "$SPOOL_DOWN_SESSION" down-c c2c2c2c2 "$SPOOL_AC_LOCK"
+down_c_dir="$SPOOL_FIXTURE_DIR"
+down_accounted_out="$(GANG_SESSION="$SPOOL_DOWN_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_DOWN_SESSION")"
+contains "AC4 down prefixes a waiting report with its agent" \
+  "$down_accounted_out" "down-a: never delivered (destroyed with the window): from alice: 'DOWN_A'"
+contains "AC4 down prefixes a full body line with its agent" \
+  "$down_accounted_out" "down-b: [gang:bob#22222222] DOWN_B full body"
+contains "AC4 down prefixes a held report with its agent" \
+  "$down_accounted_out" "down-b: held (delivery NOT verified — it may still have arrived): from carol: 'DOWN_HELD'"
+if tmux has-session -t "=$SPOOL_DOWN_SESSION" 2>/dev/null; then
+  fail "AC4 down ends the exact disposable team" "session survived"
+else
+  pass "AC4 down ends the exact disposable team"
+fi
+[ ! -e "$down_a_dir" ] && [ ! -e "$down_c_dir" ] \
+  && pass "AC4 down removes reservations it emptied" \
+  || fail "AC4 down removes reservations it emptied" "an empty reservation survived"
+equal "AC4 down preserves the held entry and destroys its waiting peer" "1 0" \
+  "$(find "$down_b_dir" -maxdepth 1 -type f -name 'sending-*' | wc -l | tr -d ' ') $(find "$down_b_dir" -maxdepth 1 -type f -name '[0-9]*' | wc -l | tr -d ' ')"
+GANG_SESSION="$SPOOL_DOWN_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire b2b2b2b2 --assume-unowned >/dev/null
+
+# AC5: drop-ignores-delivery-lock, down-kills-mid-delivery, and
+# down-prunes-before-it-locks. The holder blocks on a fifo; its liveness is the
+# immediate observable, and the dead-pid half reuses the same symlink.
+SPOOL_LOCK_SESSION="spool-lock-$$"
+tmux new-session -d -s "$SPOOL_LOCK_SESSION" -n seed
+spool_fixture_window "$SPOOL_LOCK_SESSION" lock-x a3a3a3a3 "$SPOOL_AC_LOCK"
+lock_x_id="$SPOOL_FIXTURE_ID" lock_x_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$lock_x_dir" 00000000000000000001-11111111 alice LOCK_X \
+  '[gang:alice#11111111] LOCK_X [/gang:alice#11111111]'
+spool_fixture_window "$SPOOL_LOCK_SESSION" lock-y b3b3b3b3 "$SPOOL_AC_LOCK"
+lock_y_id="$SPOOL_FIXTURE_ID" lock_y_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$lock_y_dir" 00000000000000000002-22222222 bob LOCK_Y \
+  '[gang:bob#22222222] LOCK_Y [/gang:bob#22222222]'
+mkfifo "$RUN_ROOT/spool-lock-holder.fifo"
+cat < "$RUN_ROOT/spool-lock-holder.fifo" >/dev/null &
+spool_lock_holder=$!
+kill -0 "$spool_lock_holder"
+lock_x_path="$SPOOL_AC_LOCK/$(printf '%s' "$lock_x_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$spool_lock_holder" "$lock_x_path"
+lock_x_before="$(spool_tree_digest "$lock_x_dir")"
+lock_y_before="$(spool_tree_digest "$lock_y_dir")"
+refuses "AC5 drop refuses a live delivery lock" "another Gangline process is delivering to lock-x" \
+  env GANG_SESSION="$SPOOL_LOCK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" drop lock-x
+equal "AC5 refused drop leaves its spool byte-identical" \
+  "$lock_x_before" "$(spool_tree_digest "$lock_x_dir")"
+refuses "AC5 down refuses when any delivery lock is live" "another Gangline process is delivering to lock-x" \
+  env GANG_SESSION="$SPOOL_LOCK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" down "$SPOOL_LOCK_SESSION"
+if tmux has-session -t "=$SPOOL_LOCK_SESSION" 2>/dev/null; then
+  pass "AC5 refused down leaves the session alive"
+else
+  fail "AC5 refused down leaves the session alive" "session was killed"
+fi
+equal "AC5 down prunes no other window before all locks are held" \
+  "$lock_y_before" "$(spool_tree_digest "$lock_y_dir")"
+printf 'release\n' > "$RUN_ROOT/spool-lock-holder.fifo"
+wait "$spool_lock_holder"
+GANG_SESSION="$SPOOL_LOCK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" drop lock-x >/dev/null
+lock_y_path="$SPOOL_AC_LOCK/$(printf '%s' "$lock_y_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$spool_lock_holder" "$lock_y_path"
+GANG_SESSION="$SPOOL_LOCK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_LOCK_SESSION" >/dev/null
+if tmux has-session -t "=$SPOOL_LOCK_SESSION" 2>/dev/null; then
+  fail "AC5 drop and down reclaim a lock whose holder is dead" "session survived"
+else
+  pass "AC5 drop and down reclaim a lock whose holder is dead"
+fi
+
+# AC6, AC7, AC13, AC15 and AC16: drain-claims-before-lock,
+# retire-races-drain, retire-eats-waiting, retire-reports-fragments-only,
+# retire-vacuous-success, retire-leaves-a-stale-drain-note, and
+# retire-clears-a-live-drain-note.
+SPOOL_RETIRE_SESSION="spool-retire-$$"
+tmux new-session -d -s "$SPOOL_RETIRE_SESSION" -n seed
+spool_fixture_window "$SPOOL_RETIRE_SESSION" retire-live a4a4a4a4 "$SPOOL_AC_LOCK"
+retire_live_id="$SPOOL_FIXTURE_ID" retire_live_dir="$SPOOL_FIXTURE_DIR"
+retire_live_pane="$(tmux list-panes -t "$retire_live_id" -F '#{pane_id}')"
+spool_seed "$retire_live_dir" 00000000000000000001-11111111 alice WAIT_A \
+  '[gang:alice#11111111] WAIT_A [/gang:alice#11111111]'
+spool_seed "$retire_live_dir" 00000000000000000002-22222222 bob WAIT_B \
+  '[gang:bob#22222222] WAIT_B [/gang:bob#22222222]'
+spool_seed "$retire_live_dir" failed-00000000000000000003-33333333 carol HELD_A \
+  '[gang:carol#33333333] HELD_A full body [/gang:carol#33333333]'
+tmux set-option -w -t "$retire_live_id" @gl_spool_failed 'seeded drain failure'
+mkfifo "$RUN_ROOT/spool-retire-holder.fifo"
+cat < "$RUN_ROOT/spool-retire-holder.fifo" >/dev/null &
+spool_retire_holder=$!
+retire_lock_path="$SPOOL_AC_LOCK/$(printf '%s' "$retire_live_id" | tr -c 'A-Za-z0-9' '_').lock"
+ln -s "$spool_retire_holder" "$retire_lock_path"
+retire_before="$(spool_tree_digest "$retire_live_dir")"
+tmux wait-for "gang-spool-drain-$retire_live_id" &
+retire_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' | \
+  GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  TMUX_PANE="$retire_live_pane" "$GANG" hook >/dev/null
+wait "$retire_drain_waiter"
+equal "AC6 a contended drain leaves every spool byte unchanged" \
+  "$retire_before" "$(spool_tree_digest "$retire_live_dir")"
+equal "AC6 a contended drain claims no waiting entry" "0" \
+  "$(find "$retire_live_dir" -maxdepth 1 -type f -name 'sending-[0-9]*' | wc -l | tr -d ' ')"
+equal "AC6 quiet contention does not overwrite the existing drain ledger" \
+  "seeded drain failure" "$(tmux show-options -wqv -t "$retire_live_id" @gl_spool_failed)"
+refuses "AC7 live retire refuses while the pane lock is held" \
+  "another Gangline process is delivering to retire-live" \
+  env GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire retire-live
+equal "AC7 refused retire removes no held entry" \
+  "$retire_before" "$(spool_tree_digest "$retire_live_dir")"
+printf 'release\n' > "$RUN_ROOT/spool-retire-holder.fifo"
+wait "$spool_retire_holder"
+spool_seed "$retire_live_dir" sending-00000000000000000004-44444444 dave HELD_B \
+  '[gang:dave#44444444] HELD_B full body [/gang:dave#44444444]'
+retire_live_out="$(GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire retire-live)"
+contains "AC13 live retire prints the first held body in full" \
+  "$retire_live_out" "HELD_A full body"
+contains "AC13 live retire prints the dead sending body in full" \
+  "$retire_live_out" "HELD_B full body"
+equal "AC13 live retire removes held and leaves waiting" "2 0" \
+  "$(find "$retire_live_dir" -maxdepth 1 -type f -name '[0-9]*' | wc -l | tr -d ' ') $(find "$retire_live_dir" -maxdepth 1 -type f \( -name 'failed-*' -o -name 'sending-*' \) | wc -l | tr -d ' ')"
+equal "AC16 clean retire reconciles the drain ledger" "" \
+  "$(tmux show-options -wqv -t "$retire_live_id" @gl_spool_failed)"
+refuses "AC15 live retire with zero held entries is not vacuous success" \
+  "nothing is held for retire-live" \
+  env GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire retire-live
+spool_seed "$retire_live_dir" failed-00000000000000000005-55555555 erin HELD_MODE \
+  '[gang:erin#55555555] HELD_MODE readable body [/gang:erin#55555555]'
+tmux set-option -w -t "$retire_live_id" @gl_spool_failed 'must remain'
+chmod 500 "$retire_live_dir"
+if mode_retire_out="$(GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire retire-live 2>&1)"; then
+  fail "AC16 an unreadable-removal world makes retire fail" "retire succeeded"
+else
+  pass "AC16 an unreadable-removal world makes retire fail"
+fi
+contains "AC16 the body is read and printed before removal fails" \
+  "$mode_retire_out" "HELD_MODE readable body"
+[ -f "$retire_live_dir/failed-00000000000000000005-55555555" ] \
+  && pass "AC16 a failed removal leaves the held body on disk" \
+  || fail "AC16 a failed removal leaves the held body on disk" "held body disappeared"
+equal "AC16 a failed removal leaves the live drain note set" "must remain" \
+  "$(tmux show-options -wqv -t "$retire_live_id" @gl_spool_failed)"
+chmod 700 "$retire_live_dir"
+GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire retire-live >/dev/null
+GANG_SESSION="$SPOOL_RETIRE_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_RETIRE_SESSION" >/dev/null
+
+# AC14: retire-deletes-into-a-dead-sink, retire-deletes-before-it-prints, and
+# down-deletes-before-it-reports. Each world reaches the deletion site in the
+# mutant; the correct build stops at its spool report, not an earlier preamble.
+SPOOL_SINK_SESSION="spool-sink-$$"
+tmux new-session -d -s "$SPOOL_SINK_SESSION" -n seed
+spool_fixture_window "$SPOOL_SINK_SESSION" sink-live a5a5a5a5 "$SPOOL_AC_LOCK"
+sink_live_id="$SPOOL_FIXTURE_ID" sink_live_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$sink_live_dir" failed-00000000000000000001-11111111 alice SINK_HELD \
+  '[gang:alice#11111111] SINK_HELD [/gang:alice#11111111]'
+if GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire sink-live >&- 2> "$RUN_ROOT/sink-live.err"; then
+  fail "AC14 live retire refuses a dead report sink" "retire succeeded"
+else
+  pass "AC14 live retire refuses a dead report sink"
+fi
+[ -f "$sink_live_dir/failed-00000000000000000001-11111111" ] \
+  && pass "AC14 live retire deletes nothing into a dead sink" \
+  || fail "AC14 live retire deletes nothing into a dead sink" "entry disappeared"
+tmux kill-window -t "$sink_live_id"
+if GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire a5a5a5a5 --assume-unowned >&- 2> "$RUN_ROOT/sink-dir.err"; then
+  fail "AC14 directory retire refuses a dead report sink" "retire succeeded"
+else
+  pass "AC14 directory retire refuses a dead report sink"
+fi
+[ -f "$sink_live_dir/failed-00000000000000000001-11111111" ] \
+  && pass "AC14 directory retire deletes nothing before it prints" \
+  || fail "AC14 directory retire deletes nothing before it prints" "entry disappeared"
+spool_fixture_window "$SPOOL_SINK_SESSION" sink-drop b5b5b5b5 "$SPOOL_AC_LOCK"
+sink_drop_id="$SPOOL_FIXTURE_ID" sink_drop_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$sink_drop_dir" 00000000000000000001-22222222 bob SINK_DROP \
+  '[gang:bob#22222222] SINK_DROP [/gang:bob#22222222]'
+if GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" drop sink-drop >&- 2> "$RUN_ROOT/sink-drop.err"; then
+  fail "AC14 drop refuses a dead report sink" "drop succeeded"
+else
+  pass "AC14 drop refuses a dead report sink"
+fi
+if tmux display-message -p -t "$sink_drop_id" '#{window_id}' >/dev/null 2>&1 \
+   && [ -f "$sink_drop_dir/00000000000000000001-22222222" ]; then
+  pass "AC14 failed drop leaves its window and entry present"
+else
+  fail "AC14 failed drop leaves its window and entry present" "window or entry disappeared"
+fi
+# The down sink must be its first report. Leaving the seed or failed-drop
+# window ahead of it makes both builds fail on that earlier write, so a
+# delete-before-report mutant never reaches the deletion AC14 claims to test.
+tmux kill-window -t "$sink_drop_id"
+GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire b5b5b5b5 --assume-unowned >/dev/null
+spool_fixture_window "$SPOOL_SINK_SESSION" sink-down c5c5c5c5 "$SPOOL_AC_LOCK"
+tmux kill-window -t "$(window_id_in "$SPOOL_SINK_SESSION" seed)"
+sink_down_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$sink_down_dir" 00000000000000000001-33333333 carol SINK_DOWN \
+  '[gang:carol#33333333] SINK_DOWN [/gang:carol#33333333]'
+if GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_SINK_SESSION" >&- 2> "$RUN_ROOT/sink-down.err"; then
+  fail "AC14 down refuses a dead report sink" "down succeeded"
+else
+  pass "AC14 down refuses a dead report sink"
+fi
+if tmux has-session -t "=$SPOOL_SINK_SESSION" 2>/dev/null \
+   && [ -f "$sink_down_dir/00000000000000000001-33333333" ]; then
+  pass "AC14 failed down leaves the session and every entry present"
+else
+  fail "AC14 failed down leaves the session and every entry present" "session or entry disappeared"
+fi
+GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire a5a5a5a5 --assume-unowned >/dev/null
+GANG_SESSION="$SPOOL_SINK_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_SINK_SESSION" >/dev/null
+
+# AC17: retire-unattributed-without-assertion,
+# unattributed-retire-claims-a-window-killed-it, and
+# retire-reports-what-it-never-read.
+unattributed_dir="$SPOOL_AC_LOCK/spool/a6a6a6a6"
+mkdir "$unattributed_dir"
+spool_seed "$unattributed_dir" 00000000000000000001-11111111 alice UNATTR_WAIT \
+  '[gang:alice#11111111] UNATTR_WAIT full body [/gang:alice#11111111]'
+spool_seed "$unattributed_dir" failed-00000000000000000002-22222222 bob UNATTR_HELD \
+  '[gang:bob#22222222] UNATTR_HELD full body [/gang:bob#22222222]'
+unattributed_before="$(spool_tree_digest "$unattributed_dir")"
+refuses "AC17 unattributed retire requires the operator assertion" \
+  "gang spool retire a6a6a6a6 --assume-unowned" \
+  env GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire a6a6a6a6
+equal "AC17 refusal without the flag changes no byte" \
+  "$unattributed_before" "$(spool_tree_digest "$unattributed_dir")"
+unattributed_retire_out="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire a6a6a6a6 --assume-unowned)"
+contains "AC17 unattributed waiting uses the truthful retirement wording" \
+  "$unattributed_retire_out" "never delivered (retired from unattributed spool a6a6a6a6)"
+excludes "AC17 unattributed retirement never claims a window was destroyed" \
+  "$unattributed_retire_out" "destroyed with the window"
+contains "AC17 unattributed retirement prints the waiting body" \
+  "$unattributed_retire_out" "UNATTR_WAIT full body"
+contains "AC17 unattributed retirement prints the held body" \
+  "$unattributed_retire_out" "UNATTR_HELD full body"
+[ ! -e "$unattributed_dir" ] \
+  && pass "AC17 asserted unattributed retirement removes the directory" \
+  || fail "AC17 asserted unattributed retirement removes the directory" "directory survived"
+refuses "AC17 a second retirement finds nothing to account for" \
+  "no live agent or token-shaped spool directory matches 'a6a6a6a6'" \
+  env GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire a6a6a6a6 --assume-unowned
+
+# AC18: spool-list-misattributes-owner, spool-gc-nonempty,
+# spool-gc-owned-empty, and spool-gc-empty-unattributed.
+SPOOL_OTHER_SESSION="spool-other-$$"
+tmux new-session -d -s "$SPOOL_OTHER_SESSION" -n seed
+spool_fixture_window "$SPOOL_OTHER_SESSION" other-owner a7a7a7a7 "$SPOOL_AC_LOCK"
+unattr_nonempty="$SPOOL_AC_LOCK/spool/b7b7b7b7"
+unattr_empty="$SPOOL_AC_LOCK/spool/c7c7c7c7"
+mkdir "$unattr_nonempty" "$unattr_empty"
+spool_seed "$unattr_nonempty" 00000000000000000001-11111111 alice LIST_BODY \
+  '[gang:alice#11111111] LIST_BODY [/gang:alice#11111111]'
+printf 'root debris\n' > "$SPOOL_AC_LOCK/spool/not-a-token"
+root_before="$(spool_tree_digest "$SPOOL_AC_LOCK/spool")"
+spool_listing="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+contains "AC18 listing attributes an owner in a different session" \
+  "$spool_listing" "owned on this tmux server by $SPOOL_OTHER_SESSION:other-owner: token a7a7a7a7"
+contains "AC18 listing names non-empty unattributed counts and path" \
+  "$spool_listing" "unattributed on this tmux server: token b7b7b7b7 at $unattr_nonempty; 1 waiting"
+contains "AC18 listing names an empty unattributed reservation" \
+  "$spool_listing" "token c7c7c7c7 at $unattr_empty; empty; retire with"
+contains "AC18 listing names root debris without treating it as a spool" \
+  "$spool_listing" "spool root debris: $SPOOL_AC_LOCK/spool/not-a-token"
+equal "AC18 gang spool is byte-for-byte read-only over the root" \
+  "$root_before" "$(spool_tree_digest "$SPOOL_AC_LOCK/spool")"
+tmux kill-session -t "=$SPOOL_OTHER_SESSION"
+for retire_token in a7a7a7a7 b7b7b7b7 c7c7c7c7; do
+  GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire "$retire_token" --assume-unowned >/dev/null
+done
+rm -f -- "$SPOOL_AC_LOCK/spool/not-a-token"
+
+# AC20: roster-footer-always and roster-gc-side-effect.
+roster_nonempty="$SPOOL_AC_LOCK/spool/a8a8a8a8"
+roster_empty="$SPOOL_AC_LOCK/spool/b8b8b8b8"
+mkdir "$roster_nonempty" "$roster_empty"
+spool_seed "$roster_nonempty" 00000000000000000001-11111111 alice ROSTER_BODY \
+  '[gang:alice#11111111] ROSTER_BODY [/gang:alice#11111111]'
+roster_spool_out="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" roster)"
+contains "AC20 roster prints exactly the non-empty unattributed count" \
+  "$roster_spool_out" "spool: 1 unattributed (1 messages) — gang spool"
+equal "AC20 roster prints one spool footer" "1" \
+  "$(printf '%s\n' "$roster_spool_out" | grep -c '^spool:')"
+[ -d "$roster_empty" ] \
+  && pass "AC20 roster does not garbage-collect an empty reservation" \
+  || fail "AC20 roster does not garbage-collect an empty reservation" "empty directory disappeared"
+GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire a8a8a8a8 --assume-unowned >/dev/null
+roster_after_retire="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" roster)"
+excludes "AC20 roster has no footer when only an empty unattributed reservation remains" \
+  "$roster_after_retire" "spool:"
+GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire b8b8b8b8 --assume-unowned >/dev/null
+
+# AC10: mutate-first-match-wins, contested-privileges-one-carrier,
+# drain-refuses-loudly-on-contention, and reads-disagree-with-mutators.
+SPOOL_CONTEST_SESSION="spool-contested-$$"
+tmux new-session -d -s "$SPOOL_CONTEST_SESSION" -n seed
+spool_fixture_window "$SPOOL_CONTEST_SESSION" contest-a c9c9c9c9 "$SPOOL_AC_LOCK"
+contest_a_id="$SPOOL_FIXTURE_ID" contest_dir="$SPOOL_FIXTURE_DIR"
+spool_fixture_window "$SPOOL_CONTEST_SESSION" contest-b c9c9c9c9 "$SPOOL_AC_LOCK"
+contest_b_id="$SPOOL_FIXTURE_ID"
+contest_a_pane="$(tmux list-panes -t "$contest_a_id" -F '#{pane_id}')"
+contest_b_pane="$(tmux list-panes -t "$contest_b_id" -F '#{pane_id}')"
+spool_seed "$contest_dir" 00000000000000000001-11111111 alice CONTESTED_BODY \
+  '[gang:alice#11111111] CONTESTED_BODY [/gang:alice#11111111]'
+contest_before="$(spool_tree_digest "$contest_dir")"
+for contest_name in contest-a contest-b; do
+  if contest_send_out="$(printf 'CONTEST_SEND' | \
+    GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+      "$GANG" send --to "$contest_name" --from tester --stdin 2>&1)"; then
+    fail "AC10 contested send aimed at $contest_name refuses" "send succeeded"
+  else
+    contains "AC10 contested send aimed at $contest_name names both carriers" \
+      "$contest_send_out" "$SPOOL_CONTEST_SESSION:contest-a, $SPOOL_CONTEST_SESSION:contest-b"
+  fi
+  refuses "AC10 contested drop aimed at $contest_name refuses symmetrically" \
+    "spool token c9c9c9c9 is contested" \
+    env GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+      "$GANG" drop "$contest_name"
+done
+refuses "AC10 down refuses rather than privilege the first contested carrier" \
+  "spool token c9c9c9c9 is contested" \
+  env GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" down "$SPOOL_CONTEST_SESSION"
+# Immediate composer readiness is observed before either native boundary; an
+# unreadable fixture aborts instead of spending unknown as a drain result.
+GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" composer contest-a >/dev/null
+GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" composer contest-b >/dev/null
+for contest_record in "$contest_a_id:$contest_a_pane" "$contest_b_id:$contest_b_pane"; do
+  contest_id="${contest_record%%:*}" contest_pane="${contest_record#*:}"
+  tmux wait-for "gang-spool-drain-$contest_id" &
+  contest_waiter=$!
+  printf '%s' '{"hook_event_name":"Stop"}' | \
+    GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    TMUX_PANE="$contest_pane" "$GANG" hook >/dev/null
+  wait "$contest_waiter"
+  contains "AC10 contested drain records a permanent loud refusal for $contest_id" \
+    "$(tmux show-options -wqv -t "$contest_id" @gl_spool_failed)" "c9c9c9c9"
+done
+equal "AC10 every contested mutator leaves the directory byte-identical" \
+  "$contest_before" "$(spool_tree_digest "$contest_dir")"
+contest_spool_report="$(GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+contest_status_report="$(GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" status contest-b)"
+contest_roster_report="$(GANG_SESSION="$SPOOL_CONTEST_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" roster)"
+contains "AC10 gang spool reports the contested carrier set" \
+  "$contest_spool_report" "contested on this tmux server by $SPOOL_CONTEST_SESSION:contest-a, $SPOOL_CONTEST_SESSION:contest-b"
+contains "AC10 status agrees that the token is contested" "$contest_status_report" "spool: contested on this tmux server"
+contains "AC10 roster agrees that the token is contested" "$contest_roster_report" "spool-contested="
+tmux kill-session -t "=$SPOOL_CONTEST_SESSION"
+GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire c9c9c9c9 --assume-unowned >/dev/null
+
+# AC11, AC12(a/b/d), and AC18b use a deterministic nonce reader built from the
+# exact production binary. Its sequence is process-local test input; the spool
+# root and tmux option remain the production reservation/publication surfaces.
+# Mutants: mint-reuses-a-taken-token, mint-adopts-a-surviving-dir,
+# mint-ignores-live-carriers, mint-retries-forever, mint-strands-its-reservation,
+# rollback-forces-past-a-body, rollback-ignores-its-refusal, and
+# spool-gc-empty-unattributed.
+MINT_TREE="$RUN_ROOT/spool-mint-tree"
+mkdir -p "$MINT_TREE/bin"
+ln -s "$ROOT/collars" "$MINT_TREE/collars"
+sed 's@^mint_nonce() {.*$@mint_nonce() { local n next="${GANG_NONCE_SEQUENCE:?}.next.$$"; IFS= read -r n < "$GANG_NONCE_SEQUENCE" || n=""; sed '\''1d'\'' "$GANG_NONCE_SEQUENCE" > "$next"; mv -- "$next" "$GANG_NONCE_SEQUENCE"; printf '\''%s'\'' "$n"; }@' \
+  "$GANG" > "$MINT_TREE/bin/gang"
+chmod +x "$MINT_TREE/bin/gang"
+bash -n "$MINT_TREE/bin/gang"
+MINT_GANG="$MINT_TREE/bin/gang"
+MINT_LOCK="$RUN_ROOT/spool-mint-locks"
+MINT_SESSION="spool-mint-$$"
+mkdir -p "$MINT_LOCK/spool"
+tmux new-session -d -s "$MINT_SESSION" -n seed
+
+mkdir "$MINT_LOCK/spool/deadbeef"
+printf '%s\n' deadbeef feedface > "$RUN_ROOT/mint-empty.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-empty \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-empty.sequence" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-empty -c bash >/dev/null
+mint_empty_id="$(window_id_in "$MINT_SESSION" mint-empty)"
+equal "AC11 an empty reserved token is skipped for a fresh token" "feedface" \
+  "$(tmux show-options -wqv -t "$mint_empty_id" @gl_spool)"
+[ -d "$MINT_LOCK/spool/deadbeef" ] \
+  && pass "AC11 the colliding empty reservation is untouched" \
+  || fail "AC11 the colliding empty reservation is untouched" "reservation disappeared"
+[ -d "$MINT_LOCK/spool/feedface" ] \
+  && pass "AC12 a newly adopted window owns a directory before any park" \
+  || fail "AC12 a newly adopted window owns a directory before any park" "reservation absent"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" drop mint-empty >/dev/null
+
+mkdir "$MINT_LOCK/spool/cafebabe"
+spool_seed "$MINT_LOCK/spool/cafebabe" 00000000000000000001-11111111 alice COLLISION_BODY \
+  '[gang:alice#11111111] COLLISION_BODY [/gang:alice#11111111]'
+collision_before="$(spool_tree_digest "$MINT_LOCK/spool/cafebabe")"
+printf '%s\n' cafebabe decafbad > "$RUN_ROOT/mint-body.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-body \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-body.sequence" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-body -c bash >/dev/null
+mint_body_id="$(window_id_in "$MINT_SESSION" mint-body)"
+equal "AC11 a surviving body directory is never adopted" "decafbad" \
+  "$(tmux show-options -wqv -t "$mint_body_id" @gl_spool)"
+equal "AC11 every byte in the surviving body directory is untouched" \
+  "$collision_before" "$(spool_tree_digest "$MINT_LOCK/spool/cafebabe")"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" drop mint-body >/dev/null
+
+tmux new-window -d -t "=$MINT_SESSION" -n prechange-carrier \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+prechange_id="$(window_id_in "$MINT_SESSION" prechange-carrier)"
+tmux set-option -w -t "$prechange_id" @gl_spool facefeed
+printf '%s\n' facefeed baddcafe > "$RUN_ROOT/mint-carrier.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-carrier \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-carrier.sequence" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-carrier -c bash >/dev/null
+mint_carrier_id="$(window_id_in "$MINT_SESSION" mint-carrier)"
+equal "AC11 a live carrier without a directory still excludes its token" "baddcafe" \
+  "$(tmux show-options -wqv -t "$mint_carrier_id" @gl_spool)"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" drop mint-carrier >/dev/null
+
+for _ in $(seq 1 16); do printf '%s\n' deadbeef; done > "$RUN_ROOT/mint-loop.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-bounded \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+if mint_bounded_out="$(GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-loop.sequence" \
+  GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-bounded -c bash 2>&1)"; then
+  fail "AC11 repeated collisions die instead of retrying forever" "adopt succeeded"
+else
+  contains "AC11 bounded mint names the refusal" "$mint_bounded_out" "refusing to loop forever"
+fi
+mint_bounded_id="$(window_id_in "$MINT_SESSION" mint-bounded)"
+equal "AC11 bounded failure publishes no token" "" \
+  "$(tmux show-options -wqv -t "$mint_bounded_id" @gl_spool)"
+tmux kill-window -t "$mint_bounded_id"
+
+# AC18b: the pure listing preserves the reservation, mint skips it, deliberate
+# retirement releases it, and the same deterministic choice then succeeds.
+mkdir "$MINT_LOCK/spool/abadcafe"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" spool >/dev/null
+printf '%s\n' abadcafe 1234abcd > "$RUN_ROOT/mint-reserved.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-reserved \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-reserved.sequence" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-reserved -c bash >/dev/null
+mint_reserved_id="$(window_id_in "$MINT_SESSION" mint-reserved)"
+equal "AC18b listing leaves a reserved token unmintable" "1234abcd" \
+  "$(tmux show-options -wqv -t "$mint_reserved_id" @gl_spool)"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" drop mint-reserved >/dev/null
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+  "$GANG" spool retire abadcafe --assume-unowned >/dev/null
+printf '%s\n' abadcafe > "$RUN_ROOT/mint-released.sequence"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-released \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_NONCE_SEQUENCE="$RUN_ROOT/mint-released.sequence" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" GANG_TEST_COLLARS=1 \
+  "$MINT_GANG" adopt mint-released -c bash >/dev/null
+mint_released_id="$(window_id_in "$MINT_SESSION" mint-released)"
+equal "AC18b deliberate retirement makes the token mintable" "abadcafe" \
+  "$(tmux show-options -wqv -t "$mint_released_id" @gl_spool)"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" "$GANG" drop mint-released >/dev/null
+
+# AC12(b/d): a failed option publication rolls back only an empty reservation;
+# a deterministic body inserted before failure makes rmdir refuse and survives.
+MINT_WRAP="$RUN_ROOT/spool-mint-wrap"
+mkdir -p "$MINT_WRAP"
+REAL_TMUX="$(command -v tmux)"
+cat > "$MINT_WRAP/tmux" <<'SH'
+#!/bin/sh
+if [ "$1" = set-option ] && [ "${5:-}" = @gl_spool ]; then
+  if [ "${MINT_SEED_BODY:-0}" = 1 ]; then
+    dir="$GANG_LOCK_DIR/spool/${6:-}"
+    printf '%s\n%s\n%s\n' seeded ROLLBACK_BODY \
+      '[gang:seeded#11111111] ROLLBACK_BODY [/gang:seeded#11111111]' \
+      > "$dir/00000000000000000999-99999999"
+  fi
+  exit 1
+fi
+exec "$REAL_TMUX" "$@"
+SH
+chmod +x "$MINT_WRAP/tmux"
+mint_dirs_before="$(find "$MINT_LOCK/spool" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)"
+tmux new-window -d -t "=$MINT_SESSION" -n mint-rollback-empty \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+if PATH="$MINT_WRAP:$PATH" REAL_TMUX="$REAL_TMUX" GANG_SESSION="$MINT_SESSION" \
+  GANG_LOCK_DIR="$MINT_LOCK" "$GANG" adopt mint-rollback-empty -c bash >/dev/null 2>&1; then
+  fail "AC12 failed spool publication makes adopt fail" "adopt succeeded"
+else
+  pass "AC12 failed spool publication makes adopt fail"
+fi
+equal "AC12 failed publication rolls back its empty reservation" "$mint_dirs_before" \
+  "$(find "$MINT_LOCK/spool" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)"
+tmux kill-window -t "$(window_id_in "$MINT_SESSION" mint-rollback-empty)"
+
+tmux new-window -d -t "=$MINT_SESSION" -n mint-rollback-body \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+if rollback_body_out="$(PATH="$MINT_WRAP:$PATH" REAL_TMUX="$REAL_TMUX" MINT_SEED_BODY=1 \
+  GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+  "$GANG" adopt mint-rollback-body -c bash 2>&1)"; then
+  fail "AC12 publication failure over a body still fails" "adopt succeeded"
+else
+  contains "AC12 refused rollback names the surviving path and body arrival" \
+    "$rollback_body_out" "because a body or unaccounted child reached"
+fi
+rollback_body_dir=""
+for rollback_candidate in "$MINT_LOCK"/spool/*; do
+  [ -f "$rollback_candidate/00000000000000000999-99999999" ] \
+    && rollback_body_dir="$rollback_candidate"
+done
+contains "AC12 rollback preserves the body byte-for-byte" \
+  "$(cat "$rollback_body_dir/00000000000000000999-99999999")" "ROLLBACK_BODY"
+tmux kill-window -t "$(window_id_in "$MINT_SESSION" mint-rollback-body)"
+rollback_body_token="${rollback_body_dir##*/}"
+GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+  "$GANG" spool retire "$rollback_body_token" --assume-unowned >/dev/null
+
+# AC12(c): establish-recreates-a-lost-reservation and
+# unconditional-rmdirs-missing-reservation.
+spool_fixture_window "$MINT_SESSION" missing-reservation d0d0d0d0 "$MINT_LOCK"
+missing_id="$SPOOL_FIXTURE_ID" missing_dir="$SPOOL_FIXTURE_DIR"
+tmux set-option -w -t "$missing_id" @gl_session_id resume-missing
+tmux send-keys -l -t "$missing_id" 'HUMAN_DRAFT'
+rmdir "$missing_dir"
+if missing_park_out="$(printf 'MISSING_RESERVATION_BODY' | \
+  GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+    "$GANG" send --to missing-reservation --from tester --stdin 2>&1)"; then
+  fail "AC12 a park never recreates a missing reservation" "send succeeded"
+else
+  contains "AC12 failed park names window, token, and absent path" \
+    "$missing_park_out" "pane $missing_id carries spool token d0d0d0d0 but its reservation $missing_dir is absent"
+  contains "AC12 failed park points at drop and relaunch recovery" \
+    "$missing_park_out" "recover with gang drop missing-reservation"
+fi
+[ ! -e "$missing_dir" ] \
+  && pass "AC12 failed park creates no replacement directory" \
+  || fail "AC12 failed park creates no replacement directory" "directory was recreated"
+if missing_drop_out="$(GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+  "$GANG" drop missing-reservation 2>&1)"; then
+  contains "AC12 drop tolerates and names the absent reservation" \
+    "$missing_drop_out" "spool reservation absent for missing-reservation: $missing_dir"
+  contains "AC12 recovery drop prints the exact resumable relaunch" \
+    "$missing_drop_out" "relaunch: gang hitch missing-reservation --resume resume-missing"
+else
+  fail "AC12 drop tolerates and names the absent reservation" "$missing_drop_out"
+  fail "AC12 recovery drop prints the exact resumable relaunch" "drop exited nonzero"
+fi
+if tmux list-windows -a -F '#{window_id}' | grep -Fx -- "$missing_id" >/dev/null; then
+  fail "AC12 recovery drop removes the wedged window" "window survived"
+else
+  pass "AC12 recovery drop removes the wedged window"
+fi
+
+tmux kill-window -t "$prechange_id"
+for mint_residual in deadbeef cafebabe; do
+  GANG_SESSION="$MINT_SESSION" GANG_LOCK_DIR="$MINT_LOCK" \
+    "$GANG" spool retire "$mint_residual" --assume-unowned >/dev/null
+done
+tmux kill-session -t "=$MINT_SESSION"
+
+# AC19 and AC21: spool-requires-session and roster-returns-before-the-footer.
+# The private socket is explicit, TMUX/TMUX_PANE are removed before its first
+# tmux call, and both server and exact socket file are removed at the end.
+NO_SERVER_ROOT="$RUN_ROOT/no-server"
+NO_SERVER_LOCK="$NO_SERVER_ROOT/locks"
+mkdir -p "$NO_SERVER_LOCK/spool/aa19aa19"
+spool_seed "$NO_SERVER_LOCK/spool/aa19aa19" 00000000000000000001-11111111 alice NO_SERVER_BODY \
+  '[gang:alice#11111111] NO_SERVER_BODY [/gang:alice#11111111]'
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$NO_SERVER_ROOT" \
+  tmux new-session -d -s spool-no-server
+NO_SERVER_SOCKET="$NO_SERVER_ROOT/tmux-$(id -u)/default"
+tmux -S "$NO_SERVER_SOCKET" kill-server
+if no_server_spool="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$NO_SERVER_ROOT" \
+  GANG_SESSION=spool-no-server GANG_LOCK_DIR="$NO_SERVER_LOCK" "$GANG" spool 2>&1)"; then
+  contains "AC19 gang spool lists an unattributed directory without a tmux server" \
+    "$no_server_spool" "unattributed on this tmux server: token aa19aa19"
+else
+  fail "AC19 gang spool lists an unattributed directory without a tmux server" \
+    "$no_server_spool"
+fi
+no_server_roster="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$NO_SERVER_ROOT" \
+  GANG_SESSION=spool-no-server GANG_LOCK_DIR="$NO_SERVER_LOCK" "$GANG" roster)"
+contains "AC21 roster without a server still prints the no-team line" \
+  "$no_server_roster" "no team (session 'spool-no-server' not running)"
+contains "AC21 roster without a server continues to the spool footer" \
+  "$no_server_roster" "spool: 1 unattributed (1 messages) — gang spool"
+env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$NO_SERVER_ROOT" \
+  GANG_SESSION=spool-no-server GANG_LOCK_DIR="$NO_SERVER_LOCK" \
+  "$GANG" spool retire aa19aa19 --assume-unowned >/dev/null
+rm -f -- "$NO_SERVER_SOCKET"
+
+# AC22 and AC23: readopt-remints-identity and
+# status-held-names-no-recovery.
+SPOOL_ADOPT_SESSION="spool-adopt-$$"
+tmux new-session -d -s "$SPOOL_ADOPT_SESSION" -n seed
+spool_fixture_window "$SPOOL_ADOPT_SESSION" readopt aa22aa22 "$SPOOL_AC_LOCK"
+readopt_id="$SPOOL_FIXTURE_ID" readopt_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$readopt_dir" failed-00000000000000000001-11111111 alice READOPT_HELD \
+  '[gang:alice#11111111] READOPT_HELD [/gang:alice#11111111]'
+GANG_SESSION="$SPOOL_ADOPT_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" adopt readopt -c spoolable >/dev/null
+equal "AC22 re-adopt preserves spool identity byte-for-byte" "aa22aa22" \
+  "$(tmux show-options -wqv -t "$readopt_id" @gl_spool)"
+readopt_status="$(GANG_SESSION="$SPOOL_ADOPT_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" status readopt)"
+contains "AC22 re-adopt leaves the held entry resolvable" "$readopt_status" "READOPT_HELD"
+contains "AC23 status names the held sender" "$readopt_status" \
+  "held (delivery NOT verified — it may still have arrived): from alice: 'READOPT_HELD'"
+contains "AC23 status names the deliberate live retirement command" "$readopt_status" \
+  "retire with gang spool retire readopt"
+GANG_SESSION="$SPOOL_ADOPT_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire readopt >/dev/null
+GANG_SESSION="$SPOOL_ADOPT_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" down "$SPOOL_ADOPT_SESSION" >/dev/null
+
+# AC24: spool-follows-symlinks and spool-rm-rf-completes-a-retire.
+unsafe_dir="$SPOOL_AC_LOCK/spool/aa24aa24"
+unsafe_target="$RUN_ROOT/spool-symlink-target"
+mkdir "$unsafe_dir" "$unsafe_dir/subdirectory"
+printf 'OUTSIDE_SECRET\n' > "$unsafe_target"
+ln -s "$unsafe_target" "$unsafe_dir/00000000000000000001-11111111"
+printf 'odd\n' > "$unsafe_dir/12-notastamp"
+printf 'partial bytes\n' > "$unsafe_dir/.writing-123-00000000000000000001"
+unsafe_listing="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+contains "AC24 listing counts the valid unaccepted fragment" "$unsafe_listing" "1 unaccepted, 3 unaccounted"
+contains "AC24 listing names the symlink as unaccounted" "$unsafe_listing" \
+  "$unsafe_dir/00000000000000000001-11111111"
+contains "AC24 listing names the subdirectory as unaccounted" "$unsafe_listing" "$unsafe_dir/subdirectory"
+contains "AC24 listing names the malformed file as unaccounted" "$unsafe_listing" "$unsafe_dir/12-notastamp"
+if unsafe_retire_out="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire aa24aa24 --assume-unowned 2>&1)"; then
+  fail "AC24 retirement refuses to complete over unaccounted children" "retire succeeded"
+else
+  contains "AC24 retirement reports and removes the fragment" "$unsafe_retire_out" "partial bytes"
+  contains "AC24 refusal names every surviving child" "$unsafe_retire_out" "$unsafe_dir/subdirectory"
+  excludes "AC24 no report follows the symlink to outside contents" "$unsafe_retire_out" "OUTSIDE_SECRET"
+fi
+[ -f "$unsafe_target" ] && [ "$(cat "$unsafe_target")" = OUTSIDE_SECRET ] \
+  && pass "AC24 the symlink target remains byte-identical" \
+  || fail "AC24 the symlink target remains byte-identical" "outside target changed"
+[ ! -e "$unsafe_dir/.writing-123-00000000000000000001" ] \
+  && pass "AC24 the reported fragment was retired" \
+  || fail "AC24 the reported fragment was retired" "fragment survived"
+rm -f -- "$unsafe_dir/00000000000000000001-11111111" "$unsafe_dir/12-notastamp" "$unsafe_target"
+rmdir "$unsafe_dir/subdirectory"
+GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire aa24aa24 --assume-unowned >/dev/null
+
+# AC25: spool-accepts-short-tokens.
+mkdir "$SPOOL_AC_LOCK/spool/a"
+short_listing="$(GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+contains "AC25 a short root directory is debris, not a spool" "$short_listing" \
+  "spool root debris: $SPOOL_AC_LOCK/spool/a"
+refuses "AC25 retire fails closed on a non-token" \
+  "no live agent or token-shaped spool directory matches 'not-a-token-????'" \
+  env GANG_SESSION=missing-spool-session GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" spool retire 'not-a-token-????'
+SPOOL_SHORT_SESSION="spool-short-$$"
+tmux new-session -d -s "$SPOOL_SHORT_SESSION" -n seed
+spool_fixture_window "$SPOOL_SHORT_SESSION" short-token aa25aa25 "$SPOOL_AC_LOCK"
+short_id="$SPOOL_FIXTURE_ID" short_dir="$SPOOL_FIXTURE_DIR"
+tmux set-option -w -t "$short_id" @gl_spool abc
+refuses "AC25 status rejects a recorded short token" \
+  "token recorded on pane $short_id is 'abc', which is not one gang minted" \
+  env GANG_SESSION="$SPOOL_SHORT_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+    "$GANG" status short-token
+tmux kill-session -t "=$SPOOL_SHORT_SESSION"
+rmdir "$short_dir" "$SPOOL_AC_LOCK/spool/a"
+
+# AC26: spool-scans-through-a-symlinked-root.
+SYMLINK_LOCK="$RUN_ROOT/spool-symlink-lock"
+SYMLINK_TARGET="$RUN_ROOT/spool-symlink-real"
+mkdir -p "$SYMLINK_LOCK" "$SYMLINK_TARGET"
+ln -s "$SYMLINK_TARGET" "$SYMLINK_LOCK/spool"
+SPOOL_SYMLINK_SESSION="spool-symlink-$$"
+tmux new-session -d -s "$SPOOL_SYMLINK_SESSION" -n symlink-row
+refuses "AC26 gang spool refuses a symlinked root" \
+  "spool root $SYMLINK_LOCK/spool is a symlink" \
+  env GANG_SESSION="$SPOOL_SYMLINK_SESSION" GANG_LOCK_DIR="$SYMLINK_LOCK" "$GANG" spool
+if symlink_roster="$(GANG_SESSION="$SPOOL_SYMLINK_SESSION" GANG_LOCK_DIR="$SYMLINK_LOCK" "$GANG" roster)"; then
+  pass "AC26 roster keeps its row exit status over an unscannable root"
+else
+  fail "AC26 roster keeps its row exit status over an unscannable root" "$symlink_roster"
+fi
+contains "AC26 roster retains its ordinary rows" "$symlink_roster" "symlink-row"
+contains "AC26 roster adds one line naming the unscannable root" "$symlink_roster" \
+  "spool cannot be scanned: the spool root $SYMLINK_LOCK/spool is a symlink"
+tmux kill-session -t "=$SPOOL_SYMLINK_SESSION"
+rm -f -- "$SYMLINK_LOCK/spool"
+
+# AC27: preserved-line-claims-held-entries and report-overclaims-abandonment.
+SPOOL_WORD_SESSION="spool-wording-$$"
+tmux new-session -d -s "$SPOOL_WORD_SESSION" -n seed
+spool_fixture_window "$SPOOL_WORD_SESSION" wording aa27aa27 "$SPOOL_AC_LOCK"
+wording_dir="$SPOOL_FIXTURE_DIR"
+printf 'unknown\n' > "$wording_dir/strange-child"
+wording_drop="$(GANG_SESSION="$SPOOL_WORD_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" drop wording)"
+contains "AC27 unaccounted-only drop prints explicit zero held and unaccepted counts" \
+  "$wording_drop" "preserved under $wording_dir: 0 held, 0 unaccepted, 1 unaccounted"
+excludes "AC27 unaccounted-only drop never claims held entries were preserved" \
+  "$wording_drop" "held entries preserved"
+excludes "AC27 drop withholds a retire pointer that would currently refuse" \
+  "$wording_drop" "retire with"
+wording_list="$(GANG_SESSION="$SPOOL_WORD_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+wording_roster="$(GANG_SESSION="$SPOOL_WORD_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" roster)"
+if wording_refusal="$(GANG_SESSION="$SPOOL_WORD_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire aa27aa27 2>&1)"; then
+  fail "AC27 unattributed retirement without its flag refuses" "retire succeeded"
+else
+  pass "AC27 unattributed retirement without its flag refuses"
+fi
+wording_all="$wording_list
+$wording_roster
+$wording_refusal"
+contains "AC27 every accounting surface names the same-server scope" "$wording_all" "unattributed on this tmux server"
+excludes "AC27 reports never call an unattributed spool orphaned" "$wording_all" "orphan"
+excludes "AC27 reports never call an unattributed spool abandoned" "$wording_all" "abandoned"
+excludes "AC27 reports never call an unattributed spool dead" "$wording_all" " dead"
+rm -f -- "$wording_dir/strange-child"
+GANG_SESSION="$SPOOL_WORD_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire aa27aa27 --assume-unowned >/dev/null
+tmux kill-session -t "=$SPOOL_WORD_SESSION"
+
+# AC28: scan-reads-the-active-window. A and B carry different tokens; A stays
+# active while every read aimed at B must retain B's path and counts.
+SPOOL_TARGET_SESSION="spool-targeted-$$"
+tmux new-session -d -s "$SPOOL_TARGET_SESSION" -n seed
+spool_fixture_window "$SPOOL_TARGET_SESSION" target-a aaaaaaaa "$SPOOL_AC_LOCK"
+target_a_id="$SPOOL_FIXTURE_ID" target_a_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$target_a_dir" failed-00000000000000000001-11111111 alice TARGET_A1 \
+  '[gang:alice#11111111] TARGET_A1 [/gang:alice#11111111]'
+spool_seed "$target_a_dir" failed-00000000000000000002-22222222 alice TARGET_A2 \
+  '[gang:alice#22222222] TARGET_A2 [/gang:alice#22222222]'
+spool_fixture_window "$SPOOL_TARGET_SESSION" target-b bbbbbbbb "$SPOOL_AC_LOCK"
+target_b_id="$SPOOL_FIXTURE_ID" target_b_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$target_b_dir" failed-00000000000000000001-33333333 bob TARGET_B \
+  '[gang:bob#33333333] TARGET_B [/gang:bob#33333333]'
+tmux select-window -t "$target_a_id"
+equal "AC28 A is active and B inactive before the targeted reads" "1 0" \
+  "$(tmux display-message -p -t "$target_a_id" '#{window_active}') $(tmux display-message -p -t "$target_b_id" '#{window_active}')"
+target_listing="$(GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool)"
+target_status="$(GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" status target-b)"
+target_roster="$(GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" roster)"
+contains "AC28 listing retains inactive B's token and owner" "$target_listing" \
+  "owned on this tmux server by $SPOOL_TARGET_SESSION:target-b: token bbbbbbbb"
+contains "AC28 listing retains active A's distinct token and owner" "$target_listing" \
+  "owned on this tmux server by $SPOOL_TARGET_SESSION:target-a: token aaaaaaaa"
+contains "AC28 status B names B's held directory" "$target_status" "read them under $target_b_dir"
+contains "AC28 roster counts B's one held entry against B" \
+  "$(printf '%s\n' "$target_roster" | grep '^target-b')" "spool-held=1"
+contains "AC28 roster counts A's two held entries against A" \
+  "$(printf '%s\n' "$target_roster" | grep '^target-a')" "spool-held=2"
+equal "AC28 the targeted reads never activate B" "1 0" \
+  "$(tmux display-message -p -t "$target_a_id" '#{window_active}') $(tmux display-message -p -t "$target_b_id" '#{window_active}')"
+GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool retire target-a >/dev/null
+GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" spool retire target-b >/dev/null
+GANG_SESSION="$SPOOL_TARGET_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" down "$SPOOL_TARGET_SESSION" >/dev/null
+
+# AC29: report-line-re-evaluates-the-body and report-line-unquoted-expansion.
+# The public sender is valid and carries a hostile body; the hostile-sender
+# worlds are seeded directly because send_sender correctly rejects them.
+SPOOL_LITERAL_SESSION="spool-literal-$$"
+tmux new-session -d -s "$SPOOL_LITERAL_SESSION" -n seed
+literal_marker="$RUN_ROOT/spool-report-executed"
+literal_payload="\$(touch $literal_marker) and \`touch $literal_marker\` * [x]"
+literal_drop_body="[gang:valid-sender#11111111] $literal_payload [/gang:valid-sender#11111111]"
+spool_fixture_window "$SPOOL_LITERAL_SESSION" literal-drop aa29aa29 "$SPOOL_AC_LOCK"
+literal_drop_dir="$SPOOL_FIXTURE_DIR"
+spool_seed "$literal_drop_dir" 00000000000000000001-11111111 valid-sender "$literal_payload" \
+  "$literal_drop_body"
+literal_drop_out="$(GANG_SESSION="$SPOOL_LITERAL_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" drop literal-drop)"
+contains "AC29 drop prints the full hostile body byte-for-byte" "$literal_drop_out" "$literal_drop_body"
+[ ! -e "$literal_marker" ] \
+  && pass "AC29 drop report executes no relayed command syntax" \
+  || fail "AC29 drop report executes no relayed command syntax" "$literal_marker exists"
+spool_fixture_window "$SPOOL_LITERAL_SESSION" literal-held bb29bb29 "$SPOOL_AC_LOCK"
+literal_held_dir="$SPOOL_FIXTURE_DIR"
+literal_sender="\`touch $literal_marker\`"
+literal_held_body="[gang:seeded#22222222] $literal_payload [/gang:seeded#22222222]"
+spool_seed "$literal_held_dir" failed-00000000000000000001-22222222 "$literal_sender" "$literal_payload" \
+  "$literal_held_body"
+literal_status="$(GANG_SESSION="$SPOOL_LITERAL_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" status literal-held)"
+contains "AC29 status prints a seeded hostile sender literally" "$literal_status" "$literal_sender"
+literal_retire="$(GANG_SESSION="$SPOOL_LITERAL_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" \
+  "$GANG" spool retire literal-held)"
+contains "AC29 live retire prints the full hostile body byte-for-byte" "$literal_retire" "$literal_held_body"
+[ ! -e "$literal_marker" ] \
+  && pass "AC29 status and retire execute no relayed command syntax" \
+  || fail "AC29 status and retire execute no relayed command syntax" "$literal_marker exists"
+GANG_SESSION="$SPOOL_LITERAL_SESSION" GANG_LOCK_DIR="$SPOOL_AC_LOCK" "$GANG" down "$SPOOL_LITERAL_SESSION" >/dev/null
+
+# AC31: mint-publishes-outside-the-boundary,
+# retire-classifies-outside-the-boundary, and
+# mint-releases-at-the-failed-write. Both doubles are scoped to the mint
+# process. The concurrent retire uses the real tmux and real rmdir, so the
+# observer sits beyond the release it discriminates instead of intercepting
+# its own subject.
+ROOT_RACE_LOCK="$RUN_ROOT/spool-root-race-locks"
+ROOT_RACE_SESSION="spool-root-race-$$"
+ROOT_RACE_WRAP="$RUN_ROOT/spool-root-race-wrap"
+mkdir -p "$ROOT_RACE_LOCK/spool" "$ROOT_RACE_WRAP"
+tmux new-session -d -s "$ROOT_RACE_SESSION" -n seed
+ROOT_RACE_REAL_TMUX="$(command -v tmux)"
+
+cat > "$ROOT_RACE_WRAP/tmux" <<'SH'
+#!/bin/sh
+if [ "$1" = set-option ] && [ "${5:-}" = @gl_spool ]; then
+  printf '%s\n' "${6:-}" > "$ROOT_RACE_TOKEN_FILE"
+  "$ROOT_RACE_REAL_TMUX" wait-for -S "$ROOT_RACE_SIGNAL"
+  IFS= read -r _ < "$ROOT_RACE_RELEASE_FIFO"
+fi
+exec "$ROOT_RACE_REAL_TMUX" "$@"
+SH
+chmod +x "$ROOT_RACE_WRAP/tmux"
+mkfifo "$RUN_ROOT/root-race-publish.fifo"
+tmux new-window -d -t "=$ROOT_RACE_SESSION" -n mint-inflight \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+tmux wait-for root-race-publish-ready &
+root_race_signal_waiter=$!
+PATH="$ROOT_RACE_WRAP:$PATH" ROOT_RACE_REAL_TMUX="$ROOT_RACE_REAL_TMUX" \
+  ROOT_RACE_TOKEN_FILE="$RUN_ROOT/root-race-publish.token" \
+  ROOT_RACE_SIGNAL=root-race-publish-ready \
+  ROOT_RACE_RELEASE_FIFO="$RUN_ROOT/root-race-publish.fifo" \
+  GANG_SESSION="$ROOT_RACE_SESSION" GANG_LOCK_DIR="$ROOT_RACE_LOCK" \
+  "$GANG" adopt mint-inflight -c bash \
+  > "$RUN_ROOT/root-race-publish.out" 2> "$RUN_ROOT/root-race-publish.err" &
+root_race_mint_pid=$!
+wait "$root_race_signal_waiter"
+root_race_token="$(cat "$RUN_ROOT/root-race-publish.token")"
+root_race_dir="$ROOT_RACE_LOCK/spool/$root_race_token"
+if root_race_retire="$(GANG_SESSION="$ROOT_RACE_SESSION" GANG_LOCK_DIR="$ROOT_RACE_LOCK" \
+  "$GANG" spool retire "$root_race_token" --assume-unowned 2>&1)"; then
+  fail "AC31 retire refuses an in-flight unpublished reservation" "retire succeeded"
+else
+  contains "AC31 refusal names the in-flight reservation boundary" \
+    "$root_race_retire" "another Gangline process is publishing or retiring a spool reservation"
+fi
+[ -d "$root_race_dir" ] \
+  && pass "AC31 in-flight reservation remains present" \
+  || fail "AC31 in-flight reservation remains present" "$root_race_dir disappeared"
+excludes "AC31 refused retire prints nothing as retired" "$root_race_retire" "retired spool"
+printf 'publish\n' > "$RUN_ROOT/root-race-publish.fifo"
+if wait "$root_race_mint_pid"; then
+  pass "AC31 mint publishes after the barrier is released"
+else
+  fail "AC31 mint publishes after the barrier is released" \
+    "$(cat "$RUN_ROOT/root-race-publish.err")"
+fi
+root_race_id="$(window_id_in "$ROOT_RACE_SESSION" mint-inflight)"
+equal "AC31 published window carries the reserved token" "$root_race_token" \
+  "$(tmux show-options -wqv -t "$root_race_id" @gl_spool)"
+[ -d "$root_race_dir" ] \
+  && pass "AC31 publication leaves its reservation present" \
+  || fail "AC31 publication leaves its reservation present" "reservation absent"
+GANG_SESSION="$ROOT_RACE_SESSION" GANG_LOCK_DIR="$ROOT_RACE_LOCK" \
+  "$GANG" drop mint-inflight >/dev/null
+
+# Failed-write interval: tmux has already returned failure when rmdir signals.
+# The correct build still owns the root lock; releasing at the failed write
+# lets the concurrently invoked real retire remove this exact directory.
+cat > "$ROOT_RACE_WRAP/tmux" <<'SH'
+#!/bin/sh
+if [ "$1" = set-option ] && [ "${5:-}" = @gl_spool ]; then
+  printf '%s\n' "${6:-}" > "$ROOT_RACE_TOKEN_FILE"
+  exit 1
+fi
+exec "$ROOT_RACE_REAL_TMUX" "$@"
+SH
+cat > "$ROOT_RACE_WRAP/rmdir" <<'SH'
+#!/bin/sh
+"$ROOT_RACE_REAL_TMUX" wait-for -S "$ROOT_RACE_SIGNAL"
+IFS= read -r _ < "$ROOT_RACE_RELEASE_FIFO"
+exec "$ROOT_RACE_REAL_RMDIR" "$@"
+SH
+chmod +x "$ROOT_RACE_WRAP/tmux" "$ROOT_RACE_WRAP/rmdir"
+ROOT_RACE_REAL_RMDIR="$(command -v rmdir)"
+mkfifo "$RUN_ROOT/root-race-failed.fifo"
+tmux new-window -d -t "=$ROOT_RACE_SESSION" -n mint-failed-write \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+tmux wait-for root-race-failed-ready &
+root_race_failed_waiter=$!
+PATH="$ROOT_RACE_WRAP:$PATH" ROOT_RACE_REAL_TMUX="$ROOT_RACE_REAL_TMUX" \
+  ROOT_RACE_REAL_RMDIR="$ROOT_RACE_REAL_RMDIR" \
+  ROOT_RACE_TOKEN_FILE="$RUN_ROOT/root-race-failed.token" \
+  ROOT_RACE_SIGNAL=root-race-failed-ready \
+  ROOT_RACE_RELEASE_FIFO="$RUN_ROOT/root-race-failed.fifo" \
+  GANG_SESSION="$ROOT_RACE_SESSION" GANG_LOCK_DIR="$ROOT_RACE_LOCK" \
+  "$GANG" adopt mint-failed-write -c bash \
+  > "$RUN_ROOT/root-race-failed.out" 2> "$RUN_ROOT/root-race-failed.err" &
+root_race_failed_pid=$!
+wait "$root_race_failed_waiter"
+root_race_failed_token="$(cat "$RUN_ROOT/root-race-failed.token")"
+root_race_failed_dir="$ROOT_RACE_LOCK/spool/$root_race_failed_token"
+if root_race_failed_retire="$(GANG_SESSION="$ROOT_RACE_SESSION" GANG_LOCK_DIR="$ROOT_RACE_LOCK" \
+  "$GANG" spool retire "$root_race_failed_token" --assume-unowned 2>&1)"; then
+  fail "AC31 failed-write rollback still excludes directory retire" "retire succeeded"
+else
+  contains "AC31 failed-write interval still owns the root boundary" \
+    "$root_race_failed_retire" "another Gangline process is publishing or retiring a spool reservation"
+fi
+[ -d "$root_race_failed_dir" ] \
+  && pass "AC31 failed-write reservation remains until rollback acts" \
+  || fail "AC31 failed-write reservation remains until rollback acts" "reservation disappeared"
+printf 'rollback\n' > "$RUN_ROOT/root-race-failed.fifo"
+if wait "$root_race_failed_pid"; then
+  fail "AC31 failed publication still returns failure after rollback" "adopt succeeded"
+else
+  contains "AC31 empty failed publication reports its settled rollback" \
+    "$(cat "$RUN_ROOT/root-race-failed.err")" "empty unpublished reservation was rolled back"
+fi
+[ ! -e "$root_race_failed_dir" ] \
+  && pass "AC31 settled empty rollback removes the unpublished reservation" \
+  || fail "AC31 settled empty rollback removes the unpublished reservation" "directory survived"
+tmux kill-window -t "$(window_id_in "$ROOT_RACE_SESSION" mint-failed-write)"
+tmux kill-session -t "=$ROOT_RACE_SESSION"
+printf 'instrument AC31 tmux=%s rmdir=%s integration=%s\n' \
+  "$(sha256sum "$ROOT_RACE_WRAP/tmux" | awk '{print $1}')" \
+  "$(sha256sum "$ROOT_RACE_WRAP/rmdir" | awk '{print $1}')" \
+  "$(sha256sum "$0" | awk '{print $1}')"
+tmux -S "$SPOOL_TMUX_SOCKET" kill-server 2>/dev/null || true
+rm -f -- "$SPOOL_TMUX_SOCKET"
+export TMUX_TMPDIR="$RUN_ROOT"
+SPOOL_TMUX_SOCKET=""
 
 # A staged record is state; the box is fresher evidence. Staged input can
 # flush outside gang's sight — an operator's Enter, a queue draining at a
@@ -5402,41 +6393,25 @@ env GANG_SESSION="$teardown_session" "$GANG" hitch spoolable \
   -c spoolable -d /tmp >/dev/null
 teardown_spoolable_id="$(window_id_in "$teardown_session" spoolable)"
 tmux send-keys -l -t "$teardown_spoolable_id" 'HUMAN_DRAFT'
-printf 'MARK_TEARDOWN_ARCHIVE' |
+printf 'MARK_TEARDOWN_REPORTED' |
   env GANG_SESSION="$teardown_session" "$GANG" send \
     --to spoolable --from tester --stdin >/dev/null
 teardown_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
   -t "$teardown_spoolable_id" @gl_spool)"
-teardown_entry=""
-for spool_entry in "$teardown_spool"/[0-9]*; do
-  [ -f "$spool_entry" ] || continue
-  teardown_entry="$spool_entry"
-  break
-done
-[ -n "$teardown_entry" ] && cp "$teardown_entry" "$RUN_ROOT/pre-down-body"
 teardown_down_out="$(env -u TMUX -u TMUX_PANE \
   GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session")"
-contains "the named teardown reports where it archived pending mail" \
-  "$teardown_down_out" "$GANG_ARCHIVE_DIR"
+contains "the named teardown reports pending mail before ending the team" \
+  "$teardown_down_out" "MARK_TEARDOWN_REPORTED"
 if tmux has-session -t "=$teardown_session" 2>/dev/null; then
   fail "a named teardown from outside the session still ends it" \
     "session still exists"
 else
   pass "a named teardown from outside the session still ends it"
 fi
-teardown_archived_entry=""
-for archived_entry in "$GANG_ARCHIVE_DIR"/*/spoolable/${teardown_entry##*/}; do
-  [ -f "$archived_entry" ] || continue
-  teardown_archived_entry="$archived_entry"
-  break
-done
-if [ -n "$teardown_archived_entry" ] \
-   && cmp "$RUN_ROOT/pre-down-body" "$teardown_archived_entry"; then
-  pass "a whole-team teardown preserves its pending message in the archive"
-else
-  fail "a whole-team teardown preserves its pending message in the archive" \
-    "${teardown_archived_entry:-archived entry is absent}"
-fi
+[ ! -d "$teardown_spool" ] \
+  && pass "a whole-team teardown releases the waiting-only spool reservation" \
+  || fail "a whole-team teardown releases the waiting-only spool reservation" \
+    "$teardown_spool survived"
 tmux new-session -d -s "$teardown_session" -n bystander \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 observer_session="${teardown_session}-obs"
