@@ -1970,13 +1970,12 @@ stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies f
 }
 
 stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
-  local rc=0 err="" frag prof
+  local rc=0 err="" frag
   AGENT_ID="$1"
   AGENT_COLLAR="$(collar_read "$AGENT_ID" "$2")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$2' exists but is not a gang agent (gang adopt $2 -c <collar>)"
-  prof="$AGENT_COLLAR"
-  load_collar "$prof"
+  load_collar "$AGENT_COLLAR"
   envelope "$3" "$4"
   err="$(send_live "$2" 2>&1)" || rc=$?
   case "$rc" in
@@ -3314,15 +3313,15 @@ hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a 
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
   DEPRECATIONS_SILENT=1
-  local payload event prof kind=""
+  local payload event collar kind=""
   payload="$(cat)" || payload=""
   event="$(printf '%s' "$payload" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
       2>/dev/null)" || exit 0
   [ -n "$event" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
-  prof="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
-  [ -n "$prof" ] || exit 0
-  hook_identity_assert "$TMUX_PANE" "$prof" "$payload"
+  collar="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
+  [ -n "$collar" ] || exit 0
+  hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
   if [ "$event" = Notification ]; then
     kind="$(printf '%s' "$payload" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
@@ -3336,13 +3335,13 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           stall_clear "$TMUX_PANE"
           glyph_write "$TMUX_PANE" "~idle~"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
-          self_compact_dispatch "$TMUX_PANE" "$prof"
-          spool_stop "$TMUX_PANE" "$prof" ;;
+          self_compact_dispatch "$TMUX_PANE" "$collar"
+          spool_stop "$TMUX_PANE" "$collar" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;
     Notification) [ -n "$kind" ] || exit 0
-                  ( load_collar "$prof"
+                  ( load_collar "$collar"
                     case " $GANG_STALL_TYPES " in
                       *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
                     esac
@@ -3350,7 +3349,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   esac
   case "$event" in
     UserPromptSubmit|PostToolUse)
-      ( set +e; advisory_reply "$event" "$prof"; exit 0 ) ;;
+      ( set +e; advisory_reply "$event" "$collar"; exit 0 ) ;;
   esac
   exit 0
 }
@@ -3390,7 +3389,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" prof="" id collar_new_arg=0 collar_old_arg=0 rc=0
+  local name="" collar="" id collar_new_arg=0 collar_old_arg=0 rc=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch is reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
@@ -3398,30 +3397,30 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     -c|--collar) [ "$collar_old_arg" -eq 0 ] \
                    || die "adopt: -c/--collar and -p/--profile are the same option under two names; pass one."
                   [ $# -ge 2 ] || die "adopt: $1 needs a value"
-                  prof="$2"; collar_new_arg=1; shift 2 ;;
+                  collar="$2"; collar_new_arg=1; shift 2 ;;
     -p|--profile) [ "$collar_new_arg" -eq 0 ] \
                    || die "adopt: -c/--collar and -p/--profile are the same option under two names; pass one."
                   [ $# -ge 2 ] || die "adopt: $1 needs a value"
-                  prof="$2"; collar_old_arg=1
+                  collar="$2"; collar_old_arg=1
                   deprecated adopt:profile "adopt: -p/--profile is now -c/--collar; the old spelling still works and will be removed in 2.0."
                   shift 2 ;;
     *) die "adopt: unknown argument '$1'" ;;
   esac; done
   deprecation_flush
-  [ -n "$prof" ] || die "adopt: -c <collar> is required"
-  ! test_only_collar "$prof" \
-    || die "adopt: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
-  load_collar "$prof"
+  [ -n "$collar" ] || die "adopt: -c <collar> is required"
+  ! test_only_collar "$collar" \
+    || die "adopt: '$collar' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
+  load_collar "$collar"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
-  registered_identity_guard "$id" "$name" adopt "$prof"
+  registered_identity_guard "$id" "$name" adopt "$collar"
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
-  tmux set-option -w -t "$id" @gl_collar "$prof"
+  tmux set-option -w -t "$id" @gl_collar "$collar"
   stamp_binary_id "$id"
   spool_mint "$id"
   state_now "$id" >/dev/null
-  printf '%s\n' "$(colour "$C_OK" "adopted $name as a $prof agent")"
+  printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
 }
 
 cmd_drop() {
