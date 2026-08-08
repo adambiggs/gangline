@@ -17,10 +17,10 @@ gang capture lead
 ```
 
 Confirm that each harness has already completed first-run setup, authentication,
-and repository trust prompts. Gangline answers only dialogs a profile enumerates
+and repository trust prompts. Gangline answers only dialogs a collar enumerates
 as carrying no authority, with the selected safe row verified before confirm and
 the restored composer verified afterwards. It never answers permission, trust,
-approval, or access surfaces; those remain `occupied (authority unknown)` until
+approval, or access surfaces; those remain `!occupied! (authority unknown)` until
 the operator resolves them in `gang attach`. A stall note follows only when a
 native harness hook witnesses a configured event: Claude Code can report its
 declared notifications and permission requests, while Codex has no Notification
@@ -36,9 +36,9 @@ before `GANG_BOOT_TIMEOUT` expires.
 Native sandboxes must be able to reach the tmux server and the `gang` executable.
 For Codex, this commonly means the tmux socket and Gangline checkout need to be
 inside paths its sandbox permits. Fix that in the operator's Codex configuration;
-shipped profiles never disable sandboxing or bypass approvals.
+shipped collars never disable sandboxing or bypass approvals.
 
-Use a stable `GANG_SESSION`, `GANG_PROFILES`, `GANG_LOCK_DIR`, and absolute
+Use a stable `GANG_SESSION`, `GANG_COLLARS`, `GANG_LOCK_DIR`, and absolute
 `GANG_CONFIG_DIR` for every shell that addresses the team. A hitch pins the
 resolved config root into its agent so nested hitches read the same file and
 doctrine.
@@ -49,7 +49,7 @@ Declare one optional receiver with `gang notify <name>`. Gangline forwards only
 events the native harness itself reports as awaiting a person; it never infers a
 stall from a quiet pane and runs no patrol. Claude Code can witness its declared
 `Notification` kinds and permission requests. Codex has no `Notification` hook,
-so its shipped profile witnesses only permission requests. opencode and Pi
+so its shipped collar witnesses only permission requests. opencode and Pi
 declare no stall source, so they raise no notes.
 
 A note accepted live or parked is debounced until the raising harness reports
@@ -75,7 +75,7 @@ Delivery refuses when:
 - a native dialog or picker owns input;
 - a person has a draft in the composer;
 - the target cannot safely accept mid-turn input;
-- the state evidence is indeterminate; or
+- the state evidence is unknown; or
 - another delivery owns that pane's lock.
 
 A failure after a paste may leave staged text in the composer. `gang status` and
@@ -178,7 +178,7 @@ so the agent can choose self-compaction first. Set `YELLOW_TOKENS` and
 `RED_TOKENS` from a current observation of that harness:
 
 ```sh
-GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to
@@ -195,59 +195,67 @@ statusline side therefore reaches running harnesses at the next repaint, while
 a change to hook wiring reaches only processes started after it — re-hitch to
 pick it up.
 
-## Optional team cutoff
+## Optional team curfew
 
 Declare one wall-clock endpoint when a team is timeboxed:
 
 ```sh
-gang cutoff 2h
-gang cutoff 17:30
-gang cutoff
-gang cutoff clear
+gang curfew 2h
+gang curfew 17:30
+gang curfew
+gang curfew clear
 ```
 
 Gangline gives hook-enabled agents one yellow time light halfway through the
 declared span and one red light after four-fifths. Each reports the elapsed
 fraction and remaining time. These are native hook messages, not a patrol. The
-cutoff never stops an agent, and no declaration means no time guidance.
+curfew never stops an agent, and no declaration means no time guidance.
 
 ## Understanding observation
 
 Gangline selects evidence for each predicate rather than averaging it. Fresh
 native events outrank owned file state, which outranks pane scraping. Missing,
-expired, or contradictory evidence produces an explicit indeterminate state.
+expired, or contradictory evidence produces an explicit unknown state.
 
-`busy` means Gangline has positive evidence of work. `idle` means it has positive
-evidence the composer is ready. `occupied` means a native UI owns the composer.
-`expired` means the available evidence can no longer answer truthfully.
+`-busy-` means Gangline has positive evidence of work. `~idle~` means it has positive
+evidence the composer is ready. `!occupied!` means a native UI owns the composer.
+`?unknown?` means the available evidence can no longer answer truthfully.
 
-An abandoned turn decays rather than standing indeterminate forever. A turn
+The glyph wrapped around a gang-managed tmux window name is the state Gangline
+last witnessed at an existing observation point or native hook event. It can be
+stale; `gang roster` remains the live-computed truth. Commands always address
+the bare agent name, so `gang send --to pii-impl` does not change as the glyph
+changes. tmux appends its own flags after the name, which makes a last-active
+busy window render as `3:-name--`; the trailing pair is tmux's, and Gangline
+does not replace the operator's status format.
+
+An abandoned turn decays rather than standing unknown forever. A turn
 stopped by keys typed straight into the pane is one no harness reports, and
 `gang interrupt` — the only command that edits the fact, by dropping it — was
 never involved, so its turn bracket stays open and only grows older. Once that bracket passes `GANG_TURN_LIMIT`,
 the tiers under the expired event decide: with nothing painting a turn, the pty
 past its quiet window, a stable pane, the harness's own input box on screen and
 empty, and neither the pty clock nor the screen having moved while Gangline read
-those tiers, the state is `idle`. Any one of those missing — a draft in the box,
+those tiers, the state is `~idle~`. Any one of those missing — a draft in the box,
 a frozen busy marker, a pty whose quietness cannot be measured, a harness that
-wrote mid-decision — and the answer stays `expired`. A profile that does not
+wrote mid-decision — and the answer stays `?unknown?`. A collar that does not
 declare `GANG_QUIET_AT_REST` never decays, because its harness writes at rest
 and its quiet is an abstention rather than an observation. A bracket that is
 unreadable or stamped in the future is unknown, not abandoned, and never decays. Within its bound the bracket still
 outranks every quiet tier beneath it, so a working-but-silent harness keeps its
-`busy` verdict.
+`-busy-` verdict.
 
 `binary-skew` means the window was hitched or adopted from different `bin/gang`
 bytes than the observation command. Finish or checkpoint work using the agent's
 existing context, then drop and re-hitch it with the intended binary; changing a
-live checkout does not retrofit hooks or profiles already loaded into a running
+live checkout does not retrofit hooks or collars already loaded into a running
 window. `binary-identity unavailable` means the snapshot could not checksum one
 side; repair the invoked Gangline installation before using the witness.
 
-Profiles contain the only harness-specific regexes and parsers. A native TUI
+Collars contain the only harness-specific regexes and parsers. A native TUI
 update can invalidate them. The intended repair loop is direct: reproduce the
 wrong observation in a disposable team, inspect the actual pane, update the
-profile, and run the fast repository gates. Gangline does not ship a diagnostic
+collar, and run the fast repository gates. Gangline does not ship a diagnostic
 agent or automated strategy-rot machinery.
 
 ## Disposable real-harness smoke tests
@@ -256,14 +264,14 @@ Never test Gangline against the development agent or the live `gangline` team.
 Use an explicitly named, disposable session:
 
 ```sh
-GANG_SESSION=gangline-smoke-codex gang hitch probe -p codex -d "$PWD"
+GANG_SESSION=gangline-smoke-codex gang hitch probe -c codex -d "$PWD"
 GANG_SESSION=gangline-smoke-codex gang capture probe
 GANG_SESSION=gangline-smoke-codex gang down
 ```
 
 Drive only the native behavior under test, inspect the pane and tmux options, and
 delete the exact smoke session afterward. Mandatory tests use a private tmux
-server and stand-in profile; they do not spend real harness turns.
+server and stand-in collar; they do not spend real harness turns.
 
 ## Recovery
 
@@ -302,9 +310,9 @@ ceiling as evidence that a target can render the body.
 
 ### A harness is blocked on a dialog
 
-Run `gang status`. A profile-enumerated benign transient is named and will be
+Run `gang status`. A collar-enumerated benign transient is named and will be
 answered only when a send or hitch already needs to write there. Any unknown or
-authority-bearing dialog remains `occupied (authority unknown)`; run
+authority-bearing dialog remains `!occupied! (authority unknown)`; run
 `gang attach`, answer it in the native TUI, then re-run status. Do not send prose
 into an unknown dialog or widen the registry to include an access decision.
 
@@ -316,7 +324,7 @@ Delivery reports this instead of claiming success. Recover it:
 gang flush worker
 ```
 
-Gangline presses the profile's recall key, reads the loaded composer back
+Gangline presses the collar's recall key, reads the loaded composer back
 against the message it recorded as parked, and submits it only if they match.
 It refuses when the composer no longer shows queue evidence, when it holds no
 record of the parked body, or when the readback does not match — without
@@ -341,7 +349,7 @@ To see the box directly:
 gang composer worker
 ```
 
-This prints the profile's styled reading: what a human typed, and nothing else.
+This prints the collar's styled reading: what a human typed, and nothing else.
 Empty output is an empty box, so text on a `gang capture` that `gang composer`
 does not show is the harness's own placeholder, not a stuck draft. A placeholder
 never blocks delivery for the same reason.
@@ -352,7 +360,7 @@ never blocks delivery for the same reason.
 gang interrupt worker
 ```
 
-This sends the profile's declared turn-stop keystroke and drops Gangline's turn
+This sends the collar's declared turn-stop keystroke and drops Gangline's turn
 bracket, so the stopped turn neither keeps reading as busy nor is declared idle
 on Gangline's say-so. `gang status` then answers from the pane itself: a harness
 that stopped reads idle, and one that ignored the key stays busy and refuses
@@ -364,18 +372,18 @@ keystroke is often what a native dialog reads as an answer.
 Gangline persists no roster. Recreate only the agents the operator chooses:
 
 ```sh
-gang hitch lead -p claude-code -d "$PWD" --resume <lead-session-id>
-gang hitch worker -p codex -d "$PWD" --resume <worker-session-id>
+gang hitch lead -c claude-code -d "$PWD" --resume <lead-session-id>
+gang hitch worker -c codex -d "$PWD" --resume <worker-session-id>
 ```
 
 Use ids copied from each agent's earlier `gang drop` output or native transcript.
-`--resume` substitutes the exact id into the profile's native command and
-refuses profiles that cannot do so. There is no latest-session fallback. This is
+`--resume` substitutes the exact id into the collar's native command and
+refuses collars that cannot do so. There is no latest-session fallback. This is
 relaunch, not a claim that Gangline reconstructed the old team.
 
-### A profile no longer recognizes its TUI
+### A collar no longer recognizes its TUI
 
-Capture the real pane, update only that harness's profile, and require loud
+Capture the real pane, update only that harness's collar, and require loud
 failure for shapes the parser cannot identify. A degraded fallback that reports
 healthy is worse than an explicit break.
 

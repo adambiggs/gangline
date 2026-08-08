@@ -69,7 +69,7 @@
 cd ~/your/repo
 gang up</code></pre>
 
-    <pre><code>gang hitch worker -p codex -d "$PWD"
+    <pre><code>gang hitch worker -c codex -d "$PWD"
 
 gang send --to worker --stdin &lt;&lt;'TASK'
 Fix the failing parser test and report the proof.
@@ -89,10 +89,10 @@ gang roster</code></pre>
       <li><code>gang status</code>, <code>gang roster</code>, and
         <code>gang capture</code> expose conservative current state.</li>
       <li><code>gang compact</code> invokes the harness's own compaction mechanism.</li>
-      <li><code>gang cutoff</code> declares one optional team deadline and exposes
+      <li><code>gang curfew</code> declares one optional team deadline and exposes
         yellow and red advisory edges without enforcing it.</li>
-      <li><code>gang profiles</code> lists the available harness integrations.</li>
-      <li>Profiles contain harness-specific launch syntax, native hooks, and TUI
+      <li><code>gang collars</code> lists the available harness integrations.</li>
+      <li>Collars contain harness-specific launch syntax, native hooks, and TUI
         observation. The core has no harness-name branches.</li>
     </ul>
   </section>
@@ -111,16 +111,16 @@ gang roster</code></pre>
     <code>YELLOW_TOKENS</code> and <code>RED_TOKENS</code> from a current
     observation of that harness:</p>
 
-    <pre><code>GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -p codex</code></pre>
+    <pre><code>GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex</code></pre>
 
     <p>The lights are advisory and edge-triggered. The agent decides when to
     compact.</p>
 
-    <p>A team may also declare a wall-clock cutoff. Yellow appears halfway
+    <p>A team may also declare a wall-clock curfew. Yellow appears halfway
     through the declared span and red after four-fifths; nothing stops
     automatically.</p>
 
-    <pre><code>gang cutoff 2h</code></pre>
+    <pre><code>gang curfew 2h</code></pre>
   </section>
 
   <p class="dim">One Bash CLI over tmux. No daemon, message bus, private protocol,

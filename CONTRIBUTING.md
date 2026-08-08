@@ -17,15 +17,15 @@ authoritative list of local push gates. Do not bypass it with `--no-verify`.
 ## Scope and implementation
 
 - Add only behaviour with a current, concrete consumer.
-- Keep harness-specific knowledge in `profiles/`; do not branch on harness names
+- Keep harness-specific knowledge in `collars/`; do not branch on harness names
   in `bin/gang` without the decision required by `CONSTITUTION.md`.
 - Do not add supervisors, daemons, retry managers, private transports, or silent
   degraded modes.
 - Prefer deletion when Gangline cannot make a surface safe or truthful.
-- A profile may drive a harness but must never disable its sandbox, bypass its
+- A collar may drive a harness but must never disable its sandbox, bypass its
   approvals, or otherwise lower the operator's security posture.
 - Put operator security choices in the operator's harness configuration, never
-  in a shipped profile.
+  in a shipped collar.
 - Add an SPDX license identifier to every new shell or Python file.
 
 Before editing `bin/gang`, resolve the executable on `PATH`:
@@ -54,7 +54,7 @@ The following rules are mandatory:
   behaviour, or use wall-clock delay as evidence.
 - Use an immediate fake clock when time is an input.
 - Assert state that the command has already established.
-- Keep indeterminate distinct from both pass and fail. A negative assertion must
+- Keep unknown distinct from both pass and fail. A negative assertion must
   not pass because its fixture produced no value.
 - Use a private tmux server and disposable session for integration tests. Never
   address the live `gangline` session.
@@ -82,7 +82,7 @@ Pair `!` with a `BREAKING CHANGE:` footer that tells callers what to update.
 
 Pull request titles must also be Conventional Commits. Commit bodies should state
 what failed, what changed, and what proves the result. Marker changes must name
-the harness version that was observed and add it to the profile's verified pins.
+the harness version that was observed and add it to the collar's verified pins.
 
 When multiple contributors share a checkout:
 

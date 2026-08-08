@@ -17,7 +17,7 @@ calling tmux pane in the same way as a message sender.
 | `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `profiles`, `config`, `cutoff`, `notify`, `down` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `collars`, `config`, `curfew`, `notify`, `down` | Keep their ordinary bare meaning. |
 
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
@@ -27,9 +27,9 @@ states that no target or Gangline agent window was available.
 ### `gang up [name] [hitch flags]`
 
 Hitches one agent, named `lead` when omitted, then attaches or switches the
-current tmux client to it. `GANG_PROFILE` selects the harness.
+current tmux client to it. `GANG_COLLAR` selects the harness.
 
-### `gang hitch <name> [-p profile] [-d dir] [-m model] [-e effort] [--resume [session-id]]`
+### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract tells the agent to choose a model and reasoning effort deliberately
@@ -43,33 +43,33 @@ appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
 
 The launch environment carries the exact `GANG_SESSION`, the absolute resolved
-`GANG_CONFIG_DIR`, and any custom profile and lock paths, so harness commands
+`GANG_CONFIG_DIR`, and any custom collar and lock paths, so harness commands
 cannot drift to another session or configuration layer on the same tmux server.
 File-layer settings therefore reach nested hitches. Other per-invocation
 environment overrides do not become sticky inside the agent.
 
 If a first-run prompt owns the screen before the composer appears, `hitch`
-directs the operator to `gang attach` once the profile's occupied pattern
+directs the operator to `gang attach` once the collar's occupied pattern
 provides positive pane evidence, then keeps waiting within the original
 `GANG_BOOT_TIMEOUT`. Clearing the prompt lets that same hitch report the
 recovered input box and deliver its startup contract. If the bound expires
 first, the window is left for inspection and the error gives the attach, drop,
 and re-hitch recovery.
 
-- `-p` selects a profile.
+- `-c` selects a collar.
 - `-d` selects the harness working directory.
-- `-m` passes a harness-native model choice through the profile's model option.
-- `-e` passes a harness-native reasoning-effort level through the profile's
+- `-m` passes a harness-native model choice through the collar's model option.
+- `-e` passes a harness-native reasoning-effort level through the collar's
   effort option, joined with no space, on the plain and `--resume` launch forms
-  alike. The profile prints its level vocabulary and a level outside it is
-  refused before any window opens. A profile that declares no effort spelling
+  alike. The collar prints its level vocabulary and a level outside it is
+  refused before any window opens. A collar that declares no effort spelling
   refuses the flag, and a vocabulary that cannot be determined is refused as a
   broken declaration rather than a bad value.
 - `--resume <session-id>` substitutes that exact native session identity into
-  the profile's resume template. Bare `--resume` is only valid when a dead,
+  the collar's resume template. Bare `--resume` is only valid when a dead,
   still-existing window registered to the same agent carries `@gl_session_id`.
   A missing id refuses with `gang whoami` and the explicit-id remedy; there is
-  no latest/continue fallback. Profiles without an explicit-id resume template
+  no latest/continue fallback. Collars without an explicit-id resume template
   refuse either form.
 
 Names use letters, digits, dot, dash, and underscore, may not begin with dot or
@@ -77,17 +77,17 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 When context lights are enabled, their thresholds are copied to the new window.
-Any profile declaring `GANG_SESSION_KEY=1` also binds the window to the useful
+Any collar declaring `GANG_SESSION_KEY=1` also binds the window to the useful
 startup envelope's nonce, whether or not lights are enabled, so later context
 queries can find the matching native session without a marker turn.
 Operators normally place both thresholds high in the native window so lights do
 not impose an artificial context disadvantage, but below the harness's observed
 automatic-compaction boundary so the lights remain reachable.
 
-### `gang adopt <name> -p <profile>`
+### `gang adopt <name> -c <collar>`
 
 Registers an existing window in `GANG_SESSION`. Adoption does not inject startup
-text or retroactively add launch-time native hooks. A profile whose context
+text or retroactively add launch-time native hooks. A collar whose context
 source requires hitch-time identity may therefore report context unavailable.
 
 Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
@@ -98,8 +98,9 @@ checkout or an installed tree alike. It therefore witnesses the executable
 bytes rather than repository metadata. If the checksum cannot be read, the
 stamp is `unavailable`; identity evidence never blocks lifecycle commands.
 When the invoked `bin/gang` is tracked in a git checkout but differs from HEAD,
-every command prints one stderr warning naming the path and HEAD. Restoring the
-file to HEAD removes the warning; the live symlink/install path is unchanged.
+every operator command prints one stderr warning naming the path and HEAD. The
+native hook endpoint stays silent except for a crossed light. Restoring the file
+to HEAD removes the warning; the live symlink/install path is unchanged.
 
 ### `gang attach`
 
@@ -109,7 +110,7 @@ Attaches to `GANG_SESSION`.
 
 Prints the window's stamped native session id and the exact
 `gang hitch <name> --resume <session-id>` relaunch command, then kills the exact
-agent window. If the profile has not supplied a stamp, it says so instead. Its
+agent window. If the collar has not supplied a stamp, it says so instead. Its
 tmux-owned state and spool die with it.
 
 ### `gang down`
@@ -123,15 +124,15 @@ spool first.
 
 Reads the full message body from standard input. Inside the team, Gangline derives
 the sender from the calling window and refuses `--from`, but only when the pane
-carries matching `@gl_agent` and profile registration and no recorded native
+carries matching `@gl_agent` and collar registration and no recorded native
 session mismatch. An unadopted window name is not an identity. Self-send to the
 same pane also refuses. Calls from outside the team must supply `--from`.
 Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
-Gangline refuses a missing or occupied composer, a human draft, indeterminate
-state, and unsafe mid-turn input. A profile may declare that its native harness
+Gangline refuses a missing or occupied composer, a human draft, unknown
+state, and unsafe mid-turn input. A collar may declare that its native harness
 accepts ordinary mid-turn input.
 
 A refusal on a box that is not provably empty classifies what Gangline read, in
@@ -140,12 +141,12 @@ Gangline did not write), `staged` (Gangline's own undelivered body, byte-identic
 to the rendering it recorded), `unattributed` (Gangline recorded an undelivered
 paste here but cannot match it to this box, so the author is exactly what is
 unknown), `parked` (the harness's declared queue evidence), `whole-pane` (the
-profile declares no input reader, so the reading is the pane rather than a box),
+collar declares no input reader, so the reading is the pane rather than a box),
 `cleared` (the box read empty when Gangline looked again, so the obstruction
 left between the decision and its naming), or `unreadable`. The classifying
 look is taken after the decision it names and changes nothing about it; a
 refusal stands even when the box clears underneath it. A suggested-prompt placeholder is not among
-them: the profile's styled reading strips it, so it never reaches a refusal —
+them: the collar's styled reading strips it, so it never reaches a refusal —
 `gang capture` is where it looks like a draft, and `gang composer` is the reading
 that settles it.
 
@@ -164,7 +165,7 @@ native hooks and no mid-turn-input declaration whose pane keeps a matching
 busy marker stays refused until the marker scrolls off or the agent is
 dropped. That refusal is fail-closed and deliberate.
 
-Queued is not delivered: where a profile declares queue evidence, a harness
+Queued is not delivered: where a collar declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed
 delivery naming the `gang flush` recovery, both before pasting and after the Enter —
 never as a success. An unreadable verification capture after the Enter is
@@ -206,7 +207,7 @@ waiting for one target loses the first when the second carries the flag, whether
 that second message parks or is delivered live. Pass it only when the newer
 message genuinely replaces everything that sender has parked.
 
-A profile that declares no `GANG_STOP_HOOK` still receives the ordinary live
+A collar that declares no `GANG_STOP_HOOK` still receives the ordinary live
 attempt. If that attempt is refused, Gangline exits with the refusal, says the
 message was not parked, and names the missing declaration because nothing else
 would drain its spool.
@@ -221,7 +222,7 @@ delete them.
 ### `gang flush <name>`
 
 Recovers a message the harness parked in its own input queue, as a verified
-operation. Gangline presses the profile's declared recall key, reads the loaded
+operation. Gangline presses the collar's declared recall key, reads the loaded
 composer back against the body it recorded when it watched the harness park the
 message, submits it, and verifies the submission the way any delivery is
 verified.
@@ -231,7 +232,7 @@ normalized away: every normalization discards content that some body means, and
 trailing-space trimming is line-oriented in every tool that offers it, so it
 cannot tell a line ending in two spaces from one that does not.
 
-It refuses before pressing anything when the profile declares no queue evidence
+It refuses before pressing anything when the collar declares no queue evidence
 or no recall key, when the composer shows no parked-queue evidence, and when
 Gangline holds no record of the parked body. It refuses after the recall key
 when that key loaded nothing, or when the readback is not exactly the recorded
@@ -239,19 +240,19 @@ message; the Enter is not pressed in either case.
 
 ### `gang interrupt <name>`
 
-Sends the keystroke the profile declares as its harness's turn-stop key and
+Sends the keystroke the collar declares as its harness's turn-stop key and
 drops Gangline's turn bracket, so the interrupted turn neither leaves a bracket
 answering busy until its bound expires nor a written one answering idle. State
 then comes from the pane: a harness that stopped goes idle, and one that
 ignored the key stays busy and unreachable. Whether the harness stops remains
-the harness's verdict. A profile that declares no interrupt key refuses the
+the harness's verdict. A collar that declares no interrupt key refuses the
 command, and an occupied composer refuses it too — that keystroke is often what
 a native dialog reads as an answer.
 
 ### `gang compact <name>`
 
-Submits the profile's native compaction command through the same verified input
-path. An external request refuses a busy or indeterminate target.
+Submits the collar's native compaction command through the same verified input
+path. An external request refuses a busy or unknown target.
 
 When a hooked Codex or claude-code agent requests its own compaction, Gangline
 records a one-shot request. Its native Stop hook submits `/compact` after the
@@ -266,7 +267,7 @@ target is stored as the session option `@gl_notify`; it need not exist when
 declared, and no target is inferred. `gang notify clear` removes the declaration
 sooner, and ending the tmux session deletes it with the rest of the team state.
 
-When a profile's native hook witnesses an awaiting-input event, Gangline sends
+When a collar's native hook witnesses an awaiting-input event, Gangline sends
 one ordinary attributed message:
 `stall: <agent> is awaiting input (<kind>) — inspect with gang capture <agent>`.
 Repeated events of the same kind within 600 seconds are one note. A native
@@ -275,9 +276,9 @@ older stamp permits a fresh note without any patrol or timer. A delivery failure
 is recorded on the raising window for `status` and `roster`, and is retired only
 after a later note is accepted live or parked.
 
-### `gang cutoff [<duration|HH:MM>|clear]`
+### `gang curfew [<duration|HH:MM>|clear]`
 
-Declares, shows, or clears one optional wall-clock cutoff for the team. Durations
+Declares, shows, or clears one optional wall-clock curfew for the team. Durations
 carry their units, such as `90m`, `2h`, or `1h30m`; a bare number is refused.
 `HH:MM` means the next occurrence of that local 24-hour clock time.
 
@@ -288,29 +289,38 @@ action. Declaring again replaces and restarts the span; `clear` removes it.
 
 ## Observation
 
+Gang-managed tmux windows wrap the bare agent name in the glyph of the state
+Gangline last witnessed: `-name-`, `~name~`, `!name!`, or `?name?`. This is an
+at-a-glance hint and can be stale between existing observation points and native
+hook events; `gang roster` remains the live-computed truth. Addressing always
+uses the bare name, so `gang send --to pii-impl` never changes. tmux appends its
+own flags after the name: a last-active busy window renders as `3:-name--`, where
+the trailing pair is tmux's flag rather than part of the agent name. Gangline
+does not set the operator's tmux status formats.
+
 ### `gang status <name>`
 
 Prints one current state:
 
-- `busy (tight tug)` — a native event, terminal activity, or profile marker
+- `-busy-` — a native event, terminal activity, or collar marker
   witnesses active work;
-- `idle (slack tug)` — the evidence positively witnesses readiness;
-- `occupied (authority unknown)` — a native UI owns the composer;
-- `occupied (known transient: <id>)` — a profile-enumerated benign dialog is
+- `~idle~` — the evidence positively witnesses readiness;
+- `!occupied! (authority unknown)` — a native UI owns the composer;
+- `!occupied! (known transient: <id>)` — a collar-enumerated benign dialog is
   visible; observation names it but presses no key;
-- `expired (...)` — the available evidence can no longer determine the answer.
+- `?unknown? (...)` — the available evidence can no longer determine the answer.
 
 A turn bracket left open by an interruption the harness never reported decays
 once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
-whose input box is on screen and provably empty reads `idle`, because that is
+whose input box is on screen and provably empty reads `~idle~`, because that is
 the same positive evidence idle means everywhere else. A drafted box, a frozen
-busy marker, or a pty whose quietness cannot be measured keeps it `expired`, and
+busy marker, or a pty whose quietness cannot be measured keeps it `?unknown?`, and
 an unreadable or future-stamped bracket is unknown rather than abandoned. Within
 its bound the bracket still outranks the tiers beneath it, and a provably empty
-box already accepted delivery while the state read `expired`.
+box already accepted delivery while the state read `?unknown?`.
 
 A decay refused because the pane was being written to during the decision reads
-`expired (the pane was written to while gang was deciding)`, and that reason
+`?unknown? (the pane was written to while gang was deciding)`, and that reason
 refuses delivery rather than falling through to the empty-box check. A harness
 can paint the opening of a turn with its composer still empty, so an empty box
 read out of a moving screen does not witness an idle target.
@@ -329,7 +339,7 @@ and a stall note that could not be accepted.
 
 ### `gang whoami`
 
-From inside an agent pane, prints the Gangline agent name, pane id, profile,
+From inside an agent pane, prints the Gangline agent name, pane id, collar,
 stamped harness session id, latest live hook-payload id, team session, and any
 recorded identity mismatch. A native hook stamps `@gl_session_id` on first
 sighting and compares every later live id against it. A mismatch is visible in
@@ -338,8 +348,8 @@ the record.
 
 ### `gang context [name]`
 
-Prints the target profile's native context reading raw, in its own
-`usedk/windowk (percent%)` format. The query reads the profile source whether or
+Prints the target collar's native context reading raw, in its own
+`usedk/windowk (percent%)` format. The query reads the collar source whether or
 not context lights are enabled; asking and edge-triggered signalling are
 separate acts. A missing or unreadable source fails loudly and no value is
 fabricated.
@@ -353,29 +363,29 @@ windows answer only when their required native source is independently present.
 
 ### `gang usage <name>`
 
-Drives the usage command declared by the target's harness profile and prints the
+Drives the usage command declared by the target's harness collar and prints the
 harness's own page raw. The pane is locked for the entire operation. Gangline
-refuses a busy, indeterminate, occupied, changing, or non-empty composer; it
+refuses a busy, unknown, occupied, changing, or non-empty composer; it
 types only after all five predicates pass. A bare `gang usage` prints help
 because the calling agent is necessarily running in the composer it would have
 to drive.
 
 Modal pages are returned as the visible screen, trailing blank terminal rows
-removed, and then dismissed with the profile's key. A modal that scrolls within
+removed, and then dismissed with the collar's key. A modal that scrolls within
 itself may contain more than Gangline can capture; attach to read that overflow.
 Inline pages are extracted from the difference between the whole scrollback
 before and after the native command, so content taller than the pane is retained.
 If tmux history rolls over and the two captures lose their common origin,
 Gangline refuses instead of printing a plausible but unbounded transcript diff.
 
-After reading either shape, Gangline verifies that the profile can read an empty
+After reading either shape, Gangline verifies that the collar can read an empty
 composer again. If restoration fails, the captured content is still printed,
 the command exits non-zero, and `gang attach` is required before more input is
-safe. Profiles without a verified usage declaration refuse the command.
+safe. Collars without a verified usage declaration refuse the command.
 
 ### `gang roster`
 
-Prints every session window with its profile and current state. Unadopted windows
+Prints every session window with its collar and current state. Unadopted windows
 are shown but not treated as agents. Context is deliberately not a roster
 column: ordinary adopted windows and lights-off claude-code windows have no
 readable source, and one absent value must not make the team inventory fail.
@@ -390,19 +400,19 @@ Prints the tail of the target pane after trimming trailing blank terminal rows.
 ### `gang composer <name>`
 
 Prints what a human actually typed into the agent's input box, via the
-profile's styled reading. `capture` shows the raw pane, where a harness's dim
+collar's styled reading. `capture` shows the raw pane, where a harness's dim
 suggested-prompt placeholder is indistinguishable from a real draft; `composer`
 strips styling, so placeholder text vanishes. Empty output means an empty box —
 a whitespace-only reading (prompt padding) counts as empty, the same rule
-delivery uses. Fails loudly when no input box is on screen or the profile
-declares no `profile_input`.
+delivery uses. Fails loudly when no input box is on screen or the collar
+declares no `collar_input`.
 
 ## Discovery and hooks
 
-### `gang profiles`
+### `gang collars`
 
-Lists shipped and custom harness profiles. The Bash substrate fixture is hidden
-unless `GANG_TEST_PROFILES=1`.
+Lists shipped and custom harness collars. The Bash substrate fixture is hidden
+unless `GANG_TEST_COLLARS=1`.
 
 ### `gang config`
 
@@ -450,9 +460,9 @@ Exactly these keys are settable:
 
 | Key | Built-in default | Meaning |
 |---|---|---|
-| `GANG_PROFILE` | `claude-code` | default profile for `up` and `hitch` |
+| `GANG_COLLAR` | `claude-code` | default collar for `up` and `hitch` |
 | `GANG_SESSION` | `gangline` | exact tmux session Gangline addresses |
-| `GANG_PROFILES` | unset | custom profile directory searched before shipped profiles |
+| `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, or absolute `yellow,red` token thresholds |
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
@@ -463,9 +473,9 @@ Exactly these keys are settable:
 | `GANG_OCCUPIED_LIMIT` | `900` | native occupancy-fact bound |
 | `GANG_CLEAR_PRESSES` | `40` | maximum verified composer-clear attempts |
 
-Profile declarations are refused because `load_profile` clears them before
-sourcing the selected profile; put those values in a custom profile and point
-`GANG_PROFILES` at it. `GANG_TEST_PROFILES` is suite-only,
+Collar declarations are refused because `load_collar` clears them before
+sourcing the selected collar; put those values in a custom collar and point
+`GANG_COLLARS` at it. `GANG_TEST_COLLARS` is suite-only,
 `GANG_CONFIG_DIR` cannot set the file that is already being read, and internal
 variables are refused. Any malformed file refuses every command, including
 native hooks; recovery is in `docs/operations.md`.
@@ -477,12 +487,36 @@ prose slot; it is not a deliverability bound. Actual delivery is bounded by the
 target composer's rendering and pane geometry and remains verified at hitch.
 Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 
-Every process addressing one team must agree on `GANG_SESSION`, `GANG_PROFILES`,
+Every process addressing one team must agree on `GANG_SESSION`, `GANG_COLLARS`,
 `GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.
 
-## Profile contract
+### Deprecated names
 
-A profile is a Bash file sourced by `bin/gang`. Harness-specific behavior belongs
+The 1.0 rename keeps every old name working through 1.x. Each announces itself
+on stderr and is removed in 2.0. A setting Gangline reads once per command
+announces once; a collar declaration read for each window announces for each
+window. Setting one setting under both names — in the file, in the environment,
+or one in each — is refused rather than silently resolved.
+
+| Accepted through 1.x | 1.0 name |
+|---|---|
+| `gang profiles` | `gang collars` |
+| `gang cutoff` | `gang curfew` |
+| `-p`, `--profile` | `-c`, `--collar` |
+| `GANG_PROFILE` | `GANG_COLLAR` |
+| `GANG_PROFILES` | `GANG_COLLARS` |
+| `GANG_TEST_PROFILES` | `GANG_TEST_COLLARS` |
+| `profile_input` | `collar_input` |
+| `profile_context` | `collar_context` |
+| `profile_session_id` | `collar_session_id` |
+
+The window option `@gl_profile` and the session option `@gl_cutoff` are not
+aliases: Gangline migrates them in place the first time it reads a window or
+team carrying them, so a fleet running when the rename lands keeps working.
+
+## Collar contract
+
+A collar is a Bash file sourced by `bin/gang`. Harness-specific behavior belongs
 there, never in a harness-name branch in the core script.
 
 | Declaration | Purpose |
@@ -510,11 +544,11 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
 | `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |
 | `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
-| `profile_input target` | print human-authored composer contents, or fail if absent |
-| `profile_context target` | print `usedk/windowk (percent%)`, or fail loudly |
-| `profile_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
+| `collar_input target` | print human-authored composer contents, or fail if absent |
+| `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly |
+| `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 
-Profiles may install native event hooks by composing them into their launch
+Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
 
 Each dialog record has five fields. `id` is `[a-z0-9-]+`; `marker` is a

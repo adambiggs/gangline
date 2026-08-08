@@ -15,7 +15,7 @@ If it resolves into this checkout, every save changes the executable used by
 attached agents immediately. There is no daemon or build step. Keep the script
 parseable and make small green checkpoints.
 
-Profiles are read at hitch time. Existing agents retain the copy already in their
+Collars are read at hitch time. Existing agents retain the copy already in their
 context. Model selection is also a launch choice: drop the old window and hitch
 a new one to change it.
 
@@ -25,23 +25,23 @@ An existing assertion records a decision. Changing its expectation requires
 showing why the old behavior was wrong; deleting it makes the strongest version
 of that claim. Do not edit a test merely because it blocks a behavior change.
 
-Green is not sufficient when a fixture produced no evidence. Keep indeterminate
+Green is not sufficient when a fixture produced no evidence. Keep unknown
 distinct from both pass and fail, and require immediate observable readiness
 before asserting state.
 
 ## Keep the agent surface small
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
-observation, profiles, native hooks, native compaction, and optional yellow/red
+observation, collars, native hooks, native compaction, and optional yellow/red
 context and team-time lights. It does not coordinate work or supervise agents.
 
-- Harness-specific knowledge belongs in `profiles/`, not harness-name branches
+- Harness-specific knowledge belongs in `collars/`, not harness-name branches
   in `bin/gang`.
 - Do not add patrols, schedulers, daemons, watchdogs, retry managers, or
   reconciliation loops.
 - Do not add speculative surfaces without a live consumer.
 - Fail loudly when a native TUI or event shape can no longer be interpreted.
-- Put operator security choices in operator configuration. Profiles must not
+- Put operator security choices in operator configuration. Collars must not
   weaken sandboxes or approvals.
 - Do not record changing counts, versions, sizes, or tallies in standing docs.
   Point to the command that measures them.
@@ -86,7 +86,7 @@ an operator request.
 | `README.md` | what Gangline is and why it exists |
 | `CONSTITUTION.md` | binding project laws |
 | `docs/DECISIONS.md` | terse durable decisions and rationale |
-| `docs/reference.md` | exact commands, environment, and profile contract |
+| `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
 | `CONTRIBUTING.md` | repository gates, commits, releases, and measurement |
 | `CHANGELOG.md` | release history owned by Release Please; never hand-edit |

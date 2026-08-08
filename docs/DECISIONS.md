@@ -16,13 +16,13 @@ coordination schema, reporting protocol, or lead state machine.
 
 Represent a team as one tmux session and each agent as a named window. Use the
 tty for input, pane capture for observation, window options for ephemeral state,
-and profiles for harness-specific knowledge; this keeps agents observable and
+and collars for harness-specific knowledge; this keeps agents observable and
 controllable without a daemon, database, or private protocol.
 
 ## Harness driving is a seam, not a second product
 
 Keep launch syntax, composer parsing, native state, submission, and native
-commands behind the small profile contract. Gangline consumes that boundary
+commands behind the small collar contract. Gangline consumes that boundary
 internally so core decisions can consume explicit observations and remain
 deterministically unit-testable. Extract a general harness driver only when a
 second non-benchmark consumer exists and can define the interface from real use.
@@ -52,7 +52,7 @@ A harness may accept the Enter and park the message in its own input queue —
 claude's queue strand renders the parked body exactly like a submitted prompt
 and empties the composer, so "the box changed" cannot prove entry into the
 session. The one place the states differ is the composer itself, which reads
-as the harness's queue hint; the profile declares that evidence
+as the harness's queue hint; the collar declares that evidence
 (`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
 body quoting the hint can never trip it. Parked input is a failed delivery
 named with the recovery `gang flush` performs, before pasting and after Enter
@@ -76,7 +76,7 @@ parking it loses nothing; a failure after a paste has an unknown fate, and a
 second copy of a message that may have landed is worse than one loud failure.
 Parking is the default and `--live-only` is the explicit probe. It drains only
 on the target's own native Stop event and delivers through the ordinary verified
-path — no poller, scheduler, or watcher. A profile whose harness announces no
+path — no poller, scheduler, or watcher. A collar whose harness announces no
 turn boundary degrades to live-only and names the missing declaration rather
 than holding a message nothing would drain. An entry is claimed out of
 the spool before it is delivered, because ownership has to span the submission
@@ -94,7 +94,7 @@ directory nothing points at.
 ## A parked queue is recovered, not narrated
 
 Gangline already owns every piece of evidence the manual recovery uses, so it
-performs the recovery instead of printing the keystrokes. The profile declares
+performs the recovery instead of printing the keystrokes. The collar declares
 the key that loads the parked body, the record written when Gangline watched the
 harness park it says which body must come back, and the loaded composer is read
 back against that record, byte for byte and whole, before any Enter. Nothing is
@@ -107,10 +107,10 @@ nothing, and a readback that does not match are all refusals with nothing
 pressed. The post-Enter proof is one shared implementation, because two copies
 of it would drift and the drifted one would report a submission nobody saw.
 
-## An interrupt is a profile keystroke and a fact Gangline owns
+## An interrupt is a collar keystroke and a fact Gangline owns
 
-The key that stops a turn is harness knowledge, declared per profile; an
-undeclared profile refuses. Gangline drops the turn bracket rather than closing
+The key that stops a turn is harness knowledge, declared per collar; an
+undeclared collar refuses. Gangline drops the turn bracket rather than closing
 it. Leaving it open strands a busy the harness will never end, but writing a
 closed one is worse: a fresh closed bracket reads as definitive idle before any
 evidence from the pane is consulted, so a harness that ignored the key would be
@@ -123,8 +123,8 @@ dialog reads as an answer.
 ## Occupancy is not authority
 
 Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
-not infer who may clear it. UI recognition belongs in profiles, unknown authority
-fails closed, and Gangline answers only a profile-enumerated, whole-block
+not infer who may clear it. UI recognition belongs in collars, unknown authority
+fails closed, and Gangline answers only a collar-enumerated, whole-block
 fingerprint whose safe row carries no authority. Re-read the selected row before
 every key and the cleared composer after confirmation. Permission, trust,
 approval, authorization, access, elevation, grant, administration, denial,
@@ -146,10 +146,11 @@ including in checkouts: executable bytes, not repository state, determine live
 skew. Compute and compare that witness only when stamping, status, or roster
 needs it; unavailability is visible but never blocks lifecycle commands. Skew
 does not justify a patrol or an attempt to retrofit launch-time context,
-profiles, or hooks.
+collars, or hooks.
 When that script lives in a git checkout and differs from HEAD, warn on every
-command dispatch with the exact path and HEAD; keep live-by-path installation,
-because a merge can intentionally upgrade a running team.
+operator command dispatch with the exact path and HEAD; the native hook endpoint
+stays silent except for a crossed light. Keep live-by-path installation, because
+a merge can intentionally upgrade a running team.
 
 ## Context lights are optional and minimal
 
@@ -161,12 +162,12 @@ of that effective window; larger windows do not make degraded context more
 useful. Expose the same computation as an on-demand query that reads whether or
 not lights are enabled, because signalling and asking are different acts.
 
-## Effort is the profile's word
+## Effort is the collar's word
 
-A reasoning-effort choice rides hitch beside the model choice, but the profile
+A reasoning-effort choice rides hitch beside the model choice, but the collar
 owns both the spelling and the vocabulary: the option is declared whole,
 including its separator, and joined to the level with no space; the levels come
-from a profile command that prints them. Printing keeps "not a level" distinct
+from a collar command that prints them. Printing keeps "not a level" distinct
 from "could not determine" — an exit status merges them and blames the operator
 for a harness that is merely absent. A bad level is refused at hitch, the last
 cheap place: harnesses either warn and run at a default nobody chose or open a
@@ -191,14 +192,14 @@ still injects no startup text.
 
 Require the startup contract to tell agents to choose both deliberately when
 hitching teammates. Gangline requires the choice, never its content: model names,
-effort levels, and policy remain the profile's and operator's words.
+effort levels, and policy remain the collar's and operator's words.
 
 ## Evidence is selected per predicate
 
 For each fact, prefer the freshest owned event, then owned file state, then pane
 scraping; witnesses do not vote. Expired or contradictory evidence is
-indeterminate and surfaced, hooks only translate facts, and no background
-processor reconciles them. Indeterminate never vetoes an action that fresher
+unknown and surfaced, hooks only translate facts, and no background
+processor reconciles them. Unknown never vetoes an action that fresher
 direct evidence proves safe — the action's own verification carries the
 residual risk — and state the new evidence refutes is retired at that moment,
 never by a patrol. Retirement applies only to state gang alone writes: the
@@ -209,7 +210,7 @@ is re-derived per action. A hookless window without mid-turn input whose
 pane keeps a frozen busy marker therefore stays refused until the marker
 scrolls off or the agent is renewed — fail-closed by intent.
 
-A turn fact nobody will ever edit decays instead of standing indeterminate for
+A turn fact nobody will ever edit decays instead of standing unknown for
 the life of the window. An interruption typed straight into the pane is reported
 by no harness, and `gang interrupt`, which drops the bracket, is the only
 command that touches it; the bracket a raw keystroke abandons stays open
@@ -217,7 +218,7 @@ forever. Once it passes its bound the tiers
 beneath it answer: a quiet pty, a stable pane, and the harness's own input box
 on screen and provably empty are the positive readiness evidence idle is defined
 by, so the state is idle rather than a permanent could-not-determine. Decay
-requires every leg, measured rather than assumed — a profile that does not
+requires every leg, measured rather than assumed — a collar that does not
 declare quiet-at-rest reports inactive by abstention, and an abstention is not
 a witness — and applies only to a readable open bracket past its bound, since
 an unreadable or future-stamped one is unknown, not abandoned. Those legs are
@@ -227,7 +228,7 @@ last, and a decay assembled while either moved is refused. That pair is also
 what lets the snapshot reader decay at all, being immediate where a stability
 check costs a churn wait. It widens no guard: inside its bound the bracket still
 outranks the tiers beneath it, and delivery already reached a provably empty box
-through the indeterminate fall-through.
+through the unknown fall-through.
 
 Movement seen during a decision is not indeterminacy, and delivery must not
 consume it as such. Every other road to could-not-determine is an absence — a
@@ -253,7 +254,7 @@ unattributed rather than blamed on a person. The
 alternative is what happened — operators diagnosing a blocked box by eye from a
 raw capture, where a dim suggested-prompt placeholder is indistinguishable from
 a half-written line, and getting it wrong publicly. Classification uses only
-evidence gang already owns: the profile's styled reading, its declared queue
+evidence gang already owns: the collar's styled reading, its declared queue
 evidence, and the box rendering gang recorded when it staged its own body. A
 placeholder is deliberately not a class — the styled reading strips it, so it
 never blocks a delivery and cannot be what a refusal saw. Inspection pointers
@@ -262,14 +263,14 @@ the question was got wrong.
 
 ## Server loss is a relaunch, not restoration
 
-Do not persist a Gangline roster. `--resume` asks a profile's verified,
+Do not persist a Gangline roster. `--resume` asks a collar's verified,
 explicit-id native command for the session stamped in `@gl_session_id`, read
 from a surviving registered window or quoted from `gang drop`'s parting output,
 and refuses without one; the operator supplies which agents and ids to relaunch.
 
-## A team cutoff is an optional declaration
+## A team curfew is an optional declaration
 
-Let the operator declare one wall-clock cutoff for the team. Derive exactly two
+Let the operator declare one wall-clock curfew for the team. Derive exactly two
 relative, advisory edges from that span: yellow halfway through and red after
 four-fifths. Do not invent a default, enforce the deadline, allocate per-agent
 budgets, or run a patrol; the substrate exposes operator intent and each agent
@@ -280,7 +281,7 @@ decides how to respond.
 Where a harness itself reports that it is waiting on a person, deliver that
 fact as an ordinary attributed message to one optional operator-declared
 target. Nothing polls, nothing infers a stall from a quiet pane, and nothing
-infers a lead: the target is a declaration in the shape of the team cutoff,
+infers a lead: the target is a declaration in the shape of the team curfew,
 and with none declared there are no stall lights. A repeated report of the
 same kind inside one stall is one note, cleared by the harness's own next move.
 A harness that reports nothing gets no substitute, and a delivery that fails
@@ -299,6 +300,37 @@ outside the core and hidden tests or reference solutions are never read.
 Before publication, replace an abandoned name everywhere without compatibility
 breadcrumbs or rename history. After publication, preserve compatibility and use
 normal deprecation because the old name has become an external fact.
+
+## A published name deprecates for one major cycle
+
+A name the 1.0 release renamed keeps its old spelling as an accepted alias
+through 1.x and is removed in 2.0. Every alias announces itself on stderr,
+naming the new spelling and the removal release, so a working setup keeps
+working and says what to change. The promise is that it is announced, not that
+it is announced exactly once: a setting read once per process says so once,
+while a collar declaration read per window says so per window, and deduplicating
+that would need durable state worth less than the line it would suppress. Old
+and new spellings of one setting are never both honored: two names for one
+setting is a refusal naming both origins, because preferring either silently
+would claim a configuration the operator did not write. Announcement is for
+names the operator wrote and still holds. Gangline's own window and session
+state is migrated in place and silently, by ordinary commands and by the native
+hook endpoint alike: there is nothing there for an operator to change, and
+carrying the news across the process that erased the evidence would take durable
+marker state no consumer wants. Two values that genuinely disagree still
+refuse.
+
+## A window name carries last-witnessed state
+
+A gang-managed window wraps its agent name in the glyph of the state Gangline
+last witnessed, so a tmux status bar shows the team at a glance without asking
+anything. It is written at the observation points and hook events that already
+determine state, never by a patrol, so between observations it can be stale and
+`gang roster` remains the live-computed truth. Addressing is always the bare
+name: every lookup strips the glyph, and two windows that strip to one name are
+a refusal rather than a guess, because a silently wrong target is worse than no
+target. tmux appends its own flags after the name; that rendering is documented,
+not fought.
 
 ## Instale data is refused from documentation
 

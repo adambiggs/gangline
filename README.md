@@ -11,11 +11,24 @@ subscription, and context.
 the worker's attributed report starts the next turn, and the lead verifies. Real
 harnesses; transparent state.</em></p>
 
+## Ontology
+
+A **dog** — a model instance — wears a **harness**, its native CLI runtime
+(Claude Code, Codex, OpenCode, or Pi). Gangline fits the dog to the
+**gangline**, the tmux session, by its **collar**: the per-harness adapter in
+`collars/` that carries every piece of harness-specific knowledge. The
+**musher** — you — drives. The musher's adopted window is conventionally called
+the **lead**, but that is a coordination convention: Gangline has no lead
+concept and no lead machinery.
+
+*Dog* is the noun for a hitched agent. *Harness* names only the runtime, never
+the instance running it.
+
 Gangline supplies only the shared primitives:
 
 - start, attach, observe, and stop native harnesses;
 - send attributed messages through their terminal and verify delivery;
-- expose conservative busy, idle, occupied, and indeterminate state;
+- expose conservative -busy-, ~idle~, !occupied!, and ?unknown? state;
 - invoke each harness's native compaction, including Codex self-compaction; and
 - optionally give agents yellow and red context or team-time lights.
 
@@ -31,8 +44,8 @@ Gangline requires Bash, tmux, Python 3, and at least one supported harness.
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
-Or run [`bin/gang`](bin/gang) directly from a clone. `gang profiles` lists the
-available harness profiles.
+Or run [`bin/gang`](bin/gang) directly from a clone. `gang collars` lists the
+available harness collars.
 
 ## Start a team
 
@@ -42,13 +55,13 @@ From the repository the agents should work in:
 gang up
 ```
 
-This hitches `lead` with `GANG_PROFILE` (Claude Code by default) and attaches to
+This hitches `lead` with `GANG_COLLAR` (Claude Code by default) and attaches to
 it. Detach from tmux with `Ctrl-b d`.
 
 Add another native harness and send it work:
 
 ```sh
-gang hitch worker -p codex -d "$PWD"
+gang hitch worker -c codex -d "$PWD"
 
 gang send --to worker --stdin <<'TASK'
 Inspect the failing parser tests, fix the root cause, and report the proof.
@@ -79,7 +92,7 @@ gang drop worker
 gang down
 ```
 
-`gang interrupt` sends the keystroke the harness's profile declares for stopping
+`gang interrupt` sends the keystroke the harness's collar declares for stopping
 a turn. `gang flush` recovers a message a harness parked in its own input queue,
 reading the reloaded composer back against what Gangline recorded before
 submitting it.
@@ -96,7 +109,7 @@ At a natural checkpoint an agent runs:
 gang compact worker
 ```
 
-Gangline submits the profile's native compaction command. Codex cannot submit
+Gangline submits the collar's native compaction command. Codex cannot submit
 `/compact` while its own turn is active, so a self-request is recorded and the
 native Stop hook submits it once at the turn boundary. Failure remains visible
 in `gang status` and `gang roster`.
@@ -108,23 +121,23 @@ compaction boundary so the agent can self-compact first. Set `YELLOW_TOKENS`
 and `RED_TOKENS` from a current observation of that harness:
 
 ```sh
-GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -p codex
+GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex
 ```
 
 The native hook advises once when usage crosses yellow and once when it crosses
 red. Dropping below yellow starts a new context epoch. Lights are guidance only;
 the agent chooses the natural checkpoint.
 
-An operator may also declare one optional cutoff for the whole team:
+An operator may also declare one optional curfew for the whole team:
 
 ```sh
-gang cutoff 2h
-gang cutoff 17:30
+gang curfew 2h
+gang curfew 17:30
 ```
 
 Yellow appears halfway through the declared span and red after four-fifths.
-Hook-enabled agents receive each edge once. `gang cutoff` shows the declaration
-and `gang cutoff clear` removes it. Nothing stops automatically.
+Hook-enabled agents receive each edge once. `gang curfew` shows the declaration
+and `gang curfew clear` removes it. Nothing stops automatically.
 
 ## Safety model
 
@@ -139,7 +152,7 @@ database, cloud service, background coordinator, or private agent protocol.
 ## Documentation
 
 - [`docs/reference.md`](docs/reference.md) — exact commands, environment, and
-  profile contract
+  collar contract
 - [`docs/operations.md`](docs/operations.md) — unattended operation and recovery
 - [`docs/benchmarks.md`](docs/benchmarks.md) — benchmark selection and validity
   gates

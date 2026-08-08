@@ -24,8 +24,8 @@ own right. Violating a law is a defect.
 3. **Delivered means verified.** A send is confirmed by pane capture or it fails
    loudly. No fire-and-forget, no success receipts for messages nobody saw.
 
-4. **Harness integration is a profile, not a plugin.** Per-harness knowledge lives in
-   a profile, never as a branch in `bin/gang`; the profile contract itself is
+4. **Harness integration is a collar, not a plugin.** Per-harness knowledge lives in
+   a collar, never as a branch in `bin/gang`; the collar contract itself is
    documented in `docs/reference.md`. Code inside a harness requires an entry in
    `docs/DECISIONS.md` proving the value is real and unachievable any other way.
 
