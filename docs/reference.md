@@ -305,6 +305,14 @@ own flags after the name: a last-active busy window renders as `3:-name--`, wher
 the trailing pair is tmux's flag rather than part of the agent name. Gangline
 does not set the operator's tmux status formats.
 
+### `gang mail <name>`
+
+Prints every message waiting in that agent's spool, oldest first, then every
+held entry, each with its sender and its entry filename, each body exactly as it
+would go onto the wire. It reads: it delivers nothing, creates nothing, removes
+nothing, and takes no delivery lock. It needs no loadable collar, because a
+queue is files on disk and the harness may be the reason you are reading it.
+
 ### `gang status <name>`
 
 Prints one current state:

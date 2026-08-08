@@ -131,7 +131,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush interrupt compact context usage status capture composer whoami drop down"
+bare_error_commands="hitch adopt send flush mail interrupt compact context usage status capture composer whoami drop down"
 meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -3516,6 +3516,70 @@ for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
 done
 equal "dropping an empty queue creates no archive directory" \
   "$archive_count" "$archive_count_after_empty"
+
+# MAIL READS THE QUEUE AND NOTHING ELSE. It does not load the target's collar,
+# claim entries, take the pane lock, or attempt delivery.
+"$GANG" hitch mailer -c spoolable -d /tmp >/dev/null
+mailer_id="$(window_id mailer)"
+tmux send-keys -l -t "$mailer_id" 'HUMAN_DRAFT'
+printf 'MARK_MAIL_ONE' |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+printf 'MARK_MAIL_TWO' |
+  "$GANG" send --to mailer --from other --stdin >/dev/null
+printf 'MARK_MAIL_THREE' |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+mailer_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$mailer_id" @gl_spool)"
+mail_names_before="$(cd "$mailer_spool" && ls)"
+mail_status_before="$("$GANG" status mailer)"
+mail_out="$("$GANG" mail mailer)"
+contains "mail prints the first waiting body" "$mail_out" "MARK_MAIL_ONE"
+contains "mail prints the second waiting body" "$mail_out" "MARK_MAIL_TWO"
+contains "mail prints the third waiting body" "$mail_out" "MARK_MAIL_THREE"
+contains "mail names the first sender" "$mail_out" "from tester"
+contains "mail names the other sender" "$mail_out" "from other"
+mail_order="$(printf '%s\n' "$mail_out" |
+  grep -oE 'MARK_MAIL_ONE|MARK_MAIL_TWO|MARK_MAIL_THREE' |
+  awk '!seen[$0]++' | tr '\n' ' ')"
+equal "mail prints waiting bodies in stamp order" \
+  "MARK_MAIL_ONE MARK_MAIL_TWO MARK_MAIL_THREE " "$mail_order"
+mail_status_after="$("$GANG" status mailer)"
+contains "mail leaves the waiting count unchanged before its read" \
+  "$mail_status_before" "spooled: 3"
+contains "mail leaves the waiting count unchanged after its read" \
+  "$mail_status_after" "spooled: 3"
+equal "mail leaves every entry filename untouched" "$mail_names_before" \
+  "$(cd "$mailer_spool" && ls)"
+
+tmux set-option -w -t "$mailer_id" @gl_collar no-such-collar
+mail_without_collar="$("$GANG" mail mailer)"
+contains "mail reads bodies without loading the target collar" \
+  "$mail_without_collar" "MARK_MAIL_ONE"
+if missing_collar_status="$("$GANG" status mailer 2>&1)"; then
+  fail "the same target proves its collar is not loadable" \
+    "status unexpectedly succeeded"
+else
+  pass "the same target proves its collar is not loadable"
+fi
+contains "status fails specifically on the missing collar" \
+  "$missing_collar_status" "unknown collar 'no-such-collar'"
+tmux set-option -w -t "$mailer_id" @gl_collar spoolable
+
+mailer_failed="$mailer_spool/failed-00000000000000000005-facefeed"
+printf '%s\n%s\n%s\n' other MARK_MAIL_HELD \
+  '[gang:other#facefeed] MARK_MAIL_HELD [/gang:other#facefeed]' \
+  > "$mailer_failed"
+mail_with_held="$("$GANG" mail mailer)"
+contains "mail prints a held body" "$mail_with_held" "MARK_MAIL_HELD"
+contains "mail labels held delivery as unverified" \
+  "$mail_with_held" "held (delivery NOT verified"
+"$GANG" drop mailer >/dev/null
+
+"$GANG" hitch empty-mailbox -c spoolable -d /tmp >/dev/null
+empty_mail_out="$("$GANG" mail empty-mailbox)"
+contains "mail exits cleanly on an empty queue" \
+  "$empty_mail_out" "no mail waiting for empty-mailbox"
+"$GANG" drop empty-mailbox >/dev/null
 
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists

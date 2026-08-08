@@ -391,6 +391,7 @@ gang — drive native CLI agents in tmux
   adopt     register an existing window
   send      deliver a message to an agent
   flush     recover a harness-queued message
+  mail      read an agent's waiting queue
   interrupt stop an agent's current turn
   compact   ask an agent to compact context
   context   read an agent's context
@@ -458,6 +459,15 @@ gang flush
   Recover a harness-queued message.
 
   gang flush <name>
+EOF
+      ;;
+    mail) cat <<'EOF'
+gang mail
+  Read an agent's waiting queue.
+
+  gang mail <name>
+
+  Prints; delivers nothing.
 EOF
       ;;
     interrupt) cat <<'EOF'
@@ -3443,6 +3453,37 @@ cmd_status() {
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
 }
 
+cmd_mail() { # read a queue without touching it
+  local name="${1:-}" id rc=0 dir e n=0 held=0
+  [ -n "$name" ] || usage_die
+  [ $# -eq 1 ] || die "mail: unexpected argument '$2'"
+  id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no agent '$name' (see: gang roster)"; }
+  dir="$(spool_dir_of "$id")"
+  if [ -z "$dir" ] || [ ! -d "$dir" ]; then
+    printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
+    return 0
+  fi
+  for e in "$dir"/[0-9]*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    n=$((n + 1))
+    printf '%s\n' "$(colour "$C_WORK" "waiting #$n from $SPOOL_SENDER — ${e##*/}")"
+    printf '%s\n\n' "$SPOOL_BODY"
+  done
+  for e in "$dir"/sending-* "$dir"/failed-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    held=$((held + 1))
+    printf '%s\n' "$(colour "$C_BAD" "held (delivery NOT verified — it may still have arrived) from $SPOOL_SENDER — ${e##*/}")"
+    printf '%s\n\n' "$SPOOL_BODY"
+  done
+  if [ "$n" -eq 0 ] && [ "$held" -eq 0 ]; then
+    printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
+    return 0
+  fi
+  printf '%s\n' "$(colour "$C_DIM" "$n waiting, $held held, in $dir")"
+}
+
 cmd_whoami() {
   local id name collar stamped live mismatch
   [ $# -eq 0 ] || die "whoami: takes no arguments"
@@ -3773,7 +3814,7 @@ if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
 fi
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|spawn|adopt|send|flush|interrupt|usage|drop|down)
+    hitch|spawn|adopt|send|flush|interrupt|usage|drop|down|mail)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -3785,6 +3826,7 @@ case "$cmd" in
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   flush)    cmd_flush "$@" ;;
+  mail)     cmd_mail "$@" ;;
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
