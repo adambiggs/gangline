@@ -4842,5 +4842,9 @@ fi
   && pass "and takes the spool of every window in it" \
   || fail "and takes the spool of every window in it" "$lingering_spool survived"
 
+# The focused role instrument is mandatory here and independently selectable so
+# mutation calibration can run the exact AC that must turn red.
+"$ROOT/test/role-briefs.sh"
+
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
 [ "$fails" -eq 0 ]
