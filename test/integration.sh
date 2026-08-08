@@ -3614,6 +3614,79 @@ excludes "a malformed oldest stamp does not fabricate an age" \
   "$agebox_row" "oldest="
 "$GANG" drop agebox >/dev/null
 
+# PREEMPTION CARRIES ITS REASON THROUGH THE BOUNDARY IT CREATES. The fixture
+# witnesses the collar-declared key independently and keeps a normal spool so
+# backlog can prove it neither competes with nor absorbs the reason.
+cat > "$RUN_ROOT/preempt-rc" <<RC
+unset -f command_not_found_handle
+PS1='❯ '
+bind -x '"\C-g": printf "%s\n" INTERRUPT_KEY_RECEIVED > "$RUN_ROOT/preempt-key"'
+RC
+cat > "$RUN_ROOT/collars/preemptible.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/preempt-rc' fixture"
+GANG_INTERRUPT_KEY='C-g'
+GANG_STOP_HOOK=1
+SH
+"$GANG" hitch preempt -c preemptible -d /tmp >/dev/null
+preempt_id="$(window_id preempt)"
+tmux send-keys -l -t "$preempt_id" 'HUMAN_DRAFT'
+printf 'MARK_PARKED_ONE' |
+  "$GANG" send --to preempt --from tester --stdin >/dev/null
+printf 'MARK_PARKED_TWO' |
+  "$GANG" send --to preempt --from other --stdin >/dev/null
+printf 'MARK_PARKED_THREE' |
+  "$GANG" send --to preempt --from third --stdin >/dev/null
+contains "the preemption world starts with three messages parked" \
+  "$("$GANG" status preempt)" "spooled: 3"
+tmux send-keys -t "$preempt_id" C-u
+preempt_out="$("$GANG" interrupt preempt -m 'MARK_PREEMPT' --from tester)"
+contains "a reasoned interrupt still reports the collar key" \
+  "$preempt_out" "C-g"
+[ -f "$RUN_ROOT/preempt-key" ] \
+  && pass "the reasoned interrupt sends the collar-declared key" \
+  || fail "the reasoned interrupt sends the collar-declared key" \
+    "$RUN_ROOT/preempt-key is absent"
+preempt_pane="$(pane preempt)"
+contains "the reason reaches the boundary created by the interrupt" \
+  "$preempt_pane" "MARK_PREEMPT"
+contains "the interrupt reason carries sender attribution" \
+  "$preempt_pane" "[gang:tester#"
+contains "the reason never joins or consumes the existing queue" \
+  "$("$GANG" status preempt)" "spooled: 3"
+excludes "the reason lands before any parked backlog" \
+  "$preempt_pane" "MARK_PARKED_ONE"
+excludes "the preemption does not drain another sender's backlog" \
+  "$preempt_pane" "MARK_PARKED_TWO"
+
+tmux send-keys -l -t "$preempt_id" 'HUMAN_DRAFT'
+if preempt_refused="$("$GANG" interrupt preempt \
+  -m 'MARK_UNDELIVERED' --from tester 2>&1)"; then
+  fail "a reasoned interrupt refuses an occupied draft after stopping" \
+    "interrupt unexpectedly succeeded"
+else
+  pass "a reasoned interrupt refuses an occupied draft after stopping"
+fi
+contains "an undelivered interrupt reason is handed back in full" \
+  "$preempt_refused" "MARK_UNDELIVERED"
+contains "a refused interrupt reason is never added to the queue" \
+  "$("$GANG" status preempt)" "spooled: 3"
+refuses "interrupt rejects an empty reason" \
+  "interrupt: -m needs a non-empty message" \
+  "$GANG" interrupt preempt -m '' --from tester
+refuses "interrupt accepts only one reason" \
+  "interrupt: -m may be passed only once" \
+  "$GANG" interrupt preempt -m one -m two --from tester
+refuses "interrupt rejects a sender when there is no message" \
+  "--from names the author of a message" \
+  "$GANG" interrupt preempt --from tester
+contains "interrupt help names its reason option" \
+  "$("$GANG" interrupt --help)" '-m "reason"'
+tmux send-keys -t "$preempt_id" C-u
+"$GANG" drop preempt >/dev/null
+
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists
 # to avoid, so gang says so instead of narrowing the window.

@@ -409,6 +409,15 @@ one at a time submits the first, which starts a turn, which refuses the second �
 so a target that is never idle for long accumulates exactly the messages that
 would have corrected it. One paste and one Enter cannot race the turn they create.
 
+## A stop carries its reason, and never through the queue
+
+`gang interrupt -m` stops a turn and delivers its reason at the boundary that
+stop creates, under one continuous pane lock. It is never spooled. `--supersede`
+retires the sender's own waiting entries and stamps the replacement now, which
+sorts it behind every other sender's — so a stop sent that way arrives after the
+work it was meant to stop. Priority is not a property a queue position can carry;
+it is a property of not being in the queue.
+
 ## A guard witnesses the artifact, and witnesses it in order
 
 Assert the thing a defect actually produces — the text left on the pane, the

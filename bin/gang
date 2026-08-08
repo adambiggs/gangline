@@ -475,6 +475,8 @@ gang interrupt
   Stop an agent's current turn.
 
   gang interrupt <name>
+    [-m "reason"]
+    [--from <sender>]
 EOF
       ;;
     compact) cat <<'EOF'
@@ -868,17 +870,17 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
 
 SEND_FROM="" SEND_WINDOW=""
 send_sender() { # $1 = optional outside identity; derive identity inside the team
-  local claimed="$1" self
+  local claimed="$1" label="${2:-send}" self
   SEND_FROM="" SEND_WINDOW=""
   if self="$(self_window)"; then
     [ -z "$claimed" ] \
-      || die "send: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity (inspect it with gang whoami)"
+      || die "$label: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity (inspect it with gang whoami)"
     SEND_WINDOW="$self"
     SEND_FROM="$(agent_name_of "$self")" \
-      || die "send: cannot read this Gangline window's identity"
+      || die "$label: cannot read this Gangline window's identity"
   else
     [ -n "$claimed" ] \
-      || die "send: calls outside session '$SESSION' must name their identity with --from <sender>"
+      || die "$label: calls outside session '$SESSION' must name their identity with --from <sender>"
     SEND_FROM="$claimed"
   fi
   valid_name "$SEND_FROM" \
@@ -911,16 +913,16 @@ identity_mismatch_read() { # $1 window; print the recorded mismatch, or nonzero
 }
 
 send_identity_guard() { # a pane with a contradicted native identity may not speak
-  local mismatch registered collar
+  local label="${1:-send}" mismatch registered collar
   [ -n "$SEND_WINDOW" ] || return 0
   registered="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_agent 2>/dev/null)" || registered=""
   collar="$(collar_read "$SEND_WINDOW" "$SEND_FROM")" || exit 1
   [ -n "$registered" ] && [ -n "$collar" ] \
-    || refuse "send: this pane has no registered Gangline agent/collar identity; a window name alone cannot attribute a message (gang whoami; then gang adopt <window-name> -c <collar>)"
+    || refuse "$label: this pane has no registered Gangline agent/collar identity; a window name alone cannot attribute a message (gang whoami; then gang adopt <window-name> -c <collar>)"
   [ "$registered" = "$SEND_FROM" ] \
-    || refuse "send: this pane is registered as '$registered' but its window is named '$SEND_FROM'; refusing misattributed delivery (gang whoami)"
+    || refuse "$label: this pane is registered as '$registered' but its window is named '$SEND_FROM'; refusing misattributed delivery (gang whoami)"
   mismatch="$(identity_mismatch_read "$SEND_WINDOW")" || return 0
-  refuse "send: this pane has a harness session identity mismatch ($mismatch); nothing from it can be attributed safely until that is resolved (gang whoami)"
+  refuse "$label: this pane has a harness session identity mismatch ($mismatch); nothing from it can be attributed safely until that is resolved (gang whoami)"
 }
 
 PROSE="" PROSE_ERROR=""
@@ -3126,12 +3128,34 @@ cmd_flush() {
 }
 
 cmd_interrupt() {
-  local name="${1:-}"
+  local name="" reason="" from="" have_m=0 ready=0 rc=0 err=""
+  name="${1:-}"
   [ -n "$name" ] || usage_die
-  [ $# -eq 1 ] || die "interrupt: unexpected argument '$2'"
+  case "$name" in -*) usage_die ;; esac
+  shift
+  while [ $# -gt 0 ]; do case "$1" in
+    -m) [ "$have_m" -eq 0 ] || die "interrupt: -m may be passed only once"
+        [ $# -ge 2 ] || die "interrupt: -m needs a value"
+        [ -n "$2" ] || die "interrupt: -m needs a non-empty message"
+        reason="$2"; have_m=1; shift 2 ;;
+    --from) [ $# -ge 2 ] || die "interrupt: --from needs a value"
+        from="$2"; shift 2 ;;
+    *) die "interrupt: unexpected argument '$1'" ;;
+  esac; done
+  [ "$have_m" -eq 1 ] || [ -z "$from" ] \
+    || die "interrupt: --from names the author of a message; pass -m or drop it"
+  if [ "$have_m" -eq 1 ]; then
+    send_sender "$from" interrupt
+    send_identity_guard interrupt
+  fi
   resolve "$name"
   [ -n "$GANG_INTERRUPT_KEY" ] \
     || die "interrupt: collar '$AGENT_COLLAR' declares no GANG_INTERRUPT_KEY, so gang does not know the keystroke that stops a turn in this harness (gang attach)"
+  if [ "$have_m" -eq 1 ]; then
+    [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
+      || refuse "interrupt: '$name' resolves to this sending pane; a message that returns to its author is never intended"
+    envelope "$SEND_FROM" "$reason"
+  fi
   lock_pane "$AGENT_ID"
   # Occupancy is not authority here either: the stop key is very often the key
   # a native dialog reads as an answer, and gang does not answer dialogs.
@@ -3154,6 +3178,18 @@ cmd_interrupt() {
   # truthful place to hang it in today's two-valued turn fact, and inventing a
   # third value here would be redesigning the state this arc was told not to.
   turn_state_clear "$AGENT_ID"
+  if [ "$have_m" -eq 1 ]; then
+    wait_ready "$AGENT_ID" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
+    [ "$ready" -eq 0 ] \
+      || { printf '%s\n' "$reason" >&2
+           die "interrupt: $GANG_INTERRUPT_KEY was sent to '$name' and its input box did not come back, so the message was NOT delivered and was NOT parked — it is printed above so it is not lost. Read the pane with gang capture $name"; }
+    err="$(inject "$AGENT_ID" "$ENVELOPE" "" locked 2>&1)" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      printf '%s\n' "$reason" >&2
+      [ -z "$err" ] || printf '%s\n' "$err" >&2
+      exit "$rc"
+    fi
+  fi
   lock_release
   printf '%s %s\n' \
     "$(colour "$C_OK" "interrupted $name with $GANG_INTERRUPT_KEY")" \

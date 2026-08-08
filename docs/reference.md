@@ -245,7 +245,7 @@ Gangline holds no record of the parked body. It refuses after the recall key
 when that key loaded nothing, or when the readback is not exactly the recorded
 message; the Enter is not pressed in either case.
 
-### `gang interrupt <name>`
+### `gang interrupt <name> [-m "reason"] [--from <sender>]`
 
 Sends the keystroke the collar declares as its harness's turn-stop key and
 drops Gangline's turn bracket, so the interrupted turn neither leaves a bracket
@@ -255,6 +255,14 @@ ignored the key stays busy and unreachable. Whether the harness stops remains
 the harness's verdict. A collar that declares no interrupt key refuses the
 command, and an occupied composer refuses it too — that keystroke is often what
 a native dialog reads as an answer.
+
+With `-m`, Gangline attributes the reason like an ordinary message, holds one
+pane lock across the stop key and the boundary it creates, then delivers the
+reason before releasing that lock. The reason is never spooled: a queued stop
+would arrive after the work it was meant to stop. If the composer does not
+return or delivery cannot be verified, the reason is printed back to the caller
+in full and reported as not delivered and not parked. Existing backlog remains
+untouched for the next native turn boundary.
 
 ### `gang compact <name>`
 
