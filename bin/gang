@@ -34,8 +34,8 @@ DEPRECATIONS_SILENT=0
 
 deprecated() { # $1 = dedupe key, $2 = operator-facing line
   [ "$DEPRECATIONS_SILENT" = 1 ] && return 0
-  local key line
-  while IFS=$'\t' read -r key line; do
+  local key
+  while IFS=$'\t' read -r key _; do
     [ "$key" = "$1" ] && return 0
   done <<<"$DEPRECATION_NOTES"
   DEPRECATION_NOTES="${DEPRECATION_NOTES:+$DEPRECATION_NOTES
@@ -115,6 +115,8 @@ config_env_aliases_normalize() {
 }$new"$'\t'"$old"
     deprecated "config:$old" "$old is now $new (from the environment); the old name still works and will be removed in 2.0."
   done
+  # This suite-only compatibility switch is an environment escape hatch, not a
+  # persistable config key, so it deliberately stays outside GANG_CONFIG_ALIASES.
   oldset="" newset=""
   eval "oldset=\${GANG_TEST_PROFILES+x}; newset=\${GANG_TEST_COLLARS+x}"
   [ "$oldset" = x ] && [ "$newset" = x ] \
@@ -186,7 +188,7 @@ config_env_origins() { # record environment keys the file did not also name
 }
 
 config_load() {
-  local root_source file raw marked sentinel=$'\034' probe bytes without_nul
+  local root_source file raw marked sentinel=$'\034' probe bytes without_nul rc
   local line n=0 k original value previous envset alias target other_line env_alias
   if [ "${GANG_CONFIG_DIR+x}" = x ]; then
     CONFIG_DIR="$GANG_CONFIG_DIR" root_source=GANG_CONFIG_DIR
@@ -743,7 +745,7 @@ envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into 
 
 STDIN_BODY=""
 stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_BODY
-  local marked sentinel=$'\034'
+  local marked sentinel=$'\034' rc
   if marked="$(
     cat || { rc=$?; exit "$rc"; }
     printf '\034'
@@ -2650,7 +2652,7 @@ cmd_hitch() {
   }
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE")"
-  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
+  printf '%s\n' "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
@@ -2776,7 +2778,7 @@ cmd_send() {
   envelope "$SEND_FROM" "$body"
   if [ "$live_only" -eq 1 ]; then
     send_live "$name"
-    echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
   fi
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
@@ -2787,7 +2789,7 @@ cmd_send() {
   case "$rc" in
     0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
        [ -z "$err" ] || printf '%s\n' "$err" >&2
-       echo "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
     *) [ -z "$err" ] || printf '%s\n' "$err" >&2
@@ -2929,7 +2931,7 @@ cmd_compact() {
   [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
   if [ "$mine" -eq 1 ] && [ "$GANG_SELF_COMPACT" = deferred ]; then
     self_compact_request "$AGENT_ID" >/dev/null
-    echo "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now)")"
+    printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now)")"
     return 0
   fi
   if [ "$mine" -ne 1 ]; then
@@ -2942,7 +2944,7 @@ cmd_compact() {
   fi
   inject "$AGENT_ID" "$GANG_COMPACT_CMD" head
   tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_failed 2>/dev/null || true
-  echo "$(colour "$C_OK" "native compaction submitted to $name") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
+  printf '%s\n' "$(colour "$C_OK" "native compaction submitted to $name") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
 }
 
 cmd_curfew() { # declare, show, or clear one optional team curfew
@@ -3447,7 +3449,7 @@ cmd_down() { # inverse of up: end the whole team's session
   while IFS= read -r raw; do
     names="$names$(bare_name "$raw") "
   done < <(tmux list-windows -t "=$SESSION" -F '#W')
-  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
+  printf '%s\n' "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
     spool_forget "$id"
