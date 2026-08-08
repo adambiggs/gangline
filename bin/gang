@@ -315,6 +315,11 @@ require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractio
   esac
 }
 
+require_python3() {
+  command -v python3 >/dev/null 2>&1 \
+    || die "python3 is required for native hook payloads, context lights, operator doctrine validation, and curfew clock times"
+}
+
 shell_quote() { # one POSIX-shell word
   local value
   value="$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
@@ -2604,8 +2609,7 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
   fi
 
-  command -v python3 >/dev/null 2>&1 \
-    || die "python3 is required for native hook payloads, context lights, and operator doctrine validation"
+  require_python3
   doctrine_read
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
@@ -2947,7 +2951,7 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
   if [ -z "$spec" ]; then
     curfew_read || rc=$?
     case "$rc" in
-      0) curfew_summary "$(date +%s)"; printf '\n' ;;
+      0) require_python3; curfew_summary "$(date +%s)"; printf '\n' ;;
       1) printf 'no curfew declared\n' ;;
       2) die "the stored curfew is unreadable — gang curfew clear removes it" ;;
     esac
@@ -2959,6 +2963,7 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
     printf 'curfew cleared\n'
     return 0
   fi
+  require_python3
   now="$(date +%s)"
   curfew_parse "$spec" "$now" \
     || die "curfew: '$spec' is not a positive duration (90m, 2h, 1h30m) or 24-hour HH:MM clock time"

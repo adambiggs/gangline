@@ -2304,6 +2304,13 @@ if "$GANG" curfew 90 >/dev/null 2>&1; then
 else
   pass "a curfew never guesses the unit of a bare number"
 fi
+no_python_path="$RUN_ROOT/no-python-path"
+mkdir -p "$no_python_path"
+for required_command in date dirname git locale sed tmux; do
+  ln -s "$(command -v "$required_command")" "$no_python_path/$required_command"
+done
+refuses "a clock curfew names a missing python3 dependency" \
+  "python3 is required" env PATH="$no_python_path" /bin/bash "$GANG" curfew 09:00
 clock_spec="$(python3 - <<'PY'
 from datetime import datetime, timedelta
 
