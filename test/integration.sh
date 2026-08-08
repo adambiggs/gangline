@@ -3582,8 +3582,8 @@ excludes "status does not inspect another agent's context" \
 
 # A repository-local hooksPath shadows the operator's global path, so the
 # tracked pre-push hook must delegate outward before it runs Gangline's gates.
-# The outer fixture deliberately calls back into the local hook: the depth
-# sentinel must make that re-entry a no-op while preserving argv and stdin.
+# An ambient legacy depth marker must not suppress either delegation or local
+# checks. Recursive chaining is an identity decision in Snubline's dispatcher.
 delegation_root="$RUN_ROOT/pre-push-delegation"
 delegation_hooks="$delegation_root/hooks"
 delegation_config="$delegation_root/gitconfig"
@@ -3598,21 +3598,19 @@ cat > "$GANGLINE_OUTER_INPUT"
   printf 'argv:%s|%s\n' "$1" "$2"
   cat "$GANGLINE_OUTER_INPUT"
 } > "$GANGLINE_OUTER_RECORD"
-"$GANGLINE_LOCAL_PRE_PUSH" "$@" < "$GANGLINE_OUTER_INPUT"
 exit "${GANGLINE_OUTER_RC:-0}"
 SH
 chmod +x "$delegation_hooks/pre-push"
 git config --file "$delegation_config" core.hooksPath "$delegation_hooks"
 export GANGLINE_OUTER_INPUT="$delegation_input"
 export GANGLINE_OUTER_RECORD="$delegation_record"
-export GANGLINE_LOCAL_PRE_PUSH="$ROOT/.githooks/pre-push"
 zero_oid="$(printf '%040d' 0)"
 remote_oid="$(printf '%040d' 1)"
 deletion_record="refs/heads/topic $zero_oid refs/heads/topic $remote_oid"
 printf '%s\n' "$deletion_record" |
-  GIT_CONFIG_GLOBAL="$delegation_config" \
+  HOOK_DELEGATION_DEPTH=1 GIT_CONFIG_GLOBAL="$delegation_config" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote
-equal "the local pre-push delegates argv and stdin exactly once" \
+equal "an ambient delegation marker cannot suppress the outer gate" \
   "argv:origin|/tmp/remote
 $deletion_record" "$(cat "$delegation_record")"
 
@@ -3632,6 +3630,41 @@ no_outer_output="$(printf '%s\n' "$deletion_record" |
   "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
 equal "no global hook is a silent no-op before Gangline's gates" \
   "0|" "$no_outer_rc|$no_outer_output"
+
+scanner_root="$RUN_ROOT/pii-scanner"
+mkdir -p "$scanner_root"
+scp_url="git@github"".com:owner/project.git"
+scp_rc=0
+printf '%s\n' "$scp_url" | "$ROOT/tools/pii-scan" --stdin >/dev/null 2>&1 \
+  || scp_rc=$?
+equal "the CI scanner allows an SCP-form Git URL" 0 "$scp_rc"
+colon_email='alice.doe@personal'"mail.co:hunter2swordfish"
+colon_email_rc=0
+colon_email_output="$(printf '%s\n' "$colon_email" | \
+  "$ROOT/tools/pii-scan" --stdin 2>&1)" || colon_email_rc=$?
+equal "the CI scanner refuses an email followed by a colon token" \
+  "blocked named" \
+  "$([ "$colon_email_rc" -ne 0 ] && printf blocked || printf leaked) $([[ "$colon_email_output" = *'[email]'* ]] && printf named || printf unnamed)"
+
+for binary_kind in attribute nul; do
+  binary_repo="$scanner_root/$binary_kind"
+  git init -q "$binary_repo"
+  git -C "$binary_repo" config user.name 'Gangline scanner test'
+  git -C "$binary_repo" config user.email 'scanner@fixture.invalid'
+  if [ "$binary_kind" = attribute ]; then
+    printf '%s\n' 'secret -diff' > "$binary_repo/.gitattributes"
+    printf 'key = sk-ant-%s\n' 'api03-ZZZfakefakefake1234567890' > "$binary_repo/secret"
+  else
+    printf 'key = sk-ant-%s\n\000\n' 'api03-ZZZfakefakefake1234567890' > "$binary_repo/secret"
+  fi
+  git -C "$binary_repo" add .
+  git -C "$binary_repo" commit -qm "test: $binary_kind scanner fixture"
+  binary_rc=0
+  (cd "$binary_repo" && "$ROOT/tools/pii-scan" --range HEAD) >/dev/null 2>&1 \
+    || binary_rc=$?
+  equal "the CI scanner refuses a $binary_kind-rendered credential" \
+    blocked "$([ "$binary_rc" -ne 0 ] && printf blocked || printf leaked)"
+done
 
 # The local sibling gate uses destination identity rather than remote-tracking
 # names, and refuses non-commit refs instead of treating an empty traversal as
@@ -3769,6 +3802,7 @@ if hook_out="$({
   cd "$hook_repo"
   printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
     env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
+      HOOK_DELEGATION_DEPTH=1 \
       PROBE_DIR="$hook_probe" \
       ./.githooks/pre-push
 } 2>&1)"; then

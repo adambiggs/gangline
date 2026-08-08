@@ -27,12 +27,6 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 cat > "$tmp/stdin"
 
-# A global dispatcher may chain back to a repository hook. Bound that path to
-# one outward delegation while retaining Git's explicit --no-verify bypass.
-if [ "${HOOK_DELEGATION_DEPTH:-0}" != 0 ]; then
-  exit 0
-fi
-
 outer="$(git config --global --get core.hooksPath 2>/dev/null || true)"
 if [ -n "$outer" ]; then
   case "$outer" in
@@ -44,11 +38,12 @@ if [ -n "$outer" ]; then
   if [ -d "$outer_dir" ]; then
     resolved_outer="$(cd "$outer_dir" && pwd -P)"
   fi
-  if [ -n "$resolved_outer" ] && [ "$resolved_outer" != "$own_dir" ] \
-     && [ -f "$outer_dir/pre-push" ] && [ -x "$outer_dir/pre-push" ]; then
+  if [ -n "$resolved_outer" ] && [ "$resolved_outer" = "$own_dir" ]; then
+    echo "pre-push: global hook path resolves to this repository hook; suppressing outward delegation" >&2
+  elif [ -n "$resolved_outer" ] \
+       && [ -f "$outer_dir/pre-push" ] && [ -x "$outer_dir/pre-push" ]; then
     outer_rc=0
-    HOOK_DELEGATION_DEPTH=1 "$outer_dir/pre-push" "$@" \
-      < "$tmp/stdin" || outer_rc=$?
+    "$outer_dir/pre-push" "$@" < "$tmp/stdin" || outer_rc=$?
     if [ "$outer_rc" -ne 0 ]; then
       echo "pre-push: outer gate refused with status $outer_rc" >&2
       exit "$outer_rc"

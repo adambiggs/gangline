@@ -2,8 +2,8 @@ name: pii-scan
 
 on: [push, pull_request]
 
-# Gangline's self-contained CI backstop runs its frozen extraction-date scanner
-# snapshot on GNU and BSD userlands. Operator-side pre-push scanning is Snubline's
+# Gangline's self-contained CI backstop runs its reviewed scanner on GNU and BSD
+# userlands. Operator-side pre-push scanning is Snubline's
 # local responsibility and does not invoke this tracked copy.
 
 jobs:

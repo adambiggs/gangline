@@ -2,8 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Gangline's self-contained CI backstop for PII shapes in commit messages and
-# patches. This is the reviewed extraction-date snapshot from source commit
-# 3a5f27d; operator-side pre-push and prose scanning belong to Snubline.
+# patches. Operator-side pre-push and prose scanning belong to Snubline.
 # Scope is docs/DECISIONS.md, "PII prevention is prospective".
 #
 # Portable shell + POSIX ERE only: the macOS CI cell is bash 3.2 with BSD
@@ -90,7 +89,7 @@ CLASSES="home-path email ip credential-sk-ant credential-ghp credential-github-p
 class_regex() {
   case "$1" in
     home-path) printf '%s' '(/home/|/Users/)[A-Za-z0-9_.-]+' ;;
-    email) printf '%s' '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' ;;
+    email) printf '%s' '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}(:[A-Za-z0-9._~/-]+)?' ;;
     ip) printf '%s' '([0-9]{1,3}\.){3}[0-9]{1,3}' ;;
     credential-sk-ant) printf '%s' 'sk-ant-[A-Za-z0-9_-]{10,}' ;;
     credential-ghp) printf '%s' 'ghp_[A-Za-z0-9]{20,}' ;;
@@ -106,7 +105,14 @@ class_allowed() {
     home-path)
       return 1 ;;
     email)
+      local scp_path
       case "$2" in
+        *:*)
+          scp_path="${2#*:}"
+          case "$scp_path" in
+            */?*|*.git) return 0 ;;   # SCP-form git URL: user@host:path
+          esac
+          ;;
         *noreply*) return 0 ;;
         *.example|*.test|*.invalid|*.localhost) return 0 ;;
         *@example.com|*@example.org|*@example.net) return 0 ;;
@@ -154,16 +160,21 @@ redact() {
 # $1 = label for messages, $2 = class, $3 = content to scan.
 # Returns 1 (and prints redacted hits) if anything unallowed matched.
 class_hits() {
-  local label="$1" class="$2" content="$3" any=0
+  local label="$1" class="$2" content="$3" any=0 rc=0 matches
   local re
   re="$(class_regex "$class")"
   local hit
+  matches="$(printf '%s' "$content" | grep -oE "$re" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0|1) ;;
+    *) refuse "grep failed while scanning class $class (status $rc)" ;;
+  esac
   while IFS= read -r hit; do
     [ -n "$hit" ] || continue
     class_allowed "$class" "$hit" && continue
     printf 'pii-scan: %s: [%s] %s\n' "$label" "$class" "$(redact "$hit")" >&2
     any=1
-  done < <(printf '%s' "$content" | grep -oE "$re" 2>/dev/null || true)
+  done <<< "$matches"
   [ "$any" -eq 0 ]
 }
 
@@ -213,7 +224,7 @@ added_lines() {
 # The vacuous-check refusal, applied prospectively: prove every pattern still
 # catches its own fixture before trusting any of them against real content.
 selftest() {
-  local class fixture projected
+  local class fixture projected scp_url colon_email
   for class in $CLASSES; do
     fixture="$(class_fixture "$class")"
     if class_hits selftest "$class" "$fixture" >/dev/null 2>&1; then
@@ -223,6 +234,17 @@ selftest() {
       exit 1
     fi
   done
+
+  scp_url='git@github.com:owner/project.git'
+  class_hits selftest email "$scp_url" >/dev/null 2>&1 || {
+    echo "pii-scan: self-test FAILED — an SCP-form git URL was flagged as an email" >&2
+    exit 1
+  }
+  colon_email='alice.doe@personal'"mail.co:hunter2swordfish"
+  class_hits selftest email "$colon_email" >/dev/null 2>&1 && {
+    echo "pii-scan: self-test FAILED — an email followed by a colon token was allowed" >&2
+    exit 1
+  }
 
   projected="$(printf '%s\n' '--- a/file' '+++ b/file' \
     '-/home/alice/removed' '+safe' | added_lines)"
@@ -281,8 +303,12 @@ main() {
         # every commit that touches it. Nothing else in the repo gets this
         # carve-out — see docs/DECISIONS.md, "PII prevention is prospective".
         message="$(git log -1 --format=%B "$sha")"
-        additions="$(git show --format= --no-color --unified=0 "$sha" -- \
-          . ':!tools/pii-scan' | added_lines)"
+        # Force a textual prospective diff even when an attribute says -diff or
+        # Git's NUL heuristic classifies a blob as binary. NUL cannot survive a
+        # shell variable, so translate it before projecting the added lines.
+        additions="$(git show --format= --no-color --unified=0 --text \
+          --no-ext-diff --no-textconv "$sha" -- . ':!tools/pii-scan' \
+          | LC_ALL=C tr '\000' '\n' | added_lines)"
         content="$message
 $additions"
         scan_content "commit $sha" "$content" || fail=1
