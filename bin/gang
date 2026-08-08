@@ -51,7 +51,7 @@ deprecation_flush() {
   DEPRECATION_NOTES=""
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
@@ -400,6 +400,7 @@ gang — drive native CLI agents in tmux
   curfew    set or show the team curfew
   status    inspect one agent's state
   roster    list the team and its state
+  spool     inspect or retire parked state
   capture   read an agent's pane
   composer  read an agent's input box
   whoami    read this pane's Gangline identity
@@ -531,6 +532,15 @@ gang roster
 
   gang roster
   gang roster --porcelain
+EOF
+      ;;
+    spool) cat <<'EOF'
+gang spool
+  Inspect or retire parked state.
+
+  gang spool
+  gang spool retire <name|token>
+    [--assume-unowned]
 EOF
       ;;
     capture) cat <<'EOF'
@@ -1839,8 +1849,36 @@ box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a 
   re_match GANG_QUEUED_REGEX "$1"
 }
 
-LOCK_PATH=""
-lock_release() { [ -z "$LOCK_PATH" ] || rm -f -- "$LOCK_PATH"; LOCK_PATH=""; }
+LOCK_PATH="" LOCK_PATHS="" LOCK_ME=""
+
+lock_current_process() { # LOCK_ME = this Bash process, including a background worker
+  if [ -n "${BASHPID:-}" ]; then
+    LOCK_ME="$BASHPID"
+  else
+    read -r LOCK_ME < <(sh -c 'ps -o ppid= -p "$PPID"') || LOCK_ME=""
+    case "$LOCK_ME" in
+      ''|*[!0-9]*) die "cannot identify the Bash process holding a Gangline lock — ps returned '${LOCK_ME:-nothing}'" ;;
+    esac
+  fi
+}
+
+lock_record() { # $1 = lock path acquired by this process
+  LOCK_PATH="$1"
+  LOCK_PATHS="${LOCK_PATHS:+$LOCK_PATHS
+}$1"
+  trap 'on_exit' EXIT
+}
+
+lock_release() { # release every lock this process acquired (down holds several)
+  local path holder
+  lock_current_process
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    holder="$(readlink "$path" 2>/dev/null)" || holder=""
+    [ "$holder" != "$LOCK_ME" ] || rm -f -- "$path"
+  done <<<"$LOCK_PATHS"
+  LOCK_PATH="" LOCK_PATHS=""
+}
 
 lock_base() { # $1 = the lock root; returns with it established as ours, or refuses
   local err
@@ -1859,20 +1897,13 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name path err me
+  local base holder name path err
   # Read OUT HERE. $BASHPID inside the command substitution below would be the
   # substitution's own fork, which dies the moment ln returns — a lock that is
   # stale by construction. macOS still ships Bash 3.2, which has no BASHPID:
   # there, a process-substitution child asks ps for its wrapper's parent (this
   # shell), and read keeps the result in this process rather than another fork.
-  if [ -n "${BASHPID:-}" ]; then
-    me="$BASHPID"
-  else
-    read -r me < <(sh -c 'ps -o ppid= -p "$PPID"') || me=""
-    case "$me" in
-      ''|*[!0-9]*) die "cannot identify the Bash process holding a delivery lock — ps returned '${me:-nothing}'" ;;
-    esac
-  fi
+  lock_current_process
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
@@ -1883,8 +1914,8 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # write down a pid that dies while the lock is still held, and the next
   # process would read the lock as stale, delete it, and paste into the same
   # composer concurrently. BASHPID is the process that actually holds it.
-  err="$(ln -s "$me" "$path" 2>&1)" \
-    && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
+  err="$(ln -s "$LOCK_ME" "$path" 2>&1)" \
+    && { lock_record "$path"; return; }
   [ -L "$path" ] \
     || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
   holder="$(readlink "$path" 2>/dev/null)" || holder=""
@@ -1894,10 +1925,55 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   kill -0 "$holder" 2>/dev/null \
     && refuse "another Gangline process is delivering to $name — inspect it with gang capture $name before retrying"
   rm -f -- "$path"
-  err="$(ln -s "$me" "$path" 2>&1)" \
+  err="$(ln -s "$LOCK_ME" "$path" 2>&1)" \
     || refuse "the stale delivery lock for $name was cleared, but another sender took it first — inspect with gang capture $name before retrying"
-  LOCK_PATH="$path"
-  trap 'on_exit' EXIT
+  lock_record "$path"
+}
+
+lock_assert_pane() { # $1 = window id; production assertion for spool mutations
+  local base path holder found=0 held
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  path="$base/$(printf '%s' "$1" | tr -c 'A-Za-z0-9' '_').lock"
+  while IFS= read -r held; do [ "$held" != "$path" ] || found=1; done <<<"$LOCK_PATHS"
+  lock_current_process
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  [ "$found" -eq 1 ] && [ "$holder" = "$LOCK_ME" ] \
+    || die "internal: spool mutation for pane $1 does not hold that pane's delivery lock"
+}
+
+lock_spool_root() { # publication/retirement boundary; never held with a pane lock
+  local base path holder err
+  [ -z "$LOCK_PATHS" ] \
+    || die "internal: the spool root lock cannot be acquired while a pane lock is held"
+  lock_current_process
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$base"
+  path="$base/spool-root.lock"
+  err="$(ln -s "$LOCK_ME" "$path" 2>&1)" \
+    && { lock_record "$path"; return; }
+  [ -L "$path" ] \
+    || die "cannot take the spool reservation lock at $path — ${err:-unknown error}"
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  case "$holder" in
+    ''|*[!0-9]*) die "spool reservation lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
+  esac
+  kill -0 "$holder" 2>/dev/null \
+    && refuse "another Gangline process is publishing or retiring a spool reservation — retry after it finishes"
+  rm -f -- "$path"
+  err="$(ln -s "$LOCK_ME" "$path" 2>&1)" \
+    || refuse "the stale spool reservation lock was cleared, but another process took it first — retry after it finishes"
+  lock_record "$path"
+}
+
+lock_assert_spool_root() {
+  local base path holder found=0 held
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  path="$base/spool-root.lock"
+  while IFS= read -r held; do [ "$held" != "$path" ] || found=1; done <<<"$LOCK_PATHS"
+  lock_current_process
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  [ "$found" -eq 1 ] && [ "$holder" = "$LOCK_ME" ] \
+    || die "internal: spool reservation mutation does not hold the root lock"
 }
 
 # THE SPOOL. A refused delivery is a live target that cannot take input YET:
@@ -1915,24 +1991,137 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # Entries are named by a fixed-width nanosecond stamp, so the glob that reads
 # them is already oldest-first. They live under a token minted into the target's
 # own window options, so a directory nothing points at can never be adopted by a
-# later window that reuses a tmux id, and they die with the window: `drop` and
-# `down` delete them.
+# later window that reuses a tmux id. Teardown reports and removes waiting
+# entries, but preserves held and unaccounted evidence for deliberate retire.
 spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
 
-archive_root() { # where a message goes when its window dies
-  printf '%s' "${GANG_ARCHIVE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive}"
+spool_token_valid() { [[ "$1" =~ ^[0-9a-f]{8}$ ]]; }
+spool_waiting_name() { [[ "$1" =~ ^[0-9]{20}-[0-9a-f]{8}$ ]]; }
+spool_held_name() { [[ "$1" =~ ^(sending-|failed-)[0-9]{20}-[0-9a-f]{8}$ ]]; }
+spool_fragment_name() { [[ "$1" =~ ^\.writing-[0-9]+-[0-9]{20}$ ]]; }
+
+SPOOL_TOKEN="" SPOOL_DIR=""
+spool_existing() { # $1 = window id; SPOOL_* = its spool; 1 = it has never had one
+  SPOOL_TOKEN="" SPOOL_DIR=""
+  SPOOL_TOKEN="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || SPOOL_TOKEN=""
+  [ -n "$SPOOL_TOKEN" ] || return 1
+  spool_token_valid "$SPOOL_TOKEN" \
+    || die "the spool token recorded on pane $1 is '$SPOOL_TOKEN', which is not one gang minted — refusing to read or delete a directory it cannot account for"
+  SPOOL_DIR="$(spool_root_of)/$SPOOL_TOKEN"
 }
 
-SPOOL_DIR=""
-spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had one
-  local token
-  SPOOL_DIR=""
-  token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
-  [ -n "$token" ] || return 1
-  case "$token" in
-    *[!a-f0-9]*) die "the spool token recorded on pane $1 is '$token', which is not one gang minted — refusing to read or delete a directory it cannot account for" ;;
+SPOOL_ROOT="" SPOOL_ROOT_ERROR=""
+spool_root_readable() { # 0 readable, 1 absent, 2 present but unsafe to scan
+  SPOOL_ROOT="$(spool_root_of)" SPOOL_ROOT_ERROR=""
+  if [ ! -e "$SPOOL_ROOT" ] && [ ! -L "$SPOOL_ROOT" ]; then return 1; fi
+  if [ -L "$SPOOL_ROOT" ]; then
+    SPOOL_ROOT_ERROR="the spool root $SPOOL_ROOT is a symlink — refusing to scan through it"
+  elif [ ! -d "$SPOOL_ROOT" ]; then
+    SPOOL_ROOT_ERROR="the spool root $SPOOL_ROOT is not a directory"
+  elif [ ! -O "$SPOOL_ROOT" ]; then
+    SPOOL_ROOT_ERROR="the spool root $SPOOL_ROOT is not owned by uid $(id -u)"
+  elif [ ! -r "$SPOOL_ROOT" ] || [ ! -x "$SPOOL_ROOT" ]; then
+    SPOOL_ROOT_ERROR="the spool root $SPOOL_ROOT is not readable and searchable by uid $(id -u)"
+  else
+    return 0
+  fi
+  return 2
+}
+
+spool_root_require() {
+  local rc=0
+  spool_root_readable || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) die "the spool root $(spool_root_of) does not exist — nothing has ever been parked or reserved there" ;;
+    2) die "$SPOOL_ROOT_ERROR" ;;
+    *) die "internal: unknown spool-root verdict $rc" ;;
   esac
-  SPOOL_DIR="$(spool_root_of)/$token"
+}
+
+SPOOL_CARRIER_COUNT=0 SPOOL_CARRIERS="" SPOOL_CARRIER_WINDOWS=""
+spool_carriers() { # $1 token; local carriers across every session on this server
+  local token="$1" wins="" err="" session win raw name carried
+  SPOOL_CARRIER_COUNT=0 SPOOL_CARRIERS="" SPOOL_CARRIER_WINDOWS=""
+  if ! wins="$(tmux list-windows -a -F $'#{session_name}\t#{window_id}\t#{window_name}' 2>&1)"; then
+    err="$wins"
+    case "$err" in
+      ""|*"no server running"*|*"error connecting to"*"No such file or directory"*) return 0 ;;
+      *) die "cannot scan this tmux server for spool carriers — $err" ;;
+    esac
+  fi
+  while IFS=$'\t' read -r session win raw; do
+    [ -n "$win" ] || continue
+    carried="$(tmux show-options -wqv -t "$win" @gl_spool 2>/dev/null)" || carried=""
+    [ "$carried" = "$token" ] || continue
+    name="$(bare_name "$raw")"
+    SPOOL_CARRIER_COUNT=$((SPOOL_CARRIER_COUNT + 1))
+    SPOOL_CARRIERS="${SPOOL_CARRIERS:+$SPOOL_CARRIERS, }$session:$name"
+    SPOOL_CARRIER_WINDOWS="$SPOOL_CARRIER_WINDOWS $win"
+  done <<<"$wins"
+}
+
+SPOOL_CLASS="" SPOOL_CLASS_WHY=""
+spool_classify_path() { # $1 root child; sets token/class/carriers
+  local path="$1" token="${1##*/}"
+  SPOOL_TOKEN="$token" SPOOL_DIR="$path" SPOOL_CLASS="" SPOOL_CLASS_WHY=""
+  if ! spool_token_valid "$token"; then SPOOL_CLASS="debris"; return; fi
+  if [ -L "$path" ]; then
+    SPOOL_CLASS="unaccountable" SPOOL_CLASS_WHY="it is a symlink"
+    return
+  fi
+  if [ ! -d "$path" ]; then
+    SPOOL_CLASS="unaccountable" SPOOL_CLASS_WHY="it is not a directory"
+    return
+  fi
+  spool_carriers "$token"
+  case "$SPOOL_CARRIER_COUNT" in
+    0) SPOOL_CLASS="unattributed" ;;
+    1) SPOOL_CLASS="owned" ;;
+    *) SPOOL_CLASS="contested" ;;
+  esac
+}
+
+SPOOL_WAITING=0 SPOOL_HELD=0 SPOOL_FRAGMENTS=0 SPOOL_UNACCOUNTED=0
+SPOOL_WAITING_PATHS="" SPOOL_HELD_PATHS="" SPOOL_FRAGMENT_PATHS="" SPOOL_UNACCOUNTED_PATHS=""
+spool_scan_entries() { # $1 directory; classify without following symlinks
+  local dir="$1" e name
+  SPOOL_WAITING=0 SPOOL_HELD=0 SPOOL_FRAGMENTS=0 SPOOL_UNACCOUNTED=0
+  SPOOL_WAITING_PATHS="" SPOOL_HELD_PATHS="" SPOOL_FRAGMENT_PATHS="" SPOOL_UNACCOUNTED_PATHS=""
+  for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    name="${e##*/}"
+    if [ -f "$e" ] && [ ! -L "$e" ] && spool_waiting_name "$name"; then
+      SPOOL_WAITING=$((SPOOL_WAITING + 1))
+      SPOOL_WAITING_PATHS="${SPOOL_WAITING_PATHS:+$SPOOL_WAITING_PATHS
+}$e"
+    elif [ -f "$e" ] && [ ! -L "$e" ] && spool_held_name "$name"; then
+      SPOOL_HELD=$((SPOOL_HELD + 1))
+      SPOOL_HELD_PATHS="${SPOOL_HELD_PATHS:+$SPOOL_HELD_PATHS
+}$e"
+    elif [ -f "$e" ] && [ ! -L "$e" ] && spool_fragment_name "$name"; then
+      SPOOL_FRAGMENTS=$((SPOOL_FRAGMENTS + 1))
+      SPOOL_FRAGMENT_PATHS="${SPOOL_FRAGMENT_PATHS:+$SPOOL_FRAGMENT_PATHS
+}$e"
+    else
+      SPOOL_UNACCOUNTED=$((SPOOL_UNACCOUNTED + 1))
+      SPOOL_UNACCOUNTED_PATHS="${SPOOL_UNACCOUNTED_PATHS:+$SPOOL_UNACCOUNTED_PATHS
+}$e"
+    fi
+  done
+}
+
+spool_assert_live_owner() { # $1 live window; called only while its pane lock is held
+  local win="$1"
+  spool_existing "$win" || return 1
+  spool_carriers "$SPOOL_TOKEN"
+  if [ "$SPOOL_CARRIER_COUNT" -gt 1 ]; then
+    die "spool token $SPOOL_TOKEN is contested on this tmux server by $SPOOL_CARRIERS — refusing to mutate either carrier"
+  fi
+  case " $SPOOL_CARRIER_WINDOWS " in
+    *" $win "*) [ "$SPOOL_CARRIER_COUNT" -eq 1 ] || die "internal: carrier count disagrees with the window scan" ;;
+    *) die "spool token $SPOOL_TOKEN is not carried by pane $win on this tmux server — refusing to mutate a directory it does not own" ;;
+  esac
 }
 
 SPOOL_UNAVAILABLE_WHY=""
@@ -1949,49 +2138,73 @@ spool_available() { # $1 = window id, $2 = target name; 0 = a parked message wou
   return 0
 }
 
-spool_mint() { # $1 = window id; the spool identity, minted where nothing races it
-  # AT HITCH AND ADOPT, never at send. Two refused sends arriving
-  # together would each see no token, mint their own, and overwrite the window
-  # option: only the last one stays reachable, so the other sender is told its
-  # message is waiting while it sits in a directory nothing points at and no
-  # drop or down will ever delete. Minting it once, before the window can have
-  # a second writer, removes the race rather than narrowing it.
-  local token
+spool_mint() { # $1 = window id; reserve first, then publish under INV-ROOT
+  local token attempt root err
   token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
   [ -z "$token" ] || return 0
-  tmux set-option -w -t "$1" @gl_spool "$(mint_nonce)" \
-    || die "cannot record the spool identity for this window"
+  lock_spool_root
+  root="$(spool_root_of)"
+  lock_base "$root"
+  attempt=0
+  while [ "$attempt" -lt 16 ]; do
+    attempt=$((attempt + 1))
+    token="$(mint_nonce)"
+    spool_token_valid "$token" \
+      || die "cannot mint a spool identity — mint_nonce returned '$token' instead of exactly 8 lowercase hex characters"
+    spool_carriers "$token"
+    [ "$SPOOL_CARRIER_COUNT" -eq 0 ] || continue
+    if ! mkdir -m 700 "$root/$token" 2>/dev/null; then
+      if [ -e "$root/$token" ] || [ -L "$root/$token" ]; then continue; fi
+      die "cannot reserve spool token $token at $root/$token"
+    fi
+    lock_assert_spool_root
+    if tmux set-option -w -t "$1" @gl_spool "$token"; then
+      lock_release
+      return 0
+    fi
+    err="cannot record the spool identity for pane $1 after reserving $root/$token"
+    if rmdir "$root/$token" 2>/dev/null; then
+      die "$err; the empty unpublished reservation was rolled back"
+    fi
+    spool_scan_entries "$root/$token"
+    die "$err; rollback refused at $root/$token because a body or unaccounted child reached the unpublished reservation ($SPOOL_WAITING waiting, $SPOOL_HELD held, $SPOOL_FRAGMENTS unaccepted, $SPOOL_UNACCOUNTED unaccounted) — its contents were kept"
+  done
+  die "cannot mint a spool identity for pane $1 after 16 reserved or locally carried tokens — refusing to loop forever"
 }
 
-spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
-  local base
+spool_establish() { # $1 = window id; reservation must already exist
+  local name
   spool_existing "$1" \
-    || die "this window has no spool identity, and gang will not mint one on the way to parking a message: two senders arriving together would mint two, and one message would be accepted into a directory nothing points at. It is minted at hitch and adopt — re-hitch or re-adopt this agent"
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
-  lock_base "$base"
-  lock_base "$base/spool"
-  lock_base "$SPOOL_DIR"
+    || die "this window has no spool identity, and gang will not mint one on the way to parking a message; re-hitch the agent"
+  name="$(agent_name_of "$1")"
+  [ -e "$SPOOL_DIR" ] || [ -L "$SPOOL_DIR" ] \
+    || die "cannot park for $name: pane $1 carries spool token $SPOOL_TOKEN but its reservation $SPOOL_DIR is absent. Another server may now own that token; recover with gang drop $name, then use drop's gang hitch $name --resume line"
+  [ ! -L "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] \
+    || die "cannot park for $name: spool reservation $SPOOL_DIR is not a real directory — refusing to write through an unaccountable path"
 }
 
 spool_stamp() { # fixed width, so the entry glob reads oldest-first with no sort
   python3 -c 'import time; print("%020d" % time.time_ns())' 2>/dev/null
 }
 
-spool_count() { # $1 = window id -> how many entries are waiting
-  local e n=0
+SPOOL_COUNT=0
+spool_count() { # $1 = window id; SPOOL_COUNT = waiting entries (returning reader)
+  local e
+  SPOOL_COUNT=0
   if spool_existing "$1"; then
     for e in "$SPOOL_DIR"/[0-9]*; do
-      [ -f "$e" ] && n=$((n + 1))
+      [ -f "$e" ] && [ ! -L "$e" ] && spool_waiting_name "${e##*/}" \
+        && SPOOL_COUNT=$((SPOOL_COUNT + 1))
     done
   fi
-  printf '%s' "$n"
+  return 0
 }
 
 spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has waited
   local e stamp now
   spool_existing "$1" || return 1
   for e in "$SPOOL_DIR"/[0-9]*; do
-    [ -f "$e" ] || continue
+    [ -f "$e" ] && [ ! -L "$e" ] && spool_waiting_name "${e##*/}" || continue
     stamp="${e##*/}"
     stamp="${stamp%%-*}"
     # spool_stamp is printf %020d of a nanosecond count: fixed-width twenty
@@ -2012,34 +2225,36 @@ spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has wa
 }
 
 spool_dir_of() { # $1 = window id -> its spool directory on stdout, nothing if it has none
-  # PRINTED, not left in SPOOL_DIR. Every caller that wants this from a command
-  # substitution is a subshell, and a global set there dies with it — which is
-  # how the held-message report came to name an empty directory.
+  # Print rather than leaving SPOOL_DIR as a returning reader: callers use this
+  # through command substitution, whose subshell cannot return a global value.
   spool_existing "$1" && printf '%s' "$SPOOL_DIR"
 }
 
-spool_held() { # $1 = window id -> entries a drain claimed and never retired
+SPOOL_HELD_COUNT=0
+spool_held() { # $1 = window id; SPOOL_HELD_COUNT = held entries (returning reader)
   # Claimed but not delivered-and-removed: a drain that died mid-flight, or one
   # whose delivery could not be verified. Counted and reported because nothing
   # will ever pick them up again — an entry gang has stopped acting on and does
   # not name is a message lost quietly.
-  local e n=0
+  local e
+  SPOOL_HELD_COUNT=0
   if spool_existing "$1"; then
     for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
-      [ -f "$e" ] && n=$((n + 1))
+      [ -f "$e" ] && [ ! -L "$e" ] && spool_held_name "${e##*/}" \
+        && SPOOL_HELD_COUNT=$((SPOOL_HELD_COUNT + 1))
     done
   fi
-  printf '%s' "$n"
+  return 0
 }
 
 spool_held_report() { # $1 = window id; one truthful line per held entry
   local e
   spool_existing "$1" || return 0
   for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
-    [ -f "$e" ] || continue
+    [ -f "$e" ] && [ ! -L "$e" ] && spool_held_name "${e##*/}" || continue
     spool_read "$e"
-    printf 'held (delivery NOT verified — it may still have arrived): %s\n' \
-      "$SPOOL_FRAG"
+    printf 'held (delivery NOT verified — it may still have arrived): from %s: '\''%s'\''\n' \
+      "$SPOOL_SENDER" "$SPOOL_FRAG"
   done
 }
 
@@ -2054,10 +2269,12 @@ spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes 
 
 spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting entries
   local e
+  lock_assert_pane "$1"
   spool_existing "$1" || return 0
+  spool_assert_live_owner "$1"
   [ -d "$SPOOL_DIR" ] || return 0
   for e in "$SPOOL_DIR"/[0-9]*; do
-    [ -f "$e" ] || continue
+    [ -f "$e" ] && [ ! -L "$e" ] && spool_waiting_name "${e##*/}" || continue
     spool_read "$e"
     [ "$SPOOL_SENDER" = "$2" ] || continue
     rm -f -- "$e" || die "cannot supersede the spooled message $e"
@@ -2066,7 +2283,9 @@ spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting 
 
 spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
   local stamp entry tmp
+  lock_assert_pane "$1"
   spool_establish "$1"
+  spool_assert_live_owner "$1"
   stamp="$(spool_stamp)"
   case "$stamp" in
     ''|*[!0-9]*) die "cannot stamp a spool entry — python3 has to run for gang to order a spool oldest-first, and a message it could not then deliver in order will not be parked" ;;
@@ -2080,55 +2299,19 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
     || die "cannot commit a spooled message into $SPOOL_DIR"
 }
 
-ARCHIVE_DIR=""
-archive_establish() { # $1 = a label for this teardown; ARCHIVE_DIR = its directory
-  local root
-  [ -z "$ARCHIVE_DIR" ] || return 0
-  root="$(archive_root)"
-  mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing to end anything while the mail has nowhere to go"
-  ARCHIVE_DIR="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
-  mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
-}
-
-spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local e name dest moved=0
-  spool_existing "$1" || return 0
-  [ -d "$SPOOL_DIR" ] || return 0
-  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
-    [ -f "$e" ] || continue
-    if [ "$moved" -eq 0 ]; then
-      archive_establish "$SESSION"
-      name="$(agent_name_of "$1" 2>/dev/null)" || name=""
-      [ -n "$name" ] || name="${1#@}"
-      dest="$ARCHIVE_DIR/$name"
-      mkdir -p "$dest" || die "cannot create $dest for the pending messages of this window"
-    fi
-    mv -- "$e" "$dest/${e##*/}" \
-      || die "cannot archive the pending message $e to $dest — nothing further has been ended, and the message is still where it was"
-    moved=$((moved + 1))
-  done
-  [ "$moved" -eq 0 ] \
-    || printf '%s\n' "$(colour "$C_WORK" "archived $moved undelivered message(s) to $dest")"
-}
-
-spool_forget() { # $1 = window id; the spool dies with the window it belongs to
-  spool_existing "$1" || return 0
-  [ ! -d "$SPOOL_DIR" ] \
-    || rm -rf -- "$SPOOL_DIR" \
-    || die "cannot delete the spool directory $SPOOL_DIR"
-  tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
-}
-
 spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
   local e claim rc err failed bundle="" frags="" claims="" n=0 nl=$'\n'
-  spool_existing "$1" || return 0
-  [ -d "$SPOOL_DIR" ] || return 0
+  lock_pane "$1"
+  spool_existing "$1" || { lock_release; return 0; }
+  spool_assert_live_owner "$1"
+  [ -d "$SPOOL_DIR" ] || { lock_release; return 0; }
   # CLAIMED FIRST, ALL OF THEM. The claim rename is what makes ownership
   # atomic, and it must span the whole bundle: an entry left live while its
   # neighbours are being delivered is one a second drain can send again.
   for e in "$SPOOL_DIR"/[0-9]*; do
-    [ -f "$e" ] || continue
+    [ -f "$e" ] && [ ! -L "$e" ] && spool_waiting_name "${e##*/}" || continue
     claim="$SPOOL_DIR/sending-${e##*/}"
+    lock_assert_pane "$1"
     mv -- "$e" "$claim" 2>/dev/null || continue   # another drain took it first
     spool_read "$claim"
     bundle="${bundle:+$bundle$nl$nl}$SPOOL_BODY"
@@ -2136,9 +2319,9 @@ spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
     claims="${claims:+$claims$nl}$claim"
     n=$((n + 1))
   done
-  [ "$n" -gt 0 ] || return 0
+  [ "$n" -gt 0 ] || { lock_release; return 0; }
   rc=0
-  err="$(inject "$1" "$bundle" 2>&1)" || rc=$?
+  err="$(inject "$1" "$bundle" "" locked 2>&1)" || rc=$?
   case "$rc" in
     0) while IFS= read -r claim; do
          [ -n "$claim" ] || continue
@@ -2147,7 +2330,7 @@ spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
        done <<EOF
 $claims
 EOF
-       ;;
+       lock_release ;;
     3) # Refused, so nothing was typed: every body is still its sender's and
        # every entry goes back in line under its own stamp, in its own order.
        while IFS= read -r claim; do
@@ -2160,6 +2343,7 @@ $claims
 EOF
        printf 'spool drain stopped with %s message(s) still waiting: %s\n' \
          "$n" "${err##*$'\n'}" >&2
+       lock_release
        return 3 ;;
     *) # Unverified: the bundle may or may not have landed, so every entry in it
        # is held where a person can read it rather than sent again.
@@ -2172,6 +2356,7 @@ $claims
 EOF
        printf "a bundle of %s spooled message(s) was not verified and is held in %s (%s): %s\n" \
          "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
+       lock_release
        return 1 ;;
   esac
 }
@@ -2195,7 +2380,8 @@ spool_drain_dispatch() { # $1 window id, $2 collar; called only by Stop
   # nothing except a state that outlives a killed worker and wedges the spool
   # silently — status would keep reporting messages that nothing would ever
   # drain again.
-  [ "$(spool_count "$1")" -gt 0 ] || return 0
+  spool_count "$1"
+  [ "$SPOOL_COUNT" -gt 0 ] || return 0
   (
     trap '' HUP INT TERM
     local err="" rc=0
@@ -2222,6 +2408,268 @@ spool_stop() { # $1 = the pane a native Stop fired in, $2 = collar
   spool_drain_dispatch "$win" "$2"
 }
 
+spool_print_body() { # $1 entry, optional $2 line prefix; byte stream stays below $()
+  if [ -n "${2:-}" ]; then
+    tail -n +3 -- "$1" | sed "s/^/$2: /"
+  else
+    tail -n +3 -- "$1"
+  fi
+}
+
+spool_prefixed_line() { # $1 prefix or empty, $2 text
+  if [ -n "$1" ]; then printf '%s: %s\n' "$1" "$2"; else printf '%s\n' "$2"; fi
+}
+
+spool_teardown() { # $1 window, $2 name, optional $3 prefix; pane lock held
+  local win="$1" name="$2" prefix="${3:-}" e line clauses
+  lock_assert_pane "$win"
+  if ! spool_existing "$win"; then
+    spool_prefixed_line "$prefix" "spool: no identity recorded for $name; nothing to remove"
+    return 0
+  fi
+  spool_assert_live_owner "$win"
+  if [ ! -e "$SPOOL_DIR" ] && [ ! -L "$SPOOL_DIR" ]; then
+    spool_prefixed_line "$prefix" "spool reservation absent for $name: $SPOOL_DIR; nothing was removed"
+    return 0
+  fi
+  [ ! -L "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] \
+    || die "spool reservation $SPOOL_DIR for $name is unaccountable — refusing to end the window"
+  spool_scan_entries "$SPOOL_DIR"
+  if [ "$SPOOL_WAITING" -eq 0 ] && [ "$SPOOL_HELD" -eq 0 ] \
+     && [ "$SPOOL_FRAGMENTS" -eq 0 ] && [ "$SPOOL_UNACCOUNTED" -eq 0 ]; then
+    spool_prefixed_line "$prefix" "spool reservation empty; removing with $name: $SPOOL_DIR"
+  fi
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_read "$e"
+    line="never delivered (destroyed with the window): from $SPOOL_SENDER: '$SPOOL_FRAG'"
+    spool_prefixed_line "$prefix" "$line"
+    spool_print_body "$e" "$prefix"
+    rm -f -- "$e" || die "cannot remove the reported spooled message $e"
+  done <<<"$SPOOL_WAITING_PATHS"
+  spool_scan_entries "$SPOOL_DIR"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_read "$e"
+    line="held (delivery NOT verified — it may still have arrived): from $SPOOL_SENDER: '$SPOOL_FRAG'"
+    spool_prefixed_line "$prefix" "$line"
+  done <<<"$SPOOL_HELD_PATHS"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_prefixed_line "$prefix" "unaccepted fragment preserved (its sender was never told it was parked): $e"
+  done <<<"$SPOOL_FRAGMENT_PATHS"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_prefixed_line "$prefix" "unaccounted spool child preserved: $e"
+  done <<<"$SPOOL_UNACCOUNTED_PATHS"
+  if [ "$SPOOL_HELD" -eq 0 ] && [ "$SPOOL_FRAGMENTS" -eq 0 ] && [ "$SPOOL_UNACCOUNTED" -eq 0 ]; then
+    rmdir "$SPOOL_DIR" || die "cannot remove the empty spool reservation $SPOOL_DIR"
+    return 0
+  fi
+  if [ "$SPOOL_UNACCOUNTED" -gt 0 ]; then
+    line="preserved under $SPOOL_DIR: $SPOOL_HELD held, $SPOOL_FRAGMENTS unaccepted, $SPOOL_UNACCOUNTED unaccounted; retire cannot complete until the unaccounted entries are gone"
+  else
+    clauses=""
+    [ "$SPOOL_HELD" -eq 0 ] || clauses="$SPOOL_HELD held"
+    [ "$SPOOL_FRAGMENTS" -eq 0 ] || clauses="${clauses:+$clauses, }$SPOOL_FRAGMENTS unaccepted"
+    line="preserved under $SPOOL_DIR: $clauses; retire with gang spool retire $SPOOL_TOKEN"
+  fi
+  spool_prefixed_line "$prefix" "$line"
+}
+
+spool_name_unaccounted() { # name every unaccounted child from the current scan
+  local e
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    printf 'unaccounted spool child: %s\n' "$e"
+  done <<<"$SPOOL_UNACCOUNTED_PATHS"
+}
+
+spool_live_retire() { # $1 window, $2 name; no root lock is held
+  local win="$1" name="$2" e line
+  lock_pane "$win"
+  lock_assert_pane "$win"
+  spool_existing "$win" || refuse "spool retire: nothing is held for $name because the window has no spool identity"
+  spool_assert_live_owner "$win"
+  [ -d "$SPOOL_DIR" ] && [ ! -L "$SPOOL_DIR" ] \
+    || die "spool retire: reservation $SPOOL_DIR for $name is absent or unaccountable"
+  spool_scan_entries "$SPOOL_DIR"
+  [ "$SPOOL_HELD" -gt 0 ] || refuse "spool retire: nothing is held for $name"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_read "$e"
+    line="held (delivery NOT verified — it may still have arrived): from $SPOOL_SENDER: '$SPOOL_FRAG'"
+    printf '%s\n' "$line"
+    spool_print_body "$e"
+    rm -f -- "$e" || die "cannot remove the reported held message $e"
+  done <<<"$SPOOL_HELD_PATHS"
+  spool_scan_entries "$SPOOL_DIR"
+  spool_name_unaccounted
+  [ "$SPOOL_HELD" -ne 0 ] \
+    || tmux set-option -uw -t "$win" @gl_spool_failed \
+    || die "retired every held entry for $name but could not reconcile its spool drain ledger"
+  lock_release
+}
+
+spool_directory_retire() { # $1 token; caller parsed --assume-unowned
+  local token="$1" path e line
+  path="$(spool_root_of)/$1"
+  lock_spool_root
+  spool_root_require
+  [ -e "$path" ] || [ -L "$path" ] \
+    || die "spool retire: no live agent or spool directory matches '$token'"
+  spool_classify_path "$path"
+  case "$SPOOL_CLASS" in
+    owned) refuse "spool retire: $token is owned on this tmux server by $SPOOL_CARRIERS; use gang spool retire <agent> or gang drop <agent>" ;;
+    contested) refuse "spool retire: $token is contested on this tmux server by $SPOOL_CARRIERS; refusing to choose a carrier" ;;
+    unaccountable) refuse "spool retire: $path is unaccountable because $SPOOL_CLASS_WHY" ;;
+    unattributed) ;;
+    *) die "internal: directory retire classified $path as $SPOOL_CLASS" ;;
+  esac
+  lock_assert_spool_root
+  spool_scan_entries "$path"
+  if [ "$SPOOL_WAITING" -eq 0 ] && [ "$SPOOL_HELD" -eq 0 ] \
+     && [ "$SPOOL_FRAGMENTS" -eq 0 ] && [ "$SPOOL_UNACCOUNTED" -eq 0 ]; then
+    printf 'retiring empty spool %s, unattributed on this tmux server: %s\n' "$token" "$path"
+  fi
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_read "$e"
+    line="never delivered (retired from unattributed spool $token): from $SPOOL_SENDER: '$SPOOL_FRAG'"
+    printf '%s\n' "$line"
+    spool_print_body "$e"
+    rm -f -- "$e" || die "cannot remove the reported spooled message $e"
+  done <<<"$SPOOL_WAITING_PATHS"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    spool_read "$e"
+    line="held (delivery NOT verified — it may still have arrived): from $SPOOL_SENDER: '$SPOOL_FRAG'"
+    printf '%s\n' "$line"
+    spool_print_body "$e"
+    rm -f -- "$e" || die "cannot remove the reported held message $e"
+  done <<<"$SPOOL_HELD_PATHS"
+  while IFS= read -r e; do
+    [ -n "$e" ] || continue
+    printf 'unaccepted fragment (its sender was never told it was parked): %s\n' "$e"
+    cat -- "$e"
+    rm -f -- "$e" || die "cannot remove the reported unaccepted fragment $e"
+  done <<<"$SPOOL_FRAGMENT_PATHS"
+  spool_scan_entries "$path"
+  if [ "$SPOOL_UNACCOUNTED" -gt 0 ]; then
+    spool_name_unaccounted
+    die "spool retire: $path still has $SPOOL_UNACCOUNTED unaccounted child(ren); retire cannot complete until they are gone"
+  fi
+  rmdir "$path" \
+    || die "spool retire: cannot remove $path after reporting its accounted entries; a surviving child was left in place"
+  printf 'retired spool %s, which was unattributed on this tmux server\n' "$token"
+  lock_release
+}
+
+spool_report_root() { # pure reader; SPOOL_ROOT already validated
+  local path line found=0
+  for path in "$SPOOL_ROOT"/* "$SPOOL_ROOT"/.[!.]* "$SPOOL_ROOT"/..?*; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    found=1
+    spool_classify_path "$path"
+    case "$SPOOL_CLASS" in
+      debris) printf 'spool root debris: %s\n' "$path" ;;
+      unaccountable) printf 'unaccountable spool %s at %s: %s\n' "$SPOOL_TOKEN" "$path" "$SPOOL_CLASS_WHY" ;;
+      owned|contested|unattributed)
+        spool_scan_entries "$path"
+        case "$SPOOL_CLASS" in
+          owned)
+            printf 'owned on this tmux server by %s: token %s; %s waiting, %s held, %s unaccepted\n' \
+              "$SPOOL_CARRIERS" "$SPOOL_TOKEN" "$SPOOL_WAITING" "$SPOOL_HELD" "$SPOOL_FRAGMENTS" ;;
+          contested)
+            printf 'contested on this tmux server by %s: token %s; retire refuses; %s waiting, %s held, %s unaccepted\n' \
+              "$SPOOL_CARRIERS" "$SPOOL_TOKEN" "$SPOOL_WAITING" "$SPOOL_HELD" "$SPOOL_FRAGMENTS" ;;
+          unattributed)
+            if [ "$SPOOL_WAITING" -eq 0 ] && [ "$SPOOL_HELD" -eq 0 ] \
+               && [ "$SPOOL_FRAGMENTS" -eq 0 ] && [ "$SPOOL_UNACCOUNTED" -eq 0 ]; then
+              line="empty"
+            else
+              line="$SPOOL_WAITING waiting, $SPOOL_HELD held, $SPOOL_FRAGMENTS unaccepted, $SPOOL_UNACCOUNTED unaccounted"
+            fi
+            printf 'unattributed on this tmux server: token %s at %s; %s; retire with gang spool retire %s --assume-unowned\n' \
+              "$SPOOL_TOKEN" "$path" "$line" "$SPOOL_TOKEN" ;;
+        esac
+        spool_name_unaccounted
+        ;;
+    esac
+  done
+  [ "$found" -ne 0 ] || printf 'spool root %s is empty\n' "$SPOOL_ROOT"
+}
+
+SPOOL_FOOTER_UNATTRIBUTED=0 SPOOL_FOOTER_MESSAGES=0
+SPOOL_FOOTER_CONTESTED=0 SPOOL_FOOTER_UNACCOUNTABLE=0
+spool_footer_scan() { # 0 scan, 1 absent, 2 unsafe; root debris is not a spool
+  local rc=0 path
+  SPOOL_FOOTER_UNATTRIBUTED=0 SPOOL_FOOTER_MESSAGES=0
+  SPOOL_FOOTER_CONTESTED=0 SPOOL_FOOTER_UNACCOUNTABLE=0
+  spool_root_readable || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  for path in "$SPOOL_ROOT"/* "$SPOOL_ROOT"/.[!.]* "$SPOOL_ROOT"/..?*; do
+    [ -e "$path" ] || [ -L "$path" ] || continue
+    spool_classify_path "$path"
+    case "$SPOOL_CLASS" in
+      unattributed)
+        spool_scan_entries "$path"
+        if [ "$SPOOL_WAITING" -gt 0 ] || [ "$SPOOL_HELD" -gt 0 ] \
+           || [ "$SPOOL_FRAGMENTS" -gt 0 ] || [ "$SPOOL_UNACCOUNTED" -gt 0 ]; then
+          SPOOL_FOOTER_UNATTRIBUTED=$((SPOOL_FOOTER_UNATTRIBUTED + 1))
+          SPOOL_FOOTER_MESSAGES=$((SPOOL_FOOTER_MESSAGES + SPOOL_WAITING + SPOOL_HELD + SPOOL_FRAGMENTS))
+        fi ;;
+      contested) SPOOL_FOOTER_CONTESTED=$((SPOOL_FOOTER_CONTESTED + 1)) ;;
+      unaccountable) SPOOL_FOOTER_UNACCOUNTABLE=$((SPOOL_FOOTER_UNACCOUNTABLE + 1)) ;;
+    esac
+  done
+}
+
+cmd_spool() {
+  local sub="${1:-}" arg="${2:-}" flag="${3:-}" live_id="" live=0 dir=0 token="" rc=0 path
+  if [ $# -eq 0 ]; then
+    spool_root_readable || rc=$?
+    case "$rc" in
+      0) spool_report_root ;;
+      1) printf 'nothing has ever been parked or reserved; spool root %s is absent\n' "$(spool_root_of)" ;;
+      2) die "$SPOOL_ROOT_ERROR" ;;
+    esac
+    return
+  fi
+  [ "$sub" = retire ] || die "spool: unknown argument '$sub'"
+  [ $# -ge 2 ] && [ $# -le 3 ] || die "spool retire: expected <name|token> [--assume-unowned]"
+  [ -z "$flag" ] || [ "$flag" = --assume-unowned ] \
+    || die "spool retire: unknown argument '$flag'"
+  if live_id="$(win_id "$arg" 2>/dev/null)"; then live=1; fi
+  path="$(spool_root_of)/$arg"
+  if spool_token_valid "$arg" && { [ -e "$path" ] || [ -L "$path" ]; }; then dir=1; fi
+  if [ "$live" -eq 1 ] && [ "$dir" -eq 1 ]; then
+    if spool_existing "$live_id" && [ "$SPOOL_TOKEN" = "$arg" ]; then
+      dir=0
+    else
+      refuse "spool retire: '$arg' names both a live agent and a different spool directory; drop the agent before the directory form becomes reachable"
+    fi
+  fi
+  if [ "$live" -eq 1 ]; then
+    [ -z "$flag" ] || die "spool retire: --assume-unowned applies only to a token no local window carries"
+    spool_live_retire "$live_id" "$arg"
+    return
+  fi
+  [ "$dir" -eq 1 ] \
+    || die "spool retire: no live agent or token-shaped spool directory matches '$arg'"
+  if [ -z "$flag" ]; then
+    spool_root_require
+    spool_classify_path "$path"
+    case "$SPOOL_CLASS" in
+      unattributed) refuse "spool retire: $arg is unattributed on this tmux server; retire only with gang spool retire $arg --assume-unowned" ;;
+      owned) refuse "spool retire: $arg is owned on this tmux server by $SPOOL_CARRIERS; use the live agent form" ;;
+      contested) refuse "spool retire: $arg is contested on this tmux server by $SPOOL_CARRIERS" ;;
+      unaccountable) refuse "spool retire: $path is unaccountable because $SPOOL_CLASS_WHY" ;;
+    esac
+  fi
+  spool_directory_retire "$arg"
+}
+
 stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies for it
   local win="$1"; shift
   tmux set-option -w -t "$win" @gl_stall_failed "$*" 2>/dev/null || true
@@ -2235,19 +2683,24 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
     || die "window '$2' exists but is not a gang agent (gang adopt $2 -c <collar>)"
   load_collar "$AGENT_COLLAR"
   envelope "$3" "$4"
-  err="$(send_live "$2" 2>&1)" || rc=$?
+  lock_pane "$AGENT_ID"
+  spool_existing "$AGENT_ID" && spool_assert_live_owner "$AGENT_ID"
+  err="$(send_live_locked "$2" 2>&1)" || rc=$?
   case "$rc" in
-    0) return 0 ;;
+    0) lock_release; return 0 ;;
     3) if spool_available "$AGENT_ID" "$2"; then
          frag="${4%%$'\n'*}"
          [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
          spool_write "$AGENT_ID" "$3" "$ENVELOPE" "$frag"
+         lock_release
          return 0
        fi
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n' "$SPOOL_UNAVAILABLE_WHY" >&2
+       lock_release
        return 3 ;;
     *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+       lock_release
        return "$rc" ;;
   esac
 }
@@ -2956,9 +3409,8 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
-send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothing typed
+send_live_locked() { # $1 target; caller owns AGENT_ID's pane lock; 3 = refused
   local busy_rc=0 box=""
-  lock_pane "$AGENT_ID"
   # A UI owning the composer is the same condition inject refuses with, and it
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
@@ -3005,7 +3457,6 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   inject "$AGENT_ID" "$ENVELOPE" "" locked
-  lock_release
   # No @gl_turn write exists anywhere on this path — not here, and not in the
   # witnesses it consults (turn_witness reports a malformed value without
   # repairing it). Native hooks write the bracket lock-free, tmux offers no
@@ -3045,38 +3496,53 @@ cmd_send() {
   [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
   envelope "$SEND_FROM" "$body"
-  if [ "$live_only" -eq 1 ]; then
-    send_live "$name"
-    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
-    return 0
-  fi
+  lock_pane "$AGENT_ID"
+  # A contested token makes even an otherwise-live send unsafe: either window
+  # could supersede or later park into the same directory.
+  spool_existing "$AGENT_ID" && spool_assert_live_owner "$AGENT_ID"
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
   # keystroke, so the body is provably still the sender's; a hard failure means
   # something was already typed and its fate is unknown, and parking that would
   # queue a second copy of a message that may already have landed.
-  err="$(send_live "$name" 2>&1)" || rc=$?
+  err="$(send_live_locked "$name" 2>&1)" || rc=$?
+  if [ "$live_only" -eq 1 ]; then
+    if [ "$rc" -eq 0 ]; then
+      [ -z "$err" ] || printf '%s\n' "$err" >&2
+      lock_release
+      printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+      return 0
+    fi
+    [ -z "$err" ] || printf '%s\n' "$err" >&2
+    lock_release
+    exit "$rc"
+  fi
   case "$rc" in
     0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
        [ -z "$err" ] || printf '%s\n' "$err" >&2
+       lock_release
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
     *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+       lock_release
        exit "$rc" ;;
   esac
   if ! spool_available "$AGENT_ID" "$name"; then
     [ -z "$err" ] || printf '%s\n' "$err" >&2
     printf 'send: NOT parked — %s. Send again when '\''%s'\'' is idle.\n' \
       "$SPOOL_UNAVAILABLE_WHY" "$name" >&2
+    lock_release
     exit 3
   fi
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
+  spool_count "$AGENT_ID"
+  lock_release
   printf '%s %s\n' \
     "$(colour "$C_WORK" "spooled for $name as [gang:$SEND_FROM] — NOT delivered")" \
-    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting; the next turn boundary in $name drains them) refused: ${err##*$'\n'}")"
+    "$(colour "$C_DIM" "($SPOOL_COUNT waiting; the next turn boundary in $name drains them) refused: ${err##*$'\n'}")"
 }
 
 # The recovery gang already diagnoses, performed as a verified operation rather
@@ -3469,6 +3935,7 @@ paint_state() { # $1 = a state phrase, padding and all
 
 cmd_status() {
   local state self_failed self_pending staged staged_box staged_box_rc spooled age held held_dir spool_failed stall_failed mismatch skew="" current
+  local spool_normal=1
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -3501,17 +3968,41 @@ cmd_status() {
     staged_box="$(landing_zone "$AGENT_ID")" || staged_box_rc=$?
     printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$name" "$staged_box_rc")")"
   fi
-  spooled="$(spool_count "$AGENT_ID")"
-  if [ "$spooled" -ne 0 ]; then
-    if age="$(spool_oldest_age "$AGENT_ID")"; then
-      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary; the oldest has waited $(human_seconds "$age")")"
+  if spool_existing "$AGENT_ID"; then
+    if [ -e "$SPOOL_DIR" ] || [ -L "$SPOOL_DIR" ]; then
+      spool_classify_path "$SPOOL_DIR"
+      case "$SPOOL_CLASS" in
+        owned) ;;
+        contested)
+          spool_normal=0
+          printf '%s\n' "$(colour "$C_BAD" "spool: contested on this tmux server by $SPOOL_CARRIERS; token $SPOOL_TOKEN")" ;;
+        unaccountable)
+          spool_normal=0
+          printf '%s\n' "$(colour "$C_BAD" "spool: unaccountable at $SPOOL_DIR because $SPOOL_CLASS_WHY")" ;;
+        unattributed)
+          spool_normal=0
+          printf '%s\n' "$(colour "$C_BAD" "spool: unattributed on this tmux server at $SPOOL_DIR")" ;;
+      esac
     else
-      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+      spool_normal=0
+      printf '%s\n' "$(colour "$C_BAD" "spool reservation absent: $SPOOL_DIR; recover with gang drop $name and use its relaunch line")"
     fi
   fi
-  held="$(spool_held "$AGENT_ID")"
+  if [ "$spool_normal" -eq 1 ]; then
+    spool_count "$AGENT_ID"; spooled="$SPOOL_COUNT"
+    if [ "$spooled" -ne 0 ]; then
+      if age="$(spool_oldest_age "$AGENT_ID")"; then
+        printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary; the oldest has waited $(human_seconds "$age")")"
+      else
+        printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+      fi
+    fi
+    spool_held "$AGENT_ID"; held="$SPOOL_HELD_COUNT"
+  else
+    held=0
+  fi
   if [ "$held" -ne 0 ]; then
-    held_dir="$(spool_dir_of "$AGENT_ID")"
+    held_dir="$SPOOL_DIR"
     # The whole promise of holding rather than re-sending is that a person can
     # go and read the body, so the place has to be in the report or the report
     # is worse than silence: it says the message was kept and does not say where.
@@ -3520,7 +4011,7 @@ cmd_status() {
     spool_held_report "$AGENT_ID" | while IFS= read -r held_line; do
       printf '%s\n' "$(colour "$C_BAD" "$held_line")"
     done
-    printf '%s\n' "$(colour "$C_BAD" "spool: $held held; gang will not send them again; read them under $held_dir")"
+    printf '%s\n' "$(colour "$C_BAD" "spool: $held held; gang will not send them again; read them under $held_dir; retire with gang spool retire $name")"
   fi
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
@@ -3586,29 +4077,47 @@ cmd_whoami() {
 }
 
 cmd_roster() {
-  local porcelain=0 id name wins current
+  local porcelain=0 id name wins="" current footer="" rc=0
   if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
     porcelain=1
   elif [ $# -ne 0 ]; then
     die "roster: expected no arguments or --porcelain"
   fi
-  if ! session_live; then
-    [ "$porcelain" -eq 1 ] \
-      || printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"
-    return
-  fi
-  current="$(binary_id)"
-  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
-  while read -r id name; do
-    [ -n "$id" ] || continue
-    if [ "$porcelain" -eq 1 ]; then
-      ( roster_row_porcelain "$id" "$(bare_name "$name")" )
-    else
-      ( roster_row "$id" "$(bare_name "$name")" "$current" )
-    fi
-  done <<EOF
+  if session_live; then
+    current="$(binary_id)"
+    wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
+    while read -r id name; do
+      [ -n "$id" ] || continue
+      if [ "$porcelain" -eq 1 ]; then
+        ( roster_row_porcelain "$id" "$(bare_name "$name")" )
+      else
+        # Each row in its own subshell: load_collar clears and re-sources the
+        # whole GANG_* surface, so every row loads only its own collar.
+        ( roster_row "$id" "$(bare_name "$name")" "$current" )
+      fi
+    done <<EOF
 $wins
 EOF
+  else
+    [ "$porcelain" -eq 1 ] \
+      || printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"
+  fi
+  [ "$porcelain" -eq 0 ] || return 0
+  spool_footer_scan || rc=$?
+  case "$rc" in
+    0)
+      [ "$SPOOL_FOOTER_UNATTRIBUTED" -eq 0 ] \
+        || footer="$SPOOL_FOOTER_UNATTRIBUTED unattributed ($SPOOL_FOOTER_MESSAGES messages)"
+      [ "$SPOOL_FOOTER_CONTESTED" -eq 0 ] \
+        || footer="${footer:+$footer, }$SPOOL_FOOTER_CONTESTED contested"
+      [ "$SPOOL_FOOTER_UNACCOUNTABLE" -eq 0 ] \
+        || footer="${footer:+$footer, }$SPOOL_FOOTER_UNACCOUNTABLE unaccountable"
+      [ -z "$footer" ] \
+        || printf '%s\n' "$(colour "$C_DIM" "spool: $footer — gang spool")" ;;
+    1) ;;
+    2) printf '%s\n' "$(colour "$C_BAD" "spool cannot be scanned: $SPOOL_ROOT_ERROR")" ;;
+    *) die "internal: unknown roster spool verdict $rc" ;;
+  esac
 }
 
 roster_state_word() { # $1 decorated state -> one stable porcelain word
@@ -3632,7 +4141,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
     load_collar "$prof"
     state="$(roster_state_word "$(state_now "$1" snapshot)")"
   fi
-  spooled="$(spool_count "$1")"
+  spool_count "$1"; spooled="$SPOOL_COUNT"
   if [ "$spooled" -ne 0 ]; then
     age="$(spool_oldest_age "$1")" || age="-"
   fi
@@ -3643,7 +4152,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 }
 
 roster_row() { # $1 window, $2 name, $3 current binary id
-  local prof state detail="" spooled age held skew="" mismatch
+  local prof state detail="" spooled age held skew="" mismatch spool_normal=1
   prof="$(collar_read "$1" "$2")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -3654,13 +4163,28 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
-  spooled="$(spool_count "$1")"
-  if [ "$spooled" -ne 0 ]; then
-    detail="$detail spooled=$spooled"
-    age="$(spool_oldest_age "$1")" && detail="$detail oldest=$(human_seconds "$age")"
+  if spool_existing "$1"; then
+    if [ -e "$SPOOL_DIR" ] || [ -L "$SPOOL_DIR" ]; then
+      spool_classify_path "$SPOOL_DIR"
+      case "$SPOOL_CLASS" in
+        owned) ;;
+        contested) detail="$detail spool-contested=[$SPOOL_CARRIERS]"; spool_normal=0 ;;
+        unaccountable) detail="$detail spool-unaccountable"; spool_normal=0 ;;
+        unattributed) detail="$detail spool-unattributed"; spool_normal=0 ;;
+      esac
+    else
+      detail="$detail spool-reservation-missing"; spool_normal=0
+    fi
   fi
-  held="$(spool_held "$1")"
-  [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
+  if [ "$spool_normal" -eq 1 ]; then
+    spool_count "$1"; spooled="$SPOOL_COUNT"
+    if [ "$spooled" -ne 0 ]; then
+      detail="$detail spooled=$spooled"
+      age="$(spool_oldest_age "$1")" && detail="$detail oldest=$(human_seconds "$age")"
+    fi
+    spool_held "$1"; held="$SPOOL_HELD_COUNT"
+    [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
+  fi
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
@@ -3816,24 +4340,24 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 }
 
 cmd_drop() {
-  local id stamped rc=0
-  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1'"; }
+  local name="${1:-}" id stamped rc=0
+  [ $# -eq 1 ] || die "drop: expected exactly one agent name"
+  id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no agent '$name'"; }
+  lock_pane "$id"
   stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
+  spool_teardown "$id" "$name"
   if [ -n "$stamped" ]; then
-    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$1" "$stamped"
+    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$name" "$stamped"
   else
     printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
   fi
-  # A spool would outlive its window on disk, which is not a design: this is
-  # its deletion path — but a composed message is archived out of it first.
-  spool_archive "$id"
-  spool_forget "$id"
   tmux kill-window -t "$id"
-  printf '%s\n' "$(colour "$C_OK" "dropped $1")"
+  lock_release
+  printf '%s\n' "$(colour "$C_OK" "dropped $name")"
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw names="" self=""
+  local named="${1:-}" id raw name names="" self="" windows
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -3845,16 +4369,28 @@ cmd_down() { # inverse of up: end the whole team's session
      && [ "${TMUX%%,*}" = "$(tmux display-message -p '#{socket_path}' 2>/dev/null)" ]; then
     refuse "down: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether it is running inside the team it would end. Run it from a shell outside tmux"
   fi
-  while IFS= read -r raw; do
-    names="$names$(bare_name "$raw") "
-  done < <(tmux list-windows -t "=$SESSION" -F '#W')
-  echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
-  while read -r id; do
+  windows="$(tmux list-windows -t "=$SESSION" -F $'#{window_id}\t#{window_name}')"
+  # Lock every window before the first report or mutation. A refusal anywhere
+  # leaves the whole team and every spool byte-identical.
+  while IFS=$'\t' read -r id raw; do
     [ -n "$id" ] || continue
-    spool_archive "$id"
-    spool_forget "$id"
-  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
+    lock_pane "$id"
+  done <<<"$windows"
+  # Ownership is re-read under every lock before pruning begins, so a contested
+  # token in a later row cannot leave an earlier row half-torn-down.
+  while IFS=$'\t' read -r id raw; do
+    [ -n "$id" ] || continue
+    spool_existing "$id" && spool_assert_live_owner "$id"
+  done <<<"$windows"
+  while IFS=$'\t' read -r id raw; do
+    [ -n "$id" ] || continue
+    name="$(bare_name "$raw")"
+    names="$names$name "
+    spool_teardown "$id" "$name" "$name"
+  done <<<"$windows"
+  printf '%s %s\n' "$(colour "$C_OK" "ending '$SESSION':")" "$(colour "$C_DIM" "$names")"
   tmux kill-session -t "=$SESSION"
+  lock_release
 }
 
 cmd_attach() {
@@ -3877,7 +4413,6 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
-    GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
@@ -3963,13 +4498,14 @@ case "$cmd" in
   notify)   cmd_notify "$@" ;;
   curfew|cutoff) cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;
+  spool)    cmd_spool "$@" ;;
   hook)     cmd_hook ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
-  drop)     cmd_drop "$1" ;;
+  drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars|profiles) cmd_collars "$@" ;;
   roles)    cmd_roles "$@" ;;
