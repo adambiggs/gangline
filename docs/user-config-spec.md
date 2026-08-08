@@ -1,5 +1,8 @@
 # User configuration, operator doctrine, and hitch discipline — implementation spec
 
+> Status: Landed at `132bfd6` on 2026-08-07; retained as a dated
+> implementation record.
+
 Four coupled changes: a user configuration file behind the `GANG_*` environment
 surface, an operator doctrine slot appended to the startup contract, a
 hitch-discipline line in that contract, and deferred self-compaction for the
@@ -840,7 +843,7 @@ behaviour:
 
 ### 5.6 Lint
 
-`test/lint.sh` needs no new rule: it globs `bin/gang`, `profiles/*.sh`, and
+`test/lint.sh` needs no new rule: it globs `bin/gang`, `collars/*.sh`, and
 `test/*.sh` already. New shell files carry an SPDX identifier.
 
 ## 6. Documentation at landing
