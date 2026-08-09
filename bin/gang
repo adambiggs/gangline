@@ -1122,17 +1122,41 @@ collar_read() { # $1 window id, optional $2 operator-facing name
   printf '%s' "$current"
 }
 
-win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous
-  local id name bare count=0 match="" raw_a="" raw_b=""
+# THE REGISTRATION IS THE IDENTITY; THE TITLE IS DECORATION. @gl_agent is what
+# hitch and adopt wrote and nothing else changes. #W is a display name: tmux
+# renames it on request from anyone with access to the server, and glyph_write
+# rewrites it from @gl_agent on every state reading. A resolver that matched on
+# #W could therefore be aimed at another lane's harness by a rename alone, and
+# would paste, submit, verify and report success against it.
+#
+# So: a window answers to a name when its registration IS that name. A window
+# with no registration at all still answers to its title, because that is the
+# only thing adopt can address before it registers one. A title that
+# contradicts a registration answers to nobody, and saying so is the whole
+# point — silence there would leave 'no agent x' standing over a window that is
+# somebody, which is the reading a person acts on next.
+win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous, 3 title of another identity
+  local id name bare registered count=0 match="" raw_a="" raw_b="" claimed=""
   while read -r id name; do   # `read id name` keeps spaces in the name
     bare="$(bare_name "$name")"
-    [ "$bare" = "$1" ] || continue
+    registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || registered=""
+    if [ -n "$registered" ]; then
+      if [ "$registered" != "$1" ]; then
+        [ "$bare" != "$1" ] || claimed="$registered"
+        continue
+      fi
+    elif [ "$bare" != "$1" ]; then
+      continue
+    fi
     count=$((count + 1))
     [ "$count" -ne 1 ] || { match="$id"; raw_a="$name"; }
     [ "$count" -ne 2 ] || raw_b="$name"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W' 2>/dev/null)
   case "$count" in
-    0) return 1 ;;
+    0) [ -n "$claimed" ] || return 1
+       printf "window '%s' is registered to Gangline agent '%s' in session '%s'; gang addresses an agent by the identity it registered, never by a window title, and will not act on '%s' through a window that is somebody else (gang roster).\n" \
+         "$1" "$claimed" "$SESSION" "$1" >&2
+       return 3 ;;
     1) printf '%s' "$match" ;;
     *) printf "'%s' is ambiguous in session '%s': windows %s and %s both address it. Rename one (tmux rename-window).\n" \
          "$1" "$SESSION" "$raw_a" "$raw_b" >&2
@@ -1141,7 +1165,9 @@ win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous
 }
 
 win_id_missing() { # $1 = win_id status, $2 = not-found message
-  [ "$1" -eq 2 ] && exit 1
+  # Only status 1 is absence. Everything above it is a reading gang could not
+  # interpret, and win_id has already said which one on stderr.
+  [ "$1" -eq 1 ] || exit 1
   die "$2"
 }
 
@@ -1383,8 +1409,12 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
 # reasoning binds readers, not the command holding the keystroke.
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 
-agent_name_of() { # $1 = window id; its CLI name on stdout
-  local name
+agent_name_of() { # $1 = window id; its registered name, or its title if it has none
+  # Same rule as win_id, read from the other end: the registration answers for
+  # a window that has one. A window without one has only its title to give.
+  local registered name
+  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
+  [ -z "$registered" ] || { printf '%s' "$registered"; return; }
   name="$(tmux display-message -p -t "$1" '#W' 2>/dev/null)" \
     || { printf 'COULD-NOT-DETERMINE'; return; }
   bare_name "$name"
@@ -2155,7 +2185,14 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
     if [ "$moved" -eq 0 ]; then
       archive_establish "$SESSION"
       name="$(agent_name_of "$1" 2>/dev/null)" || name=""
-      [ -n "$name" ] || name="${1#@}"
+      # A NAME BECOMES A PATH COMPONENT HERE, so this is where it has to be a
+      # name. hitch and adopt both validate what they register, but the option
+      # is a tmux value and gang is not the only writer a tmux server has; a
+      # value carrying a separator or a parent reference would move pending
+      # mail out of the archive root on an ordinary drop. Validating at the
+      # join is the check no reader of the identity can route around, and the
+      # window id is a destination gang always owns.
+      valid_name "$name" || name="${1#@}"
       dest="$ARCHIVE_DIR/$name"
       mkdir -p "$dest" || die "cannot create $dest for the pending messages of this window"
     fi

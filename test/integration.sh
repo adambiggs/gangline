@@ -1681,6 +1681,38 @@ contains "the mismatch refusal names the requested window identity too" \
   "$("$GANG" adopt displaced -c bash 2>&1 || true)" "displaced"
 tmux kill-window -t "$residue_id"
 
+# IDENTITY IS THE REGISTRATION, NOT THE TITLE. tmux lets anyone rename a window,
+# and gang paints its own state glyph into that title out of @gl_agent, so a
+# resolver that matches on #W can be aimed at another lane's harness by a rename
+# alone — and would paste, submit, VERIFY and report success against it. The
+# registration is what hitch and adopt wrote; the title is decoration.
+"$GANG" hitch registered-name -c bash -d /tmp >/dev/null
+registered_name_id="$(window_id registered-name)"
+tmux rename-window -t "$registered_name_id" borrowed-title
+refuses "a window title cannot address the agent registered under another name" \
+  "registered to Gangline agent 'registered-name'" \
+  bash -c 'printf TITLE_SPOOF | "$1" send --to borrowed-title --from tester --stdin' \
+  fixture "$GANG"
+excludes "the title-addressed message never reached the registered harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "TITLE_SPOOF"
+if printf 'REGISTERED_REACHES' |
+    "$GANG" send --to registered-name --from tester --stdin >/dev/null 2>&1; then
+  pass "the registered identity still resolves through a changed window title"
+else
+  fail "the registered identity still resolves through a changed window title" \
+    "send refused the agent under its own registered name"
+fi
+contains "and that message reaches the registered harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "REGISTERED_REACHES"
+equal "the agent's own name is its registration, whatever the title says" \
+  "registered-name" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$registered_name_id" -F '#{pane_id}')" \
+    "$GANG" whoami | sed -n 's/^agent: //p')"
+# Teardown, not an assertion: a resolver that cannot find this window by its
+# registration is exactly the defect above, and the fixture still has to go.
+"$GANG" drop registered-name >/dev/null 2>&1 \
+  || tmux kill-window -t "$registered_name_id"
+
 # A synchronous tty fixture paints the captured Codex menu and records every
 # key Gangline sends. Each mutant changes one load-bearing observation.
 cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
@@ -3738,6 +3770,34 @@ for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
 done
 equal "dropping an empty queue creates no archive directory" \
   "$archive_count" "$archive_count_after_empty"
+
+# AN AGENT NAME BECOMES A PATH COMPONENT. spool_archive names the archive
+# subdirectory after the agent whose mail it is holding, so a "name" carrying a
+# parent reference moves pending messages out of the archive root entirely — on
+# a plain gang drop, with no error, into a directory nobody chose. Identity is
+# read from the registration now, so the registration is what gets validated
+# before it is joined to a path: the check sits at the boundary that builds the
+# destination, where no reader can route around it.
+"$GANG" hitch traversal -c spoolable -d /tmp >/dev/null
+traversal_id="$(window_id traversal)"
+tmux send-keys -l -t "$traversal_id" 'HUMAN_DRAFT'
+printf 'MARK_TRAVERSAL' |
+  "$GANG" send --to traversal --from tester --stdin >/dev/null
+traversal_escape="$RUN_ROOT/outside"
+rm -rf -- "$traversal_escape"
+tmux rename-window -t "$traversal_id" '../../outside'
+tmux set-option -w -t "$traversal_id" @gl_agent '../../outside'
+"$GANG" drop '../../outside' >/dev/null 2>&1 || true
+traversal_archived=""
+for archived_traversal in "$GANG_ARCHIVE_DIR"/*/*/[0-9]*; do
+  [ -f "$archived_traversal" ] || continue
+  grep -q MARK_TRAVERSAL "$archived_traversal" 2>/dev/null \
+    && traversal_archived="$archived_traversal"
+done
+equal "a registration that is not a name never becomes an archive path" \
+  "contained archived" \
+  "$([ -e "$traversal_escape" ] && printf escaped || printf contained) $([ -n "$traversal_archived" ] && printf archived || printf lost)"
+tmux kill-window -t "$traversal_id" 2>/dev/null || true
 
 # MAIL READS THE QUEUE AND NOTHING ELSE. It does not load the target's collar,
 # claim entries, take the pane lock, or attempt delivery.
