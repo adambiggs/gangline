@@ -5264,6 +5264,46 @@ for binary_kind in attribute nul; do
     blocked "$([ "$binary_rc" -ne 0 ] && printf blocked || printf leaked)"
 done
 
+# GIT RENDERS AN ADDED LINE WHOSE CONTENT STARTS WITH "++" AS "+++...", which is
+# indistinguishable from a "+++ b/file" header by prefix alone. Dropping every
+# +++ record therefore drops real added content, and a credential sitting on
+# such a line reaches the remote through a gate that reported clean. Both forms
+# are asserted, because requiring only the header's trailing space still loses
+# the spaced one.
+plusplus_repo="$scanner_root/plus-prefixed"
+git init -q "$plusplus_repo"
+git -C "$plusplus_repo" config user.name 'Gangline scanner test'
+git -C "$plusplus_repo" config user.email 'scanner@fixture.invalid'
+printf '++key = sk-ant-%s\n' 'api03-ZZZfakefakefake1234567890' \
+  > "$plusplus_repo/quoted-diff"
+printf '++ key = ghp_%s\n' 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef01234' \
+  > "$plusplus_repo/quoted-diff-spaced"
+git -C "$plusplus_repo" add .
+git -C "$plusplus_repo" commit -qm 'test: plus-prefixed scanner fixture'
+plusplus_rc=0
+plusplus_out="$( (cd "$plusplus_repo" && "$ROOT/tools/pii-scan" --range HEAD) 2>&1 )" \
+  || plusplus_rc=$?
+equal "the CI scanner refuses a credential on a ++-prefixed added line" \
+  "blocked named spaced" \
+  "$([ "$plusplus_rc" -ne 0 ] && printf blocked || printf leaked) $([[ "$plusplus_out" = *'[credential-sk-ant]'* ]] && printf named || printf missed) $([[ "$plusplus_out" = *'[credential-ghp]'* ]] && printf spaced || printf missed)"
+
+# The other direction: a real +++ header is framing, and scanning it as content
+# would flag every commit that adds a file under a path shaped like a home
+# directory. The fixture's own content carries nothing to find.
+header_repo="$scanner_root/path-header"
+git init -q "$header_repo"
+git -C "$header_repo" config user.name 'Gangline scanner test'
+git -C "$header_repo" config user.email 'scanner@fixture.invalid'
+mkdir -p "$header_repo/home/alice"
+printf '%s\n' 'nothing sensitive here' > "$header_repo/home/alice/notes.txt"
+git -C "$header_repo" add .
+git -C "$header_repo" commit -qm 'test: path-header scanner fixture'
+header_rc=0
+header_out="$( (cd "$header_repo" && "$ROOT/tools/pii-scan" --range HEAD) 2>&1 )" \
+  || header_rc=$?
+equal "the CI scanner reads a +++ file header as framing, not as content" \
+  "0|" "$header_rc|$header_out"
+
 # The local sibling gate uses destination identity rather than remote-tracking
 # names, and refuses non-commit refs instead of treating an empty traversal as
 # a clean result. Its fixtures isolate the local hook from the host-global gate.

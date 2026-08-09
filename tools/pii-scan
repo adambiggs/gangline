@@ -214,9 +214,23 @@ scan_content() { # $1 = label, $2 = content
   return "$fail"
 }
 
+# A LEADING +++ IS NOT ENOUGH TO CALL A RECORD A HEADER. Git renders an added
+# line whose content starts with "++" as "+++...", so skipping every +++ record
+# drops real content — and a credential on such a line reaches the remote
+# through a gate that reported clean. Requiring the header's trailing space is
+# not enough either: content of "++ x" renders as "+++ x".
+#
+# The framing git already emits is what decides it. A file header appears only
+# in the block between "diff --" and the first hunk marker; inside a hunk every
+# record beginning with + is content, whatever follows it. Outside a hunk the
+# old prefix rule still stands, so input that carries no framing at all — the
+# self-test's projections below — behaves as it always did rather than going
+# silently empty.
 added_lines() {
   awk '
-    /^\+\+\+/ { next }
+    /^diff --/ { in_hunk = 0; next }
+    /^@@/ { in_hunk = 1; next }
+    !in_hunk && /^\+\+\+ / { next }
     /^\+/ { sub(/^\+/, ""); print }
   '
 }
@@ -256,6 +270,22 @@ selftest() {
     '-safe' '+/home/alice/added' | added_lines)"
   [ "$projected" = /home/alice/added ] || {
     echo "pii-scan: self-test FAILED — added diff content did not reach the prospective scanner" >&2
+    exit 1
+  }
+  # Both directions of the header/content discrimination, against the framing
+  # git actually emits: content that renders as +++ must be scanned, and the
+  # file header that renders the same way must not be.
+  projected="$(printf '%s\n' 'diff --git a/file b/file' '--- a/file' \
+    '+++ b/file' '@@ -1 +1 @@' '-safe' '+++ /home/alice/added' | added_lines)"
+  [ "$projected" = '++ /home/alice/added' ] || {
+    echo "pii-scan: self-test FAILED — an added line whose content starts with" \
+         "'++' was dropped as if it were a file header" >&2
+    exit 1
+  }
+  projected="$(printf '%s\n' 'diff --git a/home/alice/notes b/home/alice/notes' \
+    '--- /dev/null' '+++ b/home/alice/notes' '@@ -0,0 +1 @@' '+safe' | added_lines)"
+  [ "$projected" = safe ] || {
+    echo "pii-scan: self-test FAILED — a +++ file header was read as added content" >&2
     exit 1
   }
 }
