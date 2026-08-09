@@ -32,14 +32,20 @@ current tmux client to it. `GANG_COLLAR` selects the harness.
 ### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
-That contract names the agent, points it at `CONTRACT.md`, and tells it to read
-that file first and to read it again after a compaction. The contract itself
-holds the standing terms: envelope attribution, how to reach a peer, deliberate
-model and effort choices when hitching a teammate, delegation, and the marathon
-rule. It is pointed at rather than pasted, so its length is bounded by nothing
-the pane can render, and losing it from context is recoverable by reading it
-again. Gangline resolves and validates the file before opening a window, and an
-agent that cannot read it is told to say so and stop rather than improvise.
+That contract names the agent and carries `CONTRACT.md`, which holds the
+standing terms: envelope attribution, how to reach a peer, deliberate model and
+effort choices when hitching a teammate, delegation, and the marathon rule.
+
+How it reaches the agent depends on the collar. Where one declares
+`GANG_ROLE_PROMPT_OPT`, the contract's bytes are passed through that launch
+option into the harness's own system prompt, so every agent holds it
+unconditionally and still holds it after a compaction; the startup contract then
+names the file rather than ordering it read. Where a collar declares no such
+option, the startup contract points at the path and tells the agent to read it
+first and again after a compaction, and to say so and stop rather than improvise
+if it cannot. Either way the bytes are never pasted into a composer, so the
+contract's length is bounded by nothing the pane can render, and Gangline
+resolves and validates the file before opening a window.
 If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose within its category-error ceiling, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
@@ -545,15 +551,24 @@ there would discover that alone in a pane. Unlike doctrine and role briefs, its
 bytes are never pasted, so the 8192-byte ceiling is its only bound and pane
 geometry is not.
 
+A role is opt-in and the contract is not, so a hitch that names no role still
+carries one into the system prompt where the collar has that option. The
+contract and the role brief share a single option rather than passing it twice:
+a collar declares one spelling, and repeating it would be a guess about whether
+that harness concatenates the values or keeps the last. The composite is
+Gangline's preamble, then the contract, then the role brief where one was
+named.
+
 Role briefs use the same prose validation. Resolution checks
 `$GANG_CONFIG_DIR/roles/<name>.md` before the shipped `roles/<name>.md`; an
 operator file replaces the shipped file whole, and an unusable override refuses
 instead of falling back. A named role must be nonempty. Where the selected
 collar declares `GANG_ROLE_PROMPT_OPT`, Gangline passes the validated bytes by
-value through that launch option and puts only an attribution pointer in the
-startup contract. Otherwise it puts the body in the startup contract before
-operator doctrine. The system-prompt form includes Gangline's own preamble
-stating that later operator doctrine governs any disagreement.
+value through that launch option, after the contract and under the same
+preamble, and puts only an attribution pointer in the startup contract.
+Otherwise it puts the body in the startup contract before operator doctrine.
+The system-prompt form includes Gangline's own preamble stating that later
+operator doctrine governs any disagreement.
 
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_COLLARS`,
 `GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.

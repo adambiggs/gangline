@@ -460,3 +460,19 @@ not. What the contract requires is unchanged, so the guards that recorded those
 requirements now prove them against the file, and every hitch is held to naming
 it. Doctrine and role briefs stay pasted; they are per-hitch, and the pointer
 buys them nothing.
+
+## The contract rides the system prompt where a collar has one
+
+A pointer is conditional on the agent following it, and the contract binds
+every agent whether or not it does. Where a collar declares
+`GANG_ROLE_PROMPT_OPT`, pass the contract through it: the harness resends that
+prompt every turn, so the terms are unconditional and survive a compaction
+without a re-read. The startup contract then names the file instead of ordering
+it read — an agent already holding the contract spends a tool call and gains
+nothing. Collars without the option keep the pointer, which is still better
+than a paste bounded by pane geometry.
+
+A role is opt-in and the contract is not, so a role-less hitch still carries a
+system prompt. Both share one option rather than passing it twice, because a
+collar declares a single spelling and repeating it would guess at whether the
+harness concatenates or keeps the last.
