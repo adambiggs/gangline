@@ -1446,6 +1446,52 @@ equal "the first native hook stamps its exact harness session id" \
   "$(tmux show-options -wqv -t "$identity_id" @gl_session_id)"
 equal "hitch records the window's Gangline agent identity" "identity" \
   "$(tmux show-options -wqv -t "$identity_id" @gl_agent)"
+
+# Codex consumes that same native payload directly. This registered window has
+# the aborted-hitch/adopt shape: no startup nonce and no rollout binding. The
+# first hook must stamp both facts without a sessions-tree search.
+codex_payload_file="$RUN_ROOT/codex-payload-session.jsonl"
+cat > "$codex_payload_file" <<'JSONL'
+{"type":"session_meta","payload":{"id":"codex-payload-123"}}
+{"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":60000},"model_context_window":300000}}}
+JSONL
+codex_payload_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n codex-payload "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$codex_payload_id" @gl_agent codex-payload
+tmux set-option -w -t "$codex_payload_id" @gl_collar codex
+codex_payload_pane="$(tmux list-panes -t "$codex_payload_id" -F '#{pane_id}')"
+equal "the codex payload fixture begins without a hitch-time nonce" "" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_key)"
+printf '%s' \
+  "{\"hook_event_name\":\"Stop\",\"session_id\":\"codex-payload-123\",\"transcript_path\":\"$codex_payload_file\"}" \
+  | TMUX_PANE="$codex_payload_pane" "$GANG" hook
+equal "a first Codex hook stamps an agent that has no startup nonce" \
+  "codex-payload-123" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session_id)"
+equal "the Codex hook binds its native transcript path for context" \
+  "$codex_payload_file" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session)"
+equal "Codex context uses the hook-bound transcript without a nonce" \
+  "60k/300k (20%)" "$($GANG context codex-payload)"
+"$GANG" drop codex-payload >/dev/null
+
+# Calibrate the parser's failure direction: a native-looking payload with the
+# identity field absent must remain UNSTAMPED rather than borrowing any other
+# hook or cwd fact.
+codex_missing_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n codex-missing-id "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$codex_missing_id" @gl_agent codex-missing-id
+tmux set-option -w -t "$codex_missing_id" @gl_collar codex
+codex_missing_pane="$(tmux list-panes -t "$codex_missing_id" -F '#{pane_id}')"
+printf '%s' \
+  "{\"hook_event_name\":\"Stop\",\"transcript_path\":\"$codex_payload_file\"}" \
+  | TMUX_PANE="$codex_missing_pane" "$GANG" hook
+equal "a Codex payload missing session_id calibrates to UNSTAMPED" "" \
+  "$(tmux show-options -wqv -t "$codex_missing_id" @gl_session_id)"
+equal "a rejected Codex payload does not half-bind its transcript" "" \
+  "$(tmux show-options -wqv -t "$codex_missing_id" @gl_session)"
+"$GANG" drop codex-missing-id >/dev/null
+
 identity_report="$(TMUX_PANE="$identity_pane" "$GANG" whoami)"
 contains "whoami names the agent" "$identity_report" "agent: identity"
 contains "whoami names the pane" "$identity_report" "pane: $identity_pane"

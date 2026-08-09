@@ -155,29 +155,40 @@ print(mine[0])
 
 codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   local key file
+  file="$(tmux show-options -wqv -t "$1" @gl_session)" || file=""
+  if [ -n "$file" ] && [ -f "$file" ]; then
+    printf '%s' "$file"
+    return 0
+  fi
   key="$(tmux show-options -wqv -t "$1" @gl_key)"
   [ -n "$key" ] || return 1
-  file="$(tmux show-options -wqv -t "$1" @gl_session)"
-  if [ -z "$file" ] || [ ! -f "$file" ]; then
-    file="$(codex_session_for "$key")" || return 1
-    tmux set-option -w -t "$1" @gl_session "$file"
-  fi
+  file="$(codex_session_for "$key")" || return 1
+  tmux set-option -w -t "$1" @gl_session "$file"
   printf '%s' "$file"
 }
 
-collar_session_id() { # $1 = tmux target; rollout metadata is the native id contract
-  local file
-  file="$(codex_session_file "$1")" || return 1
-  python3 -c '
+collar_session_id() { # $1 = tmux target, $2 = native hook payload
+  local value transcript
+  value="$(printf '%s' "$2" | python3 -c '
 import json, sys
-with open(sys.argv[1], encoding="utf-8", errors="replace") as stream:
-    record = json.loads(next(stream))
-payload = record.get("payload") or {}
-value = payload.get("id") or payload.get("session_id")
-if record.get("type") != "session_meta" or not isinstance(value, str) or not value:
+value = json.load(sys.stdin).get("session_id", "")
+if not isinstance(value, str) or not value:
     raise SystemExit(1)
 print(value)
-' "$file"
+')" || return 1
+  transcript="$(printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("transcript_path")
+if value is None:
+    raise SystemExit(0)
+if not isinstance(value, str):
+    raise SystemExit(1)
+print(value, end="")
+')" || return 1
+  if [ -n "$transcript" ]; then
+    tmux set-option -w -t "$1" @gl_session "$transcript" || return 1
+  fi
+  printf '%s\n' "$value"
 }
 
 codex_context_read() { # $1 = rollout path; prints "<used>k/<win>k (<pct>%)"
