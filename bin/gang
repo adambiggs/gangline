@@ -1412,9 +1412,22 @@ turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 agent_name_of() { # $1 = window id; its registered name, or its title if it has none
   # Same rule as win_id, read from the other end: the registration answers for
   # a window that has one. A window without one has only its title to give.
+  #
+  # SANITIZED, BECAUSE A REGISTRATION IS RAW BYTES. tmux escapes control
+  # characters out of a window title — #W hands back \033 as six literal
+  # characters — so the title was never a way to paint somebody's terminal.
+  # An option value comes back exactly as written, so reading identity from
+  # @gl_agent opened that door for every caller that prints one: whoami, the
+  # delivery-lock refusals, mail, down's refusal, a stall body. Sanitizing at
+  # the one function they all read through closes it in one place instead of
+  # at each print, and leaves the next one safe too. Matching is unaffected:
+  # win_id compares the option's bytes and never comes through here, so a
+  # forged registration stays droppable and archivable under the name it
+  # actually holds. What it loses is being addressable BY that name, which is
+  # true of it already — nobody can type it.
   local registered name
   registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
-  [ -z "$registered" ] || { printf '%s' "$registered"; return; }
+  [ -z "$registered" ] || { printf '%s' "$registered" | config_sanitize; return; }
   name="$(tmux display-message -p -t "$1" '#W' 2>/dev/null)" \
     || { printf 'COULD-NOT-DETERMINE'; return; }
   bare_name "$name"
@@ -4076,11 +4089,18 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 }
 
 cmd_drop() {
-  local id stamped rc=0
+  local id stamped shown rc=0
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1'"; }
+  # The argument reaches the terminal, and drop is the one command an operator
+  # runs with a name they read off a hostile registration. It is not validated
+  # here on purpose: valid_name would leave a window whose own registration is
+  # forged undroppable by any name gang accepts, and tmux kill-window is then
+  # the only way out — which skips the archive and destroys the pending mail.
+  # Droppable, contained, and printed safely is the combination that holds.
+  shown="$(printf '%s' "$1" | config_sanitize)"
   stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
   if [ -n "$stamped" ]; then
-    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$1" "$stamped"
+    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$shown" "$stamped"
   else
     printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
   fi
@@ -4089,7 +4109,7 @@ cmd_drop() {
   spool_archive "$id"
   spool_forget "$id"
   tmux kill-window -t "$id"
-  printf '%s\n' "$(colour "$C_OK" "dropped $1")"
+  printf '%s\n' "$(colour "$C_OK" "dropped $shown")"
 }
 
 cmd_down() { # inverse of up: end the whole team's session

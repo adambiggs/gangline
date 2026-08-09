@@ -1713,6 +1713,26 @@ equal "the agent's own name is its registration, whatever the title says" \
 "$GANG" drop registered-name >/dev/null 2>&1 \
   || tmux kill-window -t "$registered_name_id"
 
+# A REGISTRATION IS RAW BYTES, AND IT IS NOW THE TRUSTED IDENTITY. tmux escapes
+# control characters out of a window TITLE — #W reads \033 back as six literal
+# characters — so the title was never a way to paint somebody's terminal. An
+# option value is returned exactly as written, so reading identity from
+# @gl_agent opened that door. Names go out sanitized; matching keeps the bytes.
+ctl_name="$(printf 'ctl\033[31mrogue')"
+ctl_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n ctl-rogue "PS1='❯ ' bash --norc")"
+ctl_pane="$(tmux list-panes -t "$ctl_id" -F '#{pane_id}')"
+tmux set-option -w -t "$ctl_id" @gl_agent "$ctl_name"
+tmux set-option -w -t "$ctl_id" @gl_collar bash
+ctl_escapes() { case "$1" in *$'\033'*) printf raw ;; *) printf clean ;; esac; }
+ctl_whoami="$(TMUX_PANE="$ctl_pane" "$GANG" whoami 2>&1)" || true
+ctl_mail="$(TMUX_PANE="$ctl_pane" "$GANG" mail 2>&1)" || true
+ctl_drop="$("$GANG" drop "$ctl_name" 2>&1)" || true
+equal "a control-bearing registration never reaches the terminal raw" \
+  "clean clean clean" \
+  "$(ctl_escapes "$ctl_whoami") $(ctl_escapes "$ctl_mail") $(ctl_escapes "$ctl_drop")"
+tmux kill-window -t "$ctl_id" 2>/dev/null || true
+
 # A synchronous tty fixture paints the captured Codex menu and records every
 # key Gangline sends. Each mutant changes one load-bearing observation.
 cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
