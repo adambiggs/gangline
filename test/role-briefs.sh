@@ -74,6 +74,17 @@ window_id() {
 window_names() { tmux list-windows -t "=$GANG_SESSION" -F '#W' 2>/dev/null || true; }
 pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 drop_agent() { "$GANG" drop "$1" >/dev/null; }
+# Mirrors config_path: gang reports operator-facing paths with HOME collapsed,
+# so an expectation built from an absolute path has to collapse it the same way
+# or it only matches on a checkout that happens to sit outside HOME.
+display_path() {
+  case "$1" in
+    "$HOME") printf '~' ;;
+    "$HOME"/*) printf '%s/%s' '~' "${1#"$HOME"/}" ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
 selected() { [ -z "${ROLE_ACS:-}" ] || case " $ROLE_ACS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 run_ac() { if selected "$1"; then "$1"; fi; }
 
@@ -300,11 +311,15 @@ ac12() {
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac12 -c argv12 -d /tmp --role shell >/dev/null
   {
     printf '%s\n' \
-      'You are running inside a Gangline team. The role brief below was attached' \
-      'by Gangline when this session launched. Operator doctrine, where the' \
-      'operator has any, reaches you as part of your first message; where that' \
-      'doctrine and this brief disagree, the doctrine governs and this brief' \
-      'yields to it. Nothing below overrides it.'
+      'You are running inside a Gangline team. What follows was attached by' \
+      'Gangline when this session launched: the contract every agent on this' \
+      'team is held to, and a role brief where this hitch named one. Operator' \
+      'doctrine, where the operator has any, reaches you as part of your first' \
+      'message; where that doctrine and anything below disagree, the doctrine' \
+      'governs and this attachment yields to it. Nothing below overrides it.'
+    printf '\n--- Gangline contract (%s) ---\n' \
+      "$(display_path "$PRODUCT_ROOT/CONTRACT.md")"
+    cat "$PRODUCT_ROOT/CONTRACT.md"
     printf '\n--- role brief: shell (%s) ---\n' "$config/roles/shell.md"
     printf "quote ' here\n\044dollar\n"
   } > "$expected"
@@ -315,12 +330,19 @@ ac12() {
   drop_agent role-ac12
 }
 
+# A role is opt-in and the contract is not, so a hitch that names no role still
+# carries one. What it must not carry is a role section it was never given.
 ac13() {
-  local prefix="$TEST_ROOT/ac13-argv"
+  local prefix="$TEST_ROOT/ac13-argv" value
   make_argv_collar argv13 "$prefix"
   GANG_CONFIG_DIR="$TEST_ROOT/ac13-config" "$GANG" hitch role-ac13 -c argv13 -d /tmp >/dev/null
-  equal "AC13 no-role argv has only the base item" 1 "$(find "$TEST_ROOT" -maxdepth 1 -name 'ac13-argv.*.bin' | wc -l | tr -d ' ')"
+  equal "AC13 no-role argv is the base item, the option and one value" 3 "$(find "$TEST_ROOT" -maxdepth 1 -name 'ac13-argv.*.bin' | wc -l | tr -d ' ')"
   equal "AC13 base argv item is intact" fresh "$(<"$prefix.0.bin")"
+  equal "AC13 a role-less hitch still carries the option" "--append-system-prompt" "$(<"$prefix.1.bin")"
+  value="$(<"$prefix.2.bin")"
+  contains "AC13 the role-less system prompt carries the contract" "$value" \
+    "Marathon rule: never halt the session to wait on the operator"
+  excludes "AC13 the role-less system prompt opens no role section" "$value" "--- role brief:"
   drop_agent role-ac13
 }
 
@@ -559,7 +581,35 @@ ac24() {
   excludes "AC24 missing contract opens no window" "$(window_names)" "role-ac24c"
 }
 
-for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac23 ac24; do
+# Where a collar declares the system-prompt option the contract travels in the
+# system prompt, which is unconditional and survives a compaction because the
+# harness resends it. The pane must then NAME the contract rather than order it
+# read: the agent is already holding it, and a fetch instruction buys a tool
+# call and no contract. The launch wrapper swallows the appended option so the
+# composer under test is still an ordinary shell.
+ac25() {
+  local config="$TEST_ROOT/ac25-config" body
+  mkdir -p "$config"
+  cat > "$TEST_ROOT/collars/sysprompt.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$PRODUCT_ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_ROLE_PROMPT_OPT="--append-system-prompt"
+SH
+  GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac25 -c sysprompt -d /tmp >/dev/null
+  body="$(pane_all role-ac25)"
+  contains "AC25 the pane says the contract was attached at launch" "$body" \
+    "was attached to this harness session at launch"
+  contains "AC25 the pane still names the contract path" "$body" "CONTRACT.md"
+  excludes "AC25 the pane does not order a read it does not need" "$body" \
+    "before anything else"
+  excludes "AC25 no stop-and-report for a file it was not sent to" "$body" \
+    "say so and stop rather than improvising"
+  drop_agent role-ac25
+}
+
+for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac23 ac24 ac25; do
   run_ac "$ac_name"
 done
 

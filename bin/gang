@@ -1002,7 +1002,7 @@ doctrine_read() { # populate DOCTRINE from the ambient operator prose slot
   DOCTRINE="$PROSE"
 }
 
-CONTRACT_FILE=""
+CONTRACT_FILE="" CONTRACT_BODY="" CONTRACT_SYSTEM=0
 contract_file() { # -> winning contract path on stdout, operator first
   local file="$CONFIG_DIR/CONTRACT.md"
   if [ -e "$file" ] || [ -L "$file" ]; then
@@ -1012,41 +1012,64 @@ contract_file() { # -> winning contract path on stdout, operator first
   printf '%s' "$ROOT/CONTRACT.md"
 }
 
-# The contract is pointed at rather than pasted, so the agent reads prose no
-# composer had to render and recovers it by re-reading after a compaction.
-# Gangline still proves the file is there and is prose at hitch time: an agent
-# sent to read a missing or binary contract would discover that alone, in a
-# pane, with nobody to tell.
-contract_read() { # resolve and vet the contract slot, into CONTRACT_FILE
+# Never pasted into a composer. Where the collar declares a system-prompt
+# option the bytes go there, which is unconditional and outlives a compaction
+# because the harness resends that prompt every turn; where it declares none,
+# the contract is pointed at and the agent reads the file. Both routes carry
+# prose no composer had to render, and both name the path, so an agent can
+# re-read it. Gangline proves the file is there and is prose at hitch time
+# either way: an agent sent to read a missing or binary contract would discover
+# that alone, in a pane, with nobody to tell.
+contract_read() { # vet the contract slot, into CONTRACT_FILE and CONTRACT_BODY
   local display
   CONTRACT_FILE="$(contract_file)"
   display="$(config_path "$CONTRACT_FILE" | config_sanitize)"
   [ -e "$CONTRACT_FILE" ] || [ -L "$CONTRACT_FILE" ] \
-    || die "the Gangline contract $display is missing, so a hitch has nothing to point at; restore the shipped file or supply $CONFIG_DIR/CONTRACT.md"
+    || die "the Gangline contract $display is missing, so a hitch has nothing to deliver; restore the shipped file or supply $CONFIG_DIR/CONTRACT.md"
   prose_read "$CONTRACT_FILE" "Gangline contract" "$display"
   [ -s "$CONTRACT_FILE" ] || die "the Gangline contract $display is empty"
+  CONTRACT_BODY="$PROSE"
+  CONTRACT_SYSTEM=0
+  [ -z "$GANG_ROLE_PROMPT_OPT" ] || CONTRACT_SYSTEM=1
 }
 
-ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 ROLE_PROMPT=""
+ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0
+SYSTEM_PROMPT=""
 
-role_prompt_build() { # populate the system-prompt-level composite byte-exact
-  local role path
+# One option carries both attachments rather than one option per attachment: a
+# collar declares a single spelling, and passing it twice would be a guess about
+# whether that harness concatenates or keeps the last one.
+system_prompt_build() { # populate the system-prompt-level composite byte-exact
+  local role path contract
+  contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
+  printf -v SYSTEM_PROMPT '%s\n%s\n%s\n%s\n%s\n%s\n\n--- Gangline contract (%s) ---\n%s' \
+    'You are running inside a Gangline team. What follows was attached by' \
+    'Gangline when this session launched: the contract every agent on this' \
+    'team is held to, and a role brief where this hitch named one. Operator' \
+    'doctrine, where the operator has any, reaches you as part of your first' \
+    'message; where that doctrine and anything below disagree, the doctrine' \
+    'governs and this attachment yields to it. Nothing below overrides it.' \
+    "$contract" "$CONTRACT_BODY"
+  [ -n "$ROLE_NAME" ] || return 0
   role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
   path="$(config_path "$ROLE_FILE" | config_sanitize)"
-  printf -v ROLE_PROMPT '%s\n%s\n%s\n%s\n%s\n\n--- role brief: %s (%s) ---\n%s' \
-    'You are running inside a Gangline team. The role brief below was attached' \
-    'by Gangline when this session launched. Operator doctrine, where the' \
-    'operator has any, reaches you as part of your first message; where that' \
-    'doctrine and this brief disagree, the doctrine governs and this brief' \
-    'yields to it. Nothing below overrides it.' \
-    "$role" "$path" "$ROLE_BODY"
+  printf -v SYSTEM_PROMPT '%s\n--- role brief: %s (%s) ---\n%s' \
+    "$SYSTEM_PROMPT" "$role" "$path" "$ROLE_BODY"
 }
 
 startup_brief() { # $1 = agent name, $2 = doctrine body or empty
   local role path contract
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
-  printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
-    "$1" "$contract" "$1"
+  if [ "$CONTRACT_SYSTEM" -eq 1 ]; then
+    # Already in the system prompt, so it needs naming rather than fetching:
+    # the harness resends that prompt every turn, and an instruction to go read
+    # a file the agent is already holding buys a tool call and no contract.
+    printf 'You are %s in Gangline. The contract for this team was attached to this harness session at launch from %s, together with a Gangline note subordinating it to operator doctrine; it governs every turn you take here. At natural checkpoints compact with: gang compact %s.' \
+      "$1" "$contract" "$1"
+  else
+    printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
+      "$1" "$contract" "$1"
+  fi
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
     path="$(config_path "$ROLE_FILE" | config_sanitize)"
@@ -2827,7 +2850,7 @@ cmd_hitch() {
       || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
   fi
   load_collar "$prof"
-  ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 ROLE_PROMPT=""
+  ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
     valid_role_name "$role" \
       || die "hitch: role '$role' is not usable — use only letters, digits, dot, dash and underscore; do not start with dash or dot"
@@ -2917,9 +2940,9 @@ cmd_hitch() {
   contract_read
   doctrine_read
 
-  if [ "$ROLE_SYSTEM" -eq 1 ]; then
-    role_prompt_build
-    GANG_LAUNCH="$GANG_LAUNCH $GANG_ROLE_PROMPT_OPT $(shell_quote "$ROLE_PROMPT")"
+  if [ "$CONTRACT_SYSTEM" -eq 1 ]; then
+    system_prompt_build
+    GANG_LAUNCH="$GANG_LAUNCH $GANG_ROLE_PROMPT_OPT $(shell_quote "$SYSTEM_PROMPT")"
   fi
 
   launch_env="GANG_SESSION=$(shell_quote "$SESSION")"
