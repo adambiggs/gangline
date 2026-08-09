@@ -2178,6 +2178,12 @@ contains "startup gives an unreadable contract a loud stop rather than a guess" 
 contains "the contract requires deliberate model and effort choices when hitching" \
   "$(contract_prose)" \
   "When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e"
+# The compaction instruction moved here once it stopped carrying an agent name,
+# so this file is the only place it lives and the only place it can be proven.
+contains "the contract tells an agent to compact at natural checkpoints" \
+  "$(contract_prose)" "At natural checkpoints, compact with"
+excludes "the startup contract no longer spends a line on compaction" \
+  "$(pane alpha)" "compact with"
 contains "the contract carries the operator-authorized marathon rule" \
   "$(contract_prose)" \
   "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."

@@ -50,6 +50,13 @@ briefing, and judging it rather than producing it: reading far enough to
 write the brief is your work, and reading far enough to author the
 deliverable is a hitch you did not make.
 
+## Compacting
+
+At natural checkpoints, compact with `gang compact`. Bare, it targets the
+window you are running in, so you do not name yourself. Do it after finishing a
+coherent arc and recording durable state somewhere that outlives your context,
+never mid-edit.
+
 ## The marathon rule
 
 Marathon rule: never halt the session to wait on the operator — resolve

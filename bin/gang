@@ -1072,15 +1072,15 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty
     # not there. Gangline cannot verify that a launch option reached the model,
     # so the recovery is worth more than the reassurance it replaces.
     if [ -n "$ROLE_NAME" ]; then
-      printf 'You are %s in Gangline. Your contract and your %s role brief are in your system prompt. If they are not, read %s and report that rather than improvising. At natural checkpoints compact with: gang compact %s.' \
-        "$1" "$role" "$contract" "$1"
+      printf 'You are %s in Gangline. Your contract and your %s role brief are in your system prompt. If they are not, read %s and report that rather than improvising.' \
+        "$1" "$role" "$contract"
     else
-      printf 'You are %s in Gangline. Your contract is in your system prompt. If it is not, read %s and report that rather than improvising. At natural checkpoints compact with: gang compact %s.' \
-        "$1" "$contract" "$1"
+      printf 'You are %s in Gangline. Your contract is in your system prompt. If it is not, read %s and report that rather than improvising.' \
+        "$1" "$contract"
     fi
   else
-    printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
-      "$1" "$contract" "$1"
+    printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. If you cannot read that file, say so and stop rather than improvising the contract.' \
+      "$1" "$contract"
     if [ -n "$ROLE_NAME" ]; then
       printf '\n\nYour role in this team is %s. Its brief follows; operator doctrine,\nwhere present, outranks it.\n\nRole brief (%s):\n\n%s' "$role" "$path" "$ROLE_BODY"
     fi

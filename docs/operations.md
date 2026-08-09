@@ -137,11 +137,12 @@ leave it alone.
 
 ## Compaction
 
-The startup contract tells every agent to use native compaction at natural
-checkpoints:
+The contract tells every agent to use native compaction at natural
+checkpoints. Bare, it targets the calling window, so an agent does not name
+itself:
 
 ```sh
-gang compact NAME
+gang compact
 ```
 
 Do this after finishing a coherent arc and recording durable state in the
