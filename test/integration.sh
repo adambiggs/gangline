@@ -14,11 +14,22 @@ TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
 export GIT_CONFIG_SYSTEM=/dev/null
 
-# The Bash fixture establishes every transition synchronously. Production waits
-# are inputs here, not evidence, so replace their clock with an immediate one.
+# The Bash fixture establishes every transition synchronously except one: a pane
+# answers its terminal asynchronously, so a composer that has been sent Enter
+# has not necessarily echoed by the time the next capture runs. Production waits
+# are inputs here and collapse to nothing; gang's pane round-trip is the sole
+# exception and keeps a floor far below the duration it asked for. Without it,
+# submission verifies only when the payload is long enough to make each poll
+# slow enough for the echo to land — a fixture buying the right answer for no
+# reason, and one that inverts as soon as the pasted text gets shorter. Keying
+# on the requested duration keeps every other clock immediate, so boot and churn
+# waits stay free.
 mkdir -p "$RUN_ROOT/bin"
 cat > "$RUN_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
+case "$1" in
+  0.3|0.4) exec /bin/sleep 0.02 ;;
+esac
 exit 0
 SH
 chmod +x "$RUN_ROOT/bin/sleep"
