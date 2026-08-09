@@ -3655,8 +3655,13 @@ cmd_status() {
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
 }
 
-cmd_mail() { # read a queue without touching it
+# READING YOUR OWN QUEUE IS ITS DELIVERY. A body the addressee has already read
+# is delivered again at the next turn boundary — the same message twice, once by
+# hand and once by the spool — so a read by the agent whose queue it is retires
+# what it printed. A read by anyone else is an inspection and touches nothing.
+cmd_mail() { # read a queue; its own agent's read consumes what it prints
   local name="${1:-}" id rc=0 dir e n=0 held=0
+  local self="" mine=0 claim label heading=waiting
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help mail
@@ -3666,17 +3671,37 @@ cmd_mail() { # read a queue without touching it
   fi
   [ $# -le 1 ] || die "mail: unexpected argument '$2'"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no agent '$name' (see: gang roster)"; }
+  # WHOSE QUEUE IS THIS? The window answers it, not the name: the calling pane
+  # either IS the target window or it is somebody else looking. No name is
+  # compared, so nothing here can be talked into consuming another agent's mail.
+  self="$(self_window)" || self=""
+  [ -n "$self" ] && [ "$self" = "$id" ] && mine=1
+  [ "$mine" -eq 0 ] || heading="read"
   dir="$(spool_dir_of "$id")"
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
   fi
+  # The glob is taken once, so an entry that lands mid-read is not one this read
+  # printed and nothing here retires it.
   for e in "$dir"/[0-9]*; do
     [ -f "$e" ] || continue
+    label="${e##*/}"
+    if [ "$mine" -eq 1 ]; then
+      # The drain's own claim rename, for the reason the drain has one: the
+      # rename is what makes ownership atomic. A drain at this turn's boundary
+      # and this read cannot both take the same entry, and the loser never
+      # prints a body it did not get.
+      claim="$dir/sending-$label"
+      mv -- "$e" "$claim" 2>/dev/null || continue
+      e="$claim"
+    fi
     spool_read "$e"
     n=$((n + 1))
-    printf '%s\n' "$(colour "$C_WORK" "waiting #$n from $SPOOL_SENDER — ${e##*/}")"
+    printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
     printf '%s\n\n' "$SPOOL_BODY"
+    [ "$mine" -eq 0 ] || rm -f -- "$e" \
+      || die "read the spooled message $label but could not retire it at $e — it is claimed rather than waiting, so nothing will deliver it again, but the file has to go by hand"
   done
   for e in "$dir"/sending-* "$dir"/failed-*; do
     [ -f "$e" ] || continue
@@ -3689,7 +3714,11 @@ cmd_mail() { # read a queue without touching it
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0
   fi
-  printf '%s\n' "$(colour "$C_DIM" "$n waiting, $held held, in $dir")"
+  if [ "$mine" -eq 1 ]; then
+    printf '%s\n' "$(colour "$C_DIM" "$n consumed by this read, $held held (kept), in $dir")"
+  else
+    printf '%s\n' "$(colour "$C_DIM" "$n waiting, $held held, in $dir")"
+  fi
 }
 
 cmd_whoami() {

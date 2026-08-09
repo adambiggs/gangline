@@ -3855,16 +3855,66 @@ mail_with_held="$("$GANG" mail mailer)"
 contains "mail prints a held body" "$mail_with_held" "MARK_MAIL_HELD"
 contains "mail labels held delivery as unverified" \
   "$mail_with_held" "held (delivery NOT verified"
-# Reading your own queue is the commonest reason to run mail at all, so a bare
-# call inside an agent window reads that window's queue rather than refusing.
+# READING YOUR OWN QUEUE CONSUMES IT. A message the addressee has already read
+# is delivered again at its next turn boundary — the same body twice, once by
+# hand and once by the spool. Reading it IS its delivery, so the read retires
+# what it printed. Only for its own agent: a read by anybody else is an
+# inspection and stays non-destructive.
+mailer_bodies() { # $1 = a mail rendering -> the marks it printed, in order
+  printf '%s\n' "$1" | grep -oE 'MARK_MAIL_[A-Z]+' | tr '\n' ' ' || true
+}
 mailer_self_pane="$(tmux list-panes -t "$(window_id mailer)" -F '#{pane_id}')"
+mail_reference="$("$GANG" mail mailer)"
 mailer_self_rc=0
 TMUX_PANE="$mailer_self_pane" "$GANG" mail > "$RUN_ROOT/mail-self.out" 2>&1 \
   || mailer_self_rc=$?
 mailer_self_out="$(grep -v '^gang: WARNING: executing dirty ' \
   "$RUN_ROOT/mail-self.out" || true)"
 equal "bare mail reads the calling agent's own queue" \
-  "0|$("$GANG" mail mailer)" "$mailer_self_rc|$mailer_self_out"
+  "0|$(mailer_bodies "$mail_reference")" \
+  "$mailer_self_rc|$(mailer_bodies "$mailer_self_out")"
+contains "a self-read says what it consumed, not what waits" \
+  "$mailer_self_out" "consumed"
+equal "a self-read retires exactly the waiting entries it printed" \
+  "failed-00000000000000000005-facefeed" "$(cd "$mailer_spool" && ls)"
+mail_after_self="$("$GANG" mail mailer)"
+excludes "the consumed bodies are gone from the queue" \
+  "$mail_after_self" "MARK_MAIL_ONE"
+excludes "every consumed body, not merely the first" \
+  "$mail_after_self" "MARK_MAIL_THREE"
+contains "a self-read never consumes a held entry" \
+  "$mail_after_self" "MARK_MAIL_HELD"
+contains "and the held entry keeps saying delivery was not verified" \
+  "$mail_after_self" "held (delivery NOT verified"
+
+# An entry that lands after the read is not one the read printed, so nothing
+# retires it: the next read is where it appears.
+printf 'MARK_MAIL_LATER' |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+mail_later_rc=0
+TMUX_PANE="$mailer_self_pane" "$GANG" mail > "$RUN_ROOT/mail-later.out" 2>&1 \
+  || mail_later_rc=$?
+mail_later_out="$(grep -v '^gang: WARNING: executing dirty ' \
+  "$RUN_ROOT/mail-later.out" || true)"
+equal "a message that arrives after a self-read survives it" \
+  "0|MARK_MAIL_LATER MARK_MAIL_HELD " \
+  "$mail_later_rc|$(mailer_bodies "$mail_later_out")"
+equal "and the second read retires only what the second read printed" \
+  "failed-00000000000000000005-facefeed" "$(cd "$mailer_spool" && ls)"
+
+# Somebody else's read is an inspection. lead reading a teammate's queue must
+# leave every entry exactly where the teammate's own next turn will find it.
+printf 'MARK_MAIL_FOREIGN' |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+mail_foreign_before="$(cd "$mailer_spool" && ls)"
+mail_foreign_out="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" mail mailer)"
+contains "another agent's read still prints the waiting body" \
+  "$mail_foreign_out" "MARK_MAIL_FOREIGN"
+equal "another agent's read consumes nothing" \
+  "$mail_foreign_before" "$(cd "$mailer_spool" && ls)"
+equal "and an operator outside the team consumes nothing either" \
+  "$mail_foreign_before" \
+  "$("$GANG" mail mailer >/dev/null; cd "$mailer_spool" && ls)"
 "$GANG" drop mailer >/dev/null
 
 "$GANG" hitch empty-mailbox -c spoolable -d /tmp >/dev/null
