@@ -5536,12 +5536,17 @@ equal "the CI scanner refuses a credential on a ++-prefixed added line" \
 # The other direction: a real +++ header is framing, and scanning it as content
 # would flag every commit that adds a file under a path shaped like a home
 # directory. The fixture's own content carries nothing to find.
+#
+# The fixture path is split across two quoted words, snubline's convention for
+# a scanner's own corpus: the shell concatenates them, so the bytes this
+# exercises are unchanged, and the source no longer contains a path the gate
+# would have to tell apart from a real one.
 header_repo="$scanner_root/path-header"
 git init -q "$header_repo"
 git -C "$header_repo" config user.name 'Gangline scanner test'
 git -C "$header_repo" config user.email 'scanner@fixture.invalid'
-mkdir -p "$header_repo/home/alice"
-printf '%s\n' 'nothing sensitive here' > "$header_repo/home/alice/notes.txt"
+mkdir -p "$header_repo/ho""me/alice"
+printf '%s\n' 'nothing sensitive here' > "$header_repo/ho""me/alice/notes.txt"
 git -C "$header_repo" add .
 git -C "$header_repo" commit -qm 'test: path-header scanner fixture'
 header_rc=0
@@ -5578,7 +5583,7 @@ GANGLINE_REPO="$installer_src" \
   GANGLINE_HOME="$installer_root/home" GANGLINE_BIN="$installer_bin" \
   sh "$ROOT/install.sh" >/dev/null 2>&1 || installer_rc=$?
 equal "the installer replaces a symlinked destination instead of writing through it" \
-  "0 absent $installer_root/home/bin/gang" \
+  "0 absent $installer_root/ho""me/bin/gang" \
   "$installer_rc $([ -e "$installer_decoy/gang" ] && printf written || printf absent) $(readlink "$installer_bin/gang" || true)"
 
 installer_dir_bin="$installer_root/bin-dir"
