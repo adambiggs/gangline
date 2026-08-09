@@ -1002,6 +1002,31 @@ doctrine_read() { # populate DOCTRINE from the ambient operator prose slot
   DOCTRINE="$PROSE"
 }
 
+CONTRACT_FILE=""
+contract_file() { # -> winning contract path on stdout, operator first
+  local file="$CONFIG_DIR/CONTRACT.md"
+  if [ -e "$file" ] || [ -L "$file" ]; then
+    printf '%s' "$file"
+    return 0
+  fi
+  printf '%s' "$ROOT/CONTRACT.md"
+}
+
+# The contract is pointed at rather than pasted, so the agent reads prose no
+# composer had to render and recovers it by re-reading after a compaction.
+# Gangline still proves the file is there and is prose at hitch time: an agent
+# sent to read a missing or binary contract would discover that alone, in a
+# pane, with nobody to tell.
+contract_read() { # resolve and vet the contract slot, into CONTRACT_FILE
+  local display
+  CONTRACT_FILE="$(contract_file)"
+  display="$(config_path "$CONTRACT_FILE" | config_sanitize)"
+  [ -e "$CONTRACT_FILE" ] || [ -L "$CONTRACT_FILE" ] \
+    || die "the Gangline contract $display is missing, so a hitch has nothing to point at; restore the shipped file or supply $CONFIG_DIR/CONTRACT.md"
+  prose_read "$CONTRACT_FILE" "Gangline contract" "$display"
+  [ -s "$CONTRACT_FILE" ] || die "the Gangline contract $display is empty"
+}
+
 ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 ROLE_PROMPT=""
 
 role_prompt_build() { # populate the system-prompt-level composite byte-exact
@@ -1018,8 +1043,10 @@ role_prompt_build() { # populate the system-prompt-level composite byte-exact
 }
 
 startup_brief() { # $1 = agent name, $2 = doctrine body or empty
-  local role path
-  printf 'You are %s in Gangline. Peer messages name their sender in the gang envelope. Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness\047s own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further. To message a peer: gang send --to NAME --stdin. Use that peer\047s Gangline name. At natural checkpoints compact with: gang compact %s. When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e; where the collar declares no such option gang refuses the flag, so that choice is the collar\047s rather than a default\047s. Never let an unexamined default stand in for a decision. When you delegate a piece of work, spend your own context choosing, briefing, and judging it rather than producing it: reading far enough to write the brief is your work, and reading far enough to author the deliverable is a hitch you did not make. Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving.' "$1" "$1"
+  local role path contract
+  contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
+  printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
+    "$1" "$contract" "$1"
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
     path="$(config_path "$ROLE_FILE" | config_sanitize)"
@@ -2880,6 +2907,7 @@ cmd_hitch() {
   fi
 
   require_python3
+  contract_read
   doctrine_read
 
   if [ "$ROLE_SYSTEM" -eq 1 ]; then

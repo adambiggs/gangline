@@ -2160,14 +2160,25 @@ contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
 contains "startup ends instead of polling for work" \
   "$(pane alpha)" "End this turn."
-contains "startup requires deliberate model and effort choices when hitching" \
-  "$(pane alpha)" \
+# The operative prose is pointed at rather than pasted, so the pane is held to
+# naming the file and the sentences are proven where they now live. What each
+# line requires is unchanged; only the surface carrying it moved. Newlines fold
+# to spaces because the file wraps its sentences and a composer never did.
+contract_prose() { tr '\n' ' ' < "$ROOT/CONTRACT.md" | tr -s ' '; }
+contains "startup names the contract file it points at" \
+  "$(pane alpha)" "CONTRACT.md"
+contains "startup orders that contract read before anything else" \
+  "$(pane alpha)" "before anything else"
+contains "startup gives an unreadable contract a loud stop rather than a guess" \
+  "$(pane alpha)" "say so and stop rather than improvising the contract"
+contains "the contract requires deliberate model and effort choices when hitching" \
+  "$(contract_prose)" \
   "When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e"
-contains "startup carries the operator-authorized marathon rule" \
-  "$(pane alpha)" \
+contains "the contract carries the operator-authorized marathon rule" \
+  "$(contract_prose)" \
   "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."
-contains "startup states the complement of envelope attribution" \
-  "$(pane alpha)" \
+contains "the contract states the complement of envelope attribution" \
+  "$(contract_prose)" \
   "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
@@ -2268,9 +2279,10 @@ contains "a doctrine-bearing hitch still carries its base identity contract" \
   "$(pane_all doctrine-present)" "You are doctrine-present in Gangline"
 contains "a present operator doctrine is injected into the startup contract" \
   "$(pane doctrine-present)" "MARK_DOCTRINE_PRESENT binds this hitch."
-contains "a doctrine-bearing startup states the complement of envelope attribution" \
-  "$(pane_all doctrine-present)" \
-  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
+# Doctrine is appended to the contract, never a replacement for it: a
+# doctrine-bearing hitch must still send its agent to the contract file.
+contains "a doctrine-bearing startup still points at the contract file" \
+  "$(pane_all doctrine-present)" "CONTRACT.md"
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \

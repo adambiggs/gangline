@@ -385,11 +385,17 @@ ac16() {
         GANG_CONFIG_DIR="$config" "$GANG" hitch "$name" -c bash -d /tmp >/dev/null
       fi
       body="$(pane_all "$name")"
-      contains "AC16 delegation sentence: $doctrine_flag doctrine, $role_flag role" "$body" \
-        "When you delegate a piece of work, spend your own context choosing, briefing, and judging it rather than producing it"
+      # The sentence moved into CONTRACT.md, so what every combination must
+      # still prove is that its agent is sent there. Neither a role nor a
+      # doctrine may displace that pointer.
+      contains "AC16 contract pointer: $doctrine_flag doctrine, $role_flag role" "$body" \
+        "CONTRACT.md"
       drop_agent "$name"
     done
   done
+  contains "AC16 the contract carries the delegation sentence" \
+    "$(tr '\n' ' ' < "$PRODUCT_ROOT/CONTRACT.md" | tr -s ' ')" \
+    "When you delegate a piece of work, spend your own context choosing, briefing, and judging it rather than producing it"
 }
 
 ac17() {
@@ -398,6 +404,8 @@ ac17() {
   cp "$PRODUCT_ROOT/bin/gang" "$tree/bin/gang"
   cp "$PRODUCT_ROOT/collars/"*.sh "$tree/collars/"
   cp "$PRODUCT_ROOT/roles/"*.md "$tree/roles/"
+  # A product root without a contract is not a product root: hitch refuses one.
+  cp "$PRODUCT_ROOT/CONTRACT.md" "$tree/CONTRACT.md"
   printf 'SHIPPED_SHADOW\n' > "$tree/roles/shadow.md"
   printf 'OPERATOR_LEAD\n' > "$config/roles/lead.md"
   awk 'BEGIN { for (i=0; i<8193; i++) printf "x" }' > "$config/roles/shadow.md"
@@ -510,7 +518,48 @@ ac23() {
   drop_agent role-ac23
 }
 
-for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac23; do
+# The contract slot resolves operator-first like a role brief, and a hitch that
+# cannot vet it refuses before opening a window: an agent told to read a missing
+# or unreadable contract would find that out alone, in a pane, with nobody to
+# tell. Precedence is proven through the refusals rather than the pane, because
+# a long operator path wraps in an 80-column capture and a wrapped path is not
+# evidence about which file won.
+ac24() {
+  local config="$TEST_ROOT/ac24-config" tree="$TEST_ROOT/ac24-tree" out rc=0
+  mkdir -p "$config" "$tree/bin" "$tree/collars" "$tree/roles"
+
+  mkdir -p "$config/CONTRACT.md"
+  out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac24a -c bash -d /tmp 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC24 operator contract of the wrong shape refuses" \
+    || fail "AC24 operator contract of the wrong shape refuses" "$out"
+  contains "AC24 refusal names the operator path" "$out" "$config/CONTRACT.md"
+  contains "AC24 refusal names the shape" "$out" "not a readable regular file"
+  excludes "AC24 wrong shape opens no window" "$(window_names)" "role-ac24a"
+  rmdir "$config/CONTRACT.md"
+
+  rc=0
+  : > "$config/CONTRACT.md"
+  out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac24b -c bash -d /tmp 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC24 empty operator contract refuses" \
+    || fail "AC24 empty operator contract refuses" "$out"
+  contains "AC24 empty refusal names the slot" "$out" "is empty"
+  excludes "AC24 empty contract opens no window" "$(window_names)" "role-ac24b"
+  rm -f "$config/CONTRACT.md"
+
+  rc=0
+  cp "$GANG" "$tree/bin/gang"
+  cp "$PRODUCT_ROOT/collars/"*.sh "$tree/collars/"
+  cp "$PRODUCT_ROOT/roles/"*.md "$tree/roles/"
+  out="$(GANG_CONFIG_DIR="$config" GANG_COLLARS="$tree/collars" \
+    "$tree/bin/gang" hitch role-ac24c -c bash -d /tmp 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC24 a root with no contract refuses" \
+    || fail "AC24 a root with no contract refuses" "$out"
+  contains "AC24 missing refusal names the shipped path" "$out" "$tree/CONTRACT.md"
+  contains "AC24 missing refusal offers the operator slot" "$out" "$config/CONTRACT.md"
+  excludes "AC24 missing contract opens no window" "$(window_names)" "role-ac24c"
+}
+
+for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac23 ac24; do
   run_ac "$ac_name"
 done
 
