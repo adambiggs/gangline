@@ -2550,11 +2550,18 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
         stage_record "$1" "'$3' is staged unsent in this box — it was $verb, never sent$stuck" "$posted"
         die "submit NOT verified: '$3' was $verb into the input box of $tname, never sent$stuck — it is staged there now and has to be cleared by hand (gang attach)"
       fi
-    fi
-    looks=$((looks + 1))
-    if [ "$looks" -ge 15 ]; then
-      stage_record "$1" "'$3' was $verb here and Enter sent, but the box never read back — it may be sitting there unsent" ""
-      die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the $noun is sitting unsent in that box (gang capture $tname)"
+    else
+      # Counted only where the read FAILED, because an unreadable box is what
+      # this bound reports. Counted on every pass it was a cap on the whole
+      # loop, so a box that read back perfectly and had simply not changed yet
+      # could die claiming it could not be read — the one diagnosis the
+      # operator disproves by looking at the pane, pointing at the wrong
+      # repair. The unchanged bound above is what answers that case.
+      looks=$((looks + 1))
+      if [ "$looks" -ge 15 ]; then
+        stage_record "$1" "'$3' was $verb here and Enter sent, but the box never read back — it may be sitting there unsent" ""
+        die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the $noun is sitting unsent in that box (gang capture $tname)"
+      fi
     fi
   done
   # The box changing is not yet proof of ENTRY. Where the collar declares
