@@ -2309,6 +2309,38 @@ else
     "$hook_config_out" "$CONFIG_CASES/broken-hook/config line 1"
 fi
 
+# A NATIVE EVENT SHAPE GANG CANNOT INTERPRET IS A FAILURE, NOT A NO-OP. Exiting
+# 0 with the parse error thrown away tells the harness everything worked while
+# Gangline records nothing: a lost Stop leaves the turn bracket open, dispatches
+# no deferred self-compaction and drains no spool; lost occupancy evidence
+# suppresses stall reporting. The loudness cannot be a nonzero exit — that is
+# the agent's own turn to break, for an event that concerns only Gangline — so
+# it is stderr plus a fact on the window that status and roster carry.
+for hook_shape in 'not json at all' '{"hook_event_name":""}' '{"no_event":"here"}' \
+    '{"hook_event_name":"Renamed"}' '{"hook_event_name":"Notification"}'; do
+  tmux set-option -uw -t "$alpha_id" @gl_hook_failed
+  hook_shape_rc=0
+  hook_shape_err="$(printf '%s' "$hook_shape" |
+    TMUX_PANE="$alpha_pane_id" "$GANG" hook 2>&1 >/dev/null)" || hook_shape_rc=$?
+  equal "an uninterpretable native event does not break the agent's own turn" \
+    0 "$hook_shape_rc"
+  contains "an uninterpretable native event says so on stderr" \
+    "$hook_shape_err" "could not interpret"
+  contains "an uninterpretable native event is recorded on its window" \
+    "$(tmux show-options -wqv -t "$alpha_id" @gl_hook_failed)" "could not interpret"
+done
+contains "the uninterpreted-event fact is visible in status" \
+  "$("$GANG" status alpha)" "native event NOT interpreted"
+contains "roster carries an uninterpreted-event light" \
+  "$("$GANG" roster)" "hook-failed"
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$alpha_pane_id" "$GANG" hook >/dev/null 2>&1
+equal "an event gang can interpret retires the fact" "" \
+  "$(tmux show-options -wqv -t "$alpha_id" @gl_hook_failed)"
+excludes "and a well-shaped event stays byte-silent on stderr" \
+  "$(printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$alpha_pane_id" "$GANG" hook 2>&1 >/dev/null)" "could not interpret"
+
 mkdir -p "$CONFIG_CASES/bad-file-value" "$CONFIG_CASES/bad-env-value"
 printf '%s\n' 'GANG_BOOT_TIMEOUT=abc' > "$CONFIG_CASES/bad-file-value/config"
 if bad_file_out="$(env -u GANG_BOOT_TIMEOUT GANG_CONFIG_DIR="$CONFIG_CASES/bad-file-value" \

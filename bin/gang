@@ -3587,7 +3587,7 @@ paint_state() { # $1 = a state phrase, padding and all
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc spooled age held held_dir spool_failed stall_failed mismatch skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc spooled age held held_dir spool_failed stall_failed hook_failed mismatch skew="" current
   local name="${1:-}"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -3647,6 +3647,9 @@ cmd_status() {
   stall_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_stall_failed)"
   [ -z "$stall_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "stall note NOT accepted: $stall_failed")"
+  hook_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_hook_failed)"
+  [ -z "$hook_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "native event NOT interpreted: $hook_failed")"
   mismatch="$(identity_mismatch_read "$AGENT_ID")" || mismatch=""
   [ -z "$mismatch" ] \
     || printf '%s\n' "$(colour "$C_BAD" "harness session identity MISMATCH: $mismatch")"
@@ -3817,6 +3820,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_hook_failed)" ] \
+    || detail="$detail hook-failed"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] || detail="$detail identity-mismatch=[$mismatch]"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
@@ -3857,14 +3862,54 @@ hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a 
   fi
 }
 
+# A SHAPE GANG CANNOT INTERPRET IS A FAILURE, NOT A NO-OP. Swallowing the parse
+# and exiting 0 tells the harness the hook worked while Gangline records
+# nothing: a lost Stop leaves the turn bracket open, dispatches no deferred
+# self-compaction and drains no spool, and lost occupancy evidence suppresses
+# stall reporting — all of it invisible. CONSTITUTION and AGENTS.md both require
+# the opposite: fail loudly when a native shape can no longer be interpreted.
+#
+# WHERE THE LOUDNESS GOES is the part that needs deciding rather than
+# reflexing. A nonzero exit is the harness's own turn to break, and breaking an
+# agent's turn over an event that concerns only Gangline trades a silent gap for
+# a loud one in the wrong place — so this is not that. A malformed CONFIG still
+# exits nonzero, because that is a whole-installation fault and every command
+# fails on it alike; a single uninterpretable event is neither. What it gets is
+# stderr for whoever is watching the harness, and a fact on the window that
+# `gang status` and `gang roster` both carry until an event gang CAN read
+# retires it, so an operator finds it without reading a hook log.
+hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
+  local win="$1"; shift
+  local note="could not interpret the native event: $*"
+  printf 'gang hook: %s\n' "$note" >&2
+  [ -n "$win" ] || return 0
+  tmux set-option -w -t "$win" @gl_hook_failed "$note" 2>/dev/null || true
+}
+
 cmd_hook() { # native harness events; facts are silent unless a light crosses
   DEPRECATIONS_SILENT=1
   local payload event collar kind=""
   payload="$(cat)" || payload=""
   event="$(printf '%s' "$payload" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
-      2>/dev/null)" || exit 0
-  [ -n "$event" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
+      2>/dev/null)" || {
+    hook_uninterpretable "${TMUX_PANE:-}" "the payload is not readable JSON"
+    exit 0
+  }
+  [ -n "$event" ] || {
+    hook_uninterpretable "${TMUX_PANE:-}" "the payload carries no hook_event_name"
+    exit 0
+  }
+  # The consumed set is gang's own, not the collar's: these are the arms below.
+  # A name outside it means the harness renamed an event Gangline installed,
+  # which is exactly the reading that must not pass as a successful no-op.
+  case "$event" in
+    UserPromptSubmit|PostToolUse|Stop|PermissionRequest|Notification) ;;
+    *) hook_uninterpretable "${TMUX_PANE:-}" \
+         "unknown hook_event_name '$event' — this Gangline consumes UserPromptSubmit, PostToolUse, Stop, PermissionRequest and Notification"
+       exit 0 ;;
+  esac
+  [ -n "${TMUX_PANE:-}" ] || exit 0
   collar="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
   [ -n "$collar" ] || exit 0
   hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
@@ -3872,7 +3917,16 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     kind="$(printf '%s' "$payload" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
         2>/dev/null)" || kind=""
+    # A kind gang cannot read is not a kind outside the collar's declaration:
+    # the second is an interpreted event this collar does not act on, and the
+    # first is a Notification whose meaning is unavailable.
+    [ -n "$kind" ] || {
+      hook_uninterpretable "$TMUX_PANE" \
+        "a Notification with no readable notification_type"
+      exit 0
+    }
   fi
+  tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
   case "$event" in
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
                                   turn_state_write "$TMUX_PANE" open
@@ -3886,8 +3940,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;
-    Notification) [ -n "$kind" ] || exit 0
-                  ( load_collar "$collar"
+    Notification) ( load_collar "$collar"
                     case " $GANG_STALL_TYPES " in
                       *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
                     esac
