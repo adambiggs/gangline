@@ -1,14 +1,38 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
-_gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
-_gl_codex_hook_flags=""
-for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
-  _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
-done
-GANG_LAUNCH="codex -c check_for_update_on_startup=false$_gl_codex_hook_flags"
-GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false$_gl_codex_hook_flags"
-unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
+GANG_LAUNCH="codex -c check_for_update_on_startup=false"
+GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false"
+# A HOSTILE ROOT IS DECLINED, NOT ESCAPED. The hook TOML rides inside a
+# single-quoted -c word, so one quote in the install path closes that word and
+# the remainder of the path is shell code the new window runs under the
+# operator's account. There is no escaping that survives both the TOML string
+# and the shell word around it, so this collar does what its sibling
+# claude-code.sh does: for a root bearing a quote, a backslash or a control
+# character it installs no hooks at all. A hookless launch loses turn-boundary
+# events; it does not execute a directory name.
+if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
+  case "$ROOT" in
+    *[\'\"\\]*|*[[:cntrl:]]*) ;;
+    *)
+      _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
+      _gl_codex_hook_flags=""
+      for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
+        _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
+      done
+      GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
+      GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
+      # The launch above passes a native Stop hook with -c, so this harness
+      # announces its own turn boundaries to gang — which is what a spool needs
+      # to drain, and what deferred self-compaction already relies on. Both are
+      # declared here, beside the hooks that deliver them, so the hookless
+      # launch above claims neither.
+      GANG_STOP_HOOK=1
+      GANG_SELF_COMPACT=deferred
+      unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
+      ;;
+  esac
+fi
 GANG_MODEL_OPT="-m"
 # REASONING EFFORT IS MODEL-SCOPED. The option includes its separator because
 # bin/gang joins it to the level with no space. Unquoted `high` reached
@@ -82,15 +106,10 @@ GANG_USAGE_CMD="/usage"
 GANG_USAGE_CONFIRM_KEY="Enter"
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
-GANG_SELF_COMPACT=deferred
 GANG_MIDTURN_INPUT=1
 # Escape stops an active turn; the busy marker above is the harness's own
 # "esc to interrupt" footer.
 GANG_INTERRUPT_KEY="Escape"
-# The launch above passes a native Stop hook with -c, so this harness announces
-# its own turn boundaries to gang — which is what a spool needs to drain, and
-# what deferred self-compaction already relies on.
-GANG_STOP_HOOK=1
 # Verified on codex 0.145.0: the native hook set contains no Notification
 # event. legacy_notify / agent-turn-complete reports turn completion, which the
 # Stop hook above already delivers; it is not an awaiting-input witness and is

@@ -542,6 +542,40 @@ contains "Codex resume declares an explicit native session slot" \
   "$codex_resume" "codex resume {{session_id}}"
 excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
 
+# A QUOTE IN THE ROOT IS NOT ESCAPABLE HERE. The hook TOML is carried inside a
+# single-quoted -c word, so one quote in the install path closes that word and
+# the remainder of the path is shell code the new window runs under the
+# operator's account. The sibling collar's answer is this collar's: decline the
+# hooks, and declare nothing a hookless launch cannot deliver.
+codex_hostile_sentinel="$RUN_ROOT/codex-hostile-sentinel"
+codex_hostile_root="$RUN_ROOT/codex'; touch \"\$CODEX_PWNED\"; :'guard"
+mkdir -p "$codex_hostile_root/bin"
+printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: Apache-2.0' \
+  > "$codex_hostile_root/bin/gang"
+chmod +x "$codex_hostile_root/bin/gang"
+codex_hostile_launch="$(codex_launch "$codex_hostile_root" GANG_LAUNCH)"
+rm -f "$codex_hostile_sentinel"
+CODEX_PWNED="$codex_hostile_sentinel" \
+  CODEX_OPTIONS="$RUN_ROOT/codex-hostile.options" \
+  sh -c 'PATH="$1"; export PATH; eval "$2"' sh \
+  "$CODEX_STUB/bin:$PATH" "$codex_hostile_launch" </dev/null >/dev/null 2>&1 || true
+if [ -e "$codex_hostile_sentinel" ]; then
+  fail "a quote-bearing root never becomes shell code in a Codex launch" \
+    "the launch executed text taken from the install path"
+else
+  pass "a quote-bearing root never becomes shell code in a Codex launch"
+fi
+excludes "a quote-bearing root gets no Codex hooks at all" \
+  "$codex_hostile_launch" "hooks."
+excludes "a quote-bearing resumed root gets no Codex hooks either" \
+  "$(codex_launch "$codex_hostile_root" GANG_RESUME_LAUNCH)" "hooks."
+codex_hostile_collar="$ROOT/collars/codex.sh"
+codex_hostile_declarations="$(GANG_TEST_COLLARS='' ROOT="$codex_hostile_root" bash -c \
+  'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
+  fixture "$codex_hostile_collar")"
+equal "an unhooked Codex launch claims neither Stop nor deferred compaction" \
+  "|" "$codex_hostile_declarations"
+
 claude_collar="$ROOT/collars/claude-code.sh"
 claude_role_prompt_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_ROLE_PROMPT_OPT:-}"' fixture "$claude_collar")"
