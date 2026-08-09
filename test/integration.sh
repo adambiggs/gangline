@@ -3798,8 +3798,10 @@ printf '%s\n%s\n%s\n' tester MARK_BAD_STAMP \
   '[gang:tester#eeeeffff] MARK_BAD_STAMP [/gang:tester#eeeeffff]' \
   > "$agebad_spool/12345-abc"
 agebad_row="$("$GANG" roster | grep '^agebad')"
-contains "a malformed oldest stamp still reports known queue depth" \
-  "$agebad_row" "spooled=1"
+contains "a malformed entry name is surfaced as unaccounted, not queued" \
+  "$agebad_row" "spool-unaccounted=1"
+excludes "a malformed entry name never counts as deliverable" \
+  "$agebad_row" "spooled="
 excludes "a malformed oldest stamp does not fabricate an age" \
   "$agebad_row" "oldest="
 "$GANG" drop agebad >/dev/null

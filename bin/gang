@@ -4184,6 +4184,11 @@ roster_row() { # $1 window, $2 name, $3 current binary id
     fi
     spool_held "$1"; held="$SPOOL_HELD_COUNT"
     [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
+    if spool_existing "$1"; then
+      spool_scan_entries "$SPOOL_DIR"
+      [ "$SPOOL_UNACCOUNTED" -eq 0 ] \
+        || detail="$detail spool-unaccounted=$SPOOL_UNACCOUNTED"
+    fi
   fi
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
