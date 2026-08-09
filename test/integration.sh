@@ -5291,6 +5291,61 @@ wait "$stall_target_waiter"
 contains "the parked stall note drains through the ordinary delivery path" \
   "$(pane_all stall-target)" "awaiting input (agent_needs_input)"
 
+# THE DEBOUNCE IS A CRITICAL SECTION, NOT A PAIR OF READS. Two native witnesses
+# of one kind for one window can both read the stale stamp and both deliver, so
+# the declared target gets the same envelope twice inside the interval the
+# debounce exists to enforce. Every assertion above it is sequential and cannot
+# see that. This one holds the first delivery open INSIDE the target's own
+# collar_input on a tmux barrier — an event, not a clock — and fires the second
+# while the first is provably still in flight.
+stall_gate_inside="test-stall-gate-inside-$$"
+stall_gate_release="test-stall-gate-release-$$"
+cat > "$RUN_ROOT/collars/stall-gated.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+GANG_STALL_TYPES="idle_prompt agent_needs_input"
+_gl_gate_real="\$(declare -f collar_input)"
+eval "stall_gate_real_input \${_gl_gate_real#collar_input}"
+collar_input() { # hold exactly one delivery open, once, on an armed barrier
+  if [ -f "$RUN_ROOT/stall-gate-arm" ]; then
+    rm -f "$RUN_ROOT/stall-gate-arm"
+    tmux wait-for -S "$stall_gate_inside"
+    tmux wait-for "$stall_gate_release"
+  fi
+  stall_gate_real_input "\$1"
+}
+SH
+"$GANG" hitch stall-gated -c stall-gated -d /tmp >/dev/null
+stall_gated_id="$(window_id stall-gated)"
+"$GANG" notify stall-gated >/dev/null
+tmux set-option -uw -t "$stall_raise_id" @gl_stall
+tmux set-option -uw -t "$stall_raise_id" @gl_stall_failed
+: > "$RUN_ROOT/stall-gate-arm"
+( printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null 2>&1 ) &
+stall_race_pid=$!
+tmux wait-for "$stall_gate_inside"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null 2>&1 || true
+tmux wait-for -S "$stall_gate_release"
+wait "$stall_race_pid" || true
+stall_gated_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$stall_gated_id" @gl_spool)"
+stall_race_spooled=0
+for stall_race_entry in "$stall_gated_spool"/[0-9]* \
+    "$stall_gated_spool"/sending-* "$stall_gated_spool"/failed-*; do
+  [ -f "$stall_race_entry" ] || continue
+  stall_race_spooled=$((stall_race_spooled + 1))
+done
+stall_race_live="$(pane_all stall-gated |
+  grep -cF 'awaiting input (idle_prompt)' || true)"
+equal "concurrent native witnesses of one kind deliver exactly one note" \
+  "1 0" "$stall_race_live $stall_race_spooled"
+"$GANG" drop stall-gated >/dev/null
+"$GANG" notify stall-target >/dev/null
+
 if "$GANG" notify 'bad name' >/dev/null 2>&1; then
   fail "notify rejects a name outside the agent-name contract" \
     "invalid name was accepted"

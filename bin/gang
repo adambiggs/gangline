@@ -1944,21 +1944,29 @@ lock_base() { # $1 = the lock root; returns with it established as ours, or refu
     || die "cannot restrict the lock directory $1 to this user — ${err:-unknown error}. Left open to others on a shared /tmp, another user can delete or forge the delivery locks gang relies on."
 }
 
+LOCK_SELF_PID=""
+lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a claim
+  # SETS, never prints. $BASHPID read through a command substitution would be
+  # the substitution's own fork, which dies the moment the caller returns — a
+  # claim that is stale by construction — so this has to run in the calling
+  # shell, which a function call does and $( ) does not. macOS still ships Bash
+  # 3.2, which has no BASHPID: there a process-substitution child asks ps for
+  # its wrapper's parent (this shell), and read keeps the answer here rather
+  # than in another fork.
+  if [ -n "${BASHPID:-}" ]; then
+    LOCK_SELF_PID="$BASHPID"
+    return 0
+  fi
+  read -r LOCK_SELF_PID < <(sh -c 'ps -o ppid= -p "$PPID"') || LOCK_SELF_PID=""
+  case "$LOCK_SELF_PID" in
+    ''|*[!0-9]*) die "cannot identify the Bash process holding a Gangline claim — ps returned '${LOCK_SELF_PID:-nothing}'" ;;
+  esac
+}
+
 lock_pane() { # $1 = window id; held until lock_release or this process exits
   local base holder name path err me
-  # Read OUT HERE. $BASHPID inside the command substitution below would be the
-  # substitution's own fork, which dies the moment ln returns — a lock that is
-  # stale by construction. macOS still ships Bash 3.2, which has no BASHPID:
-  # there, a process-substitution child asks ps for its wrapper's parent (this
-  # shell), and read keeps the result in this process rather than another fork.
-  if [ -n "${BASHPID:-}" ]; then
-    me="$BASHPID"
-  else
-    read -r me < <(sh -c 'ps -o ppid= -p "$PPID"') || me=""
-    case "$me" in
-      ''|*[!0-9]*) die "cannot identify the Bash process holding a delivery lock — ps returned '${me:-nothing}'" ;;
-    esac
-  fi
+  lock_self_pid
+  me="$LOCK_SELF_PID"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   name="$(agent_name_of "$1")"
@@ -2345,23 +2353,68 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
   esac
 }
 
+# READ, DECIDE, DELIVER, STAMP IS ONE CRITICAL SECTION. Two native witnesses of
+# one kind for one window arrive concurrently — a PermissionRequest and its
+# Notification, or two hooks from one harness — and without a claim over the
+# whole sequence both read the same stale stamp, both pass the debounce, and the
+# declared target gets the same envelope twice inside the interval the debounce
+# exists to enforce. tmux options offer no compare-and-set, so the claim is the
+# same shape the drain uses for exactly this problem: an atomic filesystem
+# operation that confers ownership, with the holder's pid recorded so a claim
+# left by a killed process is recognised as stale rather than wedging every
+# later note for that window in silence.
+#
+# The loser returns without delivering and says nothing, because a second
+# witness of the same kind for the same window IS the duplicate the debounce
+# suppresses. The key is window AND kind, so a different kind is never held up
+# behind one that is already in flight.
+STALL_CLAIM=""
+stall_claim() { # $1 raising window, $2 kind; 0 = this process owns the decision
+  local base path holder
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$base" || return 1
+  lock_self_pid
+  path="$base/stall-$(printf '%s' "$1-$2" | tr -c 'A-Za-z0-9' '_').claim"
+  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null && { STALL_CLAIM="$path"; return 0; }
+  [ -L "$path" ] || return 1
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  case "$holder" in ''|*[!0-9]*) return 1 ;; esac
+  ! kill -0 "$holder" 2>/dev/null || return 1   # a live note of this kind is in flight
+  rm -f -- "$path"
+  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null || return 1
+  STALL_CLAIM="$path"
+}
+
+stall_claim_release() { [ -z "$STALL_CLAIM" ] || rm -f -- "$STALL_CLAIM"; STALL_CLAIM=""; }
+
 stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
-  local raising="$1" raising_win="" kind="$2" notify target raising_name body
-  local recorded_kind="" recorded_epoch="" extra="" now rc=0 err="" raw=""
+  local raising="$1" raising_win="" kind="$2" notify target
+  local rc=0
   notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
   [ -n "$notify" ] || return 0
   raising_win="$(tmux display-message -p -t "$raising" '#{window_id}' 2>/dev/null)" || raising_win=""
   [ -n "$raising_win" ] || return 0
   target="$(win_id "$notify" 2>/dev/null)" || {
     rc=$?
-    if [ "$rc" -eq 2 ]; then
-      stall_failed_write "$raising_win" "notify target '$notify' is ambiguous"
-    else
-      stall_failed_write "$raising_win" "notify target '$notify' does not exist"
-    fi
+    case "$rc" in
+      1) stall_failed_write "$raising_win" "notify target '$notify' does not exist" ;;
+      3) stall_failed_write "$raising_win" \
+           "notify target '$notify' is the window title of another registered agent" ;;
+      *) stall_failed_write "$raising_win" "notify target '$notify' is ambiguous" ;;
+    esac
     return 0
   }
   [ "$target" != "$raising_win" ] || return 0
+  stall_claim "$raising_win" "$kind" || return 0
+  stall_note_claimed "$raising" "$raising_win" "$kind" "$notify" "$target" || true
+  stall_claim_release
+  return 0
+}
+
+stall_note_claimed() { # the debounce decision and its delivery, under the claim
+  local raising="$1" raising_win="$2" kind="$3" notify="$4" target="$5"
+  local recorded_kind="" recorded_epoch="" extra="" now rc=0 err="" raw=""
+  local raising_name body
 
   raw="$(tmux show-options -wqv -t "$raising_win" @gl_stall 2>/dev/null)" || raw=""
   read -r recorded_kind recorded_epoch extra <<<"$raw"
