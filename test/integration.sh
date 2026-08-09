@@ -750,7 +750,6 @@ cat > "$RUN_ROOT/collars/ctx-known.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_SESSION_KEY=1
 collar_context() { printf '42k/200k (21%%)\n'; }
 SH
 cat > "$RUN_ROOT/collars/ctx-fail.sh" <<SH
@@ -1094,12 +1093,6 @@ equal "bare context targets the calling agent window" \
   "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
 equal "context answers while context lights are off" \
   "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
-if [ -n "$(tmux show-options -wqv -t "$ctx_agent_id" @gl_key)" ]; then
-  pass "a session-key collar mints @gl_key even with context lights off"
-else
-  fail "a session-key collar mints @gl_key even with context lights off" \
-    "@gl_key was empty"
-fi
 "$GANG" hitch ctx-failing -c ctx-fail -d /tmp >/dev/null
 excludes "roster carries no context reading column" \
   "$("$GANG" roster)" "42k/200k"
@@ -1460,8 +1453,8 @@ codex_payload_id="$(tmux new-window -d -P -F '#{window_id}' \
 tmux set-option -w -t "$codex_payload_id" @gl_agent codex-payload
 tmux set-option -w -t "$codex_payload_id" @gl_collar codex
 codex_payload_pane="$(tmux list-panes -t "$codex_payload_id" -F '#{pane_id}')"
-equal "the codex payload fixture begins without a hitch-time nonce" "" \
-  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_key)"
+equal "the codex payload fixture begins with no native session binding" "|" \
+  "$(tmux show-options -wqv -t "$codex_payload_id" @gl_session_id)|$(tmux show-options -wqv -t "$codex_payload_id" @gl_session)"
 printf '%s' \
   "{\"hook_event_name\":\"Stop\",\"session_id\":\"codex-payload-123\",\"transcript_path\":\"$codex_payload_file\"}" \
   | TMUX_PANE="$codex_payload_pane" "$GANG" hook
@@ -2170,8 +2163,8 @@ excludes "an absent doctrine leaves no doctrine origin in the base contract" \
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
 excludes "startup does not ask for a reply to its synthetic sender" \
   "$(pane alpha)" "Reply to that sender"
-equal "context lights leave no state when disabled" "|" \
-  "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)|$(tmux show-options -wqv -t "$(window_id alpha)" @gl_key)"
+equal "context lights leave no threshold state when disabled" "" \
+  "$(tmux show-options -wqv -t "$(window_id alpha)" @gl_context_lights)"
 
 mkdir -p "$CONFIG_CASES/literal-lock"
 literal_lock="$CONFIG_CASES/lock with space # literal"

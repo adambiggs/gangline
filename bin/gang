@@ -53,7 +53,7 @@ deprecation_flush() {
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SESSION_KEY GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line, $4 alias
@@ -707,7 +707,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
-  GANG_MIDTURN_INPUT="" GANG_SESSION_KEY="" GANG_QUEUE_RECALL_KEY=""
+  GANG_MIDTURN_INPUT="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
   GANG_STALL_TYPES="" GANG_DIALOGS="" GANG_DIALOG_HITCH_DIR_TRUST=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
@@ -854,11 +854,10 @@ role_file() { # $1 = role name -> winning path on stdout, operator first
 
 mint_nonce() { od -An -N4 -tx1 /dev/urandom | tr -d ' \n'; }
 
-ENVELOPE="" ENVELOPE_NONCE=""
+ENVELOPE=""
 envelope() { # $1 = sender, $2 = body; the message as it goes on the wire, into ENVELOPE
   local nonce body marked sentinel=$'\034'
   nonce="$(mint_nonce)"
-  ENVELOPE_NONCE="$nonce"
   marked="$(printf '%s\034' "$2" \
     | sed -E 's,(\[|［|〔|【)([[:space:]]*/?[[:space:]]*)([Gg][Aa][Nn][Gg])([[:space:]]*:),(\2\3\4,g')"
   case "$marked" in
@@ -2937,9 +2936,6 @@ cmd_hitch() {
     *) die "'$name' is running but its input box did not become ready, so its startup message was not delivered — $recovery" ;;
   esac
   envelope hitch "$msg"
-  if [ "${GANG_SESSION_KEY:-}" = 1 ]; then
-    tmux set-option -w -t "$id" @gl_key "$ENVELOPE_NONCE"
-  fi
   delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)" || delivery_rc=$?
   if [ "$delivery_rc" -ne 0 ]; then
     delivery_err="${delivery_err#gang: }"

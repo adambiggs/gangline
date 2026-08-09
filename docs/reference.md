@@ -80,9 +80,6 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 When context lights are enabled, their thresholds are copied to the new window.
-Any collar declaring `GANG_SESSION_KEY=1` also binds the window to the useful
-startup envelope's nonce, whether or not lights are enabled, so later context
-queries can find the matching native session without a marker turn.
 Operators normally place both thresholds high in the native window so lights do
 not impose an artificial context disadvantage, but below the harness's observed
 automatic-compaction boundary so the lights remain reachable.
@@ -600,7 +597,6 @@ there, never in a harness-name branch in the core script.
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
-| `GANG_SESSION_KEY=1` | every hitch records the startup-envelope nonce for context lookup |
 | `GANG_USAGE_CMD` | native command that opens the harness's usage page |
 | `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
 | `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |

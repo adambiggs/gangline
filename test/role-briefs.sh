@@ -339,7 +339,6 @@ SH
 . "$TEST_ROOT/collars/bash.sh"
 GANG_LAUNCH="python3 '$TEST_ROOT/argv-witness.py' '$root/state-argv' state"
 GANG_ROLE_PROMPT_OPT="--append-system-prompt"
-GANG_SESSION_KEY=1
 SH
   for variant in plain role; do
     mkdir -p "$root/$variant"
