@@ -530,6 +530,7 @@ gang roster
   List the team and its state.
 
   gang roster
+  gang roster --porcelain
 EOF
       ;;
     capture) cat <<'EOF'
@@ -3589,17 +3590,60 @@ cmd_whoami() {
 }
 
 cmd_roster() {
-  session_live \
-    || { printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"; return; }
-  local id name wins current
+  local porcelain=0 id name wins current
+  if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
+    porcelain=1
+  elif [ $# -ne 0 ]; then
+    die "roster: expected no arguments or --porcelain"
+  fi
+  if ! session_live; then
+    [ "$porcelain" -eq 1 ] \
+      || printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"
+    return
+  fi
   current="$(binary_id)"
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
   while read -r id name; do
     [ -n "$id" ] || continue
-    ( roster_row "$id" "$(bare_name "$name")" "$current" )
+    if [ "$porcelain" -eq 1 ]; then
+      ( roster_row_porcelain "$id" "$(bare_name "$name")" )
+    else
+      ( roster_row "$id" "$(bare_name "$name")" "$current" )
+    fi
   done <<EOF
 $wins
 EOF
+}
+
+roster_state_word() { # $1 decorated state -> one stable porcelain word
+  case "$1" in
+    -busy-*) printf busy ;;
+    '~idle~'*) printf idle ;;
+    '!occupied!'*) printf occupied ;;
+    '?unknown?'*) printf unknown ;;
+    *) die "internal: no porcelain word for state '$1'" ;;
+  esac
+}
+
+roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
+  local prof state spooled age="-" stamped
+  prof="$(collar_read "$1" "$2")" || exit 1
+  if [ -z "$prof" ]; then
+    prof="-" state=unadopted
+  elif ! collar_file "$prof" >/dev/null; then
+    state="collar-missing"
+  else
+    load_collar "$prof"
+    state="$(roster_state_word "$(state_now "$1" snapshot)")"
+  fi
+  spooled="$(spool_count "$1")"
+  if [ "$spooled" -ne 0 ]; then
+    age="$(spool_oldest_age "$1")" || age="-"
+  fi
+  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" \
+    || stamped=""
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$2" "$prof" "$state" "$spooled" "$age" "${stamped:-UNSTAMPED}"
 }
 
 roster_row() { # $1 window, $2 name, $3 current binary id
@@ -3927,7 +3971,7 @@ case "$cmd" in
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;
-  roster)   cmd_roster ;;
+  roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
   drop)     cmd_drop "$1" ;;
   down)     cmd_down "$@" ;;

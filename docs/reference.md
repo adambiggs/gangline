@@ -418,6 +418,16 @@ window's binary stamp with the invoked `gang` binary and visibly marks skew; the
 comparison runs only for this snapshot. A non-empty queue reports both its depth
 and the age of its oldest waiting entry.
 
+`gang roster --porcelain` is the scripting interface. It prints one unpadded,
+uncoloured TSV row per window with these columns in order: `name`, `collar`,
+`state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
+word: `busy`, `idle`, `occupied`, or `unknown` for the four human glyph states;
+unadopted windows and missing collars read `unadopted` and `collar-missing`.
+`spooled` is an integer. `oldest_age_s` is integer seconds or `-` for an empty
+queue or an unreadable age. `session_id` is the exact stamp or `UNSTAMPED`.
+With no running session it prints no rows and exits successfully, like the human
+roster.
+
 ### `gang capture <name> [lines]`
 
 Prints the tail of the target pane after trimming trailing blank terminal rows.

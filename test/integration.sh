@@ -153,10 +153,14 @@ contains "gang collars help prints the new synopsis" \
   "$("$GANG" collars --help)" "gang collars"
 contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
+contains "gang roster help names its scripting mode" \
+  "$("$GANG" roster --help)" "--porcelain"
 refuses "gang attach refuses a stray argument" \
   "attach: takes no arguments" "$GANG" attach stray
 refuses "gang collars refuses a stray argument" \
   "collars: takes no arguments" "$GANG" collars stray
+refuses "gang roster refuses a stray argument" \
+  "roster: expected no arguments or --porcelain" "$GANG" roster stray
 equal "every dispatched operator command has a bare classification" \
   "$dispatch_commands" "$classified_commands"
 help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
@@ -3678,6 +3682,62 @@ contains "mail exits cleanly on an empty queue" \
 # this roster probe's stderr belongs only to the age world under test.
 "$GANG" drop legacy-contract-a >/dev/null
 "$GANG" drop legacy-contract-b >/dev/null
+
+# PORCELAIN IS EXACT TSV, NOT THE HUMAN GLYPH TABLE. First spend the exact-row
+# assertion against the default roster and require it to fail; only then use it
+# as the instrument for the scripting output.
+cat > "$RUN_ROOT/collars/porcelain.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_BUSY_REGEX='MARK_PORCELAIN_BUSY'
+SH
+"$GANG" hitch porcelain-busy -c porcelain -d /tmp >/dev/null
+"$GANG" hitch porcelain-idle -c porcelain -d /tmp >/dev/null
+porcelain_busy_id="$(window_id porcelain-busy)"
+porcelain_painted="porcelain-painted-$$"
+tmux send-keys -l -t "$porcelain_busy_id" \
+  "printf MARK_PORCELAIN_BUSY\\n; tmux wait-for -S $porcelain_painted"
+tmux send-keys -t "$porcelain_busy_id" Enter
+tmux wait-for "$porcelain_painted"
+tmux set-option -w -t "$porcelain_busy_id" @gl_session_id sid-porcelain
+porcelain_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$porcelain_busy_id" @gl_spool)"
+mkdir -p "$porcelain_spool"
+printf '%s\n%s\n%s\n' tester MARK_PORCELAIN_QUEUE \
+  '[gang:tester#abcd1234] MARK_PORCELAIN_QUEUE [/gang:tester#abcd1234]' \
+  > "$porcelain_spool/00000000100000000000-abcd1234"
+mkdir -p "$RUN_ROOT/porcelain-bin"
+cat > "$RUN_ROOT/porcelain-bin/date" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+case "${1:-}" in
+  +%s) printf '105\n' ;;
+  *) exec /usr/bin/date "$@" ;;
+esac
+SH
+chmod +x "$RUN_ROOT/porcelain-bin/date"
+expected_porcelain="$(printf \
+  'porcelain-busy\tporcelain\tbusy\t1\t5\tsid-porcelain\nporcelain-idle\tporcelain\tidle\t0\t-\tUNSTAMPED')"
+default_porcelain_probe="$(PATH="$RUN_ROOT/porcelain-bin:$PATH" \
+  GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^porcelain-')"
+if [ "$default_porcelain_probe" = "$expected_porcelain" ]; then
+  fail "the exact TSV instrument rejects the decorated human roster" \
+    "the human roster unexpectedly matched porcelain bytes"
+else
+  pass "the exact TSV instrument rejects the decorated human roster"
+fi
+actual_porcelain="$(PATH="$RUN_ROOT/porcelain-bin:$PATH" \
+  GANG_ACTIVITY_WINDOW=0 "$GANG" roster --porcelain | grep '^porcelain-')"
+equal "porcelain roster prints the exact six-column rows" \
+  "$expected_porcelain" "$actual_porcelain"
+equal "porcelain names contain no window-state glyph bytes" \
+  $'porcelain-busy\nporcelain-idle' \
+  "$(printf '%s\n' "$actual_porcelain" | cut -f1)"
+equal "porcelain roster is empty when its session is absent" "" \
+  "$(GANG_SESSION="porcelain-absent-$$" "$GANG" roster --porcelain)"
+"$GANG" drop porcelain-busy >/dev/null
+"$GANG" drop porcelain-idle >/dev/null
 
 # QUEUE AGE COMES FROM THE OLDEST LIVE ENTRY'S FIXED-WIDTH STAMP. The chosen
 # time is immediate input, not a wall-clock wait; prefix matching tolerates the
