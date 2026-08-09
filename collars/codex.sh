@@ -84,7 +84,6 @@ GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
 GANG_SELF_COMPACT=deferred
 GANG_MIDTURN_INPUT=1
-GANG_SESSION_KEY=1
 # Escape stops an active turn; the busy marker above is the harness's own
 # "esc to interrupt" footer.
 GANG_INTERRUPT_KEY="Escape"
@@ -117,53 +116,10 @@ Yes, continue
 No, quit
 Press enter to continue'
 
-codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
-
-codex_session_for() { # $1 = marker -> the one rollout that recorded it as user input
-  local dir hits
-  dir="$(codex_sessions_dir)"
-  [ -d "$dir" ] || die "no codex sessions tree at $dir"
-  hits="$(grep -rlF -- "$1" "$dir" 2>/dev/null)" \
-    || die "marker not in any rollout under $dir — the hitch message may not be flushed yet"
-  printf '%s\n' "$hits" | python3 -c '
-import json, sys
-marker = sys.argv[1]
-mine = []
-for path in (l.strip() for l in sys.stdin if l.strip()):
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for line in f:
-            if marker not in line:
-                continue
-            try:
-                rec = json.loads(line)
-            except ValueError:
-                continue
-            p = rec.get("payload") or {}
-            if p.get("type") == "message" and p.get("role") == "user":
-                mine.append(path)
-                break
-if len(mine) != 1:
-    n = len(mine)
-    print(f"marker matches {n} rollouts as user input — "
-          + ("not flushed yet, or the marker line never landed" if n == 0
-             else "the marker was repeated; re-hitch the agent: " + " ".join(mine)),
-          file=sys.stderr)
-    sys.exit(1)
-print(mine[0])
-' "$1" || die "cannot bind this agent to a codex rollout"
-}
-
 codex_session_file() { # $1 = tmux target -> this window's bound rollout path
-  local key file
+  local file
   file="$(tmux show-options -wqv -t "$1" @gl_session)" || file=""
-  if [ -n "$file" ] && [ -f "$file" ]; then
-    printf '%s' "$file"
-    return 0
-  fi
-  key="$(tmux show-options -wqv -t "$1" @gl_key)"
-  [ -n "$key" ] || return 1
-  file="$(codex_session_for "$key")" || return 1
-  tmux set-option -w -t "$1" @gl_session "$file"
+  [ -n "$file" ] && [ -f "$file" ] || return 1
   printf '%s' "$file"
 }
 
@@ -241,7 +197,7 @@ print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 collar_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
   local file
   file="$(codex_session_file "$1")" \
-    || die "window has no usable @gl_key — Codex context lookup requires a hitch-time startup-envelope nonce; adopted windows have none"
+    || die "window has no usable @gl_session — Codex context lookup requires a native hook payload with transcript_path"
   codex_context_read "$file"
 }
 

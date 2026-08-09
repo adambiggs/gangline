@@ -378,8 +378,9 @@ not context lights are enabled; asking and edge-triggered signalling are
 separate acts. A missing or unreadable source fails loudly and no value is
 fabricated.
 
-Codex context is available for hitched windows because every Codex hitch records
-the startup-envelope nonce; adopted Codex windows have no such identity.
+Codex context becomes available when a native hook payload binds its
+`transcript_path`; this works equally for hitched and adopted windows once a
+hook has fired.
 opencode and Pi read their panes and can answer with lights off when their native
 readout is visible. claude-code can answer only when lights were enabled at
 hitch, because that launch choice installs its statusline beacon. Adopted
