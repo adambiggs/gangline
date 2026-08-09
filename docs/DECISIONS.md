@@ -146,18 +146,22 @@ Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
 not infer who may clear it. UI recognition belongs in collars, unknown authority
 fails closed, and Gangline answers only a collar-enumerated, whole-block
 fingerprint whose safe row carries no authority. Re-read the selected row before
-every key and the cleared composer after confirmation. Permission, trust,
-approval, authorization, access, elevation, grant, administration, denial,
-bypass, credential, token, secret, privilege, and sandbox language is never
-an auto-answer surface. The live Codex `safety-buffering-prompt` capture is the
-record: installed-binary string extraction undercounted its options and omitted
+every key and the cleared composer after confirmation. Permission, approval,
+authorization, access, elevation, grant, administration, denial, bypass,
+credential, token, secret, privilege, and sandbox language is never an
+auto-answer surface. Directory trust is the narrow exception when a collar
+marks that one record as the directory already selected by `hitch -d`; the
+prompt asks Gangline to repeat a choice the operator or lead already made. The
+live Codex `safety-buffering-prompt` capture is the record for every other
+dialog: installed-binary string extraction undercounted its options and omitted
 `Learn more`.
 
 At hitch, positive evidence of a prompt without a composer is an operator
 outcome before it is a launch failure: report `gang attach` once and spend the
 remaining original boot bound waiting. A blank pane is only startup, not prompt
-evidence. Never answer the native prompt; timeout retains the manual
-drop-and-re-hitch recovery.
+evidence. Unknown prompts remain manual, but clearing one leaves a healthy
+agent whose startup contract can be delivered with `gang send`; only a composer
+that never appears calls for drop-and-re-hitch.
 
 ## Binary identity is a window witness
 

@@ -584,6 +584,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_DIALOGS` | newline-separated `id|marker|safe|move|confirm` known-transient records |
 | `GANG_DIALOG_LINES_<id>` | every painted line of one dialog, in order; dashes in `id` become underscores |
+| `GANG_DIALOG_HITCH_DIR_TRUST` | optional one dialog id whose directory trust was already chosen by `hitch -d` |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_COMPACT_CMD` | native compaction command |
@@ -608,7 +609,10 @@ malformed or duplicate records, absent blocks, safe labels absent from their
 block, invalid key names, and any id, safe label, or block line containing
 authority language such as permission, trust, approval, authorization, access,
 elevation, grants, administration, denial, bypass, credentials, tokens, secrets,
-privileges, or sandboxing.
+privileges, or sandboxing. A collar may name one record in
+`GANG_DIALOG_HITCH_DIR_TRUST`; that record alone may carry directory-trust and
+explanatory allow language because `hitch -d` already named the directory.
+Every other authority family remains forbidden in that record.
 
 Before a send, or while hitch is already waiting for a composer, Gangline may
 answer one unambiguous full-block match. Whitespace and soft wraps are

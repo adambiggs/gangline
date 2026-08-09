@@ -100,13 +100,22 @@ GANG_STOP_HOOK=1
 # Verified against codex 0.145.0 from the live capture cited in the landing
 # commit. Numeric prefixes move with the selection and are normalized by core;
 # all three option labels and every explanatory line remain fingerprint bytes.
-GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
+directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
+GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
 GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
 Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
 Retry with a faster model
 Dismiss and keep waiting
 Learn more
 No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
+# Verified against codex 0.145.0 from the live first-run capture cited in the
+# landing commit. The cwd-bearing first line is variable and excluded; -J joins
+# the question's visual wraps before the stable block is matched.
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+Yes, continue
+No, quit
+Press enter to continue'
 
 codex_sessions_dir() { printf '%s/sessions' "${CODEX_HOME:-$HOME/.codex}"; }
 

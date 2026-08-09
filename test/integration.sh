@@ -564,6 +564,15 @@ codex_dialog_block="$(env ROOT="$ROOT" bash -c \
   fixture "$ROOT/collars/codex.sh")"
 contains "the shipped Codex fingerprint includes the third captured option" \
   "$codex_dialog_block" "Learn more"
+codex_trust_record="$(env ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s\n--\n%s" "$GANG_DIALOGS" "$GANG_DIALOG_LINES_directory_trust_prompt"' \
+  fixture "$ROOT/collars/codex.sh")"
+contains "the shipped Codex registry names directory trust as a known dialog" \
+  "$codex_trust_record" "directory-trust-prompt"
+contains "the Codex directory-trust fingerprint retains the stable question" \
+  "$codex_trust_record" "Do you trust the contents of this directory?"
+excludes "the variable cwd line is not part of the directory-trust fingerprint" \
+  "$codex_trust_record" "> You are in"
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
   fixture "$claude_collar")"
@@ -1578,12 +1587,21 @@ selected = 0
 composer = False
 draft = bytearray()
 answered = 0
+safe_index = 1
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
 ]
 labels = ["Retry with a faster model", "Dismiss and keep waiting", "Learn more"]
 footer = "No action is required. Codex will keep waiting, and this menu will close when the response is ready."
+if variant == "trust":
+    body = [
+        "> You are in /tmp/fixture-cwd",
+        "Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.",
+    ]
+    labels = ["Yes, continue", "No, quit"]
+    footer = "Press enter to continue"
+    safe_index = 0
 if variant == "changed-byte":
     body[0] = body[0].replace("systems", "system")
 if variant == "reordered":
@@ -1639,7 +1657,7 @@ while True:
             paint()
     elif char in (b"\r", b"\n"):
         record("Enter")
-        if selected == 1 and variant != "confirm-stuck":
+        if selected == safe_index and variant != "confirm-stuck":
             answered += 1
             if variant == "recurring" and answered < 5:
                 sys.stdout.write("\x1b[2J\x1b[H❯ ")
@@ -1808,6 +1826,21 @@ refuses "load_collar mechanically rejects an authority-shaped dialog registry" \
   "forbidden authority word" "$GANG" hitch dialog-danger -c dialog-danger -d /tmp
 equal "a refused authority registry opens no window" "" "$(window_id dialog-danger)"
 
+cat > "$RUN_ROOT/collars/dialog-trust-unscoped.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust this directory?
+Yes, continue
+No, quit'
+SH
+refuses "directory trust remains forbidden without the hitch-directory declaration" \
+  "forbidden authority word" \
+  "$GANG" hitch dialog-trust-unscoped -c dialog-trust-unscoped -d /tmp
+equal "an unscoped trust registry opens no window" "" \
+  "$(window_id dialog-trust-unscoped)"
+
 authority_probe_cases='approval|Approval required to continue
 access|Grant access to your files
 authorize|Authorize this device
@@ -1898,6 +1931,66 @@ case "$(<"$RUN_ROOT/dialog-recurring.keys")" in
        "unexpected key sequence [$(<"$RUN_ROOT/dialog-recurring.keys")]" ;;
 esac
 "$GANG" drop dialog-recurring >/dev/null
+
+# Calibrate the boot-dialog instrument first: one fingerprint byte is wrong,
+# so the same trust-shaped screen must receive no key and reproduce the settled
+# non-composer hitch failure. The successful twin then exercises the shipped
+# empty-move shape and startup delivery, not merely dialog recognition.
+cat > "$RUN_ROOT/collars/dialog-trust-boot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot.keys' DIALOG_READY='dialog-trust-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
+GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+Yes, continue
+No, quit
+Press enter to continue'
+SH
+cat > "$RUN_ROOT/collars/dialog-trust-boot-miss.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-trust-boot.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot-miss.keys' DIALOG_READY='dialog-trust-boot-miss-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the content of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+Yes, continue
+No, quit
+Press enter to continue'
+SH
+: > "$RUN_ROOT/dialog-trust-boot-miss.keys"
+if trust_miss_out="$(GANG_BOOT_TIMEOUT=1 "$GANG" hitch trust-boot-miss \
+    -c dialog-trust-boot-miss -d /tmp 2>&1)"; then
+  fail "a mutated trust fingerprint calibrates the boot-dialog guard red" \
+    "hitch unexpectedly succeeded"
+else
+  pass "a mutated trust fingerprint calibrates the boot-dialog guard red"
+fi
+equal "the missed boot dialog receives no auto-answer key" "" \
+  "$(<"$RUN_ROOT/dialog-trust-boot-miss.keys")"
+contains "unknown-dialog recovery delivers the contract after manual clearance" \
+  "$trust_miss_out" "gang send --to trust-boot-miss"
+excludes "unknown-dialog recovery does not prescribe an unconditional drop" \
+  "$trust_miss_out" "then 'gang drop"
+"$GANG" drop trust-boot-miss >/dev/null
+
+: > "$RUN_ROOT/dialog-trust-boot.keys"
+if GANG_BOOT_TIMEOUT=3 "$GANG" hitch trust-boot -c dialog-trust-boot -d /tmp \
+    >"$RUN_ROOT/dialog-trust-boot.out" 2>&1; then
+  pass "hitch answers the known directory-trust dialog and continues"
+else
+  fail "hitch answers the known directory-trust dialog and continues" \
+    "$(<"$RUN_ROOT/dialog-trust-boot.out")"
+fi
+equal "the preselected trust row needs only its empty-move confirmation" \
+  "Enter" "$(<"$RUN_ROOT/dialog-trust-boot.keys")"
+contains "the post-dialog hitch delivers its startup contract" \
+  "$(pane trust-boot)" "You are trust-boot in Gangline"
+contains "the post-dialog hitch reports verified startup delivery" \
+  "$(<"$RUN_ROOT/dialog-trust-boot.out")" \
+  "delivered startup contract to trust-boot"
+"$GANG" drop trust-boot >/dev/null
 
 modal_observed="test-boot-modal-observed-$$"
 modal_painted="test-boot-modal-painted-$$"
