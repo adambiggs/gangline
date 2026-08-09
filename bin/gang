@@ -458,14 +458,14 @@ EOF
 gang flush
   Recover a harness-queued message.
 
-  gang flush <name>
+  gang flush [name]
 EOF
       ;;
     mail) cat <<'EOF'
 gang mail
   Read an agent's waiting queue.
 
-  gang mail <name>
+  gang mail [name]
 
   Prints; delivers nothing.
 EOF
@@ -474,7 +474,7 @@ EOF
 gang interrupt
   Stop an agent's current turn.
 
-  gang interrupt <name>
+  gang interrupt [name]
     [-m "reason"]
     [--from <sender>]
 EOF
@@ -497,7 +497,7 @@ EOF
 gang usage
   Read a harness usage page.
 
-  gang usage <name>
+  gang usage [name]
 EOF
       ;;
     notify) cat <<'EOF'
@@ -3150,8 +3150,14 @@ cmd_send() {
 # readback that does not match, and no Enter is pressed.
 cmd_flush() {
   local name="${1:-}" parked frag box loaded
-  [ -n "$name" ] || usage_die
-  [ $# -eq 1 ] || die "flush: unexpected argument '$2'"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help flush
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   resolve "$name"
   [ -n "$GANG_QUEUED_REGEX" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
@@ -3212,9 +3218,16 @@ cmd_flush() {
 cmd_interrupt() {
   local name="" reason="" from="" have_m=0 ready=0 rc=0 err=""
   name="${1:-}"
-  [ -n "$name" ] || usage_die
-  case "$name" in -*) usage_die ;; esac
-  shift
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help interrupt
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  else
+    case "$name" in -*) usage_die ;; esac
+    shift
+  fi
   while [ $# -gt 0 ]; do case "$1" in
     -m) [ "$have_m" -eq 0 ] || die "interrupt: -m may be passed only once"
         [ $# -ge 2 ] || die "interrupt: -m needs a value"
@@ -3385,8 +3398,14 @@ cmd_context() { # print the collar's native context reading, unparsed
 cmd_usage() { # drive and return the harness's own usage UI
   local name="${1:-}" busy_rc=0 before after content="" key looks=0
   local diff_rc=0 before_nonempty=0 restored=0 box="" restore_key
-  [ -n "$name" ] || { cmd_help usage; exit 1; }
-  [ $# -eq 1 ] || die "usage: expected exactly one agent name"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help usage
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  [ $# -le 1 ] || die "usage: expected at most one agent name"
   resolve "$name"
   [ -n "$GANG_USAGE_CMD" ] \
     || die "usage: collar '$AGENT_COLLAR' declares no GANG_USAGE_CMD, so gang does not know this harness's usage command"
@@ -3601,8 +3620,14 @@ cmd_status() {
 
 cmd_mail() { # read a queue without touching it
   local name="${1:-}" id rc=0 dir e n=0 held=0
-  [ -n "$name" ] || usage_die
-  [ $# -eq 1 ] || die "mail: unexpected argument '$2'"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help mail
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  [ $# -le 1 ] || die "mail: unexpected argument '$2'"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no agent '$name' (see: gang roster)"; }
   dir="$(spool_dir_of "$id")"
   if [ -z "$dir" ] || [ ! -d "$dir" ]; then
@@ -4004,9 +4029,14 @@ if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
   cmd_help "$cmd"
   exit 0
 fi
+# A bare call to a command that names one agent is answered by the command
+# itself, which falls back to the calling window. These are the ones with no
+# such fallback by decision: an implicit self target on drop or down is a
+# footgun, a message needs a stated recipient, and hitch and adopt are naming
+# a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|spawn|adopt|send|flush|interrupt|usage|drop|down|mail)
+    hitch|spawn|adopt|send|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;

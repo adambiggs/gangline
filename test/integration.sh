@@ -1298,13 +1298,32 @@ refuses "usage refuses an unknown render declaration" \
 
 alpha_before_bare_help="$(pane alpha)"
 alpha_composer_before_bare_help="$($GANG composer alpha)"
-for incoherent_bare in hitch adopt send flush interrupt usage drop; do
+for incoherent_bare in hitch adopt send drop; do
   if incoherent_output="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$incoherent_bare" 2>&1)"; then
     fail "bare gang $incoherent_bare refuses inside an agent" \
       "command unexpectedly succeeded: [$incoherent_output]"
   else
     contains "bare gang $incoherent_bare prints help inside an agent" \
       "$incoherent_output" "gang $incoherent_bare"
+  fi
+done
+# A COMMAND THAT TAKES ONE AGENT NAME DEFAULTS TO THE CALLER. Bare flush,
+# interrupt and usage inside an agent window therefore resolve to that agent
+# rather than printing a synopsis, and each then refuses on something the
+# fixture's own collar does not declare — which is the evidence that a target
+# was resolved at all. drop, down, adopt, hitch and send's recipient stay
+# without a self default on purpose and remain in the loop above.
+for self_bare in flush:GANG_QUEUED_REGEX interrupt:GANG_INTERRUPT_KEY usage:GANG_USAGE_CMD; do
+  self_bare_cmd="${self_bare%%:*}"
+  self_bare_decl="${self_bare#*:}"
+  if self_bare_out="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$self_bare_cmd" 2>&1)"; then
+    fail "bare gang $self_bare_cmd targets the calling agent" \
+      "command unexpectedly succeeded: [$self_bare_out]"
+  else
+    contains "bare gang $self_bare_cmd targets the calling agent" \
+      "$self_bare_out" "declares no $self_bare_decl"
+    excludes "bare gang $self_bare_cmd prints no synopsis inside an agent" \
+      "$self_bare_out" "gang $self_bare_cmd"
   fi
 done
 equal "incoherent bare commands leave the calling pane untouched" \
@@ -3776,6 +3795,16 @@ mail_with_held="$("$GANG" mail mailer)"
 contains "mail prints a held body" "$mail_with_held" "MARK_MAIL_HELD"
 contains "mail labels held delivery as unverified" \
   "$mail_with_held" "held (delivery NOT verified"
+# Reading your own queue is the commonest reason to run mail at all, so a bare
+# call inside an agent window reads that window's queue rather than refusing.
+mailer_self_pane="$(tmux list-panes -t "$(window_id mailer)" -F '#{pane_id}')"
+mailer_self_rc=0
+TMUX_PANE="$mailer_self_pane" "$GANG" mail > "$RUN_ROOT/mail-self.out" 2>&1 \
+  || mailer_self_rc=$?
+mailer_self_out="$(grep -v '^gang: WARNING: executing dirty ' \
+  "$RUN_ROOT/mail-self.out" || true)"
+equal "bare mail reads the calling agent's own queue" \
+  "0|$("$GANG" mail mailer)" "$mailer_self_rc|$mailer_self_out"
 "$GANG" drop mailer >/dev/null
 
 "$GANG" hitch empty-mailbox -c spoolable -d /tmp >/dev/null
