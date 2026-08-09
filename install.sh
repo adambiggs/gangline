@@ -44,7 +44,19 @@ else
 fi
 
 mkdir -p "$BIN_DIR"
-ln -sf "$HOME_DIR/bin/gang" "$BIN_DIR/gang"
+# `ln -sf` FOLLOWS an existing symlink to a directory: it writes gang INSIDE the
+# referenced directory and leaves the link standing, so a re-run mutates a
+# directory nobody named and only fails afterwards, when it executes the
+# still-directory destination. -f does not prevent that. Remove the exact
+# destination first when it is gang's own link or file, and refuse anything else
+# rather than reaching through it.
+if [ -L "$BIN_DIR/gang" ] || [ -f "$BIN_DIR/gang" ]; then
+  rm -f "$BIN_DIR/gang" || die "could not remove the existing $BIN_DIR/gang"
+elif [ -e "$BIN_DIR/gang" ]; then
+  die "$BIN_DIR/gang exists and is not a file or a symlink — move it aside"
+fi
+ln -s "$HOME_DIR/bin/gang" "$BIN_DIR/gang" \
+  || die "could not link $BIN_DIR/gang -> $HOME_DIR/bin/gang"
 
 # Execute the installed tree before reporting success.
 "$BIN_DIR/gang" collars >/dev/null || die "installed, but 'gang collars' failed"

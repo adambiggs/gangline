@@ -5304,6 +5304,47 @@ header_out="$( (cd "$header_repo" && "$ROOT/tools/pii-scan" --range HEAD) 2>&1 )
 equal "the CI scanner reads a +++ file header as framing, not as content" \
   "0|" "$header_rc|$header_out"
 
+# `ln -sf` DEREFERENCES a symlink-to-directory: with the destination already a
+# link to a directory it writes <that directory>/gang and leaves the link
+# standing, so the installer mutates a directory nobody named and only fails
+# afterwards, when it tries to execute the still-directory destination.
+installer_root="$RUN_ROOT/installer"
+installer_src="$installer_root/src"
+mkdir -p "$installer_src/bin"
+cat > "$installer_src/bin/gang" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+echo bash
+SH
+chmod +x "$installer_src/bin/gang"
+git init -q "$installer_src"
+git -C "$installer_src" config user.name 'Gangline installer test'
+git -C "$installer_src" config user.email 'installer@fixture.invalid'
+git -C "$installer_src" add .
+git -C "$installer_src" commit -qm 'test: installer source fixture'
+
+installer_bin="$installer_root/bin"
+installer_decoy="$installer_root/decoy"
+mkdir -p "$installer_bin" "$installer_decoy"
+ln -s "$installer_decoy" "$installer_bin/gang"
+installer_rc=0
+GANGLINE_REPO="$installer_src" \
+  GANGLINE_HOME="$installer_root/home" GANGLINE_BIN="$installer_bin" \
+  sh "$ROOT/install.sh" >/dev/null 2>&1 || installer_rc=$?
+equal "the installer replaces a symlinked destination instead of writing through it" \
+  "0 absent $installer_root/home/bin/gang" \
+  "$installer_rc $([ -e "$installer_decoy/gang" ] && printf written || printf absent) $(readlink "$installer_bin/gang" || true)"
+
+installer_dir_bin="$installer_root/bin-dir"
+mkdir -p "$installer_dir_bin/gang"
+installer_dir_rc=0
+installer_dir_out="$(GANGLINE_REPO="$installer_src" \
+  GANGLINE_HOME="$installer_root/home-dir" GANGLINE_BIN="$installer_dir_bin" \
+  sh "$ROOT/install.sh" 2>&1)" || installer_dir_rc=$?
+equal "the installer refuses a destination it cannot replace rather than filling it" \
+  "refused empty named" \
+  "$([ "$installer_dir_rc" -ne 0 ] && printf refused || printf installed) $([ -e "$installer_dir_bin/gang/gang" ] && printf filled || printf empty) $([[ "$installer_dir_out" = *'is not a file or a symlink'* ]] && printf named || printf unnamed)"
+
 # The local sibling gate uses destination identity rather than remote-tracking
 # names, and refuses non-commit refs instead of treating an empty traversal as
 # a clean result. Its fixtures isolate the local hook from the host-global gate.
