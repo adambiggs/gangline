@@ -442,3 +442,21 @@ acted goes green for no reason anyone chose. Order the observation behind the
 same input path the work travels, so that when the probe reports, what is being
 tested has either happened or never will. A guard that is right about what to
 look at and undefined about when is still luck.
+
+## The contract is a file agents read, not a paste they receive
+
+The standing terms live in `CONTRACT.md` and the startup contract points at it.
+Prose that is pasted is bounded by what a composer renders and by pane geometry,
+it is unaddressable inside one long line, and it is gone once a compaction
+summarises it. A path has none of those properties: the file can be structured,
+it can define its own vocabulary, and re-reading it is the recovery. Gangline
+resolves and validates it before opening a window, operator-first like a role
+brief, and refuses the hitch when it is missing or is not prose — an agent sent
+to read a contract that is not there would find that out alone, in a pane, with
+nobody to tell.
+
+The cost is real and accepted: a pasted rule is unconditional, and a pointer is
+not. What the contract requires is unchanged, so the guards that recorded those
+requirements now prove them against the file, and every hitch is held to naming
+it. Doctrine and role briefs stay pasted; they are per-hitch, and the pointer
+buys them nothing.

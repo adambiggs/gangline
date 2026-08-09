@@ -32,12 +32,15 @@ current tmux client to it. `GANG_COLLAR` selects the harness.
 ### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
-That contract tells the agent to choose a model and reasoning effort deliberately
-when hitching teammates. Peer messages name their sender in the gang envelope.
-Gangline never delivers a message without one — the only unenveloped text it
-ever types into a pane is your harness's own compaction command — so any other
-unenveloped text arrived from the session keyboard, and Gangline cannot
-attribute it further. If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
+That contract names the agent, points it at `CONTRACT.md`, and tells it to read
+that file first and to read it again after a compaction. The contract itself
+holds the standing terms: envelope attribution, how to reach a peer, deliberate
+model and effort choices when hitching a teammate, delegation, and the marathon
+rule. It is pointed at rather than pasted, so its length is bounded by nothing
+the pane can render, and losing it from context is recoverable by reading it
+again. Gangline resolves and validates the file before opening a window, and an
+agent that cannot read it is told to say so and stop rather than improvise.
+If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose within its category-error ceiling, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
@@ -490,6 +493,7 @@ absolute. It contains:
 
 - `config`, the optional settings file;
 - `DOCTRINE.md`, optional operator prose delivered in every hitch contract;
+- `CONTRACT.md`, an optional operator contract that replaces the shipped one;
 - `roles/`, optional operator role briefs that replace shipped roles
   file-for-file by name.
 
@@ -532,6 +536,14 @@ no NUL, no controls other than tab and newline, valid UTF-8, and no more than
 prose slot; it is not a deliverability bound. Actual delivery is bounded by the
 target composer's rendering and pane geometry and remains verified at hitch.
 Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
+
+The contract uses the same prose validation and the same operator-first
+resolution: `$GANG_CONFIG_DIR/CONTRACT.md` before the shipped `CONTRACT.md`. It
+is the one prose slot that is not optional — a root without one refuses every
+hitch, naming both paths, because an agent sent to read a contract that is not
+there would discover that alone in a pane. Unlike doctrine and role briefs, its
+bytes are never pasted, so the 8192-byte ceiling is its only bound and pane
+geometry is not.
 
 Role briefs use the same prose validation. Resolution checks
 `$GANG_CONFIG_DIR/roles/<name>.md` before the shipped `roles/<name>.md`; an

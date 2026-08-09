@@ -19,6 +19,10 @@ Collars and role briefs are read at hitch time. Existing agents retain the copy
 already in their context. Model selection is also a launch choice: drop the old
 window and hitch a new one to change it.
 
+`CONTRACT.md` is different: agents are pointed at it, so an edit reaches every
+agent that reads it again, including agents already running. Editing it changes
+what a live team is held to.
+
 ## Preserve guards
 
 An existing assertion records a decision. Changing its expectation requires
@@ -32,9 +36,9 @@ before asserting state.
 ## Keep the agent surface small
 
 Gangline is substrate: tmux lifecycle, attributed verified delivery, direct
-observation, collars, shipped prose in `roles/`, native hooks, native compaction,
-and optional yellow/red context and team-time lights. It does not coordinate
-work or supervise agents.
+observation, collars, shipped prose in `CONTRACT.md` and `roles/`, native hooks,
+native compaction, and optional yellow/red context and team-time lights. It does
+not coordinate work or supervise agents.
 
 - Harness-specific knowledge belongs in `collars/`, not harness-name branches
   in `bin/gang`.
@@ -86,6 +90,7 @@ an operator request.
 |---|---|
 | `README.md` | what Gangline is and why it exists |
 | `CONSTITUTION.md` | binding project laws |
+| `CONTRACT.md` | the standing terms every hitched agent is sent to read |
 | `docs/DECISIONS.md` | terse durable decisions and rationale |
 | `docs/reference.md` | exact commands, environment, and collar contract |
 | `docs/operations.md` | unattended operation and recovery |
