@@ -39,8 +39,10 @@ effort choices when hitching a teammate, delegation, and the marathon rule.
 How it reaches the agent depends on the collar. Where one declares
 `GANG_ROLE_PROMPT_OPT`, the contract's bytes are passed through that launch
 option into the harness's own system prompt, so every agent holds it
-unconditionally and still holds it after a compaction; the startup contract then
-names the file rather than ordering it read. Where a collar declares no such
+unconditionally and still holds it after a compaction. The startup contract does
+not restate what that prompt already says. It carries the one thing the prompt
+cannot: where to look, and an instruction to report it, if the attachment is not
+there — Gangline cannot verify that a launch option reached the model. Where a collar declares no such
 option, the startup contract points at the path and tells the agent to read it
 first and again after a compaction, and to say so and stop rather than improvise
 if it cannot. Either way the bytes are never pasted into a composer, so the

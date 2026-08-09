@@ -476,3 +476,9 @@ A role is opt-in and the contract is not, so a role-less hitch still carries a
 system prompt. Both share one option rather than passing it twice, because a
 collar declares a single spelling and repeating it would guess at whether the
 harness concatenates or keeps the last.
+
+The startup contract does not repeat what the system prompt says. An agent that
+reads the same assurance twice can still only act on it once, and Gangline
+cannot verify that a launch option reached the model, so that line is spent on
+the recovery instead: where the contract lives, and an instruction to report a
+missing attachment rather than improvise.

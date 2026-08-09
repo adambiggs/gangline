@@ -270,7 +270,8 @@ ac9() {
   equal "AC9 argv has the role option" "--append-system-prompt" "$(<"$prefix.1.bin")"
   contains "AC9 argv has the preamble" "$value" "You are running inside a Gangline team"
   contains "AC9 argv has the body" "$value" "MARK_SYSTEM_BODY"
-  contains "AC9 composer has the pointer" "$pane" "Its brief was attached to this harness"
+  contains "AC9 composer points at the brief instead of carrying it" "$pane" \
+    "role brief are in your system prompt"
   excludes "AC9 composer does not duplicate the body" "$pane" "MARK_SYSTEM_BODY"
   drop_agent role-ac9
 }
@@ -599,13 +600,18 @@ GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 SH
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac25 -c sysprompt -d /tmp >/dev/null
   body="$(pane_all role-ac25)"
-  contains "AC25 the pane says the contract was attached at launch" "$body" \
-    "was attached to this harness session at launch"
-  contains "AC25 the pane still names the contract path" "$body" "CONTRACT.md"
+  contains "AC25 the pane says where the contract already is" "$body" \
+    "Your contract is in your system prompt"
   excludes "AC25 the pane does not order a read it does not need" "$body" \
     "before anything else"
-  excludes "AC25 no stop-and-report for a file it was not sent to" "$body" \
-    "say so and stop rather than improvising"
+  # The one thing the system prompt cannot say for itself. Gangline cannot
+  # verify a launch option reached the model, so the pane carries the recovery
+  # rather than a second assurance that the attachment happened.
+  contains "AC25 the pane carries a recovery if the attachment is not there" \
+    "$body" "If it is not, read"
+  contains "AC25 the recovery names the contract path" "$body" "CONTRACT.md"
+  excludes "AC25 the pane does not restate the launch-time attachment" "$body" \
+    "was attached to this harness session at launch"
   drop_agent role-ac25
 }
 

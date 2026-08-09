@@ -1033,7 +1033,7 @@ contract_read() { # vet the contract slot, into CONTRACT_FILE and CONTRACT_BODY
   [ -z "$GANG_ROLE_PROMPT_OPT" ] || CONTRACT_SYSTEM=1
 }
 
-ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0
+ROLE_NAME="" ROLE_FILE="" ROLE_BODY=""
 SYSTEM_PROMPT=""
 
 # One option carries both attachments rather than one option per attachment: a
@@ -1060,22 +1060,28 @@ system_prompt_build() { # populate the system-prompt-level composite byte-exact
 startup_brief() { # $1 = agent name, $2 = doctrine body or empty
   local role path contract
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
-  if [ "$CONTRACT_SYSTEM" -eq 1 ]; then
-    # Already in the system prompt, so it needs naming rather than fetching:
-    # the harness resends that prompt every turn, and an instruction to go read
-    # a file the agent is already holding buys a tool call and no contract.
-    printf 'You are %s in Gangline. The contract for this team was attached to this harness session at launch from %s, together with a Gangline note subordinating it to operator doctrine; it governs every turn you take here. At natural checkpoints compact with: gang compact %s.' \
-      "$1" "$contract" "$1"
-  else
-    printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
-      "$1" "$contract" "$1"
-  fi
   if [ -n "$ROLE_NAME" ]; then
     role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
     path="$(config_path "$ROLE_FILE" | config_sanitize)"
-    if [ "$ROLE_SYSTEM" -eq 1 ]; then
-      printf '\n\nYour role in this team is %s. Its brief was attached to this harness\nsession at launch from %s, together with a Gangline note subordinating\nit to operator doctrine.' "$role" "$path"
+  fi
+  if [ "$CONTRACT_SYSTEM" -eq 1 ]; then
+    # The system prompt already says what was attached, that it was attached at
+    # launch, and that operator doctrine outranks it. Saying so again here is a
+    # restatement the agent reads twice and can act on once, so this line only
+    # does what that prompt cannot: it says where to look if the attachment is
+    # not there. Gangline cannot verify that a launch option reached the model,
+    # so the recovery is worth more than the reassurance it replaces.
+    if [ -n "$ROLE_NAME" ]; then
+      printf 'You are %s in Gangline. Your contract and your %s role brief are in your system prompt. If they are not, read %s and report that rather than improvising. At natural checkpoints compact with: gang compact %s.' \
+        "$1" "$role" "$contract" "$1"
     else
+      printf 'You are %s in Gangline. Your contract is in your system prompt. If it is not, read %s and report that rather than improvising. At natural checkpoints compact with: gang compact %s.' \
+        "$1" "$contract" "$1"
+    fi
+  else
+    printf 'You are %s in Gangline. Read %s now, before anything else: it is the standing contract for this team, Gangline checked it at hitch time, and reading it again is how you recover it after a compaction. At natural checkpoints compact with: gang compact %s. If you cannot read that file, say so and stop rather than improvising the contract.' \
+      "$1" "$contract" "$1"
+    if [ -n "$ROLE_NAME" ]; then
       printf '\n\nYour role in this team is %s. Its brief follows; operator doctrine,\nwhere present, outranks it.\n\nRole brief (%s):\n\n%s' "$role" "$path" "$ROLE_BODY"
     fi
   fi
@@ -2850,7 +2856,7 @@ cmd_hitch() {
       || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
   fi
   load_collar "$prof"
-  ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" ROLE_SYSTEM=0 SYSTEM_PROMPT=""
+  ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
     valid_role_name "$role" \
       || die "hitch: role '$role' is not usable — use only letters, digits, dot, dash and underscore; do not start with dash or dot"
@@ -2861,7 +2867,6 @@ cmd_hitch() {
     [ -s "$ROLE_FILE" ] || die "role brief $role_path is empty"
     ROLE_NAME="$role"
     ROLE_BODY="$PROSE"
-    [ -z "$GANG_ROLE_PROMPT_OPT" ] || ROLE_SYSTEM=1
   fi
   if session_live; then
     id="$(win_id "$name")" || {
