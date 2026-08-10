@@ -3349,6 +3349,33 @@ equal "a composer showing no queue evidence refuses the flush" "3" "$drained_rc"
 contains "rather than pressing the recall key blindly" \
   "$drained_out" "none of the parked-queue evidence"
 
+# A DRAINED QUEUE AND A QUEUE THAT NEVER EXISTED ARE DIFFERENT ANSWERS. Both
+# reach flush as an empty record, so an operator reaching for it a moment after
+# the harness drained itself would otherwise be told the same sentence as one
+# whose message never arrived. The record is retired the way a drain retires
+# it — gang reading the composer back empty — rather than by unsetting it. The
+# staged note is the obstruction record a real park leaves beside @gl_parked;
+# both are present here, and the empty composer is what refutes them.
+tmux set-option -w -t "$parked_id" @gl_staged \
+  "'MARK_PARKED' was pasted and Enter sent, but the harness parked it in its own input queue"
+flush_settle
+"$GANG" status parked >/dev/null 2>&1 || :
+equal "an empty composer retires the parked record" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+if drained_record_out="$("$GANG" flush parked 2>&1)"; then
+  drained_record_rc=0
+else
+  drained_record_rc=$?
+fi
+equal "flushing a drained queue refuses" "3" "$drained_record_rc"
+contains "and says the park is gone rather than never recorded" \
+  "$drained_record_out" "NOT parked any more"
+excludes "so it cannot be read as a message that never arrived" \
+  "$drained_record_out" "no record of a message parked"
+# Hand the world back the way the next case expects to find it: this one
+# retired the record on purpose, and the readback cases below need it.
+tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
+
 # THE READBACK IS LOAD-BEARING, AND IT IS THE WHOLE BODY. Here the recall key
 # loads a message that begins with exactly the recorded one and carries extra
 # text after it — the case a containment check waves through. The Enter must not

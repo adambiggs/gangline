@@ -2548,6 +2548,16 @@ stage_forget() { # $1 = window id
   # The parked-message record belongs to the same obstruction: once there is
   # nothing staged here, there is nothing for `flush` to read a composer back
   # against either.
+  #
+  # Retiring it leaves a mark, because the ABSENCE of a record has two causes
+  # an operator must not confuse: gang never watched a park here, or it did and
+  # the queue has since drained on its own — which is what a harness does when
+  # a compaction ends. Both reach flush as an empty @gl_parked, and reaching
+  # for flush a moment too late is how an operator gets told "no record" about
+  # a message that was delivered.
+  if [ -n "$(tmux show-options -wqv -t "$1" @gl_parked 2>/dev/null)" ]; then
+    tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
+  fi
   tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
 }
 
@@ -2744,6 +2754,9 @@ submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the E
     # Recorded HERE and only here: this is the one moment gang knows both that
     # the harness parked something and exactly which body it parked.
     [ -z "$4" ] || tmux set-option -w -t "$1" @gl_parked "$4" 2>/dev/null || true
+    # A fresh park replaces the history: whatever drained before this one is no
+    # longer the answer to "where did my message go".
+    [ -z "$4" ] || tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
     stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
     die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname, which loads the parked message, reads it back against what gang recorded, and submits it — or by hand: gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
   fi
@@ -3267,8 +3280,11 @@ cmd_flush() {
   [ -n "$GANG_QUEUE_RECALL_KEY" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
   parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
-  [ -n "$parked" ] \
-    || refuse "flush: gang has no record of a message parked in the queue of '$name'. It recovers only a body it watched the harness park, because that record is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
+  if [ -z "$parked" ]; then
+    [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_drained)" ] \
+      || refuse "flush: the message gang watched the harness park in '$name' is NOT parked any more — its composer came back empty, so the queue drained itself (a harness does this when a compaction ends) or somebody submitted it by hand. There is nothing left here to recover, and this is not the same as never having been parked: look for it in the transcript before sending it again (gang capture $name)"
+    refuse "flush: gang has no record of a message parked in the queue of '$name'. It recovers only a body it watched the harness park, because that record is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
+  fi
   frag="${parked%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   lock_pane "$AGENT_ID"
