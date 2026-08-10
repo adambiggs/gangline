@@ -5475,86 +5475,6 @@ no_outer_output="$(printf '%s\n' "$deletion_record" |
 equal "no global hook is a silent no-op before Gangline's gates" \
   "0|" "$no_outer_rc|$no_outer_output"
 
-scanner_root="$RUN_ROOT/pii-scanner"
-mkdir -p "$scanner_root"
-scp_url="git@github"".com:owner/project.git"
-scp_rc=0
-printf '%s\n' "$scp_url" | "$ROOT/tools/pii-scan" --stdin >/dev/null 2>&1 \
-  || scp_rc=$?
-equal "the CI scanner allows an SCP-form Git URL" 0 "$scp_rc"
-colon_email='alice.doe@personal'"mail.co:hunter2swordfish"
-colon_email_rc=0
-colon_email_output="$(printf '%s\n' "$colon_email" | \
-  "$ROOT/tools/pii-scan" --stdin 2>&1)" || colon_email_rc=$?
-equal "the CI scanner refuses an email followed by a colon token" \
-  "blocked named" \
-  "$([ "$colon_email_rc" -ne 0 ] && printf blocked || printf leaked) $([[ "$colon_email_output" = *'[email]'* ]] && printf named || printf unnamed)"
-
-for binary_kind in attribute nul; do
-  binary_repo="$scanner_root/$binary_kind"
-  git init -q "$binary_repo"
-  git -C "$binary_repo" config user.name 'Gangline scanner test'
-  git -C "$binary_repo" config user.email 'scanner@fixture.invalid'
-  if [ "$binary_kind" = attribute ]; then
-    printf '%s\n' 'secret -diff' > "$binary_repo/.gitattributes"
-    printf 'key = sk-ant-%s\n' 'api03-ZZZfakefakefake1234567890' > "$binary_repo/secret"
-  else
-    printf 'key = sk-ant-%s\n\000\n' 'api03-ZZZfakefakefake1234567890' > "$binary_repo/secret"
-  fi
-  git -C "$binary_repo" add .
-  git -C "$binary_repo" commit -qm "test: $binary_kind scanner fixture"
-  binary_rc=0
-  (cd "$binary_repo" && "$ROOT/tools/pii-scan" --range HEAD) >/dev/null 2>&1 \
-    || binary_rc=$?
-  equal "the CI scanner refuses a $binary_kind-rendered credential" \
-    blocked "$([ "$binary_rc" -ne 0 ] && printf blocked || printf leaked)"
-done
-
-# GIT RENDERS AN ADDED LINE WHOSE CONTENT STARTS WITH "++" AS "+++...", which is
-# indistinguishable from a "+++ b/file" header by prefix alone. Dropping every
-# +++ record therefore drops real added content, and a credential sitting on
-# such a line reaches the remote through a gate that reported clean. Both forms
-# are asserted, because requiring only the header's trailing space still loses
-# the spaced one.
-plusplus_repo="$scanner_root/plus-prefixed"
-git init -q "$plusplus_repo"
-git -C "$plusplus_repo" config user.name 'Gangline scanner test'
-git -C "$plusplus_repo" config user.email 'scanner@fixture.invalid'
-printf '++key = sk-ant-%s\n' 'api03-ZZZfakefakefake1234567890' \
-  > "$plusplus_repo/quoted-diff"
-printf '++ key = ghp_%s\n' 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef01234' \
-  > "$plusplus_repo/quoted-diff-spaced"
-git -C "$plusplus_repo" add .
-git -C "$plusplus_repo" commit -qm 'test: plus-prefixed scanner fixture'
-plusplus_rc=0
-plusplus_out="$( (cd "$plusplus_repo" && "$ROOT/tools/pii-scan" --range HEAD) 2>&1 )" \
-  || plusplus_rc=$?
-equal "the CI scanner refuses a credential on a ++-prefixed added line" \
-  "blocked named spaced" \
-  "$([ "$plusplus_rc" -ne 0 ] && printf blocked || printf leaked) $([[ "$plusplus_out" = *'[credential-sk-ant]'* ]] && printf named || printf missed) $([[ "$plusplus_out" = *'[credential-ghp]'* ]] && printf spaced || printf missed)"
-
-# The other direction: a real +++ header is framing, and scanning it as content
-# would flag every commit that adds a file under a path shaped like a home
-# directory. The fixture's own content carries nothing to find.
-#
-# The fixture path is split across two quoted words, snubline's convention for
-# a scanner's own corpus: the shell concatenates them, so the bytes this
-# exercises are unchanged, and the source no longer contains a path the gate
-# would have to tell apart from a real one.
-header_repo="$scanner_root/path-header"
-git init -q "$header_repo"
-git -C "$header_repo" config user.name 'Gangline scanner test'
-git -C "$header_repo" config user.email 'scanner@fixture.invalid'
-mkdir -p "$header_repo/ho""me/alice"
-printf '%s\n' 'nothing sensitive here' > "$header_repo/ho""me/alice/notes.txt"
-git -C "$header_repo" add .
-git -C "$header_repo" commit -qm 'test: path-header scanner fixture'
-header_rc=0
-header_out="$( (cd "$header_repo" && "$ROOT/tools/pii-scan" --range HEAD) 2>&1 )" \
-  || header_rc=$?
-equal "the CI scanner reads a +++ file header as framing, not as content" \
-  "0|" "$header_rc|$header_out"
-
 # `ln -sf` DEREFERENCES a symlink-to-directory: with the destination already a
 # link to a directory it writes <that directory>/gang and leaves the link
 # standing, so the installer mutates a directory nobody named and only fails
@@ -5698,12 +5618,10 @@ equal "the repository gate refuses a mirror carrying a blob ref" \
 # makes a leaked main index distinguishable from the detached worktree's index.
 hook_repo="$RUN_ROOT/pre-push-repo"
 hook_probe="$RUN_ROOT/pre-push-probe"
-mkdir -p "$hook_repo/.githooks" "$hook_repo/tools" "$hook_repo/test" "$hook_probe"
+mkdir -p "$hook_repo/.githooks" "$hook_repo/test" "$hook_probe"
 cp "$ROOT/.githooks/pre-push" "$ROOT/.githooks/commit-msg" \
   "$hook_repo/.githooks/"
-cp "$ROOT/tools/pii-scan" "$hook_repo/tools/"
-chmod +x "$hook_repo/.githooks/pre-push" "$hook_repo/.githooks/commit-msg" \
-  "$hook_repo/tools/pii-scan"
+chmod +x "$hook_repo/.githooks/pre-push" "$hook_repo/.githooks/commit-msg"
 cat > "$hook_repo/test/lint.sh" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0

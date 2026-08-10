@@ -95,10 +95,11 @@ When multiple contributors share a checkout:
 
 ## Public content
 
-The local pre-push hook delegates to the operator's installed Snubline gate;
-Gangline's CI backstop covers pushed repository content independently. Issue and
-pull request bodies reach neither path, so scan them with the installed Snubline
-scanner before publishing:
+The local pre-push hook delegates to the operator's installed Snubline gate,
+which is the only PII scan Gangline runs — there is no CI backstop, so a clone
+without Snubline pushes unscanned. Issue and pull request bodies reach no hook at
+all, so scan them, and anything else you are about to publish, with the installed
+Snubline scanner first:
 
 ```sh
 scanner="$(git config --global --get snubline.piiScanner)" || {
