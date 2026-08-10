@@ -99,7 +99,7 @@ GANG_BUSY_REGEX="esc to interrupt"
 GANG_QUIET_AT_REST=1
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 GANG_COMPACT_CMD="/compact"
-# Verified on codex 0.145.0: /usage opens a selection menu with "Show usage"
+# Verified on codex 0.146.0: /usage opens a selection menu with "Show usage"
 # preselected; one Enter confirms it and the content is appended to the
 # transcript with the composer already restored, so nothing dismisses it.
 GANG_USAGE_CMD="/usage"

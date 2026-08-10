@@ -100,7 +100,7 @@ print(*levels, sep=\"\\n\")
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
-# Verified on claude-code 2.1.224: /usage opens a full-screen tabbed modal with
+# Verified on claude-code 2.1.226: /usage opens a full-screen tabbed modal with
 # no composer, and Escape restores an empty composer. The page scrolls; gang
 # returns the visible screen and does not drive the scrollbar.
 GANG_USAGE_CMD="/usage"
