@@ -104,6 +104,22 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # 0.146.0 rows with ASCII ">" (0x3E), so this marker scores zero against it.
 # The marker was authored where we always look, so it fits what we always see —
 # any screen a fresh codex draws before a session exists is outside its reach.
+#
+# Enumerated on 0.146.0 against a cold CODEX_HOME: the sign-in menu, the
+# browser-wait screen carrying the authorize URL, the device-code screen, and
+# the API-key entry screen. NOTHING this collar declares reaches any of them —
+# collar_input keys on the same U+203A, both GANG_DIALOGS records are anchored
+# on it, and the busy footer belongs to a turn that cannot exist yet. The
+# API-key screen is a real bordered text field and is still not a composer by
+# that definition, which is the definition working: gang reads it as occupied
+# (authority unknown), refuses /usage, spools rather than delivers, and hitch
+# fails without naming what it saw.
+#
+# Widening this to ^[›>] is REFUSED. Pre-session and in-session are different
+# code paths, not different builds, and the ASCII form is ordinary transcript
+# text: a delivered message quoting "> 1. …" would read as an occupied
+# composer inside a live session. That trade buys one boot-time sentence and
+# sells a false occupancy during work.
 GANG_COMPACT_CMD="/compact"
 # Verified on codex 0.146.0: /usage opens a selection menu with "Show usage"
 # preselected; one Enter confirms it and the content is appended to the
@@ -126,10 +142,15 @@ GANG_INTERRUPT_KEY="Escape"
 # prove a negative. Left unproven rather than repinned.
 
 # HOOKS ARE TRUSTED, NOT MERELY INSTALLED (observed on codex 0.146.0). Trust is
-# persisted per hook in config.toml's [hooks.state] table under a hash of the
-# hook COMMAND, which embeds $ROOT. A checkout whose command has been trusted
-# once boots straight to its composer; a fresh clone, a moved checkout, a
-# container, or any edit to the command above meets this first:
+# persisted in config.toml's [hooks.state] table. The KEY is a fixed sentinel,
+# /<session-flags>/config.toml:<event>:0:0 — it does not move with the
+# checkout, which is what makes a pre-seeded trust table addressable at all.
+# What varies is the VALUE: a hash over the hook COMMAND, which embeds $ROOT,
+# and over the EVENT, so the four events wired above need four distinct hashes.
+# It is deterministic — no salt, no nonce; the same root recomputed in a fresh
+# sandbox reproduces the same bytes. A checkout whose commands have been
+# trusted once boots straight to its composer; a fresh clone, a moved checkout,
+# a container, or any edit to the command above meets this first:
 #
 #     Hooks need review
 #     4 hooks are new or changed.
@@ -151,8 +172,16 @@ GANG_INTERRUPT_KEY="Escape"
 # reads !occupied! (authority unknown), delivery is refused and hitch fails.
 # Safe, and unhelpful — the operator sees a state word rather than the one-line
 # instruction, which is to run codex once in this checkout and choose "Review
-# hooks". Naming it needs a registry that declares no keystroke; there is none
-# yet.
+# hooks".
+#
+# A registry that NAMED such screens without declaring a keystroke was proposed
+# and DECIDED AGAINST. It could only ever name screens somebody had already
+# met, while the generic pointer gang already prints — inspect it with gang
+# attach — covers every screen including the unmet ones. And a per-dialog
+# fingerprint is one more per-build string that rots: when the wording moves it
+# stops matching and falls back to exactly this generic path, except that by
+# then we believe we have coverage. A guard that degrades to correct-but-silent
+# is fine; one that degrades while we think it holds is not.
 
 # Verified against codex 0.145.0 from the live capture cited in the landing
 # commit. Numeric prefixes move with the selection and are normalized by core;

@@ -108,6 +108,26 @@ GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="Escape"
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
+# BEFORE A SESSION EXISTS. Enumerated on claude-code 2.1.226 against a cold
+# CLAUDE_CONFIG_DIR: a splash-only frame, the theme picker, the login-method
+# picker, "Opening browser to sign in…", and the authorize URL above "Paste
+# code here if prompted >". None of them draws a composer — collar_input needs
+# a run framed by two ─ rules of equal width, and none of these is framed at
+# all — so gang cannot mistake an auth field for an input box. Driven through
+# the real commands, not read off the regexes: the window reads !occupied!
+# (authority unknown), composer and /usage refuse by name, send spools instead
+# of typing, and hitch declines to deliver the startup contract.
+#
+# Of the five, the two pickers put a "❯" row on screen, so hitch also names
+# them as a first-run prompt to answer with gang attach. The other three match
+# nothing here and fail with hitch's generic wording. That silence is the
+# floor, not a defect: naming them would take a per-build fingerprint, refused
+# for the reason recorded in collars/codex.sh. Note the code prompt is ASCII
+# ">" (0x3E) rather than the composer's U+276F — the same pre-session alphabet
+# split codex shows.
+#
+# Anything past the login picker needs real credentials, so whatever a first
+# run draws AFTER signing in is UNKNOWN here rather than assumed absent.
 # PARKED INPUT IS NOT A SUBMISSION. The queue strand (observed on 2.1.223)
 # renders a queued body in the transcript styled exactly like a submitted
 # prompt and empties the composer; the state is visible only in the composer
