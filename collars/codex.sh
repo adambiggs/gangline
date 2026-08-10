@@ -98,6 +98,12 @@ print(*levels, sep=\"\\n\")
 GANG_BUSY_REGEX="esc to interrupt"
 GANG_QUIET_AT_REST=1
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+# THIS IS IN-SESSION TYPOGRAPHY. Every menu codex draws inside a session uses
+# U+203A (bytes 342 200 272). Its pre-session screens are drawn by another code
+# path that does not share the alphabet: the first-run sign-in menu observed on
+# 0.146.0 rows with ASCII ">" (0x3E), so this marker scores zero against it.
+# The marker was authored where we always look, so it fits what we always see —
+# any screen a fresh codex draws before a session exists is outside its reach.
 GANG_COMPACT_CMD="/compact"
 # Verified on codex 0.146.0: /usage opens a selection menu with "Show usage"
 # preselected; one Enter confirms it and the content is appended to the
@@ -114,10 +120,47 @@ GANG_INTERRUPT_KEY="Escape"
 # event. legacy_notify / agent-turn-complete reports turn completion, which the
 # Stop hook above already delivers; it is not an awaiting-input witness and is
 # deliberately not wired. PermissionRequest is this collar's only stall source.
+# UNKNOWN on 0.146.0: that build offers no live enumeration of hook events —
+# `codex debug` exposes models, app-server and prompt-input and none of them
+# lists one — so re-verifying this means probing event names one at a time to
+# prove a negative. Left unproven rather than repinned.
+
+# HOOKS ARE TRUSTED, NOT MERELY INSTALLED (observed on codex 0.146.0). Trust is
+# persisted per hook in config.toml's [hooks.state] table under a hash of the
+# hook COMMAND, which embeds $ROOT. A checkout whose command has been trusted
+# once boots straight to its composer; a fresh clone, a moved checkout, a
+# container, or any edit to the command above meets this first:
+#
+#     Hooks need review
+#     4 hooks are new or changed.
+#     Hooks can run outside the sandbox after you trust them.
+#   › 1. Review hooks
+#     2. Trust all and continue
+#     3. Continue without trusting (hooks won't run)
+#
+# It is deliberately NOT in GANG_DIALOGS. That registry answers dialogs, and
+# bin/gang screens every record in it for authority language — this block trips
+# that screen on "trust" and "sandbox", which is the screen working, not
+# failing. A collar that pressed "Trust all and continue" would be granting the
+# operator's approval to run hooks outside the sandbox on their behalf, and
+# option 3 is a keystroke away from a codex agent with no Stop hook at all: no
+# spool drain, no deferred self-compaction, gang waiting on turn boundaries
+# that never arrive.
+#
+# What gang does today: GANG_OCCUPIED_REGEX matches this menu, so the window
+# reads !occupied! (authority unknown), delivery is refused and hitch fails.
+# Safe, and unhelpful — the operator sees a state word rather than the one-line
+# instruction, which is to run codex once in this checkout and choose "Review
+# hooks". Naming it needs a registry that declares no keystroke; there is none
+# yet.
 
 # Verified against codex 0.145.0 from the live capture cited in the landing
 # commit. Numeric prefixes move with the selection and are normalized by core;
 # all three option labels and every explanatory line remain fingerprint bytes.
+# The safety-buffering prompt is PERMANENTLY UNVERIFIABLE ON DEMAND: it appears
+# when the provider is slow to start responding, and nothing here can induce
+# that. Its pin will therefore never advance on evidence, and saying so is
+# honest where a version implying a re-check nobody schedules would not be.
 GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
 directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
 GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
