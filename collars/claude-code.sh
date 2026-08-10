@@ -141,7 +141,11 @@ print(*levels, sep=\"\\n\")
 ' || true"
 GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
 GANG_QUIET_AT_REST=1
-GANG_COMPACT_CMD="/compact"
+# The instruction slot is declared here because THIS harness's /compact takes
+# instructions for its summariser — driven on 2.1.226, where a summary told to
+# keep a lane name and a build number kept both and dropped what it was told to
+# omit. Codex declares a bare command until the same is driven there.
+GANG_COMPACT_CMD="/compact {{instructions}}"
 # Verified on claude-code 2.1.226: /usage opens a full-screen tabbed modal with
 # no composer, and Escape restores an empty composer. The page scrolls; gang
 # returns the visible screen and does not drive the scrollbar.

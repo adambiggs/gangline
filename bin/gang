@@ -1675,7 +1675,36 @@ self_compact_after_stop() { # $1 window id, $2 collar
     2) die "a dialog owns the screen after the turn ended" ;;
     *) die "the input box did not become ready after the turn ended" ;;
   esac
-  inject "$1" "$GANG_COMPACT_CMD" head
+  inject "$1" "$(compact_command)" head
+}
+
+# WHAT A COMPACTION IS TOLD TO KEEP. A summary chosen without instruction keeps
+# what reads as important, which is not the same as what a lane needs to
+# continue: the brief, the durable state already written down, and what is
+# still outstanding. Driven on claude-code 2.1.226 — a summary instructed to
+# keep a lane name and a build number kept both, and dropped the one fact it
+# was told to omit while retaining an unrelated one, so instructions are
+# honoured rather than merely carried.
+#
+# It is orientation, never direction. A default of "continue working" would
+# make a finished agent invent work, which is a worse failure than the one this
+# prevents. Nothing here tells the agent to act — after a compaction the
+# harness leaves it idle with an empty composer, and no instruction to the
+# SUMMARISER can change that. What to do next is the agent's, and CONTRACT.md
+# is where it is told.
+#
+# Only a collar that declares the slot gets this. claude-code's /compact takes
+# instructions; codex's has not been driven, so codex declares a bare command
+# and gang appends nothing to it rather than typing text at a harness that may
+# not read it.
+GANG_COMPACT_KEEP='Keep the brief you were given, the durable state you have already written down, and what is still outstanding in your lane, including anything you were asked to report.'
+
+compact_command() { # the collar's compact command with its instruction slot filled
+  case "$GANG_COMPACT_CMD" in
+    *'{{instructions}}'*)
+      printf '%s' "${GANG_COMPACT_CMD//'{{instructions}}'/$GANG_COMPACT_KEEP}" ;;
+    *) printf '%s' "$GANG_COMPACT_CMD" ;;
+  esac
 }
 
 # POSSIBLY REDUNDANT WITH THE COMPACTION BRACKET, AND DELIBERATELY STILL HERE.
@@ -3507,7 +3536,7 @@ cmd_compact() {
       2) die "cannot determine whether '$name' is mid-turn; refusing compaction" ;;
     esac
   fi
-  inject "$AGENT_ID" "$GANG_COMPACT_CMD" head
+  inject "$AGENT_ID" "$(compact_command)" head
   tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_failed 2>/dev/null || true
   printf '%s\n' "$(colour "$C_OK" "native compaction submitted to $name") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
 }

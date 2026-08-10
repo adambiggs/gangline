@@ -5177,6 +5177,33 @@ export GANG_COLLARS="$RUN_ROOT/collars"
 "$GANG" compact compactable >/dev/null
 contains "compact submits the collar's native command" \
   "$(pane compactable)" "NATIVE_COMPACT"
+# A COLLAR THAT DECLARES NO SLOT GETS NOTHING APPENDED. Instructions are typed
+# at the harness's own summariser, so a harness that has not been driven to
+# accept them must not have text pushed at it on the assumption that it does.
+excludes "and appends no instructions to a collar that declares no slot" \
+  "$(pane compactable)" "still outstanding in your lane"
+
+# WHERE THE SLOT IS DECLARED, THE INSTRUCTIONS ARE WHAT GETS TYPED. A summary
+# chosen without instruction keeps what reads as important, which is not what a
+# lane needs to continue.
+cat > "$RUN_ROOT/collars/native-slot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf SLOTTED_{{instructions}}"
+SH
+"$HITCH" slotted -c native-slot -d /tmp >/dev/null
+"$GANG" compact slotted >/dev/null
+slotted_pane="$(pane slotted)"
+contains "a declared slot is filled with the continuation instructions" \
+  "$slotted_pane" "still outstanding in your lane"
+contains "which name the durable state a lane is resumed from" \
+  "$slotted_pane" "durable state"
+# Orientation, never direction: a default that told a finished agent to carry on
+# would make it invent work, which is the worse failure of the two.
+excludes "and never tell the agent to keep working" "$slotted_pane" "continue working"
+excludes "the placeholder itself is never typed" "$slotted_pane" "{{instructions}}"
+"$GANG" drop slotted >/dev/null 2>&1 || :
 
 # A self-request made inside an agent's own pane must not submit the native
 # command during that turn. Stop consumes it once, after which a one-shot worker
