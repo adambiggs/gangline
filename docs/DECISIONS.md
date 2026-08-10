@@ -489,3 +489,36 @@ reads the same assurance twice can still only act on it once, and Gangline
 cannot verify that a launch option reached the model, so that line is spent on
 the recovery instead: where the contract lives, and an instruction to report a
 missing attachment rather than improvise.
+
+## A message is charged to the receiver, so brevity is a contract term
+
+Message length is not the sender's cost. Text handed to another agent is pasted
+into its window and re-read on every subsequent turn, so the sender writes it
+once and the receiver pays for it repeatedly — a lead's habit of arguing its
+reasoning in full is multiplied by however many turns the lane runs. Observed
+directly: two agents on single lanes reached 500k and 616k tokens, the larger
+share of it inbound brief rather than work.
+
+The contract therefore asks for the decision, the scope, and the stop rule, and
+sends reasoning to a durable artifact by pointer. This is a term rather than a
+lead heuristic because both ends of every send are held to it, and because the
+substrate cannot enforce it: nothing in `bin/gang` may inspect or ration message
+bodies, so the only place the rule can live is the prose every agent carries.
+
+## A brief fences work; prescribing steps is producing it
+
+Delegation buys a second window's thinking. Handing that window a route spends
+it on transcription instead, and the lead has done the work anyway while paying
+twice to have it read back. State the outcome, the constraints, and the standard
+the result is judged by; ask for the report rather than the progress. A lead
+reaching for the next move has taken the lane back without saying so, which is
+worse than either owning it or leaving it alone.
+
+## Peer traffic goes sideways; only decisions go up
+
+Gangline addresses every agent by name and delivers between any two of them, so
+a lead is a participant rather than a switchboard. Relaying review feedback or a
+question about a peer's work through the lead pays for that content three times
+— read in, restated, sent out — and the restating hand is the one that did not
+do the work, so the copy is worse as well as dearer. The lead is owed what it
+must decide or record. Everything else is cheaper and more accurate direct.

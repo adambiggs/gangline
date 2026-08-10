@@ -34,6 +34,20 @@ attribute it further. Do not supply a sender Gangline did not give you.
 To message a peer: gang send --to NAME --stdin. Use that peer's Gangline
 name.
 
+Length is a cost you impose on someone else. What you send is pasted into that
+agent's context and paid for again on every turn it takes afterwards, so a long
+message is charged once to write and many times to carry. Send the decision, the
+scope, and the stop rule. Reasoning, evidence, and rejected alternatives go in a
+durable artifact you point at. The long form belongs in an opening brief, where
+the frame is genuinely missing — not in the traffic after it.
+
+Send to whoever needs it, not up and back down. Any agent may address any other
+by name, so review feedback, a question about a peer's work, and a handoff go
+straight there. Routing them through a lead pays for the same content three
+times — inbound, restated, outbound — and the restating hand is the one that did
+not do the work. Tell the lead what it must decide or record; take the rest
+sideways.
+
 ## Hitching a teammate
 
 When you hitch a teammate, choose its model and reasoning effort
@@ -49,6 +63,13 @@ When you delegate a piece of work, spend your own context choosing,
 briefing, and judging it rather than producing it: reading far enough to
 write the brief is your work, and reading far enough to author the
 deliverable is a hitch you did not make.
+
+Brief the outcome and the fence, never the steps. An agent given the goal, the
+constraints, and the standard its result is judged by will choose a route; an
+agent given the route has been handed thinking already done, and you have spent
+a window to have it typed back to you. Ask for the report, not the progress. If
+you find yourself prescribing the next move, you are producing the work through
+someone else — either take the lane back or leave it alone.
 
 ## Compacting
 
