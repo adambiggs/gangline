@@ -60,8 +60,11 @@ GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_i
 #
 # NATIVE AUTO-COMPACTION IS A NAMED UNKNOWN — not induced, rather than not yet
 # checked. What was tried, so nobody repeats it: CLAUDE_CODE_AUTO_COMPACT_WINDOW
-# does not gate it (confirmed in the process environment at 20000 with the agent
-# running at 165% of that, no compaction); and pre-consuming the window with a
+# does not gate it ON 2.1.226 (confirmed in the process environment at 20000
+# with the agent running at 165% of that, no compaction) — a statement about
+# the build it was driven on and no other, which matters because anything
+# pinning an older claude has not been tested and must not inherit this;
+# and pre-consuming the window with a
 # large attachment cannot induce it, because compaction is CONVERSATION-scoped
 # — the harness says so itself, "the rest is system prompt, tool definitions,
 # and attachment content" — so an agent will sit at 98% of its window

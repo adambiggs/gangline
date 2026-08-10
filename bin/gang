@@ -1678,6 +1678,16 @@ self_compact_after_stop() { # $1 window id, $2 collar
   inject "$1" "$GANG_COMPACT_CMD" head
 }
 
+# POSSIBLY REDUNDANT WITH THE COMPACTION BRACKET, AND DELIBERATELY STILL HERE.
+# This flag exists because gang had no other way to know a self-compaction was
+# in flight. Where a collar wires PreCompact/PostCompact it now does — and
+# deferred self-compaction was watched raising both — so on those collars this
+# path may cover nothing the bracket does not. It stays until something
+# demonstrates that rather than argues it: the two overlap on a collar that
+# declares the pair and NOT on one that does not, so removing it would quietly
+# change behaviour for every harness declaring less. Answer it by driving a
+# deferred self-compaction with the bracket wired and watching what each one
+# contributes, not by reading this comment and agreeing with it.
 self_compact_dispatch() { # $1 window id, $2 collar; called only by Stop
   local request
   request="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
