@@ -79,6 +79,12 @@ Mandatory tests contain no sleeps, polling, or timeout scenarios and must remain
 well below their hard ceiling. Use immediate state, event barriers, or fake
 clocks.
 
+Where the behaviour under test *is* a timeout, a fake clock may be scaled rather
+than stopped — stopping it inverts the assertion instead of removing the wait.
+Such a fixture must record its measured margin: quiet-box latency, test budget,
+production budget. Recording it is the price of the exception, since without
+those numbers the exception is only permission to be timing-dependent.
+
 When native behavior needs proof, drive a separately named disposable Gangline
 session. Never use the development agent or the live `gangline` session as the
 test subject. Delete only the exact disposable session afterward.

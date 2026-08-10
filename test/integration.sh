@@ -28,6 +28,34 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # which inverted the moment the pasted startup contract became a pointer. Keying
 # on the requested duration leaves boot and churn clocks immediate, and no
 # assertion depends on the floor's value.
+#
+# THE MARGIN, MEASURED 2026-08-09 on claude-code 2.1.226 rather than reasoned
+# about, because the reasoning above is what a reader would otherwise have to
+# re-derive. submit_verify presses Enter and reads the box up to five times,
+# napping 0.4s between reads.
+#
+#   quiet-box echo latency      ~10ms
+#   test budget (this floor)     5 x 0.05s = 0.25s
+#   production budget            5 x 0.4s  = 2.0s
+#
+# So the quiet margin is about 25x and looks unbreakable right up until an
+# I/O-starved box stretches one round trip past 250ms. Under sustained load —
+# CPU spinners plus dd+sync loops, not CPU bursts, which do not reproduce it —
+# the same hitch failed 39 times in 40. UNDER THE SAME LOAD, PRODUCTION TIMING
+# FAILED 0 IN 20: gang's real delivery survives a box this busy, and only the
+# compressed clock does not. That is the more valuable half of the measurement
+# and the reason this floor is a test artifact rather than a substrate finding.
+#
+# AN EVENT BARRIER WAS CONSIDERED AND REFUSED, so the next reader does not
+# spend a day rediscovering it. The suite owns this shim, so the shim looks
+# like the place to block on pane output instead of napping — with a latched
+# tmux wait-for signalled from the fixture's PROMPT_COMMAND. Two things kill
+# it. The shim is global to every 0.3/0.4 nap in gang and most of them are not
+# waiting on a pane echo, so a blanket barrier deadlocks the rest. And tmux
+# wait-for has no timeout, so an unsignalled channel converts a failing test
+# into a HANGING suite, which is strictly worse than the flake it replaces.
+# Raising the floor is not an option either: a test that passes by waiting
+# longer on a slow box reports the box, not the tree.
 mkdir -p "$RUN_ROOT/bin"
 cat > "$RUN_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
