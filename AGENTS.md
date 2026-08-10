@@ -83,6 +83,13 @@ When native behavior needs proof, drive a separately named disposable Gangline
 session. Never use the development agent or the live `gangline` session as the
 test subject. Delete only the exact disposable session afterward.
 
+Isolating one takes a step the goal does not imply. Inside an agent window
+`$TMUX` is set, so bare `tmux` — and `gang`, which takes no socket flag — talks
+to the live server and `TMUX_TMPDIR` is ignored without saying so. Start with
+`unset TMUX TMUX_PANE`, then prove it with `tmux list-sessions` showing only
+your own session, before anything spawns an agent. `test/integration.sh` does
+this on its seventh line.
+
 Do not invent extra test matrices, reviewer chains, or release blockers without
 an operator request.
 
