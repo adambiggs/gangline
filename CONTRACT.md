@@ -57,6 +57,12 @@ window you are running in, so you do not name yourself. Do it after finishing a
 coherent arc and recording durable state somewhere that outlives your context,
 never mid-edit.
 
+Compacting leaves you idle with a summary and no instruction. Nothing will
+prompt you, so the next move is yours: re-read your brief and the durable state
+you wrote, then either resume the lane or report it complete. Both are turns.
+Doing neither is how a lane is silently dropped — you will still read as idle,
+and idle is indistinguishable from finished.
+
 ## The marathon rule
 
 Marathon rule: never halt the session to wait on the operator — resolve
