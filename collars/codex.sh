@@ -136,10 +136,18 @@ GANG_INTERRUPT_KEY="Escape"
 # event. legacy_notify / agent-turn-complete reports turn completion, which the
 # Stop hook above already delivers; it is not an awaiting-input witness and is
 # deliberately not wired. PermissionRequest is this collar's only stall source.
-# UNKNOWN on 0.146.0: that build offers no live enumeration of hook events —
-# `codex debug` exposes models, app-server and prompt-input and none of them
-# lists one — so re-verifying this means probing event names one at a time to
-# prove a negative. Left unproven rather than repinned.
+# UNVERIFIABLE BY ENUMERATION on 0.146.0, which is a stronger statement than
+# unverified. There is no enumeration surface to find: `codex debug` exposes
+# models, app-server and prompt-input, and none lists an event. Reading the
+# names out of the binary is not a substitute — that method was tested against
+# events known to be real, returned zero for every one of them, and so reports
+# absence it cannot see. Its silence is not evidence.
+#
+# The only route left is probing event names one at a time and proving a
+# negative from the misses. Recorded this way so nobody goes looking for a menu
+# that does not exist: claude-code has one and this harness does not, which is
+# a difference between the harnesses rather than a gap in what we bothered to
+# check.
 
 # HOOKS ARE TRUSTED, NOT MERELY INSTALLED (observed on codex 0.146.0). Trust is
 # persisted in config.toml's [hooks.state] table. The KEY is a fixed sentinel,

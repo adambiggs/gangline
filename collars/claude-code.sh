@@ -36,6 +36,13 @@ GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 # on; the other four report something that finished. A value not in this list
 # is not a stall — a renamed one stops raising notes rather than raising wrong
 # ones, and re-verifying this list is what a version bump costs.
+#
+# That cost is smaller than it reads, because this harness enumerates its own
+# hook vocabulary: /hooks opens a read-only menu listing every event with a
+# one-line description, and it needs no model turn. Use it before assuming an
+# event does or does not exist. It is a place to look, not a shopping list —
+# gang wires an event when something consumes it, never because the menu
+# offers it.
 GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
 
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
