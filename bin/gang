@@ -3192,8 +3192,14 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
   fi
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
-    0) [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-         || refuse "'$1' is not safely reachable mid-turn; wait for it to become idle" ;;
+    0) # States the fact and stops there. The instruction that used to live here
+       # — wait for it to become idle — is advice for the SENDER, and it is
+       # wrong on the path that follows: an accepted message is queued and the
+       # sender has nothing left to do. The one caller where waiting IS the
+       # answer is --live-only, and that path prints its own "NOT parked" line
+       # saying so, because there the message really was not taken.
+       [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
+         || refuse "'$1' is not safely reachable mid-turn" ;;
     2) # Could-not-determine is not busy. An expired witness is stale owned
        # state, and it must not veto a delivery that fresh box evidence can
        # prove safe — the same inversion the staged-record read-repair fixed
@@ -3295,9 +3301,28 @@ cmd_send() {
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
-  printf '%s %s\n' \
-    "$(colour "$C_WORK" "spooled for $name as [gang:$SEND_FROM] — NOT delivered")" \
-    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting; the next turn boundary in $name drains them) refused: ${err##*$'\n'}")"
+  # SAY WHAT IS TRUE OF THE MESSAGE, AND SAY IT FIRST. Every clause of the old
+  # wording was defensible and the composition was not: "NOT delivered",
+  # "refused" and "wait for it to become idle" read together as a failure the
+  # sender must work around, and one did — routing a report to an unattributed
+  # channel to escape a reliability that was never at risk. What is true is that
+  # the message was ACCEPTED. Only the immediate typing was declined, which is a
+  # fact about timing rather than about the message.
+  #
+  # So "refused" is gone from this path entirely: gang exits 0 here, and a word
+  # that means nothing was taken must not appear beside a success. It survives
+  # where it belongs — the NOT-parked path above, which exits 3 because there
+  # the message really was not taken.
+  #
+  # And the promise is now the one gang can keep. It used to say the next turn
+  # boundary drains them, which is a guarantee about a turn nobody has taken
+  # yet: an agent that never takes another one never drains, and a compaction
+  # produces no boundary at all on a collar that declares no bracket. The
+  # conditional form is true in both worlds and names where the message can be
+  # seen while it waits.
+  printf '%s\n%s\n' \
+    "$(colour "$C_OK" "queued for $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
+    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' next completes a turn, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
 # The recovery gang already diagnoses, performed as a verified operation rather

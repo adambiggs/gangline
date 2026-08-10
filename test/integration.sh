@@ -3429,8 +3429,8 @@ contains "a compacting agent reads busy though its turn bracket is closed" \
   "$("$GANG" status bracket 2>&1)" "-busy-"
 bracket_out="$(printf 'MARK_MIDCOMPACT' \
   | "$GANG" send --to bracket --from tester --stdin 2>&1)" || :
-contains "so a delivery into it is refused rather than typed" \
-  "$bracket_out" "spooled for bracket"
+contains "so a delivery into it is queued rather than typed" \
+  "$bracket_out" "queued for bracket"
 contains "and the message is waiting, not lost" "$("$GANG" roster)" "spooled=1"
 # The drain is dispatched, not performed inline, and it signals when it is
 # done. Waiting on that barrier is what makes the next two assertions read the
@@ -3719,8 +3719,24 @@ fi
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 spool_out="$(printf 'MARK_SPOOLED' |
   "$GANG" send --to parker --from tester --stdin)"
-contains "a refused delivery is parked rather than lost" "$spool_out" "spooled for parker"
-contains "and says plainly that it was not delivered" "$spool_out" "NOT delivered"
+contains "a refused delivery is parked rather than lost" "$spool_out" "queued for parker"
+# THE DECISION THIS GUARD RECORDS SURVIVES; ONLY ITS WORDING MOVES. It was
+# written so a parked message can never be reported as delivered, and that is
+# still enforced below. What changed is that "NOT delivered" was the whole
+# headline, and read beside "refused" and "wait for it to become idle" it told
+# a sender their message had failed when it had been accepted — one routed a
+# report around gang to escape it. The old expectation was defensible clause by
+# clause and wrong in composition, which is why it is the wording that moves
+# and not the rule.
+contains "and does not let it be read as delivered" "$spool_out" "not yet in the session"
+excludes "and never calls an accepted message refused" "$spool_out" "refused"
+contains "it says what the sender must now do, which is nothing" \
+  "$spool_out" "nothing further is needed from you"
+# The drain is conditional on a turn nobody has taken yet, so the promise is
+# conditional too: an agent that takes no further turn never drains, and the
+# message must not claim otherwise.
+contains "and promises the drain only on a turn actually being completed" \
+  "$spool_out" "next completes a turn"
 excludes "nothing was typed into the refusing target" "$(pane parker)" "MARK_SPOOLED"
 contains "status reports what is waiting for that target" \
   "$("$GANG" status parker)" "spooled: 1"
@@ -3741,7 +3757,7 @@ spool_noop_out="$(printf 'MARK_ANNOUNCED' |
   "$GANG" send --to parker --from tester --spool --supersede --stdin 2>&1)"
 contains "the deprecated spool flag announces its no-op" \
   "$spool_noop_out" "is the default now"
-contains "and the deprecated form still parks" "$spool_noop_out" "spooled for parker"
+contains "and the deprecated form still parks" "$spool_noop_out" "queued for parker"
 contains "its supersession leaves one replacement waiting" \
   "$("$GANG" status parker)" "spooled: 1"
 
