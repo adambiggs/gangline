@@ -13,7 +13,9 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]}"
+      _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]}"
       case "${GANG_CONTEXT_LIGHTS:-off}" in
         off|'') _gl_cc_json="$_gl_cc_json}" ;;
         *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
@@ -44,6 +46,36 @@ GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 # gang wires an event when something consumes it, never because the menu
 # offers it.
 GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
+# COMPACTION IS DECLARED, NOT INFERRED (driven on 2.1.226). A compacting
+# harness queues what it is sent, and @gl_turn stays CLOSED for the whole of
+# it, so gang used to read a compacting agent as idle and deliver into it. The
+# native pair above says so directly: PreCompact opens the bracket, PostCompact
+# closes it and drains. PreCompact's payload names its own cause in a `trigger`
+# field.
+#
+# THREE ORIGINS RAISE THE PAIR, each watched rather than assumed: an operator
+# typing /compact, gang submitting /compact to another agent, and deferred
+# self-compaction where the agent runs bare `gang compact` on itself. All three
+# read trigger="manual".
+#
+# NATIVE AUTO-COMPACTION IS A NAMED UNKNOWN — not induced, rather than not yet
+# checked. What was tried, so nobody repeats it: CLAUDE_CODE_AUTO_COMPACT_WINDOW
+# does not gate it (confirmed in the process environment at 20000 with the agent
+# running at 165% of that, no compaction); and pre-consuming the window with a
+# large attachment cannot induce it, because compaction is CONVERSATION-scoped
+# — the harness says so itself, "the rest is system prompt, tool definitions,
+# and attachment content" — so an agent will sit at 98% of its window
+# indefinitely when the compactable part is small. Proximity to the limit is
+# not the trigger; conversation size is. The only route left is a real
+# conversation of roughly two hundred thousand tokens, and tool results cap at
+# a few thousand each, which is why that is slow rather than merely untried.
+#
+# The cheap question to answer FIRST, if a real session ever auto-compacts: is
+# the TURN bracket already open across it? Auto-compaction is decided when the
+# harness is about to send a request, which is inside a turn — if that holds,
+# the turn witness already covers this case and the unknown above is a note
+# rather than a gap. That costs one observation in a session that was going to
+# happen anyway; the fill costs hours.
 
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
   printf '%s' "$2" | python3 -c '

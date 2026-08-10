@@ -683,7 +683,7 @@ print(*sorted(json.loads(settings)["hooks"]), sep=" ")
 PY
 )"
 equal "Claude installs every native event Gangline consumes" \
-  "Notification PermissionRequest PostToolUse Stop UserPromptSubmit" \
+  "Notification PermissionRequest PostCompact PostToolUse PreCompact Stop UserPromptSubmit" \
   "$claude_hook_events"
 claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' fixture "$claude_collar")"
@@ -3400,6 +3400,54 @@ contains "refused by the readback rather than by anything downstream of it" \
 contains "and says the Enter was not pressed" "$mismatch_out" "Enter was NOT pressed"
 contains "the recalled body is recorded against the window" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
+
+# COMPACTION IS A BRACKET AND CLOSING IT DELIVERS. The harness will not accept
+# input while it compacts, and @gl_turn is CLOSED throughout, so nothing below
+# the witness would have said so. What is asserted here is the thing we need
+# rather than the thing anyone happened to see: a gang delivery landing
+# immediately after PostCompact, not a parked message healing itself.
+cat > "$RUN_ROOT/collars/bracketable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+SH
+"$HITCH" bracket -c bracketable -d /tmp >/dev/null
+bracket_id="$(window_id bracket)"
+bracket_pane="$(tmux list-panes -t "$bracket_id" -F '#{pane_id}')"
+bracket_hook() { # $1 = event name, $2... = extra JSON body
+  printf '{"hook_event_name":"%s"%s}\n' "$1" "${2:-}" \
+    | TMUX_PANE="$bracket_pane" "$GANG" hook >/dev/null 2>&1
+}
+bracket_hook Stop                       # a closed turn: the state gang used to trust
+bracket_hook PreCompact ',"trigger":"manual"'
+contains "PreCompact opens the compaction bracket" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction)" "open "
+equal "and records the cause the harness named" "manual" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction_trigger)"
+contains "a compacting agent reads busy though its turn bracket is closed" \
+  "$("$GANG" status bracket 2>&1)" "-busy-"
+bracket_out="$(printf 'MARK_MIDCOMPACT' \
+  | "$GANG" send --to bracket --from tester --stdin 2>&1)" || :
+contains "so a delivery into it is refused rather than typed" \
+  "$bracket_out" "spooled for bracket"
+contains "and the message is waiting, not lost" "$("$GANG" roster)" "spooled=1"
+# The drain is dispatched, not performed inline, and it signals when it is
+# done. Waiting on that barrier is what makes the next two assertions read the
+# finished state rather than a race.
+tmux wait-for "gang-spool-drain-$bracket_id" &
+bracket_waiter=$!
+bracket_hook PostCompact
+wait "$bracket_waiter"
+equal "PostCompact closes the bracket" "closed" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction | cut -d' ' -f1)"
+excludes "and closing it drains the spool the compaction filled" \
+  "$("$GANG" roster)" "spooled="
+# Read from the PANE, not the composer: a delivery that landed has left the
+# box empty, because entering the session is what delivery means.
+contains "so the message enters the session once the compaction ends" \
+  "$(pane bracket)" "MARK_MIDCOMPACT"
+"$GANG" drop bracket >/dev/null 2>&1 || :
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
 # THE COMPOSER, not gang's account of it. Everything above is gang reporting on

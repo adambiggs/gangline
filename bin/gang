@@ -1409,6 +1409,33 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
 # reasoning binds readers, not the command holding the keystroke.
 turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 
+# COMPACTION IS A BRACKET, FOR THE SAME REASON A TURN IS. A harness that is
+# compacting will not accept input — it queues it — and gang used to learn that
+# only by inference, because @gl_turn is closed throughout and the witness that
+# reads it outranks the pane. Where a collar wires the native pair, the harness
+# declares the state instead: PreCompact opens, PostCompact closes, and closing
+# drains the spool exactly as Stop does. Collars that wire nothing keep the
+# fallthrough behaviour and lose nothing.
+compaction_state_write() { # $1 = window id, $2 = open|closed
+  tmux set-option -w -t "$1" @gl_compaction "$2 $(date +%s)" 2>/dev/null || true
+}
+
+compaction_witness() { # $1 = window id; 0 compacting, 1 not, 2 bracket unusable
+  local raw state at now
+  raw="$(tmux show-options -wqv -t "$1" @gl_compaction 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  read -r state at _ <<<"$raw"
+  [ "$state" = open ] || return 1
+  [[ "$at" =~ ^[0-9]+$ ]] || return 2
+  now="$(date +%s)"
+  # An open bracket whose close never arrived must not wedge the agent busy
+  # forever, so it ages out on the same bound a turn does and hands the verdict
+  # back to the tiers below. Degrading to today's behaviour is the safe
+  # direction; staying busy on a stale fact is not.
+  [ $(( now - at )) -lt "$GANG_TURN_LIMIT" ] || return 2
+  return 0
+}
+
 agent_name_of() { # $1 = window id; its registered name, or its title if it has none
   # Same rule as win_id, read from the other end: the registration answers for
   # a window that has one. A window without one has only its title to give.
@@ -1533,9 +1560,14 @@ decay_allowed() { # $1 = window id, $2 = the witness pair taken before the tier 
 }
 
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
-  local turn_rc=0 undetermined=0 stale_turn=0
+  local turn_rc=0 undetermined=0 stale_turn=0 compaction_rc=0
   BUSY_EXPIRED_WHAT="pty activity bound reached"
   BUSY_MOVED=0
+  # Asked FIRST, because it answers the question delivery actually has. An open
+  # turn and an open compaction both mean "will not accept input now"; only the
+  # second is invisible to @gl_turn, which stays closed for the whole of it.
+  compaction_witness "$1" || compaction_rc=$?
+  if [ "$compaction_rc" -eq 0 ]; then activity_hold_clear "$1"; return 0; fi
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
     0) activity_hold_clear "$1"; return 0 ;;
@@ -3987,8 +4019,9 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   # which is exactly the reading that must not pass as a successful no-op.
   case "$event" in
     UserPromptSubmit|PostToolUse|Stop|PermissionRequest|Notification) ;;
+    PreCompact|PostCompact) ;;
     *) hook_uninterpretable "${TMUX_PANE:-}" \
-         "unknown hook_event_name '$event' — this Gangline consumes UserPromptSubmit, PostToolUse, Stop, PermissionRequest and Notification"
+         "unknown hook_event_name '$event' — this Gangline consumes UserPromptSubmit, PostToolUse, Stop, PermissionRequest, Notification, PreCompact and PostCompact"
        exit 0 ;;
   esac
   [ -n "${TMUX_PANE:-}" ] || exit 0
@@ -4019,6 +4052,24 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$collar"
           spool_stop "$TMUX_PANE" "$collar" ;;
+    PreCompact) compaction_state_write "$TMUX_PANE" open
+                # The harness names its own cause in the payload, so gang never
+                # has to infer the origin from how the compaction was started.
+                # Recorded rather than acted on: every trigger observed so far
+                # reads "manual", and the value is what will identify an "auto"
+                # the first time a real session produces one.
+                kind="$(printf '%s' "$payload" \
+                  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("trigger",""))' \
+                    2>/dev/null)" || kind=""
+                [ -z "$kind" ] \
+                  || tmux set-option -w -t "$TMUX_PANE" @gl_compaction_trigger "$kind" 2>/dev/null || true
+                glyph_write "$TMUX_PANE" "-busy-" ;;
+    PostCompact) compaction_state_write "$TMUX_PANE" closed
+                 # Closing this bracket drains, exactly as closing a turn does.
+                 # A compaction produces no Stop, so without this the spool a
+                 # correctly-refused delivery just filled would wait for an
+                 # unrelated turn boundary that may never come.
+                 spool_stop "$TMUX_PANE" "$collar" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;
