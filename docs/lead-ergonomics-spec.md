@@ -1,7 +1,10 @@
 # Lead-ergonomics spec
 
 > Status: Landed at `96982ca` on 2026-08-07; retained as a dated
-> implementation record.
+> implementation record. Superseded in part at `fee26a8`: Gangline carries no PII
+> scanner, so §5's account of the hook and its fixture step naming
+> `tools/pii-scan` describe a file that no longer exists. The body is left as it
+> was written; see `docs/DECISIONS.md`, "PII prevention belongs to Snubline".
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
