@@ -318,6 +318,30 @@ authority-bearing dialog remains `!occupied! (authority unknown)`; run
 `gang attach`, answer it in the native TUI, then re-run status. Do not send prose
 into an unknown dialog or widen the registry to include an access decision.
 
+### Codex will not start until its hooks are reviewed
+
+Codex reviews new or changed hooks before it will run them, and Gangline wires
+hooks at launch. The window reads `!occupied! (authority unknown)`, hitch
+reports that the startup contract was not delivered, and the refusal points at
+`gang attach`. Attach and the screen names itself.
+
+Gangline will never answer this one. It is an authority decision, and the
+known-dialog registry refuses trust and sandbox language mechanically rather
+than by convention. Answer it yourself, in the native TUI, choosing to review
+the hooks.
+
+Two things a capture will not tell you. Answering once in a checkout persists
+that trust in codex's own configuration, per wired event, under a hash of the
+hook command — which embeds this checkout's path. A fresh clone, a moved
+checkout, a container image, or any change to what the collar composes raises
+it again, so pre-answer it once per environment rather than expecting it never
+to return.
+
+And continuing WITHOUT trusting is the option to avoid. It leaves codex running
+with its hooks inert, so that agent has no `Stop` hook: no spool drain and no
+deferred self-compaction. Gangline waits on turn boundaries that never arrive,
+and the roster shows a teammate that looks alive.
+
 ### The harness parked a message in its own input queue
 
 Delivery reports this instead of claiming success. Recover it:
