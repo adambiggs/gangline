@@ -40,7 +40,63 @@ chmod +x "$RUN_ROOT/bin/sleep"
 PATH="$RUN_ROOT/bin:$PATH"
 export PATH
 
+# AN UNVERIFIABLE SUBMISSION IS AN UNKNOWN, AND AN UNKNOWN COSTS ONE ASSERTION.
+# The floor above is a race and a starved box can lose it: measured, the same
+# setup hitch fails 39 times in 40 under sustained I/O load. That failure
+# reaches gang through `die`, so `set -e` used to end the whole run — one
+# starved paste cost every remaining check AND the summary, which is the one
+# reading nobody can act on, on exactly the busy box the suite exists to speak
+# about.
+#
+# Only SETUP hitches route through this: the ones whose output no assertion
+# reads. Anything that inspects what hitch printed, or that means to watch a
+# hitch fail, still calls gang directly and still ends the run, so no guard
+# here has been softened. The retry is a second OBSERVATION, not a longer wait
+# — a real defect fails both, while a starved pane usually loses only once —
+# and the unknown is recorded either way so a quiet green and a green bought
+# under load never read the same.
+cat > "$RUN_ROOT/bin/hitch-guard" <<SH
+#!/bin/sh
+REAL="$GANG"
+UNKNOWNS="$RUN_ROOT/unknowns"
+ERR="$RUN_ROOT/hitch-stderr"
+SH
+cat >> "$RUN_ROOT/bin/hitch-guard" <<'SH'
+rc=0
+"$REAL" hitch "$@" 2>"$ERR" || rc=$?
+if [ "$rc" -ne 0 ] \
+  && grep -q 'submit NOT verified\|submission unverifiable' "$ERR"; then
+  printf '%s\n' "$1" >> "$UNKNOWNS"
+  "$REAL" drop "$1" >/dev/null 2>&1
+  rc=0
+  "$REAL" hitch "$@" 2>"$ERR" || rc=$?
+fi
+cat "$ERR" >&2
+exit "$rc"
+SH
+chmod +x "$RUN_ROOT/bin/hitch-guard"
+HITCH="$RUN_ROOT/bin/hitch-guard"
+
+# A run that ends early still owes a reading. One retry rescues an ISOLATED
+# starved submission, which is the case that used to cost every later check;
+# it cannot rescue a box starving nearly all of them, and pretending otherwise
+# would just be the floor raised by another name. So the second consecutive
+# starve still ends the run — but it ends it OUT LOUD, naming the coverage
+# reached and the reason, because a verdict nobody can read is what made the
+# original failure expensive.
+summary_printed=0
 cleanup() {
+  if [ "$summary_printed" -eq 0 ]; then
+    printf '\nRUN ENDED EARLY after %s checks in %ss — no verdict on the rest.\n' \
+      "$checks" "$SECONDS"
+    if [ -s "$RUN_ROOT/unknowns" ]; then
+      printf 'Gang could not verify these setup submissions: %s\n' \
+        "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
+      printf 'Each was retried once and starved again, so this box is too busy\n'
+      printf 'to time a paste. That is machine load, not a tree verdict — read\n'
+      printf 'uptime, then re-run quiet before concluding anything about gang.\n'
+    fi
+  fi
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
 }
@@ -910,7 +966,7 @@ SH
 # below has been established.
 printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
-  "$GANG" hitch alpha -c bash -d /tmp >/dev/null
+  "$HITCH" alpha -c bash -d /tmp >/dev/null
 alpha_id="$(window_id alpha)"
 # The shipped startup contract now includes the delegation sentence. Keep the
 # Bash stand-in's composer immediately observable for ordinary doctrine-sized
@@ -973,7 +1029,7 @@ collar_input() {
   shadow_real_input "\$1"
 }
 SH
-GANG_COLLARS="$shadow_dir" "$GANG" hitch shadowed -c bash -d /tmp >/dev/null
+GANG_COLLARS="$shadow_dir" "$HITCH" shadowed -c bash -d /tmp >/dev/null
 : > "$RUN_ROOT/shadow-marker-on"
 equal "a custom collar directory shadows the shipped collar" \
   "CUSTOM_COLLAR_MARKER" \
@@ -1032,8 +1088,8 @@ contains "a roster over shared legacy collars announces at least once" \
   "$(<"$RUN_ROOT/legacy-roster.err")" \
   "collar 'legacy-contract' declares profile_input"
 new_roster_session="gangtest-new-contract-$$"
-GANG_SESSION="$new_roster_session" "$GANG" hitch new-contract-a -c bash -d /tmp >/dev/null
-GANG_SESSION="$new_roster_session" "$GANG" hitch new-contract-b -c bash -d /tmp >/dev/null
+GANG_SESSION="$new_roster_session" "$HITCH" new-contract-a -c bash -d /tmp >/dev/null
+GANG_SESSION="$new_roster_session" "$HITCH" new-contract-b -c bash -d /tmp >/dev/null
 GANG_SESSION="$new_roster_session" "$GANG" roster \
   > "$RUN_ROOT/new-roster.out" 2> "$RUN_ROOT/new-roster.err"
 excludes "new contract collars calibrate the roster announcement" \
@@ -1042,7 +1098,7 @@ GANG_SESSION="$new_roster_session" "$GANG" down "$new_roster_session" >/dev/null
 
 # A running pre-rename window is healed by the hook itself, with no stderr
 # announcement: internal tmux residue is Gangline's state, not operator input.
-"$GANG" hitch legacy-option -c bash -d /tmp >/dev/null
+"$HITCH" legacy-option -c bash -d /tmp >/dev/null
 legacy_option_id="$(window_id legacy-option)"
 legacy_option_pane="$(tmux list-panes -t "$legacy_option_id" -F '#{pane_id}')"
 tmux set-option -w -t "$legacy_option_id" @gl_profile bash
@@ -1133,7 +1189,7 @@ printf 'instrument tmux=%s sha256=%s sleep=%s sha256=%s spec-sha256=%s\n' \
   "$sleep_stub_sha" \
   '52a740a3954c18b82f2b4461d92a38dfb17d8e1655d4e5796c4d0e07f97ac995'
 
-GANG_CONTEXT_LIGHTS=off "$GANG" hitch ctx-agent -c ctx-known -d /tmp >/dev/null
+GANG_CONTEXT_LIGHTS=off "$HITCH" ctx-agent -c ctx-known -d /tmp >/dev/null
 ctx_agent_id="$(window_id ctx-agent)"
 ctx_agent_pane="$(tmux list-panes -t "$ctx_agent_id" -F '#{pane_id}')"
 equal "named context prints the collar reading byte-for-byte" \
@@ -1142,7 +1198,7 @@ equal "bare context targets the calling agent window" \
   "42k/200k (21%)" "$(TMUX_PANE="$ctx_agent_pane" "$GANG" context)"
 equal "context answers while context lights are off" \
   "42k/200k (21%)" "$(GANG_CONTEXT_LIGHTS=off "$GANG" context ctx-agent)"
-"$GANG" hitch ctx-failing -c ctx-fail -d /tmp >/dev/null
+"$HITCH" ctx-failing -c ctx-fail -d /tmp >/dev/null
 excludes "roster carries no context reading column" \
   "$("$GANG" roster)" "42k/200k"
 
@@ -1157,12 +1213,12 @@ equal "a collar context failure fabricates no reading" "" "$(<"$ctx_fail_stdout"
 contains "a collar context failure keeps its own diagnostic" \
   "$(<"$ctx_fail_stderr")" "fixture context unavailable"
 
-"$GANG" hitch ctx-missing -c ctx-none -d /tmp >/dev/null
+"$HITCH" ctx-missing -c ctx-none -d /tmp >/dev/null
 refuses "a missing collar_context names the collar" \
   "collar 'ctx-none' declares no collar_context" \
   "$GANG" context ctx-missing
 
-GANG_CONTEXT_LIGHTS=off "$GANG" hitch usage-inline -c usage-inline -d /tmp >/dev/null
+GANG_CONTEXT_LIGHTS=off "$HITCH" usage-inline -c usage-inline -d /tmp >/dev/null
 usage_inline_id="$(window_id usage-inline)"
 tmux resize-window -t "$usage_inline_id" -x 80 -y 12
 usage_marker_ready="test-usage-marker-ready-$$"
@@ -1180,7 +1236,7 @@ excludes "inline usage excludes the pre-existing transcript" \
 equal "inline usage restores an empty composer" "" \
   "$("$GANG" composer usage-inline)"
 
-"$GANG" hitch usage-modal -c usage-modal -d /tmp >/dev/null
+"$HITCH" usage-modal -c usage-modal -d /tmp >/dev/null
 usage_modal_out="$("$GANG" usage usage-modal)"
 equal "modal usage returns the visible page raw" \
   $'MODAL_ONE\nMODAL_TWO' \
@@ -1188,7 +1244,7 @@ equal "modal usage returns the visible page raw" \
 equal "modal usage dismisses back to an empty composer" "" \
   "$("$GANG" composer usage-modal)"
 
-"$GANG" hitch usage-confirm -c usage-confirm -d /tmp >/dev/null
+"$HITCH" usage-confirm -c usage-confirm -d /tmp >/dev/null
 usage_confirm_out="$("$GANG" usage usage-confirm)"
 equal "usage presses the collar's confirmation key before capture" \
   "CONFIRMED_USAGE" \
@@ -1196,7 +1252,7 @@ equal "usage presses the collar's confirmation key before capture" \
 equal "confirmed modal usage restores an empty composer" "" \
   "$("$GANG" composer usage-confirm)"
 
-"$GANG" hitch usage-stuck -c usage-stuck -d /tmp >/dev/null
+"$HITCH" usage-stuck -c usage-stuck -d /tmp >/dev/null
 usage_stuck_stdout="$RUN_ROOT/usage-stuck.stdout"
 usage_stuck_stderr="$RUN_ROOT/usage-stuck.stderr"
 if "$GANG" usage usage-stuck >"$usage_stuck_stdout" 2>"$usage_stuck_stderr"; then
@@ -1224,7 +1280,7 @@ tmux set-option -uw -t "$usage_inline_id" @gl_turn
 equal "usage readiness refusals type nothing" \
   "$usage_before_refusals" "$(pane usage-inline)"
 
-"$GANG" hitch usage-occupied -c usage-occupied -d /tmp >/dev/null
+"$HITCH" usage-occupied -c usage-occupied -d /tmp >/dev/null
 usage_occupied_id="$(window_id usage-occupied)"
 usage_occupied_ready="test-usage-occupied-ready-$$"
 printf -v usage_occupied_cmd 'printf OCCUPIED_USAGE; tmux wait-for -S %q; IFS= read -r _' \
@@ -1241,7 +1297,7 @@ equal "an occupied usage refusal types nothing" \
 refuses "a collar with no GANG_USAGE_CMD refuses usage" \
   "declares no GANG_USAGE_CMD" "$GANG" usage alpha
 
-"$GANG" hitch usage-nochange -c usage-nochange -d /tmp >/dev/null
+"$HITCH" usage-nochange -c usage-nochange -d /tmp >/dev/null
 usage_nochange_id="$(window_id usage-nochange)"
 usage_nochange_ready="test-usage-nochange-ready-$$"
 usage_nochange_marker="READY_USAGE_NOCHANGE_$$"
@@ -1274,7 +1330,7 @@ equal "an unchanged usage screen leaves the composer empty" "" \
   "$("$GANG" composer usage-nochange)"
 
 tmux set-option -g history-limit 5
-"$GANG" hitch usage-rollover -c usage-inline -d /tmp >/dev/null
+"$HITCH" usage-rollover -c usage-inline -d /tmp >/dev/null
 tmux set-option -g history-limit 2000
 usage_rollover_id="$(window_id usage-rollover)"
 tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
@@ -1292,7 +1348,7 @@ contains "a rolled-over usage read names the lost origin" \
 equal "a rolled-over usage read prints no content" "" \
   "$(<"$usage_rollover_stdout")"
 
-"$GANG" hitch usage-unknown -c usage-unknown -d /tmp >/dev/null
+"$HITCH" usage-unknown -c usage-unknown -d /tmp >/dev/null
 refuses "usage refuses an unknown render declaration" \
   "unknown GANG_USAGE_RENDER 'unknown'" "$GANG" usage usage-unknown
 
@@ -1492,7 +1548,7 @@ collar_session_id() {
   printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin)["session_id"])'
 }
 SH
-"$GANG" hitch identity -c identity -d /tmp >/dev/null
+"$HITCH" identity -c identity -d /tmp >/dev/null
 identity_id="$(window_id identity)"
 identity_pane="$(tmux list-panes -t "$identity_id" -F '#{pane_id}')"
 : > "$RUN_ROOT/identity-stderr-on"
@@ -1607,7 +1663,7 @@ refuses "bare resume without a surviving stamped window refuses loudly" \
   "$GANG" hitch identity -c identity -d /tmp --resume
 equal "a refused stamp-less resume launches nothing" "" "$(window_id identity)"
 
-"$GANG" hitch survivor -c identity -d /tmp >/dev/null
+"$HITCH" survivor -c identity -d /tmp >/dev/null
 survivor_id="$(window_id survivor)"
 survivor_pane="$(tmux list-panes -t "$survivor_id" -F '#{pane_id}')"
 printf '%s' '{"hook_event_name":"Stop","session_id":"surviving-native-id"}' \
@@ -1621,7 +1677,7 @@ printf -v survivor_exit 'trap %q EXIT; exit' "tmux wait-for -S $survivor_dead"
 tmux send-keys -l -t "$survivor_id" "$survivor_exit"
 tmux send-keys -t "$survivor_id" Enter
 tmux wait-for "$survivor_dead"
-"$GANG" hitch survivor -c identity -d /tmp --resume >/dev/null
+"$HITCH" survivor -c identity -d /tmp --resume >/dev/null
 contains "bare resume reads the stamp from a surviving dead window" \
   "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
   "resume-surviving-native-id"
@@ -1686,7 +1742,7 @@ tmux kill-window -t "$residue_id"
 # resolver that matches on #W can be aimed at another lane's harness by a rename
 # alone — and would paste, submit, VERIFY and report success against it. The
 # registration is what hitch and adopt wrote; the title is decoration.
-"$GANG" hitch registered-name -c bash -d /tmp >/dev/null
+"$HITCH" registered-name -c bash -d /tmp >/dev/null
 registered_name_id="$(window_id registered-name)"
 tmux rename-window -t "$registered_name_id" borrowed-title
 refuses "a window title cannot address the agent registered under another name" \
@@ -1870,7 +1926,7 @@ SH
 
 dialog_start() { # $1 agent, $2 variant, $3 collar
   local name="$1" variant="$2" collar="$3" id command
-  "$GANG" hitch "$name" -c "$collar" -d /tmp >/dev/null
+  "$HITCH" "$name" -c "$collar" -d /tmp >/dev/null
   id="$(window_id "$name")"
   case "$name" in dialog-known) tmux resize-window -t "$id" -x 48 -y 24 ;; esac
   : > "$RUN_ROOT/$name.keys"
@@ -2255,7 +2311,7 @@ cat > "$RUN_ROOT/collars/broken-observer.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_BUSY_REGEX='['
 SH
-"$GANG" hitch broken-observer -c broken-observer -d /tmp >/dev/null
+"$HITCH" broken-observer -c broken-observer -d /tmp >/dev/null
 if broken_roster="$("$GANG" roster 2>&1)"; then
   fail "roster fails when an agent row cannot be observed" "roster exited successfully"
 else
@@ -2399,7 +2455,7 @@ mkdir -p "$CONFIG_CASES/nested" "$RUN_ROOT/nested-parent-dir" "$RUN_ROOT/nested-
 printf '%s\n' 'GANG_COLLAR=bash' 'GANG_SESSION=config-nested-session' \
   > "$CONFIG_CASES/nested/config"
 env -u GANG_COLLAR -u GANG_SESSION GANG_CONFIG_DIR="$CONFIG_CASES/nested" \
-  "$GANG" hitch nested-parent -d "$RUN_ROOT/nested-parent-dir" >/dev/null
+  "$HITCH" nested-parent -d "$RUN_ROOT/nested-parent-dir" >/dev/null
 nested_parent_id="$(window_id_in config-nested-session nested-parent)"
 nested_done="test-config-nested-done-$$"
 tmux send-keys -t "$nested_parent_id" \
@@ -2421,7 +2477,7 @@ mkdir -p "$DOCTRINE_CASES/present"
 printf '%s\n' 'MARK_DOCTRINE_PRESENT binds this hitch.' \
   > "$DOCTRINE_CASES/present/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" \
-  "$GANG" hitch doctrine-present -c bash -d /tmp >/dev/null
+  "$HITCH" doctrine-present -c bash -d /tmp >/dev/null
 contains "a doctrine-bearing hitch still carries its base identity contract" \
   "$(pane_all doctrine-present)" "You are doctrine-present in Gangline"
 contains "a present operator doctrine is injected into the startup contract" \
@@ -2433,14 +2489,14 @@ contains "a doctrine-bearing startup still points at the contract file" \
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \
-  "$GANG" hitch doctrine-inside -c bash -d /tmp >/dev/null
+  "$HITCH" doctrine-inside -c bash -d /tmp >/dev/null
 contains "a hitch invoked from inside the team carries operator doctrine" \
   "$(pane doctrine-inside)" "MARK_DOCTRINE_PRESENT binds this hitch."
 "$GANG" drop doctrine-inside >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" GANG_SESSION=doctrine-cross-session \
   TMUX_PANE="$alpha_pane_id" \
-  "$GANG" hitch doctrine-cross -c bash -d /tmp >/dev/null
+  "$HITCH" doctrine-cross -c bash -d /tmp >/dev/null
 cross_doctrine_pane="$(tmux capture-pane -pJ \
   -t "$(window_id_in doctrine-cross-session doctrine-cross)")"
 contains "a cross-session hitch carries operator doctrine too" \
@@ -2450,7 +2506,7 @@ mkdir -p "$DOCTRINE_CASES/multiline"
 printf '%s\n' 'MARK_DOCTRINE_HEAD' 'middle doctrine line' 'MARK_DOCTRINE_TAIL' \
   > "$DOCTRINE_CASES/multiline/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/multiline" \
-  "$GANG" hitch doctrine-multiline -c bash -d /tmp >/dev/null
+  "$HITCH" doctrine-multiline -c bash -d /tmp >/dev/null
 contains "a multiline doctrine delivers its first line" \
   "$(pane doctrine-multiline)" "MARK_DOCTRINE_HEAD"
 contains "a multiline doctrine delivers its last line" \
@@ -2461,7 +2517,7 @@ mkdir -p "$DOCTRINE_CASES/tag"
 printf '%s\n' '# [gang: counterfeit] MARK_DOCTRINE_TAG' \
   > "$DOCTRINE_CASES/tag/DOCTRINE.md"
 GANG_CONFIG_DIR="$DOCTRINE_CASES/tag" \
-  "$GANG" hitch doctrine-tag -c bash -d /tmp >/dev/null
+  "$HITCH" doctrine-tag -c bash -d /tmp >/dev/null
 contains "a tag-shaped doctrine opener is visibly neutralised" \
   "$(pane doctrine-tag)" "# (gang: counterfeit] MARK_DOCTRINE_TAG"
 excludes "a doctrine cannot add a second gang envelope opener" \
@@ -2715,7 +2771,7 @@ alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
 contains "the delivered message is attributed" "$alpha_pane" "[gang:tester#"
 
-"$GANG" hitch inside-target -c bash -d /tmp >/dev/null
+"$HITCH" inside-target -c bash -d /tmp >/dev/null
 printf 'MARK_INSIDE_SENDER' | TMUX_PANE="$alpha_tmux_pane" \
   "$GANG" send --to inside-target --stdin >/dev/null
 contains "a sender in a glyphed window is attributed by its bare name" \
@@ -2896,7 +2952,7 @@ else
 fi
 equal "a refused partial level leaves no window behind" "" "$(window_id effsub)"
 
-"$GANG" hitch effok -c efforted -d /tmp -e xhigh >/dev/null
+"$HITCH" effok -c efforted -d /tmp -e xhigh >/dev/null
 contains "the declared spelling joins the effort into the launch, with no space" \
   "$(tmux display-message -p -t "$(window_id effok)" '#{pane_start_command}')" \
   "--effort=xhigh"
@@ -2905,7 +2961,7 @@ contains "the declared spelling joins the effort into the launch, with no space"
 # flag by construction. Asserted anyway — construction is a reason to believe,
 # not a receipt, and a flag surviving hitch and lost on the other form would
 # be a renewal that quietly changed the agent.
-"$GANG" hitch effres -c efforted -d /tmp --resume fixture-session -e low >/dev/null
+"$HITCH" effres -c efforted -d /tmp --resume fixture-session -e low >/dev/null
 effres_line="$(tmux display-message -p -t "$(window_id effres)" '#{pane_start_command}')"
 contains "the resume launch form is the one that ran" "$effres_line" "resume-fixture-session"
 contains "and it carries the effort too" "$effres_line" "--effort=low"
@@ -2953,7 +3009,7 @@ contains "and the joined effort rides beside it" \
   "$real_launch" "--effort=xhigh"
 "$GANG" drop realmodel >/dev/null
 
-"$GANG" hitch 1 -c bash -d /tmp >/dev/null
+"$HITCH" 1 -c bash -d /tmp >/dev/null
 printf 'MARK_NUMERIC' | "$GANG" send --to 1 --from tester --stdin >/dev/null
 contains "a numeric name reaches its exact window" "$(pane 1)" "MARK_NUMERIC"
 excludes "numeric addressing does not fall through to another window" \
@@ -3062,7 +3118,7 @@ GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand exec bash --rcfile $RUN_
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
-"$GANG" hitch strand -c queueing -d /tmp >/dev/null
+"$HITCH" strand -c queueing -d /tmp >/dev/null
 touch "$RUN_ROOT/queue-strand"
 if strand_out="$(printf 'MARK_QUEUED' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
   fail "a submission the harness parks in its queue is not a delivery" \
@@ -3161,7 +3217,7 @@ collar_input() { # a composer that spans lines, and reads as the hint when empty
 }
 SH
 : > "$RUN_ROOT/flush-signal"
-"$GANG" hitch parked -c flushable -d /tmp >/dev/null
+"$HITCH" parked -c flushable -d /tmp >/dev/null
 parked_id="$(window_id parked)"
 
 # The fixture raises and lowers its strand from a prompt hook, so a world that
@@ -3408,7 +3464,7 @@ GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/interrupt-rc' fixture"
 GANG_INTERRUPT_KEY='C-g'
 GANG_BUSY_REGEX='STILL_WORKING'
 SH
-"$GANG" hitch stoppable -c interruptible -d /tmp >/dev/null
+"$HITCH" stoppable -c interruptible -d /tmp >/dev/null
 stop_id="$(window_id stoppable)"
 tmux set-option -w -t "$stop_id" @gl_turn "open $(date +%s)"
 contains "an open turn bracket answers busy" \
@@ -3443,7 +3499,7 @@ contains "so the keystroke cannot strand a false busy" \
 # busy marker, and that evidence has to survive the interrupt — writing a fresh
 # closed bracket would answer idle before anything looked at the pane, and the
 # next send would enter mid-turn on gang's own say-so.
-"$GANG" hitch stubborn -c interruptible -d /tmp >/dev/null
+"$HITCH" stubborn -c interruptible -d /tmp >/dev/null
 stubborn_id="$(window_id stubborn)"
 tmux send-keys -l -t "$stubborn_id" 'printf STILL_WORKING\\n'
 tmux send-keys -t "$stubborn_id" Enter
@@ -3498,7 +3554,7 @@ cat > "$RUN_ROOT/collars/nodrain.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 SH
-"$GANG" hitch nodrain -c nodrain -d /tmp >/dev/null
+"$HITCH" nodrain -c nodrain -d /tmp >/dev/null
 nodrain_id="$(window_id nodrain)"
 nodrain_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$nodrain_id" @gl_spool)"
 tmux send-keys -l -t "$nodrain_id" 'HUMAN_DRAFT'
@@ -3547,7 +3603,7 @@ collar_input() { # once per armed drain, report what the spool and the lock look
   spool_real_input "\$1"
 }
 SH
-"$GANG" hitch parker -c spoolable -d /tmp >/dev/null
+"$HITCH" parker -c spoolable -d /tmp >/dev/null
 parker_id="$(window_id parker)"
 parker_pane_id="$(tmux list-panes -t "$parker_id" -F '#{pane_id}')"
 parker_token="$(tmux show-options -wqv -t "$parker_id" @gl_spool)"
@@ -3801,7 +3857,7 @@ fi
   || fail "a held failed entry is archived with waiting mail" \
     "${parker_failed##*/} is absent"
 
-"$GANG" hitch archive-second -c spoolable -d /tmp >/dev/null
+"$HITCH" archive-second -c spoolable -d /tmp >/dev/null
 archive_second_id="$(window_id archive-second)"
 tmux send-keys -l -t "$archive_second_id" 'HUMAN_DRAFT'
 printf 'MARK_SECOND_ARCHIVE' |
@@ -3814,7 +3870,7 @@ done
 equal "a second teardown claims a distinct archive directory" "2" \
   "$archive_count"
 
-"$GANG" hitch archive-empty -c spoolable -d /tmp >/dev/null
+"$HITCH" archive-empty -c spoolable -d /tmp >/dev/null
 "$GANG" drop archive-empty >/dev/null
 archive_count_after_empty=0
 for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
@@ -3830,7 +3886,7 @@ equal "dropping an empty queue creates no archive directory" \
 # read from the registration now, so the registration is what gets validated
 # before it is joined to a path: the check sits at the boundary that builds the
 # destination, where no reader can route around it.
-"$GANG" hitch traversal -c spoolable -d /tmp >/dev/null
+"$HITCH" traversal -c spoolable -d /tmp >/dev/null
 traversal_id="$(window_id traversal)"
 tmux send-keys -l -t "$traversal_id" 'HUMAN_DRAFT'
 printf 'MARK_TRAVERSAL' |
@@ -3853,7 +3909,7 @@ tmux kill-window -t "$traversal_id" 2>/dev/null || true
 
 # MAIL READS THE QUEUE AND NOTHING ELSE. It does not load the target's collar,
 # claim entries, take the pane lock, or attempt delivery.
-"$GANG" hitch mailer -c spoolable -d /tmp >/dev/null
+"$HITCH" mailer -c spoolable -d /tmp >/dev/null
 mailer_id="$(window_id mailer)"
 tmux send-keys -l -t "$mailer_id" 'HUMAN_DRAFT'
 printf 'MARK_MAIL_ONE' |
@@ -3969,7 +4025,7 @@ equal "and an operator outside the team consumes nothing either" \
   "$("$GANG" mail mailer >/dev/null; cd "$mailer_spool" && ls)"
 "$GANG" drop mailer >/dev/null
 
-"$GANG" hitch empty-mailbox -c spoolable -d /tmp >/dev/null
+"$HITCH" empty-mailbox -c spoolable -d /tmp >/dev/null
 empty_mail_out="$("$GANG" mail empty-mailbox)"
 contains "mail exits cleanly on an empty queue" \
   "$empty_mail_out" "no mail waiting for empty-mailbox"
@@ -3989,8 +4045,8 @@ cat > "$RUN_ROOT/collars/porcelain.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_BUSY_REGEX='MARK_PORCELAIN_BUSY'
 SH
-"$GANG" hitch porcelain-busy -c porcelain -d /tmp >/dev/null
-"$GANG" hitch porcelain-idle -c porcelain -d /tmp >/dev/null
+"$HITCH" porcelain-busy -c porcelain -d /tmp >/dev/null
+"$HITCH" porcelain-idle -c porcelain -d /tmp >/dev/null
 porcelain_busy_id="$(window_id porcelain-busy)"
 porcelain_painted="porcelain-painted-$$"
 tmux send-keys -l -t "$porcelain_busy_id" \
@@ -4039,7 +4095,7 @@ equal "porcelain roster is empty when its session is absent" "" \
 # QUEUE AGE COMES FROM THE OLDEST LIVE ENTRY'S FIXED-WIDTH STAMP. The chosen
 # time is immediate input, not a wall-clock wait; prefix matching tolerates the
 # one second in which the command itself runs.
-"$GANG" hitch agebox -c spoolable -d /tmp >/dev/null
+"$HITCH" agebox -c spoolable -d /tmp >/dev/null
 agebox_id="$(window_id agebox)"
 agebox_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
   -t "$agebox_id" @gl_spool)"
@@ -4064,7 +4120,7 @@ contains "queue age follows the older of two waiting entries" \
   "$("$GANG" roster)" "oldest=2h"
 "$GANG" drop agebox >/dev/null
 
-"$GANG" hitch agebad -c spoolable -d /tmp >/dev/null
+"$HITCH" agebad -c spoolable -d /tmp >/dev/null
 agebad_id="$(window_id agebad)"
 agebad_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
   -t "$agebad_id" @gl_spool)"
@@ -4095,7 +4151,7 @@ GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/preempt-rc' fixture"
 GANG_INTERRUPT_KEY='C-g'
 GANG_STOP_HOOK=1
 SH
-"$GANG" hitch preempt -c preemptible -d /tmp >/dev/null
+"$HITCH" preempt -c preemptible -d /tmp >/dev/null
 preempt_id="$(window_id preempt)"
 tmux send-keys -l -t "$preempt_id" 'HUMAN_DRAFT'
 printf 'MARK_PARKED_ONE' |
@@ -4155,7 +4211,7 @@ tmux send-keys -t "$preempt_id" C-u
 # A window with no spool identity is refused rather than given one here. Minting
 # at the moment a message needs parking is exactly the race the identity exists
 # to avoid, so gang says so instead of narrowing the window.
-"$GANG" hitch identityless -c spoolable -d /tmp >/dev/null
+"$HITCH" identityless -c spoolable -d /tmp >/dev/null
 tmux set-option -uw -t "$(window_id identityless)" @gl_spool
 tmux send-keys -l -t "$(window_id identityless)" 'HUMAN_DRAFT'
 if identityless_out="$(printf 'MARK_NO_IDENTITY' |
@@ -4249,7 +4305,7 @@ collar_input() { # the real box, then a draft that refuses, then one that never 
   wedge_real_input "\$1"
 }
 SH
-"$GANG" hitch wedged -c wedging -d /tmp >/dev/null
+"$HITCH" wedged -c wedging -d /tmp >/dev/null
 : > "$RUN_ROOT/wedge-block"
 wedged_id="$(window_id wedged)"
 wedged_pane_id="$(tmux list-panes -t "$wedged_id" -F '#{pane_id}')"
@@ -4320,7 +4376,7 @@ equal "a later native boundary never re-sends an unverified held entry" \
 "$GANG" drop wedged >/dev/null
 
 # One spool is deliberately left alive for the teardown below to account for.
-"$GANG" hitch lingering -c spoolable -d /tmp >/dev/null
+"$HITCH" lingering -c spoolable -d /tmp >/dev/null
 lingering_id="$(window_id lingering)"
 tmux send-keys -l -t "$lingering_id" 'HUMAN_DRAFT'
 printf 'MARK_LINGERS' |
@@ -4421,7 +4477,7 @@ collar_input() { # a parked reading per ticket, then the real drained box
 }
 SH
 printf '0' > "$RUN_ROOT/drain-tickets"
-"$GANG" hitch drain -c drain -d /tmp >/dev/null
+"$HITCH" drain -c drain -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id drain)" @gl_staged \
   "'MARK_OLD' is staged unsent in this box"
 tmux set-option -w -t "$(window_id drain)" @gl_staged_box "BOXMEMO_NOT_MATCHING"
@@ -4468,7 +4524,7 @@ collar_input() { # one readable look at the post-Enter sentinel, then nothing
   printf '%s' "\$line" | tr -d '\302\240'
 }
 SH
-"$GANG" hitch flicker -c flicker -d /tmp >/dev/null
+"$HITCH" flicker -c flicker -d /tmp >/dev/null
 touch "$RUN_ROOT/flicker-flag"
 if flicker_out="$(printf 'MARK_FLICKER' | "$GANG" send --to flicker --from tester --stdin 2>&1)"; then
   fail "an unreadable verification reread is not a delivery" "send reported success"
@@ -4550,7 +4606,7 @@ collar_input() { # readable per ticket once the vanish flag is set, then not
   return 1
 }
 SH
-"$GANG" hitch vanish -c vanish -d /tmp >/dev/null
+"$HITCH" vanish -c vanish -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id vanish)" @gl_turn "open $(( $(date +%s) - 400 ))"
 printf '1' > "$RUN_ROOT/vanish-tickets"
 touch "$RUN_ROOT/vanish-flag"
@@ -4593,7 +4649,7 @@ collar_input() { # the draft per ticket once the flag is set, then an empty box
   printf ''
 }
 SH
-"$GANG" hitch emptied -c emptied -d /tmp >/dev/null
+"$HITCH" emptied -c emptied -d /tmp >/dev/null
 tmux send-keys -l -t "$(window_id emptied)" 'MARK_LEAVING'
 # Six: the box reads a refused send takes to settle — the busy verdict's
 # composer and emptiness pair, the settled-composer pair, the parked-queue
@@ -4657,7 +4713,7 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch fossil -c fossil -d /tmp >/dev/null
+"$HITCH" fossil -c fossil -d /tmp >/dev/null
 tmux send-keys -l -t "$(window_id fossil)" \
   'echo "Retrying in 8s left by an interrupted loop"'
 tmux send-keys -t "$(window_id fossil)" Enter
@@ -4713,7 +4769,7 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='Retrying in [0-9]+s'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch abandoned -c abandoned -d /tmp >/dev/null
+"$HITCH" abandoned -c abandoned -d /tmp >/dev/null
 abandoned_bracket="open $(( $(date +%s) - 400 ))"
 tmux set-option -w -t "$(window_id abandoned)" @gl_turn "$abandoned_bracket"
 # The guard the decay must not stomp, asserted first: an UNEXPIRED bracket is
@@ -4771,7 +4827,7 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
 # rest, so the activity tier reports inactive by abstention rather than by
 # observation. Spending that as the positive evidence a decay requires would
 # decay every abandoned turn on a harness gang cannot hear.
-"$GANG" hitch assumed -c bash -d /tmp >/dev/null
+"$HITCH" assumed -c bash -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id assumed)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a collar that never measures the pty cannot witness the quiet a decay needs" \
   "?unknown? (turn-bracket bound reached)" \
@@ -4798,7 +4854,7 @@ collar_input() { # $1 = tmux target; reads the box, then writes below it
 }
 SH
 } > "$RUN_ROOT/collars/moving.sh"
-"$GANG" hitch moving -c moving -d /tmp >/dev/null
+"$HITCH" moving -c moving -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400 ))"
 : > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
 equal "a pane that moves while gang is deciding refuses the decay" \
@@ -4833,7 +4889,7 @@ exec "$real" "$@"
 SH
 } > "$RUN_ROOT/bin-seam/tmux"
 chmod +x "$RUN_ROOT/bin-seam/tmux"
-"$GANG" hitch seam -c abandoned -d /tmp >/dev/null
+"$HITCH" seam -c abandoned -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a write between the quiet reading and the witness refuses the decay" \
   "?unknown? (the pane was written to while gang was deciding)" \
@@ -4856,7 +4912,7 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_BUSY_REGEX='tick-after-quiet-read'
 GANG_QUIET_AT_REST=1
 SH
-"$GANG" hitch seamsend -c seamsend -d /tmp >/dev/null
+"$HITCH" seamsend -c seamsend -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id seamsend)" @gl_turn "open $(( $(date +%s) - 400 ))"
 seamsend_out=""
 if seamsend_out="$(printf 'MARK_LIVE_SEND' | PATH="$RUN_ROOT/bin-seam:$PATH" \
@@ -4884,7 +4940,7 @@ cat > "$RUN_ROOT/collars/noreader.sh" <<SH
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 unset -f collar_input
 SH
-"$GANG" hitch noreader -c noreader -d /tmp >/dev/null
+"$HITCH" noreader -c noreader -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id noreader)" @gl_turn \
   "open $(( $(date +%s) - 400 ))"
 if noreader_out="$(printf 'MARK_NOREADER' | GANG_ACTIVITY_WINDOW=0 \
@@ -4977,7 +5033,7 @@ collar_input() {
   blind_real_input "\$1"
 }
 SH
-"$GANG" hitch blindbox -c blindbox -d /tmp >/dev/null
+"$HITCH" blindbox -c blindbox -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id blindbox)" @gl_turn "open $(( $(date +%s) - 400 ))"
 touch "$RUN_ROOT/blindbox-flag"
 if blind_out="$(printf 'MARK_BLIND' | "$GANG" send --to blindbox --from tester --stdin 2>&1)"; then
@@ -4998,7 +5054,7 @@ cat > "$RUN_ROOT/collars/native.sh" <<SH
 GANG_COMPACT_CMD="printf NATIVE_COMPACT"
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
-"$GANG" hitch compactable -c native -d /tmp >/dev/null
+"$HITCH" compactable -c native -d /tmp >/dev/null
 "$GANG" compact compactable >/dev/null
 contains "compact submits the collar's native command" \
   "$(pane compactable)" "NATIVE_COMPACT"
@@ -5023,7 +5079,7 @@ collar_input() {
   self_real_input "\$1"
 }
 SH
-"$GANG" hitch selfable -c deferred -d /tmp >/dev/null
+"$HITCH" selfable -c deferred -d /tmp >/dev/null
 self_id="$(window_id selfable)"
 self_tmux_pane="$(tmux list-panes -t "$self_id" -F '#{pane_id}')"
 self_requested="test-self-compact-requested-$$"
@@ -5081,7 +5137,7 @@ collar_input() {
   nodeferred_real_input "\$1"
 }
 SH
-"$GANG" hitch nodeferred -c nodeferred -d /tmp >/dev/null
+"$HITCH" nodeferred -c nodeferred -d /tmp >/dev/null
 nodeferred_id="$(window_id nodeferred)"
 nodeferred_observed="test-nodeferred-compact-observed-$$"
 nodeferred_release="test-nodeferred-compact-release-$$"
@@ -5123,8 +5179,8 @@ GANG_STALL_TYPES="idle_prompt agent_needs_input"
 SH
 equal "a team starts without an inferred notify target" \
   "no notify target declared" "$("$GANG" notify)"
-"$GANG" hitch stall-raise -c stallable -d /tmp >/dev/null
-"$GANG" hitch stall-target -c stallable -d /tmp >/dev/null
+"$HITCH" stall-raise -c stallable -d /tmp >/dev/null
+"$HITCH" stall-target -c stallable -d /tmp >/dev/null
 stall_raise_id="$(window_id stall-raise)"
 stall_raise_pane="$(tmux list-panes -t "$stall_raise_id" -F '#{pane_id}')"
 stall_target_id="$(window_id stall-target)"
@@ -5142,7 +5198,7 @@ cat > "$RUN_ROOT/collars/no-stalls.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_STOP_HOOK=1
 SH
-"$GANG" hitch stall-silent -c no-stalls -d /tmp >/dev/null
+"$HITCH" stall-silent -c no-stalls -d /tmp >/dev/null
 stall_silent_id="$(window_id stall-silent)"
 stall_silent_pane="$(tmux list-panes -t "$stall_silent_id" -F '#{pane_id}')"
 stall_silent_before="$(pane_all stall-target)"
@@ -5154,7 +5210,7 @@ equal "a collar without a declared stall source raises no empty-kind note" \
 
 # Stop owns the universal turn boundary even when the window's old collar no
 # longer resolves. Collar loading belongs only to collar-dependent work.
-"$GANG" hitch stall-vanished -c stallable -d /tmp >/dev/null
+"$HITCH" stall-vanished -c stallable -d /tmp >/dev/null
 stall_vanished_id="$(window_id stall-vanished)"
 stall_vanished_pane="$(tmux list-panes -t "$stall_vanished_id" -F '#{pane_id}')"
 tmux set-option -w -t "$stall_vanished_id" @gl_turn open
@@ -5267,7 +5323,7 @@ contains "roster carries a failed stall light" \
 equal "a missing target writes no debounce stamp" "" \
   "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
 
-"$GANG" hitch ghost -c stallable -d /tmp >/dev/null
+"$HITCH" ghost -c stallable -d /tmp >/dev/null
 printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
 contains "a failed note retries once its target exists" \
@@ -5337,7 +5393,7 @@ collar_input() { # hold exactly one delivery open, once, on an armed barrier
   stall_gate_real_input "\$1"
 }
 SH
-"$GANG" hitch stall-gated -c stall-gated -d /tmp >/dev/null
+"$HITCH" stall-gated -c stall-gated -d /tmp >/dev/null
 stall_gated_id="$(window_id stall-gated)"
 "$GANG" notify stall-gated >/dev/null
 tmux set-option -uw -t "$stall_raise_id" @gl_stall
@@ -5385,7 +5441,7 @@ collar_context() {
   tmux show-options -wqv -t "\$1" @test_context
 }
 SH
-GANG_CONTEXT_LIGHTS=100000,200000 "$GANG" hitch lit -c lights -d /tmp >/dev/null
+GANG_CONTEXT_LIGHTS=100000,200000 "$HITCH" lit -c lights -d /tmp >/dev/null
 lit_id="$(window_id lit)"
 lit_tmux_pane="$(tmux list-panes -t "$lit_id" -F '#{pane_id}')"
 warming="$(printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
@@ -5783,5 +5839,16 @@ fi
 # mutation calibration can run the exact AC that must turn red.
 "$ROOT/test/role-briefs.sh"
 
+summary_printed=1
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
+# Reported apart from both columns and folded into neither: an unknown is what
+# the box did to the run, not a verdict on the tree. Green with unknowns above
+# zero means the coverage held on a machine too busy to be sure of its timing,
+# which is worth knowing before the number gets quoted anywhere.
+if [ -s "$RUN_ROOT/unknowns" ]; then
+  printf '%s setup submission(s) gang could not verify, re-established: %s\n' \
+    "$(wc -l < "$RUN_ROOT/unknowns" | tr -d ' ')" \
+    "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
+  printf 'That is machine load, not a tree verdict. Re-run quiet before trusting timing.\n'
+fi
 [ "$fails" -eq 0 ]
