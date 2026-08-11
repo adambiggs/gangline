@@ -6295,8 +6295,21 @@ contains "the uncommitted executable warns where it lives" \
   "$("$gate_fix/bin/gang" collars 2>&1)" "WARNING: executing dirty"
 gate_snap="$RUN_ROOT/gate-snapshot"
 "$gate_fix/test/gate.sh" --snapshot "$gate_snap"
+gate_snap_run="$RUN_ROOT/gate-snapshot-run.out"
+if env -u GANG_COLLARS "$gate_snap/bin/gang" collars \
+    > "$gate_snap_run" 2>&1; then
+  pass "the executable in the snapshot runs to its ordinary output"
+else
+  fail "the executable in the snapshot runs to its ordinary output" \
+    "it exited non-zero: [$(<"$gate_snap_run")]"
+fi
+# Silence is only evidence if the command got far enough to have spoken. The
+# dirty warning is printed before dispatch, so an executable that died early
+# would satisfy the exclusion below while proving nothing.
+contains "and that output is the collar listing it was asked for" \
+  "$(<"$gate_snap_run")" "bash"
 excludes "the same bytes raise no dirty-execution warning in the snapshot" \
-  "$("$gate_snap/bin/gang" collars 2>&1)" "executing dirty"
+  "$(<"$gate_snap_run")" "executing dirty"
 # WHY it is silent has to be the reason claimed. A snapshot with no commit at
 # all is silent too, because the warning abstains when it cannot resolve a
 # HEAD, and that silence would be an absent instrument reported as a clean one.
@@ -6341,6 +6354,7 @@ if [ "\${3:-}" = ls-files ]; then
     case "\${GATE_DRIFT_MODE:-none}" in
       content) printf 'LATE_EDIT\n' >> "$gate_fix/bin/gang" ;;
       list) printf 'LATE_FILE\n' > "$gate_fix/late-file.txt" ;;
+      mode) chmod -x "$gate_fix/bin/gang" ;;
     esac
   fi
 fi
@@ -6355,6 +6369,14 @@ refuses "a file appearing during the copy makes the snapshot unusable" \
   "moved while it was being copied (the set of files changed)" \
   env GATE_DRIFT_MODE=list PATH="$gate_git_bin:$PATH" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-list"
+# `chmod +x` moves a tree without moving a byte, and the executable bit is the
+# one mode git records, so a comparison that reads only contents would call
+# 100755 and 100644 the same tree.
+refuses "a mode changed during the copy makes the snapshot unusable" \
+  "moved while it was being copied (the mode of bin/gang changed)" \
+  env GATE_DRIFT_MODE=mode PATH="$gate_git_bin:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-mode"
+chmod +x "$gate_fix/bin/gang"
 
 # A COPY THAT FAILED IS NOT A SNAPSHOT. Bash suspends `set -e` throughout a
 # function whose caller tests its status, which is exactly how --snapshot calls
@@ -6381,6 +6403,143 @@ fi
 refuses "a destination inside the tree is named, not blamed on the tree" \
   "copying the tree into itself" \
   "$gate_fix/test/gate.sh" --snapshot "$gate_fix/inside-snapshot"
+rm -rf "$gate_fix/inside-snapshot"
+
+# A destination that already holds something keeps it: the overlay is committed
+# alongside the copy, so the tree under test would be this tree plus somebody
+# else's leftovers — including a file whose deletion is what was being tested.
+mkdir -p "$RUN_ROOT/gate-occupied"
+printf 'STALE\n' > "$RUN_ROOT/gate-occupied/stale.txt"
+refuses "a destination that already holds something is not a snapshot" \
+  "already holds something" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-occupied"
+
+# A SUBMODULE'S GITLINK IS A DIRECTORY IN THIS LISTING, and it would reach the
+# byte comparison as one: cmp answers "Is a directory" and the tree gets blamed
+# for moving. That is a true refusal for a false reason, so the unsupported file
+# type is named where it is found. (A named pipe cannot get this far: git lists
+# neither a tracked nor an untracked FIFO, so it is simply not part of the tree.)
+mkdir -p "$gate_fix/inner"
+git -C "$gate_fix/inner" init -q
+printf 'inner\n' > "$gate_fix/inner/held.txt"
+git -C "$gate_fix/inner" add -A
+git -C "$gate_fix/inner" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: inner repository'
+git -C "$gate_fix" update-index --add --cacheinfo \
+  "160000,$(git -C "$gate_fix/inner" rev-parse HEAD),inner"
+refuses "a file this gate cannot carry is refused, not silently omitted" \
+  "neither a regular file nor a symlink" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-gitlink"
+git -C "$gate_fix" update-index --force-remove inner
+rm -rf "$gate_fix/inner"
+
+# UNKNOWN IS NOT A PASS. A tree whose state cannot be read is not a tree this
+# run owns, and reporting that as ownership is the whole failure this arc is
+# about wearing the opposite verdict's clothes.
+mkdir -p "$RUN_ROOT/gate-nogit/test"
+cp "$ROOT/test/gate.sh" "$RUN_ROOT/gate-nogit/test/"
+refuses "a tree that is not a checkout at all cannot be owned" \
+  "cannot tell whether it owns the tree" \
+  "$RUN_ROOT/gate-nogit/test/gate.sh" --assert-owned
+mkdir -p "$RUN_ROOT/gate-blindgit"
+cat > "$RUN_ROOT/gate-blindgit/git" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+[ "\${3:-}" = status ] && exit 42
+exec "$gate_real_git" "\$@"
+SH
+chmod +x "$RUN_ROOT/gate-blindgit/git"
+refuses "a reading that failed is refused rather than reported as settled" \
+  "cannot tell whether it owns the tree" \
+  env PATH="$RUN_ROOT/gate-blindgit:$PATH" \
+  "$gate_fix/test/gate.sh" --assert-owned
+
+# The index can be told to report a file as unchanged without looking at it.
+# A verdict resting on that is a promise, not a reading.
+printf '\n# concealed edit\n' >> "$gate_fix/bin/gang"
+git -C "$gate_fix" update-index --assume-unchanged bin/gang
+equal "the fixture really did conceal the edit from ordinary status" "" \
+  "$(git -C "$gate_fix" status --porcelain -- bin/gang)"
+refuses "an index told not to look at a file cannot report the tree settled" \
+  "the index is told not to look at some files" \
+  "$gate_fix/test/gate.sh" --assert-owned
+git -C "$gate_fix" update-index --no-assume-unchanged bin/gang
+git -C "$gate_fix" checkout -q -- bin/gang
+
+# WHERE ROOT IS A SUBDIRECTORY of a larger repository, an edit elsewhere in that
+# repository is not movement in the tree this gate would copy, and the identity
+# must name the subtree rather than the repository containing it.
+gate_nest="$RUN_ROOT/gate-nested"
+mkdir -p "$gate_nest/project/test"
+cp "$ROOT/test/gate.sh" "$gate_nest/project/test/"
+printf 'sibling\n' > "$gate_nest/sibling.txt"
+gate_nest="$(cd -P "$gate_nest" && pwd)"
+git -C "$gate_nest" init -q
+git -C "$gate_nest" add -A
+git -C "$gate_nest" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: nested gate fixture'
+printf 'edited outside the copied subtree\n' >> "$gate_nest/sibling.txt"
+equal "the identity names the subtree that would be copied, not its container" \
+  "settled $(git -C "$gate_nest" rev-parse HEAD) $gate_nest/project" \
+  "$("$gate_nest/project/test/gate.sh" --assert-owned)"
+
+# THE GATE'S OWN ORCHESTRATION, which every check above leaves untouched: they
+# drive --assert-owned, --assert-unmoved and --snapshot, so dropping the suite
+# from the no-argument run would leave all of them green. Stand-in gates record
+# that they ran, in order, from inside the copy.
+gate_run="$RUN_ROOT/gate-default"
+mkdir -p "$gate_run/test"
+cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
+gate_run="$(cd -P "$gate_run" && pwd)"
+gate_order="$RUN_ROOT/gate-default-order"
+cat > "$gate_run/test/lint.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'lint\n' >> "$gate_order"
+SH
+cat > "$gate_run/test/integration.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration\n' >> "$gate_order"
+SH
+chmod +x "$gate_run/test/lint.sh" "$gate_run/test/integration.sh"
+git -C "$gate_run" init -q
+git -C "$gate_run" add -A
+git -C "$gate_run" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: default gate fixture'
+printf 'uncommitted while the gate runs\n' > "$gate_run/scratch.txt"
+: > "$gate_order"
+gate_default_out="$("$gate_run/test/gate.sh" 2>&1)"
+equal "the no-argument gate runs lint and then the suite, in that order" \
+  "$(printf 'lint\nintegration')" "$(<"$gate_order")"
+contains "and runs them against the tree it copied" "$gate_default_out" "$gate_run"
+contains "an uncommitted tree is announced as one" \
+  "$gate_default_out" "unsettled"
+contains "a green gate says which gates were green" \
+  "$gate_default_out" "passed lint and the integration suite"
+
+# A failed gate owes the verdict's evidence AND that evidence's deletion path.
+cat > "$gate_run/test/integration.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration\n' >> "$gate_order"
+exit 3
+SH
+chmod +x "$gate_run/test/integration.sh"
+gate_fail_rc=0
+gate_fail_out="$("$gate_run/test/gate.sh" 2>&1)" || gate_fail_rc=$?
+equal "a failing suite is the gate's own exit status" "3" "$gate_fail_rc"
+contains "a failed gate keeps the snapshot that produced the verdict" \
+  "$gate_fail_out" "kept for reading"
+contains "and says exactly how that snapshot dies" "$gate_fail_out" "rm -rf "
+gate_kept="$(printf '%s\n' "$gate_fail_out" | awk '/^  \// { print $1; exit }')"
+if [ -n "$gate_kept" ] && [ -d "$gate_kept" ]; then
+  pass "the kept snapshot is really there to read"
+else
+  fail "the kept snapshot is really there to read" \
+    "the reported path [$gate_kept] is not a directory"
+fi
+[ -z "$gate_kept" ] || rm -rf -- "$(dirname "$gate_kept")"
 
 # THE WIRING, not a restatement of it: both mandatory entry points are run
 # against a tree they would not own and must refuse before doing any work.
@@ -6413,13 +6572,6 @@ tree_moved=0
 
 summary_printed=1
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
-case "$TREE_AT_START" in
-  unverifiable*)
-    printf 'Tree ownership UNVERIFIABLE (%s): this run cannot tell whether its\n' \
-      "$TREE_AT_START"
-    printf 'source changed underneath it, so the verdict is about whatever bytes\n'
-    printf 'bash happened to read. Run test/gate.sh to test an owned snapshot.\n' ;;
-esac
 if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'

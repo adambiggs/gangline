@@ -563,7 +563,9 @@ name the command that does. The suite reads the tree's identity again at the
 end, so a run whose source moved underneath it reports no verdict rather than a
 count about a tree that no longer exists. What counts as the tree resolves the
 operator's own git configuration and never the caller's environment: two reads
-in one run must be answering the same question.
+in one run must be answering the same question. A reading that cannot be taken
+refuses; an unknown is not ownership, and neither is an index instructed not to
+look at a file.
 
 ## Native continuation owns compaction recovery
 

@@ -54,32 +54,57 @@ unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 
-# An operator's own git configuration decides what `status` is willing to see.
-# `status.showUntrackedFiles=no` would leave an untracked collar invisible here
-# and let this check report a tree nobody owns as owned, so the reporting mode
-# is stated rather than inherited. Ignore rules are inherited on purpose: a file
-# the operator's excludes hide is not part of this tree.
-tree_identity() { # prints one line: the identity, or the reason there is none
-  local top status head
-  top="$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null)" || {
+# WHAT THIS CHECK IS NOT ABLE TO SEE, stated because a claim of ownership that
+# quietly excludes cases is worse than no claim. A file git ignores is outside
+# this tree by definition, so an ignored collar can change what the LIVE
+# checkout does while this reads settled — the snapshot is unaffected, since it
+# does not carry that file either. And a relative symlink pointing outside the
+# tree keeps its text in the copy and therefore resolves somewhere else; nothing
+# in this repository is such a link, and one would have to be handled
+# deliberately rather than assumed equivalent.
+#
+# What it does refuse to inherit: an operator's `status.showUntrackedFiles=no`
+# would hide an untracked collar, a submodule ignore rule would hide moved
+# submodule bytes, and the index can be told to lie about a file outright. Those
+# are stated rather than trusted, and the reads never resolve a caller's
+# environment (see the unset above).
+tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
+  local status head concealed
+  git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || {
     printf 'unverifiable (not a git checkout)\n'
-    return 0
+    return 2
   }
-  status="$(git -C "$ROOT" status --porcelain --untracked-files=normal)" || {
+  # Scoped to ROOT with a pathspec: where ROOT is a subdirectory of a larger
+  # repository, an unrelated edit elsewhere in that repository is not movement
+  # in the tree this gate copies.
+  status="$(git -C "$ROOT" status --porcelain --untracked-files=normal \
+    --ignore-submodules=none -- . 2>/dev/null)" || {
     printf 'unverifiable (git status failed)\n'
-    return 0
+    return 2
+  }
+  concealed="$(git -C "$ROOT" ls-files -v -- . 2>/dev/null)" || {
+    printf 'unverifiable (git ls-files failed)\n'
+    return 2
   }
   head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || head=no-commit
-  if [ -n "$status" ]; then
-    printf 'moving %s\n' "$head"
+  # assume-unchanged (a lowercase tag) and skip-worktree (S) are standing
+  # instructions to report a file as unchanged without looking at it. A verdict
+  # resting on one is a promise, not a reading.
+  if printf '%s\n' "$concealed" | grep -q '^[a-zS]'; then
+    printf 'unsettled %s (the index is told not to look at some files)\n' "$head"
     return 1
   fi
-  printf 'settled %s %s\n' "$head" "$top"
+  if [ -n "$status" ]; then
+    printf 'unsettled %s\n' "$head"
+    return 1
+  fi
+  printf 'settled %s %s\n' "$head" "$ROOT"
 }
 
-owned_refusal() {
+owned_refusal() { # $1 = the reading taken, so the refusal says which one it was
   printf '%s\n' \
     "gate: this run would not own the tree it is testing." \
+    "      reading: $1" \
     "      $ROOT has uncommitted changes, and the suite reads bin/gang," \
     "      collars/, roles/ and its own script while it runs, so an edit landing" \
     "      mid-run changes what executes. The dirty executable also warns on" \
@@ -92,17 +117,36 @@ owned_refusal() {
     "" >&2
 }
 
+unverifiable_refusal() { # $1 = the reading that could not be taken
+  printf '%s\n' \
+    "gate: this run cannot tell whether it owns the tree it is testing:" \
+    "      $1" \
+    "      An unknown is not a pass. Nothing here can say whether the source" \
+    "      moved under the run, so no verdict over it would be about a tree." >&2
+}
+
 # Tracked, staged and untracked-not-ignored, which together are what the next
 # commit would carry. `ls-files --cached` still names a file deleted from the
 # working tree, so the list is filtered by what is actually there: a deletion
 # has to reach the snapshot as a deletion.
 list_tree() { # $1 = destination list file, NUL separated
   local raw="$1.raw" f
-  git -C "$ROOT" ls-files -z --cached --others --exclude-standard > "$raw"
+  git -C "$ROOT" ls-files -z --cached --others --exclude-standard > "$raw" || return 1
   : > "$1"
   while IFS= read -r -d '' f; do
-    if [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ]; then
+    # Symlink first: a link to a directory answers -d as well.
+    if [ -L "$ROOT/$f" ] || [ -f "$ROOT/$f" ]; then
       printf '%s\0' "$f" >> "$1"
+    elif [ -e "$ROOT/$f" ]; then
+      # A submodule's gitlink is a directory in this listing, and it would reach
+      # the byte comparison as one: cmp answers "Is a directory" and the tree
+      # gets blamed for moving — a true refusal for a false reason, which is the
+      # failure class this file exists to remove. Say what was actually found.
+      printf '%s\n' \
+        "gate: $ROOT/$f is neither a regular file nor a symlink, so this gate" \
+        "      cannot copy it. A submodule in the tree needs a deliberate" \
+        "      decision, not a silent omission." >&2
+      return 1
     fi
   done < "$raw"
 }
@@ -111,10 +155,11 @@ list_tree() { # $1 = destination list file, NUL separated
 # it an unusable snapshot rather than a mixture of two trees quietly tested as
 # one. A symlink is compared by its target, because a relative link resolves
 # against a different directory inside the copy and following it would report
-# drift that never happened.
+# drift that never happened. The executable bit is compared as well: it is the
+# only mode git records, and `chmod +x` moves a tree without moving a byte.
 copy_drift() { # $1 = list file, $2 = snapshot root; prints what moved, if anything
   local f second="$1.second"
-  list_tree "$second"
+  list_tree "$second" || { printf 'the tree stopped being readable'; return 0; }
   cmp -s "$1" "$second" || { printf 'the set of files changed'; return 0; }
   while IFS= read -r -d '' f; do
     if [ -L "$ROOT/$f" ]; then
@@ -122,6 +167,11 @@ copy_drift() { # $1 = list file, $2 = snapshot root; prints what moved, if anyth
         || { printf '%s' "the symlink $f changed"; return 0; }
     else
       cmp -s "$ROOT/$f" "$2/$f" || { printf '%s' "$f changed"; return 0; }
+      if [ -x "$ROOT/$f" ]; then
+        [ -x "$2/$f" ] || { printf '%s' "the mode of $f changed"; return 0; }
+      else
+        [ ! -x "$2/$f" ] || { printf '%s' "the mode of $f changed"; return 0; }
+      fi
     fi
   done < "$1"
 }
@@ -138,6 +188,17 @@ snap_git() {
 
 snapshot_into() { # $1 = destination directory, $2 = scratch directory
   local dest="$1" work="$2" drift phys
+  # AN OCCUPIED DESTINATION IS NOT A SNAPSHOT OF ANYTHING. Whatever is already
+  # there survives the overlay and is committed alongside the copy, so the tree
+  # under test would be this tree plus somebody else's leftovers — including a
+  # file whose deletion here is exactly what was meant to be tested.
+  if [ -e "$dest" ] && { [ ! -d "$dest" ] || [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+    printf '%s\n' \
+      "gate: $dest already holds something." \
+      "      A snapshot is the tree and nothing else, so name a destination" \
+      "      that does not exist or is empty." >&2
+    return 1
+  fi
   mkdir -p "$dest"
   phys="$(cd -P "$dest" && pwd)" || return 1
   # A destination inside the tree is copied into itself. The drift check would
@@ -151,7 +212,7 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
         "      outside the tree." >&2
       return 1 ;;
   esac
-  list_tree "$work/list"
+  list_tree "$work/list" || return 1
   [ -s "$work/list" ] || {
     echo "gate: $ROOT holds no files to test" >&2
     return 1
@@ -191,7 +252,11 @@ case "${1:-}" in
     [ $# -eq 1 ] || { echo "gate: --assert-owned takes no arguments" >&2; exit 2; }
     identity=0
     line="$(tree_identity)" || identity=$?
-    [ "$identity" -eq 0 ] || { owned_refusal; exit 1; }
+    case "$identity" in
+      0) ;;
+      1) owned_refusal "$line"; exit 1 ;;
+      *) unverifiable_refusal "$line"; exit 1 ;;
+    esac
     printf '%s\n' "$line"
     exit 0 ;;
   --assert-unmoved)
@@ -229,10 +294,15 @@ esac
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
 SNAP="$WORK/tree"
 keep=0
+# A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
+# collects these later — no gate run touches another run's snapshot — so the
+# deletion is the reader's, stated as the exact command rather than left to be
+# discovered as accumulated copies of the source under TMPDIR.
 cleanup() {
   if [ "$keep" -eq 1 ]; then
-    printf '\ngate: the snapshot that produced this verdict is kept at\n  %s\n' \
-      "$SNAP" >&2
+    printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
+    printf '  %s\n' "$SNAP" >&2
+    printf 'gate: nothing removes it but you:  rm -rf %s\n' "$WORK" >&2
   else
     rm -rf -- "$WORK"
   fi
@@ -241,11 +311,11 @@ trap cleanup EXIT HUP INT TERM
 
 snapshot_into "$SNAP" "$WORK"
 
-source_head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo 'no commit')"
-source_state=settled
-git -C "$ROOT" diff --quiet HEAD 2>/dev/null || source_state=uncommitted
+# Read the same way the ownership check reads, so an untracked-only tree is not
+# announced as settled by a diagnostic that only looks at tracked files.
+source_state="$(tree_identity)" || true
 printf 'gate: testing a snapshot of %s\n' "$ROOT"
-printf 'gate: source HEAD %s, working tree %s\n' "$source_head" "$source_state"
+printf 'gate: source tree %s\n' "$source_state"
 
 rc=0
 ( cd "$SNAP" && ./test/lint.sh && ./test/integration.sh ) || rc=$?
