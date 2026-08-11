@@ -710,7 +710,7 @@ collar_file() { # $1 = collar name -> path on stdout; yours wins over the shippe
 }
 
 load_collar() { # $1 = collar name; sets the GANG_* strategy surface
-  local f record pipes id marker marker_tail safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc suffix new old
+  local f record pipes id marker marker_tail marker_atom marker_rest safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc suffix new old
   f="$(collar_file "$1")" \
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
@@ -791,13 +791,24 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     case "$marker" in ^*) ;; *) die "collar '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
     marker_tail="${marker#^}"
     # dialog_normalize removes every line's leading whitespace before this
-    # marker is evaluated. The literal-one-or-more form found in the live
-    # defect is therefore dead; do not also refuse a zero-or-more form that can
-    # legitimately match the normalized line.
+    # marker is evaluated. A leading whitespace atom is therefore dead unless
+    # its own following quantifier permits zero occurrences.
+    marker_atom=""
     case "$marker_tail" in
-      ' +'*)
-        die "collar '$1' dialog '$id' marker requires leading whitespace that dialog normalization removes: '$marker'" ;;
+      ' '*) marker_atom=' ' ;;
+      '\s'*) marker_atom='\s' ;;
+      '\t'*) marker_atom='\t' ;;
+      '\ '*) marker_atom='\ ' ;;
+      '[ ]'*) marker_atom='[ ]' ;;
+      '[[:space:]]'*) marker_atom='[[:space:]]' ;;
+      '[[:blank:]]'*) marker_atom='[[:blank:]]' ;;
     esac
+    if [ -n "$marker_atom" ]; then
+      marker_rest="${marker_tail#"$marker_atom"}"
+      case "$marker_rest" in '*'*|'?'*|'{0'*) ;;
+        *) die "collar '$1' dialog '$id' marker requires leading whitespace that dialog normalization removes: '$marker'" ;;
+      esac
+    fi
     if [ -z "$safe" ]; then
       [ -z "$move$confirm" ] \
         || die "collar '$1' observe-only dialog '$id' must leave safe, move and confirm empty"
@@ -2314,13 +2325,23 @@ spool_held_report() { # $1 = window id; one truthful line per held entry
   done
 }
 
-SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY=""
-spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes on the wire
+SPOOL_SENDER="" SPOOL_FRAG="" SPOOL_BODY="" SPOOL_READ_ERROR=""
+spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
   SPOOL_SENDER=""; SPOOL_FRAG=""; SPOOL_BODY=""
-  { read -r SPOOL_SENDER; read -r SPOOL_FRAG; SPOOL_BODY="$(cat)"; } < "$1" \
-    || die "cannot read the spooled message $1 — refusing to guess at a message body"
-  [ -n "$SPOOL_BODY" ] \
-    || die "the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"
+  SPOOL_READ_ERROR=""
+  if ! { read -r SPOOL_SENDER; read -r SPOOL_FRAG; SPOOL_BODY="$(cat)"; } < "$1"; then
+    SPOOL_READ_ERROR="cannot read the spooled message $1 — refusing to guess at a message body"
+    return 1
+  fi
+  if [ -z "$SPOOL_BODY" ]; then
+    SPOOL_READ_ERROR="the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"
+    return 1
+  fi
+  return 0
+}
+
+spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes on the wire
+  spool_read_try "$1" || die "$SPOOL_READ_ERROR"
 }
 
 spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting entries
@@ -4083,10 +4104,6 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
   for e in "$dir"/[0-9]*; do
     [ -f "$e" ] || continue
     label="${e##*/}"
-    # Validate immutable spool bytes before the atomic claim. If a corrupt or
-    # unreadable entry cannot be rendered, it remains waiting with its known
-    # undelivered fate instead of becoming a false sending-/held unknown.
-    spool_read "$e"
     if [ "$mine" -eq 1 ]; then
       # Prove the archive path before claiming anything. A bad archive setting
       # must leave a waiting message waiting, never turn it into a held entry
@@ -4106,6 +4123,14 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
       claim="$dir/sending-$label"
       mv -- "$e" "$claim" 2>/dev/null || continue
       e="$claim"
+    fi
+    if ! spool_read_try "$e"; then
+      if [ "$mine" -eq 1 ]; then
+        mv -- "$e" "$dir/$label" 2>/dev/null \
+          || die "$SPOOL_READ_ERROR; its claim also could not be returned — it remains readable at $e"
+        die "$SPOOL_READ_ERROR — the entry was returned to the waiting spool"
+      fi
+      die "$SPOOL_READ_ERROR"
     fi
     if [ "$mine" -eq 1 ]; then
       if ! mv -- "$e" "$mail_archive/$label"; then

@@ -2092,6 +2092,20 @@ cat > "$RUN_ROOT/collars/dialog-leading-space.sh" <<SH
 GANG_DIALOGS='dead-record|^ +› [0-9]+\. |||'
 GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
 SH
+cat > "$RUN_ROOT/collars/dialog-single-space.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-observe.sh"
+GANG_DIALOGS='dead-record|^ › [0-9]+\. |||'
+GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
+SH
+cat > "$RUN_ROOT/collars/dialog-class-space.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-observe.sh"
+GANG_DIALOGS='dead-record|^[[:space:]]› [0-9]+\. |||'
+GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
+SH
 cat > "$RUN_ROOT/collars/dialog-optional-space.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -2121,16 +2135,18 @@ exit 0
 SH
 chmod +x "$RUN_ROOT/dialog-observe-bin/sleep"
 
-if leading_marker_out="$("$GANG" hitch dialog-leading-space \
-    -c dialog-leading-space -d /tmp 2>&1)"; then
-  fail "a dialog marker dead after normalization is refused" \
-    "hitch unexpectedly succeeded"
-else
-  contains "the dead-marker refusal names normalization" \
-    "$leading_marker_out" "requires leading whitespace that dialog normalization removes"
-fi
-equal "a dead dialog marker opens no window" "" \
-  "$(window_id dialog-leading-space)"
+for dead_marker_case in leading-space single-space class-space; do
+  if dead_marker_out="$("$GANG" hitch "dialog-$dead_marker_case" \
+      -c "dialog-$dead_marker_case" -d /tmp 2>&1)"; then
+    fail "$dead_marker_case dialog marker dead after normalization is refused" \
+      "hitch unexpectedly succeeded"
+  else
+    contains "$dead_marker_case refusal names normalization" \
+      "$dead_marker_out" "requires leading whitespace that dialog normalization removes"
+  fi
+  equal "$dead_marker_case dead marker opens no window" "" \
+    "$(window_id "dialog-$dead_marker_case")"
+done
 if "$HITCH" dialog-optional-space -c dialog-optional-space -d /tmp \
     >/dev/null; then
   pass "a marker allowing zero leading spaces remains loadable"
