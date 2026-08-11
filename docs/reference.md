@@ -347,6 +347,11 @@ location. Held entries are never consumed. Mail takes no delivery lock and needs
 no loadable collar, because a queue is files on disk and the harness may be the
 reason you are reading it.
 
+Read archives are durable and have no automatic expiry. Their stderr notice
+names the read-scoped root and the exact command that deletes it. Delete that
+root after its recovery or audit purpose ends; see
+[Operations](operations.md#sending-messages-safely) for retention.
+
 ### `gang status <name>`
 
 Prints one current state:

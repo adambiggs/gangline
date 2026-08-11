@@ -721,12 +721,14 @@ equal "Claude declares only native kinds that await a person" \
 claude_external_dialog="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s\n--\n%s" "$GANG_DIALOGS" "$GANG_DIALOG_LINES_external_import_trust"' \
   fixture "$claude_collar")"
+claude_external_record="${claude_external_dialog%%$'\n--\n'*}"
+claude_external_lines="${claude_external_dialog#*$'\n--\n'}"
 contains "Claude names the external-import trust prompt" \
   "$claude_external_dialog" "external-import-trust"
 contains "Claude fingerprints the security warning below the variable paths" \
   "$claude_external_dialog" "Only use Claude Code with files you trust."
 contains "Claude's external-import record has no answerable row or key" \
-  "$claude_external_dialog" "external-import-trust|^ +❯ [0-9]+\\. |||"
+  "$claude_external_dialog" "external-import-trust|^❯ [0-9]+\\. |||"
 claude_resume="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_collar")"
 contains "Claude resume declares an explicit native session slot" \
@@ -1938,6 +1940,7 @@ composer = False
 draft = bytearray()
 answered = 0
 safe_index = 1
+selected_glyph = "›"
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
@@ -1952,6 +1955,14 @@ if variant == "trust":
     labels = ["Yes, continue", "No, quit"]
     footer = "Press enter to continue"
     safe_index = 0
+if variant == "external-import":
+    body = [
+        "Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security",
+    ]
+    labels = ["Yes, allow external imports", "No, disable external imports"]
+    footer = "Enter to confirm · Esc to cancel"
+    safe_index = 0
+    selected_glyph = "❯"
 if variant == "changed-byte":
     body[0] = body[0].replace("systems", "system")
 if variant == "reordered":
@@ -1969,7 +1980,7 @@ def paint():
         print("  " + line)
     print()
     for index, label in enumerate(labels):
-        glyph = "›" if index == selected or (variant == "two-glyph" and index == 1) else " "
+        glyph = selected_glyph if index == selected or (variant == "two-glyph" and index == 1) else " "
         print(f"{glyph} {index + 1}. {label}")
     print()
     print("  " + footer)
@@ -2067,19 +2078,48 @@ cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$RUN_ROOT/collars/dialog-observe.sh"
+unset -f collar_input
 GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='dialog-observe-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+SH
+cat > "$RUN_ROOT/collars/dialog-leading-space.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-observe.sh"
+GANG_DIALOGS='dead-record|^ +› [0-9]+\. |||'
+GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
+SH
+printf -v claude_external_record_q '%q' "$claude_external_record"
+printf -v claude_external_lines_q '%q' "$claude_external_lines"
+cat > "$RUN_ROOT/collars/dialog-claude-external.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+GANG_DIALOGS=$claude_external_record_q
+GANG_DIALOG_LINES_external_import_trust=$claude_external_lines_q
 SH
 mkdir -p "$RUN_ROOT/dialog-observe-bin"
 cat > "$RUN_ROOT/dialog-observe-bin/sleep" <<SH
 #!/bin/sh
 if [ ! -e "$RUN_ROOT/dialog-observe-sleep-seen" ]; then
   : > "$RUN_ROOT/dialog-observe-sleep-seen"
+  printf '%s' "\$1" > "$RUN_ROOT/dialog-observe-sleep-argument"
   tmux wait-for -S "$observe_boot_seen"
   tmux wait-for "$observe_boot_release"
 fi
 exit 0
 SH
 chmod +x "$RUN_ROOT/dialog-observe-bin/sleep"
+
+if leading_marker_out="$("$GANG" hitch dialog-leading-space \
+    -c dialog-leading-space -d /tmp 2>&1)"; then
+  fail "a dialog marker dead after normalization is refused" \
+    "hitch unexpectedly succeeded"
+else
+  contains "the dead-marker refusal names normalization" \
+    "$leading_marker_out" "requires leading whitespace that dialog normalization removes"
+fi
+equal "a dead dialog marker opens no window" "" \
+  "$(window_id dialog-leading-space)"
 
 dialog_start() { # $1 agent, $2 variant, $3 collar
   local name="$1" variant="$2" collar="$3" id command
@@ -2187,6 +2227,29 @@ equal "observe-only recognition leaves the operator dialog unchanged" \
   "$observe_before" "$(pane dialog-observe)"
 "$GANG" drop dialog-observe >/dev/null
 
+# Bind the shipped Claude declaration to the matcher that consumes it. The
+# fixture renders the stable suffix captured from Claude; the collar under
+# test contributes its own marker and block, rather than restating either.
+dialog_start dialog-claude-external external-import dialog-claude-external
+claude_external_before="$(pane dialog-claude-external)"
+contains "the shipped Claude record recognizes its rendered dialog" \
+  "$("$GANG" status dialog-claude-external)" \
+  "known operator dialog: external-import-trust"
+if claude_external_send="$(printf SHIPPED_EXTERNAL_BODY | "$GANG" send \
+    --to dialog-claude-external --from tester --live-only --stdin 2>&1)"; then
+  fail "the shipped Claude operator dialog refuses delivery" \
+    "send unexpectedly succeeded"
+else
+  contains "the shipped refusal names its exact dialog" \
+    "$claude_external_send" "known operator dialog 'external-import-trust'"
+fi
+equal "the shipped Claude record sends no key" "" \
+  "$(<"$RUN_ROOT/dialog-claude-external.keys")"
+# source-guard: whole-surface@c171fc82a7df: an observe-only shipped record is forbidden to change any visible pane byte, whatever produced it
+equal "the shipped Claude operator dialog remains byte-exact" \
+  "$claude_external_before" "$(pane dialog-claude-external)"
+"$GANG" drop dialog-claude-external >/dev/null
+
 # Hitch names an observe-only prompt while preserving the original boot budget.
 # The sleep shim is an event barrier: the notice is already written when it
 # signals, then the fixture receives only the two manual operator keys below.
@@ -2196,6 +2259,8 @@ PATH="$RUN_ROOT/dialog-observe-bin:$PATH" GANG_BOOT_TIMEOUT=3 \
   >"$RUN_ROOT/dialog-observe-boot.out" 2>&1 &
 observe_boot_pid=$!
 tmux wait-for "$observe_boot_seen"
+equal "an observe-only branch waits before testing generic readiness" \
+  "1" "$(<"$RUN_ROOT/dialog-observe-sleep-argument")"
 contains "hitch names the operator dialog it is waiting on" \
   "$(<"$RUN_ROOT/dialog-observe-boot.out")" \
   "known operator dialog 'operator-choice'"
@@ -4372,6 +4437,33 @@ equal "a message that arrives after a self-read survives it" \
 equal "and the second read retires only what the second read printed" \
   "failed-00000000000000000005-facefeed" "$(cd "$mailer_spool" && ls)"
 
+# ARCHIVE FAILURE PRECEDES CLAIM. A self-read cannot turn mail with a known
+# undelivered fate into a sending-/held entry merely because its recovery
+# destination is misconfigured.
+printf 'MARK_MAIL_ARCHIVE_REFUSAL' |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+mail_archive_refusal_before="$(cd "$mailer_spool" && ls)"
+mail_archive_blocker="$RUN_ROOT/archive-not-a-directory"
+: > "$mail_archive_blocker"
+mail_archive_refusal_rc=0
+GANG_ARCHIVE_DIR="$mail_archive_blocker" TMUX_PANE="$mailer_self_pane" \
+  "$GANG" mail >"$RUN_ROOT/mail-archive-refusal.out" 2>&1 \
+  || mail_archive_refusal_rc=$?
+[ "$mail_archive_refusal_rc" -ne 0 ] \
+  && pass "an unwritable archive refuses a self-read" \
+  || fail "an unwritable archive refuses a self-read" \
+    "mail unexpectedly returned zero"
+contains "the archive refusal names the unusable recovery path" \
+  "$(<"$RUN_ROOT/mail-archive-refusal.out")" "$mail_archive_blocker"
+equal "archive refusal leaves the waiting spool byte-for-byte named" \
+  "$mail_archive_refusal_before" "$(cd "$mailer_spool" && ls)"
+excludes "archive refusal creates no false held delivery verdict" \
+  "$(cd "$mailer_spool" && ls)" "sending-"
+rm -f -- "$mail_archive_blocker"
+mail_archive_recovery="$(TMUX_PANE="$mailer_self_pane" "$GANG" mail 2>&1)"
+contains "the untouched message remains readable after archive repair" \
+  "$mail_archive_recovery" "MARK_MAIL_ARCHIVE_REFUSAL"
+
 # A SHELL FILTER MAY HIDE OUTPUT, BUT IT CANNOT DESTROY THE ONLY COPY. This is
 # the live incident shape: tail consumes all of gang mail's stdout and prints
 # only its end. The body prefix is absent from the filtered view, while the
@@ -4388,7 +4480,7 @@ excludes "tail hides the head of a long self-read as the incident requires" \
 contains "the destructive read names its archive outside the stdout pipe" \
   "$(<"$RUN_ROOT/mail-filter.err")" "self-mail is destructive"
 contains "the archive notice carries its deletion path" \
-  "$(<"$RUN_ROOT/mail-filter.err")" "delete that archive after recovery with: rm -rf --"
+  "$(<"$RUN_ROOT/mail-filter.err")" "delete this read archive after recovery with: rm -rf --"
 mail_filter_archive=""
 for mail_archived_entry in "$GANG_ARCHIVE_DIR"/*/mailer/[0-9]*; do
   [ -f "$mail_archived_entry" ] || continue
@@ -5970,7 +6062,7 @@ excludes "status does not inspect another agent's context" \
 # ONE RELATIVE SPEC SERVES DIFFERENT NATIVE WINDOWS. The same percentages are
 # copied at hitch; each hook resolves them against the window in its own native
 # reading rather than spending one team's absolute thresholds on both harnesses.
-for relative_case in small large; do
+for relative_case in small large zero; do
   GANG_CONTEXT_LIGHTS=50%,80% "$HITCH" "lit-$relative_case" \
     -c lights -d /tmp >/dev/null
 done
@@ -6004,6 +6096,16 @@ large_red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
 contains "the same relative red resolves inside the larger native window" \
   "$large_red" "Red context light"
 
+lit_zero_id="$(window_id lit-zero)"
+lit_zero_pane="$(tmux list-panes -t "$lit_zero_id" -F '#{pane_id}')"
+tmux set-option -w -t "$lit_zero_id" @test_context '0k/0k (0%)'
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lit_zero_pane" "$GANG" hook >/dev/null
+zero_window="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_zero_pane" "$GANG" hook)"
+contains "a zero native window is invalid rather than an immediate red light" \
+  "$zero_window" "native context source reported a zero-token window"
+
 GANG_CONTEXT_LIGHTS=350000,500000 "$HITCH" lit-impossible \
   -c lights -d /tmp >/dev/null
 lit_impossible_id="$(window_id lit-impossible)"
@@ -6011,9 +6113,10 @@ lit_impossible_pane="$(tmux list-panes -t "$lit_impossible_id" -F '#{pane_id}')"
 tmux set-option -w -t "$lit_impossible_id" @test_context '100k/258k (39%)'
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$lit_impossible_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$lit_impossible_id" @gl_context_light red
 impossible="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_impossible_pane" "$GANG" hook)"
-contains "an absolute red beyond the native window fails visibly" \
+contains "an impossible absolute spec supersedes a stale red latch" \
   "$impossible" "red threshold 500000 cannot fire in this harness's 258000-token window"
 impossible_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_impossible_pane" "$GANG" hook)"

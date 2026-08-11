@@ -161,7 +161,7 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # joins its visual wraps. Empty safe/move/confirm fields make this record
 # read-only in core. The dialog asks an operator security question and no key
 # Gangline can send is an answer it is authorized to choose.
-GANG_DIALOGS='external-import-trust|^ +❯ [0-9]+\. |||'
+GANG_DIALOGS='external-import-trust|^❯ [0-9]+\. |||'
 GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
 Yes, allow external imports
 No, disable external imports

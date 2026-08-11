@@ -454,6 +454,11 @@ into the same archive surface before writing that entry to stdout, and prints th
 archive and deletion paths on stderr. A shell filter may hide rendered output;
 it cannot erase the only copy or the route back to it.
 
+Read archives are durable recovery state, not a cache: Gangline never guesses
+when their human purpose is over. The read prints the exact deletion command,
+and operations guidance makes the operator responsible for running it after
+recovery or audit ends.
+
 ## A queue drains as one message
 
 When a turn boundary drains a spool, every waiting entry is delivered as one

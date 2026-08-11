@@ -710,7 +710,7 @@ collar_file() { # $1 = collar name -> path on stdout; yours wins over the shippe
 }
 
 load_collar() { # $1 = collar name; sets the GANG_* strategy surface
-  local f record pipes id marker safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc suffix new old
+  local f record pipes id marker marker_tail safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc suffix new old
   f="$(collar_file "$1")" \
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
@@ -789,6 +789,14 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     case "$id" in ''|*[!a-z0-9-]*) die "collar '$1' has invalid dialog id '$id' (expected [a-z0-9-]+)" ;; esac
     [ -n "$marker" ] || die "collar '$1' dialog '$id' has an empty marker"
     case "$marker" in ^*) ;; *) die "collar '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
+    marker_tail="${marker#^}"
+    # dialog_normalize removes every line's leading whitespace before this
+    # marker is evaluated. A record that requires such whitespace is dead
+    # configuration: it can look precise and still never recognize a screen.
+    case "$marker_tail" in
+      ' '*|'\s'*|'\t'*|'\ '*|'[[:space:]]'*|'[[:blank:]]'*)
+        die "collar '$1' dialog '$id' marker requires leading whitespace that dialog normalization removes: '$marker'" ;;
+    esac
     if [ -z "$safe" ]; then
       [ -z "$move$confirm" ] \
         || die "collar '$1' observe-only dialog '$id' must leave safe, move and confirm empty"
@@ -2014,13 +2022,18 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
 }
 
 wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
-  local t=0 modal_reported=0 dialogs_answered=0
+  local t=0 operator_reported=0 prompt_reported=0 dialogs_answered=0
   while [ "$t" -lt "$2" ]; do
     if [ -n "${3:-}" ] && dialog_find "$1" && [ -z "$DIALOG_MATCH_SAFE" ]; then
-      if [ "$modal_reported" -eq 0 ]; then
+      if [ "$operator_reported" -eq 0 ]; then
         printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on known operator dialog '$DIALOG_MATCH_ID' — answer it with 'gang attach'; Gangline will not make this security decision")" >&2
-        modal_reported=1
+        operator_reported=1
       fi
+      # Recognition never makes an operator-owned screen a composer. In
+      # particular, a collar with no collar_input must not fall through to
+      # input_painted's intentionally permissive startup default.
+      sleep 1; t=$((t + 1))
+      continue
     # At most two distinct boot dialogs may consume this same boot budget.
     # Recurrence cannot turn hitch into a reconciliation loop.
     elif [ -n "${3:-}" ] && [ "$dialogs_answered" -lt 2 ] \
@@ -2031,14 +2044,14 @@ wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
     fi
     if input_painted "$1"; then
       if pane_stable "$1"; then
-        [ "$modal_reported" -eq 0 ] \
+        [ "$operator_reported" -eq 0 ] && [ "$prompt_reported" -eq 0 ] \
           || printf '%s\n' "$(colour "$C_OK" "'$3' now has an input box; hitch is continuing")" >&2
         return 0
       fi
-    elif [ -n "${3:-}" ] && [ "$modal_reported" -eq 0 ] \
+    elif [ -n "${3:-}" ] && [ "$prompt_reported" -eq 0 ] \
       && boot_prompt_visible "$1"; then
       printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on a first-run prompt — answer it with 'gang attach'; hitch will keep waiting for its input box")" >&2
-      modal_reported=1
+      prompt_reported=1
     fi
     sleep 1; t=$((t + 1))
   done
@@ -2338,11 +2351,11 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
 }
 
 ARCHIVE_DIR=""
-archive_establish() { # $1 = a label for this teardown; ARCHIVE_DIR = its directory
+archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its directory
   local root
   [ -z "$ARCHIVE_DIR" ] || return 0
   root="$(archive_root)"
-  mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing to end anything while the mail has nowhere to go"
+  mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing the operation while the mail has nowhere to go"
   ARCHIVE_DIR="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
   mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
 }
@@ -2979,6 +2992,10 @@ context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
   ctx="$(context_now "$1" 2>/dev/null)" || return 2
   pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 2
   read -r used window <<<"$pair"
+  if [ "$window" -eq 0 ]; then
+    CONTEXT_LIGHT_ERROR="Context lights invalid: this harness's native context source reported a zero-token window."
+    return 3
+  fi
   yellow="$LIGHT_YELLOW" red="$LIGHT_RED"
   if [ "$LIGHT_RELATIVE" -eq 1 ]; then
     yellow="$(( (window * yellow + 99) / 100 ))"
@@ -3021,7 +3038,9 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
     [ "$rc" -eq 0 ] || return 0
   fi
   [ "$CONTEXT_LIGHT" != "$previous" ] || return 0
-  [ "$previous" != red ] || [ "$CONTEXT_LIGHT" = unavailable ] || return 0
+  if [ "$previous" = red ]; then
+    case "$CONTEXT_LIGHT" in unavailable|invalid) ;; *) return 0 ;; esac
+  fi
   tmux set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" 2>/dev/null \
     || return 0
   if [ -z "$note" ]; then
@@ -4064,6 +4083,17 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     [ -f "$e" ] || continue
     label="${e##*/}"
     if [ "$mine" -eq 1 ]; then
+      # Prove the archive path before claiming anything. A bad archive setting
+      # must leave a waiting message waiting, never turn it into a held entry
+      # whose delivery fate is then misreported as unknown.
+      if [ -z "$mail_archive" ]; then
+        archive_establish "$SESSION-read"
+        archived_name="$(agent_name_of "$id" 2>/dev/null)" || archived_name=""
+        valid_name "$archived_name" || archived_name="${id#@}"
+        mail_archive="$ARCHIVE_DIR/$archived_name"
+        mkdir -p "$mail_archive" \
+          || die "cannot create $mail_archive for messages consumed by this read — the spool is untouched"
+      fi
       # The drain's own claim rename, for the reason the drain has one: the
       # rename is what makes ownership atomic. A drain at this turn's boundary
       # and this read cannot both take the same entry, and the loser never
@@ -4074,18 +4104,14 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     fi
     spool_read "$e"
     if [ "$mine" -eq 1 ]; then
-      if [ -z "$mail_archive" ]; then
-        archive_establish "$SESSION-read"
-        archived_name="$(agent_name_of "$id" 2>/dev/null)" || archived_name=""
-        valid_name "$archived_name" || archived_name="${id#@}"
-        mail_archive="$ARCHIVE_DIR/$archived_name"
-        mkdir -p "$mail_archive" \
-          || die "cannot create $mail_archive for messages consumed by this read"
-        printf 'self-mail is destructive; every consumed entry is archived first at %s\ndelete that archive after recovery with: rm -rf -- %q\n' \
-          "$mail_archive" "$ARCHIVE_DIR" >&2
+      if ! mv -- "$e" "$mail_archive/$label"; then
+        mv -- "$e" "$dir/$label" 2>/dev/null \
+          || die "cannot archive the spooled message $label before printing it, and cannot return its claim — it remains readable at $e"
+        die "cannot archive the spooled message $label before printing it — it was returned to the waiting spool"
       fi
-      mv -- "$e" "$mail_archive/$label" \
-        || die "cannot archive the spooled message $label before printing it — it remains claimed at $e"
+      [ "$n" -ne 0 ] \
+        || printf 'self-mail is destructive; consumed entries from this read are archived under %s\ndelete this read archive after recovery with: rm -rf -- %q\n' \
+          "$ARCHIVE_DIR" "$ARCHIVE_DIR" >&2
     fi
     n=$((n + 1))
     printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
@@ -4098,6 +4124,10 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     printf '%s\n' "$(colour "$C_BAD" "held (delivery NOT verified — it may still have arrived) from $SPOOL_SENDER — ${e##*/}")"
     printf '%s\n\n' "$SPOOL_BODY"
   done
+  if [ "$n" -eq 0 ] && [ -n "$mail_archive" ]; then
+    rmdir -- "$mail_archive" "$ARCHIVE_DIR" 2>/dev/null || true
+    mail_archive="" ARCHIVE_DIR=""
+  fi
   if [ "$n" -eq 0 ] && [ "$held" -eq 0 ]; then
     printf '%s\n' "$(colour "$C_DIM" "no mail waiting for $name")"
     return 0

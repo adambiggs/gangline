@@ -114,6 +114,15 @@ re-sending it by hand. Spools die with their window: `gang drop` and `gang down`
 archive any waiting or held entries under `GANG_ARCHIVE_DIR`, then forget the
 spool.
 
+An addressee's own `gang mail` read also archives every entry before printing
+it. These read archives are durable operator recovery state under
+`GANG_ARCHIVE_DIR`; Gangline never expires or reaps them, and a home-directory
+backup may retain them too. Each read prints its exact archive root and a quoted
+`rm -rf -- <root>` command on stderr. The archive dies when the operator has
+finished any recovery or audit that required it and runs that command. Periodic
+operator housekeeping should remove read and teardown archives that no longer
+have a recovery purpose.
+
 For a harness whose native Stop event does not reach Gangline, an ordinary send
 still tries live delivery. A refusal is not parked, and names the missing
 `GANG_STOP_HOOK`, because nothing would drain the message.
