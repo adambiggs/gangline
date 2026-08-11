@@ -483,7 +483,12 @@ EOF
 gang compact
   Ask an agent to compact its context.
 
+  A continuation turn follows every compaction,
+  so the agent never lands idle. --resume
+  replaces the default one.
+
   gang compact <name>
+  gang compact --resume "<turn to take after>"
 EOF
       ;;
     context) cat <<'EOF'
@@ -825,7 +830,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
   case "$1" in
-    hitch) return 1 ;;
+    hitch|gangline) return 1 ;;
     ''|-*|.*) return 1 ;;
     *[!A-Za-z0-9._-]*) return 1 ;;
   esac
@@ -901,7 +906,7 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
     SEND_FROM="$claimed"
   fi
   valid_name "$SEND_FROM" \
-    || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
+    || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
 }
 
 registered_identity_guard() { # $1 window, $2 requested name, $3 action, optional $4 requested collar
@@ -1662,7 +1667,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
 }
 
 self_compact_after_stop() { # $1 window id, $2 collar
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" resume
   load_collar "$2"
   [ "$GANG_SELF_COMPACT" = deferred ] \
     || die "collar '$2' no longer declares deferred self-compaction"
@@ -1675,7 +1680,20 @@ self_compact_after_stop() { # $1 window id, $2 collar
     2) die "a dialog owns the screen after the turn ended" ;;
     *) die "the input box did not become ready after the turn ended" ;;
   esac
-  inject "$1" "$(compact_command)" head
+  resume="$(tmux show-options -wqv -t "$1" @gl_self_compact_resume 2>/dev/null)" \
+    || resume=""
+  # One lock across both, so nothing lands between the compaction and the turn
+  # that follows it.
+  lock_pane "$1"
+  inject "$1" "$(compact_command)" head locked
+  compact_continue "$1" "$resume"
+  lock_release
+  tmux set-option -uw -t "$1" @gl_self_compact_resume 2>/dev/null || true
+}
+
+compact_continue() { # $1 window id, $2 the agent's continuation or empty; caller holds the lock
+  envelope gangline "$(compact_resume "$2")"
+  inject "$1" "$ENVELOPE" '' locked queued
 }
 
 # WHAT A COMPACTION IS TOLD TO KEEP. A summary chosen without instruction keeps
@@ -1705,6 +1723,16 @@ compact_command() { # the collar's compact command with its instruction slot fil
       printf '%s' "${GANG_COMPACT_CMD//'{{instructions}}'/$GANG_COMPACT_KEEP}" ;;
     *) printf '%s' "$GANG_COMPACT_CMD" ;;
   esac
+}
+
+# THE TURN A COMPACTION LANDS ON. Typed behind the compaction command: a
+# compacting harness parks it and submits it when the compaction ends, and a
+# harness that refused the compaction takes it now. Orientation, never direction —
+# "continue working" would make a finished agent invent work.
+GANG_COMPACT_RESUME='Your context was just compacted. Re-read your brief and the durable state you wrote. Then either resume your lane or report it complete.'
+
+compact_resume() { # $1 = the agent's own continuation, if it supplied one
+  printf '%s' "${1:-$GANG_COMPACT_RESUME}"
 }
 
 # POSSIBLY REDUNDANT WITH THE COMPACTION BRACKET, AND DELIBERATELY STILL HERE.
@@ -2667,7 +2695,8 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   stage_forget "$1"
 }
 
-inject() { # $1 window, $2 text, $3 head, $4 locked, $5 screen if UI proves submit
+inject() { # $1 window, $2 text, $3 head, $4 locked,
+           # $5 witness: screen if UI proves submit, queued if a park is a landing
   local buf="gang-$$" frag before after tname keep_lock=0
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
@@ -2718,15 +2747,20 @@ inject() { # $1 window, $2 text, $3 head, $4 locked, $5 screen if UI proves subm
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
-  if [ "${5:-}" = screen ]; then
-    # A modal removes the composer that ordinary delivery reads after Enter.
-    # The usage caller retains this lock and proves the native screen changed
-    # before extracting or dismissing anything, so that screen is the submit
-    # witness; every pre-Enter paste and authority guard above remains shared.
-    tmux send-keys -t "$1" Enter
-  else
-    submit_verify "$1" "$after" "$frag" paste
-  fi
+  case "${5:-}" in
+    screen)
+      # A modal removes the composer that ordinary delivery reads after Enter.
+      # The usage caller retains this lock and proves the native screen changed
+      # before extracting or dismissing anything, so that screen is the submit
+      # witness; every pre-Enter paste and authority guard above remains shared.
+      tmux send-keys -t "$1" Enter ;;
+    # A continuation is typed at a harness that is compacting, so the harness's
+    # own queue is where it is meant to wait. Parking is the landing here, not a
+    # failed delivery.
+    queued) submit_verify "$1" "$after" "$frag" paste park_ok ;;
+    '') submit_verify "$1" "$after" "$frag" paste ;;
+    *) die "internal: inject received unknown witness mode '$5'" ;;
+  esac
   [ "$keep_lock" -eq 1 ] || lock_release
 }
 
@@ -2741,7 +2775,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked, $5 screen if UI proves subm
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall
+                  # $4 paste|recall, $5 park_ok to accept a parked landing
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
   tname="$(agent_name_of "$1")"
   case "$4" in
@@ -2783,7 +2817,7 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # harness's own parked-input hint. A parked message renders in the
   # transcript exactly like a submitted one, so this composer reading is the
   # one place the two states differ.
-  if [ -n "$GANG_QUEUED_REGEX" ]; then
+  if [ -n "$GANG_QUEUED_REGEX" ] && [ "${5:-}" != park_ok ]; then
     local qlooks=0
     while :; do
       ! box_queued "$posted" || submit_parked "$1" "$3" "$4" "$2"
@@ -3013,7 +3047,7 @@ cmd_hitch() {
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
-    || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch is reserved"
+    || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
   while [ $# -gt 0 ]; do case "$1" in
     -c|--collar) [ "$collar_old_arg" -eq 0 ] \
                    || die "hitch: -c/--collar and -p/--profile are the same option under two names; pass one."
@@ -3507,7 +3541,19 @@ cmd_interrupt() {
 }
 
 cmd_compact() {
-  local name="${1:-}" self="" mine=0 busy_rc=0
+  local name="" self="" mine=0 busy_rc=0 resume=""
+  while [ $# -gt 0 ]; do case "$1" in
+    --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
+              [ -z "$resume" ] || die "compact: --resume may be passed only once"
+              resume="$2"; shift 2 ;;
+    -*) die "compact: unknown argument '$1'" ;;
+    *) [ -z "$name" ] || die "compact: unexpected argument '$1'"
+       name="$1"; shift ;;
+  esac; done
+  case "$resume" in
+    *[![:space:]]*|'') ;;
+    *) die "compact: --resume was given only whitespace; omit it to use the default continuation" ;;
+  esac
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help compact
@@ -3515,7 +3561,6 @@ cmd_compact() {
       exit 1
     }
   fi
-  [ $# -le 1 ] || die "compact: unexpected argument '$2'"
   resolve "$name"
   [ -n "${GANG_COMPACT_CMD:-}" ] \
     || die "collar '$AGENT_COLLAR' declares no compact command"
@@ -3524,8 +3569,14 @@ cmd_compact() {
   self="$(self_window)" || self=""
   [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
   if [ "$mine" -eq 1 ] && [ "$GANG_SELF_COMPACT" = deferred ]; then
+    if [ -n "$resume" ]; then
+      tmux set-option -w -t "$AGENT_ID" @gl_self_compact_resume "$resume" \
+        || die "could not record the continuation for this compaction"
+    else
+      tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_resume 2>/dev/null || true
+    fi
     self_compact_request "$AGENT_ID" >/dev/null
-    printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now)")"
+    printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now; a continuation turn follows the compaction)")"
     return 0
   fi
   if [ "$mine" -ne 1 ]; then
@@ -3536,9 +3587,12 @@ cmd_compact() {
       2) die "cannot determine whether '$name' is mid-turn; refusing compaction" ;;
     esac
   fi
-  inject "$AGENT_ID" "$(compact_command)" head
+  lock_pane "$AGENT_ID"
+  inject "$AGENT_ID" "$(compact_command)" head locked
+  compact_continue "$AGENT_ID" "$resume"
+  lock_release
   tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_failed 2>/dev/null || true
-  printf '%s\n' "$(colour "$C_OK" "native compaction submitted to $name") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
+  printf '%s\n' "$(colour "$C_OK" "native compaction submitted to $name, with a continuation turn behind it") $(colour "$C_DIM" "(execution remains the harness's verdict)")"
 }
 
 cmd_curfew() { # declare, show, or clear one optional team curfew
@@ -4188,7 +4242,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   local name="" collar="" id collar_new_arg=0 collar_old_arg=0 rc=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
-    || die "adopt: '$name' is not a usable agent name — hitch is reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
+    || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
   while [ $# -gt 0 ]; do case "$1" in
     -c|--collar) [ "$collar_old_arg" -eq 0 ] \
                    || die "adopt: -c/--collar and -p/--profile are the same option under two names; pass one."

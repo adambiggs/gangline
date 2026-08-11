@@ -5205,6 +5205,73 @@ excludes "and never tell the agent to keep working" "$slotted_pane" "continue wo
 excludes "the placeholder itself is never typed" "$slotted_pane" "{{instructions}}"
 "$GANG" drop slotted >/dev/null 2>&1 || :
 
+# A COMPACTION LANDS THE AGENT ON A TURN, NOT AN EMPTY COMPOSER. The continuation
+# is typed behind the compaction command and carries Gangline's own attribution.
+compactable_pane="$(pane compactable)"
+contains "a continuation turn is typed behind the compaction command" \
+  "$compactable_pane" "Re-read your brief and the durable state you wrote"
+contains "attributed to Gangline itself, not to a peer" \
+  "$compactable_pane" "[gang:gangline#"
+# Orientation, never direction, for the same reason the keep-instructions are.
+excludes "and the default continuation never tells the agent to keep working" \
+  "$compactable_pane" "continue working"
+"$GANG" compact compactable --resume "RESUME_MARKER_ONLY" >/dev/null
+contains "--resume replaces the default continuation" \
+  "$(pane compactable)" "RESUME_MARKER_ONLY"
+compact_bad_rc=0
+"$GANG" compact compactable --resume "   " >/dev/null 2>&1 || compact_bad_rc=$?
+equal "a whitespace-only continuation is refused rather than typed" \
+  "1" "$compact_bad_rc"
+"$GANG" drop compactable >/dev/null 2>&1 || :
+
+# THE CONTINUATION IS MEANT TO PARK, AND THE PARK IS THE LANDING. A harness that
+# is compacting queues the turn typed behind the compaction command and submits it
+# when the compaction ends. The composer reads clean while the compaction runs and
+# carries the hint only once something is queued, which is what claude-code 2.1.227
+# was driven doing; a fixture showing the hint earlier would refuse at the
+# preflight and prove nothing. Same observed hint as the claude-code collar.
+cat > "$RUN_ROOT/compact-queue-rc" <<'RC'
+unset -f command_not_found_handle
+PS1='❯ '
+PROMPT_COMMAND='if [ -f "$QUEUE_STRAND" ]; then
+                  [ -z "$QUEUE_ARMED" ] || PS1="❯ Press up to edit queued messages"
+                  QUEUE_ARMED=1
+                fi'
+RC
+cat > "$RUN_ROOT/collars/compact-queueing.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/compact-queue-strand exec bash --rcfile $RUN_ROOT/compact-queue-rc' fixture"
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+GANG_COMPACT_CMD="touch $RUN_ROOT/compact-queue-strand"
+SH
+rm -f "$RUN_ROOT/compact-queue-strand"
+"$HITCH" parking -c compact-queueing -d /tmp >/dev/null
+if "$GANG" compact parking >/dev/null 2>&1; then
+  pass "a continuation the harness parks is accepted, not reported as failed"
+else
+  fail "a continuation the harness parks is accepted, not reported as failed" \
+    "compact reported the park as a failed delivery"
+fi
+# A DELIBERATE PARK LEAVES NO RECOVERY RECORD. flush exists to rescue a peer
+# message the harness swallowed; this one drains itself when the compaction ends,
+# and a record here would send an operator after a message already on its way.
+equal "and records no parked message for flush to chase" "" \
+  "$(tmux show-options -wqv -t "$(window_id parking)" @gl_parked)"
+# The exception is scoped to the continuation and does not widen delivery. With
+# the fixture's queue still showing, an ordinary peer message is refused on the
+# same evidence gang has always refused it on, before anything is typed.
+parking_rc=0
+parking_out="$(printf 'MARK_PEER_PARKED' \
+  | "$GANG" send --to parking --from tester --live-only --stdin 2>&1)" \
+  || parking_rc=$?
+equal "while an ordinary message into that same queue is still refused" \
+  "3" "$parking_rc"
+contains "on the parked-queue evidence, before anything is typed" \
+  "$parking_out" "parked earlier input"
+"$GANG" drop parking >/dev/null 2>&1 || :
+
 # A self-request made inside an agent's own pane must not submit the native
 # command during that turn. Stop consumes it once, after which a one-shot worker
 # submits the collar command and exits. Both waits below are tmux event barriers,

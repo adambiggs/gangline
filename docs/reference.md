@@ -272,16 +272,23 @@ return or delivery cannot be verified, the reason is printed back to the caller
 in full and reported as not delivered and not parked. Existing backlog remains
 untouched for the next native turn boundary.
 
-### `gang compact <name>`
+### `gang compact [<name>] [--resume <turn>]`
 
 Submits the collar's native compaction command through the same verified input
 path. An external request refuses a busy or unknown target.
 
+A continuation turn is typed immediately behind the compaction command, enveloped
+from the reserved sender `gangline`. A harness that is compacting parks it and
+submits it when the compaction ends; a harness that refused the compaction takes
+it at once. `--resume` supplies that turn, and a default fires when the agent
+supplies none.
+
 When a hooked Codex or claude-code agent requests its own compaction, Gangline
 records a one-shot request. Its native Stop hook submits `/compact` after the
-active turn releases the composer. `status` and `roster` expose pending or failed
-self-compaction. A guarded claude-code launch that cannot install hooks declares
-neither Stop support nor deferred self-compaction.
+active turn releases the composer, then the continuation behind it. `status` and
+`roster` expose pending or failed self-compaction. A guarded claude-code launch
+that cannot install hooks declares neither Stop support nor deferred
+self-compaction.
 
 ### `gang notify [<name>|clear]`
 

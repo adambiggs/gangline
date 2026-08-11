@@ -78,11 +78,10 @@ window you are running in, so you do not name yourself. Do it after finishing a
 coherent arc and recording durable state somewhere that outlives your context,
 never mid-edit.
 
-Compacting leaves you idle with a summary and no instruction. Nothing will
-prompt you, so the next move is yours: re-read your brief and the durable state
-you wrote, then either resume the lane or report it complete. Both are turns.
-Doing neither is how a lane is silently dropped — you will still read as idle,
-and idle is indistinguishable from finished.
+Every compaction is followed by a continuation turn Gangline types for you, so
+you land with something to answer rather than idle. Pass `--resume` to say what
+that turn should be. The default sends you back to your brief and your durable
+state, to resume the lane or report it complete.
 
 ## The marathon rule
 
