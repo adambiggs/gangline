@@ -6265,9 +6265,9 @@ git -C "$gate_fix" init -q
 git -C "$gate_fix" add -A
 git -C "$gate_fix" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: gate fixture'
-gate_head="$(git -C "$gate_fix" rev-parse HEAD)"
+gate_head="$(git -C "$gate_fix" rev-parse 'HEAD^{tree}')"
 
-equal "a settled tree answers with its own identity" \
+equal "a settled tree answers with the object name of its own bytes" \
   "settled $gate_head $gate_fix" \
   "$("$gate_fix/test/gate.sh" --assert-owned)"
 printf '\n# fixture dirt\n' >> "$gate_fix/bin/gang"
@@ -6441,6 +6441,7 @@ if [ "\$gl_is_list" = 1 ] && [ "\$gl_has_z" = 1 ]; then
       content) printf 'LATE_EDIT\n' >> "$gate_fix/bin/gang" ;;
       list) printf 'LATE_FILE\n' > "$gate_fix/late-file.txt" ;;
       mode) chmod -x "$gate_fix/bin/gang" ;;
+      dest) printf 'FOREIGN\n' > "\${GATE_DRIFT_DEST:-/dev/null}/foreign.txt" ;;
       link) nl='
 '; ln -sfn "bin/gang\$nl" "$gate_fix/gang-link" ;;
     esac
@@ -6472,6 +6473,14 @@ refuses "a symlink retargeted during the copy makes the snapshot unusable" \
   env GATE_DRIFT_MODE=link PATH="$gate_git_bin:$PATH" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-link"
 ln -sfn bin/gang "$gate_fix/gang-link"
+# A destination checked once at the start is a promise about a directory another
+# process can still reach. This one is written into after that check and before
+# the commit.
+refuses "bytes arriving in the destination during the copy are refused" \
+  "holds something the copy did not put there" \
+  env GATE_DRIFT_MODE=dest GATE_DRIFT_DEST="$RUN_ROOT/gate-drift-dest" \
+  PATH="$gate_git_bin:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-dest"
 ln -s ../outside-the-tree "$gate_fix/escaping-link"
 refuses "a relative symlink out of the tree is refused, not quietly relocated" \
   "pointing out of the tree" \
@@ -6529,9 +6538,22 @@ else
     "the gate refused a destination that held nothing"
 fi
 ln -s "$RUN_ROOT/gate-nowhere" "$RUN_ROOT/gate-dangling-dest"
-refuses "a destination that is a symlink is refused where it is found" \
+refuses "a destination that is a dangling symlink is refused where it is found" \
   "already holds something" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-dangling-dest"
+# A LIVE link to an empty directory answers yes to every test a plain empty
+# directory does, and the snapshot would be built in a place nobody named.
+mkdir -p "$RUN_ROOT/gate-link-referent"
+ln -s "$RUN_ROOT/gate-link-referent" "$RUN_ROOT/gate-live-dest"
+refuses "a destination that is a live symlink is refused too" \
+  "already holds something" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-live-dest"
+if [ -e "$RUN_ROOT/gate-link-referent/.git" ]; then
+  fail "and nothing was committed through it" \
+    "a repository was initialised in the link's referent"
+else
+  pass "and nothing was committed through it"
+fi
 
 # A SUBMODULE'S GITLINK IS A DIRECTORY IN THIS LISTING, and it would reach the
 # byte comparison as one: cmp answers "Is a directory" and the tree gets blamed
@@ -6564,7 +6586,9 @@ mkdir -p "$RUN_ROOT/gate-blindgit"
 cat > "$RUN_ROOT/gate-blindgit/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-[ "\${3:-}" = status ] && exit 42
+for gl_arg in "\$@"; do
+  [ "\$gl_arg" = status ] && exit 42
+done
 exec "$gate_real_git" "\$@"
 SH
 chmod +x "$RUN_ROOT/gate-blindgit/git"
@@ -6641,6 +6665,106 @@ refuses "a tree whose index hides files is not one this gate can copy" \
   "standing orders not to look" \
   "$gate_sparse/test/gate.sh" --snapshot "$RUN_ROOT/gate-sparse-snapshot"
 
+# A CACHE CANNOT ANSWER FOR THE BYTES. core.fsmonitor answers from a daemon, and
+# when its hook cannot run git prints a fatal line, exits zero, and reports
+# nothing changed — a dirty tree read as a clean one by an instrument that never
+# looked.
+gate_fsm="$RUN_ROOT/gate-fsmonitor"
+mkdir -p "$gate_fsm/test"
+cp "$ROOT/test/gate.sh" "$gate_fsm/test/"
+gate_fsm="$(cd -P "$gate_fsm" && pwd)"
+printf 'watched\n' > "$gate_fsm/watched.txt"
+git -C "$gate_fsm" init -q
+git -C "$gate_fsm" add -A
+git -C "$gate_fsm" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: fsmonitor fixture'
+# A real protocol-v2 hook, kept outside the tree so it is not itself a change:
+# it answers with an unchanging token and no changed paths, which is exactly
+# what a healthy monitor says about a tree nobody has touched.
+cat > "$RUN_ROOT/gate-fsmonitor-hook" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'gate-fixture-token\0'
+SH
+chmod +x "$RUN_ROOT/gate-fsmonitor-hook"
+git -C "$gate_fsm" config core.fsmonitor "$RUN_ROOT/gate-fsmonitor-hook"
+git -C "$gate_fsm" status --porcelain >/dev/null 2>&1
+printf 'edited behind the cache\n' >> "$gate_fsm/watched.txt"
+equal "the fixture's cache really did report a modified tree as clean" "" \
+  "$(git -C "$gate_fsm" status --porcelain 2>/dev/null)"
+equal "and git itself sees the change once the cache is not asked" \
+  " M watched.txt" \
+  "$(git -C "$gate_fsm" -c core.fsmonitor=false status --porcelain)"
+refuses "a tree read through a broken cache is not a settled tree" \
+  "would not own the tree it is testing" \
+  "$gate_fsm/test/gate.sh" --assert-owned
+
+# THE THIRD BRANCH NEEDS ITS OWN FIXTURE. A listing that cannot be read is a
+# reading that was not taken, and a skip-worktree bit is a standing order rather
+# than evidence of change: both are unknown, and neither is ownership.
+mkdir -p "$RUN_ROOT/gate-blindls"
+cat > "$RUN_ROOT/gate-blindls/git" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+for gl_arg in "\$@"; do
+  [ "\$gl_arg" = -v ] && exit 42
+done
+exec "$gate_real_git" "\$@"
+SH
+chmod +x "$RUN_ROOT/gate-blindls/git"
+refuses "a listing that could not be read is an unknown, not ownership" \
+  "cannot tell whether it owns the tree" \
+  env PATH="$RUN_ROOT/gate-blindls:$PATH" \
+  "$gate_fsm/test/gate.sh" --assert-owned
+git -C "$gate_fsm" config --unset core.fsmonitor
+git -C "$gate_fsm" checkout -q -- watched.txt
+git -C "$gate_fsm" update-index --skip-worktree watched.txt
+equal "the skip-worktree fixture really did leave status empty" "" \
+  "$(git -C "$gate_fsm" status --porcelain)"
+refuses "a skip-worktree bit is a standing order, not a settled tree" \
+  "the index is told not to look at some files" \
+  "$gate_fsm/test/gate.sh" --assert-owned
+# And it is an UNKNOWN, not a claim about movement: the bit proves only that git
+# was told not to look, which is a reading nobody took rather than a change
+# somebody made.
+refuses "and it is refused as a reading nobody took, not as a change" \
+  "cannot tell whether it owns the tree" \
+  "$gate_fsm/test/gate.sh" --assert-owned
+# The end of a run has the same three branches as its start: a tree that stopped
+# being readable did not stay the tree the run began against.
+refuses "a tree that stopped being readable at the end voids the verdict" \
+  "THE SOURCE TREE MOVED DURING THIS RUN" \
+  "$gate_fsm/test/gate.sh" --assert-unmoved "settled whatever $gate_fsm"
+git -C "$gate_fsm" update-index --no-skip-worktree watched.txt
+
+# A CHECK THAT DISAPPEARS ON A BIG ENOUGH INDEX is not a check. `grep -q` stops
+# at the first match, and under `pipefail` the SIGPIPE that kills the writer of
+# a long listing turns a successful match into a failed pipeline — so the
+# concealed entry has to be found past more output than a pipe will hold.
+mkdir -p "$RUN_ROOT/gate-bigindex"
+cat > "$RUN_ROOT/gate-bigindex/git" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+gl_v=0
+for gl_arg in "\$@"; do
+  [ "\$gl_arg" = -v ] && gl_v=1
+done
+if [ "\$gl_v" = 1 ]; then
+  printf 'h concealed-payload\n'
+  awk 'BEGIN { for (i = 0; i < 40000; i++) print "H filler-path-long-enough-to-fill-a-pipe-" i }'
+  exit 0
+fi
+exec "$gate_real_git" "\$@"
+SH
+chmod +x "$RUN_ROOT/gate-bigindex/git"
+equal "the clean fixture is settled before the big index is introduced" \
+  "settled $(git -C "$gate_fsm" rev-parse 'HEAD^{tree}') $gate_fsm" \
+  "$("$gate_fsm/test/gate.sh" --assert-owned)"
+refuses "a concealed entry is found past more output than a pipe holds" \
+  "the index is told not to look at some files" \
+  env PATH="$RUN_ROOT/gate-bigindex:$PATH" \
+  "$gate_fsm/test/gate.sh" --assert-owned
+
 # WHERE ROOT IS A SUBDIRECTORY of a larger repository, an edit elsewhere in that
 # repository is not movement in the tree this gate would copy, and the identity
 # must name the subtree rather than the repository containing it.
@@ -6654,9 +6778,33 @@ git -C "$gate_nest" add -A
 git -C "$gate_nest" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: nested gate fixture'
 printf 'edited outside the copied subtree\n' >> "$gate_nest/sibling.txt"
+gate_nest_identity=refused
+gate_nest_identity="$("$gate_nest/project/test/gate.sh" --assert-owned)" || true
 equal "the identity names the subtree that would be copied, not its container" \
-  "settled $(git -C "$gate_nest" rev-parse HEAD) $gate_nest/project" \
-  "$("$gate_nest/project/test/gate.sh" --assert-owned)"
+  "settled $(git -C "$gate_nest" rev-parse HEAD:project) $gate_nest/project" \
+  "$gate_nest_identity"
+# A COMMIT OUTSIDE THE SUBTREE MOVES HEAD WITHOUT MOVING ONE COPIED BYTE. An
+# identity taken from the containing repository's HEAD would void a subtree run
+# for a teammate's unrelated landing — the same false verdict, other direction.
+git -C "$gate_nest" add -A
+git -C "$gate_nest" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: a sibling-only commit'
+# An index bit on a sibling is a standing order about bytes this gate never
+# copies, so the listing that looks for such orders is scoped like the rest.
+git -C "$gate_nest" update-index --assume-unchanged sibling.txt
+if "$gate_nest/project/test/gate.sh" --assert-unmoved "$gate_nest_identity"; then
+  pass "a commit that touches no copied byte is not movement in the subtree"
+else
+  fail "a commit that touches no copied byte is not movement in the subtree" \
+    "an unrelated sibling commit voided the run"
+fi
+printf 'edited inside the subtree\n' >> "$gate_nest/project/test/gate.sh"
+git -C "$gate_nest" add -A
+git -C "$gate_nest" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: a commit inside the subtree'
+refuses "a commit that does touch one is movement in the subtree" \
+  "THE SOURCE TREE MOVED DURING THIS RUN" \
+  "$gate_nest/project/test/gate.sh" --assert-unmoved "$gate_nest_identity"
 
 # THE GATE'S OWN ORCHESTRATION, which every check above leaves untouched: they
 # drive --assert-owned, --assert-unmoved and --snapshot, so dropping the suite
@@ -6667,15 +6815,18 @@ mkdir -p "$gate_run/test"
 cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
 gate_run="$(cd -P "$gate_run" && pwd)"
 gate_order="$RUN_ROOT/gate-default-order"
+gate_where="$RUN_ROOT/gate-default-where"
 cat > "$gate_run/test/lint.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 printf 'lint\n' >> "$gate_order"
+printf 'lint %s\n' "\$PWD" >> "$gate_where"
 SH
 cat > "$gate_run/test/integration.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
 printf 'integration\n' >> "$gate_order"
+printf 'integration %s\n' "\$PWD" >> "$gate_where"
 SH
 chmod +x "$gate_run/test/lint.sh" "$gate_run/test/integration.sh"
 git -C "$gate_run" init -q
@@ -6684,10 +6835,23 @@ git -C "$gate_run" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: default gate fixture'
 printf 'uncommitted while the gate runs\n' > "$gate_run/scratch.txt"
 : > "$gate_order"
+: > "$gate_where"
 gate_default_out="$("$gate_run/test/gate.sh" 2>&1)"
 equal "the no-argument gate runs lint and then the suite, in that order" \
   "$(printf 'lint\nintegration')" "$(<"$gate_order")"
-contains "and runs them against the tree it copied" "$gate_default_out" "$gate_run"
+# WHERE they ran is the claim, and the gate's own report cannot witness it: that
+# line prints the SOURCE path whatever directory the gates were run from.
+gate_lint_where="$(awk '$1 == "lint" { print $2; exit }' "$gate_where")"
+gate_suite_where="$(awk '$1 == "integration" { print $2; exit }' "$gate_where")"
+equal "and runs both of them from one and the same directory" \
+  "$gate_lint_where" "$gate_suite_where"
+if [ -n "$gate_lint_where" ] && [ "$gate_lint_where" != "$gate_run" ]; then
+  pass "and that directory is the copy, not the tree it was copied from"
+else
+  fail "and that directory is the copy, not the tree it was copied from" \
+    "the gates ran in [$gate_lint_where], the source is [$gate_run]"
+fi
+contains "the gate names the tree it copied" "$gate_default_out" "$gate_run"
 contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
@@ -6706,7 +6870,6 @@ gate_fail_out="$("$gate_run/test/gate.sh" 2>&1)" || gate_fail_rc=$?
 equal "a failing suite is the gate's own exit status" "3" "$gate_fail_rc"
 contains "a failed gate keeps the snapshot that produced the verdict" \
   "$gate_fail_out" "kept for reading"
-contains "and says exactly how that snapshot dies" "$gate_fail_out" "rm -rf "
 gate_kept="$(printf '%s\n' "$gate_fail_out" | awk '/^  \// { print $1; exit }')"
 if [ -n "$gate_kept" ] && [ -d "$gate_kept" ]; then
   pass "the kept snapshot is really there to read"
@@ -6714,7 +6877,23 @@ else
   fail "the kept snapshot is really there to read" \
     "the reported path [$gate_kept] is not a directory"
 fi
-[ -z "$gate_kept" ] || rm -rf -- "$(dirname "$gate_kept")"
+# A deletion path is only a deletion path if it deletes THIS artifact. The
+# command is taken from the message and run, and the snapshot has to be gone.
+gate_removal="$(printf '%s\n' "$gate_fail_out" |
+  sed -n 's/^gate: nothing removes it but you:  //p')"
+contains "and says exactly how that snapshot dies" "$gate_removal" "rm -rf "
+if [ -n "$gate_removal" ] && [ -d "$gate_kept" ]; then
+  eval "$gate_removal"
+  if [ -e "$gate_kept" ]; then
+    fail "and that command is the one that ends it" \
+      "[$gate_removal] left $gate_kept behind"
+  else
+    pass "and that command is the one that ends it"
+  fi
+else
+  fail "and that command is the one that ends it" \
+    "no removal command was printed for $gate_kept"
+fi
 
 # THE WIRING, not a restatement of it: both mandatory entry points are run
 # against a tree they would not own and must refuse before doing any work.

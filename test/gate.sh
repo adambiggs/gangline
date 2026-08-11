@@ -77,13 +77,28 @@ ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 # What it refuses to trust rather than merely inherit: `status.showUntrackedFiles`,
 # a submodule ignore rule, an index instructed not to look at a file, and an
 # operation left half-finished with a commit still to come.
+subtree_identity() { # the object name of exactly the bytes this gate copies
+  local prefix
+  prefix="$(git -C "$ROOT" rev-parse --show-prefix 2>/dev/null)" || prefix=""
+  if [ -n "$prefix" ]; then
+    git -C "$ROOT" rev-parse "HEAD:${prefix%/}" 2>/dev/null || printf 'no-commit'
+  else
+    git -C "$ROOT" rev-parse 'HEAD^{tree}' 2>/dev/null || printf 'no-commit'
+  fi
+}
+
 index_conceals() { # 0 = the index is under standing orders not to look
   local tags
   tags="$(git -C "$ROOT" ls-files -v -- . 2>/dev/null)" || return 1
   # A lowercase tag is assume-unchanged; S is skip-worktree. Both are standing
   # instructions to report a file without reading it, and a sparse checkout
   # leaves tracked paths absent from the working tree entirely.
-  printf '%s\n' "$tags" | LC_ALL=C grep -q '^[a-zS]'
+  #
+  # A here-string, not a pipe: `grep -q` stops at the first match, and under
+  # `set -o pipefail` the SIGPIPE that kills the writer of a large index turns a
+  # successful match into a failed pipeline — so the check would disappear on
+  # exactly the trees big enough to need it.
+  LC_ALL=C grep -q '^[a-zS]' <<<"$tags"
 }
 
 operation_in_progress() { # prints the operation's name, 0 = one is under way
@@ -105,8 +120,13 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
   # Scoped to ROOT with a pathspec: where ROOT is a subdirectory of a larger
   # repository, an unrelated edit elsewhere in that repository is not movement
   # in the tree this gate copies.
-  status="$(git -C "$ROOT" status --porcelain --untracked-files=normal \
-    --ignore-submodules=none -- . 2>/dev/null)" || {
+  # core.fsmonitor answers from a daemon's cache, and a healthy monitor that has
+  # not noticed a write answers "nothing changed" for a modified tree. The
+  # pathspec below is what actually forces git to stat the bytes here — measured,
+  # not assumed — and the pin says so out loud rather than leaving the guarantee
+  # resting on a side effect of scoping.
+  status="$(git -C "$ROOT" -c core.fsmonitor=false status --porcelain \
+    --untracked-files=normal --ignore-submodules=none -- . 2>/dev/null)" || {
     printf 'unverifiable (git status failed)\n'
     return 2
   }
@@ -114,11 +134,17 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
     printf 'unverifiable (git ls-files failed)\n'
     return 2
   }
-  head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || head=no-commit
+  # The identity of a SUBTREE is its own tree object, not the containing
+  # repository's HEAD: a commit that touches only a sibling moves HEAD without
+  # moving one byte this gate would copy, and voiding a run for that is the same
+  # false verdict in the other direction.
+  head="$(subtree_identity)"
   # A verdict resting on a standing order is a promise, not a reading.
+  # The bit proves only that git was TOLD not to look. It is not evidence that
+  # anything changed, so it belongs with the readings that could not be taken.
   if index_conceals; then
-    printf 'unsettled %s (the index is told not to look at some files)\n' "$head"
-    return 1
+    printf 'unverifiable (the index is told not to look at some files)\n'
+    return 2
   fi
   # Settled bytes under a half-finished operation are settled for one more
   # moment: the commit that ends it moves HEAD, and the snapshot carries none of
@@ -245,6 +271,23 @@ copy_drift() { # $1 = list file, $2 = snapshot root; prints what moved, if anyth
 # because the fixtures that build commits need one, and the operator's own git
 # configuration is excluded so a global hooks path, commit template or signing
 # requirement cannot reach in here.
+# The two listings name the same files in different orders — the source's is
+# tracked-then-untracked, the snapshot's is index order — so they are compared as
+# sets. NUL-terminated throughout, because a newline in a filename is a filename,
+# not a separator; a `sort` that cannot do that is refused rather than worked
+# around, since the alternative silently stops comparing what it claims to.
+same_set() { # $1, $2 = NUL-separated listings
+  printf 'a\0' | LC_ALL=C sort -z >/dev/null 2>&1 || {
+    printf '%s\n' \
+      "gate: this sort cannot read NUL-separated input, so the snapshot's" \
+      "      contents cannot be compared with the tree's." >&2
+    return 1
+  }
+  LC_ALL=C sort -z < "$1" > "$1.sorted"
+  LC_ALL=C sort -z < "$2" > "$2.sorted"
+  cmp -s "$1.sorted" "$2.sorted"
+}
+
 snap_git() {
   git "$@"
 }
@@ -308,13 +351,28 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
       "      would be about either one. Stop editing $ROOT and run again." >&2
     return 1
   fi
+  # -f so the index holds exactly what was copied: a file this repository's own
+  # .gitignore names is still a file the copy carries, and the comparison below
+  # is only exact if the index agrees.
   { snap_git -c init.defaultBranch=gate init -q "$dest" \
     && snap_git -C "$dest" config user.name 'Gangline gate snapshot' \
     && snap_git -C "$dest" config user.email 'gate@gangline.invalid' \
     && snap_git -C "$dest" config commit.gpgsign false \
-    && snap_git -C "$dest" add -A \
+    && snap_git -C "$dest" add -A -f \
+    && snap_git -C "$dest" ls-files -z > "$work/snapped" \
+    && same_set "$work/list" "$work/snapped" \
     && snap_git -C "$dest" commit -q --no-verify -m 'gate: working-tree snapshot'
   } || {
+    # The destination was empty when this began, so anything the copy did not
+    # put there arrived while it was running. Checked here rather than only up
+    # front, because a check taken once at the start is a promise about a
+    # directory another process can still reach.
+    if [ -s "$work/snapped" ] && ! same_set "$work/list" "$work/snapped"; then
+      printf '%s\n' \
+        "gate: $dest holds something the copy did not put there, so committing" \
+        "      it would test this tree plus somebody else's bytes." >&2
+      return 1
+    fi
     printf '%s\n' \
       "gate: could not commit the snapshot in $dest, so the executable there" \
       "      would be measured against a HEAD that does not hold its bytes." >&2
@@ -377,7 +435,9 @@ cleanup() {
   if [ "$keep" -eq 1 ]; then
     printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
     printf '  %s\n' "$SNAP" >&2
-    printf 'gate: nothing removes it but you:  rm -rf %s\n' "$WORK" >&2
+    # Quoted, because an unquoted path with a space in it is a command that
+    # deletes something else.
+    printf 'gate: nothing removes it but you:  rm -rf %q\n' "$WORK" >&2
   else
     rm -rf -- "$WORK"
   fi
