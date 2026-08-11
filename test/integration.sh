@@ -5740,6 +5740,8 @@ cat > "$GANGLINE_OUTER_INPUT"
   printf 'argv:%s|%s\n' "$1" "$2"
   cat "$GANGLINE_OUTER_INPUT"
 } > "$GANGLINE_OUTER_RECORD"
+printf '%s\n' OUTER_STDOUT_MARKER
+printf '%s\n' OUTER_STDERR_MARKER >&2
 exit "${GANGLINE_OUTER_RC:-0}"
 SH
 chmod +x "$delegation_hooks/pre-push"
@@ -5749,12 +5751,61 @@ export GANGLINE_OUTER_RECORD="$delegation_record"
 zero_oid="$(printf '%040d' 0)"
 remote_oid="$(printf '%040d' 1)"
 deletion_record="refs/heads/topic $zero_oid refs/heads/topic $remote_oid"
-printf '%s\n' "$deletion_record" |
+outer_success_output="$(printf '%s\n' "$deletion_record" |
   HOOK_DELEGATION_DEPTH=1 GIT_CONFIG_GLOBAL="$delegation_config" \
-  "$ROOT/.githooks/pre-push" origin /tmp/remote
+  "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)"
 equal "an ambient delegation marker cannot suppress the outer gate" \
   "argv:origin|/tmp/remote
 $deletion_record" "$(cat "$delegation_record")"
+equal "the outer gate's stdout and stderr are replayed at the end" \
+  "pre-push: global gate verdict, held back so it lands last:
+OUTER_STDOUT_MARKER
+OUTER_STDERR_MARKER" \
+  "$(printf '%s\n' "$outer_success_output" | tail -n 3)"
+
+# Exercise the ordering property with local output between the outer gate and
+# replay. An empty-tree commit has no suite, so Gangline's own missing-gate
+# refusal is the intervening line without paying for a nested integration run.
+order_hooks="$RUN_ROOT/pre-push-ordering-hooks"
+order_config="$RUN_ROOT/pre-push-ordering-gitconfig"
+mkdir -p "$order_hooks"
+cat > "$order_hooks/pre-push" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cat > /dev/null
+printf 'OUTER-VERDICT-MARKER\n' >&2
+exit 0
+SH
+chmod +x "$order_hooks/pre-push"
+git config --file "$order_config" core.hooksPath "$order_hooks"
+order_oid="$(GIT_AUTHOR_NAME='Gangline test' \
+  GIT_AUTHOR_EMAIL='test@gangline.invalid' \
+  GIT_COMMITTER_NAME='Gangline test' \
+  GIT_COMMITTER_EMAIL='test@gangline.invalid' \
+  git -C "$ROOT" commit-tree \
+  "$(git -C "$ROOT" mktree </dev/null)" -m 'feat: lintless ordering unit')"
+order_output="$(
+  printf 'refs/heads/main %s refs/heads/main %s\n' \
+    "$order_oid" "$(printf '%040d' 0)" |
+  GIT_CONFIG_GLOBAL="$order_config" \
+    "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1
+)" || true
+order_gate_line="$(printf '%s\n' "$order_output" |
+  awk '/carries no test\/lint.sh/ { print NR; exit }')"
+order_marker_line="$(printf '%s\n' "$order_output" |
+  awk '/OUTER-VERDICT-MARKER/ { print NR; exit }')"
+contains "the ordering fixture reaches Gangline's own gate" \
+  "$order_output" "carries no test/lint.sh"
+contains "the ordering fixture reaches the outer gate" \
+  "$order_output" "OUTER-VERDICT-MARKER"
+equal "the outer verdict is printed after Gangline's own output" \
+  "after" \
+  "$(if [ -n "$order_gate_line" ] && [ -n "$order_marker_line" ] \
+        && [ "$order_marker_line" -gt "$order_gate_line" ]; then
+       printf after
+     else
+       printf before
+     fi)"
 
 outer_refusal_rc=0
 outer_refusal_output="$(printf '%s\n' "$deletion_record" |
