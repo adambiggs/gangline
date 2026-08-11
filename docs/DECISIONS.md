@@ -567,6 +567,14 @@ in one run must be answering the same question. A reading that cannot be taken
 refuses; an unknown is not ownership, and neither is an index instructed not to
 look at a file.
 
+`test/gate.sh` is the one file the snapshot cannot protect, because it is the
+file running from the live tree while the copy is judged. Its whole executable
+body is one function, called on the last line with the exit, so bash has read
+the file before it blocks and a save landing mid-run reaches nothing. And a
+relative symlink is judged by where it points, not by whether the source end of
+it exists: a dangling one resolves against the destination's parent and can read
+bytes the source never held.
+
 ## Native continuation owns compaction recovery
 
 Native continuation now returns every supported compact command to a turn that

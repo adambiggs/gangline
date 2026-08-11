@@ -189,14 +189,38 @@ unverifiable_refusal() { # $1 = the reading that could not be taken
 # safe — it names the same referent from anywhere — and a link that resolves
 # inside the tree is safe, because the copy carries the referent too.
 link_escapes() { # $1 = path relative to ROOT; 0 = the copy would read elsewhere
-  local target here there
+  local target here rest part missing
   target="$(readlink "$ROOT/$1")" || return 0
+  # An absolute target names the same path read from either tree.
   case "$target" in /*) return 1 ;; esac
   here="$(cd -P "$(dirname "$ROOT/$1")" 2>/dev/null && pwd)" || return 0
-  # A dangling relative link resolves to nothing in both trees, and the copy is
-  # a subset, so it cannot start resolving to something.
-  there="$(cd -P "$here/$(dirname "$target")" 2>/dev/null && pwd)" || return 1
-  case "$there" in "$ROOT"|"$ROOT"/*) return 1 ;; esac
+  # A RELATIVE TARGET RESOLVES AGAINST A DIFFERENT PARENT IN THE COPY, so where
+  # it lands has to be worked out rather than assumed. Walk the target's
+  # directory a component at a time: one that exists is resolved physically, so
+  # a symlink on the way cannot hide the answer, and once one is missing nothing
+  # under it exists either and the rest is joined by name. A `..` past that
+  # point would move the answer with nothing left to check it against, so it
+  # refuses instead of guessing.
+  #
+  # Dangling is not the same as harmless. `../missing/file` reads nothing here
+  # and can read a real file beside the destination, which is bytes the source
+  # never had — so what matters is where the link points, not whether the
+  # source end of it happens to exist.
+  rest="$(dirname "$target")" missing=0
+  while [ -n "$rest" ]; do
+    part="${rest%%/*}"
+    if [ "$part" = "$rest" ]; then rest=; else rest="${rest#*/}"; fi
+    case "$part" in ''|.) continue ;; esac
+    if [ "$missing" -eq 0 ] && [ -d "$here/$part" ]; then
+      here="$(cd -P "$here/$part" 2>/dev/null && pwd)" || return 0
+      here="${here%/}"
+      continue
+    fi
+    missing=1
+    case "$part" in ..) return 0 ;; esac
+    here="$here/$part"
+  done
+  case "$here" in "$ROOT"|"$ROOT"/*) return 1 ;; esac
   return 0
 }
 
@@ -380,83 +404,101 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
   }
 }
 
-case "${1:-}" in
-  --assert-owned)
-    [ $# -eq 1 ] || { echo "gate: --assert-owned takes no arguments" >&2; exit 2; }
-    identity=0
-    line="$(tree_identity)" || identity=$?
-    case "$identity" in
-      0) ;;
-      1) owned_refusal "$line"; exit 1 ;;
-      *) unverifiable_refusal "$line"; exit 1 ;;
-    esac
-    printf '%s\n' "$line"
-    exit 0 ;;
-  --assert-unmoved)
-    [ $# -eq 2 ] || { echo "gate: --assert-unmoved takes one identity" >&2; exit 2; }
-    now="$(tree_identity)" || true
-    [ "$now" = "$2" ] || {
+# BASH READS A SCRIPT WHILE IT RUNS IT, so an edit that lands during a run is
+# read from a stale byte offset and executed as whatever now sits there. This
+# is the only file in the gate that runs from the live tree — lint and the
+# suite run from the snapshot, which nobody edits — and it sits in one place
+# for the length of a whole suite. That is what makes it the one file a
+# teammate's save can corrupt mid-run, which it has: a run once died on
+# `dest: unbound variable` at a line holding no such name.
+#
+# A function body is one command, so it is read whole before any of it runs.
+# Everything that can wait goes inside, and the call is the last line in the
+# file, so once the run reaches the suite there is nothing left to read.
+main() {
+  case "${1:-}" in
+    --assert-owned)
+      [ $# -eq 1 ] || { echo "gate: --assert-owned takes no arguments" >&2; exit 2; }
+      identity=0
+      line="$(tree_identity)" || identity=$?
+      case "$identity" in
+        0) ;;
+        1) owned_refusal "$line"; exit 1 ;;
+        *) unverifiable_refusal "$line"; exit 1 ;;
+      esac
+      printf '%s\n' "$line"
+      exit 0 ;;
+    --assert-unmoved)
+      [ $# -eq 2 ] || { echo "gate: --assert-unmoved takes one identity" >&2; exit 2; }
+      now="$(tree_identity)" || true
+      [ "$now" = "$2" ] || {
+        printf '%s\n' \
+          "gate: THE SOURCE TREE MOVED DURING THIS RUN. It was [$2] at the start" \
+          "      and [$now] now, so the checks were not all taken against one" \
+          "      tree and no count over them is a verdict on either. Run" \
+          "      test/gate.sh, which copies the working tree first and cannot be" \
+          "      edited out from under itself." >&2
+        exit 1
+      }
+      exit 0 ;;
+    --snapshot)
+      [ $# -eq 2 ] || { echo "gate: --snapshot takes one directory" >&2; exit 2; }
+      scratch="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate-snap.XXXXXX")"
+      rc=0
+      snapshot_into "$2" "$scratch" || rc=$?
+      rm -rf -- "$scratch"
+      exit "$rc" ;;
+    -h|--help)
       printf '%s\n' \
-        "gate: THE SOURCE TREE MOVED DURING THIS RUN. It was [$2] at the start" \
-        "      and [$now] now, so the checks were not all taken against one" \
-        "      tree and no count over them is a verdict on either. Run" \
-        "      test/gate.sh, which copies the working tree first and cannot be" \
-        "      edited out from under itself." >&2
-      exit 1
-    }
-    exit 0 ;;
-  --snapshot)
-    [ $# -eq 2 ] || { echo "gate: --snapshot takes one directory" >&2; exit 2; }
-    scratch="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate-snap.XXXXXX")"
-    rc=0
-    snapshot_into "$2" "$scratch" || rc=$?
-    rm -rf -- "$scratch"
-    exit "$rc" ;;
-  -h|--help)
-    printf '%s\n' \
-      'usage: test/gate.sh [--snapshot DIR | --assert-owned | --assert-unmoved IDENTITY]' \
-      '  (no argument)     snapshot this working tree and run lint + integration there' \
-      '  --snapshot DIR    build that snapshot in DIR and stop' \
-      '  --assert-owned    print this tree'"'"'s identity, or refuse a tree that is moving' \
-      '  --assert-unmoved  refuse if the identity is no longer the one given'
-    exit 0 ;;
-  '') ;;
-  *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
-esac
+        'usage: test/gate.sh [--snapshot DIR | --assert-owned | --assert-unmoved IDENTITY]' \
+        '  (no argument)     snapshot this working tree and run lint + integration there' \
+        '  --snapshot DIR    build that snapshot in DIR and stop' \
+        '  --assert-owned    print this tree'"'"'s identity, or refuse a tree that is moving' \
+        '  --assert-unmoved  refuse if the identity is no longer the one given'
+      exit 0 ;;
+    '') ;;
+    *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
+  esac
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
-SNAP="$WORK/tree"
-keep=0
-# A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
-# collects these later — no gate run touches another run's snapshot — so the
-# deletion is the reader's, stated as the exact command rather than left to be
-# discovered as accumulated copies of the source under TMPDIR.
-cleanup() {
-  if [ "$keep" -eq 1 ]; then
-    printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
-    printf '  %s\n' "$SNAP" >&2
-    # Quoted, because an unquoted path with a space in it is a command that
-    # deletes something else.
-    printf 'gate: nothing removes it but you:  rm -rf %q\n' "$WORK" >&2
-  else
-    rm -rf -- "$WORK"
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
+  SNAP="$WORK/tree"
+  keep=0
+  # A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
+  # collects these later — no gate run touches another run's snapshot — so the
+  # deletion is the reader's, stated as the exact command rather than left to be
+  # discovered as accumulated copies of the source under TMPDIR.
+  cleanup() {
+    if [ "$keep" -eq 1 ]; then
+      printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
+      printf '  %s\n' "$SNAP" >&2
+      # Quoted, because an unquoted path with a space in it is a command that
+      # deletes something else.
+      printf 'gate: nothing removes it but you:  rm -rf %q\n' "$WORK" >&2
+    else
+      rm -rf -- "$WORK"
+    fi
+  }
+  trap cleanup EXIT HUP INT TERM
+
+  snapshot_into "$SNAP" "$WORK"
+
+  # Read the same way the ownership check reads, so an untracked-only tree is not
+  # announced as settled by a diagnostic that only looks at tracked files.
+  source_state="$(tree_identity)" || true
+  printf 'gate: testing a snapshot of %s\n' "$ROOT"
+  printf 'gate: source tree %s\n' "$source_state"
+
+  rc=0
+  ( cd "$SNAP" && ./test/lint.sh && ./test/integration.sh ) || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    keep=1
+    printf '\ngate: REFUSED (status %s)\n' "$rc" >&2
+    exit "$rc"
   fi
+  printf '\ngate: the snapshot passed lint and the integration suite.\n'
 }
-trap cleanup EXIT HUP INT TERM
 
-snapshot_into "$SNAP" "$WORK"
-
-# Read the same way the ownership check reads, so an untracked-only tree is not
-# announced as settled by a diagnostic that only looks at tracked files.
-source_state="$(tree_identity)" || true
-printf 'gate: testing a snapshot of %s\n' "$ROOT"
-printf 'gate: source tree %s\n' "$source_state"
-
-rc=0
-( cd "$SNAP" && ./test/lint.sh && ./test/integration.sh ) || rc=$?
-if [ "$rc" -ne 0 ]; then
-  keep=1
-  printf '\ngate: REFUSED (status %s)\n' "$rc" >&2
-  exit "$rc"
-fi
-printf '\ngate: the snapshot passed lint and the integration suite.\n'
+# The exit shares this line, so it is read with the call rather than after it:
+# a return to the top level would send bash back to the file for one more
+# command, at an offset a run-long edit has already moved.
+main "$@"; exit

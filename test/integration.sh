@@ -6487,6 +6487,32 @@ refuses "a relative symlink out of the tree is refused, not quietly relocated" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-escape"
 rm -f "$gate_fix/escaping-link"
 
+# A DANGLING LINK IS NOT A HARMLESS ONE, and treating it as one made a green
+# snapshot read bytes the source never held. `../missingdir/file` resolves to
+# nothing beside the source and to a real file beside the destination, because a
+# relative link resolves against whichever parent it finds itself under. So
+# where the link POINTS decides this, not whether the source end of it exists —
+# the referent is placed beside the destination here to make that difference the
+# only thing the check can be answering.
+mkdir -p "$RUN_ROOT/gate-dangle-parent/missingdir"
+printf 'DESTINATION_ONLY\n' > "$RUN_ROOT/gate-dangle-parent/missingdir/file"
+ln -s ../missingdir/file "$gate_fix/dangling-escape"
+refuses "a dangling relative symlink out of the tree is refused as well" \
+  "pointing out of the tree" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-dangle-parent/tree"
+rm -f "$gate_fix/dangling-escape"
+# The other direction, so the fix above is a distinction and not a ban: a link
+# dangling INSIDE the tree is carried, because the copy is a subset of the
+# source and a name missing here is missing there too.
+ln -s ./nodir/file "$gate_fix/dangling-inside"
+gate_dangle_in_rc=0
+"$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-dangle-inside" >/dev/null 2>&1 ||
+  gate_dangle_in_rc=$?
+equal "a symlink dangling inside the tree is carried, not refused" \
+  "0 ./nodir/file" \
+  "$gate_dangle_in_rc $(readlink "$RUN_ROOT/gate-dangle-inside/dangling-inside" 2>/dev/null || printf missing)"
+rm -f "$gate_fix/dangling-inside"
+
 # A COPY THAT FAILED IS NOT A SNAPSHOT. Bash suspends `set -e` throughout a
 # function whose caller tests its status, which is exactly how --snapshot calls
 # this one, so a failing copy would otherwise run on to commit and report a
@@ -6856,6 +6882,54 @@ contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
   "$gate_default_out" "passed lint and the integration suite"
+
+# THE GATE IS THE ONE FILE A TEAMMATE'S SAVE CAN STILL CORRUPT. Bash reads a
+# script while it runs it, so an edit landing mid-run is read from a stale byte
+# offset and executed as whatever now sits there. Every other file under test
+# runs from the snapshot, which nobody edits; this one runs from the live tree
+# and sits in one place for the length of a whole suite. It has already happened
+# — a run died on `dest: unbound variable` at a line holding no such name — and
+# the diagnosis is only believable if the harness can produce it on demand.
+#
+# The edit is made BY the stand-in lint, which is the moment a teammate's save
+# would land and needs no barrier to arrange: the gate is inside its own suite
+# call and blocked on that process, so there is nothing here to synchronise and
+# nothing that can deadlock a mandatory run. What replaces the file is a file of
+# nothing but a line that fails under `set -u`, long enough that WHEREVER bash
+# resumes reading it lands inside one — so a surviving run is the property being
+# claimed and not a lucky offset.
+gate_edit="$RUN_ROOT/gate-midrun"
+mkdir -p "$gate_edit/test"
+cp "$ROOT/test/gate.sh" "$gate_edit/test/gate.sh"
+gate_edit_lines=$(( ($(wc -c < "$ROOT/test/gate.sh") / 8) + 64 ))
+cat > "$gate_edit/test/lint.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+yes '"\$dest"' | head -n $gate_edit_lines > "$gate_edit/test/gate.sh"
+SH
+cat > "$gate_edit/test/integration.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 0
+SH
+chmod +x "$gate_edit/test/lint.sh" "$gate_edit/test/integration.sh" \
+  "$gate_edit/test/gate.sh"
+git -C "$gate_edit" init -q
+git -C "$gate_edit" add -A
+git -C "$gate_edit" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: mid-run edit fixture'
+gate_edit_rc=0
+gate_edit_err="$("$gate_edit/test/gate.sh" 2>&1 >/dev/null)" || gate_edit_rc=$?
+equal "an edit landing mid-run cannot corrupt the running gate" \
+  "0 " "$gate_edit_rc $gate_edit_err"
+# The replacement really was in place while the run was still going, so a green
+# above is the gate surviving it rather than the edit never arriving.
+if [ "$(head -n 1 "$gate_edit/test/gate.sh")" = '"$dest"' ]; then
+  pass "and the edit really did land on the file the run was reading"
+else
+  fail "and the edit really did land on the file the run was reading" \
+    "the fixture gate still starts [$(head -n 1 "$gate_edit/test/gate.sh")]"
+fi
 
 # A failed gate owes the verdict's evidence AND that evidence's deletion path.
 cat > "$gate_run/test/integration.sh" <<SH
