@@ -718,6 +718,15 @@ claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
 equal "Claude declares only native kinds that await a person" \
   "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
   "$claude_stall_types"
+claude_external_dialog="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s\n--\n%s" "$GANG_DIALOGS" "$GANG_DIALOG_LINES_external_import_trust"' \
+  fixture "$claude_collar")"
+contains "Claude names the external-import trust prompt" \
+  "$claude_external_dialog" "external-import-trust"
+contains "Claude fingerprints the security warning below the variable paths" \
+  "$claude_external_dialog" "Only use Claude Code with files you trust."
+contains "Claude's external-import record has no answerable row or key" \
+  "$claude_external_dialog" "external-import-trust|^ +❯ [0-9]+\\. |||"
 claude_resume="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_collar")"
 contains "Claude resume declares an explicit native session slot" \
@@ -1809,6 +1818,18 @@ residue_recovery_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n residue-recovery "PS1='❯ ' bash --norc")"
 residue_recovery_pane="$(tmux list-panes -t "$residue_recovery_id" -F '#{pane_id}')"
 tmux set-option -w -t "$residue_recovery_id" @gl_collar identity
+residue_target_before="$(pane residue-recovery)"
+if residue_target_out="$(printf RESIDUE_TARGET_BODY | "$GANG" send \
+    --to residue-recovery --from tester --live-only --stdin 2>&1)"; then
+  fail "collar residue without registration is not a send target" \
+    "send unexpectedly succeeded"
+else
+  contains "the unregistered target refusal names adoption as the repair" \
+    "$residue_target_out" "not a registered Gangline agent"
+fi
+# source-guard: whole-surface@f8a9746a76b8: a refused target must leave every visible pane byte unchanged regardless of producer
+equal "the unregistered target receives no message bytes" \
+  "$residue_target_before" "$(pane residue-recovery)"
 refuses "collar residue without @gl_agent cannot send under a bare window name" \
   "no registered Gangline agent/collar identity" bash -c \
   'printf RESIDUE_BEFORE_ADOPT | TMUX_PANE="$1" "$2" send --to alpha --stdin' \
@@ -2033,6 +2054,32 @@ cat > "$RUN_ROOT/collars/dialog-recurring.sh" <<SH
 . "$RUN_ROOT/collars/dialog.sh"
 GANG_LAUNCH="env DIALOG_VARIANT=recurring DIALOG_KEY_LOG='$RUN_ROOT/dialog-recurring.keys' DIALOG_READY='dialog-recurring-ready-$$' DIALOG_RECUR_SIGNAL='$dialog_recurring_signal' '$RUN_ROOT/dialog-fixture.py'"
 SH
+cat > "$RUN_ROOT/collars/dialog-observe.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+GANG_DIALOGS='operator-choice|^› [0-9]+\. |||'
+GANG_DIALOG_LINES_operator_choice="\$GANG_DIALOG_LINES_safety_buffering_prompt"
+SH
+observe_boot_seen="dialog-observe-boot-seen-$$"
+observe_boot_release="dialog-observe-boot-release-$$"
+cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-observe.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='dialog-observe-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+SH
+mkdir -p "$RUN_ROOT/dialog-observe-bin"
+cat > "$RUN_ROOT/dialog-observe-bin/sleep" <<SH
+#!/bin/sh
+if [ ! -e "$RUN_ROOT/dialog-observe-sleep-seen" ]; then
+  : > "$RUN_ROOT/dialog-observe-sleep-seen"
+  tmux wait-for -S "$observe_boot_seen"
+  tmux wait-for "$observe_boot_release"
+fi
+exit 0
+SH
+chmod +x "$RUN_ROOT/dialog-observe-bin/sleep"
 
 dialog_start() { # $1 agent, $2 variant, $3 collar
   local name="$1" variant="$2" collar="$3" id command
@@ -2120,6 +2167,55 @@ equal "status is read-only even for a recognized dialog" \
   "$status_dialog_before" "$(pane dialog-status)"
 equal "status presses no dialog key" "" "$(<"$RUN_ROOT/dialog-status.keys")"
 "$GANG" drop dialog-status >/dev/null
+
+dialog_start dialog-observe known dialog-observe
+observe_before="$(pane dialog-observe)"
+contains "status names a recognized operator dialog without calling it transient" \
+  "$("$GANG" status dialog-observe)" \
+  "!occupied! (known operator dialog: operator-choice)"
+if observe_send="$(printf OBSERVE_ONLY_BODY | "$GANG" send \
+    --to dialog-observe --from tester --live-only --stdin 2>&1)"; then
+  fail "an observe-only dialog refuses delivery" "send unexpectedly succeeded"
+else
+  contains "the refusal names the operator decision Gangline will not make" \
+    "$observe_send" "known operator dialog 'operator-choice'"
+fi
+equal "observe-only recognition sends no key" "" \
+  "$(<"$RUN_ROOT/dialog-observe.keys")"
+# source-guard: whole-surface@f2d2c71674d2: no visible byte may change because observe-only recognition is forbidden to send any key
+equal "observe-only recognition leaves the operator dialog unchanged" \
+  "$observe_before" "$(pane dialog-observe)"
+"$GANG" drop dialog-observe >/dev/null
+
+# Hitch names an observe-only prompt while preserving the original boot budget.
+# The sleep shim is an event barrier: the notice is already written when it
+# signals, then the fixture receives only the two manual operator keys below.
+: > "$RUN_ROOT/dialog-observe-boot.keys"
+PATH="$RUN_ROOT/dialog-observe-bin:$PATH" GANG_BOOT_TIMEOUT=3 \
+  "$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp \
+  >"$RUN_ROOT/dialog-observe-boot.out" 2>&1 &
+observe_boot_pid=$!
+tmux wait-for "$observe_boot_seen"
+contains "hitch names the operator dialog it is waiting on" \
+  "$(<"$RUN_ROOT/dialog-observe-boot.out")" \
+  "known operator dialog 'operator-choice'"
+equal "hitch sends no key to the operator dialog" "" \
+  "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
+observe_boot_id="$(window_id dialog-observe-boot)"
+tmux send-keys -t "$observe_boot_id" Down Enter
+tmux wait-for -S "$observe_boot_release"
+if wait "$observe_boot_pid"; then
+  pass "hitch continues after the operator answers the recognized dialog"
+else
+  fail "hitch continues after the operator answers the recognized dialog" \
+    "$(<"$RUN_ROOT/dialog-observe-boot.out")"
+fi
+equal "only the operator's manual answer reaches the recognized dialog" \
+  $'Down\nEnter' "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
+# source-guard: producer@b9a4f7b286cf: the successful hitch above is the sole producer of this nonce-addressed startup body after the fixture restores its composer
+contains "the post-dialog startup contract is delivered" \
+  "$(pane dialog-observe-boot)" "You are dialog-observe-boot in Gangline"
+"$GANG" drop dialog-observe-boot >/dev/null
 
 cat > "$RUN_ROOT/collars/dialog-ambiguous.sh" <<SH
 # shellcheck shell=bash
@@ -2466,6 +2562,9 @@ contains "the contract carries the operator-authorized marathon rule" \
 contains "the contract states the complement of envelope attribution" \
   "$(contract_prose)" \
   "Treat an unenveloped message as session-keyboard input, not as a teammate's message."
+contains "the contract makes crossed state explicit before stale instructions act" \
+  "$(contract_prose)" \
+  "If a teammate's message crossed one you just sent, say so in your next reply and state what is already true before acting on the stale message."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"
@@ -4169,8 +4268,9 @@ equal "a registration that is not a name never becomes an archive path" \
   "$([ -e "$traversal_escape" ] && printf escaped || printf contained) $([ -n "$traversal_archived" ] && printf archived || printf lost)"
 tmux kill-window -t "$traversal_id" 2>/dev/null || true
 
-# MAIL READS THE QUEUE AND NOTHING ELSE. It does not load the target's collar,
-# claim entries, take the pane lock, or attempt delivery.
+# A FOREIGN MAIL READ INSPECTS THE QUEUE AND NOTHING ELSE. It does not load the
+# target's collar, claim entries, take the pane lock, or attempt delivery. A
+# self-read below consumes, but archives before a byte reaches stdout.
 "$HITCH" mailer -c spoolable -d /tmp >/dev/null
 mailer_id="$(window_id mailer)"
 tmux send-keys -l -t "$mailer_id" 'HUMAN_DRAFT'
@@ -4271,6 +4371,36 @@ equal "a message that arrives after a self-read survives it" \
   "$mail_later_rc|$(mailer_bodies "$mail_later_out")"
 equal "and the second read retires only what the second read printed" \
   "failed-00000000000000000005-facefeed" "$(cd "$mailer_spool" && ls)"
+
+# A SHELL FILTER MAY HIDE OUTPUT, BUT IT CANNOT DESTROY THE ONLY COPY. This is
+# the live incident shape: tail consumes all of gang mail's stdout and prints
+# only its end. The body prefix is absent from the filtered view, while the
+# archive named on unfiltered stderr keeps the exact complete envelope.
+mail_filter_body="MARK_MAIL_FILTER_HEAD
+$(printf 'filter filler %02d\n' {1..40})
+MARK_MAIL_FILTER_TAIL"
+printf '%s' "$mail_filter_body" |
+  "$GANG" send --to mailer --from tester --stdin >/dev/null
+TMUX_PANE="$mailer_self_pane" "$GANG" mail \
+  2>"$RUN_ROOT/mail-filter.err" | tail -20 >"$RUN_ROOT/mail-filter.out"
+excludes "tail hides the head of a long self-read as the incident requires" \
+  "$(<"$RUN_ROOT/mail-filter.out")" "MARK_MAIL_FILTER_HEAD"
+contains "the destructive read names its archive outside the stdout pipe" \
+  "$(<"$RUN_ROOT/mail-filter.err")" "self-mail is destructive"
+contains "the archive notice carries its deletion path" \
+  "$(<"$RUN_ROOT/mail-filter.err")" "delete that archive after recovery with: rm -rf --"
+mail_filter_archive=""
+for mail_archived_entry in "$GANG_ARCHIVE_DIR"/*/mailer/[0-9]*; do
+  [ -f "$mail_archived_entry" ] || continue
+  grep -q MARK_MAIL_FILTER_HEAD "$mail_archived_entry" \
+    && mail_filter_archive="$mail_archived_entry"
+done
+[ -n "$mail_filter_archive" ] \
+  && pass "the filtered-away head survives in the named archive" \
+  || fail "the filtered-away head survives in the named archive" \
+    "no archived entry contains MARK_MAIL_FILTER_HEAD"
+contains "the archived entry keeps the filtered message's tail too" \
+  "$(<"$mail_filter_archive")" "MARK_MAIL_FILTER_TAIL"
 
 # Somebody else's read is an inspection. lead reading a teammate's queue must
 # leave every entry exactly where the teammate's own next turn will find it.
@@ -5837,6 +5967,70 @@ equal "an unavailable context source reports once per failure epoch" \
 excludes "status does not inspect another agent's context" \
   "$("$GANG" status lit)" "context"
 
+# ONE RELATIVE SPEC SERVES DIFFERENT NATIVE WINDOWS. The same percentages are
+# copied at hitch; each hook resolves them against the window in its own native
+# reading rather than spending one team's absolute thresholds on both harnesses.
+for relative_case in small large; do
+  GANG_CONTEXT_LIGHTS=50%,80% "$HITCH" "lit-$relative_case" \
+    -c lights -d /tmp >/dev/null
+done
+lit_small_id="$(window_id lit-small)"
+lit_small_pane="$(tmux list-panes -t "$lit_small_id" -F '#{pane_id}')"
+tmux set-option -w -t "$lit_small_id" @test_context '130k/258k (50%)'
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lit_small_pane" "$GANG" hook >/dev/null
+small_yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_small_pane" "$GANG" hook)"
+contains "relative yellow resolves inside the smaller native window" \
+  "$small_yellow" "Yellow context light"
+tmux set-option -w -t "$lit_small_id" @test_context '210k/258k (81%)'
+small_red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_small_pane" "$GANG" hook)"
+contains "relative red resolves inside the smaller native window" \
+  "$small_red" "Red context light"
+
+lit_large_id="$(window_id lit-large)"
+lit_large_pane="$(tmux list-panes -t "$lit_large_id" -F '#{pane_id}')"
+tmux set-option -w -t "$lit_large_id" @test_context '600k/1000k (60%)'
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lit_large_pane" "$GANG" hook >/dev/null
+large_yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_large_pane" "$GANG" hook)"
+contains "the same relative yellow resolves inside the larger native window" \
+  "$large_yellow" "Yellow context light"
+tmux set-option -w -t "$lit_large_id" @test_context '850k/1000k (85%)'
+large_red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_large_pane" "$GANG" hook)"
+contains "the same relative red resolves inside the larger native window" \
+  "$large_red" "Red context light"
+
+GANG_CONTEXT_LIGHTS=350000,500000 "$HITCH" lit-impossible \
+  -c lights -d /tmp >/dev/null
+lit_impossible_id="$(window_id lit-impossible)"
+lit_impossible_pane="$(tmux list-panes -t "$lit_impossible_id" -F '#{pane_id}')"
+tmux set-option -w -t "$lit_impossible_id" @test_context '100k/258k (39%)'
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lit_impossible_pane" "$GANG" hook >/dev/null
+impossible="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_impossible_pane" "$GANG" hook)"
+contains "an absolute red beyond the native window fails visibly" \
+  "$impossible" "red threshold 500000 cannot fire in this harness's 258000-token window"
+impossible_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_impossible_pane" "$GANG" hook)"
+equal "an impossible absolute spec reports once per invalid epoch" \
+  "" "$impossible_repeat"
+
+if mixed_light_out="$(GANG_CONTEXT_LIGHTS=50%,200000 "$GANG" hitch \
+    lit-mixed-units -c lights -d /tmp 2>&1)"; then
+  fail "context-light thresholds in mixed units are refused" \
+    "hitch unexpectedly succeeded"
+else
+  contains "the mixed-unit refusal names the one-unit rule" \
+    "$mixed_light_out" "must use the same unit for both thresholds"
+fi
+equal "the mixed-unit refusal opens no window" "" \
+  "$(window_id lit-mixed-units)"
+
 # A repository-local hooksPath shadows the operator's global path, so the
 # tracked pre-push hook must delegate outward before it runs Gangline's gates.
 # An ambient legacy depth marker must not suppress either delegation or local
@@ -6905,7 +7099,10 @@ gate_edit_lines=$(( ($(wc -c < "$ROOT/test/gate.sh") / 8) + 64 ))
 cat > "$gate_edit/test/lint.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-yes '"\$dest"' | head -n $gate_edit_lines > "$gate_edit/test/gate.sh"
+# Generate the whole replacement in one producer. The old yes-to-head pipeline
+# gave yes a routine SIGPIPE once head had enough lines, and whether that
+# diagnostic leaked was pipe-buffer timing, not gate self-read evidence.
+awk 'BEGIN { for (i = 0; i < $gate_edit_lines; i++) print "\"\$dest\"" }' > "$gate_edit/test/gate.sh"
 SH
 cat > "$gate_edit/test/integration.sh" <<'SH'
 #!/bin/sh

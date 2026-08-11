@@ -93,9 +93,12 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 When context lights are enabled, their thresholds are copied to the new window.
-Operators normally place both thresholds high in the native window so lights do
-not impose an artificial context disadvantage, but below the harness's observed
-automatic-compaction boundary so the lights remain reachable.
+Percentages are relative to each native window and serve mixed-window teams.
+Absolute tokens remain supported for an observed fixed window. Place both high
+enough not to impose an artificial context disadvantage, but below the harness's
+observed automatic-compaction boundary. An absolute red threshold above the
+reported native window produces an invalid-light notice rather than staying
+silently unreachable.
 
 ### `gang adopt <name> -c <collar>`
 
@@ -334,9 +337,15 @@ does not set the operator's tmux status formats.
 
 Prints every message waiting in that agent's spool, oldest first, then every
 held entry, each with its sender and its entry filename, each body exactly as it
-would go onto the wire. It reads: it delivers nothing, creates nothing, removes
-nothing, and takes no delivery lock. It needs no loadable collar, because a
-queue is files on disk and the harness may be the reason you are reading it.
+would go onto the wire. Another agent's or the operator's read is inspection and
+touches nothing. The addressee's own read is delivery: it consumes each waiting
+entry so the native turn boundary cannot deliver the same message again. Before
+printing an entry, it moves it into a human-readable directory under
+`GANG_ARCHIVE_DIR`; the path and its explicit deletion command go to stderr, so
+an ordinary stdout filter cannot destroy the only copy or hide its recovery
+location. Held entries are never consumed. Mail takes no delivery lock and needs
+no loadable collar, because a queue is files on disk and the harness may be the
+reason you are reading it.
 
 ### `gang status <name>`
 
@@ -533,7 +542,7 @@ Exactly these keys are settable:
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
-| `GANG_CONTEXT_LIGHTS` | `off` | `off`, or absolute `yellow,red` token thresholds |
+| `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
@@ -652,9 +661,16 @@ command. They must not weaken sandboxing, approvals, or operator permissions.
 Each dialog record has five fields. `id` is `[a-z0-9-]+`; `marker` is a
 line-start-anchored ERE for the selected numeric row; `safe` is one declared
 option label; `move` is zero or more tmux key names; and `confirm` is one key.
-The associated block contains the whole dialog, not a subset. Load refuses
-malformed or duplicate records, absent blocks, safe labels absent from their
-block, invalid key names, and any id, safe label, or block line containing
+Leaving `safe`, `move`, and `confirm` all empty declares an observe-only operator
+dialog: status and roster name a matching fingerprint, while delivery refuses
+without sending a key. This is how a collar recognizes a security choice that
+only the operator may answer.
+
+The associated block contains the stable dialog fingerprint; variable prefix
+lines may be excluded, as they are for working directories and imported paths.
+Load refuses malformed or duplicate records, absent blocks, safe labels absent
+from their answerable block, invalid key names, and any answerable id, safe
+label, or block line containing
 authority language such as permission, trust, approval, authorization, access,
 elevation, grants, administration, denial, bypass, credentials, tokens, secrets,
 privileges, or sandboxing. A collar may name one record in
@@ -669,5 +685,5 @@ the fingerprint, while every label, body line, footer, and their order must
 match. Gangline re-captures after every movement key, verifies the selected
 label is `safe` immediately before confirmation, and then verifies both that
 the dialog disappeared and a composer returned. Any failed proof refuses and
-does not confirm. `status` and `roster` only name a recognized transient and
-never press a key.
+does not confirm. `status` and `roster` name recognized answerable transients
+and observe-only operator dialogs; observation never presses a key.

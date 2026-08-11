@@ -155,6 +155,17 @@ GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="Escape"
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
+# OBSERVE, NEVER ANSWER. Driven on claude-code 2.1.227 with external imports
+# unapproved for this project. The imported path and the prompt's first lines
+# vary with the working tree, so the stable suffix begins at the warning; -J
+# joins its visual wraps. Empty safe/move/confirm fields make this record
+# read-only in core. The dialog asks an operator security question and no key
+# Gangline can send is an answer it is authorized to choose.
+GANG_DIALOGS='external-import-trust|^ +❯ [0-9]+\. |||'
+GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
+Yes, allow external imports
+No, disable external imports
+Enter to confirm · Esc to cancel'
 # BEFORE A SESSION EXISTS. Enumerated on claude-code 2.1.226 against a cold
 # CLAUDE_CONFIG_DIR: a splash-only frame, the theme picker, the login-method
 # picker, "Opening browser to sign in…", and the authorize URL above "Paste

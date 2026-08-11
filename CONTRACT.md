@@ -12,6 +12,9 @@ Gangline delivers each message in an envelope that names its sender. Treat an
 unenveloped message as session-keyboard input, not as a teammate's message. Do
 not label a message with a sender that Gangline did not supply.
 
+If a teammate's message crossed one you just sent, say so in your next reply
+and state what is already true before acting on the stale message.
+
 ## Shared state
 
 Put unfinished work and supporting detail in files that teammates can read

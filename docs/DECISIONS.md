@@ -213,12 +213,14 @@ a merge can intentionally upgrade a running team.
 ## Context lights are optional and minimal
 
 Keep context signaling off by default. When enabled, expose exactly yellow and
-red at intentionally high absolute token thresholds, notify once per context
-epoch, and leave the decision to compact with the agent. Place both thresholds
-below the observed native automatic-compaction boundary while preserving most
-of that effective window; larger windows do not make degraded context more
-useful. Expose the same computation as an on-demand query that reads whether or
-not lights are enabled, because signalling and asking are different acts.
+red at intentionally high thresholds, notify once per context epoch, and leave
+the decision to compact with the agent. Percentage thresholds scale one operator
+setting across mixed native windows; absolute tokens remain for a fixed observed
+window, but an edge beyond that window fails visibly once the native source is
+readable. Place both thresholds below the observed native automatic-compaction
+boundary while preserving most of the effective window. Expose the same native
+reading as an on-demand query whether or not lights are enabled, because
+signalling and asking are different acts.
 
 ## Effort is the collar's word
 
@@ -445,6 +447,12 @@ A composed message is not teardown state. `gang drop` and `gang down` move every
 waiting or held entry into a human-readable archive before deleting its window's
 spool, and refuse to end anything if that archive cannot be written. The archive
 is created only when mail exists and its printed path is the handoff to a person.
+
+An addressee's own `gang mail` read still consumes what it prints, so the next
+turn boundary cannot deliver the same message twice. It moves each claimed entry
+into the same archive surface before writing that entry to stdout, and prints the
+archive and deletion paths on stderr. A shell filter may hide rendered output;
+it cannot erase the only copy or the route back to it.
 
 ## A queue drains as one message
 

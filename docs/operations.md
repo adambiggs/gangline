@@ -173,14 +173,13 @@ the content already printed is still useful, but inspect that agent with
 
 ## Optional context lights
 
-Context lights are disabled unless the operator supplies absolute thresholds at
-hitch time. Set them intentionally high so the harness retains most of its
-effective native window, but below its observed automatic-compaction boundary
-so the agent can choose self-compaction first. Set `YELLOW_TOKENS` and
-`RED_TOKENS` from a current observation of that harness:
+Context lights are disabled unless the operator supplies thresholds at hitch
+time. Percentages serve mixed-window teams; absolute tokens remain available
+for one observed harness window. Set them intentionally high, but below the
+observed automatic-compaction boundary so the agent can self-compact first:
 
 ```sh
-GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex
+GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to
@@ -190,6 +189,8 @@ hook messages, not patrols or automatic actions.
 
 If an enabled source fails, the affected agent receives one unavailable notice.
 Disabled lights perform no context read and add no prompt or roster noise.
+An absolute red threshold above the window reports one invalid notice as soon as
+the native source makes that window readable; it never remains silently armed.
 
 Claude Code reads its hook configuration once, at process startup, and
 re-executes the statusline script from disk on every repaint. A change on the

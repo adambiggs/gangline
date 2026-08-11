@@ -469,7 +469,8 @@ gang mail
 
   gang mail [name]
 
-  Prints; delivers nothing.
+  Another reader inspects. An agent's own read
+  consumes into the human-readable archive.
 EOF
       ;;
     interrupt) cat <<'EOF'
@@ -788,8 +789,12 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     case "$id" in ''|*[!a-z0-9-]*) die "collar '$1' has invalid dialog id '$id' (expected [a-z0-9-]+)" ;; esac
     [ -n "$marker" ] || die "collar '$1' dialog '$id' has an empty marker"
     case "$marker" in ^*) ;; *) die "collar '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
-    [ -n "$safe" ] || die "collar '$1' dialog '$id' has an empty safe option"
-    [ -n "$confirm" ] || die "collar '$1' dialog '$id' has an empty confirm key"
+    if [ -z "$safe" ]; then
+      [ -z "$move$confirm" ] \
+        || die "collar '$1' observe-only dialog '$id' must leave safe, move and confirm empty"
+    else
+      [ -n "$confirm" ] || die "collar '$1' dialog '$id' has an empty confirm key"
+    fi
     case " $seen_ids " in *" $id "*) die "collar '$1' repeats dialog id '$id'" ;; esac
     seen_ids="$seen_ids $id"
     block_var="GANG_DIALOG_LINES_${id//-/_}"
@@ -799,14 +804,21 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     printf '' | grep -Eq -- "$marker" 2>/dev/null || marker_rc=$?
     [ "$marker_rc" -le 1 ] \
       || die "collar '$1' dialog '$id' marker is not an ERE grep can evaluate: '$marker'"
-    printf '%s\n' "$block" | awk '{$1=$1; if (length) print}' | grep -Fx -- "$safe" >/dev/null \
-      || die "collar '$1' dialog '$id' safe option '$safe' is not one of $block_var's normalized lines"
+    if [ -n "$safe" ]; then
+      printf '%s\n' "$block" | awk '{$1=$1; if (length) print}' | grep -Fx -- "$safe" >/dev/null \
+        || die "collar '$1' dialog '$id' safe option '$safe' is not one of $block_var's normalized lines"
+    fi
     for key in $move $confirm; do
       case "$key" in *[!A-Za-z0-9-]*)
         die "collar '$1' dialog '$id' declares key '$key', which is not a tmux key name" ;;
       esac
     done
-    if [ "$id" = "$GANG_DIALOG_HITCH_DIR_TRUST" ]; then
+    if [ -z "$safe" ]; then
+      # Recognition is read-only. Authority language is forbidden only on a
+      # record Gangline can answer; an operator dialog has to name the choice
+      # it is refusing to make if status is to say what is actually on screen.
+      forbidden=""
+    elif [ "$id" = "$GANG_DIALOG_HITCH_DIR_TRUST" ]; then
       printf '%s\n%s\n%s\n' "$id" "$safe" "$block" | grep -Eiq 'trust' \
         || die "collar '$1' names dialog '$id' as hitch-directory trust, but its fingerprint contains no trust language"
       # The directory was already selected by hitch -d. Permit only the trust
@@ -1206,8 +1218,12 @@ self_name() { # -> this window's agent name; nonzero outside a Gangline window
 AGENT_ID="" AGENT_COLLAR=""
 
 resolve() { # $1 = agent name; sets AGENT_ID + AGENT_COLLAR and loads the collar
-  local rc=0
+  local rc=0 registered
   AGENT_ID="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1' (see: gang roster)"; }
+  registered="$(tmux show-options -wqv -t "$AGENT_ID" @gl_agent 2>/dev/null)" \
+    || registered=""
+  [ "$registered" = "$1" ] \
+    || die "window '$1' exists but is not a registered Gangline agent (gang adopt $1 -c <collar>)"
   AGENT_COLLAR="$(collar_read "$AGENT_ID" "$1")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$1' exists but is not a gang agent (gang adopt $1 -c <collar>)"
@@ -1930,6 +1946,8 @@ dialog_triage() { # $1 window, $2 name, $3 locked|unlocked; 0 answered, 1 unknow
   dialog_find "$1" || return 1
   wanted="$DIALOG_MATCH_ID" safe="$DIALOG_MATCH_SAFE" move="$DIALOG_MATCH_MOVE"
   confirm="$DIALOG_MATCH_CONFIRM" block="$DIALOG_MATCH_BLOCK"
+  [ -n "$safe" ] \
+    || refuse "'$2' is occupied by known operator dialog '$wanted' — Gangline recognizes it but will not answer an operator security decision; inspect it with gang attach"
   case "$lock_mode" in locked) ;; unlocked) lock_pane "$1" ;; *) die "internal: unknown dialog lock mode '$lock_mode'" ;; esac
   dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] || {
     [ "$lock_mode" = locked ] || lock_release
@@ -1998,9 +2016,14 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
 wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
   local t=0 modal_reported=0 dialogs_answered=0
   while [ "$t" -lt "$2" ]; do
+    if [ -n "${3:-}" ] && dialog_find "$1" && [ -z "$DIALOG_MATCH_SAFE" ]; then
+      if [ "$modal_reported" -eq 0 ]; then
+        printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on known operator dialog '$DIALOG_MATCH_ID' — answer it with 'gang attach'; Gangline will not make this security decision")" >&2
+        modal_reported=1
+      fi
     # At most two distinct boot dialogs may consume this same boot budget.
     # Recurrence cannot turn hitch into a reconciliation loop.
-    if [ -n "${3:-}" ] && [ "$dialogs_answered" -lt 2 ] \
+    elif [ -n "${3:-}" ] && [ "$dialogs_answered" -lt 2 ] \
       && dialog_triage "$1" "$3" unlocked; then
       dialogs_answered=$((dialogs_answered + 1))
       sleep 1; t=$((t + 1))
@@ -2909,22 +2932,34 @@ ctx_tokens() { # $1 = <used>k/<window>k (...) -> used and window in tokens
 
 LIGHT_YELLOW=0
 LIGHT_RED=0
-context_lights_parse() { # $1 = off or yellow,red absolute token thresholds
+LIGHT_RELATIVE=0
+context_lights_parse() { # $1 = off or yellow,red token thresholds or percentages
+  local yellow red
   LIGHT_YELLOW=0
   LIGHT_RED=0
+  LIGHT_RELATIVE=0
   case "$1" in
     off|'') return 1 ;;
     *,*)
-      LIGHT_YELLOW="${1%%,*}"
-      LIGHT_RED="${1##*,}"
+      yellow="${1%%,*}"
+      red="${1##*,}"
+      case "$yellow:$red" in
+        *%:*%) LIGHT_RELATIVE=1; yellow="${yellow%\%}"; red="${red%\%}" ;;
+        *%*)
+          die "GANG_CONTEXT_LIGHTS must use the same unit for both thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+      esac
+      LIGHT_YELLOW="$yellow"
+      LIGHT_RED="$red"
       case "$LIGHT_YELLOW:$LIGHT_RED" in
         *[!0-9:]*|:*|*:)
-          die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+          die "GANG_CONTEXT_LIGHTS must be off or two thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
       esac
       [ "$LIGHT_YELLOW" -gt 0 ] && [ "$LIGHT_RED" -gt "$LIGHT_YELLOW" ] \
         || die "GANG_CONTEXT_LIGHTS must increase from yellow to red, got '$1'$(config_origin_note GANG_CONTEXT_LIGHTS)"
+      [ "$LIGHT_RELATIVE" -eq 0 ] || [ "$LIGHT_RED" -lt 100 ] \
+        || die "GANG_CONTEXT_LIGHTS percentage thresholds must both be below 100%, got '$1'$(config_origin_note GANG_CONTEXT_LIGHTS)"
       return 0 ;;
-    *) die "GANG_CONTEXT_LIGHTS must be off or two absolute token thresholds: yellow,red$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+    *) die "GANG_CONTEXT_LIGHTS must be off or two thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
   esac
 }
 
@@ -2935,16 +2970,26 @@ context_lights_for() { # $1 = window; load its hitch-time setting
 }
 
 CONTEXT_LIGHT=""
+CONTEXT_LIGHT_ERROR=""
 context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
-  local ctx pair used
+  local ctx pair used window yellow red
   CONTEXT_LIGHT=""
+  CONTEXT_LIGHT_ERROR=""
   context_lights_for "$1" || return 1
   ctx="$(context_now "$1" 2>/dev/null)" || return 2
   pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 2
-  read -r used _ <<<"$pair"
-  if [ "$used" -ge "$LIGHT_RED" ]; then
+  read -r used window <<<"$pair"
+  yellow="$LIGHT_YELLOW" red="$LIGHT_RED"
+  if [ "$LIGHT_RELATIVE" -eq 1 ]; then
+    yellow="$(( (window * yellow + 99) / 100 ))"
+    red="$(( (window * red + 99) / 100 ))"
+  elif [ "$red" -gt "$window" ]; then
+    CONTEXT_LIGHT_ERROR="Context lights invalid: configured red threshold $red cannot fire in this harness's $window-token window. Re-hitch with reachable token thresholds or percentages."
+    return 3
+  fi
+  if [ "$used" -ge "$red" ]; then
     CONTEXT_LIGHT=red
-  elif [ "$used" -ge "$LIGHT_YELLOW" ]; then
+  elif [ "$used" -ge "$yellow" ]; then
     CONTEXT_LIGHT=yellow
   else
     return 1
@@ -2969,6 +3014,9 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
     [ "$previous" != unavailable ] || return 0
     CONTEXT_LIGHT=unavailable
     note="Context lights unavailable: Gangline cannot read this harness's native context source. Inspect the harness directly."
+  elif [ "$rc" -eq 3 ]; then
+    CONTEXT_LIGHT=invalid
+    note="$CONTEXT_LIGHT_ERROR"
   else
     [ "$rc" -eq 0 ] || return 0
   fi
@@ -3879,7 +3927,11 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   if occupied "$1"; then
     activity_hold_clear "$1"
     if dialog_find "$1"; then
-      state="!occupied! (known transient: $DIALOG_MATCH_ID)"
+      if [ -n "$DIALOG_MATCH_SAFE" ]; then
+        state="!occupied! (known transient: $DIALOG_MATCH_ID)"
+      else
+        state="!occupied! (known operator dialog: $DIALOG_MATCH_ID)"
+      fi
     else
       state="!occupied! (authority unknown)"
     fi
@@ -3983,9 +4035,9 @@ cmd_status() {
 # is delivered again at the next turn boundary — the same message twice, once by
 # hand and once by the spool — so a read by the agent whose queue it is retires
 # what it printed. A read by anyone else is an inspection and touches nothing.
-cmd_mail() { # read a queue; its own agent's read consumes what it prints
+cmd_mail() { # read a queue; its own agent's read archives what it consumes
   local name="${1:-}" id rc=0 dir e n=0 held=0
-  local self="" mine=0 claim label heading=waiting
+  local self="" mine=0 claim label heading=waiting mail_archive="" archived_name=""
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help mail
@@ -4021,11 +4073,23 @@ cmd_mail() { # read a queue; its own agent's read consumes what it prints
       e="$claim"
     fi
     spool_read "$e"
+    if [ "$mine" -eq 1 ]; then
+      if [ -z "$mail_archive" ]; then
+        archive_establish "$SESSION-read"
+        archived_name="$(agent_name_of "$id" 2>/dev/null)" || archived_name=""
+        valid_name "$archived_name" || archived_name="${id#@}"
+        mail_archive="$ARCHIVE_DIR/$archived_name"
+        mkdir -p "$mail_archive" \
+          || die "cannot create $mail_archive for messages consumed by this read"
+        printf 'self-mail is destructive; every consumed entry is archived first at %s\ndelete that archive after recovery with: rm -rf -- %q\n' \
+          "$mail_archive" "$ARCHIVE_DIR" >&2
+      fi
+      mv -- "$e" "$mail_archive/$label" \
+        || die "cannot archive the spooled message $label before printing it — it remains claimed at $e"
+    fi
     n=$((n + 1))
     printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
     printf '%s\n\n' "$SPOOL_BODY"
-    [ "$mine" -eq 0 ] || rm -f -- "$e" \
-      || die "read the spooled message $label but could not retire it at $e — it is claimed rather than waiting, so nothing will deliver it again, but the file has to go by hand"
   done
   for e in "$dir"/sending-* "$dir"/failed-*; do
     [ -f "$e" ] || continue
@@ -4039,7 +4103,9 @@ cmd_mail() { # read a queue; its own agent's read consumes what it prints
     return 0
   fi
   if [ "$mine" -eq 1 ]; then
-    printf '%s\n' "$(colour "$C_DIM" "$n consumed by this read, $held held (kept), in $dir")"
+    printf '%s\n' "$(colour "$C_DIM" "$n consumed by this read and archived at ${mail_archive:-<none>}, $held held (kept), in $dir")"
+    [ -z "$mail_archive" ] \
+      || printf 'self-mail archived %s consumed message(s) at %s\n' "$n" "$mail_archive" >&2
   else
     printf '%s\n' "$(colour "$C_DIM" "$n waiting, $held held, in $dir")"
   fi

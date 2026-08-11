@@ -104,14 +104,12 @@ gang roster</code></pre>
     self-compaction crosses its native Stop boundary so <code>/compact</code> is
     submitted only after the requesting turn releases the composer.</p>
 
-    <p>Optional context lights are off by default. When enabled, their absolute
-    yellow and red thresholds should be intentionally high so agents retain most
-    of their effective native context, but below the harness's observed automatic
-    compaction boundary so they can self-compact first. Set
-    <code>YELLOW_TOKENS</code> and <code>RED_TOKENS</code> from a current
-    observation of that harness:</p>
+    <p>Optional context lights are off by default. Percentage thresholds let one
+    setting serve harnesses with different native windows; absolute token
+    thresholds remain available for one observed window. Keep both edges high,
+    but below the harness's observed automatic-compaction boundary:</p>
 
-    <pre><code>GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex</code></pre>
+    <pre><code>GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex</code></pre>
 
     <p>The lights are advisory and edge-triggered. The agent decides when to
     compact.</p>

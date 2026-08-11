@@ -116,19 +116,19 @@ Gangline submits the collar's native compaction command. Codex cannot submit
 native Stop hook submits it once at the turn boundary. Failure remains visible
 in `gang status` and `gang roster`.
 
-Context lights are optional and off by default. When enabled, set their absolute
-yellow and red thresholds intentionally high so the agent retains most of its
-effective native context window, but below the harness's observed automatic
-compaction boundary so the agent can self-compact first. Set `YELLOW_TOKENS`
-and `RED_TOKENS` from a current observation of that harness:
+Context lights are optional and off by default. Percentage thresholds let one
+team setting serve harnesses with different context windows; absolute token
+thresholds remain available for a single observed window. Keep both edges high,
+but below the harness's observed automatic-compaction boundary:
 
 ```sh
-GANG_CONTEXT_LIGHTS="${YELLOW_TOKENS},${RED_TOKENS}" gang hitch worker -c codex
+GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex
 ```
 
 The native hook advises once when usage crosses yellow and once when it crosses
 red. Dropping below yellow starts a new context epoch. Lights are guidance only;
-the agent chooses the natural checkpoint.
+the agent chooses the natural checkpoint. An absolute red threshold above the
+native window reports itself as invalid when that window is first readable.
 
 An operator may also declare one optional curfew for the whole team:
 
