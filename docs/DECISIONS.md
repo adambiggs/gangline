@@ -20,17 +20,20 @@ knowledge a collar carries. Gangline validates a brief as prose and
 delivers it — at system-prompt level where a collar declares the option,
 at message level otherwise — and never parses it.
 
-Attachment is a launch choice like a model or an effort level, and
-Gangline builds no coordination state around it: no role or brief
-identity is recorded in a window or session option, no later command
-reads one, no output varies by it, and nothing checks whether an agent
-behaved as its brief describes. Delivery necessarily leaves the brief
-where delivery put it — in the agent's transcript or system prompt, in
-the launched process's arguments, and in the launch string tmux retains
-for the pane. Those are artifacts of having delivered it, readable by
-anyone who can already read the pane; they are not a record Gangline
-keeps or consults. A role is a thing an agent was told, not a thing
-Gangline knows.
+Attachment is a launch choice like a model or an effort level. `gang up`
+chooses the shipped `lead` role because it creates the team's lead; an explicit
+role replaces that default. `gang hitch` attaches only the role its caller
+names and never infers one from the agent name.
+
+Gangline builds no coordination state around attachment: no role or brief
+identity is recorded in a window or session option, no later command reads one,
+no output varies by it, and nothing checks whether an agent behaved as its brief
+describes. Delivery necessarily leaves the brief where delivery put it — in the
+agent's transcript or system prompt, in the launched process's arguments, and
+in the launch string tmux retains for the pane. Those are artifacts of having
+delivered it, readable by anyone who can already read the pane; they are not a
+record Gangline keeps or consults. A role is a thing an agent was told, not a
+thing Gangline knows.
 
 ## tmux is the transport
 
@@ -510,10 +513,10 @@ it read — an agent already holding the contract spends a tool call and gains
 nothing. Collars without the option keep the pointer, which is still better
 than a paste bounded by pane geometry.
 
-A role is opt-in and the contract is not, so a role-less hitch still carries a
-system prompt. Both share one option rather than passing it twice, because a
-collar declares a single spelling and repeating it would guess at whether the
-harness concatenates or keeps the last.
+A hitch may be role-less, but the contract is always present, so a role-less
+hitch still carries a system prompt. Both share one option rather than passing
+it twice, because a collar declares a single spelling and repeating it would
+guess at whether the harness concatenates or keeps the last.
 
 The startup contract does not repeat what the system prompt says. An agent that
 reads the same assurance twice can still only act on it once, and Gangline

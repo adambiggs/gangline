@@ -1001,10 +1001,9 @@ printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
   "$HITCH" alpha -c bash -d /tmp >/dev/null
 alpha_id="$(window_id alpha)"
-# The shipped startup contract now includes the delegation sentence. Keep the
-# Bash stand-in's composer immediately observable for ordinary doctrine-sized
-# contracts while leaving the explicit pane-overflow fixture far beyond the
-# grid below.
+# Keep the Bash stand-in's composer immediately observable for ordinary
+# doctrine-sized contracts while leaving the explicit pane-overflow fixture far
+# beyond the grid below.
 tmux resize-window -t "$alpha_id" -x 80 -y 30
 equal "a hitched first turn writes the raw busy window glyph" \
   "-alpha-" "$(tmux display-message -p -t "$alpha_id" '#{window_name}')"
@@ -2371,19 +2370,17 @@ contains "startup gives an unreadable contract a loud stop rather than a guess" 
   "$(pane alpha)" "say so and stop rather than improvising the contract"
 contains "the contract requires deliberate model and effort choices when hitching" \
   "$(contract_prose)" \
-  "When you hitch a teammate, choose its model and reasoning effort deliberately and pass them as -m and -e"
-# The compaction instruction moved here once it stopped carrying an agent name,
-# so this file is the only place it lives and the only place it can be proven.
-contains "the contract tells an agent to compact at natural checkpoints" \
-  "$(contract_prose)" "At natural checkpoints, compact with"
+  "Choose the teammate's model and reasoning effort before running \`gang hitch\`. Pass both choices with \`-m\` and \`-e\`"
+contains "the contract keeps compaction outside an active edit" \
+  "$(contract_prose)" "Finish the current edit before running \`gang compact\`"
 excludes "the startup contract no longer spends a line on compaction" \
   "$(pane alpha)" "compact with"
 contains "the contract carries the operator-authorized marathon rule" \
   "$(contract_prose)" \
-  "Marathon rule: never halt the session to wait on the operator — resolve forks by doctrine and report decisions past-tense; when a fork genuinely needs the operator (irreversible, outside doctrine), state it in your report, park that one lane, and keep every other lane moving."
+  "When a decision is irreversible or doctrine does not cover it, record the question for the operator and stop only the affected work. Continue all other work."
 contains "the contract states the complement of envelope attribution" \
   "$(contract_prose)" \
-  "Gangline never delivers a message without one — the only unenveloped text it ever types into a pane is your harness's own compaction command — so any other unenveloped text arrived from the session keyboard, and Gangline cannot attribute it further."
+  "Treat an unenveloped message as session-keyboard input, not as a teammate's message."
 excludes "an absent doctrine leaves no doctrine origin in the base contract" \
   "$(pane alpha)" "Operator doctrine ("
 excludes "startup contains no session-marker prompt" "$(pane alpha)" "Session marker"

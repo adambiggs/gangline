@@ -419,6 +419,8 @@ gang up
 
   gang up [name]
     [hitch flags]
+
+  Uses role lead unless -r selects another.
 EOF
       ;;
     hitch|spawn) cat <<'EOF'
@@ -3250,7 +3252,7 @@ cmd_hitch() {
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   local name="lead" id rc=0
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
-  cmd_hitch "$name" "$@"
+  cmd_hitch "$name" -r lead "$@"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "up: '$name' vanished between hitch and attach"; }
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"

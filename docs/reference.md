@@ -26,15 +26,17 @@ states that no target or Gangline agent window was available.
 
 ### `gang up [name] [hitch flags]`
 
-Hitches one agent, named `lead` when omitted, then attaches or switches the
-current tmux client to it. `GANG_COLLAR` selects the harness.
+Hitches the team's lead, names its window `lead` when omitted, then attaches or
+switches the current tmux client to it. It attaches the shipped `lead` role by
+default; an explicit `-r` or `--role` selects another role. `GANG_COLLAR`
+selects the harness.
 
 ### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
 standing terms: envelope attribution, how to reach a peer, deliberate model and
-effort choices when hitching a teammate, delegation, and the marathon rule.
+effort choices when hitching a teammate, compaction, and the marathon rule.
 
 How it reaches the agent depends on the collar. Where one declares
 `GANG_ROLE_PROMPT_OPT`, the contract's bytes are passed through that launch
@@ -76,9 +78,9 @@ and re-hitch recovery.
   refused before any window opens. A collar that declares no effort spelling
   refuses the flag, and a vocabulary that cannot be determined is refused as a
   broken declaration rather than a bad value.
-- `-r`, `--role` attaches the named role brief to this hitch only. There is no
-  default or inference from the agent name. Role names use letters, digits,
-  dot, dash, and underscore and may not begin with dot or dash.
+- `-r`, `--role` attaches the named role brief to this hitch only. `gang hitch`
+  has no role default and never infers one from the agent name. Role names use
+  letters, digits, dot, dash, and underscore and may not begin with dot or dash.
 - `--resume <session-id>` substitutes that exact native session identity into
   the collar's resume template. Bare `--resume` is only valid when a dead,
   still-existing window registered to the same agent carries `@gl_session_id`.
@@ -562,12 +564,12 @@ there would discover that alone in a pane. Unlike doctrine and role briefs, its
 bytes are never pasted, so the 8192-byte ceiling is its only bound and pane
 geometry is not.
 
-A role is opt-in and the contract is not, so a hitch that names no role still
-carries one into the system prompt where the collar has that option. The
-contract and the role brief share a single option rather than passing it twice:
-a collar declares one spelling, and repeating it would be a guess about whether
-that harness concatenates the values or keeps the last. The composite is
-Gangline's preamble, then the contract, then the role brief where one was
+A hitch may be role-less, but the contract is always present, so a role-less
+hitch still carries one into the system prompt where the collar has that option.
+The contract and the role brief share a single option rather than passing it
+twice: a collar declares one spelling, and repeating it would be a guess about
+whether that harness concatenates the values or keeps the last. The composite
+is Gangline's preamble, then the contract, then the role brief where one was
 named.
 
 Role briefs use the same prose validation. Resolution checks

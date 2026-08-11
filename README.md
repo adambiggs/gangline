@@ -17,9 +17,10 @@ A **dog** — a model instance — wears a **harness**, its native CLI runtime
 (Claude Code, Codex, OpenCode, or Pi). Gangline fits the dog to the
 **gangline**, the tmux session, by its **collar**: the per-harness adapter in
 `collars/` that carries every piece of harness-specific knowledge. The
-**musher** — you — drives. The musher's adopted window is conventionally called
-the **lead**, but that is a coordination convention: Gangline has no lead
-concept and no lead machinery.
+**musher** — you — drives. `gang up` creates the **lead**, names its window
+`lead` by default, and attaches the shipped lead role unless the musher selects
+another. That role is launch prose; Gangline neither records nor manages it
+after delivery.
 
 *Dog* is the noun for a hitched agent. *Harness* names only the runtime, never
 the instance running it.
@@ -55,8 +56,9 @@ From the repository the agents should work in:
 gang up
 ```
 
-This hitches `lead` with `GANG_COLLAR` (Claude Code by default) and attaches to
-it. Detach from tmux with `Ctrl-b d`.
+This hitches `lead` with `GANG_COLLAR` (Claude Code by default), attaches the
+shipped `lead` role brief, and joins its window. Pass `-r` to select another
+role. Detach from tmux with `Ctrl-b d`.
 
 Add another native harness and send it work:
 

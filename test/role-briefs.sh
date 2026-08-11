@@ -34,9 +34,8 @@ export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$TEST_ROOT/locks"
 export GANG_COLLARS="$TEST_ROOT/collars"
 
-# The focused message fixtures intentionally carry the shipped lead brief. Read
-# the Bash stand-in's newest prompt from its complete history so verified
-# delivery does not depend on whether that long draft still fits the grid.
+# The focused message fixtures read the Bash stand-in's newest prompt from its
+# complete history so verified delivery does not depend on pane wrapping.
 cat > "$TEST_ROOT/collars/bash.sh" <<SH
 # shellcheck shell=bash
 . "$PRODUCT_ROOT/collars/bash.sh"
@@ -93,8 +92,15 @@ tmux set-option -g default-size 200x100
 tmux resize-window -t '=role-grid-fixture:grid' -x 200 -y 100
 
 ac1() {
-  GANG_CONFIG_DIR="$TEST_ROOT/ac1-config" "$GANG" hitch role-ac1 -c bash -d /tmp -r lead >/dev/null 2>&1 || true
-  contains "AC1 message-level pane contract carries the role body" "$(pane_all role-ac1)" "Your product is a team that finished the"
+  local prefix="$TEST_ROOT/ac1-argv" value
+  make_argv_collar argv1 "$prefix"
+  GANG_CONFIG_DIR="$TEST_ROOT/ac1-config" \
+    "$GANG" hitch role-ac1 -c argv1 -d /tmp -r lead >/dev/null
+  value="$(<"$prefix.2.bin")"
+  contains "AC1 system prompt carries the shipped role body" "$value" \
+    "Lead the team to complete the operator's goal"
+  equal "AC1 the startup contract was submitted" "" \
+    "$("$GANG" composer role-ac1)"
   drop_agent role-ac1
 }
 
@@ -141,7 +147,7 @@ ac5() {
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac5 -c bash -d /tmp --role lead >/dev/null
   body="$(pane_all role-ac5)"
   contains "AC5 operator role wins" "$body" "MARK_OPERATOR_LEAD"
-  excludes "AC5 roles are not concatenated" "$body" "Your product is a team that finished the"
+  excludes "AC5 roles are not concatenated" "$body" "Lead the team to complete the operator's goal"
   drop_agent role-ac5
 }
 
@@ -331,8 +337,9 @@ ac12() {
   drop_agent role-ac12
 }
 
-# A role is opt-in and the contract is not, so a hitch that names no role still
-# carries one. What it must not carry is a role section it was never given.
+# A role is opt-in on `hitch` and the contract is not, so a hitch that names no
+# role still carries one. What it must not carry is a role section it was never
+# given.
 ac13() {
   local prefix="$TEST_ROOT/ac13-argv" value
   make_argv_collar argv13 "$prefix"
@@ -342,7 +349,7 @@ ac13() {
   equal "AC13 a role-less hitch still carries the option" "--append-system-prompt" "$(<"$prefix.1.bin")"
   value="$(<"$prefix.2.bin")"
   contains "AC13 the role-less system prompt carries the contract" "$value" \
-    "Marathon rule: never halt the session to wait on the operator"
+    "Continue all other work."
   excludes "AC13 the role-less system prompt opens no role section" "$value" "--- role brief:"
   drop_agent role-ac13
 }
@@ -389,7 +396,7 @@ SH
 
 ac15() {
   GANG_CONFIG_DIR="$TEST_ROOT/ac15-config" "$GANG" hitch lead -c bash -d /tmp >/dev/null
-  excludes "AC15 agent name does not infer a role" "$(pane_all lead)" "Your product is a team that finished the"
+  excludes "AC15 agent name does not infer a role" "$(pane_all lead)" "Lead the team to complete the operator's goal"
   excludes "AC15 role-less contract has no role section" "$(pane_all lead)" "Your role in this team"
   drop_agent lead
 }
@@ -416,9 +423,12 @@ ac16() {
       drop_agent "$name"
     done
   done
-  contains "AC16 the contract carries the delegation sentence" \
+  excludes "AC16 the contract does not impose lead delegation policy on every role" \
     "$(tr '\n' ' ' < "$PRODUCT_ROOT/CONTRACT.md" | tr -s ' ')" \
-    "When you delegate a piece of work, spend your own context choosing, briefing, and judging it rather than producing it"
+    "Let the teammate choose its method"
+  contains "AC16 the lead brief leaves methods to the teammate" \
+    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+    "Let the teammate choose its method, division of work, and delegation"
 }
 
 ac17() {
@@ -530,6 +540,45 @@ ac21() {
   drop_agent role-ac21
 }
 
+# `up` creates the team's lead, so the command chooses the shipped lead role
+# independently of the window name. An explicit role remains the caller's
+# launch choice. Point the command at the proven private server as though it ran
+# in a client; the final switch then returns immediately because the fixture has
+# no client, after the full hitch and delivery path has completed.
+ac22() {
+  local config="$TEST_ROOT/ac22-config" private_tmux prefix value
+  mkdir -p "$config/roles"
+  private_tmux="$(tmux display-message -p -t "=$GANG_SESSION" \
+    '#{socket_path},#{pid},0')"
+
+  prefix="$TEST_ROOT/ac22-default-argv"
+  make_argv_collar argv22-default "$prefix"
+  TMUX="$private_tmux" GANG_CONFIG_DIR="$config" \
+    "$GANG" up role-ac22-default -c argv22-default -d /tmp \
+    >/dev/null 2>&1 || true
+  value="$(<"$prefix.2.bin")"
+  contains "AC22 up attaches the lead role independently of the window name" \
+    "$value" "Lead the team to complete the operator's goal"
+  equal "AC22 the default role contract was submitted" "" \
+    "$("$GANG" composer role-ac22-default)"
+  drop_agent role-ac22-default
+
+  printf 'MARK_UP_ROLE_OVERRIDE\n' > "$config/roles/override.md"
+  prefix="$TEST_ROOT/ac22-override-argv"
+  make_argv_collar argv22-override "$prefix"
+  TMUX="$private_tmux" GANG_CONFIG_DIR="$config" \
+    "$GANG" up role-ac22-override -c argv22-override -d /tmp --role override \
+    >/dev/null 2>&1 || true
+  value="$(<"$prefix.2.bin")"
+  contains "AC22 an explicit role replaces the up default" "$value" \
+    "MARK_UP_ROLE_OVERRIDE"
+  excludes "AC22 the explicit role is not concatenated with the up default" \
+    "$value" "Lead the team to complete the operator's goal"
+  equal "AC22 the override contract was submitted" "" \
+    "$("$GANG" composer role-ac22-override)"
+  drop_agent role-ac22-override
+}
+
 ac23() {
   local config="$TEST_ROOT/ac23-config" prefix="$TEST_ROOT/ac23-argv" hex
   mkdir -p "$config/roles"
@@ -615,7 +664,7 @@ SH
   drop_agent role-ac25
 }
 
-for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac23 ac24 ac25; do
+for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac22 ac23 ac24 ac25; do
   run_ac "$ac_name"
 done
 
