@@ -545,7 +545,11 @@ done
 
 # Codex receives the native hooks with live consumers on fresh and resumed launches. The
 # command must remain one shell word even when Gangline is installed under a path
-# containing spaces.
+# containing spaces. The compaction pair earns its place the same way the turn
+# hooks do: @gl_turn is closed for the whole of a compaction and the turn witness
+# outranks the pane, so without the bracket a compacting Codex agent reads idle
+# and gang delivers into it — and Codex declares no queue evidence, so that
+# delivery reports submitted for input the harness parked.
 CODEX_STUB="$RUN_ROOT/codex-stub"
 mkdir -p "$CODEX_STUB/bin"
 cat > "$CODEX_STUB/bin/codex" <<'SH'
@@ -578,6 +582,7 @@ import sys
 
 events = {
     "UserPromptSubmit", "PostToolUse", "Stop", "PermissionRequest",
+    "PreCompact", "PostCompact",
 }
 shape = re.compile(
     r'hooks\.([A-Za-z]+)=\[\{ hooks = \[\{ type = "command", '
@@ -3447,6 +3452,33 @@ excludes "and closing it drains the spool the compaction filled" \
 # box empty, because entering the session is what delivery means.
 contains "so the message enters the session once the compaction ends" \
   "$(pane bracket)" "MARK_MIDCOMPACT"
+
+# A REFUSED COMPACTION NEVER SENDS THE CLOSING EVENT. claude-code declines a short
+# session after PreCompact has already fired, so the opening event cannot be
+# trusted to be paired and an unpaired one holds the agent busy until it ages out.
+# A turn event settles it: parked input raises nothing until it drains, so a turn
+# witnesses a harness that is not compacting.
+bracket_hook PreCompact ',"trigger":"manual"'
+contains "an unpaired PreCompact leaves the bracket open" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction)" "open "
+contains "and the refused compaction still reads busy" \
+  "$("$GANG" status bracket 2>&1)" "-busy-"
+bracket_hook UserPromptSubmit
+equal "a turn opening settles the bracket a refusal left open" "closed" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction | cut -d' ' -f1)"
+bracket_hook PreCompact ',"trigger":"manual"'
+bracket_hook Stop
+equal "and so does a turn ending" "closed" \
+  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction | cut -d' ' -f1)"
+# Settling is not fabrication: a window that never carried a bracket must not
+# acquire one from an ordinary turn.
+"$HITCH" unbracketed -c bracketable -d /tmp >/dev/null
+unbracketed_pane="$(tmux list-panes -t "$(window_id unbracketed)" -F '#{pane_id}')"
+printf '{"hook_event_name":"Stop"}\n' \
+  | TMUX_PANE="$unbracketed_pane" "$GANG" hook >/dev/null 2>&1
+equal "a turn on a window with no bracket writes none" "" \
+  "$(tmux show-options -wqv -t "$(window_id unbracketed)" @gl_compaction)"
+"$GANG" drop unbracketed >/dev/null 2>&1 || :
 "$GANG" drop bracket >/dev/null 2>&1 || :
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"

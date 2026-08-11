@@ -488,7 +488,9 @@ The command takes no arguments and needs no tmux server.
 Internal endpoint for native harness events. It reads one JSON payload from
 standard input. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction and a spool drain, and permission requests
-raise occupancy.
+raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
+it and drains. A harness that refuses a compaction raises the opening event and
+never the closing one, so any turn event also settles a bracket left open.
 Awaiting-input events listed by `GANG_STALL_TYPES`, plus permission requests,
 raise a stall note only when `gang notify` has declared a target.
 Hooks are silent unless an enabled context light or declared team-time light

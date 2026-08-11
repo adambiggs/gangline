@@ -59,6 +59,18 @@ Add an MCP wrapper only for a real consumer that cannot use the CLI. MCP does no
 universally start a turn in an idle native harness, while tty input does; agents
 remain free to use MCP tools without Gangline mediating them.
 
+## A turn event settles an open compaction bracket
+
+PreCompact is not reliably paired: a harness that REFUSES the compaction raises it
+and never raises PostCompact. An unpaired opening held the agent busy until the
+bracket aged out, and reported busy over an idle harness for that whole window.
+
+A turn event closes it, because taking a turn and compacting are mutually
+exclusive. Input typed into a compaction is parked, and the park raises nothing
+until it drains, so a turn witnesses a harness that is not compacting whether or
+not the compaction it followed ever finished. Settling only ever closes a bracket
+that is already open; a turn on a window that never had one writes nothing.
+
 ## A compaction is followed by a continuation turn
 
 Gang types a continuation behind every compaction command, so an agent lands with

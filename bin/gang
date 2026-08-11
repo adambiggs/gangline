@@ -1425,6 +1425,24 @@ compaction_state_write() { # $1 = window id, $2 = open|closed
   tmux set-option -w -t "$1" @gl_compaction "$2 $(date +%s)" 2>/dev/null || true
 }
 
+# A REFUSED COMPACTION RAISES PreCompact AND NEVER PostCompact, so the opening
+# event cannot be trusted to be paired. claude-code declines a short session with
+# "Not enough messages to compact" and pi with "Nothing to compact"; the bracket
+# then stays open over an idle agent until it ages out, and every reader above it
+# reports busy for that whole window.
+#
+# A turn event settles it, because taking a turn and compacting are mutually
+# exclusive. Input typed into a compaction is PARKED, and the park raises nothing:
+# driven on claude-code 2.1.227, an Enter 0.8s into a compaction produced
+# UserPromptSubmit 38.6s later, immediately after PostCompact. So a turn event
+# witnesses a harness that is not compacting, whether or not the compaction it
+# followed ever finished.
+compaction_state_settle() { # $1 = window id; a turn event proves nothing is compacting
+  case "$(tmux show-options -wqv -t "$1" @gl_compaction 2>/dev/null)" in
+    open*) compaction_state_write "$1" closed ;;
+  esac
+}
+
 compaction_witness() { # $1 = window id; 0 compacting, 1 not, 2 bracket unusable
   local raw state at now
   raw="$(tmux show-options -wqv -t "$1" @gl_compaction 2>/dev/null)" || raw=""
@@ -4163,8 +4181,10 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   case "$event" in
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
                                   turn_state_write "$TMUX_PANE" open
+                                  compaction_state_settle "$TMUX_PANE"
                                   glyph_write "$TMUX_PANE" "-busy-" ;;
     Stop) turn_state_write "$TMUX_PANE" closed
+          compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
           glyph_write "$TMUX_PANE" "~idle~"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true

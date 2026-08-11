@@ -17,7 +17,14 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
       _gl_codex_hook_flags=""
-      for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest; do
+      # PreCompact/PostCompact are wired for the same reason claude-code wires
+      # them: @gl_turn is closed for the whole of a compaction, and the turn
+      # witness outranks the pane, so without the bracket a compacting codex
+      # agent reads IDLE and gang delivers into it. Codex declares no queue
+      # evidence, so that delivery would be reported submitted when the harness
+      # had parked it. Verified firing on 0.146.0.
+      for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest \
+                             PreCompact PostCompact; do
         _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
       done
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
