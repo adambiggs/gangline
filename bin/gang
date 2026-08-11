@@ -53,7 +53,7 @@ deprecation_flush() {
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line, $4 alias
@@ -719,7 +719,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_STALL_TYPES="" GANG_DIALOGS="" GANG_DIALOG_HITCH_DIR_TRUST=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
-  GANG_ROLE_PROMPT_OPT=""
+  GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
   unset -f collar_context collar_input collar_session_id \
     profile_context profile_input profile_session_id 2>/dev/null || true
@@ -741,6 +741,8 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     fi
   done
   [ -n "$GANG_LAUNCH" ] || die "collar '$1' sets no GANG_LAUNCH"
+  [ -z "$GANG_HARNESS_PROMPT" ] || [ -n "$GANG_ROLE_PROMPT_OPT" ] \
+    || die "collar '$1' declares GANG_HARNESS_PROMPT but no GANG_ROLE_PROMPT_OPT, so gang has no system-prompt option that can carry it"
   if [ -n "$GANG_RESUME_LAUNCH" ]; then
     case "$GANG_RESUME_LAUNCH" in
       *'{{session_id}}'*) ;;
@@ -1047,16 +1049,22 @@ SYSTEM_PROMPT=""
 # collar declares a single spelling, and passing it twice would be a guess about
 # whether that harness concatenates or keeps the last one.
 system_prompt_build() { # populate the system-prompt-level composite byte-exact
-  local role path contract
+  local role path contract harness
   contract="$(config_path "$CONTRACT_FILE" | config_sanitize)"
-  printf -v SYSTEM_PROMPT '%s\n%s\n%s\n%s\n%s\n%s\n\n--- Gangline contract (%s) ---\n%s' \
+  printf -v SYSTEM_PROMPT '%s\n%s\n%s\n%s\n%s\n%s\n%s\n\n--- Gangline contract (%s) ---\n%s' \
     'You are running inside a Gangline team. What follows was attached by' \
     'Gangline when this session launched: the contract every agent on this' \
-    'team is held to, and a role brief where this hitch named one. Operator' \
-    'doctrine, where the operator has any, reaches you as part of your first' \
+    'team is held to, optional guidance from its harness collar, and a role brief' \
+    'where this hitch named one. Operator doctrine, where the operator has any,' \
+    'reaches you as part of your first' \
     'message; where that doctrine and anything below disagree, the doctrine' \
     'governs and this attachment yields to it. Nothing below overrides it.' \
     "$contract" "$CONTRACT_BODY"
+  if [ -n "$GANG_HARNESS_PROMPT" ]; then
+    harness="$(config_path "$GANG_COLLAR_FILE" | config_sanitize)"
+    printf -v SYSTEM_PROMPT '%s\n--- harness guidance (%s) ---\n%s\n' \
+      "$SYSTEM_PROMPT" "$harness" "$GANG_HARNESS_PROMPT"
+  fi
   [ -n "$ROLE_NAME" ] || return 0
   role="$(printf '%s' "$ROLE_NAME" | config_sanitize)"
   path="$(config_path "$ROLE_FILE" | config_sanitize)"
@@ -3063,7 +3071,7 @@ effort_levels() { # print the levels the collar says this harness takes
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -3139,6 +3147,13 @@ cmd_hitch() {
     registered_identity_guard "$id" "$name" hitch
     die "agent '$name' already exists"
   fi
+  if [ -n "$GANG_MODEL_OPT" ] && [ -z "$model" ]; then missing="-m"; fi
+  if [ -n "$GANG_EFFORT_OPT" ] && [ -z "$effort" ]; then
+    if [ -n "$missing" ]; then missing="$missing and -e"; else missing="-e"; fi
+  fi
+  [ -z "$missing" ] \
+    || printf "gang: WARNING: hitching '%s' without %s; the collar will choose any missing default. Pass every supported choice deliberately.\n" \
+      "$name" "$missing" >&2
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: collar '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac

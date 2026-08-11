@@ -57,6 +57,7 @@ fail() { checks=$((checks + 1)); fails=$((fails + 1)); printf 'FAIL %s\n       %
 contains() { case "$2" in *"$3"*) pass "$1" ;; *) fail "$1" "missing [$3]" ;; esac; }
 excludes() { case "$2" in *"$3"*) fail "$1" "unexpected [$3]" ;; *) pass "$1" ;; esac; }
 equal() { [ "$2" = "$3" ] && pass "$1" || fail "$1" "expected [$2], got [$3]"; }
+submitted() { equal "$1" "" "$("$GANG" composer "$2")"; }
 
 window_id() {
   local id name bare first last
@@ -98,7 +99,7 @@ ac1() {
     "$GANG" hitch role-ac1 -c argv1 -d /tmp -r lead >/dev/null
   value="$(<"$prefix.2.bin")"
   contains "AC1 system prompt carries the shipped role body" "$value" \
-    "Lead the team to complete the operator's goal"
+    "Delegate each whole result as one arc"
   equal "AC1 the startup contract was submitted" "" \
     "$("$GANG" composer role-ac1)"
   drop_agent role-ac1
@@ -147,7 +148,7 @@ ac5() {
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac5 -c bash -d /tmp --role lead >/dev/null
   body="$(pane_all role-ac5)"
   contains "AC5 operator role wins" "$body" "MARK_OPERATOR_LEAD"
-  excludes "AC5 roles are not concatenated" "$body" "Lead the team to complete the operator's goal"
+  excludes "AC5 roles are not concatenated" "$body" "Delegate each whole result as one arc"
   drop_agent role-ac5
 }
 
@@ -178,6 +179,7 @@ ac7() {
   contains "AC7 empty refusal names vacuity" "$out" "is empty"
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac7-ok -c bash -d /tmp --role nonempty >/dev/null
   contains "AC7 absent doctrine remains valid" "$(pane_all role-ac7-ok)" "MARK_NONEMPTY_ROLE"
+  submitted "AC7 the valid role contract was submitted" role-ac7-ok
   drop_agent role-ac7-ok
 }
 
@@ -267,19 +269,46 @@ PY
 }
 
 ac9() {
-  local config="$TEST_ROOT/ac9-config" prefix="$TEST_ROOT/ac9-argv" value pane
+  local config="$TEST_ROOT/ac9-config" prefix="$TEST_ROOT/ac9-argv" value pane out rc=0
   mkdir -p "$config/roles"
   printf 'MARK_SYSTEM_BODY\n' > "$config/roles/system.md"
   make_argv_collar argv9 "$prefix"
+  printf '%s\n' 'GANG_HARNESS_PROMPT="MARK_HARNESS_GUIDANCE"' \
+    >> "$TEST_ROOT/collars/argv9.sh"
   GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac9 -c argv9 -d /tmp --role system >/dev/null
   value="$(<"$prefix.2.bin")" pane="$(pane_all role-ac9)"
   equal "AC9 argv has the role option" "--append-system-prompt" "$(<"$prefix.1.bin")"
   contains "AC9 argv has the preamble" "$value" "You are running inside a Gangline team"
+  contains "AC9 preamble inventories optional harness guidance" "$value" \
+    "optional guidance from its harness collar"
+  contains "AC9 harness guidance names its collar source" "$value" \
+    "--- harness guidance ($(display_path "$TEST_ROOT/collars/argv9.sh")) ---"
+  case "$value" in
+    *'--- Gangline contract'*$'\n--- harness guidance ('*$') ---\nMARK_HARNESS_GUIDANCE\n\n--- role brief:'*MARK_SYSTEM_BODY*)
+      pass "AC9 contract, harness guidance, and role have separated ordered sections" ;;
+    *) fail "AC9 contract, harness guidance, and role have separated ordered sections" "$value" ;;
+  esac
   contains "AC9 argv has the body" "$value" "MARK_SYSTEM_BODY"
   contains "AC9 composer points at the brief instead of carrying it" "$pane" \
     "role brief are in your system prompt"
   excludes "AC9 composer does not duplicate the body" "$pane" "MARK_SYSTEM_BODY"
+  submitted "AC9 the assembled startup contract was submitted" role-ac9
   drop_agent role-ac9
+
+  cat > "$TEST_ROOT/collars/promptless.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$PRODUCT_ROOT/collars/bash.sh"
+GANG_HARNESS_PROMPT="UNDELIVERABLE_GUIDANCE"
+SH
+  out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac9-bad -c promptless -d /tmp 2>&1)" \
+    || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC9 harness guidance without a prompt option refuses" \
+    || fail "AC9 harness guidance without a prompt option refuses" "$out"
+  contains "AC9 refusal names the missing system-prompt declaration" "$out" \
+    "declares GANG_HARNESS_PROMPT but no GANG_ROLE_PROMPT_OPT"
+  excludes "AC9 refused harness guidance opens no window" "$(window_names)" \
+    "role-ac9-bad"
 }
 
 ac10() {
@@ -320,8 +349,9 @@ ac12() {
     printf '%s\n' \
       'You are running inside a Gangline team. What follows was attached by' \
       'Gangline when this session launched: the contract every agent on this' \
-      'team is held to, and a role brief where this hitch named one. Operator' \
-      'doctrine, where the operator has any, reaches you as part of your first' \
+      'team is held to, optional guidance from its harness collar, and a role brief' \
+      'where this hitch named one. Operator doctrine, where the operator has any,' \
+      'reaches you as part of your first' \
       'message; where that doctrine and anything below disagree, the doctrine' \
       'governs and this attachment yields to it. Nothing below overrides it.'
     printf '\n--- Gangline contract (%s) ---\n' \
@@ -349,7 +379,7 @@ ac13() {
   equal "AC13 a role-less hitch still carries the option" "--append-system-prompt" "$(<"$prefix.1.bin")"
   value="$(<"$prefix.2.bin")"
   contains "AC13 the role-less system prompt carries the contract" "$value" \
-    "Continue all other work."
+    "You are one agent on a Gangline team."
   excludes "AC13 the role-less system prompt opens no role section" "$value" "--- role brief:"
   drop_agent role-ac13
 }
@@ -396,7 +426,7 @@ SH
 
 ac15() {
   GANG_CONFIG_DIR="$TEST_ROOT/ac15-config" "$GANG" hitch lead -c bash -d /tmp >/dev/null
-  excludes "AC15 agent name does not infer a role" "$(pane_all lead)" "Lead the team to complete the operator's goal"
+  excludes "AC15 agent name does not infer a role" "$(pane_all lead)" "Delegate each whole result as one arc"
   excludes "AC15 role-less contract has no role section" "$(pane_all lead)" "Your role in this team"
   drop_agent lead
 }
@@ -428,7 +458,16 @@ ac16() {
     "Let the teammate choose its method"
   contains "AC16 the lead brief leaves methods to the teammate" \
     "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
-    "Let the teammate choose its method, division of work, and delegation"
+    "The arc owner chooses the method, decomposition, delegation, and independent reviewer."
+  contains "AC16 the lead does not prescribe how an arc is worked" \
+    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+    "Do not prescribe how an arc is worked."
+  contains "AC16 the lead commissions rather than performs review" \
+    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+    "Do not review the result yourself."
+  contains "AC16 the lead stays idle while an arc runs" \
+    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+    "Stay idle while an arc runs."
 }
 
 ac17() {
@@ -463,6 +502,7 @@ ac17() {
   excludes "AC17 leading-dot basename is not advertised" "$advertised" ".hidden"
   GANG_CONFIG_DIR="$config" GANG_TEST_COLLARS=1 "$tree/bin/gang" hitch role-ac17-hitch -c bash -d /tmp --role hitch >/dev/null
   contains "AC17 identity-reserved role attaches" "$(pane_all role-ac17-hitch)" "HITCH_ROLE_BODY"
+  submitted "AC17 the identity-reserved role contract was submitted" role-ac17-hitch
   drop_agent role-ac17-hitch
 }
 
@@ -558,7 +598,7 @@ ac22() {
     >/dev/null 2>&1 || true
   value="$(<"$prefix.2.bin")"
   contains "AC22 up attaches the lead role independently of the window name" \
-    "$value" "Lead the team to complete the operator's goal"
+    "$value" "Delegate each whole result as one arc"
   equal "AC22 the default role contract was submitted" "" \
     "$("$GANG" composer role-ac22-default)"
   drop_agent role-ac22-default
@@ -573,7 +613,7 @@ ac22() {
   contains "AC22 an explicit role replaces the up default" "$value" \
     "MARK_UP_ROLE_OVERRIDE"
   excludes "AC22 the explicit role is not concatenated with the up default" \
-    "$value" "Lead the team to complete the operator's goal"
+    "$value" "Delegate each whole result as one arc"
   equal "AC22 the override contract was submitted" "" \
     "$("$GANG" composer role-ac22-override)"
   drop_agent role-ac22-override
@@ -661,6 +701,7 @@ SH
   contains "AC25 the recovery names the contract path" "$body" "CONTRACT.md"
   excludes "AC25 the pane does not restate the launch-time attachment" "$body" \
     "was attached to this harness session at launch"
+  submitted "AC25 the system-prompt recovery contract was submitted" role-ac25
   drop_agent role-ac25
 }
 

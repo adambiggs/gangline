@@ -35,8 +35,8 @@ selects the harness.
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
-standing terms: envelope attribution, how to reach a peer, deliberate model and
-effort choices when hitching a teammate, compaction, and the marathon rule.
+standing terms. Any supported `-m` or `-e` choice omitted at hitch warns before
+the collar silently chooses that default.
 
 How it reaches the agent depends on the collar. Where one declares
 `GANG_ROLE_PROMPT_OPT`, the contract's bytes are passed through that launch
@@ -569,8 +569,8 @@ hitch still carries one into the system prompt where the collar has that option.
 The contract and the role brief share a single option rather than passing it
 twice: a collar declares one spelling, and repeating it would be a guess about
 whether that harness concatenates the values or keeps the last. The composite
-is Gangline's preamble, then the contract, then the role brief where one was
-named.
+is Gangline's preamble, then the contract, harness-specific guidance where the
+collar declares it, and the role brief where one was named.
 
 Role briefs use the same prose validation. Resolution checks
 `$GANG_CONFIG_DIR/roles/<name>.md` before the shipped `roles/<name>.md`; an
@@ -623,6 +623,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_EFFORT_OPT` | optional native effort option, declared whole with its separator; the level joins with no space |
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
 | `GANG_ROLE_PROMPT_OPT` | optional native option whose next argument is a system-prompt addition passed by value |
+| `GANG_HARNESS_PROMPT` | optional harness-specific prose included in that system-prompt addition; requires `GANG_ROLE_PROMPT_OPT` |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |

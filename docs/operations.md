@@ -145,9 +145,9 @@ itself:
 gang compact
 ```
 
-Do this after finishing a coherent arc and recording durable state in the
-repository, not in the middle of a half-applied edit. Native harness compaction
-owns the summary and context transition.
+Do this after finishing a coherent arc and putting unfinished work in repository
+files that teammates can read, not in the middle of a half-applied edit. Native
+harness compaction owns the summary and context transition.
 
 Codex self-compaction is deferred to its Stop event because its active turn
 cannot submit `/compact` into its own composer. The request is one-shot. If the

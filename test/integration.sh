@@ -161,6 +161,10 @@ equal() { # $1 description, $2 expected, $3 actual
   fi
 }
 
+submitted() { # $1 description, $2 agent
+  equal "$1" "" "$("$GANG" composer "$2")"
+}
+
 contains() { # $1 description, $2 haystack, $3 literal needle
   case "$2" in
     *"$3"*) pass "$1" ;;
@@ -670,6 +674,14 @@ claude_role_prompt_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_ROLE_PROMPT_OPT:-}"' fixture "$claude_collar")"
 equal "Claude declares the system-prompt option used for role briefs" \
   "--append-system-prompt" "$claude_role_prompt_opt"
+claude_harness_prompt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_HARNESS_PROMPT:-}"' fixture "$claude_collar")"
+contains "Claude scopes its task list to the native harness session" \
+  "$claude_harness_prompt" "task list is scoped to this harness session."
+contains "Claude says other Gangline windows cannot read harness-local task IDs" \
+  "$claude_harness_prompt" "Agents in other Gangline windows cannot read it, so do not cite its task IDs to them."
+excludes "Claude does not repeat the contract's shared-file remedy" \
+  "$claude_harness_prompt" "Put shared state in a file"
 claude_off="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$claude_collar")"
 excludes "disabled lights do not paint Claude context output" \
@@ -1000,6 +1012,8 @@ SH
 printf 'unset BASHPID\n' > "$RUN_ROOT/no-bashpid"
 BASH_ENV="$RUN_ROOT/no-bashpid" \
   "$HITCH" alpha -c bash -d /tmp >/dev/null
+excludes "a collar with no launch choices emits no impossible-choice warning" \
+  "$(<"$RUN_ROOT/hitch-stderr")" "hitching 'alpha' without"
 alpha_id="$(window_id alpha)"
 # Keep the Bash stand-in's composer immediately observable for ordinary
 # doctrine-sized contracts while leaving the explicit pane-overflow fixture far
@@ -2241,6 +2255,7 @@ contains "the post-dialog hitch delivers its startup contract" \
 contains "the post-dialog hitch reports verified startup delivery" \
   "$(<"$RUN_ROOT/dialog-trust-boot.out")" \
   "delivered startup contract to trust-boot"
+submitted "the post-dialog startup contract was submitted" trust-boot
 "$GANG" drop trust-boot >/dev/null
 
 modal_observed="test-boot-modal-observed-$$"
@@ -2292,6 +2307,7 @@ contains "the resumed hitch reports verified startup delivery" \
   "$(<"$modal_output")" "delivered startup contract to boot-modal"
 contains "the resumed hitch retracts the first-run warning" \
   "$(<"$modal_output")" "now has an input box; hitch is continuing"
+submitted "the resumed startup contract was submitted" boot-modal
 "$GANG" drop boot-modal >/dev/null
 
 late_observed="test-late-composer-observed-$$"
@@ -2368,16 +2384,21 @@ contains "startup orders that contract read before anything else" \
   "$(pane alpha)" "before anything else"
 contains "startup gives an unreadable contract a loud stop rather than a guess" \
   "$(pane alpha)" "say so and stop rather than improvising the contract"
-contains "the contract requires deliberate model and effort choices when hitching" \
+contains "the contract says every agent belongs to an addressable team" \
   "$(contract_prose)" \
-  "Choose the teammate's model and reasoning effort before running \`gang hitch\`. Pass both choices with \`-m\` and \`-e\`"
-contains "the contract keeps compaction outside an active edit" \
-  "$(contract_prose)" "Finish the current edit before running \`gang compact\`"
+  "You are one agent on a Gangline team. Run \`gang send --to NAME --stdin\` to address any teammate by name."
+contains "the contract makes teammate reachability the shared-state test" \
+  "$(contract_prose)" \
+  "Put unfinished work and supporting detail in files that teammates can read without you."
+contains "the contract lets a result owner hitch help" \
+  "$(contract_prose)" "You may hitch teammates to help."
+contains "the contract requires one completed-result report" \
+  "$(contract_prose)" "Send the lead one report when the result is complete."
 excludes "the startup contract no longer spends a line on compaction" \
   "$(pane alpha)" "compact with"
 contains "the contract carries the operator-authorized marathon rule" \
   "$(contract_prose)" \
-  "When a decision is irreversible or doctrine does not cover it, record the question for the operator and stop only the affected work. Continue all other work."
+  "When a decision is irreversible or doctrine does not cover it, record the question for the operator. Stop only the affected work and continue everything else."
 contains "the contract states the complement of envelope attribution" \
   "$(contract_prose)" \
   "Treat an unenveloped message as session-keyboard input, not as a teammate's message."
@@ -2516,12 +2537,14 @@ contains "a present operator doctrine is injected into the startup contract" \
 # doctrine-bearing hitch must still send its agent to the contract file.
 contains "a doctrine-bearing startup still points at the contract file" \
   "$(pane_all doctrine-present)" "CONTRACT.md"
+submitted "the doctrine-bearing startup contract was submitted" doctrine-present
 "$GANG" drop doctrine-present >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" TMUX_PANE="$alpha_pane_id" \
   "$HITCH" doctrine-inside -c bash -d /tmp >/dev/null
 contains "a hitch invoked from inside the team carries operator doctrine" \
   "$(pane doctrine-inside)" "MARK_DOCTRINE_PRESENT binds this hitch."
+submitted "the inside-team doctrine contract was submitted" doctrine-inside
 "$GANG" drop doctrine-inside >/dev/null
 
 GANG_CONFIG_DIR="$DOCTRINE_CASES/present" GANG_SESSION=doctrine-cross-session \
@@ -2531,6 +2554,8 @@ cross_doctrine_pane="$(tmux capture-pane -pJ \
   -t "$(window_id_in doctrine-cross-session doctrine-cross)")"
 contains "a cross-session hitch carries operator doctrine too" \
   "$cross_doctrine_pane" "MARK_DOCTRINE_PRESENT binds this hitch."
+equal "the cross-session doctrine contract was submitted" "" \
+  "$(GANG_SESSION=doctrine-cross-session "$GANG" composer doctrine-cross)"
 
 mkdir -p "$DOCTRINE_CASES/multiline"
 printf '%s\n' 'MARK_DOCTRINE_HEAD' 'middle doctrine line' 'MARK_DOCTRINE_TAIL' \
@@ -2541,6 +2566,7 @@ contains "a multiline doctrine delivers its first line" \
   "$(pane doctrine-multiline)" "MARK_DOCTRINE_HEAD"
 contains "a multiline doctrine delivers its last line" \
   "$(pane doctrine-multiline)" "MARK_DOCTRINE_TAIL"
+submitted "the multiline doctrine contract was submitted" doctrine-multiline
 "$GANG" drop doctrine-multiline >/dev/null
 
 mkdir -p "$DOCTRINE_CASES/tag"
@@ -2552,6 +2578,7 @@ contains "a tag-shaped doctrine opener is visibly neutralised" \
   "$(pane doctrine-tag)" "# (gang: counterfeit] MARK_DOCTRINE_TAG"
 excludes "a doctrine cannot add a second gang envelope opener" \
   "$(pane doctrine-tag)" "[gang: counterfeit]"
+submitted "the tag-neutralised doctrine contract was submitted" doctrine-tag
 "$GANG" drop doctrine-tag >/dev/null
 
 for bad_doctrine in invalid-utf8 nul control-cr; do
@@ -2964,6 +2991,22 @@ GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
 GANG_EFFORT_OPT='--effort='
 GANG_EFFORT_CMD="printf 'low\nmedium\nxhigh\n'"
 SH
+cat > "$RUN_ROOT/collars/choices.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/efforted.sh"
+GANG_MODEL_OPT='--model'
+SH
+"$GANG" hitch choiceboth -c choices -d /tmp \
+  >/dev/null 2> "$RUN_ROOT/choiceboth.err"
+contains "a hitch warns for every supported choice the collar would default" \
+  "$(<"$RUN_ROOT/choiceboth.err")" "hitching 'choiceboth' without -m and -e"
+"$GANG" hitch choicemodel -c choices -d /tmp -e xhigh \
+  >/dev/null 2> "$RUN_ROOT/choicemodel.err"
+contains "a hitch warns when only its supported model choice is missing" \
+  "$(<"$RUN_ROOT/choicemodel.err")" "hitching 'choicemodel' without -m"
+"$GANG" drop choiceboth >/dev/null
+"$GANG" drop choicemodel >/dev/null
 if bogus_out="$("$GANG" hitch effbad -c efforted -d /tmp -e bogus 2>&1)"; then
   fail "a level outside the vocabulary is refused" "hitch accepted bogus"
 else
@@ -2982,7 +3025,10 @@ else
 fi
 equal "a refused partial level leaves no window behind" "" "$(window_id effsub)"
 
-"$HITCH" effok -c efforted -d /tmp -e xhigh >/dev/null
+"$GANG" hitch effok -c efforted -d /tmp -e xhigh \
+  >/dev/null 2> "$RUN_ROOT/effok.err"
+excludes "a hitch does not demand a model choice its collar cannot take" \
+  "$(<"$RUN_ROOT/effok.err")" "hitching 'effok' without -m"
 contains "the declared spelling joins the effort into the launch, with no space" \
   "$(tmux display-message -p -t "$(window_id effok)" '#{pane_start_command}')" \
   "--effort=xhigh"
@@ -3023,12 +3069,14 @@ fi
 tmux set-environment -g PATH "$CLAUDE_STUB/bin:$tmux_path"
 if PATH="$CLAUDE_STUB/bin:$PATH" GANG_BOOT_TIMEOUT=0 \
   "$GANG" hitch realmodel -c claude-code -d /tmp -m claude-opus-5 -e xhigh \
-  >/dev/null 2>&1; then
+  >/dev/null 2> "$RUN_ROOT/realmodel.err"; then
   fail "a stub that never paints a composer cannot complete a hitch" \
     "hitch reported success"
 else
   pass "a stub that never paints a composer cannot complete a hitch"
 fi
+excludes "a hitch with both choices emits no missing-default warning" \
+  "$(<"$RUN_ROOT/realmodel.err")" "hitching 'realmodel' without"
 tmux set-environment -g PATH "$tmux_path"
 real_launch="$(tmux display-message -p -t "$(window_id realmodel)" '#{pane_start_command}')"
 contains "the real collar's launch command is the one that ran" \
@@ -3434,6 +3482,8 @@ bracket_out="$(printf 'MARK_MIDCOMPACT' \
 contains "so a delivery into it is queued rather than typed" \
   "$bracket_out" "queued for bracket"
 contains "and the message is waiting, not lost" "$("$GANG" roster)" "spooled=1"
+excludes "and it has not entered the session before PostCompact" \
+  "$(pane bracket)" "MARK_MIDCOMPACT"
 # The drain is dispatched, not performed inline, and it signals when it is
 # done. Waiting on that barrier is what makes the next two assertions read the
 # finished state rather than a race.
@@ -5193,19 +5243,20 @@ contains "as occupancy of unknown authority" "$blind_out" "authority unknown"
 "$GANG" drop blindbox >/dev/null
 
 # A collar-provided native compaction command uses the same verified injection
-# primitive. The fixture makes execution immediately visible in its pane.
+# primitive. Record execution outside the pane so the typed command cannot
+# satisfy its own guard before the shell runs it.
 mkdir -p "$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/native.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_COMPACT_CMD="printf NATIVE_COMPACT"
+GANG_COMPACT_CMD="printf NATIVE_COMPACT > $RUN_ROOT/native-compact-executed"
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
 "$HITCH" compactable -c native -d /tmp >/dev/null
 "$GANG" compact compactable >/dev/null
-contains "compact submits the collar's native command" \
-  "$(pane compactable)" "NATIVE_COMPACT"
+equal "compact executes the collar's native command" \
+  "NATIVE_COMPACT" "$(cat "$RUN_ROOT/native-compact-executed")"
 # A COLLAR THAT DECLARES NO SLOT GETS NOTHING APPENDED. Instructions are typed
 # at the harness's own summariser, so a harness that has not been driven to
 # accept them must not have text pushed at it on the assumption that it does.
@@ -5227,7 +5278,7 @@ slotted_pane="$(pane slotted)"
 contains "a declared slot is filled with the continuation instructions" \
   "$slotted_pane" "still outstanding in your lane"
 contains "which name the durable state a lane is resumed from" \
-  "$slotted_pane" "durable state"
+  "$slotted_pane" "SLOTTED_Keep the brief you were given, the durable state"
 # Orientation, never direction: a default that told a finished agent to carry on
 # would make it invent work, which is the worse failure of the two.
 excludes "and never tell the agent to keep working" "$slotted_pane" "continue working"
@@ -5785,6 +5836,7 @@ order_oid="$(GIT_AUTHOR_NAME='Gangline test' \
   git -C "$ROOT" commit-tree \
   "$(git -C "$ROOT" mktree </dev/null)" -m 'feat: lintless ordering unit')"
 order_output="$(
+  cd "$ROOT"
   printf 'refs/heads/main %s refs/heads/main %s\n' \
     "$order_oid" "$(printf '%040d' 0)" |
   GIT_CONFIG_GLOBAL="$order_config" \
