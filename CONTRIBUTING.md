@@ -39,12 +39,21 @@ of that executable. Keep edits and checkpoints small.
 
 ## Tests
 
-Run the repository gates:
+Run the repository gate:
 
 ```sh
-test/lint.sh
-test/integration.sh
+test/gate.sh
 ```
+
+It snapshots the working tree, uncommitted work included, into a private copy,
+commits it there, and runs `test/lint.sh` and `test/integration.sh` from that
+copy. Two things follow, and both are the point. The complete gate is runnable
+before a commit, because the executable is clean against the snapshot's own
+HEAD and the dirty-execution warning one mandatory assertion reads as failure
+never fires. And the run owns its tree: bash reads a script incrementally and
+`gang` re-reads collars and roles at hitch time, so an edit landing mid-run
+otherwise changes what executes. `test/lint.sh` and `test/integration.sh` still
+run directly against an already-settled tree, and refuse one they would not own.
 
 The following rules are mandatory:
 

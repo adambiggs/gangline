@@ -8,6 +8,17 @@ unset TMUX TMUX_PANE
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
+
+# A VERDICT IS ABOUT A TREE, so the tree has to hold still. This refuses to
+# start against a working tree that is already moving — bash reads this script
+# incrementally, gang re-reads collars and roles at hitch time, and an edit
+# landing mid-run changes what executes, which has already cost this team a red
+# that belonged to the editor rather than to the code. The identity is read
+# again at the end, because starting settled is not the same as staying
+# settled. test/gate.sh is the way to run this before a commit: it snapshots
+# the working tree, uncommitted work included, and runs the gate from the copy.
+TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
+
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
@@ -6180,12 +6191,198 @@ fi
   && pass "and takes the spool of every window in it" \
   || fail "and takes the spool of every window in it" "$lingering_spool survived"
 
+# THE GATE OWNS THE TREE IT JUDGES. Two failures wrote test/gate.sh: a mandatory
+# assertion that could not pass while bin/gang was uncommitted, so the complete
+# gate only ever ran after a commit; and a run whose source was edited while it
+# ran, which reported the editor rather than the code. Both are one problem —
+# the run and the working tree were not separated — so these fixtures drive the
+# separation itself rather than either symptom.
+gate_fix="$RUN_ROOT/gate-fixture"
+mkdir -p "$gate_fix/bin" "$gate_fix/test"
+cp "$ROOT/test/gate.sh" "$gate_fix/test/gate.sh"
+cp "$GANG" "$gate_fix/bin/gang"
+cp -R "$ROOT/collars" "$gate_fix/collars"
+printf 'ignored.txt\n' > "$gate_fix/.gitignore"
+printf 'DOOMED\n' > "$gate_fix/doomed.txt"
+# Same identity domain as gang_root and the dirty-execution fixture above:
+# macOS reaches TMPDIR through a symlink and the printed path is the physical
+# one.
+gate_fix="$(cd -P "$gate_fix" && pwd)"
+git -C "$gate_fix" init -q
+git -C "$gate_fix" add -A
+git -C "$gate_fix" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: gate fixture'
+gate_head="$(git -C "$gate_fix" rev-parse HEAD)"
+
+equal "a settled tree answers with its own identity" \
+  "settled $gate_head $gate_fix" \
+  "$("$gate_fix/test/gate.sh" --assert-owned)"
+printf '\n# fixture dirt\n' >> "$gate_fix/bin/gang"
+refuses "a moving tree is refused as one no run can own" \
+  "would not own the tree it is testing" \
+  "$gate_fix/test/gate.sh" --assert-owned
+refuses "the refusal hands over the command that does own a tree" \
+  "test/gate.sh" "$gate_fix/test/gate.sh" --assert-owned
+git -C "$gate_fix" checkout -q -- bin/gang
+
+# An operator who has turned untracked reporting off must not thereby turn this
+# check off: a new collar or role file is exactly the kind of untracked file
+# that changes what a run executes, and inheriting `status.showUntrackedFiles`
+# would report a tree nobody owns as settled.
+printf 'stray\n' > "$gate_fix/untracked-collar.sh"
+git -C "$gate_fix" config status.showUntrackedFiles no
+equal "the fixture really did hide untracked files from ordinary status" "" \
+  "$(git -C "$gate_fix" status --porcelain)"
+refuses "an untracked file still makes the tree unownable" \
+  "would not own the tree it is testing" \
+  "$gate_fix/test/gate.sh" --assert-owned
+git -C "$gate_fix" config --unset status.showUntrackedFiles
+
+rm -f "$gate_fix/untracked-collar.sh"
+gate_identity="$("$gate_fix/test/gate.sh" --assert-owned)"
+if "$gate_fix/test/gate.sh" --assert-unmoved "$gate_identity"; then
+  pass "a tree that held still keeps the identity its run started with"
+else
+  fail "a tree that held still keeps the identity its run started with" \
+    "the unchanged fixture reported movement"
+fi
+printf '\n# fixture dirt\n' >> "$gate_fix/bin/gang"
+refuses "a tree that moved mid-run voids the verdict rather than passing it" \
+  "THE SOURCE TREE MOVED DURING THIS RUN" \
+  "$gate_fix/test/gate.sh" --assert-unmoved "$gate_identity"
+
+# A COMMIT IS ALSO MOVEMENT. A tree that is settled at the start and settled at
+# the end has still changed if the commit under it changed, and that reading is
+# the one a teammate landing work mid-run produces.
+git -C "$gate_fix" checkout -q -- bin/gang
+gate_settled_identity="$("$gate_fix/test/gate.sh" --assert-owned)"
+printf 'landed mid-run\n' > "$gate_fix/second.txt"
+git -C "$gate_fix" add -A
+git -C "$gate_fix" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: a commit landing mid-run'
+equal "the moved tree is settled again, so only its commit changed" "" \
+  "$(git -C "$gate_fix" status --porcelain)"
+refuses "a commit landing mid-run voids the verdict too" \
+  "THE SOURCE TREE MOVED DURING THIS RUN" \
+  "$gate_fix/test/gate.sh" --assert-unmoved "$gate_settled_identity"
+
+# THE EXACT PAIR THAT MADE THE SUITE UNRUNNABLE, from one set of bytes: the
+# uncommitted executable warns on stderr where it lives, and is silent inside
+# the snapshot, because the snapshot's own HEAD holds those same bytes. No
+# assertion was relaxed to get there and there is no suite-only switch to relax
+# one later.
+gate_dirt='# named gate-snapshot mutant'
+printf '%s\n' "$gate_dirt" >> "$gate_fix/bin/gang"
+rm -f "$gate_fix/doomed.txt"
+printf 'UNTRACKED_GATE_FILE\n' > "$gate_fix/untracked.txt"
+printf 'IGNORED_GATE_FILE\n' > "$gate_fix/ignored.txt"
+contains "the uncommitted executable warns where it lives" \
+  "$("$gate_fix/bin/gang" collars 2>&1)" "WARNING: executing dirty"
+gate_snap="$RUN_ROOT/gate-snapshot"
+"$gate_fix/test/gate.sh" --snapshot "$gate_snap"
+excludes "the same bytes raise no dirty-execution warning in the snapshot" \
+  "$("$gate_snap/bin/gang" collars 2>&1)" "executing dirty"
+# WHY it is silent has to be the reason claimed. A snapshot with no commit at
+# all is silent too, because the warning abstains when it cannot resolve a
+# HEAD, and that silence would be an absent instrument reported as a clean one.
+equal "the snapshot is silent because its own HEAD holds those exact bytes" \
+  "$(cksum < "$gate_snap/bin/gang")" \
+  "$(git -C "$gate_snap" show HEAD:bin/gang 2>/dev/null | cksum)"
+contains "the snapshot carries the uncommitted work it was taken from" \
+  "$(<"$gate_snap/bin/gang")" "$gate_dirt"
+equal "the snapshot's own worktree is settled against its own HEAD" "" \
+  "$(git -C "$gate_snap" status --porcelain)"
+equal "an untracked file is part of the tree the gate tests" \
+  "UNTRACKED_GATE_FILE" "$(<"$gate_snap/untracked.txt")"
+if [ -e "$gate_snap/doomed.txt" ]; then
+  fail "a deleted tracked file reaches the snapshot as a deletion" \
+    "the snapshot restored a file the working tree no longer has"
+else
+  pass "a deleted tracked file reaches the snapshot as a deletion"
+fi
+if [ -e "$gate_snap/ignored.txt" ]; then
+  fail "an ignored file is not part of the tree" \
+    "the snapshot copied a file git was told to ignore"
+else
+  pass "an ignored file is not part of the tree"
+fi
+
+# AN EDIT THAT LANDS WHILE THE TREE IS BEING COPIED is the one corruption the
+# snapshot cannot prevent by existing, so it is detected instead. The stand-in
+# git edits the fixture on the second listing, which is exactly when a real
+# editor's save would land, and needs no wall clock to do it.
+gate_git_bin="$RUN_ROOT/gate-git"
+mkdir -p "$gate_git_bin"
+gate_real_git="$(command -v git)"
+cat > "$gate_git_bin/git" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+if [ "\${3:-}" = ls-files ]; then
+  count="$RUN_ROOT/gate-ls-\${GATE_DRIFT_MODE:-none}"
+  n="\$(cat "\$count" 2>/dev/null)" || n=0
+  n=\$(( \${n:-0} + 1 ))
+  printf '%s\n' "\$n" > "\$count"
+  if [ "\$n" -ge 2 ]; then
+    case "\${GATE_DRIFT_MODE:-none}" in
+      content) printf 'LATE_EDIT\n' >> "$gate_fix/bin/gang" ;;
+      list) printf 'LATE_FILE\n' > "$gate_fix/late-file.txt" ;;
+    esac
+  fi
+fi
+exec "$gate_real_git" "\$@"
+SH
+chmod +x "$gate_git_bin/git"
+refuses "a file edited during the copy makes the snapshot unusable" \
+  "moved while it was being copied (bin/gang changed)" \
+  env GATE_DRIFT_MODE=content PATH="$gate_git_bin:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-content"
+refuses "a file appearing during the copy makes the snapshot unusable" \
+  "moved while it was being copied (the set of files changed)" \
+  env GATE_DRIFT_MODE=list PATH="$gate_git_bin:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-list"
+
+# THE WIRING, not a restatement of it: both mandatory entry points are run
+# against a tree they would not own and must refuse before doing any work.
+gate_wire="$RUN_ROOT/gate-wiring"
+mkdir -p "$gate_wire/test"
+cp "$ROOT/test/gate.sh" "$ROOT/test/lint.sh" "$ROOT/test/integration.sh" \
+  "$gate_wire/test/"
+printf 'gate wiring fixture\n' > "$gate_wire/README"
+git -C "$gate_wire" init -q
+git -C "$gate_wire" add -A
+git -C "$gate_wire" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: gate wiring fixture'
+printf 'edited while the gate was starting\n' >> "$gate_wire/README"
+refuses "lint refuses a tree it would not own" \
+  "would not own the tree it is testing" "$gate_wire/test/lint.sh"
+refuses "the mandatory suite refuses a tree it would not own" \
+  "would not own the tree it is testing" "$gate_wire/test/integration.sh"
+
 # The focused role instrument is mandatory here and independently selectable so
 # mutation calibration can run the exact AC that must turn red.
 "$ROOT/test/role-briefs.sh"
 
+# THE SAME TREE THIS RUN STARTED AGAINST, OR NO VERDICT. A source edit landing
+# mid-run is not caught by either read — bash has already executed whatever it
+# read — so this cannot make such a run safe. It can only stop the number below
+# from being quoted as a fact about a tree that no longer exists, which is the
+# form the last one took.
+tree_moved=0
+"$ROOT/test/gate.sh" --assert-unmoved "$TREE_AT_START" || tree_moved=1
+
 summary_printed=1
 printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
+case "$TREE_AT_START" in
+  unverifiable*)
+    printf 'Tree ownership UNVERIFIABLE (%s): this run cannot tell whether its\n' \
+      "$TREE_AT_START"
+    printf 'source changed underneath it, so the verdict is about whatever bytes\n'
+    printf 'bash happened to read. Run test/gate.sh to test an owned snapshot.\n' ;;
+esac
+if [ "$tree_moved" -eq 1 ]; then
+  printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
+  printf 'verdict on any tree. The refusal above says what changed.\n'
+fi
 # Reported apart from both columns and folded into neither: an unknown is what
 # the box did to the run, not a verdict on the tree. Green with unknowns above
 # zero means the coverage held on a machine too busy to be sure of its timing,
@@ -6196,4 +6393,4 @@ if [ -s "$RUN_ROOT/unknowns" ]; then
     "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
   printf 'That is machine load, not a tree verdict. Re-run quiet before trusting timing.\n'
 fi
-[ "$fails" -eq 0 ]
+[ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ]

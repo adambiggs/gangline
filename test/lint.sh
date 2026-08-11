@@ -6,6 +6,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# A gate that reads the tree it is judging must own that tree, or its verdict
+# belongs to whatever the tree happened to be at each read. test/gate.sh runs
+# the whole gate against a private snapshot of the working tree, which is how
+# this suite becomes runnable before a commit rather than only at pre-push.
+test/gate.sh --assert-owned >/dev/null
+
 python3 --version >/dev/null 2>&1 || {
   echo "lint: python3 cannot run here, so the source-guard dataflow check cannot run" >&2
   exit 1

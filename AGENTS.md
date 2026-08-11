@@ -68,12 +68,19 @@ Do not bypass them. Use Conventional Commits as specified in
 
 ## Use the shortest proof
 
-Run the ordinary gates at coherent checkpoints:
+Run the ordinary gate at coherent checkpoints:
 
 ```sh
-test/lint.sh
-test/integration.sh
+test/gate.sh
 ```
+
+It copies the working tree — uncommitted work included — into a private
+snapshot, commits it there, and runs `test/lint.sh` and `test/integration.sh`
+from the copy. That is what makes the complete gate runnable *before* a commit:
+the executable is clean against the snapshot's own HEAD, so the dirty-execution
+warning has nothing to report, and no edit you make afterwards can reach a run
+already under way. Run the two scripts directly only against a tree that is
+already settled; they refuse a tree they would not own and say so.
 
 Mandatory tests contain no sleeps, polling, or timeout scenarios and must remain
 well below their hard ceiling. Use immediate state, event barriers, or fake
