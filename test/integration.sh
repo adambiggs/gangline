@@ -6378,6 +6378,9 @@ if [ -e "$RUN_ROOT/gate-broken-snapshot/.git" ]; then
 else
   pass "the refused copy left no committed snapshot behind"
 fi
+refuses "a destination inside the tree is named, not blamed on the tree" \
+  "copying the tree into itself" \
+  "$gate_fix/test/gate.sh" --snapshot "$gate_fix/inside-snapshot"
 
 # THE WIRING, not a restatement of it: both mandatory entry points are run
 # against a tree they would not own and must refuse before doing any work.

@@ -137,8 +137,20 @@ snap_git() {
 }
 
 snapshot_into() { # $1 = destination directory, $2 = scratch directory
-  local dest="$1" work="$2" drift
+  local dest="$1" work="$2" drift phys
   mkdir -p "$dest"
+  phys="$(cd -P "$dest" && pwd)" || return 1
+  # A destination inside the tree is copied into itself. The drift check would
+  # catch it and blame the working tree for moving, which is a true refusal for
+  # a false reason — the failure this whole file exists to stop.
+  case "$phys" in
+    "$ROOT"|"$ROOT"/*)
+      printf '%s\n' \
+        "gate: $phys is inside $ROOT." \
+        "      That would be copying the tree into itself; name a destination" \
+        "      outside the tree." >&2
+      return 1 ;;
+  esac
   list_tree "$work/list"
   [ -s "$work/list" ] || {
     echo "gate: $ROOT holds no files to test" >&2
