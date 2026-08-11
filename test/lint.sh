@@ -6,6 +6,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+python3 --version >/dev/null 2>&1 || {
+  echo "lint: python3 cannot run here, so the source-guard dataflow check cannot run" >&2
+  exit 1
+}
+python3 test/source-guards.py --discover test
+test/source-guards-fixtures.sh
+
 # Mandatory tests consume state, not wall time. A fake clock may hand code any
 # timestamp it needs, but executable test code may not sleep, poll, or exercise
 # timeout behaviour. Real harness probes are operator commands, not this suite.

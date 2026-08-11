@@ -56,6 +56,23 @@ The following rules are mandatory:
 - Assert state that the command has already established.
 - Keep unknown distinct from both pass and fail. A negative assertion must
   not pass because its fixture produced no value.
+- Treat panes, captures, transcripts, and logs as combined surfaces. A positive
+  text claim against one must name whether the whole surface is the intended
+  evidence or identify an independent producer witness. `test/source-guards.py`
+  discovers capture producers and positive `contains`, `equal`, quiet `grep`,
+  `[[ … ]]`, wrapper, and `case` guards, then follows captured bytes through
+  assignments, parameter expansion, shell transforms, `read`, `mapfile`,
+  `printf -v`, literal file hops, and producer wrappers. For entered text, an
+  empty composer after verified Enter is the producer witness; for execution,
+  prefer an artifact only execution can create; for timing, assert both sides
+  of the boundary. A later feature can otherwise supply an old guard's text
+  without changing either feature or guard incorrectly. A legitimate claim
+  about any visible source uses the adjacent, statement-fingerprinted
+  `source-guard: whole-surface@DIGEST: rationale`; a conjunctive source witness
+  uses `source-guard: producer@DIGEST: rationale`. Run the checker once without
+  the annotation to get the exact forms it will accept. The introduction-time
+  migration ledger is closed to new entries: copying, moving, changing, or
+  deleting one of its reviewed assertions requires a fresh inline decision.
 - Use a private tmux server and disposable session for integration tests. Never
   address the live `gangline` session.
 - Real harness turns are explicit operator smoke tests, not mandatory tests. Run
