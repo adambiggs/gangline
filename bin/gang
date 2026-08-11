@@ -3702,6 +3702,7 @@ cmd_context() { # print the collar's native context reading, unparsed
 cmd_usage() { # drive and return the harness's own usage UI
   local name="${1:-}" busy_rc=0 before after content="" key looks=0
   local diff_rc=0 before_nonempty=0 restored=0 box="" restore_key
+  local submit_looks=0 empty_looks=0 unreadable=0 submitted_box="" submitted_rc=0
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help usage
@@ -3741,6 +3742,59 @@ cmd_usage() { # drive and return the harness's own usage UI
   for key in $GANG_USAGE_CONFIRM_KEY; do
     tmux send-keys -t "$AGENT_ID" "$key" \
       || die "usage: could not send confirmation key $key to '$name'"
+  done
+
+  # The first changed screen after Enter can be gang's own command or confirm
+  # key. Inline usage is ready only once its composer is empty. A modal removes
+  # the composer, so three consecutive unreadable looks are its submit witness.
+  while :; do
+    sleep 0.4
+    submitted_rc=0
+    submitted_box="$(collar_input "$AGENT_ID")" || submitted_rc=$?
+    if [ "$submitted_rc" -eq 0 ]; then
+      unreadable=0
+      if grep -q '[^[:space:]]' <<<"$submitted_box"; then
+        empty_looks=0
+        if box_queued "$submitted_box"; then
+          die "usage: submit NOT verified: '$GANG_USAGE_CMD' was parked in the harness queue of '$name' instead of opening usage — gang does not make its own command flushable; clear it by hand before retrying (gang attach; press Up, then C-u)"
+        fi
+      else
+        empty_looks=$((empty_looks + 1))
+        # A declared queue hint can paint after the composer first empties.
+        # Three empty readings give it the same observation window as send.
+        if [ "$GANG_USAGE_RENDER" = inline ] \
+          && { [ -z "$GANG_QUEUED_REGEX" ] || [ "$empty_looks" -ge 3 ]; }; then
+          break
+        fi
+      fi
+    else
+      empty_looks=0
+      unreadable=$((unreadable + 1))
+      submitted_box=""
+      if [ "$GANG_USAGE_RENDER" = modal ] && [ "$unreadable" -ge 3 ]; then
+        break
+      fi
+    fi
+    submit_looks=$((submit_looks + 1))
+    if [ "$submit_looks" -ge 8 ]; then
+      if [ "$submitted_rc" -ne 0 ]; then
+        if [ "$GANG_USAGE_RENDER" = inline ]; then
+          die "usage: submit NOT verified: the input box of '$name' did not become provably empty after $GANG_USAGE_CMD; this collar renders usage inline, so an unreadable box is not proof that the command entered (gang capture $name)"
+        fi
+        die "usage: submit NOT verified: the input box of '$name' neither became empty nor stayed unreadable long enough to prove that the usage modal opened (gang capture $name)"
+      fi
+      if ! grep -q '[^[:space:]]' <<<"$submitted_box"; then
+        if [ "$GANG_USAGE_RENDER" = modal ]; then
+          die "usage: the input box of '$name' became empty after $GANG_USAGE_CMD, but the declared modal never removed that box, so gang has no usage page to report (gang capture $name)"
+        fi
+        die "usage: submit NOT verified: the input box of '$name' became empty but did not stay readable long enough to rule out a parked command (gang capture $name)"
+      fi
+      if clear_box "$AGENT_ID"; then
+        die "usage: submit NOT verified: '$GANG_USAGE_CMD' was pasted into the input box of '$name' and never sent — it has been cleared back out of that box"
+      fi
+      stage_record "$AGENT_ID" "'$GANG_USAGE_CMD' is staged unsent in this box — it was pasted, never sent, and would not clear" "$submitted_box"
+      die "usage: submit NOT verified: '$GANG_USAGE_CMD' was pasted into the input box of '$name', never sent, and would not clear — it is staged there now (gang attach)"
+    fi
   done
 
   while :; do
