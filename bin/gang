@@ -791,10 +791,11 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     case "$marker" in ^*) ;; *) die "collar '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
     marker_tail="${marker#^}"
     # dialog_normalize removes every line's leading whitespace before this
-    # marker is evaluated. A record that requires such whitespace is dead
-    # configuration: it can look precise and still never recognize a screen.
+    # marker is evaluated. The literal-one-or-more form found in the live
+    # defect is therefore dead; do not also refuse a zero-or-more form that can
+    # legitimately match the normalized line.
     case "$marker_tail" in
-      ' '*|'\s'*|'\t'*|'\ '*|'[[:space:]]'*|'[[:blank:]]'*)
+      ' +'*)
         die "collar '$1' dialog '$id' marker requires leading whitespace that dialog normalization removes: '$marker'" ;;
     esac
     if [ -z "$safe" ]; then
@@ -4082,6 +4083,10 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
   for e in "$dir"/[0-9]*; do
     [ -f "$e" ] || continue
     label="${e##*/}"
+    # Validate immutable spool bytes before the atomic claim. If a corrupt or
+    # unreadable entry cannot be rendered, it remains waiting with its known
+    # undelivered fate instead of becoming a false sending-/held unknown.
+    spool_read "$e"
     if [ "$mine" -eq 1 ]; then
       # Prove the archive path before claiming anything. A bad archive setting
       # must leave a waiting message waiting, never turn it into a held entry
@@ -4102,7 +4107,6 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
       mv -- "$e" "$claim" 2>/dev/null || continue
       e="$claim"
     fi
-    spool_read "$e"
     if [ "$mine" -eq 1 ]; then
       if ! mv -- "$e" "$mail_archive/$label"; then
         mv -- "$e" "$dir/$label" 2>/dev/null \

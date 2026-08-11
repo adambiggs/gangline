@@ -1941,6 +1941,7 @@ draft = bytearray()
 answered = 0
 safe_index = 1
 selected_glyph = "›"
+external_frame = None
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
@@ -1956,11 +1957,9 @@ if variant == "trust":
     footer = "Press enter to continue"
     safe_index = 0
 if variant == "external-import":
-    body = [
-        "Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security",
-    ]
+    with open(os.environ["DIALOG_CAPTURE"], encoding="utf-8") as stream:
+        external_frame = stream.read().splitlines()
     labels = ["Yes, allow external imports", "No, disable external imports"]
-    footer = "Enter to confirm · Esc to cancel"
     safe_index = 0
     selected_glyph = "❯"
 if variant == "changed-byte":
@@ -1976,6 +1975,11 @@ if variant == "extra-option":
 
 def paint():
     sys.stdout.write("\x1b[2J\x1b[H")
+    if external_frame is not None:
+        for line in external_frame:
+            print(line)
+        sys.stdout.flush()
+        return
     for line in body:
         print("  " + line)
     print()
@@ -2088,6 +2092,13 @@ cat > "$RUN_ROOT/collars/dialog-leading-space.sh" <<SH
 GANG_DIALOGS='dead-record|^ +› [0-9]+\. |||'
 GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
 SH
+cat > "$RUN_ROOT/collars/dialog-optional-space.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-observe.sh"
+GANG_DIALOGS='optional-space|^ *› [0-9]+\. |||'
+GANG_DIALOG_LINES_optional_space="\$GANG_DIALOG_LINES_operator_choice"
+SH
 printf -v claude_external_record_q '%q' "$claude_external_record"
 printf -v claude_external_lines_q '%q' "$claude_external_lines"
 cat > "$RUN_ROOT/collars/dialog-claude-external.sh" <<SH
@@ -2120,6 +2131,14 @@ else
 fi
 equal "a dead dialog marker opens no window" "" \
   "$(window_id dialog-leading-space)"
+if "$HITCH" dialog-optional-space -c dialog-optional-space -d /tmp \
+    >/dev/null; then
+  pass "a marker allowing zero leading spaces remains loadable"
+else
+  fail "a marker allowing zero leading spaces remains loadable" \
+    "hitch refused a marker that matches normalized input"
+fi
+"$GANG" drop dialog-optional-space >/dev/null
 
 dialog_start() { # $1 agent, $2 variant, $3 collar
   local name="$1" variant="$2" collar="$3" id command
@@ -2127,8 +2146,9 @@ dialog_start() { # $1 agent, $2 variant, $3 collar
   id="$(window_id "$name")"
   case "$name" in dialog-known) tmux resize-window -t "$id" -x 48 -y 24 ;; esac
   : > "$RUN_ROOT/$name.keys"
-  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q %q' \
-    "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" "$RUN_ROOT/dialog-fixture.py"
+  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q DIALOG_CAPTURE=%q %q' \
+    "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" \
+    "$ROOT/test/fixtures/claude-external-import.txt" "$RUN_ROOT/dialog-fixture.py"
   tmux send-keys -l -t "$id" "$command"
   tmux send-keys -t "$id" Enter
   tmux wait-for "dialog-ready-$name-$$"
@@ -4436,6 +4456,25 @@ equal "a message that arrives after a self-read survives it" \
   "$mail_later_rc|$(mailer_bodies "$mail_later_out")"
 equal "and the second read retires only what the second read printed" \
   "failed-00000000000000000005-facefeed" "$(cd "$mailer_spool" && ls)"
+
+# MALFORMED SPOOL BYTES FAIL BEFORE CLAIM. This entry cannot be produced by
+# spool_write, but corruption must not turn its known undelivered state into a
+# held verdict saying it may have arrived.
+mail_malformed="$mailer_spool/00000000000000000006-malformed"
+printf '%s\n%s\n' tester malformed-fragment > "$mail_malformed"
+mail_malformed_before="$(cd "$mailer_spool" && ls)"
+mail_malformed_rc=0
+TMUX_PANE="$mailer_self_pane" "$GANG" mail \
+  >"$RUN_ROOT/mail-malformed.out" 2>&1 || mail_malformed_rc=$?
+[ "$mail_malformed_rc" -ne 0 ] \
+  && pass "a bodyless spool entry refuses a self-read" \
+  || fail "a bodyless spool entry refuses a self-read" \
+    "mail unexpectedly returned zero"
+equal "a bodyless entry stays waiting under its original name" \
+  "$mail_malformed_before" "$(cd "$mailer_spool" && ls)"
+excludes "a bodyless entry creates no false held verdict" \
+  "$(cd "$mailer_spool" && ls)" "sending-00000000000000000006-malformed"
+rm -f -- "$mail_malformed"
 
 # ARCHIVE FAILURE PRECEDES CLAIM. A self-read cannot turn mail with a known
 # undelivered fate into a sending-/held entry merely because its recovery
