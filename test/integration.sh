@@ -6252,6 +6252,25 @@ refuses "a caller's git configuration cannot blind the ownership check" \
   "would not own the tree it is testing" \
   env GIT_CONFIG_GLOBAL="$RUN_ROOT/gate-hostile-gitconfig" \
   GIT_CONFIG_SYSTEM=/dev/null "$gate_fix/test/gate.sh" --assert-owned
+# One door per probe, because a denylist that closes four of five reads exactly
+# as green as one that closes all five.
+refuses "nor the numbered configuration triples" \
+  "would not own the tree it is testing" \
+  env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile \
+  GIT_CONFIG_VALUE_0="$RUN_ROOT/gate-excludes-all" \
+  "$gate_fix/test/gate.sh" --assert-owned
+refuses "nor the parameter channel that overrides even a pinned file" \
+  "would not own the tree it is testing" \
+  env GIT_CONFIG_PARAMETERS="'core.excludesFile=$RUN_ROOT/gate-excludes-all'" \
+  "$gate_fix/test/gate.sh" --assert-owned
+mkdir -p "$RUN_ROOT/gate-xdg/git" "$RUN_ROOT/gate-home"
+printf '[core]\n\texcludesFile = %s\n[status]\n\tshowUntrackedFiles = no\n' \
+  "$RUN_ROOT/gate-excludes-all" > "$RUN_ROOT/gate-xdg/git/config"
+cp "$RUN_ROOT/gate-xdg/git/config" "$RUN_ROOT/gate-home/.gitconfig"
+refuses "nor the configuration search path the suite itself moves" \
+  "would not own the tree it is testing" \
+  env XDG_CONFIG_HOME="$RUN_ROOT/gate-xdg" HOME="$RUN_ROOT/gate-home" \
+  "$gate_fix/test/gate.sh" --assert-owned
 
 rm -f "$gate_fix/untracked-collar.sh"
 gate_identity="$("$gate_fix/test/gate.sh" --assert-owned)"
@@ -6339,13 +6358,27 @@ fi
 # snapshot cannot prevent by existing, so it is detected instead. The stand-in
 # git edits the fixture on the second listing, which is exactly when a real
 # editor's save would land, and needs no wall clock to do it.
+# A relative symlink inside the tree is carried; one pointing out of it is not,
+# because its text survives the copy and then resolves against another parent.
+ln -s bin/gang "$gate_fix/gang-link"
+ln -s /etc/hostname "$gate_fix/absolute-link"
 gate_git_bin="$RUN_ROOT/gate-git"
 mkdir -p "$gate_git_bin"
 gate_real_git="$(command -v git)"
 cat > "$gate_git_bin/git" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-if [ "\${3:-}" = ls-files ]; then
+# Only the NUL-separated listing is counted: that is the one the copy is built
+# from and the one it is verified against, so the second of those two is the
+# moment an editor's save would land inside the copy window. The index probe
+# reads the same command with different flags and must not be mistaken for it.
+gl_is_list=0
+gl_has_z=0
+for gl_arg in "\$@"; do
+  [ "\$gl_arg" = ls-files ] && gl_is_list=1
+  [ "\$gl_arg" = -z ] && gl_has_z=1
+done
+if [ "\$gl_is_list" = 1 ] && [ "\$gl_has_z" = 1 ]; then
   count="$RUN_ROOT/gate-ls-\${GATE_DRIFT_MODE:-none}"
   n="\$(cat "\$count" 2>/dev/null)" || n=0
   n=\$(( \${n:-0} + 1 ))
@@ -6355,6 +6388,8 @@ if [ "\${3:-}" = ls-files ]; then
       content) printf 'LATE_EDIT\n' >> "$gate_fix/bin/gang" ;;
       list) printf 'LATE_FILE\n' > "$gate_fix/late-file.txt" ;;
       mode) chmod -x "$gate_fix/bin/gang" ;;
+      link) nl='
+'; ln -sfn "bin/gang\$nl" "$gate_fix/gang-link" ;;
     esac
   fi
 fi
@@ -6377,6 +6412,18 @@ refuses "a mode changed during the copy makes the snapshot unusable" \
   env GATE_DRIFT_MODE=mode PATH="$gate_git_bin:$PATH" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-mode"
 chmod +x "$gate_fix/bin/gang"
+# A target ending in a newline is a real target, and command substitution would
+# compare it equal to one that does not.
+refuses "a symlink retargeted during the copy makes the snapshot unusable" \
+  "moved while it was being copied (the symlink gang-link changed)" \
+  env GATE_DRIFT_MODE=link PATH="$gate_git_bin:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-link"
+ln -sfn bin/gang "$gate_fix/gang-link"
+ln -s ../outside-the-tree "$gate_fix/escaping-link"
+refuses "a relative symlink out of the tree is refused, not quietly relocated" \
+  "pointing out of the tree" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-escape"
+rm -f "$gate_fix/escaping-link"
 
 # A COPY THAT FAILED IS NOT A SNAPSHOT. Bash suspends `set -e` throughout a
 # function whose caller tests its status, which is exactly how --snapshot calls
@@ -6403,7 +6450,12 @@ fi
 refuses "a destination inside the tree is named, not blamed on the tree" \
   "copying the tree into itself" \
   "$gate_fix/test/gate.sh" --snapshot "$gate_fix/inside-snapshot"
-rm -rf "$gate_fix/inside-snapshot"
+if [ -e "$gate_fix/inside-snapshot" ]; then
+  fail "and the refusal left nothing new in the tree it refused to copy" \
+    "the refused destination was created anyway"
+else
+  pass "and the refusal left nothing new in the tree it refused to copy"
+fi
 
 # A destination that already holds something keeps it: the overlay is committed
 # alongside the copy, so the tree under test would be this tree plus somebody
@@ -6413,6 +6465,20 @@ printf 'STALE\n' > "$RUN_ROOT/gate-occupied/stale.txt"
 refuses "a destination that already holds something is not a snapshot" \
   "already holds something" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-occupied"
+# An empty directory is a fine destination; a symlink is not, and a DANGLING one
+# answers no to -e, so it would otherwise reach mkdir and refuse with a message
+# about the wrong thing.
+mkdir -p "$RUN_ROOT/gate-empty-dest"
+if "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-empty-dest" >/dev/null 2>&1; then
+  pass "an empty directory is a destination a snapshot may use"
+else
+  fail "an empty directory is a destination a snapshot may use" \
+    "the gate refused a destination that held nothing"
+fi
+ln -s "$RUN_ROOT/gate-nowhere" "$RUN_ROOT/gate-dangling-dest"
+refuses "a destination that is a symlink is refused where it is found" \
+  "already holds something" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-dangling-dest"
 
 # A SUBMODULE'S GITLINK IS A DIRECTORY IN THIS LISTING, and it would reach the
 # byte comparison as one: cmp answers "Is a directory" and the tree gets blamed
@@ -6465,6 +6531,62 @@ refuses "an index told not to look at a file cannot report the tree settled" \
   "$gate_fix/test/gate.sh" --assert-owned
 git -C "$gate_fix" update-index --no-assume-unchanged bin/gang
 git -C "$gate_fix" checkout -q -- bin/gang
+
+# A HALF-FINISHED OPERATION IS ONE COMMIT FROM MOVING HEAD, and it can leave the
+# working tree byte-clean while it waits. The merge here is real and changes
+# nothing, which is exactly the shape that reads as settled.
+gate_alt="$RUN_ROOT/gate-operation"
+mkdir -p "$gate_alt/test"
+cp "$ROOT/test/gate.sh" "$gate_alt/test/"
+gate_alt="$(cd -P "$gate_alt" && pwd)"
+git -C "$gate_alt" init -q
+printf 'base\n' > "$gate_alt/shared.txt"
+git -C "$gate_alt" add -A
+git -C "$gate_alt" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: operation fixture base'
+git -C "$gate_alt" branch -q side
+printf 'both sides agree\n' > "$gate_alt/shared.txt"
+git -C "$gate_alt" add -A
+git -C "$gate_alt" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: on the trunk'
+git -C "$gate_alt" checkout -q side
+printf 'both sides agree\n' > "$gate_alt/shared.txt"
+git -C "$gate_alt" add -A
+git -C "$gate_alt" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: on the branch'
+git -C "$gate_alt" checkout -q -
+git -C "$gate_alt" -c user.name=fixture -c user.email=fixture@example.invalid \
+  merge --no-commit --no-ff side >/dev/null 2>&1 || true
+equal "the half-finished merge really did leave the bytes clean" "" \
+  "$(git -C "$gate_alt" status --porcelain)"
+if [ -e "$gate_alt/.git/MERGE_HEAD" ]; then
+  pass "and really did leave the merge open"
+else
+  fail "and really did leave the merge open" "no MERGE_HEAD was written"
+fi
+refuses "a tree one commit from moving HEAD is not a settled tree" \
+  "MERGE_HEAD is still in progress" \
+  "$gate_alt/test/gate.sh" --assert-owned
+git -C "$gate_alt" merge --abort 2>/dev/null || true
+
+# A SPARSE CHECKOUT'S TRACKED PATHS ARE ABSENT FROM THE WORKING TREE, so a copy
+# of that tree drops them while its own HEAD would claim to be the whole tree.
+gate_sparse="$RUN_ROOT/gate-sparse"
+mkdir -p "$gate_sparse/test"
+cp "$ROOT/test/gate.sh" "$gate_sparse/test/"
+gate_sparse="$(cd -P "$gate_sparse" && pwd)"
+printf 'held out of the working tree\n' > "$gate_sparse/absent.txt"
+git -C "$gate_sparse" init -q
+git -C "$gate_sparse" add -A
+git -C "$gate_sparse" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: sparse fixture'
+git -C "$gate_sparse" update-index --skip-worktree absent.txt
+rm -f "$gate_sparse/absent.txt"
+equal "the sparse fixture really did hide the missing file from status" "" \
+  "$(git -C "$gate_sparse" status --porcelain)"
+refuses "a tree whose index hides files is not one this gate can copy" \
+  "standing orders not to look" \
+  "$gate_sparse/test/gate.sh" --snapshot "$RUN_ROOT/gate-sparse-snapshot"
 
 # WHERE ROOT IS A SUBDIRECTORY of a larger repository, an edit elsewhere in that
 # repository is not movement in the tree this gate would copy, and the identity

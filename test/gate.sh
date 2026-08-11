@@ -42,34 +42,62 @@ set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
-# WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
-# private GIT_CONFIG_GLOBAL partway through its own setup, so a caller reading
-# the tree before and after that point would be reading two different
-# definitions of "ignored" and could report movement that never happened. These
-# reads therefore always resolve the operator's real configuration, which is
-# also the configuration bin/gang's own dirty-execution warning resolves — the
-# behaviour this check exists to predict. Writes into the snapshot go the other
-# way and are pinned hermetically; see snap_git.
-unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM
+# WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED, and the way to get that
+# is to fix the configuration once rather than to chase the channels that can
+# change it. The suite exports a private GIT_CONFIG_GLOBAL and a private
+# XDG_CONFIG_HOME partway through its own setup, so a check inheriting either
+# would answer one question before those lines and a different one after, and
+# could report movement that never happened. A denylist loses that race by
+# construction: GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, the numbered
+# GIT_CONFIG_COUNT triples, XDG_CONFIG_HOME and HOME are five doors to the same
+# room, and GIT_CONFIG_PARAMETERS overrides even a pinned file.
+#
+# So every git call in this file — reads and snapshot writes alike — runs
+# against one stated configuration: the repository's own. .git/config,
+# .gitignore and .git/info/exclude decide what this tree is; nothing outside it
+# does. An operator's global excludes therefore do not hide a file from this
+# gate, which is the deliberate cost: what the gate copies and what the gate
+# calls settled are then the same set, in every environment, for every caller.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+unset GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM GIT_CONFIG_PARAMETERS
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 
 # WHAT THIS CHECK IS NOT ABLE TO SEE, stated because a claim of ownership that
-# quietly excludes cases is worse than no claim. A file git ignores is outside
-# this tree by definition, so an ignored collar can change what the LIVE
-# checkout does while this reads settled — the snapshot is unaffected, since it
-# does not carry that file either. And a relative symlink pointing outside the
-# tree keeps its text in the copy and therefore resolves somewhere else; nothing
-# in this repository is such a link, and one would have to be handled
-# deliberately rather than assumed equivalent.
+# quietly excludes cases is worse than no claim. A file the repository itself
+# ignores is outside this tree by definition, so an ignored collar can change
+# what the LIVE checkout does while this reads settled — the snapshot is
+# unaffected, since it does not carry that file either. And the snapshot is a
+# copy of a working tree, not of a repository: it is a fresh single-commit
+# history in the destination's default object format, so nothing that reads the
+# source's refs, reflog, object format or an operation's metadata is equivalent
+# inside it.
 #
-# What it does refuse to inherit: an operator's `status.showUntrackedFiles=no`
-# would hide an untracked collar, a submodule ignore rule would hide moved
-# submodule bytes, and the index can be told to lie about a file outright. Those
-# are stated rather than trusted, and the reads never resolve a caller's
-# environment (see the unset above).
+# What it refuses to trust rather than merely inherit: `status.showUntrackedFiles`,
+# a submodule ignore rule, an index instructed not to look at a file, and an
+# operation left half-finished with a commit still to come.
+index_conceals() { # 0 = the index is under standing orders not to look
+  local tags
+  tags="$(git -C "$ROOT" ls-files -v -- . 2>/dev/null)" || return 1
+  # A lowercase tag is assume-unchanged; S is skip-worktree. Both are standing
+  # instructions to report a file without reading it, and a sparse checkout
+  # leaves tracked paths absent from the working tree entirely.
+  printf '%s\n' "$tags" | LC_ALL=C grep -q '^[a-zS]'
+}
+
+operation_in_progress() { # prints the operation's name, 0 = one is under way
+  local dir name
+  dir="$(git -C "$ROOT" rev-parse --git-dir 2>/dev/null)" || return 1
+  case "$dir" in /*) ;; *) dir="$ROOT/$dir" ;; esac
+  for name in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [ -e "$dir/$name" ]; then printf '%s' "$name"; return 0; fi
+  done
+  return 1
+}
+
 tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
-  local status head concealed
+  local status head operation
   git -C "$ROOT" rev-parse --show-toplevel >/dev/null 2>&1 || {
     printf 'unverifiable (not a git checkout)\n'
     return 2
@@ -82,16 +110,21 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
     printf 'unverifiable (git status failed)\n'
     return 2
   }
-  concealed="$(git -C "$ROOT" ls-files -v -- . 2>/dev/null)" || {
+  git -C "$ROOT" ls-files -v -- . >/dev/null 2>&1 || {
     printf 'unverifiable (git ls-files failed)\n'
     return 2
   }
   head="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" || head=no-commit
-  # assume-unchanged (a lowercase tag) and skip-worktree (S) are standing
-  # instructions to report a file as unchanged without looking at it. A verdict
-  # resting on one is a promise, not a reading.
-  if printf '%s\n' "$concealed" | grep -q '^[a-zS]'; then
+  # A verdict resting on a standing order is a promise, not a reading.
+  if index_conceals; then
     printf 'unsettled %s (the index is told not to look at some files)\n' "$head"
+    return 1
+  fi
+  # Settled bytes under a half-finished operation are settled for one more
+  # moment: the commit that ends it moves HEAD, and the snapshot carries none of
+  # that state anyway.
+  if operation="$(operation_in_progress)"; then
+    printf 'unsettled %s (%s is still in progress)\n' "$head" "$operation"
     return 1
   fi
   if [ -n "$status" ]; then
@@ -125,6 +158,22 @@ unverifiable_refusal() { # $1 = the reading that could not be taken
     "      moved under the run, so no verdict over it would be about a tree." >&2
 }
 
+# A relative symlink is the one thing a copy cannot carry faithfully: its text
+# survives, and the text resolves against the copy's parent. An ABSOLUTE link is
+# safe — it names the same referent from anywhere — and a link that resolves
+# inside the tree is safe, because the copy carries the referent too.
+link_escapes() { # $1 = path relative to ROOT; 0 = the copy would read elsewhere
+  local target here there
+  target="$(readlink "$ROOT/$1")" || return 0
+  case "$target" in /*) return 1 ;; esac
+  here="$(cd -P "$(dirname "$ROOT/$1")" 2>/dev/null && pwd)" || return 0
+  # A dangling relative link resolves to nothing in both trees, and the copy is
+  # a subset, so it cannot start resolving to something.
+  there="$(cd -P "$here/$(dirname "$target")" 2>/dev/null && pwd)" || return 1
+  case "$there" in "$ROOT"|"$ROOT"/*) return 1 ;; esac
+  return 0
+}
+
 # Tracked, staged and untracked-not-ignored, which together are what the next
 # commit would carry. `ls-files --cached` still names a file deleted from the
 # working tree, so the list is filtered by what is actually there: a deletion
@@ -135,7 +184,17 @@ list_tree() { # $1 = destination list file, NUL separated
   : > "$1"
   while IFS= read -r -d '' f; do
     # Symlink first: a link to a directory answers -d as well.
-    if [ -L "$ROOT/$f" ] || [ -f "$ROOT/$f" ]; then
+    if [ -L "$ROOT/$f" ]; then
+      if link_escapes "$f"; then
+        printf '%s\n' \
+          "gate: $ROOT/$f is a relative symlink pointing out of the tree." \
+          "      Its text is carried unchanged, so in the copy it resolves" \
+          "      somewhere else and the suite would read different bytes" \
+          "      through the same name. That needs a deliberate decision." >&2
+        return 1
+      fi
+      printf '%s\0' "$f" >> "$1"
+    elif [ -f "$ROOT/$f" ]; then
       printf '%s\0' "$f" >> "$1"
     elif [ -e "$ROOT/$f" ]; then
       # A submodule's gitlink is a directory in this listing, and it would reach
@@ -163,7 +222,11 @@ copy_drift() { # $1 = list file, $2 = snapshot root; prints what moved, if anyth
   cmp -s "$1" "$second" || { printf 'the set of files changed'; return 0; }
   while IFS= read -r -d '' f; do
     if [ -L "$ROOT/$f" ]; then
-      [ "$(readlink "$ROOT/$f")" = "$(readlink "$2/$f" 2>/dev/null)" ] \
+      # Through files, not command substitution: a target ending in a newline is
+      # a real target, and $( ) would compare it equal to one that does not.
+      readlink "$ROOT/$f" > "$1.link-a" 2>/dev/null || : > "$1.link-a"
+      readlink "$2/$f" > "$1.link-b" 2>/dev/null || : > "$1.link-b"
+      cmp -s "$1.link-a" "$1.link-b" \
         || { printf '%s' "the symlink $f changed"; return 0; }
     else
       cmp -s "$ROOT/$f" "$2/$f" || { printf '%s' "$f changed"; return 0; }
@@ -183,7 +246,7 @@ copy_drift() { # $1 = list file, $2 = snapshot root; prints what moved, if anyth
 # configuration is excluded so a global hooks path, commit template or signing
 # requirement cannot reach in here.
 snap_git() {
-  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null git "$@"
+  git "$@"
 }
 
 snapshot_into() { # $1 = destination directory, $2 = scratch directory
@@ -192,18 +255,19 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
   # there survives the overlay and is committed alongside the copy, so the tree
   # under test would be this tree plus somebody else's leftovers — including a
   # file whose deletion here is exactly what was meant to be tested.
-  if [ -e "$dest" ] && { [ ! -d "$dest" ] || [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
+  if { [ -e "$dest" ] || [ -L "$dest" ]; } \
+     && { [ ! -d "$dest" ] || [ -L "$dest" ] \
+          || [ -n "$(ls -A "$dest" 2>/dev/null)" ]; }; then
     printf '%s\n' \
       "gate: $dest already holds something." \
       "      A snapshot is the tree and nothing else, so name a destination" \
       "      that does not exist or is empty." >&2
     return 1
   fi
-  mkdir -p "$dest"
-  phys="$(cd -P "$dest" && pwd)" || return 1
-  # A destination inside the tree is copied into itself. The drift check would
-  # catch it and blame the working tree for moving, which is a true refusal for
-  # a false reason — the failure this whole file exists to stop.
+  # Decided BEFORE the directory is created, so a refusal leaves nothing new in
+  # the tree it just refused to copy.
+  phys="$(cd -P "$(dirname "$dest")" 2>/dev/null && pwd)/$(basename "$dest")" \
+    || return 1
   case "$phys" in
     "$ROOT"|"$ROOT"/*)
       printf '%s\n' \
@@ -212,6 +276,17 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
         "      outside the tree." >&2
       return 1 ;;
   esac
+  mkdir -p "$dest"
+  # A tree the index is told not to read cannot be copied faithfully: a sparse
+  # checkout leaves tracked paths absent from the working tree, and the copy
+  # would drop them silently while its own HEAD claims to be the whole tree.
+  if index_conceals; then
+    printf '%s\n' \
+      "gate: the index of $ROOT is under standing orders not to look at some" \
+      "      files — assume-unchanged, skip-worktree, or a sparse checkout." \
+      "      A copy of this working tree would silently be missing them." >&2
+    return 1
+  fi
   list_tree "$work/list" || return 1
   [ -s "$work/list" ] || {
     echo "gate: $ROOT holds no files to test" >&2
