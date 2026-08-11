@@ -982,6 +982,19 @@ GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="C-g"
 SH
+cat > "$RUN_ROOT/collars/usage-hold.sh" <<'SH'
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+# A usage command the harness begins and never finishes, so it has provably not
+# consumed the submission when gang takes its first screen reading. Nothing here
+# waits: the pane is blocked on its own input for the whole run, which is the
+# losing side of a race held open by state instead of by delay.
+GANG_USAGE_CMD='read -r _'
+GANG_USAGE_CONFIRM_KEY=""
+GANG_USAGE_RENDER="inline"
+GANG_USAGE_DISMISS_KEY=""
+SH
 cat > "$RUN_ROOT/collars/usage-nochange.sh" <<'SH'
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1353,6 +1366,46 @@ equal "an occupied usage refusal types nothing" \
 
 refuses "a collar with no GANG_USAGE_CMD refuses usage" \
   "declares no GANG_USAGE_CMD" "$GANG" usage alpha
+
+# A SCREEN THAT DIFFERS BECAUSE GANG JUST TYPED INTO IT IS NOT A USAGE SCREEN.
+# Until this fixture existed, gang pressed Enter and compared the very next
+# capture, so whichever of two states that round trip caught decided which
+# refusal came out: the shell finishing first gave "never changed after clear",
+# gang looking first gave a rollover complaint about a scrollback that had not
+# rolled over. Measured at two wrong refusals in twenty-five under sustained
+# load, none in twenty quiet. Here the command never completes, so the losing
+# state is permanent and the verdict is the same every time.
+"$HITCH" usage-hold -c usage-hold -d /tmp >/dev/null
+usage_hold_id="$(window_id usage-hold)"
+usage_hold_ready="test-usage-hold-ready-$$"
+usage_hold_marker="READY_USAGE_HOLD_$$"
+printf -v usage_hold_cmd 'PROMPT_COMMAND=; PS1=%q""%q; clear' \
+  "READY_USAGE_" "HOLD_$$❯ "
+printf -v usage_hold_pipe \
+  'needle=%q; event=%q; seen=; while IFS= read -r -n 1 char; do seen="${seen}${char}"; case "$seen" in *"$needle") tmux wait-for -S "$event"; exit 0;; esac; if [ "${#seen}" -gt 256 ]; then seen="${seen: -256}"; fi; done' \
+  "$usage_hold_marker❯ " "$usage_hold_ready"
+printf -v usage_hold_pipe_shell '%q' "$usage_hold_pipe"
+tmux pipe-pane -O -t "$usage_hold_id" "bash -c $usage_hold_pipe_shell"
+tmux send-keys -l -t "$usage_hold_id" "$usage_hold_cmd"
+tmux send-keys -t "$usage_hold_id" Enter
+tmux wait-for "$usage_hold_ready"
+tmux pipe-pane -t "$usage_hold_id"
+usage_hold_stdout="$RUN_ROOT/usage-hold.stdout"
+usage_hold_stderr="$RUN_ROOT/usage-hold.stderr"
+if "$GANG" usage usage-hold \
+    >"$usage_hold_stdout" 2>"$usage_hold_stderr"; then
+  fail "usage refuses a command the harness has not taken" \
+    "usage unexpectedly succeeded"
+else
+  pass "usage refuses a command the harness has not taken"
+fi
+contains "an unconsumed command is named as an unverified submission" \
+  "$(<"$usage_hold_stderr")" "submit NOT verified"
+excludes "and is not reported as a scrollback that rolled over" \
+  "$(<"$usage_hold_stderr")" "rolled over"
+equal "an unconsumed command yields no usage content" "" \
+  "$(<"$usage_hold_stdout")"
+"$GANG" drop usage-hold >/dev/null
 
 "$HITCH" usage-nochange -c usage-nochange -d /tmp >/dev/null
 usage_nochange_id="$(window_id usage-nochange)"
