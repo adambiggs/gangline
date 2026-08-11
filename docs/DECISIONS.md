@@ -544,6 +544,27 @@ The cost remains a team operating rule, not a substrate message schema. Doctrine
 owns brevity and peer routing; the contract keeps the shared-state reachability
 rule. Gangline does not inspect or ration message bodies.
 
+## The gate runs against a tree the run owns
+
+Run the mandatory gate through `test/gate.sh`. It copies the working tree —
+tracked, staged and untracked alike — into a private snapshot, commits it there,
+and runs lint and the suite from that copy.
+
+Two properties follow and both are load-bearing. The complete gate becomes
+runnable before a commit, because the executable is clean against the snapshot's
+own HEAD and the dirty-execution warning that one mandatory stderr assertion
+reads as failure never fires. No assertion was relaxed to reach that, and no
+suite-only environment switch exists to relax one later. And the run owns its
+tree: bash reads a script incrementally and `gang` re-reads collars and roles at
+hitch time, so an edit landing mid-run otherwise changes what executes.
+
+`test/lint.sh` and `test/integration.sh` refuse a tree they would not own and
+name the command that does. The suite reads the tree's identity again at the
+end, so a run whose source moved underneath it reports no verdict rather than a
+count about a tree that no longer exists. What counts as the tree resolves the
+operator's own git configuration and never the caller's environment: two reads
+in one run must be answering the same question.
+
 ## Native continuation owns compaction recovery
 
 Native continuation now returns every supported compact command to a turn that

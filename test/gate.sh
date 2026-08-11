@@ -42,6 +42,16 @@ set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
+# WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
+# private GIT_CONFIG_GLOBAL partway through its own setup, so a caller reading
+# the tree before and after that point would be reading two different
+# definitions of "ignored" and could report movement that never happened. These
+# reads therefore always resolve the operator's real configuration, which is
+# also the configuration bin/gang's own dirty-execution warning resolves — the
+# behaviour this check exists to predict. Writes into the snapshot go the other
+# way and are pinned hermetically; see snap_git.
+unset GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM
+
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 
 # An operator's own git configuration decides what `status` is willing to see.
@@ -134,7 +144,14 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
     echo "gate: $ROOT holds no files to test" >&2
     return 1
   }
-  tar -C "$ROOT" --null -T "$work/list" -cf - | tar -C "$dest" -xf -
+  # `set -e` is suspended for the whole body of a function whose caller tests
+  # its status, and --snapshot does exactly that. Every step that can fail is
+  # therefore checked here by hand: a half-copied tree reported as a snapshot is
+  # the failure this file exists to prevent, not one it may introduce.
+  tar -C "$ROOT" --null -T "$work/list" -cf - | tar -C "$dest" -xf - || {
+    printf '%s\n' "gate: could not copy $ROOT into $dest" >&2
+    return 1
+  }
   drift="$(copy_drift "$work/list" "$dest")"
   if [ -n "$drift" ]; then
     printf '%s\n' \
@@ -143,12 +160,18 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
       "      would be about either one. Stop editing $ROOT and run again." >&2
     return 1
   fi
-  snap_git -c init.defaultBranch=gate init -q "$dest"
-  snap_git -C "$dest" config user.name 'Gangline gate snapshot'
-  snap_git -C "$dest" config user.email 'gate@gangline.invalid'
-  snap_git -C "$dest" config commit.gpgsign false
-  snap_git -C "$dest" add -A
-  snap_git -C "$dest" commit -q --no-verify -m 'gate: working-tree snapshot'
+  { snap_git -c init.defaultBranch=gate init -q "$dest" \
+    && snap_git -C "$dest" config user.name 'Gangline gate snapshot' \
+    && snap_git -C "$dest" config user.email 'gate@gangline.invalid' \
+    && snap_git -C "$dest" config commit.gpgsign false \
+    && snap_git -C "$dest" add -A \
+    && snap_git -C "$dest" commit -q --no-verify -m 'gate: working-tree snapshot'
+  } || {
+    printf '%s\n' \
+      "gate: could not commit the snapshot in $dest, so the executable there" \
+      "      would be measured against a HEAD that does not hold its bytes." >&2
+    return 1
+  }
 }
 
 case "${1:-}" in

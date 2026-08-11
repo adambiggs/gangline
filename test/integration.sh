@@ -6238,6 +6238,21 @@ refuses "an untracked file still makes the tree unownable" \
   "$gate_fix/test/gate.sh" --assert-owned
 git -C "$gate_fix" config --unset status.showUntrackedFiles
 
+# NOR MAY A CALLER'S ENVIRONMENT DECIDE WHAT THIS TREE IS. The suite exports a
+# private GIT_CONFIG_GLOBAL partway through its own setup, so a check that
+# inherited it would answer one question before that line and a different one
+# after, and could report movement that never happened. A configuration that
+# ignores everything is the sharpest form of that: inherited, it turns every
+# untracked file into no file at all.
+printf 'gitignore-everything\n' > "$RUN_ROOT/gate-ignore-all"
+printf '*\n' > "$RUN_ROOT/gate-excludes-all"
+printf '[core]\n\texcludesFile = %s\n[status]\n\tshowUntrackedFiles = no\n' \
+  "$RUN_ROOT/gate-excludes-all" > "$RUN_ROOT/gate-hostile-gitconfig"
+refuses "a caller's git configuration cannot blind the ownership check" \
+  "would not own the tree it is testing" \
+  env GIT_CONFIG_GLOBAL="$RUN_ROOT/gate-hostile-gitconfig" \
+  GIT_CONFIG_SYSTEM=/dev/null "$gate_fix/test/gate.sh" --assert-owned
+
 rm -f "$gate_fix/untracked-collar.sh"
 gate_identity="$("$gate_fix/test/gate.sh" --assert-owned)"
 if "$gate_fix/test/gate.sh" --assert-unmoved "$gate_identity"; then
@@ -6340,6 +6355,29 @@ refuses "a file appearing during the copy makes the snapshot unusable" \
   "moved while it was being copied (the set of files changed)" \
   env GATE_DRIFT_MODE=list PATH="$gate_git_bin:$PATH" \
   "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-drift-list"
+
+# A COPY THAT FAILED IS NOT A SNAPSHOT. Bash suspends `set -e` throughout a
+# function whose caller tests its status, which is exactly how --snapshot calls
+# this one, so a failing copy would otherwise run on to commit and report a
+# half-tree as the thing under test.
+mkdir -p "$RUN_ROOT/gate-broken-tar"
+cat > "$RUN_ROOT/gate-broken-tar/tar" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+echo "tar: refusing, for the fixture" >&2
+exit 1
+SH
+chmod +x "$RUN_ROOT/gate-broken-tar/tar"
+refuses "a copy that failed is refused rather than committed as a snapshot" \
+  "could not copy" \
+  env PATH="$RUN_ROOT/gate-broken-tar:$PATH" \
+  "$gate_fix/test/gate.sh" --snapshot "$RUN_ROOT/gate-broken-snapshot"
+if [ -e "$RUN_ROOT/gate-broken-snapshot/.git" ]; then
+  fail "the refused copy left no committed snapshot behind" \
+    "a repository was initialised over a copy that never happened"
+else
+  pass "the refused copy left no committed snapshot behind"
+fi
 
 # THE WIRING, not a restatement of it: both mandatory entry points are run
 # against a tree they would not own and must refuse before doing any work.
