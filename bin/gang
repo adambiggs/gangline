@@ -243,7 +243,7 @@ config_load() {
     esac
     while [[ "$value" == *' ' || "$value" == *$'\t' ]]; do value="${value%?}"; done
     [ -n "$value" ] \
-      || die "Gangline config $file line $n sets $k to an empty value; a key with no value states nothing — delete the line to take the default"
+      || die "Gangline config $file line $n sets $k to an empty value; delete the line to take the default"
     previous="$(config_seen_line "$k")" || previous=""
     [ -z "$previous" ] \
       || die "Gangline config $file duplicates $k on lines $previous and $n"
@@ -1053,14 +1053,10 @@ contract_file() { # -> winning contract path on stdout, operator first
   printf '%s' "$ROOT/CONTRACT.md"
 }
 
-# Never pasted into a composer. Where the collar declares a system-prompt
-# option the bytes go there, which is unconditional and outlives a compaction
-# because the harness resends that prompt every turn; where it declares none,
-# the contract is pointed at and the agent reads the file. Both routes carry
-# prose no composer had to render, and both name the path, so an agent can
-# re-read it. Gangline proves the file is there and is prose at hitch time
-# either way: an agent sent to read a missing or binary contract would discover
-# that alone, in a pane, with nobody to tell.
+# Never pasted into a composer: the contract rides the collar's system-prompt
+# option where one is declared, and is pointed at as a file where none is.
+# Either way hitch proves the file present and prose. See docs/DECISIONS.md
+# "The contract rides the system prompt where a collar has one".
 contract_read() { # vet the contract slot, into CONTRACT_FILE and CONTRACT_BODY
   local display
   CONTRACT_FILE="$(contract_file)"
@@ -1112,12 +1108,8 @@ startup_brief() { # $1 = agent name, $2 = doctrine body or empty
     path="$(config_path "$ROLE_FILE" | config_sanitize)"
   fi
   if [ "$CONTRACT_SYSTEM" -eq 1 ]; then
-    # The system prompt already says what was attached, that it was attached at
-    # launch, and that operator doctrine outranks it. Saying so again here is a
-    # restatement the agent reads twice and can act on once, so this line only
-    # does what that prompt cannot: it says where to look if the attachment is
-    # not there. Gangline cannot verify that a launch option reached the model,
-    # so the recovery is worth more than the reassurance it replaces.
+    # Gangline cannot verify that the launch option reached the model, so
+    # name the recovery path if the attachment is absent.
     if [ -n "$ROLE_NAME" ]; then
       printf 'You are %s in Gangline. Your contract and your %s role brief are in your system prompt. If they are not, read %s and report that rather than improvising.' \
         "$1" "$role" "$contract"
@@ -1682,25 +1674,16 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     2) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
-  # An abandoned turn's bracket is stale owned state, and it is the only thing
-  # still claiming a turn. A turn ended by RAW keys in the pane — the operator's
-  # own Escape, which no harness reports and which bypasses `gang interrupt`,
-  # the only command that edits the fact — leaves it open forever, so
-  # could-not-determine
-  # would be this agent's permanent verdict. It is not undeterminable: the tiers
-  # under the expired event positively witness readiness, which is what
-  # `~idle~` means everywhere else. Decay needs all of them — the
-  # bracket readable, open, and past its bound (TURN_ABANDONED: an unreadable
-  # or future-stamped one is unknown, not abandoned), nothing painting a turn,
-  # the pty past its quiet window
-  # (measured, never assumed: only verdict 1 counts, an unknown one does not),
-  # a byte-stable pane where the snapshot can afford the churn wait to look, the
-  # harness's own input box on screen and provably empty, and — the leg every
-  # path gets, including the snapshot that cannot afford the churn wait —
-  # nothing having moved on the pty or the screen across the whole decision. A
-  # working-but-quiet harness fails at least one. A decay refused because the
-  # pane MOVED is reported as its own thing, because delivery has to treat it
-  # as its own thing: see BUSY_MOVED.
+  # Abandoned-turn decay needs every leg: the bracket readable, open, and past
+  # its bound (TURN_ABANDONED: an unreadable or future-stamped one is unknown,
+  # not abandoned); nothing painting a turn; the pty past its quiet window
+  # (measured, never assumed: only verdict 1 counts, an unknown one does not);
+  # a byte-stable pane where the snapshot can afford the churn wait to look;
+  # the harness's own input box on screen and provably empty; and — the leg
+  # every path gets, including the snapshot that cannot afford the churn wait —
+  # nothing having moved on the pty or the screen across the whole decision.
+  # A decay refused because the pane MOVED is reported as its own thing,
+  # because delivery has to treat it as its own thing: see BUSY_MOVED.
   case "${2:-}" in
     snapshot)
       if composer_live "$1"; then
@@ -1768,9 +1751,7 @@ compact_continue() { # $1 window id, $2 the agent's continuation or empty; calle
 # was told to omit while retaining an unrelated one, so instructions are
 # honoured rather than merely carried.
 #
-# It is orientation, never direction. A default of "continue working" would
-# make a finished agent invent work, which is a worse failure than the one this
-# prevents. Nothing here tells the agent to act — after a compaction the
+# Nothing here tells the agent to act — after a compaction the
 # harness leaves it idle with an empty composer, and no instruction to the
 # SUMMARISER can change that. What to do next is the agent's, and CONTRACT.md
 # is where it is told.
@@ -2248,7 +2229,7 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
 spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
   local base
   spool_existing "$1" \
-    || die "this window has no spool identity, and gang will not mint one on the way to parking a message: two senders arriving together would mint two, and one message would be accepted into a directory nothing points at. It is minted at hitch and adopt — re-hitch or re-adopt this agent"
+    || die "this window has no spool identity, and gang will not mint one on the way to parking a message. It is minted at hitch and adopt — re-hitch or re-adopt this agent"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base"
   lock_base "$base/spool"
@@ -2957,7 +2938,7 @@ submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the E
     # longer the answer to "where did my message go".
     [ -z "$4" ] || tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
     stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
-    die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname, which loads the parked message, reads it back against what gang recorded, and submits it — or by hand: gang attach, press Up to load the parked message, then Enter. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
+    die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
   fi
   stage_record "$1" "'$2' was recalled out of the harness's queue and Enter sent, and the harness parked it again — it never entered the session" ""
   die "flush NOT verified: '$2' was loaded back into the composer of $tname and the Enter parked it in the harness's queue again. The queue is not draining, so no keystroke gang can send will submit it: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
@@ -3281,9 +3262,9 @@ cmd_hitch() {
     local levels="" flat="" levels_rc=0
     levels="$(effort_levels "$model")" || levels_rc=$?
     [ "$levels_rc" -eq 0 ] \
-      || die "hitch: collar '$prof' declares GANG_EFFORT_CMD and running it failed (status $levels_rc), so gang could not determine whether '$effort' is a level. That is a broken declaration rather than a bad value — output from a failed checker is not a vocabulary"
+      || die "hitch: collar '$prof' declares GANG_EFFORT_CMD and running it failed (status $levels_rc), so gang could not determine whether '$effort' is a level. That is a broken declaration rather than a bad value"
     [ -n "$levels" ] \
-      || die "hitch: collar '$prof' declares GANG_EFFORT_CMD and running it produced no levels, so gang could not determine whether '$effort' is one. That is a broken declaration rather than a bad value, and it is refused under its own name rather than blamed on what you typed"
+      || die "hitch: collar '$prof' declares GANG_EFFORT_CMD and running it produced no levels, so gang could not determine whether '$effort' is one. That is a broken declaration rather than a bad value"
     # Padded on both sides and matched whole, so a level cannot be satisfied by
     # sitting inside another one — `high` must not be answered by `xhigh`.
     flat=" $(printf '%s' "$levels" | tr '[:space:]' ' ') "
@@ -3496,25 +3477,10 @@ cmd_send() {
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
-  # SAY WHAT IS TRUE OF THE MESSAGE, AND SAY IT FIRST. Every clause of the old
-  # wording was defensible and the composition was not: "NOT delivered",
-  # "refused" and "wait for it to become idle" read together as a failure the
-  # sender must work around, and one did — routing a report to an unattributed
-  # channel to escape a reliability that was never at risk. What is true is that
-  # the message was ACCEPTED. Only the immediate typing was declined, which is a
-  # fact about timing rather than about the message.
-  #
-  # So "refused" is gone from this path entirely: gang exits 0 here, and a word
-  # that means nothing was taken must not appear beside a success. It survives
-  # where it belongs — the NOT-parked path above, which exits 3 because there
-  # the message really was not taken.
-  #
-  # And the promise is now the one gang can keep. It used to say the next turn
-  # boundary drains them, which is a guarantee about a turn nobody has taken
-  # yet: an agent that never takes another one never drains, and a compaction
-  # produces no boundary at all on a collar that declares no bracket. The
-  # conditional form is true in both worlds and names where the message can be
-  # seen while it waits.
+  # Exit 0 must not say "refused" — the message was accepted; the word
+  # survives only on the NOT-parked path above, which exits 3. And the drain
+  # promise stays conditional on a later turn: an agent that never takes
+  # another one never drains.
   printf '%s\n%s\n' \
     "$(colour "$C_OK" "queued for $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' next completes a turn, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"

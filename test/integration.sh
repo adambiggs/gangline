@@ -519,7 +519,7 @@ refuses "a duplicated config key names both lines" \
 mkdir -p "$CONFIG_CASES/empty"
 printf '%s\n' 'GANG_SESSION=' > "$CONFIG_CASES/empty/config"
 refuses "an empty config value says to delete the line" \
-  "a key with no value states nothing — delete the line to take the default" \
+  "an empty value; delete the line to take the default" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/empty" "$GANG" collars
 
 mkdir -p "$CONFIG_CASES/nul"
@@ -3557,7 +3557,7 @@ else
 fi
 contains "the failure names the parked queue" \
   "$strand_out" "parked it in its own input queue"
-contains "and hands over the manual recovery" "$strand_out" "press Up"
+contains "and hands over the automated recovery" "$strand_out" "gang flush strand"
 contains "the parked message is recorded against the window" \
   "$(tmux show-options -wqv -t "$(window_id strand)" @gl_staged)" "queue"
 # The record says what gang did; the status line says what is in the box now.
