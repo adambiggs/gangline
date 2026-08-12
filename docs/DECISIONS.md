@@ -605,16 +605,17 @@ bytes the source never held.
 
 ## Commit gates require a destination boundary
 
-Check Conventional Commits over the exact event range or over a new ref bounded
-by destination commits available locally. A failed or unusable destination read,
-an unavailable base for the pushed ref, or a nonempty advertisement with no
-locally usable boundary refuses: substituting all reachable history can reject
-the push for unrelated commits and is not a verdict about the requested range.
-Advertised objects absent locally do not themselves refuse when other advertised
-commits provide the boundary, because objects that cannot be traversed cannot
-narrow it. In the unfiltered push workflow, a branch's first push carries a zero
-`before` and therefore refuses; that red check is the disclosed cost of declining
-to invent an event boundary.
+Check Conventional Commits over an exact event range and refuse an unusable or
+all-zero base. Post-push ref advertisement cannot determine a new ref's pushed
+range: two refs created in one push are already visible to both runs, and two
+equal new refs are indistinguishable from a routine new branch at a pre-existing
+head. Default-branch merge-base therefore admits a false refusal by including
+commits already on another branch, while subtracting other advertised refs
+admits a false clean when concurrent new refs overlap. Neither is a measured
+replacement for the missing pre-push boundary; pull requests retain their real
+base and exact range.
+The first push of a branch carries an all-zero `before` and therefore goes red;
+that is the accepted cost of refusing to invent its missing event boundary.
 
 ## Native continuation owns compaction recovery
 
