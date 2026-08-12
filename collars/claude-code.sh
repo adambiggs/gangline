@@ -43,9 +43,7 @@ GANG_HARNESS_PROMPT="Claude Code's task list is scoped to this harness session. 
 # That cost is smaller than it reads, because this harness enumerates its own
 # hook vocabulary: /hooks opens a read-only menu listing every event with a
 # one-line description, and it needs no model turn. Use it before assuming an
-# event does or does not exist. It is a place to look, not a shopping list —
-# gang wires an event when something consumes it, never because the menu
-# offers it.
+# event does or does not exist.
 GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_input"
 # COMPACTION IS DECLARED, NOT INFERRED (driven on 2.1.226). A compacting
 # harness queues what it is sent, and @gl_turn stays CLOSED for the whole of
@@ -78,8 +76,7 @@ GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_i
 # the TURN bracket already open across it? Auto-compaction is decided when the
 # harness is about to send a request, which is inside a turn — if that holds,
 # the turn witness already covers this case and the unknown above is a note
-# rather than a gap. That costs one observation in a session that was going to
-# happen anyway; the fill costs hours.
+# rather than a gap.
 
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
   printf '%s' "$2" | python3 -c '

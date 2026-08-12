@@ -109,8 +109,8 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # U+203A (bytes 342 200 272). Its pre-session screens are drawn by another code
 # path that does not share the alphabet: the first-run sign-in menu observed on
 # 0.146.0 rows with ASCII ">" (0x3E), so this marker scores zero against it.
-# The marker was authored where we always look, so it fits what we always see —
-# any screen a fresh codex draws before a session exists is outside its reach.
+# Any screen a fresh codex draws before a session exists is outside this
+# marker's reach.
 #
 # Enumerated on 0.146.0 against a cold CODEX_HOME: the sign-in menu, the
 # browser-wait screen carrying the authorize URL, the device-code screen, and
@@ -125,8 +125,7 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # Widening this to ^[›>] is REFUSED. Pre-session and in-session are different
 # code paths, not different builds, and the ASCII form is ordinary transcript
 # text: a delivered message quoting "> 1. …" would read as an occupied
-# composer inside a live session. That trade buys one boot-time sentence and
-# sells a false occupancy during work.
+# composer inside a live session.
 GANG_COMPACT_CMD="/compact"
 # Verified on codex 0.146.0: /usage opens a selection menu with "Show usage"
 # preselected; one Enter confirms it and the content is appended to the
@@ -189,14 +188,8 @@ GANG_INTERRUPT_KEY="Escape"
 # instruction, which is to run codex once in this checkout and choose "Review
 # hooks".
 #
-# A registry that NAMED such screens without declaring a keystroke was proposed
-# and DECIDED AGAINST. It could only ever name screens somebody had already
-# met, while the generic pointer gang already prints — inspect it with gang
-# attach — covers every screen including the unmet ones. And a per-dialog
-# fingerprint is one more per-build string that rots: when the wording moves it
-# stops matching and falls back to exactly this generic path, except that by
-# then we believe we have coverage. A guard that degrades to correct-but-silent
-# is fine; one that degrades while we think it holds is not.
+# A registry that NAMED such screens without declaring a keystroke was decided
+# against: see docs/DECISIONS.md "No name-only dialog registry".
 
 # Verified against codex 0.145.0 from the live capture cited in the landing
 # commit. Numeric prefixes move with the selection and are normalized by core;

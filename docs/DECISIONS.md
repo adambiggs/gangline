@@ -32,8 +32,7 @@ describes. Delivery necessarily leaves the brief where delivery put it — in th
 agent's transcript or system prompt, in the launched process's arguments, and
 in the launch string tmux retains for the pane. Those are artifacts of having
 delivered it, readable by anyone who can already read the pane; they are not a
-record Gangline keeps or consults. A role is a thing an agent was told, not a
-thing Gangline knows.
+record Gangline keeps or consults.
 
 ## tmux is the transport
 
@@ -270,35 +269,22 @@ is re-derived per action. A hookless window without mid-turn input whose
 pane keeps a frozen busy marker therefore stays refused until the marker
 scrolls off or the agent is renewed — fail-closed by intent.
 
-A turn fact nobody will ever edit decays instead of standing unknown for
-the life of the window. An interruption typed straight into the pane is reported
-by no harness, and `gang interrupt`, which drops the bracket, is the only
-command that touches it; the bracket a raw keystroke abandons stays open
-forever. Once it passes its bound the tiers
-beneath it answer: a quiet pty, a stable pane, and the harness's own input box
-on screen and provably empty are the positive readiness evidence idle is defined
-by, so the state is idle rather than a permanent could-not-determine. Decay
-requires every leg, measured rather than assumed — a collar that does not
-declare quiet-at-rest reports inactive by abstention, and an abstention is not
-a witness — and applies only to a readable open bracket past its bound, since
-an unreadable or future-stamped one is unknown, not abandoned. Those legs are
-read one after another, so a decay could otherwise describe a state no instant
-held; the pty clock and the screen are read before the first tier and after the
-last, and a decay assembled while either moved is refused. That pair is also
-what lets the snapshot reader decay at all, being immediate where a stability
-check costs a churn wait. It widens no guard: inside its bound the bracket still
-outranks the tiers beneath it, and delivery already reached a provably empty box
-through the unknown fall-through.
+A turn fact nobody will ever edit — a bracket abandoned by an interruption
+typed straight into the pane, which no harness reports — decays instead of
+standing unknown for the life of the window: once it passes its bound, the
+tiers beneath it answer. Decay requires every leg, measured rather than
+assumed — a collar that does not declare quiet-at-rest reports inactive by
+abstention, and an abstention is not a witness — and applies only to a readable
+open bracket past its bound, since an unreadable or future-stamped one is
+unknown, not abandoned. The pty clock and the screen are read before the first
+tier and after the last, and a decay assembled while either moved is refused.
+Inside its bound the bracket still outranks the tiers beneath it.
 
-Movement seen during a decision is not indeterminacy, and delivery must not
-consume it as such. Every other road to could-not-determine is an absence — a
-witness too old, a tier that never answered — and the fall-through exists
-precisely so an absence cannot veto what a fresh reading proves safe. A pane
-observed being written to is presence: a harness paints the opening of a turn
-with its composer still empty, so an empty box read out of a moving screen is
-one frame of something in motion rather than a settled reading, and typing into
-it lands in work that began while gang was deciding. That verdict carries its
-reason so delivery can refuse on it alone.
+Movement seen during a decision is presence, not indeterminacy: a harness
+paints the opening of a turn with its composer still empty, so an empty box
+read out of a moving screen is one frame of something in motion rather than a
+settled reading. That verdict carries its reason so delivery can refuse on it
+alone.
 
 ## A refusal names what was read, not just that it refused
 
@@ -310,10 +296,7 @@ successfully and is cleared, never a harness that could not be read.
 Human authorship is never the leftover case — the delivery legs that record a
 paste whose fate gang never saw record no rendering to match, so a box beside
 one of those records is gang's own text as plausibly as anybody's and is named
-unattributed rather than blamed on a person. The
-alternative is what happened — operators diagnosing a blocked box by eye from a
-raw capture, where a dim suggested-prompt placeholder is indistinguishable from
-a half-written line, and getting it wrong publicly. Classification uses only
+unattributed rather than blamed on a person. Classification uses only
 evidence gang already owns: the collar's styled reading, its declared queue
 evidence, and the box rendering gang recorded when it staged its own body. A
 placeholder is deliberately not a class — the styled reading strips it, so it
@@ -348,6 +331,17 @@ A harness that reports nothing gets no substitute, and a delivery that fails
 is recorded on the window for status to surface rather than killing the hook —
 a record retired only by a later note accepted live or parked, because a light
 that is still broken has to keep saying so.
+
+## No name-only dialog registry
+
+A registry naming stall screens without declaring a safe keystroke was decided
+against. It could only name screens somebody had already met, while the generic
+pointer gang already prints — inspect it with `gang attach` — covers every
+screen including the unmet ones. Each per-dialog fingerprint is one more
+per-build string that rots: when the wording moves it stops matching and falls
+back to exactly that generic path, except that by then we believe we have
+coverage. A guard that degrades to correct-but-silent is fine; one that
+degrades while we think it holds is not.
 
 ## Benchmarks consume Gangline but do not shape it
 
@@ -437,9 +431,7 @@ tmux sessions.
 `gang down` requires the session it ends and refuses from inside it. Every other
 argument-taking command answers a bare invocation with its usage; `down` did not,
 so the reflex that reads the manual — run it bare and see what it wants —
-executed the teardown instead. A gesture that asks what a command does must never
-be the gesture that performs it, and the command with no undo is the one that
-must cost an argument rather than the one that costs none.
+executed the teardown instead.
 
 ## Teardown archives mail before deleting its spool
 
@@ -465,7 +457,7 @@ When a turn boundary drains a spool, every waiting entry is delivered as one
 chronological bundle under one pane lock, envelopes intact. Delivering them
 one at a time submits the first, which starts a turn, which refuses the second —
 so a target that is never idle for long accumulates exactly the messages that
-would have corrected it. One paste and one Enter cannot race the turn they create.
+would have corrected it.
 
 ## A stop carries its reason, and never through the queue
 
@@ -473,8 +465,7 @@ would have corrected it. One paste and one Enter cannot race the turn they creat
 stop creates, under one continuous pane lock. It is never spooled. `--supersede`
 retires the sender's own waiting entries and stamps the replacement now, which
 sorts it behind every other sender's — so a stop sent that way arrives after the
-work it was meant to stop. Priority is not a property a queue position can carry;
-it is a property of not being in the queue.
+work it was meant to stop.
 
 ## A guard witnesses the artifact, and witnesses it in order
 
@@ -494,37 +485,20 @@ send returns when the key is enqueued, so a capture taken afterwards reads
 whichever moment it happens to catch, and a run where the harness had not yet
 acted goes green for no reason anyone chose. Order the observation behind the
 same input path the work travels, so that when the probe reports, what is being
-tested has either happened or never will. A guard that is right about what to
-look at and undefined about when is still luck.
-
-## The contract is a file agents read, not a paste they receive
-
-The standing terms live in `CONTRACT.md` and the startup contract points at it.
-Prose that is pasted is bounded by what a composer renders and by pane geometry,
-it is unaddressable inside one long line, and it is gone once a compaction
-summarises it. A path has none of those properties: the file can be structured,
-it can define its own vocabulary, and re-reading it is the recovery. Gangline
-resolves and validates it before opening a window, operator-first like a role
-brief, and refuses the hitch when it is missing or is not prose — an agent sent
-to read a contract that is not there would find that out alone, in a pane, with
-nobody to tell.
-
-The cost is real and accepted: a pasted rule is unconditional, and a pointer is
-not. What the contract requires is unchanged, so the guards that recorded those
-requirements now prove them against the file, and every hitch is held to naming
-it. Doctrine and role briefs stay pasted; they are per-hitch, and the pointer
-buys them nothing.
+tested has either happened or never will.
 
 ## The contract rides the system prompt where a collar has one
 
-A pointer is conditional on the agent following it, and the contract binds
-every agent whether or not it does. Where a collar declares
-`GANG_ROLE_PROMPT_OPT`, pass the contract through it: the harness resends that
-prompt every turn, so the terms are unconditional and survive a compaction
-without a re-read. The startup contract then names the file instead of ordering
-it read — an agent already holding the contract spends a tool call and gains
-nothing. Collars without the option keep the pointer, which is still better
-than a paste bounded by pane geometry.
+The standing terms live in `CONTRACT.md`, resolved operator-first and validated
+before a window opens; a missing or non-prose contract refuses the hitch,
+because an agent sent to read a contract that is not there would find that out
+alone, in a pane, with nobody to tell. Where a collar declares
+`GANG_ROLE_PROMPT_OPT`, the contract passes through it: the harness resends
+that prompt every turn, so the terms are unconditional and survive a compaction
+without a re-read. Collars without the option point the startup contract at the
+file instead, which is still better than a paste bounded by what a composer
+renders and by pane geometry. Doctrine and role briefs stay pasted; they are
+per-hitch, and the pointer buys them nothing.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries a system prompt. Both share one option rather than passing
