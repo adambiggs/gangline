@@ -597,6 +597,19 @@ relative symlink is judged by where it points, not by whether the source end of
 it exists: a dangling one resolves against the destination's parent and can read
 bytes the source never held.
 
+## Commit gates require a destination boundary
+
+Check Conventional Commits over the exact event range or over a new ref bounded
+by destination commits available locally. A failed or unusable destination read,
+an unavailable base for the pushed ref, or a nonempty advertisement with no
+locally usable boundary refuses: substituting all reachable history can reject
+the push for unrelated commits and is not a verdict about the requested range.
+Advertised objects absent locally do not themselves refuse when other advertised
+commits provide the boundary, because objects that cannot be traversed cannot
+narrow it. In the unfiltered push workflow, a branch's first push carries a zero
+`before` and therefore refuses; that red check is the disclosed cost of declining
+to invent an event boundary.
+
 ## Native continuation owns compaction recovery
 
 Native continuation now returns every supported compact command to a turn that

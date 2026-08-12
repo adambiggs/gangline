@@ -21,14 +21,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Use the same gate as commit-msg; fall back to reachable history when
-          # the event has no usable base.
+          # Use the same gate as commit-msg over the exact event range. A
+          # missing base cannot be replaced by a verdict over unrelated history.
           if [ -n "$BASE" ] && [ "$BASE" != "0000000000000000000000000000000000000000" ] \
              && git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             range="${BASE}..${HEAD_SHA}"
           else
-            range="$HEAD_SHA"
-            echo "no usable base ref — checking all history reachable from $HEAD_SHA"
+            echo "commits: refusing — the event has no usable base, so its commit range is indeterminate" >&2
+            exit 1
           fi
 
           fail=0 n=0

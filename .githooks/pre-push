@@ -63,6 +63,7 @@ dest="${2:-}"
 excl=()
 need_lsremote=0
 oid_width=0
+range_error=""
 while read -r _local_ref local_sha _remote_ref remote_sha \
       || [ -n "${local_sha:-}${remote_sha:-}" ]; do
   [ -n "${local_sha:-}" ] || continue
@@ -72,6 +73,8 @@ while read -r _local_ref local_sha _remote_ref remote_sha \
     need_lsremote=1
   elif git cat-file -e "${remote_sha}^{commit}" 2>/dev/null; then
     excl+=("$remote_sha")
+  elif [ -z "$range_error" ]; then
+    range_error="pre-push: remote base $remote_sha for $_local_ref is unavailable locally."
   fi
 done < "$tmp/stdin"
 
@@ -79,9 +82,7 @@ if [ "$need_lsremote" -eq 1 ]; then
   lrc=0
   git ls-remote "$dest" > "$tmp/adv" 2>/dev/null || lrc=$?
   if [ "$lrc" -ne 0 ]; then
-    printf '%s\n' \
-      "pre-push: could not read the destination's refs (git ls-remote exited $lrc)." \
-      "          Checking the full history of each new ref instead." >&2
+    range_error="pre-push: could not read the destination's refs (git ls-remote exited $lrc)."
   elif [ -s "$tmp/adv" ]; then
     adv_usable=1
     while read -r oid ref extra \
@@ -94,15 +95,22 @@ if [ "$need_lsremote" -eq 1 ]; then
       [ -z "${extra:-}" ] || adv_usable=0
     done < "$tmp/adv"
     if [ "$adv_usable" -eq 0 ]; then
-      printf '%s\n' \
-        "pre-push: could not read the destination's refs (git ls-remote returned unusable output)." \
-        "          Checking the full history of each new ref instead." >&2
+      range_error="pre-push: could not read the destination's refs (git ls-remote returned unusable output)."
     else
       while read -r oid _ref || [ -n "${oid:-}" ]; do
         git cat-file -e "${oid}^{commit}" 2>/dev/null && excl+=("$oid")
       done < "$tmp/adv"
+      if [ "${#excl[@]}" -eq 0 ]; then
+        range_error="pre-push: none of the destination's advertised commits is available locally."
+      fi
     fi
   fi
+fi
+
+if [ -n "$range_error" ]; then
+  printf '%s\n' "$range_error" \
+    "pre-push: refusing — the pushed commit range is indeterminate." >&2
+  exit 1
 fi
 
 while read -r local_ref local_sha _remote_ref remote_sha \

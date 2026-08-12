@@ -6336,7 +6336,9 @@ OUTER_STDOUT_MARKER" \
 # following line without paying for a nested integration run.
 order_hooks="$RUN_ROOT/pre-push-ordering-hooks"
 order_config="$RUN_ROOT/pre-push-ordering-gitconfig"
+order_remote="$RUN_ROOT/pre-push-ordering-remote.git"
 mkdir -p "$order_hooks"
+GIT_CONFIG_GLOBAL="$order_config" git init -q --bare "$order_remote"
 cat > "$order_hooks/pre-push" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -6357,7 +6359,7 @@ order_output="$(
   printf 'refs/heads/main %s refs/heads/main %s\n' \
     "$order_oid" "$(printf '%040d' 0)" |
   GIT_CONFIG_GLOBAL="$order_config" \
-    "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1
+    "$ROOT/.githooks/pre-push" origin "$order_remote" 2>&1
 )" || true
 order_gate_line="$(printf '%s\n' "$order_output" |
   awk '/carries no test\/lint.sh/ { print NR; exit }')"
@@ -6607,17 +6609,57 @@ hook_sha="$(git -C "$hook_repo" rev-parse HEAD)"
 touch "$hook_repo/main-index-only"
 git -C "$hook_repo" add main-index-only
 hook_zero=0000000000000000000000000000000000000000
+hook_remote="$RUN_ROOT/pre-push-hook-remote.git"
+GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$hook_remote"
+hook_missing=1111111111111111111111111111111111111111
+hook_base_rc=0
+hook_base_out="$({
+  cd "$hook_repo"
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_missing" |
+    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
+      ./.githooks/pre-push origin "$hook_remote"
+} 2>&1)" || hook_base_rc=$?
+equal "pre-push refuses an unavailable base of the pushed ref" \
+  "refused named" \
+  "$([ "$hook_base_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_base_out" = *"remote base $hook_missing"* ]] && printf named || printf unnamed)"
+hook_range_rc=0
+hook_range_out="$({
+  cd "$hook_repo"
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
+    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
+      ./.githooks/pre-push origin "$RUN_ROOT/missing-pre-push-remote"
+} 2>&1)" || hook_range_rc=$?
+equal "pre-push refuses an indeterminate new-ref range" \
+  "refused named" \
+  "$([ "$hook_range_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_range_out" = *'pushed commit range is indeterminate'* ]] && printf named || printf unnamed)"
+hook_unbounded_remote="$RUN_ROOT/pre-push-unbounded-remote.git"
+GIT_CONFIG_GLOBAL="$gate_global" git init -q --bare "$hook_unbounded_remote"
+mkdir -p "$hook_unbounded_remote/refs/pull/100"
+printf '%s\n' "$hook_missing" > "$hook_unbounded_remote/refs/pull/100/head"
+hook_unbounded_rc=0
+hook_unbounded_out="$({
+  cd "$hook_repo"
+  printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
+    env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
+      ./.githooks/pre-push origin "$hook_unbounded_remote"
+} 2>&1)" || hook_unbounded_rc=$?
+equal "pre-push refuses a nonempty advertisement with no usable boundary" \
+  "refused named" \
+  "$([ "$hook_unbounded_rc" -ne 0 ] && printf refused || printf passed) $([[ "$hook_unbounded_out" = *"none of the destination's advertised commits is available locally"* ]] && printf named || printf unnamed)"
+mkdir -p "$hook_remote/refs/heads" "$hook_remote/refs/pull/100"
+printf '%s\n' "$hook_sha" > "$hook_remote/refs/heads/main"
+printf '%s\n' "$hook_missing" > "$hook_remote/refs/pull/100/head"
 if hook_out="$({
   cd "$hook_repo"
   printf 'refs/heads/main %s refs/heads/main %s\n' "$hook_sha" "$hook_zero" |
     env GIT_CONFIG_GLOBAL="$gate_global" GIT_DIR="$hook_repo/.git" \
       HOOK_DELEGATION_DEPTH=1 \
       PROBE_DIR="$hook_probe" \
-      ./.githooks/pre-push
+      ./.githooks/pre-push origin "$hook_remote"
 } 2>&1)"; then
-  pass "pre-push lints the pushed commit under Git's hook environment"
+  pass "pre-push ignores an unrelated advertised commit absent locally"
 else
-  fail "pre-push lints the pushed commit under Git's hook environment" "$hook_out"
+  fail "pre-push ignores an unrelated advertised commit absent locally" "$hook_out"
 fi
 hook_gitdir="$(<"$hook_probe/gitdir")"
 case "$hook_gitdir" in
