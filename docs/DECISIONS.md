@@ -506,18 +506,27 @@ alone, in a pane, with nobody to tell. Where a collar declares
 that prompt every turn, so the terms are unconditional and survive a compaction
 without a re-read. Collars without the option point the startup contract at the
 file instead, which is still better than a paste bounded by what a composer
-renders and by pane geometry. Doctrine and role briefs stay pasted; they are
-per-hitch, and the pointer buys them nothing.
+renders and by pane geometry. A role brief joins the contract in that prompt
+wherever the collar has the option, and is pasted where it does not; doctrine is
+pasted always. Neither can be replaced by a pointer the way the contract can:
+they are per-hitch, and the pointer buys them nothing.
 
 Prose that rides the system prompt is never read back, so no delivery
 verification bounds it, and the byte ceiling in prose validation is the only
-bound those bytes have. That is what the ceiling is for. It sits far above any
-standing terms or role brief written to be read on every turn, and below the
-size at which a mis-pointed file would quietly spend an agent's context every
-turn instead of failing. For the pasted slots the verified refusal at hitch is
-the real bound and the ceiling only moves the same refusal earlier, before a
-window opens; every prose slot shares one validation because carving out an
-exception would add a branch to remove a bound that costs those slots nothing.
+refusal Gangline can apply to it — before a window opens, or not at all. That is
+what the ceiling is for. What it catches is a mis-pointed file large enough to
+spend an agent's context on every turn, since the harness resends that prompt,
+and small enough to reach the launch without complaint. It is not the only limit
+those bytes meet: the operating system, the harness, and the model's context
+window all bound them later and less legibly.
+
+8192 is the boundary already in force, kept because nothing measures where a
+better one would be — inventing a number for the corrected reason would repeat
+the defect one layer down. Every prose slot shares it rather than branching per
+slot, and that is not free: byte count does not predict what a composer can
+render, so a doctrine or a pasted role brief above the ceiling can be refused
+here although the verified paste would have delivered it. That refusal is loud
+and names the file, and it is the price of one validation for every prose slot.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries a system prompt. Both share one option rather than passing

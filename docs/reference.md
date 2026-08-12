@@ -566,19 +566,24 @@ no NUL, no controls other than tab and newline, valid UTF-8, and no more than
 8192 bytes. The ceiling is not a deliverability bound and does not predict one:
 delivery is bounded by the target composer's rendering and by pane geometry,
 and a doctrine the target cannot accept fails loudly at hitch through the
-verified paste. Delete `DOCTRINE.md` to remove the slot; a hitched copy dies
-with its window.
+verified paste. It runs the other way too — doctrine a composer would have
+rendered can still be refused by the ceiling, which every prose slot shares.
+Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 
 The contract uses the same prose validation and the same operator-first
 resolution: `$GANG_CONFIG_DIR/CONTRACT.md` before the shipped `CONTRACT.md`. It
 is the one prose slot that is not optional — a root without one refuses every
-hitch, naming both paths. Unlike doctrine and role briefs, its bytes are never
-pasted, so nothing downstream reads them back: the 8192-byte ceiling is the
-only bound they have, and pane geometry is not. That is the ceiling's job —
-bounding prose no composer will refuse on the operator's behalf. It is far
-above any standing terms written to be read on every turn, and below the size
-at which a mis-pointed file would quietly spend an agent's context every turn
-instead of failing.
+hitch, naming both paths. Its bytes are never pasted: they ride the system
+prompt where the collar declares that option, and where it does not, only the
+path is sent. A role brief joins them in that prompt on the same collars.
+Nothing downstream reads those bytes back, so the 8192-byte ceiling is the only
+refusal Gangline can apply to them, and it applies before a window opens. That
+is the ceiling's job. It is not the only limit those bytes meet — the operating
+system, the harness, and the model's context window bound them later — and 8192
+is the boundary already in force rather than a measured cutoff. The prose
+Gangline ships for these slots sits far below it; what the ceiling catches is a
+mis-pointed file large enough to spend an agent's context on every turn and
+small enough to reach the launch without complaint.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries one into the system prompt where the collar has that option.
