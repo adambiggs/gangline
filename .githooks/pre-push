@@ -16,24 +16,7 @@ cd "$root"
 fail=0
 n_ref=0
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/gangline-pre-push.XXXXXX")"
-# The outer gate runs first so a failure here cannot skip it, but its verdict is
-# what a person needs last: printed in place it sits above every line this hook
-# emits afterwards, and the closing lines of a successful push read as a pass.
-outer_out="$tmp/outer.out"
-outer_err="$tmp/outer.err"
-outer_replayed=0
-replay_outer() {
-  [ "$outer_replayed" -eq 0 ] || return 0
-  outer_replayed=1
-  if [ -s "$outer_out" ] || [ -s "$outer_err" ]; then
-    printf '%s\n' "pre-push: global gate verdict, held back so it lands last:" >&2
-    if [ -s "$outer_out" ]; then cat "$outer_out"; fi
-    if [ -s "$outer_err" ]; then cat "$outer_err" >&2; fi
-  fi
-  return 0
-}
 cleanup() {
-  replay_outer
   ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
     local w
     for w in "$tmp"/tree-*; do
@@ -59,10 +42,13 @@ if [ -n "$outer" ]; then
     echo "pre-push: global hook path resolves to this repository hook; suppressing outward delegation" >&2
   elif [ -n "$resolved_outer" ] \
        && [ -f "$outer_dir/pre-push" ] && [ -x "$outer_dir/pre-push" ]; then
+    # The outer gate runs first so a failure here cannot skip it, and it writes
+    # straight to the terminal: a host-global gate that spends minutes in
+    # inference reports its progress while it runs, and holding that back until
+    # the local gate finishes makes a live push look hung.
     outer_rc=0
-    "$outer_dir/pre-push" "$@" < "$tmp/stdin" > "$outer_out" 2> "$outer_err" || outer_rc=$?
+    "$outer_dir/pre-push" "$@" < "$tmp/stdin" || outer_rc=$?
     if [ "$outer_rc" -ne 0 ]; then
-      replay_outer
       echo "pre-push: outer gate refused with status $outer_rc" >&2
       exit "$outer_rc"
     fi

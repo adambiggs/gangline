@@ -6314,15 +6314,21 @@ outer_success_output="$(printf '%s\n' "$deletion_record" |
 equal "an ambient delegation marker cannot suppress the outer gate" \
   "argv:origin|/tmp/remote
 $deletion_record" "$(cat "$delegation_record")"
-equal "the outer gate's stdout and stderr are replayed at the end" \
-  "pre-push: global gate verdict, held back so it lands last:
-OUTER_STDOUT_MARKER
-OUTER_STDERR_MARKER" \
-  "$(printf '%s\n' "$outer_success_output" | tail -n 3)"
+# Both streams reach the terminal unwrapped. Not one exact two-line reading:
+# with the outer hook's output inherited rather than captured, its stdout is
+# block-buffered into this capture pipe while its stderr is not, so the order of
+# those two markers relative to each other is buffering-dependent. The ordering
+# that matters is proven below, where both lines are on stderr.
+contains "the outer gate's stdout reaches the terminal unwrapped" \
+  "$outer_success_output" "OUTER_STDOUT_MARKER"
+contains "the outer gate's stderr reaches the terminal unwrapped" \
+  "$outer_success_output" "OUTER_STDERR_MARKER"
+excludes "no banner announces a withheld outer verdict" \
+  "$outer_success_output" "held back so it lands last"
 
-# Exercise the ordering property with local output between the outer gate and
-# replay. An empty-tree commit has no suite, so Gangline's own missing-gate
-# refusal is the intervening line without paying for a nested integration run.
+# Exercise the ordering property with local output after the outer gate. An
+# empty-tree commit has no suite, so Gangline's own missing-gate refusal is the
+# following line without paying for a nested integration run.
 order_hooks="$RUN_ROOT/pre-push-ordering-hooks"
 order_config="$RUN_ROOT/pre-push-ordering-gitconfig"
 mkdir -p "$order_hooks"
@@ -6356,13 +6362,13 @@ contains "the ordering fixture reaches Gangline's own gate" \
   "$order_output" "carries no test/lint.sh"
 contains "the ordering fixture reaches the outer gate" \
   "$order_output" "OUTER-VERDICT-MARKER"
-equal "the outer verdict is printed after Gangline's own output" \
-  "after" \
+equal "the outer verdict is printed before Gangline's own output" \
+  "before" \
   "$(if [ -n "$order_gate_line" ] && [ -n "$order_marker_line" ] \
-        && [ "$order_marker_line" -gt "$order_gate_line" ]; then
-       printf after
-     else
+        && [ "$order_marker_line" -lt "$order_gate_line" ]; then
        printf before
+     else
+       printf after
      fi)"
 
 outer_refusal_rc=0
