@@ -5,6 +5,11 @@
 > scanner, so §5's account of the hook and its fixture step naming
 > `tools/pii-scan` describe a file that no longer exists. The body is left as it
 > was written; see `docs/DECISIONS.md`, "PII prevention belongs to Snubline".
+> Superseded again at `f8410f8`: the "Suite isolation" requirement under
+> Cross-cutting requirements asked for a second config-root pin, and an
+> assertion to prove it, against a future fixture that would drop the first pin.
+> Both are removed. The paragraph says in its own words that the case is a
+> future one, and that is not a consumer.
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no
