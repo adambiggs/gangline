@@ -419,6 +419,12 @@ identities agree; the local hook never trusts an ambient recursion variable. An
 absent global hook is a silent no-op. Gangline tracks no scanner of its own;
 outward delegation is the whole of its participation.
 
+The outer hook writes to the terminal, and Gangline does not capture it to
+replay the verdict last. A host-global gate that spends minutes in inference
+reports its progress while it runs; withholding that until Gangline's own lint
+and suite finish makes a live push indistinguishable from a hang. Closing
+cosmetic order is worth less than the fresher observation it suppresses.
+
 ## Mandatory tests are immediate
 
 The mandatory suite normally completes in seconds and must remain under five
@@ -567,3 +573,20 @@ bytes the source never held.
 Native continuation now returns every supported compact command to a turn that
 re-reads the brief and saved state. Repository checkpoint safety remains in
 `AGENTS.md` and operations rather than the standing team contract.
+
+## A fixture shell is hermetic
+
+Gangline's suite compresses gang's production waits, so the pane's own reaction
+to a keystroke is the whole margin. A bash launched with `--rcfile` or
+`--init-file` still reads `/etc/bash.bashrc`, where Debian installs a
+`command_not_found_handle` that runs a Python program against a multi-megabyte
+apt database — and every envelope this suite delivers is an unrunnable command,
+so that handler lands on the Enter path of every submission gang verifies. It
+cost most of the compressed budget on an otherwise idle box, and it made the
+suite's verdict depend on the operator's system configuration and page cache.
+
+Fixture rc files therefore reach their shell through `ENV` in posix mode, where
+bash reads no system rc at all, or the shell takes none with `--norc`.
+`test/lint.sh` checks it. Enforcement rather than convention is the decision:
+the property was already known and written into most fixture rc files as a line
+authors copied, and the fixtures that starved were the ones that had not.
