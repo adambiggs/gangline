@@ -409,6 +409,8 @@ contains "gang config attributes a file-layer value to its line" \
   $'GANG_COLLAR=codex\t'"$CONFIG_CASES/report/config line 2"
 contains "gang config attributes an untouched built-in value to the default" \
   "$config_report" $'GANG_CLEAR_PRESSES=40\tdefault'
+excludes "gang config no longer publishes an occupancy timer" \
+  "$config_report" "GANG_OCCUPIED_LIMIT="
 
 # Published config names stay live for 1.x, but two names for one setting are
 # never silently normalized. Exercise every reachable layer arrangement in
@@ -3270,9 +3272,21 @@ printf '%s\n' '{"hook_event_name":"PermissionRequest"}' \
 equal "permission occupancy emits the exact snagged state token" \
   "!occupied! (authority unknown)" \
   "$("$GANG" status alpha | head -1)"
+tmux set-option -w -t "$alpha_id" @gl_occupied 'open not-a-timestamp'
+malformed_occupied_rc=0
+malformed_occupied_out="$("$GANG" status alpha 2>&1)" || malformed_occupied_rc=$?
+equal "malformed permission evidence refuses instead of becoming absence" \
+  "refused named" \
+  "$([ "$malformed_occupied_rc" -ne 0 ] && printf refused || printf passed) $([[ "$malformed_occupied_out" = *'malformed @gl_occupied evidence'* ]] && printf named || printf unnamed)"
+equal "the malformed permission evidence is not erased" \
+  "open not-a-timestamp" \
+  "$(tmux show-options -wqv -t "$alpha_id" @gl_occupied)"
 tmux set-option -w -t "$alpha_id" @gl_collar bash
+tmux set-option -w -t "$alpha_id" @gl_occupied 'open 1'
+"$GANG" status alpha >/dev/null
+equal "direct composer evidence clears an arbitrarily old permission witness" \
+  "" "$(tmux show-options -wqv -t "$alpha_id" @gl_occupied)"
 "$GANG" notify clear >/dev/null
-tmux set-option -uw -t "$alpha_id" @gl_occupied
 tmux set-option -uw -t "$alpha_id" @gl_stall_failed
 tmux kill-window -t "$amb_a_id"
 tmux kill-window -t "$amb_b_id"

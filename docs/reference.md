@@ -505,6 +505,8 @@ dispatch deferred self-compaction and a spool drain, and permission requests
 raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
 it and drains. A harness that refuses a compaction raises the opening event and
 never the closing one, so any turn event also settles a bracket left open.
+Permission occupancy has no timed decay: a readable composer clears it, and a
+malformed witness refuses rather than becoming ordinary absence.
 Awaiting-input events listed by `GANG_STALL_TYPES`, plus permission requests,
 raise a stall note only when `gang notify` has declared a target.
 Hooks are silent unless an enabled context light or declared team-time light
@@ -551,7 +553,6 @@ Exactly these keys are settable:
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_ACTIVITY_LIMIT` | `300` | activity-only evidence bound |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound |
-| `GANG_OCCUPIED_LIMIT` | `900` | native occupancy-fact bound |
 | `GANG_CLEAR_PRESSES` | `40` | maximum verified composer-clear attempts |
 
 Collar declarations are refused because `load_collar` clears them before

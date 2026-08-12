@@ -54,7 +54,7 @@ deprecation_flush() {
   DEPRECATION_NOTES=""
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_CLEAR_PRESSES'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
@@ -373,7 +373,6 @@ GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
-GANG_OCCUPIED_LIMIT="${GANG_OCCUPIED_LIMIT:-900}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
 GANG_STALL_REPEAT=600
 
@@ -1836,13 +1835,14 @@ OCCUPY_STATE=""
 OCCUPY_AT=0
 
 occupied_raise_read() { # $1 = window id; sets OCCUPY_*; 1 = absent, 2 = malformed
-  local raw
+  local raw extra
   raw="$(tmux show-options -wqv -t "$1" @gl_occupied 2>/dev/null)" || raw=""
   OCCUPY_STATE=""; OCCUPY_AT=0
   [ -n "$raw" ] || return 1
-  read -r OCCUPY_STATE OCCUPY_AT _ <<<"$raw"
+  read -r OCCUPY_STATE OCCUPY_AT extra <<<"$raw"
   [ "$OCCUPY_STATE" = open ] || { OCCUPY_STATE=""; return 2; }
   [[ "$OCCUPY_AT" =~ ^[0-9]+$ ]] || { OCCUPY_STATE=""; OCCUPY_AT=0; return 2; }
+  [ -z "$extra" ] || { OCCUPY_STATE=""; OCCUPY_AT=0; return 2; }
 }
 
 occupied_raise_write() { # $1 = window id; never fatal (law 7)
@@ -1852,18 +1852,14 @@ occupied_raise_write() { # $1 = window id; never fatal (law 7)
 occupied_raise_clear() { tmux set-option -uw -t "$1" @gl_occupied 2>/dev/null || true; }
 
 occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
-  local now rc=0
+  local rc=0
   occupied_raise_read "$1" || rc=$?
   case "$rc" in
     0) ;;
     1) return 1 ;;
-    2) occupied_raise_clear "$1"; return 1 ;;
+    2) die "$(agent_name_of "$1") carries malformed @gl_occupied evidence — inspect it, then clear with: tmux set-option -uw -t '$1' @gl_occupied" ;;
     *) die "internal: occupied_raise_read returned unknown verdict $rc" ;;
   esac
-  require_whole GANG_OCCUPIED_LIMIT "$GANG_OCCUPIED_LIMIT" seconds
-  now="$(date +%s)"
-  [ "$OCCUPY_AT" -le "$now" ] || return 1
-  [ $(( now - OCCUPY_AT )) -lt "$GANG_OCCUPIED_LIMIT" ] || return 1
   if composer_live "$1"; then
     occupied_raise_clear "$1"
     return 1
@@ -4545,7 +4541,6 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
     GANG_ACTIVITY_LIMIT) printf '%s' "$GANG_ACTIVITY_LIMIT" ;;
     GANG_TURN_LIMIT) printf '%s' "$GANG_TURN_LIMIT" ;;
-    GANG_OCCUPIED_LIMIT) printf '%s' "$GANG_OCCUPIED_LIMIT" ;;
     GANG_CLEAR_PRESSES) printf '%s' "${GANG_CLEAR_PRESSES:-40}" ;;
     *) die "internal: no effective config value for $1" ;;
   esac

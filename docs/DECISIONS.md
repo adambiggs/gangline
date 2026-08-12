@@ -203,6 +203,12 @@ evidence. Unknown prompts remain manual, but clearing one leaves a healthy
 agent whose startup contract can be delivered with `gang send`; only a composer
 that never appears calls for drop-and-re-hitch.
 
+A native permission-request witness has no timed decay. The readable composer
+that proves the dialog ended is its only closer; malformed evidence refuses
+instead of being erased. A synthetic `remain-on-exit` survivor read identically
+before and after the former bound, so the timer prevented nothing, while under
+tmux defaults a dead harness removes its window and leaves no orphan to report.
+
 ## Binary identity is a window witness
 
 Stamp hitch and adopt windows with the checksum and size of the invoked script,

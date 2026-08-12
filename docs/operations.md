@@ -271,6 +271,21 @@ server and stand-in collar; they do not spend real harness turns.
 
 ## Recovery
 
+### A malformed occupancy witness refuses observation
+
+Gangline retains malformed `@gl_occupied` evidence rather than demoting an
+unknown permission state to absence. The refusal names the affected agent and
+the exact tmux window target. Inspect that window and its option, then remove
+only the malformed witness:
+
+```sh
+tmux show-options -wv -t '<window-id>' @gl_occupied
+tmux set-option -uw -t '<window-id>' @gl_occupied
+```
+
+Re-run `gang status`. Do not clear a valid `open <unix-seconds>` witness; direct
+observation of the restored composer clears valid evidence itself.
+
 ### Every command and native hook refuses after a config edit
 
 Gangline parses the config before dispatch. An unknown or duplicated key, empty

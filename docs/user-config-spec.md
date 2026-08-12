@@ -142,7 +142,6 @@ Exactly these, with the defaults they have today:
 | `GANG_ACTIVITY_WINDOW` | `5` | top-of-file default block |
 | `GANG_ACTIVITY_LIMIT` | `300` | top-of-file default block |
 | `GANG_TURN_LIMIT` | `300` | top-of-file default block |
-| `GANG_OCCUPIED_LIMIT` | `900` | top-of-file default block |
 | `GANG_CLEAR_PRESSES` | `40` | `presses="${GANG_CLEAR_PRESSES:-40}"` |
 
 **Refused with their own message, not as unknown keys:**
@@ -242,7 +241,7 @@ already reads through `${X:-default}` or through the default block.
 ```sh
 GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR
 GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW
-GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_OCCUPIED_LIMIT GANG_CLEAR_PRESSES'
+GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_CLEAR_PRESSES'
 ```
 
 `CONFIG_ORIGINS` accumulates one tab-separated record per key, newline-joined:
