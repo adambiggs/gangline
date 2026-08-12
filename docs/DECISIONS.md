@@ -41,6 +41,13 @@ tty for input, pane capture for observation, window options for ephemeral state,
 and collars for harness-specific knowledge; this keeps agents observable and
 controllable without a daemon, database, or private protocol.
 
+## UTF-8 is a host prerequisite
+
+Refuse startup when neither the environment nor the host locale inventory can
+establish UTF-8. Gangline writes Unicode protocol glyphs into tmux state and
+reads them back; continuing under an unverified character contract would report
+a degraded transport as healthy rather than provide a supported fallback.
+
 ## Harness driving is a seam, not a second product
 
 Keep launch syntax, composer parsing, native state, submission, and native

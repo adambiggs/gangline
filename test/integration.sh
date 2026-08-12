@@ -210,6 +210,17 @@ refuses() { # $1 description, $2 expected message, rest = command
   fi
 }
 
+mkdir -p "$RUN_ROOT/no-utf8-bin"
+cat > "$RUN_ROOT/no-utf8-bin/locale" <<'SH'
+#!/bin/sh
+exit 1
+SH
+chmod +x "$RUN_ROOT/no-utf8-bin/locale"
+refuses "startup refuses when no UTF-8 locale can be established" \
+  "could not establish a UTF-8 locale" \
+  env -u LC_ALL -u LC_CTYPE LANG=C PATH="$RUN_ROOT/no-utf8-bin:$PATH" \
+    "$GANG" config
+
 bare_window_name() { # $1 raw tmux window name
   local n="$1" first last
   [ "${#n}" -ge 3 ] || { printf '%s' "$n"; return; }

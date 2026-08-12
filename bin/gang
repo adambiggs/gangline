@@ -13,7 +13,10 @@ utf8_locale() {
   done
   return 1
 }
-utf8_locale || true
+utf8_locale || {
+  printf 'gang: could not establish a UTF-8 locale\n' >&2
+  exit 1
+}
 
 die() { fail 1 "$@"; }
 

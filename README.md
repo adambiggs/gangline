@@ -38,7 +38,8 @@ operator's control.
 
 ## Install
 
-Gangline requires Bash, tmux, Python 3, and at least one supported harness.
+Gangline requires Bash, tmux, Python 3, a UTF-8 locale, and at least one
+supported harness.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
