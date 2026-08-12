@@ -44,6 +44,30 @@ if [ -n "$timing_hits" ]; then
   exit 1
 fi
 
+# A FIXTURE SHELL MUST NOT READ THE OPERATOR'S SYSTEM BASH STARTUP FILES.
+# --rcfile and --init-file replace ~/.bashrc and leave /etc/bash.bashrc, where
+# Debian installs a command_not_found_handle that runs a Python program against
+# a multi-megabyte apt database. Every envelope this suite delivers is an
+# unrunnable command, so that handler lands on the Enter path of every
+# submission gang verifies and spends most of the compressed clock's budget
+# before anything has gone wrong. A fixture shell therefore takes its rc file
+# through ENV in posix mode, where bash reads no system rc at all, or takes no
+# rc with --norc. Checked here rather than left to a line each new fixture
+# remembers to copy, because the fixtures that starved were the ones that
+# forgot the line.
+shell_leaks="$(awk '
+  FILENAME == "test/lint.sh" { next }   # the checker has to name what it refuses
+  /^[[:space:]]*#/ { next }
+  /--rcfile|--init-file/ { print FILENAME ":" FNR ":" $0; next }
+  /GANG_LAUNCH=/ && /bash/ && !/--norc|--posix/ { print FILENAME ":" FNR ":" $0 }
+' test/*.sh collars/*.sh)"
+if [ -n "$shell_leaks" ]; then
+  printf '%s\n' \
+    "lint: a fixture shell may not read /etc/bash.bashrc — carry its rc with ENV=<file> bash --posix, or take none with bash --norc:" \
+    "$shell_leaks" >&2
+  exit 1
+fi
+
 # .githooks is globbed rather than listed: hooksPath points the whole directory
 # at git, so a hook added later is a shell file this repo runs, and it should
 # not also need an edit here to be read.

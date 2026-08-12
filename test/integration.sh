@@ -39,16 +39,27 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # on the requested duration leaves boot and churn clocks immediate, and no
 # assertion depends on the floor's value.
 #
-# THE MARGIN, MEASURED 2026-08-09 on claude-code 2.1.226 rather than reasoned
+# THE MARGIN, MEASURED 2026-08-09 on the deployed harness build rather than reasoned
 # about, because the reasoning above is what a reader would otherwise have to
 # re-derive. submit_verify presses Enter and reads the box up to five times,
 # napping 0.4s between reads.
 #
-#   quiet-box echo latency      ~10ms
+#   hermetic fixture pane, Enter to box change  ~5ms (re-measured 2026-08-12)
 #   test budget (this floor)     5 x 0.05s = 0.25s
 #   production budget            5 x 0.4s  = 2.0s
 #
-# So the quiet margin is about 25x and looks unbreakable right up until an
+# THE FIRST NUMBER IS A PROPERTY OF THE PANE, NOT OF THE BOX, and leaving that
+# implicit is what made this margin unreadable. A fixture shell that reads the
+# operator's /etc/bash.bashrc answers the same Enter in ~180ms instead, because
+# Debian installs a command_not_found_handle there that runs a Python program
+# against a multi-megabyte apt database, and every envelope this suite delivers
+# is an unrunnable command — so that handler sits on the Enter path of every
+# submission gang verifies. Two fixture collars launched such a shell, spent
+# most of this budget before anything had gone wrong, and starved at load 1.06.
+# test/lint.sh keeps fixture shells hermetic; the ~5ms above holds only while
+# it does.
+#
+# So the quiet margin is about 50x and looks unbreakable right up until an
 # I/O-starved box stretches one round trip past 250ms. Under sustained load —
 # CPU spinners plus dd+sync loops, not CPU bursts, which do not reproduce it —
 # the same hitch failed 39 times in 40. UNDER THE SAME LOAD, PRODUCTION TIMING
@@ -1025,7 +1036,7 @@ cat > "$RUN_ROOT/collars/usage-inline.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-bashrc'"
+GANG_LAUNCH="env ENV='$RUN_ROOT/usage-bashrc' bash --posix"
 GANG_USAGE_CMD='u'
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="inline"
@@ -1035,7 +1046,7 @@ cat > "$RUN_ROOT/collars/usage-confirm.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="bash --init-file '$RUN_ROOT/usage-confirm-bashrc'"
+GANG_LAUNCH="env ENV='$RUN_ROOT/usage-confirm-bashrc' bash --posix"
 GANG_USAGE_CMD='c'
 GANG_USAGE_CONFIRM_KEY="Enter"
 GANG_USAGE_RENDER="modal"
@@ -3021,7 +3032,6 @@ excludes "a startup delivery refusal does not nest a second diagnostic prefix" \
 # record is the witness for the trailing bytes the pane itself cannot display
 # unambiguously.
 cat > "$RUN_ROOT/doctrine-queue-rc" <<'RC'
-unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='if [ ! -e "$DOCTRINE_QUEUE_SEEN" ]; then : > "$DOCTRINE_QUEUE_SEEN"; elif [ -e "$DOCTRINE_QUEUE_ARM" ]; then PS1="❯ Press up to edit queued messages"; fi'
 RC
@@ -3029,7 +3039,7 @@ cat > "$RUN_ROOT/collars/doctrine-queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'DOCTRINE_QUEUE_SEEN=$RUN_ROOT/doctrine-queue-seen DOCTRINE_QUEUE_ARM=$RUN_ROOT/doctrine-queue-arm exec bash --rcfile $RUN_ROOT/doctrine-queue-rc' fixture"
+GANG_LAUNCH="sh -c 'DOCTRINE_QUEUE_SEEN=$RUN_ROOT/doctrine-queue-seen DOCTRINE_QUEUE_ARM=$RUN_ROOT/doctrine-queue-arm ENV=$RUN_ROOT/doctrine-queue-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 collar_input() {
   local box
@@ -3531,10 +3541,6 @@ tmux send-keys -t "$(window_id 1)" C-u
 # changing is therefore not proof of entry, and delivery must say so instead
 # of reporting success.
 cat > "$RUN_ROOT/queue-rc" <<'RC'
-# --rcfile replaces ~/.bashrc but not /etc/bash.bashrc: Ubuntu's
-# command-not-found handler there spends seconds per envelope line, which
-# outlasts the immediate verification rhythm this suite runs on.
-unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='[ -f "$QUEUE_STRAND" ] && PS1="❯ Press up to edit queued messages"'
 RC
@@ -3543,7 +3549,7 @@ cat > "$RUN_ROOT/collars/queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand exec bash --rcfile $RUN_ROOT/queue-rc' fixture"
+GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand ENV=$RUN_ROOT/queue-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
@@ -3606,7 +3612,6 @@ contains "and the refusal names the missing declaration" \
 # reader rather than in the prompt string, where it would concatenate with the
 # recalled body and make every readback look altered.
 cat > "$RUN_ROOT/flush-rc" <<'RC'
-unset -f command_not_found_handle
 PS1='❯ '
 HISTCONTROL=ignorespace
 PROMPT_COMMAND='if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
@@ -3623,7 +3628,7 @@ cat > "$RUN_ROOT/collars/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan exec bash --rcfile $RUN_ROOT/flush-rc' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 collar_input() { # a composer that spans lines, and reads as the hint when empty
@@ -3985,7 +3990,6 @@ equal "and it leaves no window behind either" "" "$(window_id badstop)"
 # key to the COLLAR's declaration rather than to anything hard-coded in core:
 # the bound key is C-g, so an interrupt that sent Escape would leave no mark.
 cat > "$RUN_ROOT/interrupt-rc" <<'RC'
-unset -f command_not_found_handle
 PS1='❯ '
 bind -x '"\C-g": printf "INTERRUPT_KEY_RECEIVED\n"'
 RC
@@ -3993,7 +3997,7 @@ cat > "$RUN_ROOT/collars/interruptible.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/interrupt-rc' fixture"
+GANG_LAUNCH="sh -c 'ENV=$RUN_ROOT/interrupt-rc exec bash --posix' fixture"
 GANG_INTERRUPT_KEY='C-g'
 GANG_BUSY_REGEX='STILL_WORKING'
 SH
@@ -4765,7 +4769,6 @@ excludes "a malformed oldest stamp does not fabricate an age" \
 # witnesses the collar-declared key independently and keeps a normal spool so
 # backlog can prove it neither competes with nor absorbs the reason.
 cat > "$RUN_ROOT/preempt-rc" <<RC
-unset -f command_not_found_handle
 PS1='❯ '
 bind -x '"\C-g": printf "%s\n" INTERRUPT_KEY_RECEIVED > "$RUN_ROOT/preempt-key"'
 RC
@@ -4773,7 +4776,7 @@ cat > "$RUN_ROOT/collars/preemptible.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'exec bash --rcfile $RUN_ROOT/preempt-rc' fixture"
+GANG_LAUNCH="sh -c 'ENV=$RUN_ROOT/preempt-rc exec bash --posix' fixture"
 GANG_INTERRUPT_KEY='C-g'
 GANG_STOP_HOOK=1
 SH
@@ -5128,7 +5131,6 @@ equal "the final parked reading was stage_clear's own landing-zone read" \
 # box unreadable. Falling through to success here is the hole; the send must
 # die naming the uncertainty and record the body as unknown.
 cat > "$RUN_ROOT/flicker-rc" <<'RC'
-unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='[ -f "$FLICKER_FLAG" ] && PS1="❯ POST_SENTINEL"'
 RC
@@ -5136,7 +5138,7 @@ cat > "$RUN_ROOT/collars/flicker.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'FLICKER_FLAG=$RUN_ROOT/flicker-flag exec bash --rcfile $RUN_ROOT/flicker-rc' fixture"
+GANG_LAUNCH="sh -c 'FLICKER_FLAG=$RUN_ROOT/flicker-flag ENV=$RUN_ROOT/flicker-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*QUEUE_HINT_NEVER_SHOWN\$'
 collar_input() { # one readable look at the post-Enter sentinel, then nothing
   local line
@@ -5739,7 +5741,6 @@ equal "a whitespace-only continuation is refused rather than typed" \
 # was driven doing; a fixture showing the hint earlier would refuse at the
 # preflight and prove nothing. Same observed hint as the claude-code collar.
 cat > "$RUN_ROOT/compact-queue-rc" <<'RC'
-unset -f command_not_found_handle
 PS1='❯ '
 PROMPT_COMMAND='if [ -f "$QUEUE_STRAND" ]; then
                   [ -z "$QUEUE_ARMED" ] || PS1="❯ Press up to edit queued messages"
@@ -5750,7 +5751,7 @@ cat > "$RUN_ROOT/collars/compact-queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/compact-queue-strand exec bash --rcfile $RUN_ROOT/compact-queue-rc' fixture"
+GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/compact-queue-strand ENV=$RUN_ROOT/compact-queue-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_COMPACT_CMD="touch $RUN_ROOT/compact-queue-strand"
 SH
