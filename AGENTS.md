@@ -28,8 +28,8 @@ reads the file. Editing it can therefore change what a live team is held to.
 ## Preserve guards
 
 An existing assertion records a decision. Changing its expectation requires
-showing why the old behavior was wrong; deleting it makes the strongest version
-of that claim. Do not edit a test merely because it blocks a behavior change.
+showing why the old behavior was wrong; deleting it requires the same proof.
+Do not edit a test merely because it blocks a behavior change.
 
 Green is not sufficient when a fixture produced no evidence. Keep unknown
 distinct from both pass and fail, and require immediate observable readiness
@@ -44,8 +44,7 @@ not coordinate work or supervise agents.
 
 - Harness-specific knowledge belongs in `collars/`, not harness-name branches
   in `bin/gang`.
-- Do not add patrols, schedulers, daemons, watchdogs, retry managers, or
-  reconciliation loops.
+- Do not add the machinery classes `CONSTITUTION.md` bans (laws 1 and 7).
 - Do not add speculative surfaces without a live consumer.
 - Fail loudly when a native TUI or event shape can no longer be interpreted.
 - Put operator security choices in operator configuration. Collars must not
@@ -75,12 +74,10 @@ test/gate.sh
 ```
 
 It copies the working tree — uncommitted work included — into a private
-snapshot, commits it there, and runs `test/lint.sh` and `test/integration.sh`
-from the copy. That is what makes the complete gate runnable *before* a commit:
-the executable is clean against the snapshot's own HEAD, so the dirty-execution
-warning has nothing to report, and no edit you make afterwards can reach a run
-already under way. Run the two scripts directly only against a tree that is
-already settled; they refuse a tree they would not own and say so.
+snapshot and runs `test/lint.sh` and `test/integration.sh` from the copy, so
+the complete gate is runnable *before* a commit. Run the two scripts directly
+only against a tree that is already settled; they refuse a tree they would not
+own and say so.
 
 Mandatory tests contain no sleeps, polling, or timeout scenarios and must remain
 well below their hard ceiling. Use immediate state, event barriers, or fake
@@ -96,9 +93,9 @@ When native behavior needs proof, drive a separately named disposable Gangline
 session. Never use the development agent or the live `gangline` session as the
 test subject. Delete only the exact disposable session afterward.
 
-Isolating one takes a step the goal does not imply. Inside an agent window
-`$TMUX` is set, so bare `tmux` — and `gang`, which takes no socket flag — talks
-to the live server and `TMUX_TMPDIR` is ignored without saying so. Start with
+Inside an agent window `$TMUX` is set, so bare `tmux` — and `gang`, which takes
+no socket flag — talks to the live server and `TMUX_TMPDIR` is ignored without
+saying so. Start with
 `unset TMUX TMUX_PANE`, then prove it with `tmux list-sessions` showing only
 your own session, before anything spawns an agent. `test/integration.sh` does
 this on its seventh line.

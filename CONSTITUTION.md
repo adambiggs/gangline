@@ -30,7 +30,7 @@ own right. Violating a law is a defect.
    `docs/DECISIONS.md` proving the value is real and unachievable any other way.
 
 5. **Nothing lands without a live consumer.** If nothing invokes it the day it
-   merges, it does not merge. Speculative generality is the seed of the pile.
+   merges, it does not merge.
 
 6. **Everything has a deletion path.** Any artifact this system produces — logs,
    state, records — must say how and when it dies.
