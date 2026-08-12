@@ -141,11 +141,10 @@ cleanup() {
     if [ -s "$RUN_ROOT/unknowns" ]; then
       printf 'Gang could not verify these setup submissions: %s\n' \
         "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
-      printf 'Each was retried once and starved again. This run measured no\n'
-      printf 'cause for that and names none. What it knows is above the shim:\n'
-      printf 'the compressed clock gives a pane 5 x 0.05s to answer an Enter,\n'
-      printf 'so anything that delays THAT PANE past its budget starves here\n'
-      printf 'and nowhere else. Measure the pane before you blame the box.\n'
+      printf 'Each was retried once and starved again, against the shim\n'
+      printf 'above: five box readings, 0.05s apart, for one to differ. That\n'
+      printf 'budget was missed. This run measured no cause for it and names\n'
+      printf 'none.\n'
     fi
   fi
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
@@ -7493,16 +7492,16 @@ if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'
 fi
-# Reported apart from both columns and folded into neither: an unknown is what
-# something outside the tree did to the run, not a verdict on the tree. Green
-# with unknowns above zero means the coverage held while at least one pane lost
-# the compressed clock's race, which is worth knowing before the number gets
+# Reported apart from both columns and folded into neither: an unknown is a
+# submission this run could not verify, which is neither a pass nor a fail.
+# Green with unknowns above zero means the coverage held while something missed
+# the compressed clock's budget, which is worth knowing before the number gets
 # quoted anywhere.
 if [ -s "$RUN_ROOT/unknowns" ]; then
   printf '%s setup submission(s) gang could not verify, re-established: %s\n' \
     "$(wc -l < "$RUN_ROOT/unknowns" | tr -d ' ')" \
     "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
-  printf 'A pane, not the tree, missed the shim budget. This run measured no\n'
-  printf 'cause and names none.\n'
+  printf 'Something missed the compressed clock budget above. This run\n'
+  printf 'measured no cause and names none.\n'
 fi
 [ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ]
