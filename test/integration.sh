@@ -6371,9 +6371,17 @@ equal "the outer verdict is printed before Gangline's own output" \
 # every assertion above and still withhold each progress line until the outer
 # process exited, which is the whole defect. So the outer fixture proves the
 # live property from inside its own run, and needs no barrier to hang on: it
-# prints to stderr, which is unbuffered, and then — still running — reads the
-# file the local hook's own output is going to. Inherited, its line is already
-# there. Captured, it is in a temporary file this fixture cannot name.
+# writes, and then — still running — reads the file the local hook's own output
+# is going to. Inherited, its lines are already there. Captured, they are in a
+# temporary file this fixture cannot name.
+#
+# Both streams, because the contract is both and a capture of either one alone
+# passes every other assertion here. stderr is unbuffered and needs nothing.
+# stdout is written by awk rather than by this shell: a child's exit flushes it
+# into the inherited descriptor, where this shell's own printf would still be
+# sitting in a stdio buffer with nothing to distinguish it from a capture. The
+# record names the streams that arrived rather than answering yes or no, so a
+# failure says which one was withheld.
 live_hooks="$RUN_ROOT/pre-push-live-hooks"
 live_config="$RUN_ROOT/pre-push-live-gitconfig"
 live_out="$RUN_ROOT/pre-push-live.out"
@@ -6383,12 +6391,12 @@ cat > "$live_hooks/pre-push" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 cat > /dev/null
-printf 'OUTER-PROGRESS-MARKER\n' >&2
-if grep -q OUTER-PROGRESS-MARKER "$GANGLINE_LIVE_OUT"; then
-  printf 'on screen\n' > "$GANGLINE_LIVE_RECORD"
-else
-  printf 'withheld\n' > "$GANGLINE_LIVE_RECORD"
-fi
+awk 'BEGIN { print "OUTER-PROGRESS-STDOUT" }'
+printf 'OUTER-PROGRESS-STDERR\n' >&2
+record=""
+if grep -Fxq 'OUTER-PROGRESS-STDOUT' "$GANGLINE_LIVE_OUT"; then record="stdout"; fi
+if grep -Fxq 'OUTER-PROGRESS-STDERR' "$GANGLINE_LIVE_OUT"; then record="$record stderr"; fi
+printf '%s\n' "${record# }" > "$GANGLINE_LIVE_RECORD"
 exit 0
 SH
 chmod +x "$live_hooks/pre-push"
@@ -6398,8 +6406,8 @@ export GANGLINE_LIVE_RECORD="$live_record"
 printf '%s\n' "$deletion_record" |
   GIT_CONFIG_GLOBAL="$live_config" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote > "$live_out" 2>&1
-equal "the outer gate's progress is on screen before that gate returns" \
-  "on screen" "$(cat "$live_record")"
+equal "both of the outer gate's streams are on screen before that gate returns" \
+  "stdout stderr" "$(cat "$live_record")"
 
 outer_refusal_rc=0
 outer_refusal_output="$(printf '%s\n' "$deletion_record" |
