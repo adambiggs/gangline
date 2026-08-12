@@ -1,8 +1,7 @@
 # Benchmark selection
 
 This page records which external evaluations can credibly test Gangline and why.
-It is selection guidance, not a source of product requirements. Benchmarks
-consume Gangline; they do not shape the core.
+It is selection guidance, not a source of product requirements.
 
 ## Portfolio
 
@@ -17,9 +16,9 @@ relevance to persistent native-harness work.
 | [RE-Bench](https://metr.org/blog/2024-11-22-evaluating-r-d-capabilities-of-llms/) | Independent generality check | METR created original research-engineering environments, collected matched human-expert baselines, and published trajectories. Continuous objective scores reward sustained experimentation rather than a single lucky patch. | GPU-heavy, ML-specific, and not natively adapted to subscription harnesses. |
 | [SlopCodeBench](https://www.scbench.ai/) | Conditional code-quality diagnostic | The academic benchmark measures correctness, structural erosion, and verbosity as agents repeatedly extend their own code. It publishes native Claude Code and Codex results. | It resets the conversation at each checkpoint, so it does not test context continuity or self-compaction. Public evaluator material also needs a native-web leakage audit. |
 
-GitHub stars are not a validity criterion. Venue or institutional credibility is
-useful, but evaluator boundaries, task construction, disclosed limitations, and
-reproducible receipts matter more.
+Evaluator boundaries, task construction, disclosed limitations, and
+reproducible receipts outrank venue or institutional credibility. GitHub stars
+are not a criterion.
 
 ## First comparison
 
@@ -38,8 +37,7 @@ Pin the benchmark, harnesses, models, effort, starting state, milestone
 information, quarantine, and elapsed-time opportunity. Report accepted progress
 and regressions together with wall time, aggregate active agent time, tokens,
 compactions, resumes, worker changes, duplicated work, and accepted contribution
-from each harness. The extra worker is not free speedup. The target is useful
-value over the controls, not a perfect score.
+from each harness.
 
 Escalate to a larger SWE-Milestone repository only after the first comparison
 is valid and informative. Adapt one unsaturated MirrorCode task only after the
