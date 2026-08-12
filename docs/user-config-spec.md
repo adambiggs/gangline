@@ -2,12 +2,9 @@
 
 > Status: Landed at `132bfd6` on 2026-08-07; retained as a dated
 > implementation record. Superseded in part: §2.3 and §2.6 argue the 8192-byte
-> ceiling as a category-error guard over the doctrine slot. The bound is
-> retained and its reason is not that one — the same validation now guards the
-> contract, whose bytes ride the system prompt or are replaced by a pointer and
-> are never read back, so the ceiling is the only refusal Gangline can apply to
-> them. A role brief takes that path too wherever its collar declares the
-> option. The body is left as it was written; see `docs/DECISIONS.md`, "The
+> ceiling as a category-error guard over the doctrine slot. The bound was
+> removed because byte count predicted neither pane delivery nor system-prompt
+> acceptance. The body is left as it was written; see `docs/DECISIONS.md`, "The
 > contract rides the system prompt where a collar has one".
 
 Four coupled changes: a user configuration file behind the `GANG_*` environment

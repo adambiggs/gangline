@@ -153,20 +153,29 @@ ac5() {
 }
 
 ac6() {
-  local config="$TEST_ROOT/ac6-config" kind expected out rc name
+  local config="$TEST_ROOT/ac6-config" kind expected out rc name prefix value
   mkdir -p "$config/roles"
   printf 'before\000after' > "$config/roles/nul.md"
   printf '\377' > "$config/roles/invalid-utf8.md"
-  awk 'BEGIN { for (i=0; i<8193; i++) printf "x" }' > "$config/roles/ceiling.md"
+  awk 'BEGIN { for (i=0; i<8193; i++) printf "x"; print "\nMARK_LARGE_ROLE" }' \
+    > "$config/roles/large.md"
   printf 'before\rafter' > "$config/roles/control.md"
-  for kind in nul invalid-utf8 ceiling control; do
-    case "$kind" in nul) expected="contains a NUL byte" ;; invalid-utf8) expected="not valid UTF-8" ;; ceiling) expected="exceeds the 8192-byte category-error ceiling" ;; control) expected="control characters other than tab and newline" ;; esac
+  for kind in nul invalid-utf8 control; do
+    case "$kind" in nul) expected="contains a NUL byte" ;; invalid-utf8) expected="not valid UTF-8" ;; control) expected="control characters other than tab and newline" ;; esac
     name="role-ac6-$kind" rc=0
     out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch "$name" -c bash -d /tmp --role "$kind" 2>&1)" || rc=$?
     [ "$rc" -ne 0 ] && pass "AC6 $kind refuses" || fail "AC6 $kind refuses" "$out"
     contains "AC6 $kind names its defect" "$out" "$expected"
     excludes "AC6 $kind opens no window" "$(window_names)" "$name"
   done
+  prefix="$TEST_ROOT/ac6-argv"
+  make_argv_collar argv6 "$prefix"
+  GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac6-large \
+    -c argv6 -d /tmp --role large >/dev/null
+  value="$(<"$prefix.2.bin")"
+  contains "AC6 large valid role reaches the system prompt" \
+    "$value" "MARK_LARGE_ROLE"
+  drop_agent role-ac6-large
 }
 
 ac7() {
@@ -480,7 +489,7 @@ ac17() {
   cp "$PRODUCT_ROOT/CONTRACT.md" "$tree/CONTRACT.md"
   printf 'SHIPPED_SHADOW\n' > "$tree/roles/shadow.md"
   printf 'OPERATOR_LEAD\n' > "$config/roles/lead.md"
-  awk 'BEGIN { for (i=0; i<8193; i++) printf "x" }' > "$config/roles/shadow.md"
+  printf 'OPERATOR\000SHADOW' > "$config/roles/shadow.md"
   printf 'INVALID_NAME\n' > "$config/roles/bad:name.md"
   printf 'INVALID_HIDDEN_NAME\n' > "$config/roles/.hidden.md"
   printf 'HITCH_ROLE_BODY\n' > "$config/roles/hitch.md"
@@ -488,7 +497,7 @@ ac17() {
   equal "AC17 operator override appears once" 1 "$(printf '%s\n' "$out" | awk -F '\t' '$1=="lead" {n++} END {print n+0}')"
   contains "AC17 operator origin is reported" "$out" "$config/roles/lead.md"
   contains "AC17 invalid shadow winner is reported" "$out" $'shadow\t'
-  contains "AC17 shadow defect is reported" "$out" "exceeds the 8192-byte category-error ceiling"
+  contains "AC17 shadow defect is reported" "$out" "contains a NUL byte"
   contains "AC17 invalid basename is not hidden" "$out" "bad:name"
   contains "AC17 leading-dot basename is not hidden" "$out" ".hidden"
   contains "AC17 basename status names the law" "$out" "role name must use only"

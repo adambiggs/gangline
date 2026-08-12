@@ -2972,19 +2972,20 @@ for bad_doctrine in invalid-utf8 nul control-cr; do
     "$(window_names)" "doctrine-$bad_doctrine"
 done
 
-mkdir -p "$DOCTRINE_CASES/over-ceiling"
+mkdir -p "$DOCTRINE_CASES/large"
 awk 'BEGIN { for (i = 0; i < 8193; i++) printf "x" }' \
-  > "$DOCTRINE_CASES/over-ceiling/DOCTRINE.md"
-if ceiling_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/over-ceiling" \
-  "$GANG" hitch doctrine-over-ceiling -c bash -d /tmp 2>&1)"; then
-  fail "an over-ceiling doctrine is refused before launch" \
+  > "$DOCTRINE_CASES/large/DOCTRINE.md"
+if large_doctrine_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/large" \
+  "$GANG" hitch doctrine-large -c bash -d /tmp 2>&1)"; then
+  fail "large valid doctrine reaches its consumer's delivery boundary" \
     "hitch unexpectedly succeeded"
 else
-  contains "an over-ceiling doctrine is refused before launch" \
-    "$ceiling_out" "exceeds the 8192-byte category-error ceiling"
+  contains "large valid doctrine reaches its consumer's delivery boundary" \
+    "$large_doctrine_out" "startup contract to 'doctrine-large' was not delivered"
 fi
-excludes "the over-ceiling refusal leaves no window" \
-  "$(window_names)" "doctrine-over-ceiling"
+contains "large valid doctrine is not refused before its window opens" \
+  "$(window_names)" "doctrine-large"
+"$GANG" drop doctrine-large >/dev/null
 
 mkdir -p "$DOCTRINE_CASES/unreadable"
 printf '%s\n' 'unreadable doctrine' > "$DOCTRINE_CASES/unreadable/DOCTRINE.md"

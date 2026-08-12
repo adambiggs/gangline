@@ -51,7 +51,7 @@ if it cannot. Either way the bytes are never pasted into a composer, so the
 contract's length is bounded by nothing the pane can render, and Gangline
 resolves and validates the file before opening a window.
 If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
-valid UTF-8 prose within the byte ceiling, the contract attributes and
+valid UTF-8 prose, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
 
@@ -563,13 +563,11 @@ variables are refused. Any malformed file refuses every command, including
 native hooks; recovery is in `docs/operations.md`.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
-no NUL, no controls other than tab and newline, valid UTF-8, and no more than
-8192 bytes. The ceiling is not a deliverability bound and does not predict one:
-delivery is bounded by the target composer's rendering and by pane geometry,
-and a doctrine the target cannot accept fails loudly at hitch through the
-verified paste. It runs the other way too — doctrine a composer would have
-rendered can still be refused by the ceiling, which every prose slot shares.
-Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
+no NUL, no controls other than tab and newline, and valid UTF-8. Byte count does
+not predict deliverability: a doctrine the target cannot accept fails loudly at
+hitch through the verified paste, while system-prompt prose meets the harness,
+operating-system, and model-context boundaries that actually consume it. Delete
+`DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 
 The contract uses the same prose validation and the same operator-first
 resolution: `$GANG_CONFIG_DIR/CONTRACT.md` before the shipped `CONTRACT.md`. It
@@ -577,14 +575,10 @@ is the one prose slot that is not optional — a root without one refuses every
 hitch, naming both paths. Its bytes are never pasted: they ride the system
 prompt where the collar declares that option, and where it does not, only the
 path is sent. A role brief joins them in that prompt on the same collars.
-Nothing downstream reads those bytes back, so the 8192-byte ceiling is the only
-refusal Gangline can apply to them, and it applies before a window opens. That
-is the ceiling's job. It is not the only limit those bytes meet — the operating
-system, the harness, and the model's context window bound them later — and 8192
-is the boundary already in force rather than a measured cutoff. The prose
-Gangline ships for these slots sits far below it; what the ceiling catches is a
-mis-pointed file large enough to spend an agent's context on every turn and
-small enough to reach the launch without complaint.
+Nothing downstream reads those bytes back, so Gangline applies only the prose
+shape checks it can prove before launch. Their consumers apply the real size
+bounds; Gangline does not substitute an unrelated byte threshold for those
+interfaces.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries one into the system prompt where the collar has that option.

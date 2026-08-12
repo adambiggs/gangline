@@ -1024,12 +1024,6 @@ prose_check() { # $1 path, $2 label, optional display path; populate PROSE or PR
     PROSE_ERROR="$label $display is not valid UTF-8"
     return 1
   fi
-  # This catches a document-tree, log, or binary put in a prose slot. It is a
-  # category-error guard, not a bound on what a target composer can render.
-  if [ "$bytes" -gt 8192 ]; then
-    PROSE_ERROR="$label $display exceeds the 8192-byte category-error ceiling"
-    return 1
-  fi
 }
 
 prose_read() { # $1 path, $2 label, optional display path; populate PROSE or fail

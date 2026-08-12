@@ -310,14 +310,13 @@ an override that still masks the repaired file.
 ### A larger startup contract cannot be delivered to the target pane
 
 Operator doctrine can make the startup contract larger than the target
-composer can render in the current pane. The doctrine byte ceiling catches a
-category error, not this geometry-dependent bound. Hitch reports that the
-startup contract was not delivered and leaves the exact window for inspection.
+composer can render in the current pane. Hitch reports that the startup contract
+was not delivered and leaves the exact window for inspection; byte count is not
+used as a proxy for this geometry-dependent boundary.
 
 Use `gang capture NAME` or `gang attach` to inspect it. Then run `gang roster`
 before the destructive step, `gang drop NAME`, shorten the doctrine or enlarge
-the target pane, and hitch the agent again. Do not treat the pre-launch doctrine
-ceiling as evidence that a target can render the body.
+the target pane, and hitch the agent again.
 
 ### A harness is blocked on a dialog
 

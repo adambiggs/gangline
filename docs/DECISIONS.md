@@ -524,22 +524,13 @@ wherever the collar has the option, and is pasted where it does not; doctrine is
 pasted always. Neither can be replaced by a pointer the way the contract can:
 they are per-hitch, and the pointer buys them nothing.
 
-Prose that rides the system prompt is never read back, so no delivery
-verification bounds it, and the byte ceiling in prose validation is the only
-refusal Gangline can apply to it — before a window opens, or not at all. That is
-what the ceiling is for. What it catches is a mis-pointed file large enough to
-spend an agent's context on every turn, since the harness resends that prompt,
-and small enough to reach the launch without complaint. It is not the only limit
-those bytes meet: the operating system, the harness, and the model's context
-window all bound them later and less legibly.
-
-8192 is the boundary already in force, kept because nothing measures where a
-better one would be — inventing a number for the corrected reason would repeat
-the defect one layer down. Every prose slot shares it rather than branching per
-slot, and that is not free: byte count does not predict what a composer can
-render, so a doctrine or a pasted role brief above the ceiling can be refused
-here although the verified paste would have delivered it. That refusal is loud
-and names the file, and it is the price of one validation for every prose slot.
+Prose validation proves file shape, readability, NUL and control-byte absence,
+and UTF-8. It does not cap bytes: the former threshold admitted a measured body
+the composer could not render while refusing differently shaped prose a system
+prompt could carry. Pane-bound prose fails at verified delivery; system-prompt
+prose meets the harness, operating-system, and model-context limits that
+actually consume it. A mis-pointed binary still reaches the content checks
+rather than being inferred from size.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries a system prompt. Both share one option rather than passing
