@@ -71,6 +71,5 @@ case ":$PATH:" in
      echo "      export PATH=\"$BIN_DIR:\$PATH\"" ;;
 esac
 echo
-# `gang up` attaches to the lead.
 echo "Start a team:  cd ~/your/repo && gang up"
 echo "  that attaches you to the lead; detach with Ctrl-b then d, return with 'gang attach'"

@@ -3,22 +3,17 @@
 #
 # THE MANDATORY GATE, RUN AGAINST A TREE THE RUN OWNS.
 #
-# Two failures wrote this file, and they are the same failure.
-#
 # The suite could not pass on a dirty tree at all. One mandatory assertion
 # requires a `gang roster` stderr capture to be exactly empty, and the live
 # executable deliberately warns on stderr whenever its own bytes diverge from
 # HEAD. Both halves are right, and together they meant the complete gate could
 # only ever run AFTER a commit, at pre-push, on the clean worktree that hook
-# builds. A day of work was landed on focused checks and lint because the full
-# gate was not runnable on the tree that held the work.
+# builds.
 #
 # And a run that reads the tree it is testing does not own it. Bash reads a
 # script incrementally, `gang` re-reads collars and roles at hitch time, and the
 # installer hashes the tree: an edit made while the suite is running changes
-# what executes mid-run. That has already cost this team a failure that belonged
-# to the editor rather than to the code, and a review of files that moved under
-# the reviewer.
+# what executes mid-run.
 #
 # So the gate copies the working tree — tracked, staged and untracked alike —
 # into a private snapshot, commits it there, and runs from that copy. The
@@ -42,9 +37,8 @@ set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
-# WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED, and the way to get that
-# is to fix the configuration once rather than to chase the channels that can
-# change it. The suite exports a private GIT_CONFIG_GLOBAL and a private
+# WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
+# private GIT_CONFIG_GLOBAL and a private
 # XDG_CONFIG_HOME partway through its own setup, so a check inheriting either
 # would answer one question before those lines and a different one after, and
 # could report movement that never happened. A denylist loses that race by
@@ -64,8 +58,7 @@ unset GIT_CONFIG_COUNT GIT_CONFIG_NOSYSTEM GIT_CONFIG_PARAMETERS
 
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 
-# WHAT THIS CHECK IS NOT ABLE TO SEE, stated because a claim of ownership that
-# quietly excludes cases is worse than no claim. A file the repository itself
+# WHAT THIS CHECK IS NOT ABLE TO SEE. A file the repository itself
 # ignores is outside this tree by definition, so an ignored collar can change
 # what the LIVE checkout does while this reads settled — the snapshot is
 # unaffected, since it does not carry that file either. And the snapshot is a
@@ -139,7 +132,6 @@ tree_identity() { # prints one line; 0 = settled, 1 = unsettled, 2 = cannot tell
   # moving one byte this gate would copy, and voiding a run for that is the same
   # false verdict in the other direction.
   head="$(subtree_identity)"
-  # A verdict resting on a standing order is a promise, not a reading.
   # The bit proves only that git was TOLD not to look. It is not evidence that
   # anything changed, so it belongs with the readings that could not be taken.
   if index_conceals; then

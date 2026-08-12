@@ -12,11 +12,10 @@ GANG="$ROOT/bin/gang"
 # A VERDICT IS ABOUT A TREE, so the tree has to hold still. This refuses to
 # start against a working tree that is already moving — bash reads this script
 # incrementally, gang re-reads collars and roles at hitch time, and an edit
-# landing mid-run changes what executes, which has already cost this team a red
-# that belonged to the editor rather than to the code. The identity is read
-# again at the end, because starting settled is not the same as staying
-# settled. test/gate.sh is the way to run this before a commit: it snapshots
-# the working tree, uncommitted work included, and runs the gate from the copy.
+# landing mid-run changes what executes. The identity is read again at the
+# end, because starting settled is not the same as staying settled.
+# test/gate.sh is the way to run this before a commit: it snapshots the
+# working tree, uncommitted work included, and runs the gate from the copy.
 TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"

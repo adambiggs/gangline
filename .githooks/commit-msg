@@ -12,9 +12,7 @@ set -euo pipefail
 # the pipeline status, and set -e kills a commit-msg hook — which REJECTS a
 # perfectly conforming commit with no explanation. It only opens up once grep's
 # block buffer is full, so it is invisible on short messages and fires on long
-# ones: 0/200 at 60 lines, 61/200 at 37KB. CONTRIBUTING asks every contributor
-# for a body saying what failed and what proved it, which is the direction that
-# pushes messages toward the size where it fires.
+# ones: 0/200 at 60 lines, 61/200 at 37KB.
 #
 # `|| rc=$?` rather than `|| true`: grep exits 1 for no-match but >1 for a real
 # failure, and swallowing both would turn an unreadable message file into an
