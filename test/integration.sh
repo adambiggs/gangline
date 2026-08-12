@@ -754,6 +754,73 @@ claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   fixture "$claude_collar")"
 equal "a hooked Claude launch declares Stop and deferred self-compaction together" \
   "1|deferred" "$claude_hook_declarations"
+
+# A COMPOSER TALLER THAN ITS PANE keeps its opening rule and its caret and loses
+# the closing rule and the status lines under it. Observed 2026-08-11 on a pane
+# that shrank by 21 rows: the reader wants the last two
+# full-width rules, saw one, and refused. Refusing is right — content below the
+# fold cannot be read, so nothing may paste against it — but it refused with the
+# status that means no box at all, so `gang send` took the "not taking input"
+# leg and left the body stranded unsent in a composer nobody could see. The
+# clipped box gets its own status so the refusal can name what it is.
+claude_box_dir="$RUN_ROOT/claude-box"
+mkdir -p "$claude_box_dir"
+claude_box_rule="$(printf '─%.0s' $(seq 40))"
+{ printf 'transcript %s\n' 1 2 3 4 5 6
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' '❯ a pasted body that outgrew'
+  printf '%s\n' '  the rows this pane had for'
+  printf '%s' '  it, so the box never closes'
+} > "$claude_box_dir/clipped"
+{ printf 'transcript %s\n' 1 2 3 4
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' 'transcript 5'
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' '❯ a pasted body under a rule'
+  printf '%s\n' '  the transcript drew earlier'
+  printf '%s' '  so a pair of rules is on screen'
+} > "$claude_box_dir/clipped-pair"
+{ printf 'transcript %s\n' 1 2 3 4 5
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' '❯ hello'
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' '  ctx 1k/2k 1%'
+  printf '%s' '  bypass permissions on'
+} > "$claude_box_dir/whole"
+{ printf 'plain %s\n' 1 2 3 4 5 6 7 8 9; printf '%s' 'plain 10'; } \
+  > "$claude_box_dir/absent"
+claude_box_session="claude-box-$$"
+tmux new-session -d -s "$claude_box_session" -n clipped -x 40 -y 10 \
+  "cat '$claude_box_dir/clipped'; cat"
+for claude_box_case in clipped-pair whole absent; do
+  tmux new-window -d -t "=$claude_box_session" -n "$claude_box_case" \
+    "cat '$claude_box_dir/$claude_box_case'; cat"
+done
+claude_box_status() { # $1 = window name -> collar_input's status against it
+  local rc=0
+  ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; collar_input "$2" >/dev/null' fixture "$claude_collar" \
+    "=$claude_box_session:$1" || rc=$?
+  printf '%s' "$rc"
+}
+claude_box_text() { # $1 = window name -> what the collar read there
+  ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; collar_input "$2"' fixture "$claude_collar" \
+    "=$claude_box_session:$1" || true
+}
+equal "a whole composer reads as a readable box" "0" "$(claude_box_status whole)"
+contains "a whole composer reads back what was typed in it" \
+  "$(claude_box_text whole)" "hello"
+equal "a pane with no box at all refuses as an absent box" \
+  "1" "$(claude_box_status absent)"
+equal "a composer clipped by a short pane refuses as clipped, not as absent" \
+  "2" "$(claude_box_status clipped)"
+equal "a clipped composer under an earlier transcript rule also refuses as clipped" \
+  "2" "$(claude_box_status clipped-pair)"
+equal "a clipped composer offers no reading for a paste to be checked against" \
+  "" "$(claude_box_text clipped)"
+tmux kill-session -t "=$claude_box_session"
+
 claude_unhooked_root="$RUN_ROOT/claude'guard"
 mkdir -p "$claude_unhooked_root/bin"
 printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: Apache-2.0' \
@@ -1625,6 +1692,27 @@ adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
 equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
+
+# THE OPERATOR-FACING HALF of the clipped-composer reading. A box that outgrew
+# its pane is drawn and is taking input; what it lacks is room to render. Naming
+# that a harness which never drew a box sends the reader after the wrong thing,
+# and it is the reading that let a stranded paste look like a dead harness.
+clipped_agent_rule="$(printf '─%.0s' $(seq 40))"
+{ printf 'transcript %s\n' 1 2 3 4 5 6
+  printf '%s\n' "$clipped_agent_rule"
+  printf '%s\n' '❯ a pasted body that outgrew'
+  printf '%s\n' '  the rows this pane had for'
+  printf '%s' '  it, so the box never closes'
+} > "$RUN_ROOT/clipped-agent-frame"
+tmux new-window -d -t "=$GANG_SESSION" -n clipped-agent \
+  "cat '$RUN_ROOT/clipped-agent-frame'; cat" >/dev/null
+"$GANG" adopt clipped-agent -c claude-code >/dev/null
+clipped_agent_read="$("$GANG" composer clipped-agent 2>&1 || true)"
+contains "gang composer names a box its pane was too short to show" \
+  "$clipped_agent_read" "taller than its pane"
+excludes "gang composer does not blame the harness for a box it did draw" \
+  "$clipped_agent_read" "has not drawn its input box"
+"$GANG" drop clipped-agent >/dev/null
 
 adopt_alias_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n adopt-alias "PS1='❯ ' bash --norc")"

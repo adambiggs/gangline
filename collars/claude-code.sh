@@ -208,8 +208,9 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
-collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
-  local box
+collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
+                 # 2 = a box whose content outgrew the pane and cannot be read
+  local box rc=0
   box="$(tmux capture-pane -pJ -e -t "$1" | awk '
     { # A dim run ends at the next escape, whatever closes it — 0m here, but the
       gsub(/\033\[2m[^\033]*/, "")
@@ -219,6 +220,15 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
       if (n && t == "") { prev = rule; prevw = rulew; rule = NR; rulew = n }
     }
     END {
+      # A box the pane could not fit keeps the rule that opened it and loses the
+      # one that closes it, so the last rule on screen has the caret under it
+      # instead of the status lines. Its tail is below the fold and unreadable;
+      # say which unreadable this is rather than report a drawn box as absent.
+      for (i = rule + 1; rule && i <= last; i++) {
+        if (line[i] ~ /^[[:space:]]*$/) continue
+        if (line[i] ~ /^❯/) exit 2
+        break
+      }
       if (!prev || !rule || rulew != prevw) exit 1
       if (last - rule > 5) exit 1
       seen = 0
@@ -232,6 +242,7 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, fails if no box
         print s
       }
       if (!seen) print ""
-    }')" || return 1
+    }')" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
   printf '%s' "$box" | tr -d '\302\240'
 }

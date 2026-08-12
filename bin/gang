@@ -2662,6 +2662,13 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
       "${AGENT_COLLAR:-loaded}" "$3"
     return
   fi
+  # A box taller than its pane is drawn and is taking input; what it lacks is
+  # room to render. Reporting that as a harness refusing input sends the reader
+  # after the wrong thing — the window is short, not stuck.
+  if [ "${4:-0}" -eq 2 ]; then
+    printf 'clipped: the composer is taller than the pane, so its box runs past the bottom and cannot be read (make the window taller, then gang composer %s)' "$3"
+    return
+  fi
   if [ "${4:-0}" -ne 0 ]; then
     printf 'unreadable: the harness is not taking input (gang capture %s)' "$3"
     return
@@ -2783,7 +2790,7 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 
 inject() { # $1 window, $2 text, $3 head, $4 locked,
            # $5 witness: screen if UI proves submit, queued if a park is a landing
-  local buf="gang-$$" frag before after tname keep_lock=0
+  local buf="gang-$$" frag before before_rc=0 after tname keep_lock=0
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   tname="$(agent_name_of "$1")"
@@ -2816,8 +2823,9 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     seen="$(landing_zone "$1")" || seen_rc=$?
     refuse "refusing to deliver '$frag' to $tname: its input box is not provably empty [$(box_class "$1" "$seen" "$tname" "$seen_rc")], so the paste would append to a half-written line and the Enter would submit that draft with this message glued to it$onlyhead. Nothing was typed and the body is still the sender's — try again once that box is clear"
   fi
-  before="$(landing_zone "$1")" \
-    || refuse "cannot read the input box of $tname — the harness is not taking input (gang capture $tname)"
+  before="$(landing_zone "$1")" || before_rc=$?
+  [ "$before_rc" -eq 0 ] \
+    || refuse "refusing to deliver '$frag' to $tname: its input box cannot be read [$(box_class "$1" "" "$tname" "$before_rc")]. Nothing was typed and the body is still the sender's"
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
   sleep 0.4
@@ -4447,8 +4455,11 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   resolve "$name"
   declare -F collar_input >/dev/null \
     || die "collar '$AGENT_COLLAR' declares no collar_input, so '$name' has no readable composer"
-  local box
-  box="$(collar_input "$AGENT_ID")" \
+  local box box_rc=0
+  box="$(collar_input "$AGENT_ID")" || box_rc=$?
+  [ "$box_rc" -ne 2 ] \
+    || die "the composer in '$name' is taller than its pane, so its box runs past the bottom of the window and cannot be read — make the window taller (gang capture $name)"
+  [ "$box_rc" -eq 0 ] \
     || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
   grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule
   printf '%s\n' "$box"
