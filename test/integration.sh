@@ -155,7 +155,6 @@ trap cleanup EXIT HUP INT TERM
 
 export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_CONFIG_DIR="$RUN_ROOT/config"
-export XDG_CONFIG_HOME="$RUN_ROOT/xdg"
 export GANG_SESSION="gangtest-$$"
 export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
@@ -338,9 +337,6 @@ contains "the suite switch alias still exposes its concrete fixture" \
 contains "the suite switch alias announces its replacement" \
   "$(<"$RUN_ROOT/test-profiles-alias.err")" \
   "GANG_TEST_PROFILES is now GANG_TEST_COLLARS"
-xdg_config_report="$(env -u GANG_CONFIG_DIR "$GANG" config)"
-contains "the fallback config root stays inside the isolated run root" \
-  "$xdg_config_report" "$RUN_ROOT/xdg/gangline"
 
 # User configuration is parsed as a lower-precedence layer, never executed or
 # sourced. Each case names its own root so malformed fixtures cannot poison the

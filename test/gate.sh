@@ -38,9 +38,8 @@ set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
 # WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
-# private GIT_CONFIG_GLOBAL and a private
-# XDG_CONFIG_HOME partway through its own setup, so a check inheriting either
-# would answer one question before those lines and a different one after, and
+# private GIT_CONFIG_GLOBAL partway through its own setup, so a check inheriting
+# it would answer one question before that line and a different one after, and
 # could report movement that never happened. A denylist loses that race by
 # construction: GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM, the numbered
 # GIT_CONFIG_COUNT triples, XDG_CONFIG_HOME and HOME are five doors to the same

@@ -590,16 +590,6 @@ relative symlink is judged by where it points, not by whether the source end of
 it exists: a dangling one resolves against the destination's parent and can read
 bytes the source never held.
 
-## The suite reads only state the run created
-
-`test/integration.sh` pins `GANG_CONFIG_DIR` under its run root, and pins
-`XDG_CONFIG_HOME` there as well. The config root resolves through three tiers
-and the suite does not own `$HOME`, so a fixture that drops the first pin reads
-the operator's live doctrine, contract, and collars instead, and the run's
-verdict starts depending on the host it ran on. The second tier is proven rather
-than assumed: one assertion runs `env -u GANG_CONFIG_DIR` and requires the
-reported config root to be inside the run root.
-
 ## Native continuation owns compaction recovery
 
 Native continuation now returns every supported compact command to a turn that
