@@ -509,6 +509,16 @@ file instead, which is still better than a paste bounded by what a composer
 renders and by pane geometry. Doctrine and role briefs stay pasted; they are
 per-hitch, and the pointer buys them nothing.
 
+Prose that rides the system prompt is never read back, so no delivery
+verification bounds it, and the byte ceiling in prose validation is the only
+bound those bytes have. That is what the ceiling is for. It sits far above any
+standing terms or role brief written to be read on every turn, and below the
+size at which a mis-pointed file would quietly spend an agent's context every
+turn instead of failing. For the pasted slots the verified refusal at hitch is
+the real bound and the ceiling only moves the same refusal earlier, before a
+window opens; every prose slot shares one validation because carving out an
+exception would add a branch to remove a bound that costs those slots nothing.
+
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries a system prompt. Both share one option rather than passing
 it twice, because a collar declares a single spelling and repeating it would

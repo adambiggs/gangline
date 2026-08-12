@@ -563,17 +563,22 @@ native hooks; recovery is in `docs/operations.md`.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
 no NUL, no controls other than tab and newline, valid UTF-8, and no more than
-8192 bytes. That ceiling catches a log, binary, or document tree placed in the
-prose slot; it is not a deliverability bound. Actual delivery is bounded by the
-target composer's rendering and pane geometry and remains verified at hitch.
-Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
+8192 bytes. The ceiling is not a deliverability bound and does not predict one:
+delivery is bounded by the target composer's rendering and by pane geometry,
+and a doctrine the target cannot accept fails loudly at hitch through the
+verified paste. Delete `DOCTRINE.md` to remove the slot; a hitched copy dies
+with its window.
 
 The contract uses the same prose validation and the same operator-first
 resolution: `$GANG_CONFIG_DIR/CONTRACT.md` before the shipped `CONTRACT.md`. It
 is the one prose slot that is not optional — a root without one refuses every
-hitch, naming both paths. Unlike doctrine and role briefs, its
-bytes are never pasted, so the 8192-byte ceiling is its only bound and pane
-geometry is not.
+hitch, naming both paths. Unlike doctrine and role briefs, its bytes are never
+pasted, so nothing downstream reads them back: the 8192-byte ceiling is the
+only bound they have, and pane geometry is not. That is the ceiling's job —
+bounding prose no composer will refuse on the operator's behalf. It is far
+above any standing terms written to be read on every turn, and below the size
+at which a mis-pointed file would quietly spend an agent's context every turn
+instead of failing.
 
 A hitch may be role-less, but the contract is always present, so a role-less
 hitch still carries one into the system prompt where the collar has that option.
