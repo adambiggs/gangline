@@ -7,9 +7,9 @@ subscription, and context.
 
 [![Two native Codex sessions using Gangline to deliver attributed work, verify the result, and return idle](site/demo.gif)](https://gangline.ai/#demo)
 
-<p align="center"><em>One goal, two native Codex sessions. The lead delegates,
-the worker's attributed report starts the next turn, and the lead verifies. Real
-harnesses; transparent state.</em></p>
+<p align="center"><em>One goal, two native Codex sessions. The worker's
+attributed report starts the lead's next turn; delivery, pane output, and final
+state are real.</em></p>
 
 ## Ontology
 
@@ -22,8 +22,7 @@ A **dog** — a model instance — wears a **harness**, its native CLI runtime
 another. That role is launch prose; Gangline neither records nor manages it
 after delivery.
 
-*Dog* is the noun for a hitched agent. *Harness* names only the runtime, never
-the instance running it.
+*Harness* names only the runtime, never the instance running it.
 
 Gangline supplies only the shared primitives:
 
@@ -149,7 +148,7 @@ and state it cannot determine. It never answers permission prompts or weakens a
 harness sandbox.
 
 State lives in tmux options and dies with its window or team. There is no daemon,
-database, cloud service, background coordinator, or private agent protocol.
+database, cloud service, or private agent protocol.
 
 ## Documentation
 
