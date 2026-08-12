@@ -551,9 +551,7 @@ Exactly these keys are settable:
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
-| `GANG_ACTIVITY_LIMIT` | `300` | activity-only evidence bound |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound |
-| `GANG_CLEAR_PRESSES` | `40` | maximum verified composer-clear attempts |
 
 Collar declarations are refused because `load_collar` clears them before
 sourcing the selected collar; put those values in a custom collar and point

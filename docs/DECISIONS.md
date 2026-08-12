@@ -387,6 +387,15 @@ carrying the news across the process that erased the evidence would take durable
 marker state no consumer wants. Two values that genuinely disagree still
 refuse.
 
+## Persistent config exposes operator choices, not implementation seams
+
+Only variables with a live persistent override consumer join
+`GANG_CONFIG_KEYS`. `GANG_ACTIVITY_LIMIT` and `GANG_CLEAR_PRESSES` retain their
+environment reads but have no repository, test, environment, or audited
+operator override; copying their defaults into the file parser created public
+promises without users. Config files that named them now refuse as unknown so
+the removed surface cannot look accepted while doing something else.
+
 ## A window name carries last-witnessed state
 
 A gang-managed window wraps its agent name in the glyph of the state Gangline

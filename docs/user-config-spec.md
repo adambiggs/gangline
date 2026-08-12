@@ -4,8 +4,12 @@
 > implementation record. Superseded in part: §2.3 and §2.6 argue the 8192-byte
 > ceiling as a category-error guard over the doctrine slot. The bound was
 > removed because byte count predicted neither pane delivery nor system-prompt
-> acceptance. The body is left as it was written; see `docs/DECISIONS.md`, "The
-> contract rides the system prompt where a collar has one".
+> acceptance. Sections 1.4 and 1.6 also promoted environment-only implementation
+> seams into persistent configuration; their tables below reflect the narrower
+> landed allowlist. The body is left as it was written; see
+> `docs/DECISIONS.md`, "The contract rides the system prompt where a collar has
+> one" and "Persistent config exposes operator choices, not implementation
+> seams".
 
 Four coupled changes: a user configuration file behind the `GANG_*` environment
 surface, an operator doctrine slot appended to the startup contract, a
@@ -137,9 +141,7 @@ Exactly these, with the defaults they have today:
 | `GANG_BOOT_TIMEOUT` | `30` | three `boot="${GANG_BOOT_TIMEOUT:-30}"` sites |
 | `GANG_CHURN_WAIT` | `0.5` | top-of-file default block |
 | `GANG_ACTIVITY_WINDOW` | `5` | top-of-file default block |
-| `GANG_ACTIVITY_LIMIT` | `300` | top-of-file default block |
 | `GANG_TURN_LIMIT` | `300` | top-of-file default block |
-| `GANG_CLEAR_PRESSES` | `40` | `presses="${GANG_CLEAR_PRESSES:-40}"` |
 
 **Refused with their own message, not as unknown keys:**
 
@@ -238,7 +240,7 @@ already reads through `${X:-default}` or through the default block.
 ```sh
 GANG_CONFIG_KEYS='GANG_PROFILE GANG_SESSION GANG_PROFILES GANG_LOCK_DIR
 GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW
-GANG_ACTIVITY_LIMIT GANG_TURN_LIMIT GANG_CLEAR_PRESSES'
+GANG_TURN_LIMIT'
 ```
 
 `CONFIG_ORIGINS` accumulates one tab-separated record per key, newline-joined:

@@ -408,9 +408,13 @@ contains "gang config attributes a file-layer value to its line" \
   "$config_report" \
   $'GANG_COLLAR=codex\t'"$CONFIG_CASES/report/config line 2"
 contains "gang config attributes an untouched built-in value to the default" \
-  "$config_report" $'GANG_CLEAR_PRESSES=40\tdefault'
+  "$config_report" $'GANG_TURN_LIMIT=300\tdefault'
 excludes "gang config no longer publishes an occupancy timer" \
   "$config_report" "GANG_OCCUPIED_LIMIT="
+for environment_only in GANG_ACTIVITY_LIMIT GANG_CLEAR_PRESSES; do
+  excludes "gang config keeps $environment_only outside persistent config" \
+    "$config_report" "$environment_only="
+done
 
 # Published config names stay live for 1.x, but two names for one setting are
 # never silently normalized. Exercise every reachable layer arrangement in
