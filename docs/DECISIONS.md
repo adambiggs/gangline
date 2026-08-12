@@ -420,10 +420,13 @@ absent global hook is a silent no-op. Gangline tracks no scanner of its own;
 outward delegation is the whole of its participation.
 
 The outer hook writes to the terminal, and Gangline does not capture it to
-replay the verdict last. A host-global gate that spends minutes in inference
-reports its progress while it runs; withholding that until Gangline's own lint
-and suite finish makes a live push indistinguishable from a hang. Closing
-cosmetic order is worth less than the fresher observation it suppresses.
+replay the verdict last. What replaying it bought is given up knowingly: the
+global gate's verdict printed in place sits above every line this hook emits
+afterwards, and holding it back made it the closing lines of a successful push,
+where a person reads the result. It is given up because a host-global gate that
+spends minutes in inference reports its progress while it runs, and withholding
+that until Gangline's own lint and suite finish makes a live push
+indistinguishable from a hang. Fresher observation outranks closing position.
 
 ## Mandatory tests are immediate
 
