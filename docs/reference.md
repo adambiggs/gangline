@@ -174,15 +174,13 @@ falls through to direct box evidence, a provably empty composer proceeds
 under the full submission verification, and anything less refuses naming both
 the expired witness and the box state. No reader writes turn state — not
 delivery, not status: the bracket is written only by the native hooks that
-own it, because tmux offers no atomic compare-and-delete and a reader's
-unset can erase a fresh hook stamp landing between the read and the unset.
-A malformed value is reported as unreadable, never repaired, and eligibility
+own it. A malformed value is reported as unreadable, never repaired, and eligibility
 is re-derived from live evidence on every send.
 
 The frozen-paint demotion requires an expired bracket, so a window with no
 native hooks and no mid-turn-input declaration whose pane keeps a matching
 busy marker stays refused until the marker scrolls off or the agent is
-dropped. That refusal is fail-closed and deliberate.
+dropped.
 
 Queued is not delivered: where a collar declares queue evidence, a harness
 that parks the submission in its own input queue is reported as a failed
@@ -573,8 +571,7 @@ Delete `DOCTRINE.md` to remove the slot; a hitched copy dies with its window.
 The contract uses the same prose validation and the same operator-first
 resolution: `$GANG_CONFIG_DIR/CONTRACT.md` before the shipped `CONTRACT.md`. It
 is the one prose slot that is not optional — a root without one refuses every
-hitch, naming both paths, because an agent sent to read a contract that is not
-there would discover that alone in a pane. Unlike doctrine and role briefs, its
+hitch, naming both paths. Unlike doctrine and role briefs, its
 bytes are never pasted, so the 8192-byte ceiling is its only bound and pane
 geometry is not.
 

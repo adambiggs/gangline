@@ -133,10 +133,8 @@ Teammates hitched to the same directory share one working tree. Two habits
 keep that safe:
 
 **Commit as you go, atomically.** One logical change per commit, split by
-default — never a pile at the end of an arc. A window can end at any moment
-(teardown, compaction, a crash), and work that reached a commit survives it;
-work in your head or your uncommitted tree may not. When a change is coherent,
-land it.
+default — never a pile at the end of an arc. When a change is coherent, land
+it.
 
 **Stage by explicit path, never by sweep.** `git add -A`, `git add .`, and
 `git commit -a` stage whatever the tree holds — including a teammate's
@@ -233,29 +231,15 @@ expired, or contradictory evidence produces an explicit unknown state.
 evidence the composer is ready. `!occupied!` means a native UI owns the composer.
 `?unknown?` means the available evidence can no longer answer truthfully.
 
-The glyph wrapped around a gang-managed tmux window name is the state Gangline
-last witnessed at an existing observation point or native hook event. It can be
-stale; `gang roster` remains the live-computed truth. Commands always address
-the bare agent name, so `gang send --to pii-impl` does not change as the glyph
-changes. tmux appends its own flags after the name, which makes a last-active
-busy window render as `3:-name--`; the trailing pair is tmux's, and Gangline
-does not replace the operator's status format.
+For the window-name glyph, its staleness, bare addressing, and tmux's appended
+flags, see [Observation](reference.md#observation); `gang roster` remains the
+live-computed truth.
 
-An abandoned turn decays rather than standing unknown forever. A turn
-stopped by keys typed straight into the pane is one no harness reports, and
-`gang interrupt` — the only command that edits the fact, by dropping it — was
-never involved, so its turn bracket stays open and only grows older. Once that bracket passes `GANG_TURN_LIMIT`,
-the tiers under the expired event decide: with nothing painting a turn, the pty
-past its quiet window, a stable pane, the harness's own input box on screen and
-empty, and neither the pty clock nor the screen having moved while Gangline read
-those tiers, the state is `~idle~`. Any one of those missing — a draft in the box,
-a frozen busy marker, a pty whose quietness cannot be measured, a harness that
-wrote mid-decision — and the answer stays `?unknown?`. A collar that does not
-declare `GANG_QUIET_AT_REST` never decays, because its harness writes at rest
-and its quiet is an abstention rather than an observation. A bracket that is
-unreadable or stamped in the future is unknown, not abandoned, and never decays. Within its bound the bracket still
-outranks every quiet tier beneath it, so a working-but-silent harness keeps its
-`-busy-` verdict.
+An abandoned turn — one stopped by keys typed straight into the pane, which no
+harness reports — decays rather than standing unknown forever: once its bracket
+passes `GANG_TURN_LIMIT`, the state reads `~idle~` only when every quieter tier
+positively witnesses readiness, and stays `?unknown?` otherwise. The exact
+conjunction is in [`gang status`](reference.md#gang-status-name).
 
 `binary-skew` means the window was hitched or adopted from different `bin/gang`
 bytes than the observation command. Finish or checkpoint work using the agent's
@@ -420,8 +404,7 @@ relaunch, not a claim that Gangline reconstructed the old team.
 ### A collar no longer recognizes its TUI
 
 Capture the real pane, update only that harness's collar, and require loud
-failure for shapes the parser cannot identify. A degraded fallback that reports
-healthy is worse than an explicit break.
+failure for shapes the parser cannot identify.
 
 ## tmux scope
 
