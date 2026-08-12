@@ -141,9 +141,11 @@ cleanup() {
     if [ -s "$RUN_ROOT/unknowns" ]; then
       printf 'Gang could not verify these setup submissions: %s\n' \
         "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
-      printf 'Each was retried once and starved again, so this box is too busy\n'
-      printf 'to time a paste. That is machine load, not a tree verdict — read\n'
-      printf 'uptime, then re-run quiet before concluding anything about gang.\n'
+      printf 'Each was retried once and starved again. This run measured no\n'
+      printf 'cause for that and names none. What it knows is above the shim:\n'
+      printf 'the compressed clock gives a pane 5 x 0.05s to answer an Enter,\n'
+      printf 'so anything that delays THAT PANE past its budget starves here\n'
+      printf 'and nowhere else. Measure the pane before you blame the box.\n'
     fi
   fi
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
@@ -7448,13 +7450,15 @@ if [ "$tree_moved" -eq 1 ]; then
   printf 'verdict on any tree. The refusal above says what changed.\n'
 fi
 # Reported apart from both columns and folded into neither: an unknown is what
-# the box did to the run, not a verdict on the tree. Green with unknowns above
-# zero means the coverage held on a machine too busy to be sure of its timing,
-# which is worth knowing before the number gets quoted anywhere.
+# something outside the tree did to the run, not a verdict on the tree. Green
+# with unknowns above zero means the coverage held while at least one pane lost
+# the compressed clock's race, which is worth knowing before the number gets
+# quoted anywhere.
 if [ -s "$RUN_ROOT/unknowns" ]; then
   printf '%s setup submission(s) gang could not verify, re-established: %s\n' \
     "$(wc -l < "$RUN_ROOT/unknowns" | tr -d ' ')" \
     "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
-  printf 'That is machine load, not a tree verdict. Re-run quiet before trusting timing.\n'
+  printf 'A pane, not the tree, missed the shim budget. This run measured no\n'
+  printf 'cause and names none.\n'
 fi
 [ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ]
