@@ -55,12 +55,52 @@ fi
 # rc with --norc. Checked here rather than left to a line each new fixture
 # remembers to copy, because the fixtures that starved were the ones that
 # forgot the line.
-shell_leaks="$(awk '
-  FILENAME == "test/lint.sh" { next }   # the checker has to name what it refuses
+#
+# The test is textual, so it is written against a shell WORD and never against
+# the line: a safe flag mentioned in a trailing comment, or sitting inside a
+# longer token or an assignment's value, is not the flag the launcher runs
+# under. The calibration below is what keeps that true, since a predicate this
+# shape is one careless anchor away from admitting exactly the line it exists
+# to refuse.
+hermetic_awk='
+  FILENAME ~ /lint\.sh$/ { next }       # the checker has to name what it refuses
   /^[[:space:]]*#/ { next }
-  /--rcfile|--init-file/ { print FILENAME ":" FNR ":" $0; next }
-  /GANG_LAUNCH=/ && /bash/ && !/--norc|--posix/ { print FILENAME ":" FNR ":" $0 }
-' test/*.sh collars/*.sh)"
+  { line = $0
+    hash = index(line, " #")
+    if (hash > 0) line = substr(line, 1, hash - 1) }
+  line ~ /--rcfile|--init-file/ { print FILENAME ":" FNR ":" $0; next }
+  line ~ /GANG_LAUNCH=/ && line ~ /(^|[^[:alnum:]_-])bash([^[:alnum:]_-]|$)/ &&
+    line !~ /[[:space:]]--(norc|posix)([[:space:]"'"'"']|$)/ {
+      print FILENAME ":" FNR ":" $0 }
+'
+
+# A CHECKER PROVES ITSELF BEFORE IT JUDGES, and proves both directions: a
+# predicate that refused everything would pass a bad-lines-only calibration
+# while making the guard useless, so the safe lines are asserted too.
+hermetic_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+cat > "$hermetic_cal/bad" <<'CAL'
+GANG_LAUNCH="bash -i" # --norc
+GANG_LAUNCH="env DECOY=--posix bash -i"
+GANG_LAUNCH="bash -i --norcnot"
+GANG_LAUNCH="sh -c 'exec bash --rcfile /x/rc' fixture"
+GANG_LAUNCH="bash --init-file /x/rc"
+CAL
+cat > "$hermetic_cal/safe" <<'CAL'
+GANG_LAUNCH="PS1='x' bash --norc"
+GANG_LAUNCH="sh -c 'ENV=/x/rc exec bash --posix' fixture"
+GANG_LAUNCH="python3 '/x/argv-witness.py' prefix fresh"
+CAL
+cal_bad="$(awk "$hermetic_awk" "$hermetic_cal/bad" | wc -l | tr -d ' ')"
+cal_safe="$(awk "$hermetic_awk" "$hermetic_cal/safe")"
+rm -rf -- "$hermetic_cal"
+if [ "$cal_bad" != 5 ] || [ -n "$cal_safe" ]; then
+  printf '%s\n' \
+    "lint: the hermetic-fixture-shell check does not hold its own calibration, so its verdict about the tree means nothing." \
+    "rejected $cal_bad of 5 known-bad launch lines; wrongly rejected: ${cal_safe:-none}" >&2
+  exit 1
+fi
+
+shell_leaks="$(awk "$hermetic_awk" test/*.sh collars/*.sh)"
 if [ -n "$shell_leaks" ]; then
   printf '%s\n' \
     "lint: a fixture shell may not read /etc/bash.bashrc — carry its rc with ENV=<file> bash --posix, or take none with bash --norc:" \
