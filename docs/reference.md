@@ -51,7 +51,7 @@ if it cannot. Either way the bytes are never pasted into a composer, so the
 contract's length is bounded by nothing the pane can render, and Gangline
 resolves and validates the file before opening a window.
 If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
-valid UTF-8 prose within its category-error ceiling, the contract attributes and
+valid UTF-8 prose within the byte ceiling, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
 
