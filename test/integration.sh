@@ -6314,17 +6314,16 @@ outer_success_output="$(printf '%s\n' "$deletion_record" |
 equal "an ambient delegation marker cannot suppress the outer gate" \
   "argv:origin|/tmp/remote
 $deletion_record" "$(cat "$delegation_record")"
-# Both streams reach the terminal unwrapped. Not one exact two-line reading:
-# with the outer hook's output inherited rather than captured, its stdout is
-# block-buffered into this capture pipe while its stderr is not, so the order of
-# those two markers relative to each other is buffering-dependent. The ordering
-# that matters is proven below, where both lines are on stderr.
-contains "the outer gate's stdout reaches the terminal unwrapped" \
-  "$outer_success_output" "OUTER_STDOUT_MARKER"
-contains "the outer gate's stderr reaches the terminal unwrapped" \
-  "$outer_success_output" "OUTER_STDERR_MARKER"
-excludes "no banner announces a withheld outer verdict" \
-  "$outer_success_output" "held back so it lands last"
+# The outer gate's own two lines are the whole of this reading: no banner, no
+# duplicate, no wrapping, nothing else. Exactly one dimension is normalised away
+# and it is the only one that is not determined — with the output inherited
+# rather than captured, the outer hook's stdout is block-buffered into this
+# capture pipe while its stderr is not, so which marker lands first is a
+# property of stdio, not of Gangline. Sorting settles that and nothing else.
+equal "the outer gate's two lines are the whole of the output, once each" \
+  "OUTER_STDERR_MARKER
+OUTER_STDOUT_MARKER" \
+  "$(printf '%s\n' "$outer_success_output" | LC_ALL=C sort)"
 
 # Exercise the ordering property with local output after the outer gate. An
 # empty-tree commit has no suite, so Gangline's own missing-gate refusal is the
@@ -6370,6 +6369,41 @@ equal "the outer verdict is printed before Gangline's own output" \
      else
        printf after
      fi)"
+
+# Ordering after the fact is not the property. A capture that replayed the
+# outer gate's output immediately before Gangline's own gates would satisfy
+# every assertion above and still withhold each progress line until the outer
+# process exited, which is the whole defect. So the outer fixture proves the
+# live property from inside its own run, and needs no barrier to hang on: it
+# prints to stderr, which is unbuffered, and then — still running — reads the
+# file the local hook's own output is going to. Inherited, its line is already
+# there. Captured, it is in a temporary file this fixture cannot name.
+live_hooks="$RUN_ROOT/pre-push-live-hooks"
+live_config="$RUN_ROOT/pre-push-live-gitconfig"
+live_out="$RUN_ROOT/pre-push-live.out"
+live_record="$RUN_ROOT/pre-push-live.record"
+mkdir -p "$live_hooks"
+cat > "$live_hooks/pre-push" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+cat > /dev/null
+printf 'OUTER-PROGRESS-MARKER\n' >&2
+if grep -q OUTER-PROGRESS-MARKER "$GANGLINE_LIVE_OUT"; then
+  printf 'on screen\n' > "$GANGLINE_LIVE_RECORD"
+else
+  printf 'withheld\n' > "$GANGLINE_LIVE_RECORD"
+fi
+exit 0
+SH
+chmod +x "$live_hooks/pre-push"
+git config --file "$live_config" core.hooksPath "$live_hooks"
+export GANGLINE_LIVE_OUT="$live_out"
+export GANGLINE_LIVE_RECORD="$live_record"
+printf '%s\n' "$deletion_record" |
+  GIT_CONFIG_GLOBAL="$live_config" \
+  "$ROOT/.githooks/pre-push" origin /tmp/remote > "$live_out" 2>&1
+equal "the outer gate's progress is on screen before that gate returns" \
+  "on screen" "$(cat "$live_record")"
 
 outer_refusal_rc=0
 outer_refusal_output="$(printf '%s\n' "$deletion_record" |
