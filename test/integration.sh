@@ -352,6 +352,17 @@ done
 refuses "gang help refuses a stray argument" \
   "help: unexpected argument 'STRAY'" "$GANG" help status STRAY
 
+# A LEADING FLAG IS STILL AN ARGUMENT TO NAME. interrupt reads a leading flag as
+# an omitted name, so its options are parsed before self is resolved: from
+# outside a Gangline window the old order answered a malformed option with the
+# synopsis and the not-an-agent line, naming everything except the word that was
+# wrong. Both probes run outside any agent pane, which is where that order was
+# visible.
+refuses "gang interrupt names a malformed leading option" \
+  "interrupt: unexpected argument '--STRAY'" "$GANG" interrupt --STRAY
+refuses "gang interrupt names a leading option that lost its value" \
+  "interrupt: -m needs a value" "$GANG" interrupt -m
+
 # THE ONE COMMAND THAT RECORDS INSTEAD OF DYING. gang hook takes its event from
 # standard input, so argv is an invocation it cannot read — but its caller is a
 # harness configuration and law 7 keeps hooks non-fatal, so it answers the way a

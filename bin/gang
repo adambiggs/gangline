@@ -3971,13 +3971,11 @@ cmd_interrupt() {
     ''|-*) ;;
     *) name="$1"; shift ;;
   esac
-  if [ -z "$name" ]; then
-    name="$(self_name)" || {
-      cmd_help interrupt
-      printf '(no target given, and this shell is not a Gangline agent window)\n'
-      exit 1
-    }
-  fi
+  # ARGUMENTS ARE DIAGNOSED BEFORE THE ENVIRONMENT IS. Resolving the omitted
+  # target first made a malformed option print the synopsis and the not-an-agent
+  # line from outside a Gangline window, naming everything except the argument
+  # that was wrong. What the caller typed is knowable without a pane; where they
+  # are standing is not.
   while [ $# -gt 0 ]; do case "$1" in
     -m) [ "$have_m" -eq 0 ] || die "interrupt: -m may be passed only once"
         [ $# -ge 2 ] || die "interrupt: -m needs a value"
@@ -3989,6 +3987,13 @@ cmd_interrupt() {
   esac; done
   [ "$have_m" -eq 1 ] || [ -z "$from" ] \
     || die "interrupt: --from names the author of a message; pass -m or drop it"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help interrupt
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
   if [ "$have_m" -eq 1 ]; then
     send_sender "$from" interrupt
     send_identity_guard interrupt
