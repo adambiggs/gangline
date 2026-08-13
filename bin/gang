@@ -661,18 +661,14 @@ gang interrupt
   Stop an agent's current turn, by sending
   the stop key its harness declares.
 
-  gang interrupt <name>
+  gang interrupt [name]
     [-m "reason"]
     [--from <sender>]
-  gang interrupt
 
-  <name>         agent to stop. Required
-                 alongside any flag; a flag
-                 cannot follow an omitted
-                 name. Bare gang interrupt,
-                 with no arguments at all,
-                 stops this window's own
-                 turn.
+  [name]         agent to stop. Omit it and
+                 gang stops this window's own
+                 turn, with or without a
+                 reason.
   -m "reason"    deliver this message once
                  the turn has stopped and
                  the input box is back. It
@@ -3964,16 +3960,22 @@ cmd_flush() {
 
 cmd_interrupt() {
   local name="" reason="" from="" have_m=0 ready=0 rc=0 err=""
-  name="${1:-}"
+  # A LEADING FLAG IS NOT A BAD AGENT NAME. Reading it as one made a reasoned
+  # stop the single self target an agent could not reach without knowing its
+  # own name: bare `gang interrupt` already stops this window's turn, and
+  # `gang interrupt -m "reason"` is that same stop carrying the note that says
+  # why. An unknown flag is refused by name in the loop below, where the old
+  # top-level synopsis dump said nothing about which argument was wrong.
+  case "${1:-}" in
+    ''|-*) ;;
+    *) name="$1"; shift ;;
+  esac
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help interrupt
       printf '(no target given, and this shell is not a Gangline agent window)\n'
       exit 1
     }
-  else
-    case "$name" in -*) usage_die ;; esac
-    shift
   fi
   while [ $# -gt 0 ]; do case "$1" in
     -m) [ "$have_m" -eq 0 ] || die "interrupt: -m may be passed only once"
@@ -3994,8 +3996,14 @@ cmd_interrupt() {
   [ -n "$GANG_INTERRUPT_KEY" ] \
     || die "interrupt: collar '$AGENT_COLLAR' declares no GANG_INTERRUPT_KEY, so gang does not know the keystroke that stops a turn in this harness (gang attach)"
   if [ "$have_m" -eq 1 ]; then
-    [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
-      || refuse "interrupt: '$name' resolves to this sending pane; a message that returns to its author is never intended"
+    # A REASON THAT RETURNS TO ITS AUTHOR IS THE POINT HERE, where on send it
+    # is an accident. The reason for a stop is written to be read after the
+    # turn it ended, so an agent stopping itself is leaving exactly that note,
+    # and refusing it would make a self target the one interrupt that has to
+    # be spelled without its reason. What gang cannot promise is the delivery:
+    # the caller runs inside the turn it is stopping, so a harness that ends
+    # that turn by killing the tool call takes this process with it before the
+    # reason is typed. That is the same verdict the stop itself is.
     envelope "$SEND_FROM" "$reason"
   fi
   lock_pane "$AGENT_ID"

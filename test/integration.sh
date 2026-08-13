@@ -4838,6 +4838,33 @@ excludes "the reason lands before any parked backlog" \
 excludes "the preemption does not drain another sender's backlog" \
   "$preempt_pane" "MARK_PARKED_TWO"
 
+# A STOP WITH A REASON SELF-TARGETS TOO. Bare `gang interrupt` already stops
+# the calling window's own turn; the reason is the note that turn's author
+# leaves for the next one, and it used to be the single self target that could
+# not be spelled — the leading -m was read as an agent name and answered with a
+# synopsis. The delivery has to be witnessed on the pane rather than in gang's
+# own report, because a parser that resolved self and a self-send guard that
+# refused afterwards both exit with the reason still in hand.
+rm -f "$RUN_ROOT/preempt-key"
+preempt_tmux_pane="$(tmux list-panes -t "$preempt_id" -F '#{pane_id}')"
+self_reason_out="$(TMUX_PANE="$preempt_tmux_pane" \
+  "$GANG" interrupt -m 'MARK_SELF_REASON' 2>&1)" || self_reason_out="REFUSED: $self_reason_out"
+contains "a leading -m stops the calling window's own turn" \
+  "$self_reason_out" "interrupted preempt with C-g"
+[ -f "$RUN_ROOT/preempt-key" ] \
+  && pass "the self-targeted stop sends the collar-declared key" \
+  || fail "the self-targeted stop sends the collar-declared key" \
+    "$RUN_ROOT/preempt-key is absent"
+self_reason_pane="$(pane preempt)"
+# source-guard: producer@1784c6b08bf6: the self-targeted interrupt above is the sole producer of MARK_SELF_REASON; no other sender, spool entry or fixture writes that literal
+contains "the self-targeted reason reaches the boundary it created" \
+  "$self_reason_pane" "MARK_SELF_REASON"
+# source-guard: producer@ae27904d4c02: only a body whose sender is preempt itself carries this attribution, and the self-targeted reason is the one such body on this pane — every other envelope here is from tester, other or third
+contains "and carries the calling agent as its author" \
+  "$self_reason_pane" "[gang:preempt#"
+contains "a self-targeted reason is never parked either" \
+  "$("$GANG" status preempt)" "spooled: 3"
+
 tmux send-keys -l -t "$preempt_id" 'HUMAN_DRAFT'
 if preempt_refused="$("$GANG" interrupt preempt \
   -m 'MARK_UNDELIVERED' --from tester 2>&1)"; then
