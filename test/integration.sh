@@ -308,19 +308,44 @@ equal "every dispatched operator command has a bare classification" \
 # hitch and up that reasoning inverts — a name that does not exist is what they
 # CREATE, so an unknown word discarded by hitch's parser would launch a real
 # ghost agent here, before the suite's own fixture team exists, and up would go
-# on to attach to it. Their `-d /nonexistent/gangline-arity-probe` is the
-# containment, not decoration: hitch checks the directory after the parse loop,
-# so the stray argument is refused first while the check is intact, and the
-# missing directory refuses before any window opens if it ever is not. Do not
-# simplify it away.
+# on to attach to it. Measured: against a hitch whose unknown-argument arm
+# discards, the uncontained row launched an agent and delivered its contract.
+#
+# Those two rows therefore carry two containments, and only one of them is
+# independent. `-d` is argv, read by the very parser whose regression this
+# probes: it stops the arm-level mutant that was measured, but a refactor that
+# stops recognising -d and discards what it does not know drops the containment
+# token along with the stray word, leaving dir at its default. Measured too —
+# that mutant launched an agent through the -d containment alone. GANG_COLLAR is
+# the one that does not depend on the parser: it is read from the environment
+# before the loop runs, cannot be dropped by it, and hitch resolves the collar
+# before any window opens. Under the same mutant it refused, naming the
+# environment. Two separate regressions must now land before this test can
+# create anything. Do not simplify either away.
 #
 # gang hook is not in this table and is not exempt from the rule; it is covered
 # below, where its own contract makes recording the argument the refusal and
 # dying the wrong answer. gang up delegates its arguments to hitch and its
 # refusal says so.
+# A containment is only a containment while it names nothing that exists, and one
+# that quietly stopped containing would read exactly like one never needed.
+arity_absent_dir="$RUN_ROOT/nonexistent/gangline-arity-probe"
+arity_absent_collar="gangline-arity-probe-absent-collar"
+[ ! -e "$arity_absent_dir" ] \
+  && pass "the hitch and up probes name a working directory that does not exist" \
+  || fail "the hitch and up probes name a working directory that does not exist" \
+    "$arity_absent_dir exists"
+if collar_absent_out="$("$GANG" hitch arity-probe-collar-check \
+  -c "$arity_absent_collar" -d /tmp 2>&1)"; then
+  fail "and a collar name that resolves to nothing" \
+    "hitch unexpectedly succeeded: [$collar_absent_out]"
+else
+  contains "and a collar name that resolves to nothing" \
+    "$collar_absent_out" "$arity_absent_collar"
+fi
 arity_probes=(
-  "up|ghost -d /nonexistent/gangline-arity-probe STRAY|hitch: unknown argument 'STRAY'"
-  "hitch|ghost -d /nonexistent/gangline-arity-probe STRAY|hitch: unknown argument 'STRAY'"
+  "up|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
+  "hitch|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
   "adopt|ghost STRAY|adopt: unknown argument 'STRAY'"
   "send|--to ghost --stdin STRAY|send: unknown argument 'STRAY'"
   "flush|ghost STRAY|flush: unexpected argument 'STRAY'"
@@ -350,10 +375,13 @@ for arity_probe in "${arity_probes[@]}"; do
   arity_cmd="${arity_probe%%|*}"
   arity_rest="${arity_probe#*|}"
   arity_argv="${arity_rest%%|*}"
-  arity_expected="${arity_rest#*|}"
-  # shellcheck disable=SC2086 # the probe argv is deliberately word-split
+  arity_rest="${arity_rest#*|}"
+  arity_expected="${arity_rest%%|*}"
+  arity_env=""
+  [ "$arity_rest" = "$arity_expected" ] || arity_env="${arity_rest#*|}"
+  # shellcheck disable=SC2086 # probe argv and env are deliberately word-split
   refuses "gang $arity_cmd refuses a stray argument" \
-    "$arity_expected" "$GANG" "$arity_cmd" $arity_argv
+    "$arity_expected" env $arity_env "$GANG" "$arity_cmd" $arity_argv
 done
 # help is a dispatcher arm rather than a command function, and it discarded
 # everything past the page it was asked for.
