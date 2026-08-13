@@ -734,17 +734,18 @@ gang usage
   left of a plan's quota — by driving its
   native usage command.
 
-  gang usage <name>
+  gang usage [name]
 
-  <name>  agent whose harness to ask
+  [name]  agent whose harness to ask
+          (default: this window)
 
   Gang locks the pane, types the command only
   into a composer it can prove is idle and
   empty, prints the page, dismisses it, then
-  checks that the composer came back. An
-  agent cannot ask this of itself: its own
-  running turn owns the box gang would type
-  into.
+  checks that the composer came back. Omit
+  the name and gang resolves this window and
+  then refuses it: an agent's own running
+  turn owns the box gang would type into.
 EOF
       ;;
     notify) cat <<'EOF'

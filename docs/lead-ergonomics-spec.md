@@ -10,6 +10,13 @@
 > assertion to prove it, against a future fixture that would drop the first pin.
 > Both are removed. The paragraph says in its own words that the case is a
 > future one, and that is not a consumer.
+> Superseded again in the "acceptance criterion is scoped" section and its test
+> 3: `interrupt`, `flush` and `usage` are listed there as bare-error commands
+> that must answer a bare invocation with a synopsis. Each takes one agent
+> name, so each shipped with the self-target fallback instead, and the operator
+> has ruled that behaviour the design — an agent reading or stopping its own
+> state should not have to know its own name. See `docs/DECISIONS.md`, "A
+> missing name is a self target".
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no

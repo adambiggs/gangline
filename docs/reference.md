@@ -5,22 +5,34 @@
 48-character line budget so it remains legible in narrow phone-SSH terminals;
 this reference carries the complete command contract.
 
-When a command's only missing argument is an agent name, a bare invocation from
-inside a Gangline window targets that window. This applies only with zero
-arguments, so a numeric argument to `capture`, for example, remains an agent
-name rather than becoming a self-targeted line count. Self is resolved from the
-calling tmux pane in the same way as a message sender.
+When a command's only missing argument is an agent name, an invocation from
+inside a Gangline window that omits that name targets that window. An agent
+reading or stopping its own state does not have to know its own name. What is
+omitted is the name, not every argument: a leading flag is not a name, so
+`gang interrupt -m "reason"` is a self-targeted stop carrying its reason, while
+a positional argument is always read as the name — a numeric argument to
+`capture` remains an agent name rather than becoming a self-targeted line count.
+Self is resolved from the calling tmux pane in the same way as a message sender.
 
 | Bare command | Result |
 |---|---|
-| `status`, `capture`, `composer`, `compact`, `context`, `mail` | Target the calling agent. |
-| `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
+| `status`, `capture`, `composer`, `compact`, `context`, `mail`, `usage`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
+Resolving self is not a promise that the command proceeds. `gang usage`
+self-targets and is then refused on that same agent's mid-turn evidence,
+because the caller is running in the composer the usage page would have to be
+typed into. Who the target is and what its state allows are separate answers.
+
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
+
+Every command refuses an argument it does not consume, naming the argument.
+Nothing is accepted and discarded: a word Gangline drops silently has told its
+caller that the word was understood, and the reading that comes back is then of
+something nobody asked for.
 
 ## Lifecycle
 
@@ -239,7 +251,7 @@ re-adopt as the repair. When a window dies, `gang drop` and `gang down` move
 waiting and held entries under `GANG_ARCHIVE_DIR`, grouped by teardown and
 agent, before deleting the spool. Empty queues create no archive directory.
 
-### `gang flush <name>`
+### `gang flush [name]`
 
 Recovers a message the harness parked in its own input queue, as a verified
 operation. Gangline presses the collar's declared recall key, reads the loaded
@@ -258,7 +270,7 @@ Gangline holds no record of the parked body. It refuses after the recall key
 when that key loaded nothing, or when the readback is not exactly the recorded
 message; the Enter is not pressed in either case.
 
-### `gang interrupt <name> [-m "reason"] [--from <sender>]`
+### `gang interrupt [name] [-m "reason"] [--from <sender>]`
 
 Sends the keystroke the collar declares as its harness's turn-stop key and
 drops Gangline's turn bracket, so the interrupted turn neither leaves a bracket
@@ -276,6 +288,14 @@ would arrive after the work it was meant to stop. If the composer does not
 return or delivery cannot be verified, the reason is printed back to the caller
 in full and reported as not delivered and not parked. Existing backlog remains
 untouched for the next native turn boundary.
+
+Omitting the name stops the calling window's own turn, with or without a
+reason. A reason that returns to its own author is refused on `send` and
+intended here: it is written to be read after the turn it ended. Gangline
+cannot promise that delivery, because the caller runs inside the turn it is
+stopping — a harness that ends that turn by killing the tool call takes the
+sending process with it before the reason is typed. Whether it survives is the
+same harness verdict the stop itself is.
 
 ### `gang compact [<name>] [--resume <turn>]`
 
@@ -417,14 +437,15 @@ readout is visible. claude-code can answer only when lights were enabled at
 hitch, because that launch choice installs its statusline beacon. Adopted
 windows answer only when their required native source is independently present.
 
-### `gang usage <name>`
+### `gang usage [name]`
 
 Drives the usage command declared by the target's harness collar and prints the
 harness's own page raw. The pane is locked for the entire operation. Gangline
 refuses a busy, unknown, occupied, changing, or non-empty composer; it
-types only after all five predicates pass. A bare `gang usage` prints help
-because the calling agent is necessarily running in the composer it would have
-to drive.
+types only after all five predicates pass. A bare `gang usage` resolves the
+calling agent like every other self target and is then refused by those same
+predicates, because that agent is necessarily running in the composer this
+command would have to drive.
 
 Modal pages are returned as the visible screen, trailing blank terminal rows
 removed, and then dismissed with the collar's key. A modal that scrolls within
