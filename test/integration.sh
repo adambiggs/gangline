@@ -345,11 +345,23 @@ arity_absent_collar="gangline-arity-probe-absent-collar"
 # One collar per line, and resolution is by exact name: a substring reading
 # would call the containment broken because some LONGER name contains it, which
 # is a red the containment does not deserve.
-if "$GANG" collars | grep -qxF -- "$arity_absent_collar"; then
-  fail "and a collar name that resolves to nothing" \
-    "$arity_absent_collar is in the collar inventory"
+# The read and the match are separate statements on purpose. Piped together
+# under `set -o pipefail` they share one status, and an inventory that could not
+# be read is nonzero exactly like a name that is not in it — so the arm meaning
+# "absent" would also catch "never looked", and record a verified absence from a
+# fixture that produced no value. An unreadable inventory gets its own arm and
+# its own red: unknown is not this containment's precondition.
+if arity_collar_listing="$("$GANG" collars)"; then
+  if printf '%s\n' "$arity_collar_listing" \
+    | grep -qxF -- "$arity_absent_collar"; then
+    fail "and a collar name that resolves to nothing" \
+      "$arity_absent_collar is in the collar inventory"
+  else
+    pass "and a collar name that resolves to nothing"
+  fi
 else
-  pass "and a collar name that resolves to nothing"
+  fail "and a collar name that resolves to nothing" \
+    "gang collars could not be read, so whether $arity_absent_collar resolves is unknown"
 fi
 arity_probes=(
   "up|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
