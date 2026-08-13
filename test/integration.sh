@@ -290,14 +290,67 @@ contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
 contains "gang roster help names its scripting mode" \
   "$("$GANG" roster --help)" "--porcelain"
-refuses "gang attach refuses a stray argument" \
-  "attach: takes no arguments" "$GANG" attach stray
-refuses "gang collars refuses a stray argument" \
-  "collars: takes no arguments" "$GANG" collars stray
-refuses "gang roster refuses a stray argument" \
-  "roster: expected no arguments or --porcelain" "$GANG" roster stray
 equal "every dispatched operator command has a bare classification" \
   "$dispatch_commands" "$classified_commands"
+
+# ARITY IS REFUSED, NOT DISCARDED. A command that quietly drops a word it never
+# consumes has told the operator that word was understood, and the reading they
+# get back is of something they did not ask for. Every row is one argument past
+# what its command accepts, and every expectation is that command's own
+# refusal: a command with no arity check runs its ordinary path and fails, if
+# it fails at all, saying something else entirely, so no row can pass on an
+# unrelated error. The names are compared against the dispatcher, so a command
+# added without an arity refusal cannot ship quietly.
+#
+# NOTHING HERE MAY REACH A SIDE EFFECT. Each probe names an agent that does not
+# exist, which is what the assertion below would report if a check were removed
+# — `drop ghost STRAY` must not become a drop.
+#
+# gang hook is excluded with the other non-operator routes above: its callers
+# are third-party harness configurations rather than operators, and it answers
+# an event it cannot interpret by recording it on the window, never by dying.
+# gang up delegates its arguments to hitch and its refusal says so.
+arity_probes=(
+  "up|ghost STRAY|hitch: unknown argument 'STRAY'"
+  "hitch|ghost STRAY|hitch: unknown argument 'STRAY'"
+  "adopt|ghost STRAY|adopt: unknown argument 'STRAY'"
+  "send|--to ghost --stdin STRAY|send: unknown argument 'STRAY'"
+  "flush|ghost STRAY|flush: unexpected argument 'STRAY'"
+  "mail|ghost STRAY|mail: unexpected argument 'STRAY'"
+  "interrupt|ghost STRAY|interrupt: unexpected argument 'STRAY'"
+  "compact|ghost STRAY|compact: unexpected argument 'STRAY'"
+  "context|ghost STRAY|context: unexpected argument 'STRAY'"
+  "usage|ghost STRAY|usage: unexpected argument 'STRAY'"
+  "notify|ghost STRAY|notify: unexpected argument 'STRAY'"
+  "curfew|30m STRAY|curfew: unexpected argument 'STRAY'"
+  "status|ghost STRAY|status: unexpected argument 'STRAY'"
+  "capture|ghost 5 STRAY|capture: unexpected argument 'STRAY'"
+  "composer|ghost STRAY|composer: unexpected argument 'STRAY'"
+  "whoami|STRAY|whoami: takes no arguments"
+  "roster|STRAY|roster: expected no arguments or --porcelain"
+  "attach|STRAY|attach: takes no arguments"
+  "drop|ghost STRAY|drop: unexpected argument 'STRAY'"
+  "down|ghost STRAY|down: unexpected argument 'STRAY'"
+  "collars|STRAY|collars: takes no arguments"
+  "roles|STRAY|roles: takes no arguments"
+  "config|STRAY|config: takes no arguments"
+)
+arity_probe_commands="$(printf '%s\n' "${arity_probes[@]}" | cut -d'|' -f1 | sort -u)"
+equal "every dispatched operator command refuses arity it cannot consume" \
+  "$dispatch_commands" "$arity_probe_commands"
+for arity_probe in "${arity_probes[@]}"; do
+  arity_cmd="${arity_probe%%|*}"
+  arity_rest="${arity_probe#*|}"
+  arity_argv="${arity_rest%%|*}"
+  arity_expected="${arity_rest#*|}"
+  # shellcheck disable=SC2086 # the probe argv is deliberately word-split
+  refuses "gang $arity_cmd refuses a stray argument" \
+    "$arity_expected" "$GANG" "$arity_cmd" $arity_argv
+done
+# help is a dispatcher arm rather than a command function, and it discarded
+# everything past the page it was asked for.
+refuses "gang help refuses a stray argument" \
+  "help: unexpected argument 'STRAY'" "$GANG" help status STRAY
 help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
 equal "help names the classified command inventory" \
   "$classified_commands" "$help_inventory"

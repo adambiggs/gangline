@@ -3890,6 +3890,7 @@ cmd_send() {
 # readback that does not match, and no Enter is pressed.
 cmd_flush() {
   local name="${1:-}" parked frag box loaded
+  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help flush
@@ -3897,7 +3898,6 @@ cmd_flush() {
       exit 1
     }
   fi
-  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   resolve "$name"
   [ -n "$GANG_QUEUED_REGEX" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
@@ -4103,7 +4103,7 @@ cmd_compact() {
 
 cmd_curfew() { # declare, show, or clear one optional team curfew
   local spec="${1:-}" now rc=0
-  [ $# -le 1 ] || die "curfew: expected one duration, HH:MM clock time, or clear"
+  [ $# -le 1 ] || die "curfew: unexpected argument '$2'; gang curfew takes one duration, HH:MM clock time, or clear"
   session_live || die "no team (session '$SESSION' not running)"
   if [ -z "$spec" ]; then
     curfew_read || rc=$?
@@ -4134,7 +4134,7 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
 
 cmd_notify() { # declare, show, or clear one optional stall-note target
   local name="${1:-}" current
-  [ $# -le 1 ] || die "notify: expected one agent name or clear"
+  [ $# -le 1 ] || die "notify: unexpected argument '$2'; gang notify takes one agent name or clear"
   session_live || die "no team (session '$SESSION' not running)"
   if [ -z "$name" ]; then
     current="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || current=""
@@ -4156,7 +4156,7 @@ cmd_notify() { # declare, show, or clear one optional stall-note target
 
 cmd_context() { # print the collar's native context reading, unparsed
   local name="${1:-}"
-  [ $# -le 1 ] || die "context: expected at most one agent name"
+  [ $# -le 1 ] || die "context: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help context
@@ -4174,6 +4174,7 @@ cmd_usage() { # drive and return the harness's own usage UI
   local name="${1:-}" busy_rc=0 before after content="" key looks=0
   local diff_rc=0 before_nonempty=0 restored=0 box="" restore_key
   local submit_looks=0 empty_looks=0 unreadable=0 submitted_box="" submitted_rc=0
+  [ $# -le 1 ] || die "usage: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help usage
@@ -4181,7 +4182,6 @@ cmd_usage() { # drive and return the harness's own usage UI
       exit 1
     }
   fi
-  [ $# -le 1 ] || die "usage: expected at most one agent name"
   resolve "$name"
   [ -n "$GANG_USAGE_CMD" ] \
     || die "usage: collar '$AGENT_COLLAR' declares no GANG_USAGE_CMD, so gang does not know this harness's usage command"
@@ -4385,6 +4385,7 @@ paint_state() { # $1 = a state phrase, padding and all
 cmd_status() {
   local state self_failed self_pending staged staged_box staged_box_rc spooled age held held_dir spool_failed stall_failed hook_failed mismatch skew="" current
   local name="${1:-}"
+  [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help status
@@ -4461,6 +4462,7 @@ cmd_status() {
 cmd_mail() { # read a queue; its own agent's read archives what it consumes
   local name="${1:-}" id rc=0 dir e n=0 held=0
   local self="" mine=0 claim label heading=waiting mail_archive="" archived_name=""
+  [ $# -le 1 ] || die "mail: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help mail
@@ -4468,7 +4470,6 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
       exit 1
     }
   fi
-  [ $# -le 1 ] || die "mail: unexpected argument '$2'"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no agent '$name' (see: gang roster)"; }
   # WHOSE QUEUE IS THIS? The window answers it, not the name: the calling pane
   # either IS the target window or it is somebody else looking. No name is
@@ -4804,6 +4805,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
 
 cmd_capture() { # trailing blank pane rows are dead space, not content
   local id name="${1:-}" rc=0
+  [ $# -le 2 ] || die "capture: unexpected argument '$3'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help capture
@@ -4819,6 +4821,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   # where a harness's dim suggested-prompt placeholder is indistinguishable from
   # a real draft; the collar's reading strips styling, so placeholders vanish
   local name="${1:-}"
+  [ $# -le 1 ] || die "composer: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
       cmd_help composer
@@ -4876,6 +4879,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 
 cmd_drop() {
   local id stamped shown rc=0
+  [ $# -le 1 ] || die "drop: unexpected argument '$2'"
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1'"; }
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
@@ -5037,11 +5041,13 @@ case "$cmd" in
   whoami)   cmd_whoami "$@" ;;
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
-  drop)     cmd_drop "$1" ;;
+  drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars|profiles) cmd_collars "$@" ;;
   roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
-  -h|--help|help) cmd_help "${1:-}" ;;
+  -h|--help|help)
+            [ $# -le 1 ] || die "help: unexpected argument '$2'"
+            cmd_help "${1:-}" ;;
   *) die "unknown command '$cmd' (gang --help for usage)" ;;
 esac
