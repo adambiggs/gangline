@@ -371,14 +371,14 @@ refuses "gang interrupt names a malformed leading option" \
 refuses "gang interrupt names a leading option that lost its value" \
   "interrupt: -m needs a value" "$GANG" interrupt -m
 
-# THE ONE COMMAND THAT RECORDS INSTEAD OF DYING. gang hook takes its event from
-# standard input, so argv is an invocation it cannot read — but its caller is a
-# harness configuration and law 7 keeps hooks non-fatal, so it answers the way a
-# malformed payload is answered: named on stderr, stamped on the window, and the
-# event NOT acted on. Discarding the argument and processing the event anyway is
-# the behaviour this pins against. The payload below is well-formed on purpose:
-# a refusal that needed a broken payload to appear would prove nothing about
-# argv.
+# THE ONE COMMAND THAT RECORDS INSTEAD OF DYING — here only as far as stderr,
+# from a caller whose pane gang cannot identify. That is a real case, because a
+# hook can fire outside a registered pane, and it is ALL this reading proves:
+# stderr survives a regression that goes on to process the event, so declining,
+# stamping and leaving the turn fact alone are pinned beside the other hook
+# events instead, where a fixture window exists to witness them. The payload is
+# well-formed on purpose: a notice that needed a broken payload would prove
+# nothing about argv.
 hook_argv_out="$(printf '{"hook_event_name":"Stop"}' \
   | "$GANG" hook STRAY 2>&1)" || true
 contains "gang hook names an argument it does not take" \
@@ -2930,6 +2930,38 @@ equal "an event gang can interpret retires the fact" "" \
 excludes "and a well-shaped event stays byte-silent on stderr" \
   "$(printf '%s' '{"hook_event_name":"Stop"}' |
     TMUX_PANE="$alpha_pane_id" "$GANG" hook 2>&1 >/dev/null)" "could not interpret"
+
+# AN UNREADABLE INVOCATION IS DECLINED, AND STDERR ALONE CANNOT PROVE IT. The
+# argv branch must stop before the event path, and the notice it prints does not
+# witness that: delete only its `exit 0` and the warning still appears, while
+# the well-formed Stop below goes on to close the bracket and clear the very
+# stamp the notice just wrote — half-honouring restored, with no evidence left
+# behind. Measured against exactly that mutant, the two stderr readings above
+# stayed green and the four assertions here went red. The payload is well-formed
+# on purpose: a decline that needed a broken payload would prove nothing about
+# argv.
+tmux set-option -uw -t "$alpha_id" @gl_hook_failed
+tmux set-option -w -t "$alpha_id" @gl_turn "open $(date +%s)"
+hook_argv_rc=0
+hook_argv_err="$(printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$alpha_pane_id" "$GANG" hook STRAY 2>&1 >/dev/null)" || hook_argv_rc=$?
+equal "an argument gang hook cannot read does not break the harness caller" \
+  0 "$hook_argv_rc"
+contains "gang hook names an argument it does not take" \
+  "$hook_argv_err" "does not take ('STRAY')"
+excludes "and does not blame a payload it can read" \
+  "$hook_argv_err" "not readable JSON"
+equal "the event carried by an unreadable invocation is NOT acted on" \
+  "open" "$(tmux show-options -wqv -t "$alpha_id" @gl_turn | cut -d' ' -f1)"
+contains "and the decline outlives the event it declined" \
+  "$(tmux show-options -wqv -t "$alpha_id" @gl_hook_failed)" "does not take ('STRAY')"
+contains "a declined invocation is visible in status" \
+  "$("$GANG" status alpha)" "native event NOT interpreted"
+contains "and roster carries its light" "$("$GANG" roster)" "hook-failed"
+# Leave alpha as the block above left it: stamp retired, bracket closed.
+tmux set-option -uw -t "$alpha_id" @gl_hook_failed
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$alpha_pane_id" "$GANG" hook >/dev/null 2>&1
 
 mkdir -p "$CONFIG_CASES/bad-file-value" "$CONFIG_CASES/bad-env-value"
 printf '%s\n' 'GANG_BOOT_TIMEOUT=abc' > "$CONFIG_CASES/bad-file-value/config"
