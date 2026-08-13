@@ -342,8 +342,15 @@ arity_absent_collar="gangline-arity-probe-absent-collar"
 # behind while recording the failure. gang collars enumerates the same
 # directories collar_file resolves through, and hides only the bash stand-in,
 # so it answers this question without acting on it.
-excludes "and a collar name that resolves to nothing" \
-  "$("$GANG" collars)" "$arity_absent_collar"
+# One collar per line, and resolution is by exact name: a substring reading
+# would call the containment broken because some LONGER name contains it, which
+# is a red the containment does not deserve.
+if "$GANG" collars | grep -qxF -- "$arity_absent_collar"; then
+  fail "and a collar name that resolves to nothing" \
+    "$arity_absent_collar is in the collar inventory"
+else
+  pass "and a collar name that resolves to nothing"
+fi
 arity_probes=(
   "up|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
   "hitch|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
