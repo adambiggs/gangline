@@ -99,10 +99,11 @@ Allowed types are `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`,
 Pair `!` with a `BREAKING CHANGE:` footer that tells callers what to update.
 
 A commit message describes the change, not the process that produced it: no
-agent, reviewer, session, harness, or model names, and no attribution trailers.
-Where provenance carries information, keep the fact and drop the private name —
-"found in independent review on a second harness" is the whole of what a reader
-outside this team can use.
+agent, reviewer, session, harness, or model names, no attribution trailers, and
+no provenance at all. Where a change came from, who found it, and on which pass
+are facts about how this repository is worked on rather than about the change,
+and a rephrasing that keeps the fact while dropping the name is still process.
+The change describes itself.
 
 Pull request titles must also be Conventional Commits. Commit bodies should state
 what failed, what changed, and what proves the result. Marker changes must name
