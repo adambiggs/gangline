@@ -13,11 +13,11 @@ calling tmux pane in the same way as a message sender.
 
 | Bare command | Result |
 |---|---|
-| `status`, `capture`, `composer`, `compact`, `context` | Target the calling agent. |
+| `status`, `capture`, `composer`, `compact`, `context`, `mail` | Target the calling agent. |
 | `usage`, `interrupt`, `flush` | Print help; self-use is incoherent while its turn is running. |
 | `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `send` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify`, `down` | Keep their ordinary bare meaning. |
+| `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
+| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
@@ -31,7 +31,7 @@ switches the current tmux client to it. It attaches the shipped `lead` role by
 default; an explicit `-r` or `--role` selects another role. `GANG_COLLAR`
 selects the harness.
 
-### `gang hitch <name> [-c collar] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -69,7 +69,7 @@ recovered input box and deliver its startup contract. If the bound expires
 first, the window is left for inspection and the error gives the attach, drop,
 and re-hitch recovery.
 
-- `-c` selects a collar.
+- `-c` selects the harness, by the name of the collar that drives it.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the collar's model option.
 - `-e` passes a harness-native reasoning-effort level through the collar's
@@ -100,11 +100,13 @@ observed automatic-compaction boundary. An absolute red threshold above the
 reported native window produces an invalid-light notice rather than staying
 silently unreachable.
 
-### `gang adopt <name> -c <collar>`
+### `gang adopt <name> -c <harness>`
 
-Registers an existing window in `GANG_SESSION`. Adoption does not inject startup
-text or retroactively add launch-time native hooks. A collar whose context
-source requires hitch-time identity may therefore report context unavailable.
+Registers an existing window in `GANG_SESSION`. `-c` names the harness already
+running there, by the name of the collar that drives it. Adoption does not inject
+startup text or retroactively add launch-time native hooks. A collar whose
+context source requires hitch-time identity may therefore report context
+unavailable.
 
 Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
 identity in `@gl_binary_id`. Reusing a window whose recorded identity names
@@ -331,7 +333,7 @@ own flags after the name: a last-active busy window renders as `3:-name--`, wher
 the trailing pair is tmux's flag rather than part of the agent name. Gangline
 does not set the operator's tmux status formats.
 
-### `gang mail <name>`
+### `gang mail [name]`
 
 Prints every message waiting in that agent's spool, oldest first, then every
 held entry, each with its sender and its entry filename, each body exactly as it
@@ -350,7 +352,7 @@ names the read-scoped root and the exact command that deletes it. Delete that
 root after its recovery or audit purpose ends; see
 [Operations](operations.md#sending-messages-safely) for retention.
 
-### `gang status <name>`
+### `gang status [name]`
 
 Prints one current state:
 
@@ -458,11 +460,11 @@ queue or an unreadable age. `session_id` is the exact stamp or `UNSTAMPED`.
 With no running session it prints no rows and exits successfully, like the human
 roster.
 
-### `gang capture <name> [lines]`
+### `gang capture [name] [lines]`
 
 Prints the tail of the target pane after trimming trailing blank terminal rows.
 
-### `gang composer <name>`
+### `gang composer [name]`
 
 Prints what a human actually typed into the agent's input box, via the
 collar's styled reading. `capture` shows the raw pane, where a harness's dim
