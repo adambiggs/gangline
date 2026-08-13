@@ -709,6 +709,13 @@ gang compact
   An agent compacting itself is scheduled for
   the end of its current turn. gang status
   reports a self-compaction still pending.
+
+  A boundary where the composer is somebody
+  else's — an operator mid-reply, a dialog on
+  the screen — defers it rather than dropping
+  it: the request stands, gang retries when
+  the next turn ends, and the agent is told
+  its context was not compacted.
 EOF
       ;;
     context) cat <<'EOF'
@@ -2122,10 +2129,15 @@ self_compact_after_stop() { # $1 window id, $2 collar
     || die "collar '$2' declares no compact command"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$1" "$boot" || ready=$?
+  # NOT AT THIS BOUNDARY, rather than not at all: a dialog on the screen and a
+  # composer that has not come back are both states the next boundary may not
+  # be in, so they refuse (status 3) and leave the request standing, exactly as
+  # spool_drain_after_stop leaves its messages spooled. Only a collar that has
+  # stopped declaring this path is fatal, because no later boundary repairs it.
   case "$ready" in
     0) ;;
-    2) die "a dialog owns the screen after the turn ended" ;;
-    *) die "the input box did not become ready after the turn ended" ;;
+    2) refuse "a dialog owns the screen after the turn ended" ;;
+    *) refuse "the input box did not become ready after the turn ended" ;;
   esac
   resume="$(tmux show-options -wqv -t "$1" @gl_self_compact_resume 2>/dev/null)" \
     || resume=""
@@ -2180,6 +2192,37 @@ compact_resume() { # $1 = the agent's own continuation, if it supplied one
   printf '%s' "${1:-$GANG_COMPACT_RESUME}"
 }
 
+# THE AGENT ASKED, SO THE AGENT IS TOLD. cmd_compact prints a promise into the
+# agent's own context, and a failure recorded only in a tmux option answers the
+# operator's roster and never the agent — which ends its turn and goes idle
+# believing it compacted. An idle agent raises no boundary of its own, so a
+# retry alone cannot reach it. The spool is the channel that does: it is where
+# an undeliverable peer message already waits, and it carries this one to the
+# same next boundary.
+#
+# SELF_COMPACT_STANDING is the suffix marking a recorded failure as one the
+# dispatcher still owns. It is read back before the next note is spooled, so it
+# doubles as the episode's identity rather than only as wording.
+SELF_COMPACT_STANDING='(still scheduled; gang retries at the next turn boundary)'
+
+self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled|dropped
+  local name body
+  name="$(agent_name_of "$1")"
+  spool_available "$1" "$name" || return 0
+  # WORDED FOR AN ARRIVAL LATER THAN ITS CAUSE. A spooled note waits for a turn
+  # boundary, and a boundary is also where a retry succeeds — so a note that
+  # said "your context was NOT compacted" could be read by an agent whose
+  # context had since been compacted, which is the same lie in the other
+  # direction. Each of these reports only what was true at the boundary it
+  # names, and sends the agent to the state rather than asserting it.
+  case "$3" in
+    rescheduled) body="A self-compaction you scheduled did not run at a turn boundary: $2 It was put back rather than dropped, so gang retries it at a later boundary. Run gang status to see whether it is still pending." ;;
+    *) body="A self-compaction you scheduled did not run and was NOT put back: $2 Your context was not compacted at that boundary and nothing will retry it. Run gang status, then gang compact again." ;;
+  esac
+  envelope gangline "$body"
+  spool_write "$1" gangline "$ENVELOPE" "self-compaction did not run"
+}
+
 # POSSIBLY REDUNDANT WITH THE COMPACTION BRACKET, AND DELIBERATELY STILL HERE.
 # This flag exists because gang had no other way to know a self-compaction was
 # in flight. Where a collar wires PreCompact/PostCompact it now does — and
@@ -2190,26 +2233,65 @@ compact_resume() { # $1 = the agent's own continuation, if it supplied one
 # change behaviour for every harness declaring less. Answer it by driving a
 # deferred self-compaction with the bracket wired and watching what each one
 # contributes, not by reading this comment and agreeing with it.
-self_compact_dispatch() { # $1 window id, $2 collar; called only by Stop
-  local request
-  request="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
+self_compact_dispatch() { # $1 = the pane a native Stop fired in, $2 = collar
+  local win request
+  # The compaction delivers, and delivery serializes on the WINDOW's lock, for
+  # the same reason spool_stop resolves the window before draining: a lock
+  # named after the firing pane would not exclude an ordinary send holding the
+  # one named after its window. The spool this falls back to is keyed by
+  # window as well.
+  win="$(tmux display-message -p -t "$1" '#{window_id}' 2>/dev/null)" || return 0
+  [ -n "$win" ] || return 0
+  request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
     || request=""
   [ -n "$request" ] || return 0
-  tmux set-option -w -t "$1" @gl_self_compact_dispatching "$request" 2>/dev/null \
+  tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
     || return 0
-  tmux set-option -uw -t "$1" @gl_self_compact_requested 2>/dev/null || true
+  tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
   (
     trap '' HUP INT TERM
-    local err=""
-    if err="$(self_compact_after_stop "$1" "$2" 2>&1)"; then
-      tmux set-option -uw -t "$1" @gl_self_compact_failed 2>/dev/null || true
-    else
-      err="${err##*$'\n'}"
-      [ -n "$err" ] || err="self-compaction dispatcher failed"
-      tmux set-option -w -t "$1" @gl_self_compact_failed "$err" 2>/dev/null || true
-    fi
-    tmux set-option -uw -t "$1" @gl_self_compact_dispatching 2>/dev/null || true
-    tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+    # THE CLEANUP RUNS EVEN WHEN THIS WORKER DOES NOT REACH ITS END. The script
+    # runs under set -e and the request has already been consumed above, so any
+    # command here that exits non-zero — loading the collar, naming the agent,
+    # establishing a spool — would otherwise leave @gl_self_compact_dispatching
+    # standing with nothing left to clear it. Every later self-compaction would
+    # then refuse as already waiting, for a turn boundary that can no longer act
+    # on it, and the barrier's waiter would never be released.
+    trap 'tmux set-option -uw -t "$win" @gl_self_compact_dispatching 2>/dev/null || true
+          tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true' EXIT
+    local err="" rc=0 was=""
+    load_collar "$2" || true
+    err="$(self_compact_after_stop "$win" "$2" 2>&1)" || rc=$?
+    err="${err##*$'\n'}"
+    case "$rc" in
+      0) tmux set-option -uw -t "$win" @gl_self_compact_failed 2>/dev/null || true ;;
+      # A REFUSAL IS "NOT AT THIS BOUNDARY", NEVER "NOT AT ALL" — the same
+      # reading spool_drain_dispatch already gives status 3. The composer
+      # belonged to somebody else for the moment gang looked at it, and an
+      # operator mid-reply is the ordinary case at a Stop, which is exactly
+      # when a deferred compaction fires: the window where it is most needed
+      # is the window where it is most likely to be refused. Consuming the
+      # request there dropped the work permanently and told no one.
+      3) tmux set-option -w -t "$win" @gl_self_compact_requested "$request" 2>/dev/null \
+           || true
+         [ -n "$err" ] || err="the composer was not gang's to type into."
+         # ONE NOTE PER EPISODE, NOT ONE PER BOUNDARY. The note itself becomes
+         # a message that drains at the next boundary, and draining it is a
+         # delivery this dispatcher can lose the lock to — so notifying on
+         # every deferral would spool a fresh note for the boundary the last
+         # note created, without bound. The transition into the deferred state
+         # is what the agent needs; the retries after it are gang's business.
+         was="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" \
+           || was=""
+         tmux set-option -w -t "$win" @gl_self_compact_failed "$err $SELF_COMPACT_STANDING" 2>/dev/null || true
+         case "$was" in
+           *"$SELF_COMPACT_STANDING") ;;
+           *) self_compact_note "$win" "$err" rescheduled || true ;;
+         esac ;;
+      *) [ -n "$err" ] || err="self-compaction dispatcher failed"
+         tmux set-option -w -t "$win" @gl_self_compact_failed "$err" 2>/dev/null || true
+         self_compact_note "$win" "$err" dropped || true ;;
+    esac
   ) </dev/null >/dev/null 2>&1 &
   disown
 }

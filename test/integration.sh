@@ -6261,6 +6261,107 @@ else
   fail "self-compaction records one request inside the running agent" \
     "@gl_self_compact_requested is empty"
 fi
+"$GANG" drop selfable >/dev/null 2>&1 || :
+
+# A BOUNDARY WHOSE COMPOSER BELONGS TO SOMEBODY ELSE DEFERS, IT DOES NOT DROP.
+# The delivery guards inside inject refuse with status 3, and the dispatcher
+# used to spend its one request on that boundary: the agent went idle believing
+# it had compacted, nothing retried, and the only record was a tmux option no
+# agent reads. A draft in the box is the ordinary case at a Stop, because a
+# Stop is exactly when an operator is mid-reply.
+drafted_executed="test-drafted-executed-$$"
+drafted_busy="$RUN_ROOT/self-drafted-busy"
+drafted_draft="$RUN_ROOT/self-drafted-draft"
+cat > "$RUN_ROOT/collars/drafted.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf DRAFTED_COMPACT; tmux wait-for -S $drafted_executed"
+GANG_SELF_COMPACT=deferred
+GANG_STOP_HOOK=1
+GANG_BUSY_REGEX='BUSY_DRAFTED'
+_gl_drafted_input="\$(declare -f collar_input)"
+eval "drafted_real_input \${_gl_drafted_input#collar_input}"
+collar_input() {
+  [ ! -e "$drafted_busy" ] || { printf ''; return; }
+  [ ! -e "$drafted_draft" ] || { printf 'half written operator line'; return; }
+  drafted_real_input "\$1"
+}
+SH
+"$HITCH" drafted -c drafted -d /tmp >/dev/null
+drafted_id="$(window_id drafted)"
+drafted_tmux_pane="$(tmux list-panes -t "$drafted_id" -F '#{pane_id}')"
+drafted_requested="test-drafted-requested-$$"
+drafted_release="test-drafted-release-$$"
+drafted_released="test-drafted-released-$$"
+printf -v drafted_command ': > %q; printf BUSY_DRAFTED; GANG_SESSION=%q GANG_COLLARS=%q %q compact; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+  "$drafted_busy" "$GANG_SESSION" "$GANG_COLLARS" "$GANG" "$drafted_requested" \
+  "$drafted_release" "$drafted_busy" "$drafted_released"
+tmux send-keys -l -t "$drafted_id" "$drafted_command"
+tmux send-keys -t "$drafted_id" Enter
+tmux wait-for "$drafted_requested"
+drafted_request="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+tmux wait-for -S "$drafted_release"
+tmux wait-for "$drafted_released"
+
+# The draft lands before the boundary, so the dispatcher meets an occupied box.
+: > "$drafted_draft"
+if [ -n "$drafted_request" ]; then
+  tmux wait-for "gang-self-compact-$drafted_request" &
+  drafted_waiter=$!
+  printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
+  wait "$drafted_waiter"
+  excludes "a refused boundary submits no compaction command" \
+    "$(pane drafted)" "DRAFTED_COMPACT"
+  equal "a refused boundary puts the self-compaction request back" \
+    "$drafted_request" \
+    "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+  contains "the recorded failure says the request still stands" \
+    "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)" \
+    "still scheduled"
+  # WHAT THIS PROVES IS THAT THE NOTE IS WAITING, not that it arrived. Only a
+  # Stop or a PostCompact drains a spool, and the refused boundary raised
+  # neither, so an agent that goes idle here is still not told. That gap is
+  # real and is not closed by this change.
+  contains "the deferral leaves a note waiting in the agent's own spool" \
+    "$("$GANG" status drafted)" "spooled: 1"
+  contains "status reports the deferred self-compaction as still pending" \
+    "$("$GANG" status drafted)" "self-compaction requested"
+
+  # The next boundary, with the box its own again, is the one that runs it.
+  rm -f -- "$drafted_draft"
+  drafted_retry="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+  # A request that was NOT put back leaves nothing to wait on, and a barrier
+  # keyed to it would hang instead of failing. The claim above already reports
+  # that; this one refuses to arm a wait it cannot satisfy.
+  if [ -n "$drafted_retry" ]; then
+    # The collar's compact command signals this barrier itself, so waiting on
+    # it is the compaction running rather than its text appearing on a pane
+    # that was also typed into.
+    tmux wait-for "$drafted_executed" &
+    drafted_execute_waiter=$!
+    tmux wait-for "gang-self-compact-$drafted_retry" &
+    drafted_retry_waiter=$!
+    printf '%s' '{"hook_event_name":"Stop"}' |
+      TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
+    wait "$drafted_retry_waiter"
+    wait "$drafted_execute_waiter"
+    equal "a submitted compaction consumes the request" "" \
+      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+    equal "a submitted compaction clears the recorded failure" "" \
+      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)"
+  else
+    fail "a submitted compaction consumes the request" \
+      "the deferred request was dropped, so no later boundary could run it"
+    fail "a submitted compaction clears the recorded failure" \
+      "the deferred request was dropped, so no later boundary could run it"
+  fi
+else
+  fail "a refused boundary puts the self-compaction request back" \
+    "@gl_self_compact_requested was empty before the boundary"
+fi
+"$GANG" drop drafted >/dev/null 2>&1 || :
 
 # Without the deferred declaration, the same self-call takes the direct path
 # and puts the native command into the tty while the caller's turn is active.
