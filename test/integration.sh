@@ -302,17 +302,25 @@ equal "every dispatched operator command has a bare classification" \
 # unrelated error. The names are compared against the dispatcher, so a command
 # added without an arity refusal cannot ship quietly.
 #
-# NOTHING HERE MAY REACH A SIDE EFFECT. Each probe names an agent that does not
-# exist, which is what the assertion below would report if a check were removed
-# — `drop ghost STRAY` must not become a drop.
+# NOTHING HERE MAY REACH A SIDE EFFECT UNDER THE REGRESSION IT WOULD CATCH. For
+# most rows a nonexistent agent is the containment: `drop ghost STRAY` cannot
+# become a drop, because with its check removed it reports no such agent. For
+# hitch and up that reasoning inverts — a name that does not exist is what they
+# CREATE, so an unknown word discarded by hitch's parser would launch a real
+# ghost agent here, before the suite's own fixture team exists, and up would go
+# on to attach to it. Their `-d /nonexistent/gangline-arity-probe` is the
+# containment, not decoration: hitch checks the directory after the parse loop,
+# so the stray argument is refused first while the check is intact, and the
+# missing directory refuses before any window opens if it ever is not. Do not
+# simplify it away.
 #
 # gang hook is not in this table and is not exempt from the rule; it is covered
 # below, where its own contract makes recording the argument the refusal and
 # dying the wrong answer. gang up delegates its arguments to hitch and its
 # refusal says so.
 arity_probes=(
-  "up|ghost STRAY|hitch: unknown argument 'STRAY'"
-  "hitch|ghost STRAY|hitch: unknown argument 'STRAY'"
+  "up|ghost -d /nonexistent/gangline-arity-probe STRAY|hitch: unknown argument 'STRAY'"
+  "hitch|ghost -d /nonexistent/gangline-arity-probe STRAY|hitch: unknown argument 'STRAY'"
   "adopt|ghost STRAY|adopt: unknown argument 'STRAY'"
   "send|--to ghost --stdin STRAY|send: unknown argument 'STRAY'"
   "flush|ghost STRAY|flush: unexpected argument 'STRAY'"

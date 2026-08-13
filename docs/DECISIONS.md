@@ -667,7 +667,9 @@ caller reads the answer as the answer to what they typed. The guard is a table
 of one-argument-too-many probes whose expected text is each command's own
 refusal, compared for completeness against the dispatcher's case arms, so a
 command cannot be added without one and a probe cannot pass on an unrelated
-failure.
+failure. A probe's containment must hold under the regression it exists to
+catch: a nonexistent agent name contains `drop`, but it is what `hitch` and `up`
+create, so those two are contained by a directory that does not exist instead.
 
 `gang hook` is the one command that records rather than dies. Its event is the
 payload on standard input, so argv is an invocation it cannot read; its caller
