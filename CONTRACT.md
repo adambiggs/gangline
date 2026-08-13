@@ -26,6 +26,14 @@ Finish the whole result assigned to you, including its review. You may hitch
 teammates to help. Send the lead one report when the result is complete. Contact
 the lead sooner only when you need a decision.
 
+A report is read by someone deciding what happens next. Include what could
+change that decision; leave out what only shows you did the work — that belongs
+in the files "Shared state" already asks you to leave behind. The test is
+whether the lead could act differently knowing it.
+
+Report what you got wrong and what remains unproven. Both change what the lead
+can rely on.
+
 ## The marathon rule
 
 Never halt the team to wait for the operator. Resolve reversible questions
