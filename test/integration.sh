@@ -335,14 +335,15 @@ arity_absent_collar="gangline-arity-probe-absent-collar"
   && pass "the hitch and up probes name a working directory that does not exist" \
   || fail "the hitch and up probes name a working directory that does not exist" \
     "$arity_absent_dir exists"
-if collar_absent_out="$("$GANG" hitch arity-probe-collar-check \
-  -c "$arity_absent_collar" -d /tmp 2>&1)"; then
-  fail "and a collar name that resolves to nothing" \
-    "hitch unexpectedly succeeded: [$collar_absent_out]"
-else
-  contains "and a collar name that resolves to nothing" \
-    "$collar_absent_out" "$arity_absent_collar"
-fi
+# Read the inventory rather than driving hitch at it. A lifecycle command cannot
+# test its own precondition: if an operator's GANG_COLLARS did expose a collar
+# under this name — which is the case that voids the containment below, and the
+# only case worth checking — a hitch would OPEN that agent and leave the window
+# behind while recording the failure. gang collars enumerates the same
+# directories collar_file resolves through, and hides only the bash stand-in,
+# so it answers this question without acting on it.
+excludes "and a collar name that resolves to nothing" \
+  "$("$GANG" collars)" "$arity_absent_collar"
 arity_probes=(
   "up|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"
   "hitch|ghost -d $arity_absent_dir STRAY|hitch: unknown argument 'STRAY'|GANG_COLLAR=$arity_absent_collar"

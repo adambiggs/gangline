@@ -672,7 +672,11 @@ catch, and must not be read by the thing whose regression it contains: a
 nonexistent agent name contains `drop`, but it is what `hitch` and `up` create,
 and a working directory passed in argv is dropped by the same parser fault it
 guards against. Those two are contained from the environment, which no argument
-parser can discard, with the argv containment kept as the nearer of two.
+parser can discard, with the argv containment kept as the nearer of two. A
+containment is asserted to be absent by reading an inventory, never by driving
+the lifecycle command whose safety is the thing in question — a check that acts
+in order to discover whether acting was safe has already done the damage in the
+one case it exists to catch.
 
 `gang hook` is the one command that records rather than dies. Its event is the
 payload on standard input, so argv is an invocation it cannot read; its caller
