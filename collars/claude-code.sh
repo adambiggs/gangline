@@ -217,6 +217,12 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
 
+# A SELECTED IN-PROCESS SUBAGENT IS NOT THIS WINDOW'S AGENT INPUT. Observed on
+# 2.1.229: its fullscreen view draws U+276F between a task-named opening band
+# and a pure closing rule. Typing there resumes the child, which answers in its
+# own transcript; it does not reach the hitched parent. The pure opening-rule
+# requirement below intentionally leaves that view unreadable, so delivery can
+# never route a parent-addressed envelope into a child context.
 collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
                  # 2 = a box whose content outgrew the pane and cannot be read
   local box rc=0

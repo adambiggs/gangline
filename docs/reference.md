@@ -225,7 +225,9 @@ The target's own native Stop event drains its spool, oldest first, through the
 verified delivery path. Each entry is claimed before it is delivered, so no
 later drain can send a body this one may already have landed. A refused drain
 returns its entry to the spool for the next turn boundary. A drain that cannot
-verify, or one that dies between the submission and the entry's retirement,
+read a composer after the native boundary leaves its entries waiting and records
+a visible drain failure; it never types through that uncertainty. A drain that
+cannot verify, or one that dies between the submission and the entry's retirement,
 leaves that entry held: `status` says its delivery was not verified and may
 still have arrived, `status` and `roster` report how many are held, the bodies
 stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A

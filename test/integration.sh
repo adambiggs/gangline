@@ -946,12 +946,23 @@ claude_box_rule="$(printf '─%.0s' $(seq 40))"
   printf '%s\n' '  ctx 1k/2k 1%'
   printf '%s' '  bypass permissions on'
 } > "$claude_box_dir/whole"
+{ printf 'transcript\n'
+  printf '%s\n' '──────── child (agent A) ───────────────'
+  printf '%s\n' '❯ '
+  printf '%s\n' "$claude_box_rule"
+  printf '%s\n' '  transcript warning'
+  printf '%s\n' '  ctx 1k/2k 1%'
+  printf '%s\n' '  ⏵⏵ mode · ← for agents'
+  printf '\n'
+  printf '%s\n' '  ◯ main'
+  printf '%s' '  ● general-purpose task'
+} > "$claude_box_dir/subagent"
 { printf 'plain %s\n' 1 2 3 4 5 6 7 8 9; printf '%s' 'plain 10'; } \
   > "$claude_box_dir/absent"
 claude_box_session="claude-box-$$"
 tmux new-session -d -s "$claude_box_session" -n clipped -x 40 -y 10 \
   "cat '$claude_box_dir/clipped'; cat"
-for claude_box_case in clipped-pair whole absent; do
+for claude_box_case in clipped-pair whole subagent absent; do
   tmux new-window -d -t "=$claude_box_session" -n "$claude_box_case" \
     "cat '$claude_box_dir/$claude_box_case'; cat"
 done
@@ -970,6 +981,8 @@ claude_box_text() { # $1 = window name -> what the collar read there
 equal "a whole composer reads as a readable box" "0" "$(claude_box_status whole)"
 contains "a whole composer reads back what was typed in it" \
   "$(claude_box_text whole)" "hello"
+equal "a selected child composer is not the parent agent input" "1" \
+  "$(claude_box_status subagent)"
 equal "a pane with no box at all refuses as an absent box" \
   "1" "$(claude_box_status absent)"
 equal "a composer clipped by a short pane refuses as clipped, not as absent" \
@@ -4519,6 +4532,7 @@ _gl_spool_real="\$(declare -f collar_input)"
 eval "spool_real_input \${_gl_spool_real#collar_input}"
 collar_input() { # once per armed drain, report what the spool and the lock look like
   local lock dir live=no holder="" waiting=0 f
+  [ ! -f "$RUN_ROOT/unreadable-drain" ] || return 1
   lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
     rm -f "$RUN_ROOT/claim-watch"
@@ -4719,6 +4733,51 @@ refused_cleanup_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
 wait "$refused_cleanup_waiter"
+
+# A READABLE OBSTRUCTION AFTER STOP is an ordinary retry, not a failed drain.
+# GANG_BOOT_TIMEOUT=0 makes the final immediate stable-pane reading the whole
+# readiness budget; no timing claim is under test.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_UNREADABLE_BOUNDARY' |
+  "$GANG" send --to parker --from tester --stdin >/dev/null
+tmux wait-for "gang-spool-drain-$parker_id" &
+readable_retry_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  GANG_BOOT_TIMEOUT=0 TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$readable_retry_waiter"
+readable_retry_status="$("$GANG" status parker)"
+contains "a readable obstruction after Stop leaves the message waiting" \
+  "$readable_retry_status" "spooled: 1"
+excludes "and remains an ordinary retry rather than a failed drain" \
+  "$readable_retry_status" "spool drain NOT verified"
+
+# A TURN BOUNDARY THAT STILL EXPOSES NO READABLE COMPOSER is not another
+# healthy refusal. Nothing may be typed and every entry remains live, but the
+# failed drain has to survive the hook process in status until a later verified
+# drain clears it.
+tmux send-keys -t "$parker_id" C-u
+: > "$RUN_ROOT/unreadable-drain"
+tmux wait-for "gang-spool-drain-$parker_id" &
+unreadable_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  GANG_BOOT_TIMEOUT=0 TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$unreadable_drain_waiter"
+unreadable_drain_status="$("$GANG" status parker)"
+contains "an unreadable composer after Stop leaves the message waiting" \
+  "$unreadable_drain_status" "spooled: 1"
+contains "and records the failed drain instead of silently retrying forever" \
+  "$unreadable_drain_status" "native turn boundary did not expose a readable composer"
+rm -f -- "$RUN_ROOT/unreadable-drain"
+tmux wait-for "gang-spool-drain-$parker_id" &
+unreadable_recovery_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$parker_pane_id" "$GANG" hook >/dev/null
+wait "$unreadable_recovery_waiter"
+# source-guard: producer@70b679da62cf: the recovered drain verifies Enter, and the earlier refused send never put this marker in the target pane
+contains "the next readable boundary delivers the waiting message" \
+  "$(pane parker)" "MARK_UNREADABLE_BOUNDARY"
+excludes "and a verified drain clears the prior failure" \
+  "$("$GANG" status parker)" "spool drain NOT verified"
 
 # An entry a drain claimed and never retired — what a killed worker leaves — is
 # never picked up again, and never hides: the ones behind it still drain.

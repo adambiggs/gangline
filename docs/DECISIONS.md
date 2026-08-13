@@ -151,6 +151,12 @@ hitch and adopt, where nothing can race it — minting it when a message needs
 parking would let two senders mint two and strand one of their messages in a
 directory nothing points at.
 
+A drain never gets a weaker delivery predicate. A readable obstruction after a
+boundary is an ordinary refusal and remains queued; a boundary that still exposes
+no readable composer records a drain failure while leaving every entry unclaimed.
+Silently spending that unreadability as another healthy retry would strand the
+same queue at every later boundary while status claimed only that it was waiting.
+
 ## A parked queue is recovered, not narrated
 
 Gangline already owns every piece of evidence the manual recovery uses, so it

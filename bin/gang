@@ -2950,14 +2950,29 @@ EOF
 }
 
 spool_drain_after_stop() { # $1 window id, $2 collar
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+  local ready=0 box_rc=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   load_collar "$2"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$1" "$boot" || ready=$?
-  # A composer that never came back is not a failure here: nothing was typed,
-  # so the spool waits for the next boundary rather than reporting a delivery
-  # problem gang has no evidence of.
-  [ "$ready" -eq 0 ] || return 3
+  if [ "$ready" -ne 0 ]; then
+    # A readable obstruction is an ordinary refusal: nothing was typed, and a
+    # later boundary may expose the same composer empty. An unreadable pane is
+    # different. The harness announced that its turn ended and the drain still
+    # cannot establish a landing zone, so silently treating that as another
+    # healthy retry strands the queue behind every later boundary. Keep every
+    # entry live and unclaimed, but leave a failure fact status can expose.
+    if ! declare -F collar_input >/dev/null; then
+      printf "collar '%s' declares no collar_input; the native turn boundary exposed no composer Gangline can address, so no delivery was attempted and the spool remains waiting\n" \
+        "$2" >&2
+      return 1
+    fi
+    collar_input "$1" >/dev/null || box_rc=$?
+    [ "$box_rc" -ne 0 ] \
+      || return 3
+    printf 'the native turn boundary did not expose a readable composer (collar_input status %s); no delivery was attempted and the spool remains waiting\n' \
+      "$box_rc" >&2
+    return 1
+  fi
   spool_drain "$1"
 }
 
