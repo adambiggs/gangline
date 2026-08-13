@@ -2491,6 +2491,20 @@ box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a 
   re_match GANG_QUEUED_REGEX "$1"
 }
 
+# Set by send_live for the mid-turn steering path: whether this delivery may
+# land in the harness's own queue, and whether it did. Declared here because
+# `set -u` makes an unset read a crash rather than a fallback.
+MIDTURN_PARK=0
+SUBMIT_PARKED=0
+# Whether the caller asked to retire its own earlier waiting messages. The
+# native queue is anonymous, so no keystroke gang can send retracts a body from
+# it; the park path reads this and refuses rather than half-honouring the flag.
+SEND_SUPERSEDE=0
+# --live-only is the explicit probe for a delivery that must reach the session
+# now. A park is exactly what it is asking gang not to do, so it never takes
+# the steering path.
+SEND_LIVE_ONLY=0
+
 LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -f -- "$LOCK_PATH"; LOCK_PATH=""; }
 
@@ -3105,6 +3119,28 @@ staged_current() { # $1 = window id -> the record, freshness-checked at read tim
   printf '%s\n' "$note"
 }
 
+# THE THIRD STATE IS CLOSED BY A LATER READ, never by a watcher. Gang records
+# that the harness parked a body; the composer is fresher evidence than that
+# record, and any command that reports on this window re-reads it here. A hint
+# that is gone means the harness drained its queue, so the record retires and
+# leaves the same mark stage_forget leaves — the absence of a record has two
+# causes, and "it drained" must not read as "there was never one".
+#
+# Keyed on the declared hint rather than on emptiness: an unreadable box refutes
+# nothing, so the record stands and the state stays reported.
+parked_current() { # $1 = window id -> the parked body, freshness-checked at read time
+  local rec box
+  declare -F collar_input >/dev/null || return 0
+  rec="$(tmux show-options -wqv -t "$1" @gl_parked 2>/dev/null)" || rec=""
+  [ -n "$rec" ] || return 0
+  if box="$(landing_zone "$1")" && ! box_queued "$box"; then
+    tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
+    tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
+    return 0
+  fi
+  printf '%s' "$rec"
+}
+
 stage_record() { # $1 = window id, $2 = the note, $3 = box rendering to match (may be empty)
   declare -F collar_input >/dev/null || return 0
   tmux set-option -w -t "$1" @gl_staged "$2"
@@ -3230,6 +3266,12 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     # own queue is where it is meant to wait. Parking is the landing here, not a
     # failed delivery.
     queued) submit_verify "$1" "$after" "$frag" paste park_ok ;;
+    # A peer's message typed during a witnessed turn. The harness parks it and
+    # drains it at its own next boundary, so a park is a landing here too — but
+    # a sender was told something, which the compaction continuation's author
+    # never was. That is why this mode watches for the drain instead of
+    # stopping at the park, and reports which of the two it saw.
+    steer) submit_verify "$1" "$after" "$frag" paste steer ;;
     '') submit_verify "$1" "$after" "$frag" paste ;;
     *) die "internal: inject received unknown witness mode '$5'" ;;
   esac
@@ -3247,7 +3289,8 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall, $5 park_ok to accept a parked landing
+                  # $4 paste|recall, $5 park_ok to accept a parked landing,
+                  # steer to watch a park through to its drain
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
   tname="$(agent_name_of "$1")"
   case "$4" in
@@ -3289,6 +3332,52 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # harness's own parked-input hint. A parked message renders in the
   # transcript exactly like a submitted one, so this composer reading is the
   # one place the two states differ.
+  # QUEUED IS NOT DELIVERED; QUEUED-THEN-WATCHED-TO-DRAIN IS. The steering path
+  # types into a witnessed turn, where this harness cannot submit at all — it
+  # can only park. So an empty composer proves NOTHING here, and the two
+  # readings that mean something are the hint appearing and the hint clearing
+  # again. Seeing both is a stronger chain than an ordinary delivery's, which
+  # only ever sees the box empty. Seeing neither is a harness gang no longer
+  # models, and it fails loudly rather than reporting a submission.
+  if [ "${5:-}" = steer ]; then
+    local slooks=0 parked_box=""
+    while :; do
+      if box_queued "$posted"; then
+        [ -n "$parked_box" ] || parked_box="$2"
+        # Recorded the moment gang knows a park happened AND which body it
+        # parked — the same instant, and the only one, that submit_parked
+        # records it on the failing path.
+        tmux set-option -w -t "$1" @gl_parked "$2" 2>/dev/null || true
+        tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
+      elif [ -n "$parked_box" ]; then
+        # The hint was there and is gone: the harness drained its queue into
+        # the session while gang was watching. That is the whole chain.
+        tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
+        tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
+        stage_forget "$1"
+        return 0
+      fi
+      slooks=$((slooks + 1))
+      [ "$slooks" -lt "${GANG_STEER_LOOKS:-8}" ] || break
+      sleep 0.4
+      posted="$(landing_zone "$1")" || {
+        stage_record "$1" "'$3' was $verb and Enter sent into a running turn, but the box stopped reading back — whether it entered the session or sits in the harness's queue is unknown" ""
+        die "submit NOT verified: the input box of $tname stopped reading back while gang was watching its queue — whether '$3' entered the session or sits in the harness's queue is unknown (gang capture $tname)"
+      }
+    done
+    if [ -z "$parked_box" ]; then
+      # Never parked, and this harness cannot have submitted mid-turn. Gang is
+      # looking at a rendering it does not model — most likely the collar's
+      # queue hint no longer matches — and it says so instead of inventing a
+      # delivery out of an empty box.
+      stage_record "$1" "'$3' was $verb and Enter sent into a running turn, and the harness's declared queue hint never appeared — gang cannot tell whether it entered the session" ""
+      die "submit NOT verified: '$3' was $verb into the input box of $tname during a running turn and the harness's declared parked-input hint (GANG_QUEUED_REGEX) never appeared. Mid-turn input on this collar can only park, so an empty box is not proof of submission — the declared evidence has stopped matching this harness version (gang capture $tname)"
+    fi
+    # Still parked at the bound. Not delivered, not failed: accepted by the
+    # harness's queue, with the body recorded so a later read can close it.
+    SUBMIT_PARKED=1
+    return 0
+  fi
   if [ -n "$GANG_QUEUED_REGEX" ] && [ "${5:-}" != park_ok ]; then
     local qlooks=0
     while :; do
@@ -3750,9 +3839,22 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
-send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothing typed
-  local busy_rc=0 box=""
-  lock_pane "$AGENT_ID"
+send_live() { # $1 = target name, $2 = locked when the caller already holds the
+              # pane lock; AGENT_ID and ENVELOPE set.
+              # 3 = refused, nothing typed. 4 = typed, and the harness parked it
+              # in its own queue: accepted, not yet in the session.
+  local busy_rc=0 box="" keep_lock=0
+  MIDTURN_PARK=0 SUBMIT_PARKED=0
+  # THE CALLER MAY OWN THE LOCK. Where the queue choice and the claim have to be
+  # one critical section, the lock is taken before this function and outlives
+  # it: a command substitution's exit does not fire the EXIT trap that would
+  # release it, so the decision and the commit stay under one hold.
+  case "${2:-}" in
+    '') lock_pane "$AGENT_ID" ;;
+    locked) [ -n "$LOCK_PATH" ] || die "internal: send_live called locked without a pane lock"
+            keep_lock=1 ;;
+    *) die "internal: send_live received unknown lock mode '$2'" ;;
+  esac
   # A UI owning the composer is the same condition inject refuses with, and it
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
@@ -3771,8 +3873,43 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
        # sender has nothing left to do. The one caller where waiting IS the
        # answer is --live-only, and that path prints its own "NOT parked" line
        # saying so, because there the message really was not taken.
-       [ "${GANG_MIDTURN_INPUT:-}" = 1 ] \
-         || refuse "'$1' is not safely reachable mid-turn" ;;
+       case "${GANG_MIDTURN_INPUT:-}" in
+         1) ;;
+         park)
+           # --live-only asked for a delivery that must not park, and this
+           # branch can only park. Refusing keeps that probe's answer honest:
+           # it prints its own NOT-parked line and nothing was typed.
+           [ "$SEND_LIVE_ONLY" -eq 0 ] \
+             || refuse "'$1' is not safely reachable mid-turn"
+           # A harness that parks mid-turn input in its own queue gives gang a
+           # landing it can watch rather than a submission it cannot prove. Two
+           # things must be true first, and both are read under the lock this
+           # function is holding, so the answer cannot change between the check
+           # and the typing.
+           #
+           # THE SPOOL IS THE ORDERING AUTHORITY. A body typed into the harness
+           # now would drain at the target's next tool batch, while anything
+           # already spooled waits for its Stop — so parking ahead of a waiting
+           # message delivers the newer one first. Refusing here is not a
+           # failure: it spools this message behind the older ones, in order.
+           [ "$(spool_count "$AGENT_ID")" -eq 0 ] \
+             || refuse "'$1' already has spooled messages waiting, and they drain at its next turn boundary — typing this one into its queue now would reach it first. Nothing was typed and the body is still the sender's"
+           # ONE OUTSTANDING BODY. The harness's queue hint says something is
+           # parked, never what or how many, and the recall key returns the
+           # whole queue at once — so a second body would leave gang unable to
+           # say which one its record names.
+           [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked 2>/dev/null)" ] \
+             || refuse "'$1' already has a message parked in its harness queue that gang has not yet watched drain — a second one would leave gang unable to say which body its record names. Nothing was typed and the body is still the sender's"
+           # --supersede retires this sender's earlier waiting messages. Gang
+           # can do that to its own spool, where every entry is attributed;
+           # the harness's queue is anonymous and its recall key returns the
+           # whole of it, so nothing gang types could retract one body from it.
+           # Spooling instead keeps the flag's promise exactly.
+           [ "$SEND_SUPERSEDE" -eq 0 ] \
+             || refuse "'$1' is mid-turn and --supersede cannot be honoured in a harness queue: gang can retire an attributed message from its own spool, but nothing it types retracts one body from the harness's anonymous queue. Nothing was typed and the body is still the sender's"
+           MIDTURN_PARK=1 ;;
+         *) refuse "'$1' is not safely reachable mid-turn" ;;
+       esac ;;
     2) # Could-not-determine is not busy. An expired witness is stale owned
        # state, and it must not veto a delivery that fresh box evidence can
        # prove safe — the same inversion the staged-record read-repair fixed
@@ -3804,8 +3941,17 @@ send_live() { # $1 = target name; AGENT_ID and ENVELOPE set. 3 = refused, nothin
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
+  if [ "$MIDTURN_PARK" -eq 1 ]; then
+    inject "$AGENT_ID" "$ENVELOPE" "" locked steer
+    [ "$keep_lock" -eq 1 ] || lock_release
+    # 4 is neither delivered nor refused: the body was typed and the harness
+    # took it into its own queue. The caller reports that as its own state and
+    # must not spool a second copy of it.
+    [ "$SUBMIT_PARKED" -eq 0 ] || return 4
+    return 0
+  fi
   inject "$AGENT_ID" "$ENVELOPE" "" locked
-  lock_release
+  [ "$keep_lock" -eq 1 ] || lock_release
   # No @gl_turn write exists anywhere on this path — not here, and not in the
   # witnesses it consults (turn_witness reports a malformed value without
   # repairing it). Native hooks write the bracket lock-free, tmux offers no
@@ -3846,25 +3992,52 @@ cmd_send() {
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
   envelope "$SEND_FROM" "$body"
   if [ "$live_only" -eq 1 ]; then
+    SEND_LIVE_ONLY=1
     send_live "$name"
     printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
   fi
+  # ONE CRITICAL SECTION. The pane lock is taken HERE rather than inside
+  # send_live, because the queue choice and the claim that follows it have to be
+  # one indivisible decision: send_live reads whether anything is already
+  # spooled, and the spool_write below commits this body against that answer.
+  # Taking the lock inside send_live put those two steps in different holds —
+  # the command substitution's exit released it — leaving a window in which a
+  # second sender read an empty spool and typed ahead of the entry this one was
+  # about to commit. A command substitution's exit does not fire the EXIT trap,
+  # so the lock taken here survives the call and covers both.
+  lock_pane "$AGENT_ID"
+  SEND_SUPERSEDE="$supersede"
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
   # keystroke, so the body is provably still the sender's; a hard failure means
   # something was already typed and its fate is unknown, and parking that would
   # queue a second copy of a message that may already have landed.
-  err="$(send_live "$name" 2>&1)" || rc=$?
+  err="$(send_live "$name" locked 2>&1)" || rc=$?
   case "$rc" in
     0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+       lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
+    4) # THE THIRD STATE. Typed, and the harness took it into its own queue
+       # while gang watched. Not delivered — gang did not see it enter the
+       # session — and not failed, because the body is in the harness's hands
+       # rather than lost. Exit 0: the sender must not send it again, exactly
+       # as for a spooled message.
+       [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+       lock_release
+       [ -z "$err" ] || printf '%s\n' "$err" >&2
+       printf '%s\n%s\n' \
+         "$(colour "$C_OK" "parked in the harness queue of $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
+         "$(colour "$C_DIM" "(gang watched the harness take it; it enters the session at that agent's next tool batch or turn boundary, and nothing further is needed from you. Until then 'gang roster' shows it parked.)")"
+       return 0 ;;
     3) ;;
-    *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+    *) lock_release
+       [ -z "$err" ] || printf '%s\n' "$err" >&2
        exit "$rc" ;;
   esac
   if ! spool_available "$AGENT_ID" "$name"; then
+    lock_release
     [ -z "$err" ] || printf '%s\n' "$err" >&2
     printf 'send: NOT parked — %s. Send again when '\''%s'\'' is idle.\n' \
       "$SPOOL_UNAVAILABLE_WHY" "$name" >&2
@@ -3874,6 +4047,8 @@ cmd_send() {
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
+  # The commit is done; the decision it was made against cannot change now.
+  lock_release
   # Exit 0 must not say "refused" — the message was accepted; the word
   # survives only on the NOT-parked path above, which exits 3. And the drain
   # promise stays conditional on a later turn: an agent that never takes
@@ -4644,6 +4819,11 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   load_collar "$prof"
   state="$(state_now "$1" snapshot)"
   [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
+  # A BOOLEAN, never a count. The harness's hint says something is parked and
+  # never how many, so a number here would be gang's invention rather than the
+  # harness's answer. staged_current above has already re-read the box, so a
+  # queue that drained since is no longer reported as waiting.
+  [ -z "$(parked_current "$1")" ] || detail="$detail parked"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
     || detail="$detail self-compact-failed"
   spooled="$(spool_count "$1")"
