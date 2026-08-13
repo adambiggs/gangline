@@ -388,174 +388,505 @@ cmd_help() { # $1 = command; empty prints the command inventory
     '') cat <<'EOF'
 gang — drive native CLI agents in tmux
 
+Every agent is a real CLI harness running in
+its own tmux window. gang collars lists the
+harnesses it can drive. Gang launches them,
+carries verified messages between them, and
+reports what each is doing. It does not plan
+or supervise their work.
+
+Agents coordinate by message. This is the one
+line you cannot work without:
+
+    printf '%s\n' "..." |
+      gang send --to NAME --stdin
+
+Exit 0 is success. Exit 3 is a refusal: the
+requested action was not taken, and stderr
+says why. Exit 1 is an error, and an error is
+not proof that nothing happened — read stderr
+before retrying anything.
+
+start and end a team
   up        start a team and join it
   hitch     add an agent
   adopt     register an existing window
-  send      deliver a message to an agent
-  flush     recover a harness-queued message
-  mail      read an agent's waiting queue
-  interrupt stop an agent's current turn
-  compact   ask an agent to compact context
-  context   read an agent's context
-  usage     read an agent's usage page
-  notify    set or show the stall-note target
-  curfew    set or show the team curfew
-  status    inspect one agent's state
-  roster    list the team and its state
-  capture   read an agent's pane
-  composer  read an agent's input box
-  whoami    read this pane's Gangline identity
-  attach    join the team in tmux
   drop      remove one agent
   down      end the team
+
+talk to agents
+  send      deliver a message to an agent
+  mail      read an agent's waiting queue
+  flush     recover a harness-queued message
+  interrupt stop an agent's current turn
+  compact   ask an agent to compact context
+
+watch agents
+  roster    list the team and its state
+  status    inspect one agent's state
+  capture   read an agent's pane
+  composer  read an agent's input box
+  context   read an agent's context
+  usage     read an agent's usage page
+  whoami    read this pane's identity
+  attach    join the team in tmux
+
+settings and discovery
+  notify    set or show the stall-note target
+  curfew    set or show the team curfew
   collars   list available harness collars
   roles     list available role briefs
   config    show effective configuration
 
-gang <command> --help for one command.
+gang <command> --help is the whole page for
+one command: every flag, what it means, and
+when to reach for it.
 EOF
       ;;
     up) cat <<'EOF'
 gang up
-  Start a team and join it.
+  Start a team and join it. Hitches one lead
+  agent, then attaches this terminal to its
+  window.
 
   gang up [name]
     [hitch flags]
 
-  Uses role lead unless -r selects another.
+  This is the whole setup for a new team. Add
+  teammates with gang hitch, message them
+  with gang send, watch them with gang roster.
+
+  [name]  window name for the lead
+          (default: lead)
+
+  Every gang hitch flag is accepted here and
+  passed through:
+
+  -c <harness>  which harness to run
+  -d <dir>      working directory
+  -m <model>    model for that harness
+  -e <effort>   reasoning-effort level
+  -r <role>     role brief (default: lead)
+  --resume      relaunch onto an existing
+                harness session
+
+  Each short flag has a long form: --collar,
+  --dir, --model, --effort, --role.
+  gang hitch --help is the full page.
 EOF
       ;;
     hitch|spawn) cat <<'EOF'
 gang hitch
-  Add an agent.
+  Add one agent to the team. Launches a
+  harness in a new tmux window called <name>
+  and delivers a startup contract, so the
+  agent knows who it is and how to reach its
+  teammates.
 
   gang hitch <name>
-    [-c <collar>]
+    [-c <harness>]
     [-d <dir>]
     [-m <model>]
     [-e <effort>]
-    [-r|--role <role>]
+    [-r <role>]
     [--resume [session-id]]
+
+  <name>  how teammates address it. Letters,
+          digits, dot, dash and underscore;
+          no leading dot or dash; unique in
+          the team. hitch and gangline are
+          reserved.
+
+  -c, --collar <harness>
+      which harness to run. gang collars
+      lists them; GANG_COLLAR is the default.
+  -d, --dir <dir>
+      directory the harness starts in
+      (default: this one).
+  -m, --model <model>
+      model name, handed to the harness as
+      its own option.
+  -e, --effort <level>
+      reasoning-effort level, from that
+      harness's own vocabulary; checked
+      before a window opens.
+  -r, --role <role>
+      role brief for this agent, on top of
+      the contract every agent gets. gang
+      roles lists them; there is no default.
+  --resume [session-id]
+      relaunch onto a harness session that
+      already exists rather than a fresh one.
+      Pass the id gang drop printed. The bare
+      form reads that id off a dead but still
+      registered window, so it does not
+      survive the window's removal. A harness
+      with no resume template takes neither
+      form.
+
+  Omitting -m or -e where the harness takes
+  them warns: the harness then falls back to
+  a default nobody chose.
 EOF
       ;;
     adopt) cat <<'EOF'
 gang adopt
-  Register an existing tmux window.
+  Register a tmux window you started yourself
+  as a gang agent, so gang can address it
+  like a hitched one.
 
   gang adopt <name>
-    -c <collar>
+    -c <harness>
+
+  Reach for it when the harness is already
+  running in a window of this team. That
+  window must already carry the name
+  (tmux rename-window), and it must be a name
+  gang accepts: letters, digits, dot, dash
+  and underscore, no leading dot or dash, and
+  not hitch or gangline.
+
+  -c, --collar <harness>
+      which harness is running in there.
+      Required; gang never guesses one.
+
+  No startup contract is delivered and no
+  native hooks are installed, so the agent
+  has not read the contract, and anything
+  that needs hooks — context readings, spool
+  drains at a turn boundary — may be
+  unavailable.
 EOF
       ;;
     send) cat <<'EOF'
 gang send
-  Deliver a message to one agent.
+  Deliver a message to one agent, verified in
+  that agent's own input box.
 
   gang send --to <name> --stdin
     [--from <sender>]
     [--live-only]
     [--supersede]
 
-  A refused delivery parks by default.
+  The body is read from stdin:
+
+    printf '%s\n' "ready?" |
+      gang send --to lead --stdin
+
+  --to <name>   who receives it
+  --stdin       read the body from stdin.
+                Required, and the only way
+                to pass a body. An empty
+                body is an error.
+  --from <who>  who it is from. Required
+                from outside the team; an
+                error inside it, where the
+                calling window is the
+                identity.
+  --live-only   report a refusal instead of
+                parking the message — an
+                availability probe. Not
+                combinable with --supersede.
+  --supersede   retire this sender's older
+                waiting messages for this
+                target once this one is
+                accepted, parked or live.
+                Scoped to the sender, not
+                to a subject: unrelated
+                messages of yours go too.
+
+  A refused delivery parks by default and
+  enters the session when the target next
+  finishes a turn; nothing further is needed
+  from the sender. gang roster shows it
+  waiting, gang mail reads it. Where no spool
+  is available it cannot park: that exits 3
+  saying NOT parked, and the message is still
+  yours to send.
+
+  On exit 1, do not simply send again. The
+  body may have been typed, left staged, or
+  already delivered; read stderr, then read
+  the target with gang status.
 EOF
       ;;
     flush) cat <<'EOF'
 gang flush
-  Recover a harness-queued message.
+  Recover a message the harness parked in its
+  own input queue instead of taking it.
 
   gang flush [name]
+
+  Reach for it only when a send says the
+  harness parked the message in its own queue
+  and names gang flush. An ordinary "queued
+  for <name>" is gang's own spool instead, and
+  needs nothing: it enters the session at the
+  next turn boundary.
+
+  Gang presses the collar's recall key, reads
+  the loaded body back against the one it
+  watched get parked, and presses Enter only
+  on an exact match.
+
+  [name]  agent to recover for (default:
+          this window)
 EOF
       ;;
     mail) cat <<'EOF'
 gang mail
-  Read an agent's waiting queue.
+  Read the messages waiting in an agent's
+  queue, oldest first, each with its sender
+  and its body.
 
   gang mail [name]
 
-  Another reader inspects. An agent's own read
-  consumes into the human-readable archive.
+  [name]  whose queue to read (default: this
+          window)
+
+  Reading somebody else's queue inspects it
+  and changes nothing. An agent reading its
+  own queue is destructive: every waiting
+  message it prints is consumed, never
+  delivered again, and moved into a readable
+  archive whose path is printed on stderr.
+  Never pipe your own read through head or
+  tail — the part you cut is already out of
+  the queue. Held entries are printed too and
+  are never consumed.
 EOF
       ;;
     interrupt) cat <<'EOF'
 gang interrupt
-  Stop an agent's current turn.
+  Stop an agent's current turn, by sending
+  the stop key its harness declares.
 
-  gang interrupt [name]
+  gang interrupt <name>
     [-m "reason"]
     [--from <sender>]
+  gang interrupt
+
+  <name>         agent to stop. Required
+                 alongside any flag; a flag
+                 cannot follow an omitted
+                 name. Bare gang interrupt,
+                 with no arguments at all,
+                 stops this window's own
+                 turn.
+  -m "reason"    deliver this message once
+                 the turn has stopped and
+                 the input box is back. It
+                 is never parked: a queued
+                 stop would arrive after the
+                 work it meant to stop. If
+                 it cannot be delivered, the
+                 reason is printed back so
+                 it is not lost.
+  --from <who>   who the reason is from, as
+                 in gang send. Only with -m.
+
+  Whether the harness stops is the harness's
+  verdict; gang reports only that the key was
+  sent. Read the outcome with gang status.
 EOF
       ;;
     compact) cat <<'EOF'
 gang compact
-  Ask an agent to compact its context.
+  Ask an agent to compact its context, using
+  its harness's own compaction command.
 
-  A continuation turn follows every compaction,
-  so the agent never lands idle. --resume
-  replaces the default one.
+  gang compact [name]
+    [--resume "<turn to take after>"]
 
-  gang compact <name>
-  gang compact --resume "<turn to take after>"
+  Reach for it when an agent is close to
+  filling its context window; gang context
+  reads how full that is.
+
+  [name]     agent to compact (default: this
+             window)
+  --resume   the turn to take once the
+             compaction finishes. One always
+             follows, so the agent never
+             lands idle behind a compaction;
+             this replaces the default turn.
+
+  An agent compacting itself is scheduled for
+  the end of its current turn. gang status
+  reports a self-compaction still pending.
 EOF
       ;;
     context) cat <<'EOF'
 gang context
-  Read an agent's context.
+  Read how full an agent's context window is.
 
   gang context [name]
+
+  [name]  agent to read (default: this
+          window)
+
+  Prints the harness's own reading, unparsed,
+  in its used/window (percent) form. Reach
+  for it before deciding whether to
+  gang compact. Where a harness offers no
+  readable source this fails loudly instead
+  of inventing a number.
 EOF
       ;;
     usage) cat <<'EOF'
 gang usage
-  Read a harness usage page.
+  Read a harness's own usage page — what is
+  left of a plan's quota — by driving its
+  native usage command.
 
-  gang usage [name]
+  gang usage <name>
+
+  <name>  agent whose harness to ask
+
+  Gang locks the pane, types the command only
+  into a composer it can prove is idle and
+  empty, prints the page, dismisses it, then
+  checks that the composer came back. An
+  agent cannot ask this of itself: its own
+  running turn owns the box gang would type
+  into.
 EOF
       ;;
     notify) cat <<'EOF'
 gang notify
-  Set, clear, or show the stall-note target.
+  Set, show, or clear the agent that receives
+  stall notes.
 
   gang notify
   gang notify <name>
   gang notify clear
+
+  When a harness reports it is waiting on
+  input — a permission prompt, a question —
+  gang sends one attributed note to this
+  target, so somebody hears about a stuck
+  agent. With none declared, nothing is sent;
+  gang starts no timer and runs no patrol.
+
+  <name>   agent to receive the notes. It
+           need not exist yet.
+  clear    remove the declaration.
+  (bare)   print the current target.
+
+  Repeated notes of the same kind are
+  collapsed into one. The declaration dies
+  with the team session.
 EOF
       ;;
     curfew|cutoff) cat <<'EOF'
 gang curfew
-  Set, clear, or show the team curfew.
+  Set, show, or clear one wall-clock deadline
+  for the whole team.
 
   gang curfew
   gang curfew <duration|HH:MM>
   gang curfew clear
+
+  A declared curfew gives hook-enabled agents
+  two advisory edges — yellow halfway through
+  the span, red after four fifths — each
+  surfaced once, so they can land work before
+  time runs out. Gang itself does nothing at
+  the deadline.
+
+  <duration>  90m, 2h, 1h30m. Units are
+              required; a bare number is an
+              error.
+  HH:MM       the next occurrence of that
+              local 24-hour clock time.
+  clear       remove the declaration.
+  (bare)      print the current curfew.
+
+  Declaring again replaces and restarts it.
 EOF
       ;;
     status) cat <<'EOF'
 gang status
-  Inspect one agent's state.
+  Report what one agent is doing right now,
+  computed from live evidence.
 
-  gang status <name>
+  gang status [name]
+
+  [name]  agent to inspect (default: this
+          window)
+
+  One state line: -busy-, ~idle~, !occupied!
+  where a native UI owns the input box, or
+  ?unknown? where the evidence cannot settle
+  it. Then anything else worth knowing —
+  input gang could not deliver and what is in
+  that box now, messages waiting or held,
+  a self-compaction pending or failed, a
+  stall note not accepted, a harness session
+  identity mismatch, and skew between this
+  gang binary and the one that hitched the
+  agent.
 EOF
       ;;
     roster) cat <<'EOF'
 gang roster
-  List the team and its state.
+  List every window in the team with its
+  collar and current state.
 
   gang roster
   gang roster --porcelain
+
+  Reach for it first when something looks
+  wrong: every row is computed live, unlike
+  the state glyph in a window's tmux name.
+  Unadopted windows are listed but are not
+  agents.
+
+  --porcelain  one unpadded, uncoloured TSV
+               row per window, for scripts:
+               name, collar, state, spooled,
+               oldest_age_s, session_id.
+
+  With no team running, the plain form says
+  so and --porcelain prints no rows; both
+  exit successfully.
 EOF
       ;;
     capture) cat <<'EOF'
 gang capture
-  Read an agent's pane.
+  Print the tail of an agent's terminal, as
+  it looks on screen.
 
-  gang capture <name>
-    [lines]
+  gang capture [name] [lines]
+
+  [name]   agent to read (default: this
+           window)
+  [lines]  how many lines up from the bottom
+           (default: 40)
+
+  A count alone reads as an agent name, so
+  pass both or neither. Trailing blank rows
+  are trimmed. This is the raw pane, where a
+  harness's dim placeholder text looks just
+  like a real draft — gang composer is the
+  reading that settles the input box.
 EOF
       ;;
     composer) cat <<'EOF'
 gang composer
-  Read an agent's input box.
+  Print what is actually typed into an
+  agent's input box.
 
-  gang composer <name>
+  gang composer [name]
+
+  [name]  agent to read (default: this
+          window)
+
+  The collar's styled reading, so a dim
+  suggested-prompt placeholder never appears
+  as text. No output means the box is empty.
+  Reach for it before deciding somebody is
+  mid-draft, and when a send refused because
+  the box was not empty.
 EOF
       ;;
     whoami) cat <<'EOF'
@@ -563,6 +894,18 @@ gang whoami
   Read this pane's Gangline identity.
 
   gang whoami
+
+  Takes no arguments, and answers only from
+  inside an agent window. Reach for it to
+  learn the name teammates address you by,
+  the session id that would resume you, or
+  why a send from this pane was refused on
+  identity grounds. Prints the agent
+  name teammates address, the pane, the
+  collar driving it, the harness session id
+  gang would resume, the newest id seen in a
+  native hook, the team session, and any
+  recorded mismatch between those two ids.
 EOF
       ;;
     attach) cat <<'EOF'
@@ -570,43 +913,107 @@ gang attach
   Join the team in tmux.
 
   gang attach
+
+  Takes no arguments. Attaches this terminal
+  to the team session, one window per agent,
+  so you can watch one work or type into it
+  yourself. Leave with tmux's own detach
+  (prefix then d); the team keeps running.
 EOF
       ;;
     drop) cat <<'EOF'
 gang drop
-  Remove one agent.
+  Remove one agent: kill exactly that agent's
+  window.
 
   gang drop <name>
+
+  <name>  agent to remove. Required — drop
+          never takes a target by omission.
+
+  Prints the stamped harness session id and
+  the exact gang hitch --resume line that
+  reopens that session, so a drop is
+  recoverable. That line carries the session
+  only: pass the harness, directory, model,
+  effort and role again yourself. An agent
+  whose collar supplied no id prints no
+  relaunch line at all.
+
+  Messages still waiting for it are archived
+  before the window dies. Whatever exists
+  only on that screen goes with it; gang
+  capture first if it matters.
 EOF
       ;;
     down) cat <<'EOF'
 gang down
-  End the whole team.
+  End the team: kill the team session and
+  every agent in it.
 
   gang down <session>
 
-  Refused from inside the session.
+  <session>  the team to end. Required, and
+             it must match the team this
+             shell is pointed at — gang ends
+             only the team you name.
+
+  This ends work you may not have started;
+  gang roster first. Waiting messages are
+  archived. Refused from a pane inside the
+  session, with no override: an agent must
+  not end the team it is running in. Detach
+  and run it from a shell outside tmux.
 EOF
       ;;
     collars|profiles) cat <<'EOF'
 gang collars
-  List available harness collars.
+  List the harness collars available to
+  hitch.
 
   gang collars
+
+  Takes no arguments. A collar is the file
+  that teaches gang one harness: how to
+  launch it, read its input box, stop a turn,
+  compact, and read its context. Pass a
+  listed name to gang hitch -c. Your own
+  collars, from GANG_COLLARS, win over the
+  shipped ones by name.
 EOF
       ;;
     roles) cat <<'EOF'
 gang roles
-  List available role briefs.
+  List the role briefs available to hitch.
 
   gang roles
+
+  Takes no arguments. A role brief is prose
+  attached to one agent at hitch, on top of
+  the contract every agent gets. Three
+  tab-separated columns: the name, where the
+  file came from, and whether it is usable.
+  Only a usable name works with
+  gang hitch -r; an unusable file stays
+  listed with its defect named.
 EOF
       ;;
     config) cat <<'EOF'
 gang config
-  Show effective configuration.
+  Show the settings gang is actually using,
+  and where each value came from.
 
   gang config
+
+  Takes no arguments and needs no running
+  team. Reach for it when a setting is not
+  what you expected: the origin says what is
+  winning. One line per setting: its
+  effective value, then that origin — a
+  built-in default, the config file and line,
+  or the environment. Then whether the operator
+  doctrine file and roles directory are
+  present, with the path to each slot.
 EOF
       ;;
     *) die "no help for unknown command '$1'" ;;
