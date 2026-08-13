@@ -667,6 +667,11 @@ caller reads the answer as the answer to what they typed. The guard is a table
 of one-argument-too-many probes whose expected text is each command's own
 refusal, compared for completeness against the dispatcher's case arms, so a
 command cannot be added without one and a probe cannot pass on an unrelated
-failure. `gang hook` is excluded by name: its callers are harness
-configurations, and it answers an event it cannot interpret by recording it on
-the window rather than by dying.
+failure.
+
+`gang hook` is the one command that records rather than dies. Its event is the
+payload on standard input, so argv is an invocation it cannot read; its caller
+is a harness configuration and law 7 keeps hooks non-fatal. It therefore names
+the argument on stderr, stamps the window where `status` and `roster` surface
+it, and declines the event. Declining is the refusal — processing the event
+while discarding the argument is the silent acceptance the rule forbids.

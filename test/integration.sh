@@ -306,10 +306,10 @@ equal "every dispatched operator command has a bare classification" \
 # exist, which is what the assertion below would report if a check were removed
 # — `drop ghost STRAY` must not become a drop.
 #
-# gang hook is excluded with the other non-operator routes above: its callers
-# are third-party harness configurations rather than operators, and it answers
-# an event it cannot interpret by recording it on the window, never by dying.
-# gang up delegates its arguments to hitch and its refusal says so.
+# gang hook is not in this table and is not exempt from the rule; it is covered
+# below, where its own contract makes recording the argument the refusal and
+# dying the wrong answer. gang up delegates its arguments to hitch and its
+# refusal says so.
 arity_probes=(
   "up|ghost STRAY|hitch: unknown argument 'STRAY'"
   "hitch|ghost STRAY|hitch: unknown argument 'STRAY'"
@@ -351,6 +351,21 @@ done
 # everything past the page it was asked for.
 refuses "gang help refuses a stray argument" \
   "help: unexpected argument 'STRAY'" "$GANG" help status STRAY
+
+# THE ONE COMMAND THAT RECORDS INSTEAD OF DYING. gang hook takes its event from
+# standard input, so argv is an invocation it cannot read — but its caller is a
+# harness configuration and law 7 keeps hooks non-fatal, so it answers the way a
+# malformed payload is answered: named on stderr, stamped on the window, and the
+# event NOT acted on. Discarding the argument and processing the event anyway is
+# the behaviour this pins against. The payload below is well-formed on purpose:
+# a refusal that needed a broken payload to appear would prove nothing about
+# argv.
+hook_argv_out="$(printf '{"hook_event_name":"Stop"}' \
+  | "$GANG" hook STRAY 2>&1)" || true
+contains "gang hook names an argument it does not take" \
+  "$hook_argv_out" "does not take ('STRAY')"
+excludes "gang hook does not blame the payload for an argv it can read" \
+  "$hook_argv_out" "not readable JSON"
 help_inventory="$(printf '%s\n' "$top_help" | awk '/^  [a-z]/ { print $1 }' | sort -u)"
 equal "help names the classified command inventory" \
   "$classified_commands" "$help_inventory"

@@ -4719,6 +4719,18 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 cmd_hook() { # native harness events; facts are silent unless a light crosses
   DEPRECATIONS_SILENT=1
   local payload event collar kind=""
+  # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
+  # other command answers unconsumed arity by dying; this one must not, because
+  # its caller is a harness configuration and law 7 keeps hooks non-fatal. It
+  # takes the same route a malformed payload takes instead: recorded on the
+  # window where status and roster surface it, and not acted on — half-honouring
+  # a request gang could not read is the outcome that would be silent. Reading
+  # stdin first would consume the event on the way to declining it.
+  if [ $# -gt 0 ]; then
+    hook_uninterpretable "${TMUX_PANE:-}" \
+      "the invocation carries an argument gang hook does not take ('$1'); the event is the payload on standard input"
+    exit 0
+  fi
   payload="$(cat)" || payload=""
   event="$(printf '%s' "$payload" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("hook_event_name",""))' \
@@ -5036,7 +5048,7 @@ case "$cmd" in
   notify)   cmd_notify "$@" ;;
   curfew|cutoff) cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;
-  hook)     cmd_hook ;;
+  hook)     cmd_hook "$@" ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;

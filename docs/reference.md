@@ -29,10 +29,11 @@ typed into. Who the target is and what its state allows are separate answers.
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
 
-Every command refuses an argument it does not consume, naming the argument.
-Nothing is accepted and discarded: a word Gangline drops silently has told its
-caller that the word was understood, and the reading that comes back is then of
-something nobody asked for.
+Every command names an argument it does not consume, and refuses. Nothing is
+accepted and discarded: a word Gangline drops silently has told its caller that
+the word was understood, and the reading that comes back is then of something
+nobody asked for. `gang hook` names it and declines the event instead of dying,
+because its caller is a harness configuration rather than a person; see below.
 
 ## Lifecycle
 
@@ -523,7 +524,11 @@ The command takes no arguments and needs no tmux server.
 ### `gang hook`
 
 Internal endpoint for native harness events. It reads one JSON payload from
-standard input. Prompt/tool events open the turn fact, Stop closes it and may
+standard input and takes no arguments. An invocation carrying one is an
+invocation Gangline cannot read: the argument is named on stderr and recorded on
+the window for `status` and `roster`, and the event is not acted on. It is the
+one command that does not die on unconsumed arity, because a hook must not be
+fatal to the harness that fired it; declining the event is the refusal. Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction and a spool drain, and permission requests
 raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
 it and drains. A harness that refuses a compaction raises the opening event and
