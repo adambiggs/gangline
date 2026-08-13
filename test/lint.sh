@@ -126,6 +126,20 @@ shellcheck --version >/dev/null 2>&1 || {
   exit 1
 }
 
-# bash -n reads one script per call; shellcheck takes the set.
-for f in $files; do bash -n "$f"; done
-shellcheck -S warning $files
+# ONE PROCESS PER FILE, NEVER THE SET. shellcheck holds a whole invocation's
+# input at once and its memory cost grows faster than that input does, so the
+# set costs far more than the sum of its files. Handed this repo as one
+# invocation it reached 6.1 GB, and on 2026-08-12 the kernel OOM killer took it
+# twice on an 11.6 GB host — the mandatory gate was itself the largest single
+# allocation on the machine. Per file the peak is whatever the largest single
+# file costs, which is what makes this gate runnable under a memory cap:
+#
+#   systemd-run --user --scope -p MemoryMax=2G -p MemorySwapMax=0 -- test/gate.sh
+#
+# Nothing here reads across files, so a file at a time is the same verdict.
+# Keeping it that way is a size question, and test/integration.sh is the file
+# that answers it: it is split into sourced parts for exactly this reason.
+for f in $files; do
+  bash -n "$f"
+  shellcheck -S warning "$f"
+done
