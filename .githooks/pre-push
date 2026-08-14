@@ -153,26 +153,50 @@ while read -r local_ref local_sha _remote_ref remote_sha \
     echo "pre-push: $local_sha carries no test/lint.sh, so nothing was linted" >&2
     fail=1
   fi
-  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-    git worktree remove --force "$work" ) 2>/dev/null || true
-
   # The same conventional-commits gate CI runs over the same destination-bound
-  # range. A remote name is not destination identity when pushurl or a retarget
-  # is involved, so no remote-tracking ref participates in this exclusion set.
-  n=0
-  bad=0
-  for sha in $(git rev-list "${revs[@]}"); do
-    n=$((n + 1))
-    git log -1 --format=%B "$sha" > "$tmp/msg"
-    .githooks/commit-msg "$tmp/msg" || {
-      echo "  ^ $(git log -1 --format='%h by %an' "$sha")" >&2
-      bad=$((bad + 1))
-    }
-  done
-  if [ "$bad" -ne 0 ]; then
-    echo "pre-push: $bad of $n commit(s) do not conform" >&2
+  # range, judged by the PUSHED hook rather than the one lying in the working
+  # tree. Those are different gates whenever anything is uncommitted, exactly
+  # as the lint tree is: a push that tightens the gate must be judged by the
+  # gate it is sending, and an uncommitted edit must not decide the verdict.
+  # A remote name is not destination identity when pushurl or a retarget is
+  # involved, so no remote-tracking ref participates in this exclusion set.
+  if [ -x "$work/.githooks/commit-msg" ]; then
+    # `for sha in $(git rev-list ...)` reads a FAILED traversal as an empty
+    # range: set -e does not apply to a failed command substitution in a for
+    # word, so the loop simply runs zero times and the push passes clean. Take
+    # the traversal's status at statement level and keep unknown out of pass.
+    rl_rc=0
+    git rev-list "${revs[@]}" > "$tmp/revs" 2> "$tmp/revs.err" || rl_rc=$?
+    if [ "$rl_rc" -ne 0 ]; then
+      echo "pre-push: refusing $local_ref: git rev-list exited $rl_rc, so the" >&2
+      echo "          pushed commit range is unknown and nothing was checked." >&2
+      sed 's/^/          /' < "$tmp/revs.err" >&2
+      fail=1
+    else
+      n=0
+      bad=0
+      while read -r sha || [ -n "${sha:-}" ]; do
+        [ -n "$sha" ] || continue
+        n=$((n + 1))
+        git log -1 --format=%B "$sha" > "$tmp/msg"
+        "$work/.githooks/commit-msg" "$tmp/msg" || {
+          echo "  ^ $(git log -1 --format='%h by %an' "$sha")" >&2
+          bad=$((bad + 1))
+        }
+      done < "$tmp/revs"
+      if [ "$bad" -ne 0 ]; then
+        echo "pre-push: $bad of $n commit(s) do not conform" >&2
+        fail=1
+      fi
+    fi
+  else
+    echo "pre-push: refusing $local_ref: $local_sha carries no executable" >&2
+    echo "          .githooks/commit-msg, so no commit message was checked." >&2
     fail=1
   fi
+
+  ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+    git worktree remove --force "$work" ) 2>/dev/null || true
 done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then

@@ -965,6 +965,109 @@ fi
 equal "pre-push lint does not read the main repository index" \
   "" "$(<"$hook_probe/index")"
 
+# The message gate is the PUSHED one, for the same reason lint is: a working
+# tree carries edits nobody is sending. The two copies are made to disagree in
+# both directions, so a hook reading the wrong tree cannot pass either half.
+msg_repo="$gate_root/pushed-message-gate"
+msg_remote="$(gate_bare pushed-message-gate)"
+rm -rf "$msg_repo"
+GIT_CONFIG_GLOBAL="$gate_global" git init -q "$msg_repo"
+git -C "$msg_repo" config user.name 'Gangline gate test'
+git -C "$msg_repo" config user.email 'gangline@fixture.invalid'
+mkdir -p "$msg_repo/test" "$msg_repo/.githooks"
+cat > "$msg_repo/test/lint.sh" <<'SH'
+#!/bin/sh
+exit 0
+SH
+cp "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh"
+msg_gate() { # $1 destination path, $2 verdict, $3 marker
+  cat > "$1" <<SH
+#!/bin/sh
+echo '$3' >&2
+exit $2
+SH
+  chmod +x "$1"
+}
+msg_gate "$msg_repo/.githooks/commit-msg" 1 'committed-gate: refusing'
+chmod +x "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh"
+printf '%s\n' base > "$msg_repo/content"
+git -C "$msg_repo" add .
+git -C "$msg_repo" commit -qm 'test: pushed message gate base'
+git -C "$msg_repo" remote add dest "$msg_remote"
+GIT_CONFIG_GLOBAL="$gate_global" git -C "$msg_repo" push \
+  --no-verify -qu dest HEAD:refs/heads/main
+git -C "$msg_repo" config core.hooksPath "$ROOT/.githooks"
+printf '%s\n' refusing > "$msg_repo/content"
+git -C "$msg_repo" add content
+git -C "$msg_repo" commit -qm 'test: judged by the committed gate'
+# Uncommitted, and permissive: nothing here may reach the verdict.
+msg_gate "$msg_repo/.githooks/commit-msg" 0 'worktree-gate: accepting'
+gate_push "$msg_repo" dest HEAD:refs/heads/main
+equal "the pre-push message gate obeys the pushed hook, not the working tree" \
+  "blocked committed absent" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'committed-gate: refusing'* ]] && printf committed || printf unnamed) $([[ "$GATE_PUSH_OUTPUT" != *'worktree-gate: accepting'* ]] && printf absent || printf consulted)"
+
+msg_gate "$msg_repo/.githooks/commit-msg" 0 'committed-gate: accepting'
+git -C "$msg_repo" add .githooks/commit-msg
+git -C "$msg_repo" commit -qm 'test: accept from the committed gate'
+msg_gate "$msg_repo/.githooks/commit-msg" 1 'worktree-gate: refusing'
+gate_push "$msg_repo" dest HEAD:refs/heads/main
+equal "and a refusing working-tree copy cannot block a conforming push" \
+  "pushed absent" \
+  "$([ "$GATE_PUSH_RC" -eq 0 ] && printf pushed || printf blocked) $([[ "$GATE_PUSH_OUTPUT" != *'worktree-gate: refusing'* ]] && printf absent || printf consulted)"
+
+git -C "$msg_repo" rm -q --cached .githooks/commit-msg
+git -C "$msg_repo" commit -qm 'test: push a tip carrying no message gate'
+gate_push "$msg_repo" dest HEAD:refs/heads/main
+equal "pre-push refuses a pushed tip that carries no message gate" \
+  "blocked named" \
+  "$([ "$GATE_PUSH_RC" -ne 0 ] && printf blocked || printf leaked) $([[ "$GATE_PUSH_OUTPUT" = *'carries no executable'* ]] && printf named || printf unnamed)"
+
+# A traversal that FAILS is not an empty range. The fixture removes one
+# reachable commit object, so rev-list must abort where the tip, its tree, and
+# the excluded base all still resolve — and the control run proves the same
+# invocation passes while that object is present.
+walk_repo="$gate_root/rev-list-failure"
+rm -rf "$walk_repo"
+GIT_CONFIG_GLOBAL="$gate_global" git init -q "$walk_repo"
+git -C "$walk_repo" config user.name 'Gangline gate test'
+git -C "$walk_repo" config user.email 'gangline@fixture.invalid'
+mkdir -p "$walk_repo/test" "$walk_repo/.githooks"
+cp "$ROOT/.githooks/commit-msg" "$walk_repo/.githooks/commit-msg"
+cat > "$walk_repo/test/lint.sh" <<'SH'
+#!/bin/sh
+exit 0
+SH
+cp "$walk_repo/test/lint.sh" "$walk_repo/test/integration.sh"
+chmod +x "$walk_repo/test/"*.sh "$walk_repo/.githooks/commit-msg"
+printf '%s\n' a > "$walk_repo/content"
+git -C "$walk_repo" add .
+git -C "$walk_repo" commit -qm 'test: traversal base'
+walk_base="$(git -C "$walk_repo" rev-parse HEAD)"
+printf '%s\n' b > "$walk_repo/content"
+git -C "$walk_repo" commit -qam 'test: traversal middle'
+walk_middle="$(git -C "$walk_repo" rev-parse HEAD)"
+printf '%s\n' c > "$walk_repo/content"
+git -C "$walk_repo" commit -qam 'test: traversal tip'
+walk_tip="$(git -C "$walk_repo" rev-parse HEAD)"
+walk_drive() { # runs the shipped hook over walk_base..walk_tip
+  WALK_RC=0
+  WALK_OUT="$({
+    cd "$walk_repo"
+    printf 'refs/heads/main %s refs/heads/main %s\n' "$walk_tip" "$walk_base" |
+      env GIT_CONFIG_GLOBAL="$gate_global" "$ROOT/.githooks/pre-push" \
+        dest "$msg_remote"
+  } 2>&1)" || WALK_RC=$?
+}
+walk_drive
+equal "pre-push passes a traversable range" "passed" \
+  "$([ "$WALK_RC" -eq 0 ] && printf passed || printf '%s' "refused: $WALK_OUT")"
+rm -f "$walk_repo/.git/objects/${walk_middle:0:2}/${walk_middle:2}"
+walk_drive
+equal "pre-push refuses a failed traversal instead of reading it as empty" \
+  "refused named" \
+  "$([ "$WALK_RC" -ne 0 ] && printf refused || printf passed) $([[ "$WALK_OUT" = *'git rev-list exited'* ]] && printf named || printf unnamed)"
+
 # `!` promises callers a break; the footer is what they can act on. The gate
 # enforces the pairing its diagnostic and CONTRIBUTING.md advertise.
 msg_file="$RUN_ROOT/commit-msg-subject"
