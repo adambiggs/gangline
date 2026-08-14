@@ -19,7 +19,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit wait status capture composer whoami drop down"
+bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
 meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -132,6 +132,7 @@ arity_probes=(
   "notify|ghost STRAY|notify: unexpected argument 'STRAY'"
   "curfew|30m STRAY|curfew: unexpected argument 'STRAY'"
   "status|ghost STRAY|status: unexpected argument 'STRAY'"
+  "explain|ghost STRAY|explain: unexpected argument 'STRAY'"
   "capture|ghost 5 STRAY|capture: unexpected argument 'STRAY'"
   "composer|ghost STRAY|composer: unexpected argument 'STRAY'"
   "whoami|STRAY|whoami: takes no arguments"

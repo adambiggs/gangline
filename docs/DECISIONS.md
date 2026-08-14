@@ -740,6 +740,15 @@ composer keystroke, and a native drain rechecks that the target is idle before
 claiming; the harness's anonymous input queue is recovery evidence, not a safe
 delivery route through a repainting turn.
 
+## State explanations instrument the classified read
+
+`gang explain` records match/miss results only while the ordinary live state
+reader evaluates collar-owned busy and occupancy rules, and prints the first
+matching line from that exact capture. It does not take a later diagnostic
+snapshot that could describe a different TUI frame. Rules bypassed by stronger
+native evidence are named as not evaluated rather than fabricated as misses;
+the diagnostic adds no stored state.
+
 ## Caller barriers use temporary native events
 
 `gang wait` is an opt-in barrier, never a patrol or supervisor. Each caller owns

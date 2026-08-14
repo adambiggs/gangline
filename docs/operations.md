@@ -328,9 +328,10 @@ side; repair the invoked Gangline installation before using the witness.
 
 Collars contain the only harness-specific regexes and parsers. A native TUI
 update can invalidate them. The intended repair loop is direct: reproduce the
-wrong observation in a disposable team, inspect the actual pane, update the
-collar, and run the fast repository gates. Gangline does not ship a diagnostic
-agent or automated strategy-rot machinery.
+wrong observation in a disposable team, run `gang explain NAME` to see the
+exact rule and pane fragment used by that state read, inspect the full pane when
+needed, update the collar, and run the repository gate. Gangline records no
+diagnostic history and ships no strategy-rot machinery.
 
 ## Disposable real-harness smoke tests
 

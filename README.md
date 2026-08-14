@@ -88,6 +88,7 @@ Observe and control the team without replacing the harness interface:
 ```sh
 gang roster
 gang status worker
+gang explain worker
 gang wait worker --until idle
 gang capture worker
 gang attach

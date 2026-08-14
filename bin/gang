@@ -308,6 +308,7 @@ talk to agents
 watch agents
   roster    list the team and its state
   status    inspect one agent's state
+  explain   show why a state was classified
   wait      wait for an agent boundary
   capture   read an agent's pane
   composer  read an agent's input box
@@ -767,6 +768,30 @@ gang status
   identity mismatch, and skew between this
   gang binary and the one that hitched the
   agent.
+EOF
+      ;;
+    explain) cat <<'EOF'
+gang explain
+  Show how one live state read was classified.
+
+  gang explain <name>
+
+  Prints the agent, active pane, collar and
+  resulting state, then each collar state rule:
+  its exact regex, whether that same read used
+  it, and the first captured pane line it
+  matched.
+
+  A rule can be matched, not matched, not
+  declared, or not evaluated because stronger
+  native evidence already settled that part of
+  the state. The pane is captured only by the
+  ordinary state read; it does not recapture and
+  accidentally diagnose a different screen.
+
+  Use it when a harness update makes busy, idle
+  or occupied look wrong. It is a pure live read
+  and records no diagnostic state.
 EOF
       ;;
     roster) cat <<'EOF'
@@ -1574,11 +1599,42 @@ capture() { tmux capture-pane -p -t "$1"; }
 
 capture_joined() { tmux capture-pane -pJ -t "$1"; }
 
+EXPLAINING=0
+EXPLAIN_BUSY_RESULT=""
+EXPLAIN_BUSY_FRAGMENT=""
+EXPLAIN_OCCUPIED_RESULT=""
+EXPLAIN_OCCUPIED_FRAGMENT=""
+
+explain_match_record() { # $1 collar variable, $2 grep verdict, $3 first matching line
+  local variable="$1" verdict="$2" fragment="$3" result
+  if [ "$verdict" -eq 0 ]; then result=matched; else result="did not match"; fi
+  case "$variable" in
+    GANG_BUSY_REGEX)
+      # A match is final evidence. A later evaluation of the same rule may read
+      # a different capture inside the same classification, but it must not
+      # erase the fragment that actually established the positive predicate.
+      [ "$EXPLAIN_BUSY_RESULT" != matched ] || return 0
+      EXPLAIN_BUSY_RESULT="$result"
+      [ "$verdict" -ne 0 ] || EXPLAIN_BUSY_FRAGMENT="$fragment"
+      ;;
+    GANG_OCCUPIED_REGEX)
+      [ "$EXPLAIN_OCCUPIED_RESULT" != matched ] || return 0
+      EXPLAIN_OCCUPIED_RESULT="$result"
+      [ "$verdict" -ne 0 ] || EXPLAIN_OCCUPIED_FRAGMENT="$fragment"
+      ;;
+  esac
+}
+
 re_match() { # $1 = the collar variable NAME holding an ERE, $2 = text; 0 hit, 1 miss
-  local re="${!1:-}" rc=0
-  grep -qE -- "$re" <<<"$2" || rc=$?
+  local re="${!1:-}" rc=0 fragment=""
+  if [ "$EXPLAINING" -eq 1 ]; then
+    fragment="$(grep -m1 -E -- "$re" <<<"$2")" || rc=$?
+  else
+    grep -qE -- "$re" <<<"$2" || rc=$?
+  fi
   [ "$rc" -le 1 ] \
     || die "$1 in ${GANG_COLLAR_FILE:-<no collar loaded>} is not an ERE this grep can evaluate (grep exit $rc): '$re' — refusing to read an unevaluable marker as an absent one"
+  [ "$EXPLAINING" -ne 1 ] || explain_match_record "$1" "$rc" "$fragment"
   return "$rc"
 }
 
@@ -4533,12 +4589,16 @@ glyph_write() { # $1 = window id, $2 = state phrase
   tmux rename-window -t "$id" -- "$target" 2>/dev/null || true
 }
 
+STATE_NOW_RESULT=""
+
 state_now() { # $1 = window id, collar loaded -> the state, in words
   local state busy_rc=0
+  STATE_NOW_RESULT=""
   if occupied "$1"; then
     activity_hold_clear "$1"
     state="!occupied! (authority unknown)"
     glyph_write "$1" "$state"
+    STATE_NOW_RESULT="$state"
     printf '%s\n' "$state"
     return 0
   fi
@@ -4550,7 +4610,51 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   glyph_write "$1" "$state"
+  STATE_NOW_RESULT="$state"
   printf '%s\n' "$state"
+}
+
+explain_rule_report() { # $1 variable, $2 result, $3 matching fragment
+  local variable="$1" result="$2" fragment="$3" regex="${!1:-}"
+  printf '%s: %s\n' "$variable" "$result"
+  [ -z "$regex" ] || printf '  rule: %s\n' "$regex"
+  if [ "$result" = matched ]; then
+    [ -n "$fragment" ] || fragment="<empty line>"
+    printf '  fragment: %s\n' "$fragment"
+  fi
+}
+
+cmd_explain() {
+  local name="${1:-}" pane
+  [ $# -le 1 ] || die "explain: unexpected argument '$2'"
+  case "$name" in ''|-*) cmd_help explain; exit 1 ;; esac
+  resolve "$name"
+  pane="$(wait_active_pane "$AGENT_ID")" \
+    || die "explain: cannot identify the active pane in '$name'"
+  EXPLAINING=1
+  if [ -n "${GANG_BUSY_REGEX:-}" ]; then
+    EXPLAIN_BUSY_RESULT="not evaluated"
+  else
+    EXPLAIN_BUSY_RESULT="not declared"
+  fi
+  EXPLAIN_BUSY_FRAGMENT=""
+  if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
+    EXPLAIN_OCCUPIED_RESULT="not evaluated"
+  else
+    EXPLAIN_OCCUPIED_RESULT="not declared"
+  fi
+  EXPLAIN_OCCUPIED_FRAGMENT=""
+  # Pass the pinned pane rather than the window id. Current Gangline state
+  # normally follows a window's active pane; a diagnostic must not explain a
+  # different pane merely because selection changed between its two regexes.
+  state_now "$pane" >/dev/null
+  EXPLAINING=0
+  printf 'agent: %s\npane: %s\ncollar: %s\nstate: %s\n' \
+    "$name" "$pane" "$AGENT_COLLAR" "$STATE_NOW_RESULT"
+  explain_rule_report GANG_OCCUPIED_REGEX \
+    "$EXPLAIN_OCCUPIED_RESULT" "$EXPLAIN_OCCUPIED_FRAGMENT"
+  explain_rule_report GANG_BUSY_REGEX \
+    "$EXPLAIN_BUSY_RESULT" "$EXPLAIN_BUSY_FRAGMENT"
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
@@ -5438,7 +5542,7 @@ fi
 # a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|send|wait|drop|down)
+    hitch|adopt|send|wait|explain|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -5461,6 +5565,7 @@ case "$cmd" in
   notify)   cmd_notify "$@" ;;
   curfew)   cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;
+  explain)  cmd_explain "$@" ;;
   hook)     cmd_hook "$@" ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;

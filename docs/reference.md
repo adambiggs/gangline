@@ -18,7 +18,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `send`, `wait`, `down` | Print help; the missing name is not a self target. |
+| `hitch`, `adopt`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
@@ -412,6 +412,23 @@ the wait. `?unknown?` fails instead of hanging. Pane exit, `drop`, and `down`
 release temporary registrations so teardown is also observed and reported as a
 vanished target. The implementation uses only `wait-for -S`; tmux channel locks
 are not used because a dead lock holder can leave them locked indefinitely.
+
+### `gang explain <name>`
+
+Runs the ordinary live state classification once and prints the agent, pinned
+active pane, collar, and resulting state. It then reports both collar-owned
+state rules, `GANG_OCCUPIED_REGEX` and `GANG_BUSY_REGEX`, as matched, did not
+match, not declared, or not evaluated because higher-priority evidence settled
+that part of the classification first. A matched rule includes its exact ERE and
+the first pane line that matched.
+
+The diagnostic instruments the regex evaluations inside that same state read.
+It does not recapture the pane afterward, so a moving TUI cannot make the
+explanation describe a screen different from the one classified. Regex capture
+targets the pinned pane rather than following a later active-pane selection.
+The command writes no diagnostic option or file; ordinary state observation may
+still refresh the window glyph and the transient evidence that `status` itself
+maintains.
 
 ### `gang status [name]`
 

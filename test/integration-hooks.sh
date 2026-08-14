@@ -25,6 +25,8 @@ cat > "$RUN_ROOT/collars/waitable.sh" <<SH
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
 GANG_STOP_HOOK=1
+GANG_BUSY_REGEX='EXPLAIN_BUSY_[0-9]+'
+GANG_OCCUPIED_REGEX='EXPLAIN_OCCUPIED_[0-9]+'
 SH
 cat > "$RUN_ROOT/wait-arm-env" <<'SH'
 tmux() {
@@ -61,6 +63,30 @@ else
   fail "an already-idle target satisfies an idle barrier immediately" \
     "gang wait returned nonzero"
 fi
+
+# EXPLAIN INSTRUMENTS THIS STATE READ, rather than taking a diagnostic capture
+# after the verdict. The fixture's own command signals only after producing the
+# one line its busy rule can match, making that pane evidence immediately ready.
+tmux set-option -uw -t "$waitable_id" @gl_turn
+explain_painted="gang-test-explain-painted-$$"
+printf -v explain_command \
+  "printf 'EXPLAIN_BUSY_%%s\\\\n' \"\$((6*7))\"; tmux wait-for -S %q" \
+  "$explain_painted"
+tmux send-keys -l -t "$waitable_pane" "$explain_command"
+tmux send-keys -t "$waitable_pane" Enter
+tmux wait-for "$explain_painted"
+explain_out="$("$GANG" explain waitable)"
+contains "explain reports the live state its rules produced" \
+  "$explain_out" "state: -busy-"
+contains "explain names the collar busy rule that matched" \
+  "$explain_out" "GANG_BUSY_REGEX: matched"
+contains "explain prints the exact busy regex" \
+  "$explain_out" "rule: EXPLAIN_BUSY_[0-9]+"
+contains "explain prints the pane fragment that matched" \
+  "$explain_out" "fragment: EXPLAIN_BUSY_42"
+contains "explain distinguishes a tested occupancy miss" \
+  "$explain_out" "GANG_OCCUPIED_REGEX: did not match"
+
 refuses "a target without a Stop source cannot arm a hanging barrier" \
   "declares no GANG_STOP_HOOK" "$GANG" wait alpha --until "done"
 
