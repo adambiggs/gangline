@@ -134,6 +134,93 @@ GANG_USAGE_CMD="/usage"
 GANG_USAGE_CONFIRM_KEY="Enter"
 GANG_USAGE_RENDER="inline"
 GANG_USAGE_DISMISS_KEY=""
+# A rollout snapshot older than this is still printable evidence, but is not
+# current enough to drive a light or arm a reset wake. The next API turn
+# refreshes it. Local file reads need no hook throttle.
+GANG_USAGE_LIMIT_MAX_AGE=300
+
+# Provider-limit decisions read the exact target session's latest native
+# rate_limits event, never the interactive usage transcript above. The event is
+# refreshed by API turns and its timestamp therefore exposes staleness rather
+# than hiding it. Verified on codex 0.146.0.
+collar_usage_limits() { # $1 = tmux target; print label<TAB>used<TAB>reset<TAB>observed
+  local file
+  file="$(codex_session_file "$1")" || return 1
+  python3 -c '
+from datetime import datetime
+import json
+import sys
+
+path = sys.argv[1]
+
+def newest_lines(path):
+    with open(path, "rb") as stream:
+        stream.seek(0, 2)
+        position = stream.tell()
+        carry = b""
+        while position:
+            size = min(65536, position)
+            position -= size
+            stream.seek(position)
+            parts = (stream.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            yield from reversed(parts[1:])
+        if carry:
+            yield carry
+
+record = None
+for raw in newest_lines(path):
+    if b"\"rate_limits\"" not in raw:
+        continue
+    try:
+        candidate = json.loads(raw)
+    except ValueError:
+        continue
+    payload = candidate.get("payload")
+    limits = payload.get("rate_limits") if isinstance(payload, dict) else None
+    if isinstance(limits, dict):
+        record = candidate
+        break
+if record is None:
+    raise SystemExit(1)
+
+stamp = record.get("timestamp")
+if not isinstance(stamp, str):
+    raise SystemExit(1)
+try:
+    observed = int(datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp())
+except ValueError:
+    raise SystemExit(1)
+
+limits = record["payload"]["rate_limits"]
+name = limits.get("limit_name") or limits.get("limit_id") or "provider"
+rows = []
+for key in ("primary", "secondary"):
+    window = limits.get(key)
+    if not isinstance(window, dict):
+        continue
+    used = window.get("used_percent")
+    minutes = window.get("window_minutes")
+    reset = window.get("resets_at")
+    if isinstance(used, bool) or isinstance(minutes, bool) or isinstance(reset, bool):
+        raise SystemExit(1)
+    if not isinstance(used, (int, float)) or not isinstance(minutes, int) or not isinstance(reset, int):
+        raise SystemExit(1)
+    if used < 0 or used > 100 or int(used) != used or minutes <= 0 or reset <= 0:
+        raise SystemExit(1)
+    if minutes == 300:
+        window_name = "5-hour"
+    elif minutes == 10080:
+        window_name = "weekly"
+    else:
+        window_name = f"{minutes}-minute"
+    rows.append((f"{name} {window_name}", int(used), reset, observed))
+if not rows:
+    raise SystemExit(1)
+for row in rows:
+    print(*row, sep="\t")
+' "$file"
+}
 GANG_MIDTURN_INPUT=1
 # Escape stops an active turn; the busy marker above is the harness's own
 # "esc to interrupt" footer.

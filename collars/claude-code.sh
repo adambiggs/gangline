@@ -151,6 +151,54 @@ GANG_USAGE_CMD="/usage"
 GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="modal"
 GANG_USAGE_DISMISS_KEY="Escape"
+# A headless Claude startup is materially heavier than reading a native event
+# file. Usage lights may reuse their last hook sample for this many seconds;
+# explicit `gang limits` and `gang wait-limit` reads remain fresh.
+GANG_USAGE_LIGHT_INTERVAL=60
+
+# Provider-limit decisions use a headless native read, never the interactive
+# modal above. Verified on claude-code 2.1.232: `claude -p /usage` returns plain
+# text even while another Claude session is mid-turn. Each `Current ...` row
+# carries percent used, a reset wall clock, and its IANA timezone.
+collar_usage_limits() { # $1 = unused target; print label<TAB>used<TAB>reset<TAB>observed
+  local output
+  output="$(claude -p '/usage')" || return 1
+  printf '%s\n' "$output" | python3 -c '
+from datetime import datetime, timedelta
+import re
+import sys
+from zoneinfo import ZoneInfo
+
+lines = sys.stdin.read().splitlines()
+now = datetime.now().astimezone()
+rows = []
+pattern = re.compile(
+    r"^(Current [^:]+): ([0-9]+)% used . resets "
+    r"([A-Z][a-z]{2} [0-9]{1,2}, [0-9]{1,2}(?::[0-9]{2})?(?:am|pm)) "
+    r"\(([^()]+)\)$"
+)
+for line in lines:
+    match = pattern.match(line)
+    if not match:
+        continue
+    label, used, clock, zone_name = match.groups()
+    try:
+        zone = ZoneInfo(zone_name)
+        year = now.astimezone(zone).year
+        clock_format = "%b %d, %I:%M%p %Y" if ":" in clock else "%b %d, %I%p %Y"
+        reset = datetime.strptime(f"{clock} {year}", clock_format).replace(tzinfo=zone)
+    except (ValueError, KeyError):
+        raise SystemExit(1)
+    if reset < now.astimezone(zone) - timedelta(days=1):
+        reset = reset.replace(year=reset.year + 1)
+    rows.append((label, int(used), int(reset.timestamp())))
+if not rows:
+    raise SystemExit(1)
+observed = int(now.timestamp())
+for label, used, reset in rows:
+    print(label, used, reset, observed, sep="\t")
+'
+}
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # OBSERVE, NEVER ANSWER. Driven on claude-code 2.1.227 with external imports
 # unapproved for this project. The imported path and the prompt's first lines

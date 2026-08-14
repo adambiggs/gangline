@@ -240,6 +240,28 @@ boundary while preserving most of the effective window. Expose the same native
 reading as an on-demand query whether or not lights are enabled, because
 signalling and asking are different acts.
 
+## Provider usage is a collar-native observation
+
+Keep provider-usage signaling optional and edge-triggered at operator-declared
+used percentages. Read only non-interactive native evidence: a headless harness
+query or the target session's native rate-limit event. Record its observation
+clock and reset alongside the percentage so staleness stays visible, and let a
+collar cap the age of evidence that may drive a warning. A still-future absolute
+reset may arm a wake without spending quota merely to refresh its percentage. Never feed
+decisions from the interactive usage page: driving a composer cannot observe a
+busy agent and a pane rendering is not a stable data contract. Collars without
+a correctness source say unavailable; status and roster report the last
+ephemeral reading without turning observation into a poll.
+
+## A provider-reset wait is one transient timer
+
+Resume an idle agent at a native reset with one systemd user timer that invokes
+the ordinary attributed delivery path and is collected after it fires. Store
+only the pending declaration in the agent's tmux window, expose it in status and
+roster, and provide exact cancellation. Do not run a Gangline watcher, daemon,
+or retry loop; a removed or superseded target makes a stale one-shot firing a
+no-op.
+
 ## Effort is the collar's word
 
 A reasoning-effort choice rides hitch beside the model choice, but the collar

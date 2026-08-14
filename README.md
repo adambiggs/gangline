@@ -29,8 +29,10 @@ Gangline supplies only the shared primitives:
 - start, attach, observe, and stop native harnesses;
 - send attributed messages through their terminal and verify delivery;
 - expose conservative -busy-, ~idle~, !occupied!, and ?unknown? state;
-- invoke each harness's native compaction, including Codex self-compaction; and
-- optionally give agents yellow and red context or team-time lights.
+- invoke each harness's native compaction, including Codex self-compaction;
+- optionally give agents yellow and red context, provider-usage, or team-time
+  lights; and
+- park an agent until a native provider-limit reset with one transient timer.
 
 It does not assign work, manage roles, enforce deadlines, patrol agents, or run a
 supervisor. Coordination remains visible in the native harnesses and under the
@@ -140,6 +142,19 @@ gang curfew 17:30
 Yellow appears halfway through the declared span and red after four-fifths.
 Hook-enabled agents receive each edge once. `gang curfew` shows the declaration
 and `gang curfew clear` removes it. Nothing stops automatically.
+
+Provider-usage lights use non-interactive sources declared by each collar, not
+screen scraping. They are optional too:
+
+```sh
+GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex
+gang limits worker
+gang wait-limit worker
+```
+
+`gang limits` reports native usage windows, reset times, and sample age. A
+provider-reset wait is one transient systemd user timer; it delivers an
+attributed continuation through the ordinary Gangline path and then disappears.
 
 ## Safety model
 

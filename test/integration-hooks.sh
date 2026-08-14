@@ -405,6 +405,176 @@ fi
 equal "the mixed-unit refusal opens no window" "" \
   "$(window_id lit-mixed-units)"
 
+# Provider-usage lights use a collar's non-interactive correctness source. The
+# native rows carry their own observation and reset clocks; status and roster
+# only report the last sampled fact and never drive a pane while observing.
+cat > "$RUN_ROOT/collars/usage-lights.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+GANG_USAGE_LIGHT_INTERVAL=60
+GANG_USAGE_LIMIT_MAX_AGE=300
+collar_usage_limits() {
+  calls="\$(tmux show-options -wqv -t "\$1" @test_usage_calls 2>/dev/null)"
+  case "\$calls" in ''|*[!0-9]*) calls=0 ;; esac
+  tmux set-option -w -t "\$1" @test_usage_calls "\$(( calls + 1 ))"
+  tmux show-options -wqv -t "\$1" @test_usage
+}
+SH
+usage_now="$(date +%s)"
+GANG_USAGE_LIGHTS=90%,95% "$HITCH" usage-lit -c usage-lights -d /tmp >/dev/null
+usage_lit_id="$(window_id usage-lit)"
+usage_lit_pane="$(tmux list-panes -t "$usage_lit_id" -F '#{pane_id}')"
+tmux set-option -w -t "$usage_lit_id" @test_usage \
+  "Current session"$'\t'"91"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
+"Current week"$'\t'"80"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+usage_yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
+contains "a native provider reading crosses the configured yellow band" \
+  "$usage_yellow" "Yellow usage light"
+usage_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
+equal "a provider-usage edge is emitted once per usage epoch" "" "$usage_repeat"
+equal "a heavyweight native reader is throttled between nearby hooks" "1" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @test_usage_calls)"
+tmux set-option -w -t "$usage_lit_id" @test_usage \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
+"Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+tmux set-option -w -t "$usage_lit_id" @gl_usage_checked "$(( usage_now - 60 ))"
+usage_red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
+contains "a native provider reading crosses the configured red band" \
+  "$usage_red" "Red usage light"
+contains "status carries the last provider-usage warning without sampling" \
+  "$("$GANG" status usage-lit)" "provider usage: Current session is 95% used"
+contains "roster carries the provider-usage warning at a glance" \
+  "$("$GANG" roster | grep '^usage-lit ')" "usage=red"
+
+usage_limits_out="$("$GANG" limits usage-lit)"
+contains "limits prints the collar's native reset and sample age" \
+  "$usage_limits_out" "Current session: 95% used"
+tmux set-option -w -t "$usage_lit_id" @test_usage \
+  $'provider\033[31mred\033[0m\t95\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"
+sanitized_usage_limits="$("$GANG" limits usage-lit)"
+case "$sanitized_usage_limits" in
+  *$'\033'*) fail "provider labels cannot write terminal control bytes" \
+    "raw escape survived" ;;
+  *) pass "provider labels cannot write terminal control bytes" ;;
+esac
+contains "provider label controls become visible placeholders" \
+  "$sanitized_usage_limits" "provider?[31mred?[0m"
+
+tmux set-option -w -t "$usage_lit_id" @test_usage \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$(( usage_now - 301 ))"
+tmux set-option -w -t "$usage_lit_id" @gl_usage_checked "$(( usage_now - 60 ))"
+usage_stale="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
+contains "a stale native event cannot drive a usage light" \
+  "$usage_stale" "too old to act on"
+tmux set-option -w -t "$usage_lit_id" @test_usage \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
+"Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+
+GANG_USAGE_LIGHTS=90%,95% "$HITCH" usage-absent -c stallable -d /tmp >/dev/null
+usage_absent_id="$(window_id usage-absent)"
+usage_absent_pane="$(tmux list-panes -t "$usage_absent_id" -F '#{pane_id}')"
+usage_absent_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_absent_pane" "$GANG" hook)"
+contains "a collar with no correctness source degrades loudly" \
+  "$usage_absent_note" "declares no non-interactive provider-limit source"
+contains "status retains an unavailable provider-usage capability" \
+  "$("$GANG" status usage-absent)" "provider usage unavailable"
+refuses "limits never substitutes the interactive usage pane" \
+  "will not substitute gang usage's composer scrape" "$GANG" limits usage-absent
+
+if invalid_usage_lights="$(GANG_USAGE_LIGHTS=95%,90% "$GANG" hitch \
+    usage-invalid -c usage-lights -d /tmp 2>&1)"; then
+  fail "decreasing provider-usage thresholds are refused" "hitch succeeded"
+else
+  contains "the provider-usage threshold refusal names the ordering" \
+    "$invalid_usage_lights" "must increase from yellow to red"
+fi
+equal "an invalid provider-usage spec opens no window" "" \
+  "$(window_id usage-invalid)"
+
+# A reset wake is a transient systemd user timer, not a watcher. The fake
+# accepts the unit synchronously and records its exact one-shot invocation;
+# firing is then driven directly against the already-established reset state.
+usage_timer_bin="$RUN_ROOT/usage-timer-bin"
+usage_timer_args="$RUN_ROOT/usage-timer.args"
+usage_timer_stops="$RUN_ROOT/usage-timer.stops"
+usage_real_date="$(command -v date)"
+mkdir -p "$usage_timer_bin"
+cat > "$usage_timer_bin/systemd-run" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$usage_timer_args"
+SH
+cat > "$usage_timer_bin/systemctl" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" >> "$usage_timer_stops"
+SH
+cat > "$usage_timer_bin/date" <<SH
+#!/bin/sh
+if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_NOW:-}" ]; then
+  printf '%s\n' "\$GANG_TEST_NOW"
+else
+  exec "$usage_real_date" "\$@"
+fi
+SH
+chmod +x "$usage_timer_bin/systemd-run" "$usage_timer_bin/systemctl" \
+  "$usage_timer_bin/date"
+usage_wait_out="$(PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
+  --resume 'Resume the assigned usage-light fixture.')"
+contains "wait-limit reports the native window it scheduled" \
+  "$usage_wait_out" "Current session, 95% used"
+contains "wait-limit creates a transient collected user timer" \
+  "$(<"$usage_timer_args")" "--collect"
+contains "the transient timer fires the exact Gangline reset command" \
+  "$(<"$usage_timer_args")" "--fire"
+contains "the timer inherits a private tmux socket directory" \
+  "$(<"$usage_timer_args")" "TMUX_TMPDIR=$TMUX_TMPDIR"
+contains "arming a reset wake preserves the red roster light" \
+  "$("$GANG" roster | grep '^usage-lit ')" "usage=red"
+usage_wake_record="$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+IFS=$'\t' read -r usage_wake_reset _ _ <<<"$usage_wake_record"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$usage_lit_pane" "$GANG" hook >/dev/null
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
+  --fire "$usage_wake_reset" >/dev/null
+equal "an early internal callback leaves the reset wake armed" \
+  "$usage_wake_record" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+GANG_TEST_NOW="$usage_wake_reset" PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --fire "$usage_wake_reset" >/dev/null
+# source-guard: producer@db5579b969d6: the exact body is unique to the pending wake record, and the adjacent empty declaration proves this fire consumed that record through its success path rather than merely finding unrelated transcript text
+contains "the reset wake resumes through attributed verified delivery" \
+  "$(pane_all usage-lit)" "Resume the assigned usage-light fixture."
+equal "a fired reset wake retires its tmux declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit --clear >/dev/null
+contains "wait-limit clear stops the exact transient timer" \
+  "$(<"$usage_timer_stops")" ".timer"
+equal "clearing a reset wake retires its tmux declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+cat > "$usage_timer_bin/systemd-run" <<'SH'
+#!/bin/sh
+exit 17
+SH
+if PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null 2>&1; then
+  fail "a refused transient timer is never reported as scheduled" "wait-limit succeeded"
+else
+  pass "a refused transient timer is never reported as scheduled"
+fi
+equal "a refused transient timer leaves no wake declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+"$GANG" drop usage-absent >/dev/null
+"$GANG" drop usage-lit >/dev/null
+
 # A repository-local hooksPath shadows the operator's global path, so the
 # tracked pre-push hook must delegate outward before it runs Gangline's gates.
 # An ambient legacy depth marker must not suppress either delegation or local
@@ -902,4 +1072,3 @@ fi
 [ ! -d "$lingering_spool" ] \
   && pass "and takes the spool of every window in it" \
   || fail "and takes the spool of every window in it" "$lingering_spool survived"
-

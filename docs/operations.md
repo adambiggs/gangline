@@ -178,6 +178,45 @@ into tmux history. If the command reports that the composer was not restored,
 the content already printed is still useful, but inspect that agent with
 `gang attach` before sending it anything else.
 
+This interactive page is not evidence for provider-limit automation. Read the
+collar's non-interactive correctness source instead:
+
+```sh
+gang limits worker-a
+gang limits worker-b
+```
+
+The result names each native usage window, its percentage used, reset time, and
+sample age. Claude Code uses its headless usage command. Codex uses the target
+session rollout's newest native rate-limit event, so its sample age is the time
+since that agent's last API turn. An old Codex event remains printable evidence,
+but after five minutes it is too stale to drive a light; the next API turn
+refreshes it. Its absolute future reset remains sufficient to arm a wake without
+spending quota on a refresh. A collar with neither source reports the capability
+unavailable; Gangline never substitutes the interactive pane.
+
+## Waiting for a provider reset
+
+An agent can end its current work and arrange one continuation at the reset of
+its most constrained native window:
+
+```sh
+gang wait-limit worker
+gang wait-limit worker --resume "Re-read the assigned arc and continue."
+gang wait-limit worker --clear
+```
+
+The most constrained window is the highest percentage used; the later reset
+breaks a tie. Gangline creates one transient systemd user timer. No Gangline
+process remains running, the timer invokes ordinary attributed delivery once,
+and the unit is collected after it runs. `gang status` and `gang roster` show a
+pending or failed wake. Clearing it stops the exact timer; dropping an agent or
+ending its team also attempts that cleanup. If the team or agent has already
+disappeared when a timer fires, the stale timer does nothing and is collected.
+
+The user manager must be available for scheduling. A failure to create or clear
+the timer is loud and is never reported as a scheduled wake.
+
 ## Optional context lights
 
 Context lights are disabled unless the operator supplies thresholds at hitch
@@ -204,6 +243,29 @@ re-executes the statusline script from disk on every repaint. A change on the
 statusline side therefore reaches running harnesses at the next repaint, while
 a change to hook wiring reaches only processes started after it — re-hitch to
 pick it up.
+
+## Optional provider-usage lights
+
+Provider-usage lights are disabled unless the operator supplies used-percentage
+thresholds at hitch or adopt time:
+
+```sh
+GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex
+```
+
+Yellow asks the agent to finish at its next natural checkpoint. Red asks it to
+finish the current arc and stop before the provider limit. Each edge is emitted
+once until usage falls below yellow. The last native reading or loud
+unavailability remains visible in `gang status`; `gang roster` carries yellow,
+red, and unavailable states without performing a new read.
+
+Claude's headless read launches the harness, so hook-driven lights reuse a
+sample for one minute instead of launching it after every tool call. Explicit
+`gang limits` and `gang wait-limit` commands always take a fresh reading.
+
+These lights use the same collar correctness source as `gang limits`. They do
+not type `/usage`, scrape a pane, poll in the background, or infer a limit from
+quiet terminal activity.
 
 ## Optional team curfew
 

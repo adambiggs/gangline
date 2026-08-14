@@ -18,7 +18,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush mail interrupt compact context usage status capture composer whoami drop down"
+bare_error_commands="hitch adopt send flush mail interrupt compact context usage limits wait-limit status capture composer whoami drop down"
 meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -126,6 +126,8 @@ arity_probes=(
   "compact|ghost STRAY|compact: unexpected argument 'STRAY'"
   "context|ghost STRAY|context: unexpected argument 'STRAY'"
   "usage|ghost STRAY|usage: unexpected argument 'STRAY'"
+  "limits|ghost STRAY|limits: unexpected argument 'STRAY'"
+  "wait-limit|ghost STRAY|wait-limit: unknown argument 'STRAY'"
   "notify|ghost STRAY|notify: unexpected argument 'STRAY'"
   "curfew|30m STRAY|curfew: unexpected argument 'STRAY'"
   "status|ghost STRAY|status: unexpected argument 'STRAY'"
@@ -920,6 +922,59 @@ codex_context="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
 equal "Codex context reads the newest native token record" \
   "120k/300k (40%)" "$codex_context"
 
+codex_limits_fixture="$RUN_ROOT/codex-limits.jsonl"
+cat > "$codex_limits_fixture" <<'JSONL'
+{"timestamp":"2026-08-13T20:00:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":91.0,"window_minutes":300,"resets_at":1786670000},"secondary":{"used_percent":84.0,"window_minutes":10080,"resets_at":1787200000}}}}
+{"timestamp":"2026-08-13T20:05:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":96.0,"window_minutes":300,"resets_at":1786670300},"secondary":null}}}
+JSONL
+codex_limits="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c '
+  . "$1"
+  fixture_path="$2"
+  codex_session_file() { printf "%s" "$fixture_path"; }
+  collar_usage_limits ignored
+' fixture "$codex_collar" "$codex_limits_fixture")"
+equal "Codex provider limits come from the target rollout's newest native event" \
+  $'codex 5-hour\t96\t1786670300\t1786651500' \
+  "$codex_limits"
+
+codex_boolean_limits_fixture="$RUN_ROOT/codex-boolean-limits.jsonl"
+cat > "$codex_boolean_limits_fixture" <<'JSONL'
+{"timestamp":"2026-08-13T20:05:00Z","payload":{"rate_limits":{"limit_id":"codex","primary":{"used_percent":true,"window_minutes":300,"resets_at":1786670300},"secondary":null}}}
+JSONL
+if GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c '
+  . "$1"
+  fixture_path="$2"
+  codex_session_file() { printf "%s" "$fixture_path"; }
+  collar_usage_limits ignored
+' fixture "$codex_collar" "$codex_boolean_limits_fixture" >/dev/null 2>&1; then
+  fail "Codex refuses a boolean provider percentage" "boolean parsed as one percent"
+else
+  pass "Codex refuses a boolean provider percentage"
+fi
+
+claude_limits_stub="$RUN_ROOT/claude-limits-stub"
+mkdir -p "$claude_limits_stub"
+cat > "$claude_limits_stub/claude" <<'SH'
+#!/bin/sh
+cat <<'OUT'
+You are currently using your subscription to power your Claude Code usage
+
+Current session: 93% used · resets Aug 13, 4:49pm (America/Vancouver)
+Current week (all models): 96% used · resets Aug 19, 10am (America/Vancouver)
+Current week (Fable): 3% used · resets Aug 19, 10am (America/Vancouver)
+OUT
+SH
+chmod +x "$claude_limits_stub/claude"
+claude_limits="$(PATH="$claude_limits_stub:$PATH" GANG_TEST_COLLARS='' ROOT="$ROOT" \
+  bash -c '. "$1"; collar_usage_limits ignored' fixture "$claude_collar")"
+contains "Claude provider limits use the headless native usage command" \
+  "$claude_limits" $'Current week (all models)\t96\t'
+contains "Claude provider limits accept a reset hour with no minute field" \
+  "$claude_limits" $'Current week (Fable)\t3\t'
+equal "Claude throttles its heavyweight usage-light subprocess" "60" \
+  "$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+    '. "$1"; printf "%s" "$GANG_USAGE_LIGHT_INTERVAL"' fixture "$claude_collar")"
+
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/ctx-known.sh" <<SH
@@ -1044,4 +1099,3 @@ GANG_USAGE_CONFIRM_KEY=""
 GANG_USAGE_RENDER="unknown"
 GANG_USAGE_DISMISS_KEY=""
 SH
-

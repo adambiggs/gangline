@@ -54,9 +54,9 @@ deprecation_flush() {
   DEPRECATION_NOTES=""
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line, $4 alias
@@ -374,6 +374,7 @@ GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
+GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
 GANG_STALL_REPEAT=600
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -428,6 +429,8 @@ watch agents
   composer  read an agent's input box
   context   read an agent's context
   usage     read an agent's usage page
+  limits    read provider usage limits
+  wait-limit resume at a provider reset
   whoami    read this pane's identity
   attach    join the team in tmux
 
@@ -753,6 +756,46 @@ gang usage
   the name and gang resolves this window and
   then refuses it: an agent's own running
   turn owns the box gang would type into.
+EOF
+      ;;
+    limits) cat <<'EOF'
+gang limits
+  Read provider usage limits without driving
+  an agent's composer.
+
+  gang limits [name]
+
+  [name]  agent whose provider limits to read
+          (default: this window)
+
+  The collar owns a machine-readable or
+  headless source. Output names each native
+  window, percent used, reset time, and sample
+  age. A collar with no such source fails
+  loudly; gang never substitutes a pane scrape.
+EOF
+      ;;
+    wait-limit) cat <<'EOF'
+gang wait-limit
+  Go idle until a provider usage window resets.
+
+  gang wait-limit [name]
+    [--resume "next turn"]
+  gang wait-limit [name] --clear
+
+  [name]    agent to resume (default: this
+            window)
+  --resume  turn delivered after the reset;
+            the default only says the reset
+            happened and asks the agent to
+            re-read its assignment.
+  --clear   cancel this agent's pending wake.
+
+  Gang reads the collar's non-interactive
+  limit source, chooses the most-used window
+  (the later reset breaks a tie), and creates
+  one transient systemd user timer. No watcher
+  or Gangline daemon remains running.
 EOF
       ;;
     notify) cat <<'EOF'
@@ -1132,13 +1175,20 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
   GANG_STALL_TYPES="" GANG_DIALOGS="" GANG_DIALOG_HITCH_DIR_TRUST=""
   GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
+  GANG_USAGE_LIGHT_INTERVAL=0 GANG_USAGE_LIMIT_MAX_AGE=0
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
-  unset -f collar_context collar_input collar_session_id \
+  unset -f collar_context collar_input collar_session_id collar_usage_limits \
     profile_context profile_input profile_session_id 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
+  case "$GANG_USAGE_LIGHT_INTERVAL" in
+    ''|*[!0-9]*) die "collar '$1' has an invalid GANG_USAGE_LIGHT_INTERVAL declaration" ;;
+  esac
+  case "$GANG_USAGE_LIMIT_MAX_AGE" in
+    ''|*[!0-9]*) die "collar '$1' has an invalid GANG_USAGE_LIMIT_MAX_AGE declaration" ;;
+  esac
   for suffix in input context session_id; do
     new="collar_$suffix" old="profile_$suffix"
     if declare -F "$new" >/dev/null && declare -F "$old" >/dev/null; then
@@ -3648,6 +3698,154 @@ context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
 }$note"
 }
 
+USAGE_YELLOW=0
+USAGE_RED=0
+usage_lights_parse() { # $1 = off or yellow%,red% provider-use thresholds
+  local yellow red
+  USAGE_YELLOW=0 USAGE_RED=0
+  case "$1" in
+    off|'') return 1 ;;
+    *%,*%)
+      yellow="${1%%%,*}" red="${1##*,}" red="${red%\%}"
+      case "$yellow:$red" in
+        *[!0-9:]*|:*|*:)
+          die "GANG_USAGE_LIGHTS must be off or two percentages, for example 90%,95%$(config_origin_note GANG_USAGE_LIGHTS)" ;;
+      esac
+      [ "$yellow" -gt 0 ] && [ "$red" -gt "$yellow" ] && [ "$red" -le 100 ] \
+        || die "GANG_USAGE_LIGHTS must increase from yellow to red at or below 100%, got '$1'$(config_origin_note GANG_USAGE_LIGHTS)"
+      USAGE_YELLOW="$yellow" USAGE_RED="$red"
+      return 0 ;;
+    *) die "GANG_USAGE_LIGHTS must be off or two percentages, for example 90%,95%$(config_origin_note GANG_USAGE_LIGHTS)" ;;
+  esac
+}
+
+usage_lights_for() { # $1 = window; load its hitch-time setting
+  local spec
+  spec="$(tmux show-options -wqv -t "$1" @gl_usage_lights 2>/dev/null)" || spec=""
+  usage_lights_parse "${spec:-off}"
+}
+
+USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
+usage_limits_read() { # $1 window, collar loaded; select the most constrained row
+  local rows line label used reset observed fields clean_rows="" best_used=-1 best_reset=-1 found=0 now
+  USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
+  declare -F collar_usage_limits >/dev/null || return 4
+  rows="$(collar_usage_limits "$1")" || return 2
+  [ -n "$rows" ] || return 2
+  now="$(date +%s)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    fields="${line//$'\t'/}"
+    [ $(( ${#line} - ${#fields} )) -eq 3 ] || return 3
+    IFS=$'\t' read -r label used reset observed <<<"$line"
+    case "$label" in ''|*$'\n'*|*$'\r'*) return 3 ;; esac
+    case "$used" in ''|*[!0-9]*) return 3 ;; esac
+    case "$reset" in ''|*[!0-9]*) return 3 ;; esac
+    case "$observed" in ''|*[!0-9]*) return 3 ;; esac
+    [ "$used" -le 100 ] && [ "$reset" -gt 0 ] && [ "$observed" -gt 0 ] \
+      && [ "$observed" -le "$now" ] \
+      || return 3
+    label="$(printf '%s' "$label" | config_sanitize)"
+    [ -n "$label" ] || return 3
+    clean_rows="${clean_rows:+$clean_rows
+}$label"$'\t'"$used"$'\t'"$reset"$'\t'"$observed"
+    found=1
+    if [ "$used" -gt "$best_used" ] \
+      || { [ "$used" -eq "$best_used" ] && [ "$reset" -gt "$best_reset" ]; }; then
+      USAGE_LIMIT_LABEL="$label" USAGE_LIMIT_USED="$used"
+      USAGE_LIMIT_RESET="$reset" USAGE_LIMIT_OBSERVED="$observed"
+      best_used="$used" best_reset="$reset"
+    fi
+  done <<<"$rows"
+  [ "$found" -eq 1 ] || return 2
+  USAGE_LIMIT_ROWS="$clean_rows"
+}
+
+usage_limit_stale() { # $1 observation, $2 now; collar declares zero for no age cap
+  [ "$GANG_USAGE_LIMIT_MAX_AGE" -gt 0 ] \
+    && [ $(( $2 - $1 )) -gt "$GANG_USAGE_LIMIT_MAX_AGE" ]
+}
+
+usage_limit_state() { # selected row + thresholds -> below|yellow|red
+  if [ "$USAGE_LIMIT_USED" -ge "$USAGE_RED" ]; then
+    printf red
+  elif [ "$USAGE_LIMIT_USED" -ge "$USAGE_YELLOW" ]; then
+    printf yellow
+  else
+    printf below
+  fi
+}
+
+usage_limit_record() { # $1 window, $2 state; store one validated native reading
+  local label
+  label="$(printf '%s' "$USAGE_LIMIT_LABEL" | config_sanitize)"
+  tmux set-option -w -t "$1" @gl_usage_limit \
+    "$2 $USAGE_LIMIT_USED $USAGE_LIMIT_RESET $USAGE_LIMIT_OBSERVED $label" 2>/dev/null \
+    || return 1
+  tmux set-option -uw -t "$1" @gl_usage_failed 2>/dev/null || true
+}
+
+usage_limit_fail_record() { # $1 window, $2 operator-facing failure
+  local note
+  note="$(printf '%s' "$2" | config_sanitize)"
+  tmux set-option -w -t "$1" @gl_usage_failed "$note" 2>/dev/null || true
+}
+
+usage_light_note() { # $1 collar; sample and append one provider-use edge
+  local rc=0 state previous note agent now checked
+  usage_lights_for "$TMUX_PANE" || return 0
+  load_collar "$1"
+  if [ "$GANG_USAGE_LIGHT_INTERVAL" -gt 0 ]; then
+    now="$(date +%s)"
+    checked="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_usage_checked 2>/dev/null)" \
+      || checked=""
+    case "$checked" in
+      ''|*[!0-9]*) ;;
+      *) [ "$checked" -gt "$now" ] \
+           || [ $(( now - checked )) -ge "$GANG_USAGE_LIGHT_INTERVAL" ] \
+           || return 0 ;;
+    esac
+    tmux set-option -w -t "$TMUX_PANE" @gl_usage_checked "$now" 2>/dev/null \
+      || return 0
+  fi
+  usage_limits_read "$TMUX_PANE" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    now="$(date +%s)"
+    usage_limit_stale "$USAGE_LIMIT_OBSERVED" "$now" && rc=5
+  fi
+  previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_usage_notified 2>/dev/null)" \
+    || previous=""
+  case "$rc" in
+    0)
+      state="$(usage_limit_state)"
+      usage_limit_record "$TMUX_PANE" "$state" || return 0
+      if [ "$state" = below ]; then
+        tmux set-option -uw -t "$TMUX_PANE" @gl_usage_notified 2>/dev/null || true
+        return 0
+      fi
+      [ "$state" != "$previous" ] || return 0
+      if [ "$previous" = red ]; then return 0; fi
+      agent="$(agent_name_of "$TMUX_PANE")"
+      case "$state" in
+        yellow) note="Yellow usage light: $USAGE_LIMIT_LABEL is ${USAGE_LIMIT_USED}% used. Finish at the next natural checkpoint; inspect with gang limits $agent." ;;
+        red) note="Red usage light: $USAGE_LIMIT_LABEL is ${USAGE_LIMIT_USED}% used. Finish the current arc and stop before the provider limit; inspect or schedule its reset with gang limits $agent and gang wait-limit $agent." ;;
+      esac
+      ;;
+    2) state=unavailable; note="Usage lights unavailable: the collar's native provider-limit reader failed. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    3) state=invalid; note="Usage lights unavailable: the collar returned a provider-limit record Gangline cannot interpret. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    4) state=unavailable; note="Usage lights unavailable: this collar declares no non-interactive provider-limit source; Gangline will not substitute a composer scrape." ;;
+    5) state=stale; note="Usage lights unavailable: the collar's newest provider-limit reading is too old to act on. Refresh the harness with an API turn, then inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    *) return 0 ;;
+  esac
+  if [ "$rc" -ne 0 ]; then
+    usage_limit_fail_record "$TMUX_PANE" "$note"
+    [ "$state" != "$previous" ] || return 0
+  fi
+  tmux set-option -w -t "$TMUX_PANE" @gl_usage_notified "$state" 2>/dev/null \
+    || return 0
+  ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$note"
+}
+
 time_light_note() { # append the team curfew edge, if any, to ADVISORY_NOTE
   local rc=0 now span spent light previous key left note
   curfew_read || rc=$?
@@ -3695,6 +3893,7 @@ time_light_note() { # append the team curfew edge, if any, to ADVISORY_NOTE
 advisory_reply() { # $1 event, $2 collar; emit at most one native hook payload
   ADVISORY_NOTE=""
   context_light_note "$2"
+  usage_light_note "$2"
   time_light_note
   [ -n "$ADVISORY_NOTE" ] || return 0
   python3 -c 'import json,sys; print(json.dumps({"hookSpecificOutput":{"hookEventName":sys.argv[1],"additionalContext":sys.argv[2]}}))' \
@@ -3758,6 +3957,7 @@ cmd_hitch() {
   esac; done
   deprecation_flush
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
+  usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_collar "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
@@ -3897,6 +4097,9 @@ cmd_hitch() {
   spool_mint "$id"
   if [ -n "$lights" ]; then
     tmux set-option -w -t "$id" @gl_context_lights "$lights"
+  fi
+  if [ "$GANG_USAGE_LIGHTS" != off ]; then
+    tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi
   exists "$name" || {
     lookup_rc=$?
@@ -4606,6 +4809,198 @@ cmd_usage() { # drive and return the harness's own usage UI
   printf '%s\n' "$content"
 }
 
+usage_limits_error() { # $1 collar, $2 read status -> operator-facing cause
+  case "$2" in
+    2) printf "collar '%s' could not read its native provider-limit source" "$1" ;;
+    3) printf "collar '%s' returned a provider-limit record Gangline cannot interpret" "$1" ;;
+    4) printf "collar '%s' declares no non-interactive provider-limit source; Gangline will not substitute gang usage's composer scrape" "$1" ;;
+    5) printf "collar '%s' has only a stale provider-limit reading; refresh it with an API turn before acting" "$1" ;;
+    *) printf "collar '%s' failed to read provider limits (status %s)" "$1" "$2" ;;
+  esac
+}
+
+usage_limit_format_epoch() { # $1 epoch
+  curfew_format_epoch "$1"
+}
+
+usage_limit_age() { # $1 observed epoch, $2 now
+  if [ "$1" -le "$2" ]; then
+    printf '%s ago' "$(human_seconds $(( $2 - $1 )))"
+  else
+    printf 'in %s (clock skew)' "$(human_seconds $(( $1 - $2 )))"
+  fi
+}
+
+cmd_limits() { # sample the collar's correctness source, never its usage UI
+  local name="${1:-}" rc=0 cause state now line label used reset observed age when
+  [ $# -le 1 ] || die "limits: unexpected argument '$2'"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help limits
+      printf '(no target given, and this shell is not in a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  resolve "$name"
+  usage_limits_read "$AGENT_ID" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cause="$(usage_limits_error "$AGENT_COLLAR" "$rc")"
+    usage_limit_fail_record "$AGENT_ID" "$cause"
+    die "limits: $cause"
+  fi
+  if usage_lights_for "$AGENT_ID"; then state="$(usage_limit_state)"; else state=sampled; fi
+  usage_limit_record "$AGENT_ID" "$state" || die "limits: could not record the native reading on '$name'"
+  now="$(date +%s)"
+  while IFS= read -r line || [ -n "$line" ]; do
+    IFS=$'\t' read -r label used reset observed <<<"$line"
+    when="$(usage_limit_format_epoch "$reset")"
+    age="$(usage_limit_age "$observed" "$now")"
+    printf '%s: %s%% used — resets %s — sampled %s\n' \
+      "$label" "$used" "$when" "$age"
+  done <<<"$USAGE_LIMIT_ROWS"
+}
+
+usage_wake_read() { # $1 window -> reset<TAB>unit<TAB>label; 1 absent, 2 invalid
+  local raw reset unit label
+  raw="$(tmux show-options -wqv -t "$1" @gl_usage_wake 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  IFS=$'\t' read -r reset unit label <<<"$raw"
+  case "$reset" in ''|*[!0-9]*) return 2 ;; esac
+  case "$unit" in gangline-usage-wake-[0-9]*-[0-9]*-[0-9]*) ;; *) return 2 ;; esac
+  [ -n "$label" ] || return 2
+  printf '%s\t%s\t%s' "$reset" "$unit" "$label"
+}
+
+usage_wake_cancel() { # $1 window, $2 loud|quiet
+  local record rc=0 reset unit label
+  record="$(usage_wake_read "$1")" || rc=$?
+  [ "$rc" -ne 1 ] || return 0
+  if [ "$rc" -eq 2 ]; then
+    [ "$2" = quiet ] && return 0
+    die "wait-limit: the stored wake declaration is unreadable; inspect @gl_usage_wake on $(agent_name_of "$1")"
+  fi
+  IFS=$'\t' read -r reset unit label <<<"$record"
+  if command -v systemctl >/dev/null 2>&1; then
+    if ! systemctl --user stop "$unit.timer" >/dev/null 2>&1; then
+      [ "$2" = quiet ] || die "wait-limit: could not stop transient timer $unit.timer; it remains armed for $label"
+      printf 'gang: WARNING: could not stop transient usage timer %s.timer; it will expire at its declared reset\n' "$unit" >&2
+    fi
+  elif [ "$2" = loud ]; then
+    die "wait-limit: systemctl is required to clear transient timer $unit.timer"
+  fi
+  tmux set-option -uw -t "$1" @gl_usage_wake 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_usage_wake_body 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_usage_wake_failed 2>/dev/null || true
+}
+
+usage_wake_unit() { # $1 window, $2 reset -> a safe transient unit basename
+  local sum
+  sum="$(printf '%s:%s:%s\n' "$SESSION" "$1" "$2" | cksum)" \
+    || die "wait-limit: cannot derive a transient unit name"
+  printf 'gangline-usage-wake-%s-%s-%s' "$(id -u)" "${sum%% *}" "$2"
+}
+
+usage_wake_fire() { # $1 name, $2 exact reset; invoked once by systemd
+  local name="$1" reset="$2" id rc=0 record stored_reset unit label body err="" now
+  id="$(win_id "$name")" || rc=$?
+  [ "$rc" -eq 0 ] || return 0 # a removed/replaced team makes the timer stale
+  record="$(usage_wake_read "$id")" || return 0
+  IFS=$'\t' read -r stored_reset unit label <<<"$record"
+  [ "$stored_reset" = "$reset" ] || return 0
+  now="$(date +%s)"
+  [ "$reset" -le "$now" ] || return 0 # an internal callback cannot resume early
+  body="$(tmux show-options -wqv -t "$id" @gl_usage_wake_body 2>/dev/null)" || body=""
+  [ -n "$body" ] || body="Provider usage window '$label' reset. Re-read your assignment and continue only if work remains."
+  if err="$(printf '%s\n' "$body" | env -u TMUX_PANE "$ROOT/bin/gang" send \
+      --to "$name" --from usage-wake --stdin 2>&1)"; then
+    tmux set-option -uw -t "$id" @gl_usage_wake 2>/dev/null || true
+    tmux set-option -uw -t "$id" @gl_usage_wake_body 2>/dev/null || true
+    tmux set-option -uw -t "$id" @gl_usage_wake_failed 2>/dev/null || true
+    printf '%s\n' "$err"
+    return 0
+  fi
+  err="$(printf '%s' "$err" | config_sanitize)"
+  tmux set-option -w -t "$id" @gl_usage_wake_failed \
+    "reset arrived but the resume turn was NOT accepted: $err" 2>/dev/null || true
+  printf 'gang: wait-limit fire failed for %s: %s\n' "$name" "$err" >&2
+  return 1
+}
+
+cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
+  local name="" resume="" clear=0 fire="" rc=0 cause now unit record reset state
+  case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
+  while [ $# -gt 0 ]; do case "$1" in
+    --resume) [ $# -ge 2 ] || die "wait-limit: --resume needs a value"
+              [ -z "$resume" ] || die "wait-limit: --resume may be passed once"
+              resume="$2"; shift 2 ;;
+    --clear) clear=1; shift ;;
+    --fire) [ $# -ge 2 ] || die "wait-limit: --fire needs a reset epoch"
+            fire="$2"; shift 2 ;;
+    *) die "wait-limit: unknown argument '$1'" ;;
+  esac; done
+  [ -n "$name" ] || name="$(self_name)" || {
+    cmd_help wait-limit
+    printf '(no target given, and this shell is not in a Gangline agent window)\n'
+    exit 1
+  }
+  if [ -n "$fire" ]; then
+    [ "$clear" -eq 0 ] && [ -z "$resume" ] \
+      || die "wait-limit: --fire is internal and takes only a target and reset epoch"
+    case "$fire" in ''|*[!0-9]*) die "wait-limit: invalid fire epoch '$fire'" ;; esac
+    usage_wake_fire "$name" "$fire"
+    return
+  fi
+  resolve "$name"
+  if [ "$clear" -eq 1 ]; then
+    [ -z "$resume" ] || die "wait-limit: --clear and --resume cannot be combined"
+    record="$(usage_wake_read "$AGENT_ID")" || rc=$?
+    if [ "$rc" -eq 1 ]; then printf 'no provider-reset wake scheduled for %s\n' "$name"; return; fi
+    usage_wake_cancel "$AGENT_ID" loud
+    printf 'provider-reset wake cleared for %s\n' "$name"
+    return
+  fi
+  usage_limits_read "$AGENT_ID" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cause="$(usage_limits_error "$AGENT_COLLAR" "$rc")"
+    usage_limit_fail_record "$AGENT_ID" "$cause"
+    die "wait-limit: $cause"
+  fi
+  now="$(date +%s)"
+  [ "$USAGE_LIMIT_RESET" -gt "$now" ] \
+    || die "wait-limit: the most constrained native reading ($USAGE_LIMIT_LABEL at ${USAGE_LIMIT_USED}% used) reset already passed; wait for the harness to publish a fresh provider-limit event"
+  command -v systemd-run >/dev/null 2>&1 \
+    || die "wait-limit: systemd-run is required for a transient user timer; no timer was created"
+  usage_wake_cancel "$AGENT_ID" loud
+  unit="$(usage_wake_unit "$AGENT_ID" "$USAGE_LIMIT_RESET")"
+  tmux set-option -w -t "$AGENT_ID" @gl_usage_wake \
+    "$USAGE_LIMIT_RESET"$'\t'"$unit"$'\t'"$USAGE_LIMIT_LABEL"
+  if [ -n "$resume" ]; then
+    tmux set-option -w -t "$AGENT_ID" @gl_usage_wake_body "$resume"
+  else
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
+  fi
+  local -a timer=(systemd-run --user --collect --unit="$unit"
+    --on-calendar="@$USAGE_LIMIT_RESET" --timer-property=AccuracySec=1s
+    --property=Type=oneshot --setenv="GANG_SESSION=$SESSION"
+    --setenv="GANG_CONFIG_DIR=$CONFIG_DIR" --setenv="PATH=$PATH")
+  [ -z "${TMUX:-}" ] || timer+=(--setenv="TMUX=$TMUX")
+  [ -z "${TMUX_TMPDIR:-}" ] || timer+=(--setenv="TMUX_TMPDIR=$TMUX_TMPDIR")
+  [ -z "${GANG_COLLARS:-}" ] || timer+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
+  [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
+  [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
+  timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET")
+  if ! "${timer[@]}" >/dev/null; then
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake 2>/dev/null || true
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
+    die "wait-limit: systemd-run did not accept the transient timer; no wake is scheduled"
+  fi
+  if usage_lights_for "$AGENT_ID"; then state="$(usage_limit_state)"; else state=sampled; fi
+  usage_limit_record "$AGENT_ID" "$state" || true
+  reset="$(usage_limit_format_epoch "$USAGE_LIMIT_RESET")"
+  printf "provider-reset wake scheduled for %s at %s (%s, %s%% used)\n" \
+    "$name" "$reset" "$USAGE_LIMIT_LABEL" "$USAGE_LIMIT_USED"
+}
+
 glyph_write() { # $1 = window id, $2 = state phrase
   local id="$1" state="$2" glyph="" bare current target
   case "$state" in
@@ -4658,6 +5053,59 @@ paint_state() { # $1 = a state phrase, padding and all
     '-busy-'*) colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
   esac
+}
+
+usage_limit_record_read() { # $1 window -> state used reset observed label; 1 absent, 2 invalid
+  local raw state used reset observed label
+  raw="$(tmux show-options -wqv -t "$1" @gl_usage_limit 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 1
+  read -r state used reset observed label <<<"$raw"
+  case "$state" in sampled|below|yellow|red) ;; *) return 2 ;; esac
+  case "$used" in ''|*[!0-9]*) return 2 ;; esac
+  case "$reset" in ''|*[!0-9]*) return 2 ;; esac
+  case "$observed" in ''|*[!0-9]*) return 2 ;; esac
+  [ "$used" -le 100 ] && [ "$reset" -gt 0 ] && [ "$observed" -gt 0 ] && [ -n "$label" ] \
+    || return 2
+  printf '%s %s %s %s %s' "$state" "$used" "$reset" "$observed" "$label"
+}
+
+usage_limit_status_report() { # $1 window
+  local record rc=0 state used reset observed label now age when tone="$C_DIM" failed
+  record="$(usage_limit_record_read "$1")" || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    printf '%s\n' "$(colour "$C_BAD" "provider usage reading UNREADABLE: inspect @gl_usage_limit")"
+  elif [ "$rc" -eq 0 ]; then
+    read -r state used reset observed label <<<"$record"
+    now="$(date +%s)" age="$(usage_limit_age "$observed" "$now")"
+    when="$(usage_limit_format_epoch "$reset")"
+    case "$state" in yellow) tone="$C_WORK" ;; red) tone="$C_BAD" ;; esac
+    if [ "$reset" -le "$now" ]; then
+      printf '%s\n' "$(colour "$C_BAD" "provider usage STALE: $label was ${used}% used; its reset passed at $when; sampled $age")"
+    elif usage_limit_stale "$observed" "$now"; then
+      printf '%s\n' "$(colour "$C_BAD" "provider usage STALE: $label was ${used}% used; resets $when; sampled $age")"
+    else
+      printf '%s\n' "$(colour "$tone" "provider usage: $label is ${used}% used; resets $when; sampled $age${state:+; state=$state}")"
+    fi
+  fi
+  failed="$(tmux show-options -wqv -t "$1" @gl_usage_failed 2>/dev/null)" || failed=""
+  [ -z "$failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "provider usage unavailable: $failed")"
+}
+
+usage_wake_status_report() { # $1 window
+  local record rc=0 reset unit label now when left failed
+  record="$(usage_wake_read "$1")" || rc=$?
+  if [ "$rc" -eq 2 ]; then
+    printf '%s\n' "$(colour "$C_BAD" "provider-reset wake UNREADABLE: inspect @gl_usage_wake")"
+  elif [ "$rc" -eq 0 ]; then
+    IFS=$'\t' read -r reset unit label <<<"$record"
+    now="$(date +%s)" when="$(usage_limit_format_epoch "$reset")"
+    if [ "$reset" -gt "$now" ]; then left="$(human_seconds $(( reset - now ))) remaining"; else left="OVERDUE"; fi
+    printf '%s\n' "$(colour "$C_WORK" "provider-reset wake: $label at $when — $left; transient unit $unit.timer")"
+  fi
+  failed="$(tmux show-options -wqv -t "$1" @gl_usage_wake_failed 2>/dev/null)" || failed=""
+  [ -z "$failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "provider-reset wake failed: $failed")"
 }
 
 cmd_status() {
@@ -4725,6 +5173,8 @@ cmd_status() {
   hook_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_hook_failed)"
   [ -z "$hook_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "native event NOT interpreted: $hook_failed")"
+  usage_limit_status_report "$AGENT_ID"
+  usage_wake_status_report "$AGENT_ID"
   mismatch="$(identity_mismatch_read "$AGENT_ID")" || mismatch=""
   [ -z "$mismatch" ] \
     || printf '%s\n' "$(colour "$C_BAD" "harness session identity MISMATCH: $mismatch")"
@@ -4907,7 +5357,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 }
 
 roster_row() { # $1 window, $2 name, $3 current binary id
-  local prof state detail="" spooled age held skew="" mismatch
+  local prof state detail="" spooled age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now
   prof="$(collar_read "$1" "$2")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -4934,6 +5384,34 @@ roster_row() { # $1 window, $2 name, $3 current binary id
     || detail="$detail stall-note-failed"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_hook_failed)" ] \
     || detail="$detail hook-failed"
+  usage_record="$(usage_limit_record_read "$1")" || usage_rc=$?
+  if [ "$usage_rc" -eq 0 ]; then
+    read -r usage_state _ _ usage_observed _ <<<"$usage_record"
+    now="$(date +%s)"
+    if usage_limit_stale "$usage_observed" "$now"; then
+      detail="$detail usage-stale"
+    else
+      case "$usage_state" in yellow|red) detail="$detail usage=$usage_state" ;; esac
+    fi
+  elif [ "$usage_rc" -eq 2 ]; then
+    detail="$detail usage-unreadable"
+  fi
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_usage_failed 2>/dev/null)" ] \
+    || detail="$detail usage-unavailable"
+  wake_record="$(usage_wake_read "$1")" || wake_rc=$?
+  if [ "$wake_rc" -eq 0 ]; then
+    IFS=$'\t' read -r wake_reset _ _ <<<"$wake_record"
+    now="$(date +%s)"
+    if [ "$wake_reset" -gt "$now" ]; then
+      detail="$detail usage-wake=$(human_seconds $(( wake_reset - now )))"
+    else
+      detail="$detail usage-wake=overdue"
+    fi
+  elif [ "$wake_rc" -eq 2 ]; then
+    detail="$detail usage-wake-unreadable"
+  fi
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_usage_wake_failed 2>/dev/null)" ] \
+    || detail="$detail usage-wake-failed"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] || detail="$detail identity-mismatch=[$mismatch]"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
@@ -5168,6 +5646,10 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" @gl_collar "$collar"
   stamp_binary_id "$id"
   spool_mint "$id"
+  usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
+  if [ "$GANG_USAGE_LIGHTS" != off ]; then
+    tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
+  fi
   state_now "$id" >/dev/null
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
 }
@@ -5191,6 +5673,7 @@ cmd_drop() {
   fi
   # A spool would outlive its window on disk, which is not a design: this is
   # its deletion path — but a composed message is archived out of it first.
+  usage_wake_cancel "$id" quiet
   spool_archive "$id"
   spool_forget "$id"
   tmux kill-window -t "$id"
@@ -5216,6 +5699,7 @@ cmd_down() { # inverse of up: end the whole team's session
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
+    usage_wake_cancel "$id" quiet
     spool_archive "$id"
     spool_forget "$id"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
@@ -5244,6 +5728,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
+    GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
@@ -5327,6 +5812,8 @@ case "$cmd" in
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
   usage)    cmd_usage "$@" ;;
+  limits)   cmd_limits "$@" ;;
+  wait-limit) cmd_wait_limit "$@" ;;
   notify)   cmd_notify "$@" ;;
   curfew|cutoff) cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;

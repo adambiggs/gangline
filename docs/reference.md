@@ -16,7 +16,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 
 | Bare command | Result |
 |---|---|
-| `status`, `capture`, `composer`, `compact`, `context`, `mail`, `usage`, `interrupt`, `flush` | Target the calling agent. |
+| `status`, `capture`, `composer`, `compact`, `context`, `mail`, `usage`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
@@ -463,6 +463,50 @@ composer again. If restoration fails, the captured content is still printed,
 the command exits non-zero, and `gang attach` is required before more input is
 safe. Collars without a verified usage declaration refuse the command.
 
+### `gang limits [name]`
+
+Reads the non-interactive provider-limit source declared by the target's collar.
+It prints one native window per line with percent used, the reset in local time,
+and the age of the native sample. The command may target an agent mid-turn
+because it never drives that agent's composer.
+
+Claude Code's collar runs the harness's headless usage command. Codex's collar
+reads the exact target rollout stamped by its native hook and selects the newest
+rate-limit event. That event's timestamp is the sample clock, so an idle Codex
+reading truthfully grows stale until its next API turn. It remains visible to
+this reporting command even after it is too old to drive a warning or wake. A missing source, failed
+reader, malformed row, missing reset, or missing observation time fails loudly.
+The interactive `gang usage` pane driver is never a fallback.
+
+A successful read records the most constrained native window on the target's
+tmux window. `status` and `roster` report that ephemeral evidence without
+sampling again; it dies with the agent window.
+
+### `gang wait-limit [name] [--resume <turn>]` / `gang wait-limit [name] --clear`
+
+Reads the same non-interactive provider limits as `gang limits`, chooses the
+highest percentage used (later reset on a tie), and schedules one transient
+systemd user timer for that reset. The optional turn is delivered after reset;
+otherwise the continuation only reports that the window reset and asks the
+agent to re-read its assignment.
+
+A collar may declare a maximum actionable age for warning evidence. Codex
+marks an event more than five minutes old stale until its next API turn, but a
+future absolute reset remains sufficient to arm a wake without spending quota
+on a refresh. Claude's headless read is fresh on demand.
+
+The timer invokes `gang wait-limit <name> --fire <reset>` with the team's pinned
+session and configuration environment. Firing uses ordinary attributed,
+verified delivery, including the ordinary spool when a target is temporarily
+busy. A stale firing against a removed agent or superseded reset does nothing.
+The unit is collected after it runs, `--clear` stops the exact pending timer,
+and drop/down attempt the same exact cleanup. There is no watcher process.
+
+The pending reset, transient unit, and optional continuation live as tmux window
+options and die with the window. Status and roster expose pending, overdue,
+unreadable, and failed wake states. A user manager or timer creation failure is
+an error and leaves no wake declaration.
+
 ### `gang roster`
 
 Prints every session window with its collar and current state. Unadopted windows
@@ -578,6 +622,7 @@ Exactly these keys are settable:
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
+| `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
@@ -686,6 +731,9 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
 | `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |
 | `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
+| `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |
+| `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
+| `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents, or fail if absent |
 | `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
