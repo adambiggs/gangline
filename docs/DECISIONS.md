@@ -738,11 +738,16 @@ prompts. Spool drains take the pane delivery lock before the first claim, so
 crossed native workers cannot split or reorder the oldest-first bundle. A
 mid-turn collar may declare `steer`: the envelope commits to the attributed
 spool before any composer keystroke, then a free composer may accept its claim
-as native steering. PostToolUse is a delivery opportunity even while the native
-turn record remains open. `park`, an occupied composer, and tmux copy-mode leave
-the entry live; Gangline never cancels operator-owned mode state. Post-paste
-verification tolerates bounded unreadable or unchanged redraw frames, then
-opens the staged-unknown record and fails closed if no changed composer appears.
+as native steering. If the harness parks that Enter in its native queue,
+Gangline retains the exact composer record for status and verified flush
+recovery after retiring the attributed claim. PostToolUse is a delivery
+opportunity even while the native turn record remains open. A live compaction
+is excluded: its queue is the sanctioned landing only for the attributed
+continuation that owns the compaction, while peer mail waits for PostCompact.
+`park`, an occupied composer, and tmux copy-mode leave the entry live; Gangline
+never cancels operator-owned mode state. Post-paste verification tolerates
+bounded unreadable or unchanged redraw frames, then opens the staged-unknown
+record and fails closed if no changed composer appears.
 
 ## State explanations instrument the classified read
 

@@ -587,10 +587,12 @@ cat > "$RUN_ROOT/collars/steering.sh" <<SH
 GANG_LAUNCH="sh -c 'ENV=$RUN_ROOT/steer-rc exec bash --posix' fixture"
 GANG_MIDTURN_INPUT=steer
 GANG_STOP_HOOK=1
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
+GANG_QUEUE_RECALL_KEY='Up'
 _gl_steer_real="\$(declare -f collar_input)"
 eval "steer_real_input \${_gl_steer_real#collar_input}"
 collar_input() { # record the ownership facts at the first claimed box read
-  local lock dir holder="" live=no claimed=0 f
+  local lock dir holder="" live=no claimed=0 f box state rc=0
   if [ -f "$RUN_ROOT/steer-claim-watch" ]; then
     lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
     if [ -L "\$lock" ]; then
@@ -605,7 +607,18 @@ collar_input() { # record the ownership facts at the first claimed box read
       fi
     fi
   fi
-  steer_real_input "\$1"
+  box="\$(steer_real_input "\$1")" || rc=\$?
+  if [ -f "$RUN_ROOT/steer-queue-arm" ]; then
+    state="\$(cat "$RUN_ROOT/steer-queue-arm")"
+    if [ "\$state" = await ] && printf '%s' "\$box" | grep -q MARK_STEER_PARK; then
+      printf queued > "$RUN_ROOT/steer-queue-arm"
+    elif [ "\$state" = queued ] && ! grep -q '[^[:space:]]' <<<"\$box"; then
+      printf 'Press up to edit queued messages'
+      return 0
+    fi
+  fi
+  [ "\$rc" -eq 0 ] || return "\$rc"
+  printf '%s' "\$box"
 }
 SH
 "$HITCH" steer -c steering -d /tmp >/dev/null
@@ -632,6 +645,60 @@ contains "the pane lock is live when the steering entry is read" \
   "$(<"$RUN_ROOT/steer-claim-observed")" "holder-alive=yes"
 contains "and attribution is claimed before that composer read" \
   "$(<"$RUN_ROOT/steer-claim-observed")" "claimed=1"
+
+# THE NATIVE QUEUE REMAINS ATTRIBUTED. Claude may accept the Enter by parking
+# the steering body until its next tool batch. That is a successful handoff,
+# but the exact composer read-back must remain available to status and flush
+# after the spool claim retires. The fixture makes the queue hint follow only
+# the marked paste, so park_ok is load-bearing rather than inert.
+printf await > "$RUN_ROOT/steer-queue-arm"
+tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
+if printf 'MARK_STEER_PARK' |
+  "$GANG" send --to steer --from tester --stdin >/dev/null 2>&1; then
+  steer_park_rc=0
+else
+  steer_park_rc=$?
+fi
+equal "a native queued steering handoff remains successful" "0" "$steer_park_rc"
+equal "the fixture observed the marked paste before showing queue evidence" \
+  "queued" "$(<"$RUN_ROOT/steer-queue-arm")"
+contains "the queued steering handoff keeps the body recovery record" \
+  "$(tmux show-options -wqv -t "$steer_id" @gl_parked)" "MARK_STEER_PARK"
+equal "a fresh queued steering record is not marked already drained" "" \
+  "$(tmux show-options -wqv -t "$steer_id" @gl_parked_drained)"
+contains "status exposes the collar-owned parked landing" \
+  "$("$GANG" status steer)" "parked"
+excludes "the accepted native queue landing retires the attributed spool" \
+  "$("$GANG" status steer)" "spooled:"
+rm -f "$RUN_ROOT/steer-queue-arm"
+"$GANG" status steer >/dev/null
+
+# COMPACTION IS NOT A PEER-STEERING SURFACE. Its native queue belongs to the
+# attributed continuation that caused it; ordinary peer mail stays spooled
+# until PostCompact closes the bracket, even if the drawn composer is empty.
+tmux set-option -w -t "$steer_id" @gl_turn "closed $(date +%s)"
+printf '%s' '{"hook_event_name":"PreCompact","trigger":"manual"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+compact_steer_out="$(printf 'MARK_COMPACT_STEER' |
+  "$GANG" send --to steer --from tester --stdin 2>&1)"
+contains "a peer send during compaction stays attributed" \
+  "$compact_steer_out" "queued for steer"
+contains "the compaction refusal names the PostCompact boundary" \
+  "$compact_steer_out" "peer input waits for PostCompact"
+excludes "peer steering types nothing into a live compaction" \
+  "$(pane steer)" "MARK_COMPACT_STEER"
+contains "the compaction-held peer body remains spooled" \
+  "$("$GANG" status steer)" "spooled: 1"
+tmux wait-for "gang-spool-drain-$steer_id" &
+compact_steer_waiter=$!
+printf '%s' '{"hook_event_name":"PostCompact"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$compact_steer_waiter"
+# source-guard: producer@96108c54245a: MARK_COMPACT_STEER has one spooled producer, and the completed PostCompact barrier is its only permitted drain
+contains "PostCompact delivers the deferred peer steering once" \
+  "$(pane steer)" "MARK_COMPACT_STEER"
+excludes "PostCompact retires the deferred peer spool" \
+  "$("$GANG" status steer)" "spooled:"
 
 # --live-only has no attributed landing and therefore never steers.
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
@@ -717,6 +784,16 @@ cat > "$RUN_ROOT/collars/park-only.sh" <<SH
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 GANG_MIDTURN_INPUT=park
 GANG_STOP_HOOK=1
+_gl_park_real="\$(declare -f collar_input)"
+eval "park_real_input \${_gl_park_real#collar_input}"
+collar_input() {
+  if [ -f "$RUN_ROOT/park-only-watch" ]; then
+    case "\$(tmux show-options -wqv -t "\$1" @gl_turn 2>/dev/null)" in
+      open*) : > "$RUN_ROOT/park-only-midturn-read" ;;
+    esac
+  fi
+  park_real_input "\$1"
+}
 SH
 "$HITCH" park-only -c park-only -d /tmp >/dev/null
 park_only_id="$(window_id park-only)"
@@ -727,15 +804,17 @@ park_only_out="$(printf 'MARK_PARK_ONLY' |
 contains "a park collar keeps its busy send attributed" "$park_only_out" "queued for park-only"
 excludes "park authorizes no mid-turn composer key" \
   "$(pane park-only)" "MARK_PARK_ONLY"
+: > "$RUN_ROOT/park-only-watch"
 printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$park_only_pane" "$GANG" hook >/dev/null
-contains "PostToolUse does not drain a park-only collar" \
-  "$("$GANG" status park-only)" "spooled: 1"
 tmux wait-for "gang-spool-drain-$park_only_id" &
 park_only_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$park_only_pane" "$GANG" hook >/dev/null
 wait "$park_only_waiter"
+equal "PostToolUse never reads a park-only composer while its turn is open" "" \
+  "$(if [ -e "$RUN_ROOT/park-only-midturn-read" ]; then printf read; fi)"
+rm -f "$RUN_ROOT/park-only-watch"
 # source-guard: producer@a550dad49d99: MARK_PARK_ONLY has one spooled producer and the completed Stop barrier is its only permitted drain
 contains "the park collar drains at the idle boundary" \
   "$(pane park-only)" "MARK_PARK_ONLY"

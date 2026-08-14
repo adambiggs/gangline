@@ -109,6 +109,10 @@ Delivery refuses when:
 - the state evidence is unknown; or
 - another delivery owns that pane's lock.
 
+A lock-owner refusal happens before Gangline accepts the body; retry that same
+send after the named delivery finishes. This is distinct from a command that
+reports `queued`, which has accepted the body and needs no retry.
+
 A failure after a paste may leave staged text in the composer. `gang status` and
 `gang roster` report it. Inspect with `gang capture` or `gang attach`; the next
 safe delivery clears only a staged rendering that still exactly matches what
@@ -124,14 +128,18 @@ When you surface, the parser fix needs a second reviewer.
 TASK
 ```
 
-The live delivery is tried first. If it is refused, the message is parked and
-reported as parked. Stop drains every collar through the same verified path; a
-`steer` collar also tries at PostToolUse while the turn remains open, but only
-after a free composer can take the already-attributed claim. A draft or tmux
-copy-mode leaves the entry live. Add `--supersede` when the newer message should
-replace the sender's earlier waiting ones. An unattended sender does not have
-to re-send a bounced message by hand. Pass `--live-only` only when a caller
-needs a refusal to come back rather than park.
+After the command owns the pane delivery lock, live delivery is tried first. If
+it is refused, the message is parked and reported as parked. Stop drains every
+collar through the same verified path; a `steer` collar also tries at
+PostToolUse while the turn remains open, but only after a free composer can take
+the already-attributed claim. A live compaction remains closed to peer
+steering; PostCompact is its delivery opportunity. If the harness parks an
+accepted steering Enter in its native queue, Gangline keeps the exact composer
+record so `gang status` accounts for it and `gang flush` can recover it. A draft
+or tmux copy-mode leaves the entry live. Add `--supersede` when the newer
+message should replace the sender's earlier waiting ones. An unattended sender
+does not have to re-send a message Gangline reports as queued. Pass
+`--live-only` only when a caller needs a refusal to come back rather than park.
 
 Do not write a retry loop around `gang send`. Spooling exists so that loop does
 not have to, and a loop that re-sends after a failure — as opposed to a refusal

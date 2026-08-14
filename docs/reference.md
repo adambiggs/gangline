@@ -225,8 +225,11 @@ An unexpected queue is not delivered: where a collar declares queue evidence,
 an ordinary submission the harness parks is reported as a failed delivery
 naming the `gang flush` recovery, both before pasting and after Enter. The
 exception is a claim that arrived through a collar's explicit `steer` path;
-there, native mid-turn queueing is the declared destination. An unreadable
-verification capture after Enter remains ambiguity and fails closed.
+there, native mid-turn queueing is the declared destination. Gangline records
+the exact pre-Enter composer even though the attributed spool claim retires, so
+status can expose the parked landing and `gang flush` can verify a later recall.
+An unreadable verification capture after Enter remains ambiguity and fails
+closed.
 
 This detection is scoped to verified harness renderings: the claude-code pin
 is the composer hint observed on 2.1.223, and a harness version whose
@@ -250,9 +253,12 @@ parking it; without the spool, it cannot use steering.
 The target's own native Stop event drains ordinary mail. On a `steer` collar,
 PostToolUse also tries the spool while the turn remains open; a free composer
 accepts its claim as native steering, while an occupied composer defers without
-typing. Hitch itself drains a startup contract parked before any turn existed
-once it observes the composer. Every route uses the same oldest-first verified
-delivery path. The pane delivery lock is taken before the first entry is
+typing. An open compaction is not a steering composer for peer mail: its native
+queue belongs only to its attributed continuation, and PostCompact drains peer
+entries after that bracket closes. Hitch itself drains a startup contract
+parked before any turn existed once it observes the composer. Every route uses
+the same oldest-first verified delivery path. The pane delivery lock is taken
+before the first entry is
 claimed and held through delivery and claim retirement, so crossed native
 workers cannot split or reorder the queue. Copy-mode and other pre-keystroke
 refusals leave entries live and unclaimed for the next native opportunity. A
