@@ -510,9 +510,19 @@ cat > "$usage_timer_bin/systemd-run" <<SH
 #!/bin/sh
 printf '%s\n' "\$@" > "$usage_timer_args"
 SH
+# The fake systemctl is a state machine, not a yes-man: a committed fixture
+# where every stop succeeds cannot tell a unit that is gone from one that is
+# still running, and those are exactly the two cases --clear has to separate.
 cat > "$usage_timer_bin/systemctl" <<SH
 #!/bin/sh
 printf '%s\n' "\$@" >> "$usage_timer_stops"
+case "\${GANG_TEST_SYSTEMCTL:-ok}" in
+  gone)  # the unit already fired and was collected: stop fails, nothing is active
+    case "\$*" in *is-active*) exit 3 ;; *) exit 5 ;; esac ;;
+  stuck) # the stop failed and the unit is still running
+    case "\$*" in *is-active*) exit 0 ;; *) exit 5 ;; esac ;;
+  *) exit 0 ;;
+esac
 SH
 cat > "$usage_timer_bin/date" <<SH
 #!/bin/sh
@@ -537,27 +547,81 @@ contains "the timer inherits a private tmux socket directory" \
 contains "arming a reset wake preserves the red roster light" \
   "$("$GANG" roster | grep '^usage-lit ')" "usage=red"
 usage_wake_record="$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
-IFS=$'\t' read -r usage_wake_reset _ _ <<<"$usage_wake_record"
+IFS=$'\t' read -r usage_wake_reset usage_wake_unit _ <<<"$usage_wake_record"
+contains "the timer callback carries the unit it was armed as" \
+  "$(<"$usage_timer_args")" "$usage_wake_unit"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$usage_lit_pane" "$GANG" hook >/dev/null
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
-  --fire "$usage_wake_reset" >/dev/null
+  --fire "$usage_wake_reset" --unit "$usage_wake_unit" >/dev/null
 equal "an early internal callback leaves the reset wake armed" \
   "$usage_wake_record" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+# A TIMER THAT OUTLIVED ITS TEAM must not consume a declaration it did not arm.
+# The reset and the agent name are the same; only the unit differs, which is
+# what the recreated-team case looks like from the callback's side.
+refuses "an internal callback with no unit is refused" \
+  "requires the --unit that armed it" \
+  env PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
+    --fire "$usage_wake_reset"
 GANG_TEST_NOW="$usage_wake_reset" PATH="$usage_timer_bin:$PATH" \
-  "$GANG" wait-limit usage-lit --fire "$usage_wake_reset" >/dev/null
+  "$GANG" wait-limit usage-lit --fire "$usage_wake_reset" \
+  --unit "${usage_wake_unit}-stale" >/dev/null
+equal "a callback naming another unit consumes nothing" \
+  "$usage_wake_record" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+excludes "and delivers nothing into the window it was aimed at" \
+  "$(pane_all usage-lit)" "Resume the assigned usage-light fixture."
+
+GANG_TEST_NOW="$usage_wake_reset" PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --fire "$usage_wake_reset" \
+  --unit "$usage_wake_unit" >/dev/null
 # source-guard: producer@db5579b969d6: the exact body is unique to the pending wake record, and the adjacent empty declaration proves this fire consumed that record through its success path rather than merely finding unrelated transcript text
 contains "the reset wake resumes through attributed verified delivery" \
   "$(pane_all usage-lit)" "Resume the assigned usage-light fixture."
 equal "a fired reset wake retires its tmux declaration" "" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
 
+: > "$usage_timer_stops"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
+usage_clear_unit="$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake |
+  cut -f2)"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit --clear >/dev/null
 contains "wait-limit clear stops the exact transient timer" \
-  "$(<"$usage_timer_stops")" ".timer"
+  "$(<"$usage_timer_stops")" "$usage_clear_unit.timer"
+contains "and the service that timer would already have started" \
+  "$(<"$usage_timer_stops")" "$usage_clear_unit.service"
 equal "clearing a reset wake retires its tmux declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+# A COLLECTED UNIT IS THE STATE --clear ASKED FOR. `systemctl stop` reports a
+# unit that is not loaded as an error, and treating that as a failure left the
+# declaration behind for status to keep promising.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
+usage_gone_rc=0
+GANG_TEST_SYSTEMCTL=gone PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --clear >/dev/null 2>&1 || usage_gone_rc=$?
+equal "clearing a collected timer succeeds" "0" "$usage_gone_rc"
+equal "and the declaration is gone with it" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+# A UNIT STILL RUNNING AFTER THE STOP is the operator's problem to hear about,
+# and the declaration is still cleared: a wake nothing will deliver must not be
+# left where status reads it as scheduled.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
+usage_stuck_rc=0
+usage_stuck_err="$(GANG_TEST_SYSTEMCTL=stuck PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --clear 2>&1 >/dev/null)" || usage_stuck_rc=$?
+if [ "$usage_stuck_rc" -eq 0 ]; then
+  fail "an unstoppable timer refuses loudly" "clear reported success"
+else
+  contains "an unstoppable timer refuses loudly" "$usage_stuck_err" \
+    "is still running"
+fi
+contains "the refusal hands over the exact recovery command" \
+  "$usage_stuck_err" "systemctl --user stop"
+equal "and the declaration is cleared anyway" "" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
 
 cat > "$usage_timer_bin/systemd-run" <<'SH'

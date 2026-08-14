@@ -16,7 +16,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 
 | Bare command | Result |
 |---|---|
-| `status`, `capture`, `composer`, `compact`, `context`, `mail`, `usage`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
+| `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
@@ -485,12 +485,21 @@ marks an event more than five minutes old stale until its next API turn, but a
 future absolute reset remains sufficient to arm a wake without spending quota
 on a refresh. Claude's headless read is fresh on demand.
 
-The timer invokes `gang wait-limit <name> --fire <reset>` with the team's pinned
-session and configuration environment. Firing uses ordinary attributed,
-verified delivery, including the ordinary spool when a target is temporarily
-busy. A stale firing against a removed agent or superseded reset does nothing.
-The unit is collected after it runs, `--clear` stops the exact pending timer,
-and drop/down attempt the same exact cleanup. There is no watcher process.
+The timer invokes `gang wait-limit <name> --fire <reset> --unit <unit>` with the
+team's pinned session and configuration environment. Firing uses ordinary
+attributed, verified delivery, including the ordinary spool when a target is
+temporarily busy. A firing does nothing unless the agent still exists and its
+stored declaration names the same reset and the same unit, so a timer that
+outlived its tmux server cannot consume the declaration of a team recreated
+under the same session and agent name.
+
+The unit is collected after it runs. `--clear` stops the pending timer and the
+service that timer may already have started, and it removes the declaration
+whether or not those stops succeeded: a unit that already fired and was
+collected is not loaded, and `systemctl stop` reports that as an error. A unit
+still active after the stop is reported as an error naming the exact
+`systemctl --user stop` to run, with the declaration already cleared. Drop and
+down attempt the same cleanup. There is no watcher process.
 
 The pending reset, transient unit, and optional continuation live as tmux window
 options and die with the window. Status and roster expose pending, overdue,

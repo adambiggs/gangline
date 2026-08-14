@@ -658,6 +658,12 @@ gang wait-limit
   (the later reset breaks a tie), and creates
   one transient systemd user timer. No watcher
   or Gangline daemon remains running.
+
+  --clear stops that timer and the service it
+  may already have started, and removes the
+  declaration either way. A unit still running
+  afterwards is reported with the systemctl
+  command that stops it.
 EOF
       ;;
     notify) cat <<'EOF'
@@ -4324,7 +4330,7 @@ usage_wake_read() { # $1 window -> reset<TAB>unit<TAB>label; 1 absent, 2 invalid
 }
 
 usage_wake_cancel() { # $1 window, $2 loud|quiet
-  local record rc=0 reset unit label
+  local record rc=0 reset unit label u still=""
   record="$(usage_wake_read "$1")" || rc=$?
   [ "$rc" -ne 1 ] || return 0
   if [ "$rc" -eq 2 ]; then
@@ -4333,16 +4339,34 @@ usage_wake_cancel() { # $1 window, $2 loud|quiet
   fi
   IFS=$'\t' read -r reset unit label <<<"$record"
   if command -v systemctl >/dev/null 2>&1; then
-    if ! systemctl --user stop "$unit.timer" >/dev/null 2>&1; then
-      [ "$2" = quiet ] || die "wait-limit: could not stop transient timer $unit.timer; it remains armed for $label"
-      printf 'gang: WARNING: could not stop transient usage timer %s.timer; it will expire at its declared reset\n' "$unit" >&2
-    fi
+    # BOTH HALVES OF A TRANSIENT TIMER. Stopping only `$unit.timer` leaves the
+    # `$unit.service` it has already triggered running, and that callback races
+    # this clear for the declaration it is about to remove.
+    #
+    # A failed stop is not a failure by itself: a unit that already fired and
+    # was collected is not loaded, and `systemctl stop` reports that as an
+    # error while reporting exactly the state the caller asked for. Only a unit
+    # still active after the stop is one the operator has to hear about.
+    for u in "$unit.timer" "$unit.service"; do
+      systemctl --user stop "$u" >/dev/null 2>&1 && continue
+      systemctl --user is-active --quiet "$u" 2>/dev/null || continue
+      still="${still:+$still }$u"
+    done
   elif [ "$2" = loud ]; then
     die "wait-limit: systemctl is required to clear transient timer $unit.timer"
   fi
+  # THE DECLARATION IS CLEARED EITHER WAY. `--clear` is a request to stop
+  # promising a wake, and status, roster and the next wait-limit all read this
+  # option: leaving it behind because a stop failed reports a wake nothing is
+  # going to deliver.
   tmux set-option -uw -t "$1" @gl_usage_wake 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_body 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_failed 2>/dev/null || true
+  [ -n "$still" ] || return 0
+  [ "$2" = quiet ] \
+    || die "wait-limit: the wake declaration for $label was cleared, but $still is still running and will fire once; stop it with: systemctl --user stop $still"
+  printf 'gang: WARNING: the usage wake declaration for %s was cleared, but %s is still running (systemctl --user stop %s)\n' \
+    "$label" "$still" "$still" >&2
 }
 
 usage_wake_unit() { # $1 window, $2 reset -> a safe transient unit basename
@@ -4352,13 +4376,20 @@ usage_wake_unit() { # $1 window, $2 reset -> a safe transient unit basename
   printf 'gangline-usage-wake-%s-%s-%s' "$(id -u)" "${sum%% *}" "$2"
 }
 
-usage_wake_fire() { # $1 name, $2 exact reset; invoked once by systemd
-  local name="$1" reset="$2" id rc=0 record stored_reset unit label body err="" now
+usage_wake_fire() { # $1 name, $2 exact reset, $3 the unit systemd is running
+  local name="$1" reset="$2" fired="$3" id rc=0 record stored_reset unit label body err="" now
   id="$(win_id "$name")" || rc=$?
   [ "$rc" -eq 0 ] || return 0 # a removed/replaced team makes the timer stale
   record="$(usage_wake_read "$id")" || return 0
   IFS=$'\t' read -r stored_reset unit label <<<"$record"
   [ "$stored_reset" = "$reset" ] || return 0
+  # THE DECLARATION NAMES THE TIMER THAT ARMED IT, and until now this callback
+  # read that name and ignored it. A timer outliving its tmux server can find a
+  # recreated team holding the same session, agent name and provider reset;
+  # what it cannot find is that team's own declaration naming this unit, because
+  # the unit name is derived from the window this one was armed against. No new
+  # state is introduced: both halves already existed and are now compared.
+  [ "$unit" = "$fired" ] || return 0
   now="$(date +%s)"
   [ "$reset" -le "$now" ] || return 0 # an internal callback cannot resume early
   body="$(tmux show-options -wqv -t "$id" @gl_usage_wake_body 2>/dev/null)" || body=""
@@ -4379,7 +4410,7 @@ usage_wake_fire() { # $1 name, $2 exact reset; invoked once by systemd
 }
 
 cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
-  local name="" resume="" clear=0 fire="" rc=0 cause now unit record reset state
+  local name="" resume="" clear=0 fire="" fired_unit="" rc=0 cause now unit record reset state
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "wait-limit: --resume needs a value"
@@ -4388,6 +4419,8 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
     --clear) clear=1; shift ;;
     --fire) [ $# -ge 2 ] || die "wait-limit: --fire needs a reset epoch"
             fire="$2"; shift 2 ;;
+    --unit) [ $# -ge 2 ] || die "wait-limit: --unit needs a transient unit name"
+            fired_unit="$2"; shift 2 ;;
     *) die "wait-limit: unknown argument '$1'" ;;
   esac; done
   [ -n "$name" ] || name="$(self_name)" || {
@@ -4397,11 +4430,14 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
   }
   if [ -n "$fire" ]; then
     [ "$clear" -eq 0 ] && [ -z "$resume" ] \
-      || die "wait-limit: --fire is internal and takes only a target and reset epoch"
+      || die "wait-limit: --fire is internal and takes only a target, reset epoch and unit"
     case "$fire" in ''|*[!0-9]*) die "wait-limit: invalid fire epoch '$fire'" ;; esac
-    usage_wake_fire "$name" "$fire"
+    [ -n "$fired_unit" ] \
+      || die "wait-limit: --fire requires the --unit that armed it, so a stale timer cannot consume another declaration"
+    usage_wake_fire "$name" "$fire" "$fired_unit"
     return
   fi
+  [ -z "$fired_unit" ] || die "wait-limit: --unit belongs to the internal --fire callback"
   resolve "$name"
   if [ "$clear" -eq 1 ]; then
     [ -z "$resume" ] || die "wait-limit: --clear and --resume cannot be combined"
@@ -4440,7 +4476,7 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
   [ -z "${GANG_COLLARS:-}" ] || timer+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
   [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
   [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
-  timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET")
+  timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET" --unit "$unit")
   if ! "${timer[@]}" >/dev/null; then
     tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake 2>/dev/null || true
     tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
