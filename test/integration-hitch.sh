@@ -313,6 +313,7 @@ submitted "the post-second-prompt startup contract was submitted" startup-second
 # prompt (the one after the startup envelope was submitted); no Stop hook helps.
 startup_up_clear="test-startup-up-clear-$$"
 startup_up_attach_outcome="test-startup-up-attach-outcome-$$"
+startup_up_process_done="test-startup-up-process-done-$$"
 startup_up_delivered="test-startup-up-delivered-$$"
 cat > "$RUN_ROOT/startup-up.sh" <<SH
 #!/bin/sh
@@ -334,6 +335,8 @@ tmux set-hook -g client-attached \
   "set-option -g @test_startup_up_attached yes; wait-for -S $startup_up_attach_outcome"
 tmux wait-for "$startup_up_attach_outcome" &
 startup_up_attached_waiter=$!
+tmux wait-for "$startup_up_process_done" &
+startup_up_process_waiter=$!
 # An attached client adds a real terminal-render path that the suite's global
 # compressed sleep is not calibrated for. Use the production verification
 # clock and a roomy but ordinary client viewport; the suite header records why
@@ -353,12 +356,14 @@ startup_up_attached_waiter=$!
     > "$RUN_ROOT/startup-up.out" 2>&1 || startup_up_rc=$?
   printf '%s\n' "$startup_up_rc" > "$RUN_ROOT/startup-up.status"
   tmux wait-for -S "$startup_up_attach_outcome"
+  tmux wait-for -S "$startup_up_process_done"
   exit "$startup_up_rc"
 ) &
 startup_up_process=$!
 wait "$startup_up_attached_waiter"
 tmux set-hook -gu client-attached
 if [ "$(tmux show-options -gqv @test_startup_up_attached)" != yes ]; then
+  wait "$startup_up_process_waiter"
   wait "$startup_up_process" 2>/dev/null || true
   fail "gang up exposes a positively observed first-run gate in its tmux client" \
     "synthetic client exited with status $(<"$RUN_ROOT/startup-up.status") before tmux observed client-attached: $(<"$RUN_ROOT/startup-up.out")"
@@ -383,9 +388,18 @@ contains "gang up delivers the parked contract after its attached prompt clears"
 excludes "gang up retires the verified startup spool entry" \
   "$("$GANG" status startup-up)" "spooled:"
 # `script` may close its synthetic client on stdin EOF after the delivery; an
-# already-detached client and one detached here are the same settled state.
+# already-detached client and one detached here are the same settled state. Its
+# driver records status and signals completion only after `script` returns, so
+# this barrier establishes process exit before the PID wait merely reaps it.
 tmux detach-client -s "=$GANG_SESSION" 2>/dev/null || true
-wait "$startup_up_process"
+wait "$startup_up_process_waiter"
+startup_up_rc=0
+wait "$startup_up_process" || startup_up_rc=$?
+if [ "$startup_up_rc" -ne 0 ]; then
+  fail "gang up's synthetic attached client exits cleanly after detachment" \
+    "driver exited with status $(<"$RUN_ROOT/startup-up.status"): $(<"$RUN_ROOT/startup-up.out")"
+  exit 1
+fi
 "$GANG" drop startup-up >/dev/null
 
 # A HEADLESS `up` MUST NOT ENTER THE LONG FOLLOW LOOP after its attach client
