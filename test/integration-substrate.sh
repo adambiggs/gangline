@@ -605,9 +605,9 @@ equal "the agent's own name is its registration, whatever the title says" \
 
 # A REGISTRATION IS RAW BYTES, AND IT IS NOW THE TRUSTED IDENTITY. tmux escapes
 # control characters out of a window TITLE — #W reads \033 back as six literal
-# characters — so the title was never a way to paint somebody's terminal. An
-# option value is returned exactly as written, so reading identity from
-# @gl_agent opened that door. Names go out sanitized; matching keeps the bytes.
+# characters — so the title was never a way to paint somebody's terminal. Some
+# supported tmux versions return a user option raw, so reading identity from
+# @gl_agent can open that door. Names go out sanitized; matching keeps the bytes.
 ctl_name="$(printf 'ctl\033[31mrogue')"
 ctl_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n ctl-rogue "PS1='❯ ' bash --norc")"
@@ -634,6 +634,21 @@ missing_ctl_name="$(printf 'missing\033[31mrogue')"
 missing_ctl_drop="$("$GANG" drop "$missing_ctl_name" 2>&1)" || true
 equal "a missing-agent drop refusal makes its control byte visible, never active" \
   "gang: no agent 'missing?[31mrogue'" "$missing_ctl_drop"
+
+# win_id owns every resolver's contradicted-title and ambiguous-name errors.
+# Sanitizing only inside drop leaves the registration it reports able to paint
+# through every caller. This forged identity is independently witnessed by its
+# tmux option; the requested title itself contains no hostile byte.
+ctl_claimed_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n victim "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$ctl_claimed_id" @gl_agent "$ctl_name"
+tmux set-option -w -t "$ctl_claimed_id" @gl_collar bash
+ctl_claimed_out="$("$GANG" drop victim 2>&1)" || true
+contains "a forged registration produces the contradicted-title refusal" \
+  "$ctl_claimed_out" "registered to Gangline agent"
+equal "the resolver never paints a forged registration through that refusal" \
+  "clean" "$(ctl_escapes "$ctl_claimed_out")"
+tmux kill-window -t "$ctl_claimed_id" 2>/dev/null || true
 
 # A synchronous tty fixture paints the two menus Gangline used to answer and
 # records every key it receives. 2.0 answers neither: both are ordinary
