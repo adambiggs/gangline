@@ -35,7 +35,35 @@ case "$subject" in
 esac
 
 types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
-printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+" && exit 0
+if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; then
+  # `!` is a promise to callers, and the footer is the only part of it they can
+  # act on. Advising the footer and accepting its absence published breaking
+  # changes with nothing saying what to update, so the gate reads the body.
+  # Both spellings the Conventional Commits specification accepts are taken.
+  # A git comment line cannot carry it: the anchor rejects `# BREAKING CHANGE:`.
+  printf '%s' "$subject" \
+    | grep -qE "^(${types})(\([a-z0-9._-]+\))?!: " || exit 0
+  frc=0
+  grep -qE '^BREAKING[ -]CHANGE: .+' -- "$1" || frc=$?
+  if [ "$frc" -gt 1 ]; then
+    echo "commit-msg: cannot read the message file ($1): grep exited $frc" >&2
+    exit 1
+  fi
+  [ "$frc" -eq 0 ] && exit 0
+  cat >&2 <<EOF
+commit-msg: a breaking subject carries no BREAKING CHANGE: footer
+
+  ${subject}
+
+The \`!\` tells callers this breaks them. Add the footer that tells them what
+to do about it, on its own line in the body:
+
+  BREAKING CHANGE: <what breaks and what callers must change>
+
+Drop the \`!\` instead if the change is not breaking.
+EOF
+  exit 1
+fi
 
 cat >&2 <<EOF
 commit-msg: subject is not a Conventional Commit
@@ -46,7 +74,7 @@ Expected: <type>[(scope)][!]: <description>
   type   ${types//|/, }
   scope  optional, lowercase — a command or component
          (send, compact, up, down, collars, installer)
-  !      breaking change; add a BREAKING CHANGE: footer alongside it
+  !      breaking change; requires a BREAKING CHANGE: footer in the body
 
   fix(collars): refuse an occupied composer
   feat(down): tear the whole team down

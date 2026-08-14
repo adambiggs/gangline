@@ -965,6 +965,45 @@ fi
 equal "pre-push lint does not read the main repository index" \
   "" "$(<"$hook_probe/index")"
 
+# `!` promises callers a break; the footer is what they can act on. The gate
+# enforces the pairing its diagnostic and CONTRIBUTING.md advertise.
+msg_file="$RUN_ROOT/commit-msg-subject"
+commit_msg_verdict() { # $1 = whole message
+  local rc=0 out
+  printf '%s' "$1" > "$msg_file"
+  out="$("$ROOT/.githooks/commit-msg" "$msg_file" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] && { printf 'accepted'; return 0; }
+  case "$out" in
+    *'no BREAKING CHANGE: footer'*) printf 'refused-footer' ;;
+    *) printf 'refused-other' ;;
+  esac
+}
+equal "the commit gate refuses a breaking subject with no footer" \
+  "refused-footer" \
+  "$(commit_msg_verdict 'feat!: breaks callers
+')"
+equal "and refuses one whose footer is only a git comment" \
+  "refused-footer" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+# BREAKING CHANGE: callers must pass --to
+')"
+equal "and accepts a breaking subject that carries the footer" \
+  "accepted" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+BREAKING CHANGE: callers must pass --to.
+')"
+equal "and accepts the hyphenated footer spelling" \
+  "accepted" \
+  "$(commit_msg_verdict 'refactor!: breaks callers
+
+BREAKING-CHANGE: callers must pass --to.
+')"
+equal "and a nonbreaking subject still needs no footer" \
+  "accepted" "$(commit_msg_verdict 'fix(spool): ordinary change
+')"
+
 # GATED TEARDOWN. `down` is the one irreversible verb, so it is exercised
 # against a session of its own: a guard that is missing must not end this run.
 teardown_session="teardown-probe-$$"
