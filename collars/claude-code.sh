@@ -144,20 +144,13 @@ GANG_QUIET_AT_REST=1
 # keep a lane name and a build number kept both and dropped what it was told to
 # omit. Codex declares a bare command until the same is driven there.
 GANG_COMPACT_CMD="/compact {{instructions}}"
-# Verified on claude-code 2.1.226: /usage opens a full-screen tabbed modal with
-# no composer, and Escape restores an empty composer. The page scrolls; gang
-# returns the visible screen and does not drive the scrollbar.
-GANG_USAGE_CMD="/usage"
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="modal"
-GANG_USAGE_DISMISS_KEY="Escape"
 # A headless Claude startup is materially heavier than reading a native event
 # file. Usage lights may reuse their last hook sample for this many seconds;
 # explicit `gang limits` and `gang wait-limit` reads remain fresh.
 GANG_USAGE_LIGHT_INTERVAL=60
 
 # Provider-limit decisions use a headless native read, never the interactive
-# modal above. Verified on claude-code 2.1.232: `claude -p /usage` returns plain
+# /usage modal. Verified on claude-code 2.1.232: `claude -p /usage` returns plain
 # text even while another Claude session is mid-turn. Each `Current ...` row
 # carries percent used, a reset wall clock, and its IANA timezone.
 collar_usage_limits() { # $1 = unused target; print label<TAB>used<TAB>reset<TAB>observed
@@ -200,17 +193,6 @@ for label, used, reset in rows:
 '
 }
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
-# OBSERVE, NEVER ANSWER. Driven on claude-code 2.1.227 with external imports
-# unapproved for this project. The imported path and the prompt's first lines
-# vary with the working tree, so the stable suffix begins at the warning; -J
-# joins its visual wraps. Empty safe/move/confirm fields make this record
-# read-only in core. The dialog asks an operator security question and no key
-# Gangline can send is an answer it is authorized to choose.
-GANG_DIALOGS='external-import-trust|^❯ [0-9]+\. |||'
-GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
-Yes, allow external imports
-No, disable external imports
-Enter to confirm · Esc to cancel'
 # BEFORE A SESSION EXISTS. Enumerated on claude-code 2.1.226 against a cold
 # CLAUDE_CONFIG_DIR: a splash-only frame, the theme picker, the login-method
 # picker, "Opening browser to sign in…", and the authorize URL above "Paste

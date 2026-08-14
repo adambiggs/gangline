@@ -1,40 +1,41 @@
 # shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
-# Hitch: boot dialogs, native event shapes gang cannot interpret, refusal contracts, the team curfew, addressing, and model and effort selection.
+# Hitch: first-run prompts, native event shapes gang cannot interpret, refusal contracts, the team curfew, addressing, and model and effort selection.
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file
 # in order and it reads that shell's fixtures, helpers and counters.
-# Bind the shipped Claude declaration to the matcher that consumes it. The
-# fixture renders the stable suffix captured from Claude; the collar under
-# test contributes its own marker and block, rather than restating either.
-dialog_start dialog-claude-external external-import dialog-claude-external
-claude_external_before="$(pane dialog-claude-external)"
-contains "the shipped Claude record recognizes its rendered dialog" \
-  "$("$GANG" status dialog-claude-external)" \
-  "known operator dialog: external-import-trust"
-if claude_external_send="$(printf SHIPPED_EXTERNAL_BODY | "$GANG" send \
-    --to dialog-claude-external --from tester --live-only --stdin 2>&1)"; then
-  fail "the shipped Claude operator dialog refuses delivery" \
-    "send unexpectedly succeeded"
-else
-  contains "the shipped refusal names its exact dialog" \
-    "$claude_external_send" "known operator dialog 'external-import-trust'"
+# Hitch names a first-run prompt and parks on positive evidence, and answers
+# nothing. Two event barriers make that exact: a sleep shim holds gang's first
+# observation until the fixture has painted, so the verdict is about a menu that
+# is on screen rather than about a pane that was still starting; and the output
+# pipe holds the test until the accepted line is written, so only the manual
+# keys that follow it can reach the UI.
+prompt_boot_barrier() { # $1 = bin dir, $2 = seen marker, $3 = fixture channel
+  mkdir -p "$1"
+  cat > "$1/sleep" <<SH
+#!/bin/sh
+if [ ! -e '$2' ]; then
+  : > '$2'
+  tmux wait-for '$3'
 fi
-equal "the shipped Claude record sends no key" "" \
-  "$(<"$RUN_ROOT/dialog-claude-external.keys")"
-# source-guard: whole-surface@c171fc82a7df: an observe-only shipped record is forbidden to change any visible pane byte, whatever produced it
-equal "the shipped Claude operator dialog remains byte-exact" \
-  "$claude_external_before" "$(pane dialog-claude-external)"
-"$GANG" drop dialog-claude-external >/dev/null
-
-# Hitch names and parks immediately on positive evidence of an observe-only
-# prompt. The output pipe is the event barrier: the accepted line is already
-# written when the test answers, and only those two manual keys reach the UI.
+exit 0
+SH
+  chmod +x "$1/sleep"
+}
+cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='dialog-observe-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+SH
 : > "$RUN_ROOT/dialog-observe-boot.keys"
+prompt_boot_barrier "$RUN_ROOT/observe-boot-bin" \
+  "$RUN_ROOT/observe-boot-seen" "dialog-observe-boot-ready-$$"
 observe_boot_pipe="$RUN_ROOT/dialog-observe-boot.out"
 mkfifo "$observe_boot_pipe"
 exec 8<>"$observe_boot_pipe"
-"$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp >&8 2>&1 &
+PATH="$RUN_ROOT/observe-boot-bin:$PATH" \
+  "$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp >&8 2>&1 &
 observe_boot_pid=$!
 observe_boot_out=""
 while IFS= read -r observe_boot_line <&8; do
@@ -43,228 +44,75 @@ while IFS= read -r observe_boot_line <&8; do
     *"nothing further is needed from you"*) break ;;
   esac
 done
-pass "an observe-only startup prompt is accepted immediately on positive evidence"
-contains "hitch names the operator dialog it is waiting on" \
+pass "a first-run prompt is accepted immediately on positive evidence"
+contains "hitch names the prompt it is waiting on" \
   "$observe_boot_out" \
-  "known operator dialog 'operator-choice'"
-equal "hitch sends no key to the operator dialog" "" \
+  "is waiting on a first-run prompt"
+contains "and points at the one way to answer it" \
+  "$observe_boot_out" "gang attach"
+equal "hitch sends no key to the prompt" "" \
   "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
 observe_boot_id="$(window_id dialog-observe-boot)"
 tmux send-keys -t "$observe_boot_id" Down Enter
 if wait "$observe_boot_pid"; then
-  pass "hitch continues after the operator answers the recognized dialog"
+  pass "hitch continues after the operator answers the prompt"
 else
-  fail "hitch continues after the operator answers the recognized dialog" \
+  fail "hitch continues after the operator answers the prompt" \
     "$observe_boot_out"
 fi
 exec 8>&-
-equal "only the operator's manual answer reaches the recognized dialog" \
+equal "only the operator's manual answer reaches the prompt" \
   $'Down\nEnter' "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
-# source-guard: producer@b9a4f7b286cf: the successful hitch above is the sole producer of this nonce-addressed startup body after the fixture restores its composer
-contains "the post-dialog startup contract is delivered" \
+# source-guard: producer@be4e8d85b13f: the successful hitch above is the sole producer of this nonce-addressed startup body, and the key log independently proves the fixture's composer was restored by the operator's own answer
+contains "the post-prompt startup contract is delivered" \
   "$(pane dialog-observe-boot)" "You are dialog-observe-boot in Gangline"
 "$GANG" drop dialog-observe-boot >/dev/null
 
-cat > "$RUN_ROOT/collars/dialog-ambiguous.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
-same-bytes|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
-GANG_DIALOG_LINES_same_bytes="\$GANG_DIALOG_LINES_safety_buffering_prompt"
-SH
-dialog_start dialog-ambiguous known dialog-ambiguous
-if ambiguous_out="$("$GANG" status dialog-ambiguous 2>&1)"; then
-  fail "two matching dialog records are refused as ambiguity" \
-    "status unexpectedly succeeded"
-else
-  contains "ambiguity names the first matching id" \
-    "$ambiguous_out" "safety-buffering-prompt"
-  contains "ambiguity names the second matching id" "$ambiguous_out" "same-bytes"
-fi
-equal "an ambiguous registry presses no key" "" \
-  "$(<"$RUN_ROOT/dialog-ambiguous.keys")"
-"$GANG" drop dialog-ambiguous >/dev/null
-
-cat > "$RUN_ROOT/collars/dialog-danger.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='permission-surface|^› [0-9]+\. |Allow||Enter'
-GANG_DIALOG_LINES_permission_surface='Do you want to allow this tool to run?
-Allow
-Deny'
-SH
-refuses "load_collar mechanically rejects an authority-shaped dialog registry" \
-  "forbidden authority word" "$GANG" hitch dialog-danger -c dialog-danger -d /tmp
-equal "a refused authority registry opens no window" "" "$(window_id dialog-danger)"
-
-cat > "$RUN_ROOT/collars/dialog-trust-unscoped.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
-GANG_DIALOG_LINES_directory_trust_prompt='Do you trust this directory?
-Yes, continue
-No, quit'
-SH
-refuses "directory trust remains forbidden without the hitch-directory declaration" \
-  "forbidden authority word" \
-  "$GANG" hitch dialog-trust-unscoped -c dialog-trust-unscoped -d /tmp
-equal "an unscoped trust registry opens no window" "" \
-  "$(window_id dialog-trust-unscoped)"
-
-authority_probe_cases='approval|Approval required to continue
-access|Grant access to your files
-authorize|Authorize this device
-admin|Grant admin rights to the agent
-denial|Denial of safeguards is disabled
-ask-again|Yes, and do not ask again
-bypass|Bypass all safety checks
-write-access|Enable write access to disk'
-while IFS='|' read -r authority_slug authority_line; do
-  [ -n "$authority_slug" ] || continue
-  cat > "$RUN_ROOT/collars/dialog-authority-$authority_slug.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='authority-$authority_slug|^› [0-9]+\. |No||Enter'
-GANG_DIALOG_LINES_authority_${authority_slug//-/_}='$authority_line
-Yes
-No'
-SH
-  refuses "authority registry rejects $authority_slug language" \
-    "forbidden authority word" \
-    "$GANG" hitch "authority-$authority_slug" \
-      -c "dialog-authority-$authority_slug" -d /tmp
-  equal "the $authority_slug authority refusal opens no window" "" \
-    "$(window_id "authority-$authority_slug")"
-done <<<"$authority_probe_cases"
-
-cat > "$RUN_ROOT/collars/dialog-four-fields.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='broken|^› [0-9]+\. |Safe|Enter'
-SH
-cat > "$RUN_ROOT/collars/dialog-bad-id.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='Bad_ID|^› [0-9]+\. |Safe||Enter'
-GANG_DIALOG_LINES_Bad_ID='Safe'
-SH
-cat > "$RUN_ROOT/collars/dialog-safe-absent.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='safe-absent|^› [0-9]+\. |Missing||Enter'
-GANG_DIALOG_LINES_safe_absent='Present'
-SH
-cat > "$RUN_ROOT/collars/dialog-block-missing.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_DIALOGS='block-missing|^› [0-9]+\. |Safe||Enter'
-SH
-refuses "a four-field dialog record is refused at collar load" \
-  "without exactly five fields" \
-  "$GANG" hitch dialog-four-fields -c dialog-four-fields -d /tmp
-refuses "a dialog id outside the slug alphabet is refused at collar load" \
-  "invalid dialog id" "$GANG" hitch dialog-bad-id -c dialog-bad-id -d /tmp
-refuses "a safe label absent from its declared block is refused at collar load" \
-  "is not one of" \
-  "$GANG" hitch dialog-safe-absent -c dialog-safe-absent -d /tmp
-refuses "an unset dialog block is refused at collar load" \
-  "has no non-empty GANG_DIALOG_LINES_block_missing" \
-  "$GANG" hitch dialog-block-missing -c dialog-block-missing -d /tmp
-
-: > "$RUN_ROOT/dialog-recurring.keys"
-mkdir -p "$RUN_ROOT/recurring-bin"
-cat > "$RUN_ROOT/recurring-bin/sleep" <<'SH'
-#!/bin/sh
-[ "${1:-}" != 1 ] || tmux wait-for -S "$DIALOG_RECUR_SIGNAL"
-exit 0
-SH
-chmod +x "$RUN_ROOT/recurring-bin/sleep"
-# shellcheck disable=SC2154  # set in test/integration-substrate.sh
-if recurring_out="$(DIALOG_RECUR_SIGNAL="$dialog_recurring_signal" \
-    PATH="$RUN_ROOT/recurring-bin:$PATH" GANG_BOOT_TIMEOUT=2 \
-    "$GANG" hitch dialog-recurring \
-    -c dialog-recurring -d /tmp 2>&1)"; then
-  fail "a recurring known transient consumes the hitch boot budget" \
-    "hitch unexpectedly answered every recurrence and succeeded"
-else
-  contains "recurring known-transient exhaustion fails loud" \
-    "$recurring_out" "startup message was not delivered"
-fi
-case "$(<"$RUN_ROOT/dialog-recurring.keys")" in
-  $'Down\nEnter'|$'Down\nEnter\nDown\nEnter')
-    pass "recurring dialogs cannot answer beyond the hitch boot budget" ;;
-  *) fail "recurring dialogs cannot answer beyond the hitch boot budget" \
-       "unexpected key sequence [$(<"$RUN_ROOT/dialog-recurring.keys")]" ;;
-esac
-"$GANG" drop dialog-recurring >/dev/null
-
-# Calibrate the boot-dialog instrument first: one fingerprint byte is wrong,
-# so the same trust-shaped screen must receive no key and reproduce the settled
-# non-composer hitch failure. The successful twin then exercises the shipped
-# empty-move shape and startup delivery, not merely dialog recognition.
+# The shipped Codex directory-trust prompt was the one screen hitch -d used to
+# answer on the operator's behalf. It is now an ordinary unanswered prompt: no
+# key, a parked contract, and a recovery that does not prescribe a drop.
 cat > "$RUN_ROOT/collars/dialog-trust-boot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
+. "$RUN_ROOT/collars/dialog.sh"
 GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot.keys' DIALOG_READY='dialog-trust-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
-GANG_OCCUPIED_REGEX='^› [0-9]+\. '
-GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
-GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
-GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
-Yes, continue
-No, quit
-Press enter to continue'
 SH
-cat > "$RUN_ROOT/collars/dialog-trust-boot-miss.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-trust-boot.sh"
-GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot-miss.keys' DIALOG_READY='dialog-trust-boot-miss-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
-GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the content of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
-Yes, continue
-No, quit
-Press enter to continue'
-SH
-: > "$RUN_ROOT/dialog-trust-boot-miss.keys"
-if trust_miss_out="$(GANG_BOOT_TIMEOUT=1 "$GANG" hitch trust-boot-miss \
-    -c dialog-trust-boot-miss -d /tmp 2>&1)"; then
-  fail "a mutated trust fingerprint calibrates the boot-dialog guard red" \
-    "hitch unexpectedly succeeded"
-else
-  pass "a mutated trust fingerprint calibrates the boot-dialog guard red"
-fi
-equal "the missed boot dialog receives no auto-answer key" "" \
-  "$(<"$RUN_ROOT/dialog-trust-boot-miss.keys")"
-contains "unknown-dialog recovery delivers the contract after manual clearance" \
-  "$trust_miss_out" "gang send --to trust-boot-miss"
-excludes "unknown-dialog recovery does not prescribe an unconditional drop" \
-  "$trust_miss_out" "then 'gang drop"
-"$GANG" drop trust-boot-miss >/dev/null
-
 : > "$RUN_ROOT/dialog-trust-boot.keys"
-if GANG_BOOT_TIMEOUT=3 "$GANG" hitch trust-boot -c dialog-trust-boot -d /tmp \
-    >"$RUN_ROOT/dialog-trust-boot.out" 2>&1; then
-  pass "hitch answers the known directory-trust dialog and continues"
+prompt_boot_barrier "$RUN_ROOT/trust-boot-bin" \
+  "$RUN_ROOT/trust-boot-seen" "dialog-trust-boot-ready-$$"
+trust_boot_pipe="$RUN_ROOT/dialog-trust-boot.out"
+mkfifo "$trust_boot_pipe"
+exec 8<>"$trust_boot_pipe"
+PATH="$RUN_ROOT/trust-boot-bin:$PATH" \
+  "$GANG" hitch trust-boot -c dialog-trust-boot -d /tmp >&8 2>&1 &
+trust_boot_pid=$!
+trust_boot_out=""
+while IFS= read -r trust_boot_line <&8; do
+  trust_boot_out="${trust_boot_out}${trust_boot_out:+$'\n'}$trust_boot_line"
+  case "$trust_boot_line" in
+    *"nothing further is needed from you"*) break ;;
+  esac
+done
+equal "directory trust receives no key from hitch -d" "" \
+  "$(<"$RUN_ROOT/dialog-trust-boot.keys")"
+contains "the parked contract names the manual recovery" \
+  "$trust_boot_out" "gang attach"
+excludes "and the recovery does not prescribe an unconditional drop" \
+  "$trust_boot_out" "then 'gang drop"
+tmux send-keys -t "$(window_id trust-boot)" Enter
+if wait "$trust_boot_pid"; then
+  pass "hitch delivers once the operator answers directory trust"
 else
-  fail "hitch answers the known directory-trust dialog and continues" \
-    "$(<"$RUN_ROOT/dialog-trust-boot.out")"
+  fail "hitch delivers once the operator answers directory trust" \
+    "$trust_boot_out"
 fi
-equal "the preselected trust row needs only its empty-move confirmation" \
-  "Enter" "$(<"$RUN_ROOT/dialog-trust-boot.keys")"
-contains "the post-dialog hitch delivers its startup contract" \
+exec 8>&-
+equal "only the operator's Enter reached the trust prompt" "Enter" \
+  "$(<"$RUN_ROOT/dialog-trust-boot.keys")"
+# source-guard: producer@e417b69a0f67: the waited-on hitch is the sole producer of this body, and the trust prompt's key log shows only the operator's Enter before it
+contains "the post-prompt hitch delivers its startup contract" \
   "$(pane trust-boot)" "You are trust-boot in Gangline"
-contains "the post-dialog hitch reports verified startup delivery" \
-  "$(<"$RUN_ROOT/dialog-trust-boot.out")" \
-  "delivered startup contract to trust-boot"
-submitted "the post-dialog startup contract was submitted" trust-boot
+submitted "the post-prompt startup contract was submitted" trust-boot
 "$GANG" drop trust-boot >/dev/null
 
 modal_observed="test-boot-modal-observed-$$"
@@ -399,10 +247,11 @@ excludes "the verified foreground drain retires the startup spool entry" \
 submitted "the foreground-delivered startup contract was submitted" startup-gated
 "$GANG" drop startup-gated >/dev/null
 
-# A SECOND NATIVE DIALOG MAY FOLLOW THE FIRST GATE. The foreground observer
-# stays quiet after its one operator notice, but it must retain the ordinary
-# hitch triage that answers a safe row already authorised by hitch -d. This
-# models the Codex ordering where hook review precedes directory trust.
+# A SECOND NATIVE PROMPT MAY FOLLOW THE FIRST GATE. The foreground observer
+# stays quiet after its one operator notice and keeps observing, so the contract
+# committed before the first gate still lands after the operator answers the
+# second. This models the Codex ordering where hook review precedes directory
+# trust; gang answers neither.
 startup_second_clear="test-startup-second-clear-$$"
 cat > "$RUN_ROOT/startup-second.sh" <<SH
 #!/bin/sh
@@ -420,12 +269,6 @@ cat > "$RUN_ROOT/collars/startup-second.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="'$RUN_ROOT/startup-second.sh'"
 GANG_OCCUPIED_REGEX='FIRST_RUN_GATE|^› [0-9]+\. '
-GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
-GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
-GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
-Yes, continue
-No, quit
-Press enter to continue'
 SH
 : > "$RUN_ROOT/startup-second.keys"
 startup_second_pipe="$RUN_ROOT/startup-second.out"
@@ -443,105 +286,26 @@ done
 contains "the first gate commits the startup contract before its successor" \
   "$startup_second_out" "queued startup contract for startup-second"
 tmux wait-for -S "$startup_second_clear"
+tmux wait-for "test-startup-second-ready-$$"
+equal "the second prompt receives no key from the observer" "" \
+  "$(<"$RUN_ROOT/startup-second.keys")"
+tmux send-keys -t "$(window_id startup-second)" Enter
 if wait "$startup_second_hitch"; then
-  pass "the foreground observer continues through a second safe dialog"
+  pass "the foreground observer continues through a second prompt"
 else
-  fail "the foreground observer continues through a second safe dialog" \
+  fail "the foreground observer continues through a second prompt" \
     "$startup_second_out"
 fi
 exec 8>&-
-equal "the post-gate safe dialog receives only its authorised confirm" \
+equal "the second prompt receives only the operator's answer" \
   "Enter" "$(<"$RUN_ROOT/startup-second.keys")"
-# source-guard: producer@01f66faef40a: the only startup-second body is the nonce-bound startup entry committed before the gate cleared, and the authorised-key log independently proves the successor dialog completed before this read
-contains "the startup contract follows the second dialog into the session" \
+# source-guard: producer@097c1dc1b2d2: the only startup-second body is the nonce-bound startup entry committed before the gate cleared, and the answered-key log independently proves the successor prompt completed before this read
+contains "the startup contract follows the second prompt into the session" \
   "$(pane startup-second)" "You are startup-second in Gangline"
-excludes "the second-dialog drain retires the startup entry" \
+excludes "the second-prompt drain retires the startup entry" \
   "$("$GANG" status startup-second)" "spooled:"
-submitted "the post-second-dialog startup contract was submitted" startup-second
+submitted "the post-second-prompt startup contract was submitted" startup-second
 "$GANG" drop startup-second >/dev/null
-
-# THE SAFE-DIALOG ALLOWANCE BELONGS TO THE WHOLE HITCH, not one observation
-# slice. A broken harness that redraws the same declared transient forever must
-# receive at most two answer sequences, then stop receiving keys while the
-# startup contract remains visible and untouched. A sleep shim supplies event
-# barriers at each redraw; no timeout verdict is being inferred.
-startup_recur_clear="test-startup-recur-clear-$$"
-startup_recur_exhausted="test-startup-recur-exhausted-$$"
-startup_recur_fifo="$RUN_ROOT/startup-recur.fifo"
-startup_recur_ack="$RUN_ROOT/startup-recur-ack.fifo"
-mkfifo "$startup_recur_fifo"
-mkfifo "$startup_recur_ack"
-cat > "$RUN_ROOT/startup-recur.sh" <<SH
-#!/bin/sh
-printf 'FIRST_RUN_GATE\n'
-tmux wait-for "$startup_recur_clear"
-exec env DIALOG_VARIANT=recurring \
-  DIALOG_KEY_LOG='$RUN_ROOT/startup-recur.keys' \
-  DIALOG_READY='test-startup-recur-ready-$$' \
-  DIALOG_RECUR_SIGNAL='unused-with-fifo' \
-  DIALOG_RECUR_FIFO='$startup_recur_fifo' \
-  DIALOG_RECUR_ACK='$startup_recur_ack' \
-  '$RUN_ROOT/dialog-fixture.py'
-SH
-chmod +x "$RUN_ROOT/startup-recur.sh"
-cat > "$RUN_ROOT/collars/startup-recur.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_LAUNCH="'$RUN_ROOT/startup-recur.sh'"
-GANG_OCCUPIED_REGEX='FIRST_RUN_GATE|^› [0-9]+\. '
-SH
-mkdir -p "$RUN_ROOT/startup-recur-bin"
-cat > "$RUN_ROOT/startup-recur-bin/sleep" <<SH
-#!/bin/sh
-if [ "\${1:-}" = 1 ]; then
-  startup_recur_count="\$(wc -l < '$RUN_ROOT/startup-recur.keys')"
-  if [ "\$startup_recur_count" -gt 0 ]; then
-    printf x > '$startup_recur_fifo'
-    cat '$startup_recur_ack' >/dev/null
-  fi
-  if [ "\$startup_recur_count" -ge 4 ]; then
-    tmux wait-for -S '$startup_recur_exhausted'
-  fi
-fi
-exit 0
-SH
-chmod +x "$RUN_ROOT/startup-recur-bin/sleep"
-: > "$RUN_ROOT/startup-recur.keys"
-startup_recur_pipe="$RUN_ROOT/startup-recur.out"
-mkfifo "$startup_recur_pipe"
-exec 7<>"$startup_recur_pipe"
-PATH="$RUN_ROOT/startup-recur-bin:$PATH" GANG_BOOT_TIMEOUT=2 \
-  "$GANG" hitch startup-recur -c startup-recur -d /tmp >&7 2>&1 &
-startup_recur_hitch=$!
-startup_recur_out=""
-while IFS= read -r startup_recur_line <&7; do
-  startup_recur_out="${startup_recur_out}${startup_recur_out:+$'\n'}$startup_recur_line"
-  case "$startup_recur_line" in
-    *"nothing further is needed from you"*) break ;;
-  esac
-done
-tmux wait-for "$startup_recur_exhausted" &
-startup_recur_waiter=$!
-tmux wait-for -S "$startup_recur_clear"
-wait "$startup_recur_waiter"
-if kill -0 "$startup_recur_hitch" 2>/dev/null; then
-  pass "a recurring post-gate safe dialog exhausts without ending hitch"
-else
-  fail "a recurring post-gate safe dialog exhausts without ending hitch" \
-    "$startup_recur_out"
-fi
-equal "the whole hitch answers a recurring safe dialog at most twice" \
-  $'Down\nEnter\nDown\nEnter' "$(<"$RUN_ROOT/startup-recur.keys")"
-contains "the exhausted safe-dialog hitch keeps its contract queued" \
-  "$("$GANG" status startup-recur)" "spooled: 1"
-excludes "the exhausted dialog receives no startup-contract keystroke" \
-  "$(pane startup-recur)" "You are startup-recur in Gangline"
-kill "$startup_recur_hitch" 2>/dev/null || true
-wait "$startup_recur_hitch" 2>/dev/null || true
-exec 7>&-
-GANG_ARCHIVE_DIR="$RUN_ROOT/startup-recur-archive" \
-  "$GANG" drop startup-recur >/dev/null
 
 # `gang up` OWNS BOTH SIDES OF THE SAME FIRST-RUN GATE: its tmux client must
 # expose the prompt while the original hitch invocation keeps the contract
@@ -923,7 +687,7 @@ contains "the nested hitch joins the session supplied only by the config file" \
 DOCTRINE_CASES="$RUN_ROOT/doctrine-cases"
 # S9 makes the ordinary doctrine contract taller than the Bash stand-in's
 # original 80x24 composer while the explicit overflow world below remains much
-# taller still. Size only this fixture lane; dialog fingerprints above retain
+# taller still. Size only this fixture lane; the prompt fixtures above retain
 # their calibrated grid.
 tmux set-option -g default-size 80x30
 mkdir -p "$DOCTRINE_CASES/present"

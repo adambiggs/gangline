@@ -17,11 +17,9 @@ gang capture lead
 ```
 
 Confirm that each harness has already completed first-run setup, authentication,
-and repository trust prompts. Gangline answers only dialogs a collar enumerates
-as carrying no authority, with the selected safe row verified before confirm and
-the restored composer verified afterwards. It never answers permission, trust,
-approval, or access surfaces; those remain `!occupied! (authority unknown)` until
-the operator resolves them in `gang attach`. A stall note follows only when a
+and repository trust prompts. Gangline answers no native dialog at all. A screen
+that owns the input box reads `!occupied! (authority unknown)` until the operator
+resolves it in `gang attach`. A stall note follows only when a
 native harness hook witnesses a configured event: Claude Code can report its
 declared notifications and permission requests, while Codex has no Notification
 hook and reports only permission requests. An unknown Codex dialog can therefore
@@ -177,25 +175,9 @@ cannot submit `/compact` into its own composer. The request is one-shot. If the
 native command cannot be submitted, `status` and `roster` retain the failure
 instead of claiming success.
 
-## Reading harness usage without attaching
+## Reading provider limits without attaching
 
-Ask for each idle agent by name:
-
-```sh
-gang usage worker-a
-gang usage worker-b
-```
-
-The output is the harness's own plan or quota page, not a Gangline summary.
-Gangline will not open it over a running turn, draft, unknown state, or native
-dialog. A full-screen page is limited to what is visibly painted; attach when
-that modal has internal scrollback. Inline output includes content that moved
-into tmux history. If the command reports that the composer was not restored,
-the content already printed is still useful, but inspect that agent with
-`gang attach` before sending it anything else.
-
-This interactive page is not evidence for provider-limit automation. Read the
-collar's non-interactive correctness source instead:
+Ask for each agent by name:
 
 ```sh
 gang limits worker-a
@@ -209,7 +191,11 @@ since that agent's last API turn. An old Codex event remains printable evidence,
 but after five minutes it is too stale to drive a light; the next API turn
 refreshes it. Its absolute future reset remains sufficient to arm a wake without
 spending quota on a refresh. A collar with neither source reports the capability
-unavailable; Gangline never substitutes the interactive pane.
+unavailable. The command may target an agent mid-turn, because it never drives
+that agent's composer.
+
+`gang usage`, which drove the harness's own usage page through the composer, was
+retired in 2.0. Attach if you want the full native page.
 
 ## Waiting for a provider reset
 
@@ -398,11 +384,10 @@ the target pane, and hitch the agent again.
 
 ### A harness is blocked on a dialog
 
-Run `gang status`. A collar-enumerated benign transient is named and will be
-answered only when a send or hitch already needs to write there. Any unknown or
-authority-bearing dialog remains `!occupied! (authority unknown)`; run
-`gang attach`, answer it in the native TUI, then re-run status. Do not send prose
-into an unknown dialog or widen the registry to include an access decision.
+Run `gang status`. Any dialog that owns the input box reads
+`!occupied! (authority unknown)`; run `gang attach`, answer it in the native TUI,
+then re-run status. Do not send prose into a dialog: a keystroke there answers
+the dialog rather than reaching the agent.
 
 ### Codex will not start until its hooks are reviewed
 
@@ -411,10 +396,9 @@ hooks at launch. The window reads `!occupied! (authority unknown)`, hitch
 reports that the startup contract was not delivered, and the refusal points at
 `gang attach`. Attach and the screen names itself.
 
-Gangline will never answer this one. It is an authority decision, and the
-known-dialog registry refuses trust and sandbox language mechanically rather
-than by convention. Answer it yourself, in the native TUI, choosing to review
-the hooks.
+Gangline will never answer this one. It answers no dialog, and this one is an
+authority decision besides. Answer it yourself, in the native TUI, choosing to
+review the hooks.
 
 Two things a capture will not tell you. Answering once in a checkout persists
 that trust in codex's own configuration, per wired event, under a hash of the

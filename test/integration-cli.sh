@@ -6,8 +6,9 @@
 # in order and it reads that shell's fixtures, helpers and counters.
 # Help coverage is derived from the dispatcher, so missing help cannot hide by
 # also being absent from a hand-maintained help inventory. The exclusions are
-# deliberate non-operator routes: the native callback, the hitch alias, the
-# announced deprecated command aliases, and help's own dispatcher arms.
+# deliberate non-operator routes: the native callback, help's own dispatcher
+# arms, and the retired `usage` name, whose arm exists only to name the command
+# that replaced it.
 dispatch_commands="$({
   sed -n '/^case "$cmd" in$/,/^esac$/p' "$GANG" |
     awk '
@@ -17,8 +18,8 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush mail interrupt compact context usage limits wait-limit status capture composer whoami drop down"
+} | awk '$0 != "hook" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit status capture composer whoami drop down"
 meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -125,7 +126,6 @@ arity_probes=(
   "interrupt|ghost STRAY|interrupt: unexpected argument 'STRAY'"
   "compact|ghost STRAY|compact: unexpected argument 'STRAY'"
   "context|ghost STRAY|context: unexpected argument 'STRAY'"
-  "usage|ghost STRAY|usage: unexpected argument 'STRAY'"
   "limits|ghost STRAY|limits: unexpected argument 'STRAY'"
   "wait-limit|ghost STRAY|wait-limit: unknown argument 'STRAY'"
   "notify|ghost STRAY|notify: unexpected argument 'STRAY'"
@@ -588,39 +588,28 @@ claude_stall_types="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
 equal "Claude declares only native kinds that await a person" \
   "permission_prompt idle_prompt elicitation_dialog agent_needs_input" \
   "$claude_stall_types"
-claude_external_dialog="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
-  '. "$1"; printf "%s\n--\n%s" "$GANG_DIALOGS" "$GANG_DIALOG_LINES_external_import_trust"' \
+# 2.0 removed the known-dialog registry, so no shipped collar declares one and
+# the occupancy regex is the whole recognition surface.
+claude_dialog_decls="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s|%s" "${GANG_DIALOGS:-}" "${GANG_DIALOG_HITCH_DIR_TRUST:-}"' \
   fixture "$claude_collar")"
-# shellcheck disable=SC2034  # read in test/integration-substrate.sh
-claude_external_record="${claude_external_dialog%%$'\n--\n'*}"
-# shellcheck disable=SC2034  # read in test/integration-substrate.sh
-claude_external_lines="${claude_external_dialog#*$'\n--\n'}"
-contains "Claude names the external-import trust prompt" \
-  "$claude_external_dialog" "external-import-trust"
-contains "Claude fingerprints the security warning below the variable paths" \
-  "$claude_external_dialog" "Only use Claude Code with files you trust."
-contains "Claude's external-import record has no answerable row or key" \
-  "$claude_external_dialog" "external-import-trust|^❯ [0-9]+\\. |||"
+equal "the Claude collar declares no known-dialog registry" "|" \
+  "$claude_dialog_decls"
 claude_resume="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_RESUME_LAUNCH"' fixture "$claude_collar")"
 contains "Claude resume declares an explicit native session slot" \
   "$claude_resume" "claude --resume {{session_id}}"
 excludes "Claude resume never resolves by directory recency" \
   "$claude_resume" "--continue"
-codex_dialog_block="$(env ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s" "$GANG_DIALOG_LINES_safety_buffering_prompt"' \
+codex_dialog_decls="$(env ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s|%s" "${GANG_DIALOGS:-}" "${GANG_DIALOG_HITCH_DIR_TRUST:-}"' \
   fixture "$ROOT/collars/codex.sh")"
-contains "the shipped Codex fingerprint includes the third captured option" \
-  "$codex_dialog_block" "Learn more"
-codex_trust_record="$(env ROOT="$ROOT" bash -c \
-  '. "$1"; printf "%s\n--\n%s" "$GANG_DIALOGS" "$GANG_DIALOG_LINES_directory_trust_prompt"' \
-  fixture "$ROOT/collars/codex.sh")"
-contains "the shipped Codex registry names directory trust as a known dialog" \
-  "$codex_trust_record" "directory-trust-prompt"
-contains "the Codex directory-trust fingerprint retains the stable question" \
-  "$codex_trust_record" "Do you trust the contents of this directory?"
-excludes "the variable cwd line is not part of the directory-trust fingerprint" \
-  "$codex_trust_record" "> You are in"
+equal "the Codex collar declares no known-dialog registry either" "|" \
+  "$codex_dialog_decls"
+codex_occupied="$(env ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_OCCUPIED_REGEX"' fixture "$ROOT/collars/codex.sh")"
+contains "and its occupancy regex still matches the numbered rows those dialogs draw" \
+  "$codex_occupied" '^› [0-9]+\. '
 claude_hook_declarations="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
   fixture "$claude_collar")"
@@ -951,108 +940,4 @@ cat > "$RUN_ROOT/collars/ctx-none.sh" <<SH
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
 unset -f collar_context
-SH
-cat > "$RUN_ROOT/usage-bashrc" <<'SH'
-PS1='❯ '
-u() {
-  printf '\033[1A\r\033[K'
-  local i=1
-  while [ "$i" -le 30 ]; do
-    printf 'USAGE_%02d\n' "$i"
-    i=$((i + 1))
-  done
-}
-SH
-cat > "$RUN_ROOT/usage-confirm-bashrc" <<'SH'
-PS1='❯ '
-c() {
-  IFS= read -r _
-  printf '\033[H\033[2JCONFIRMED_USAGE\n'
-  IFS= read -r -n 1 _
-}
-SH
-cat > "$RUN_ROOT/collars/usage-inline.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_LAUNCH="env ENV='$RUN_ROOT/usage-bashrc' bash --posix"
-GANG_USAGE_CMD='u'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="inline"
-GANG_USAGE_DISMISS_KEY=""
-SH
-cat > "$RUN_ROOT/collars/usage-confirm.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_LAUNCH="env ENV='$RUN_ROOT/usage-confirm-bashrc' bash --posix"
-GANG_USAGE_CMD='c'
-GANG_USAGE_CONFIRM_KEY="Enter"
-GANG_USAGE_RENDER="modal"
-GANG_USAGE_DISMISS_KEY="Escape"
-SH
-cat > "$RUN_ROOT/collars/usage-modal.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_ONE\nMODAL_TWO\n"; IFS= read -r -n 1 _'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="modal"
-GANG_USAGE_DISMISS_KEY="Escape"
-SH
-cat > "$RUN_ROOT/collars/usage-stuck.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_USAGE_CMD='printf "\033[H\033[2JMODAL_STUCK\n"; while :; do IFS= read -r -n 1 _; [ "$_" = q ] && break; done'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="modal"
-GANG_USAGE_DISMISS_KEY="C-g"
-SH
-cat > "$RUN_ROOT/collars/usage-hold.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-# A usage command the harness begins and never finishes, so it has provably not
-# consumed the submission when gang takes its first screen reading. Nothing here
-# waits: the pane is blocked on its own input for the whole run, which is the
-# losing side of a race held open by state instead of by delay.
-GANG_USAGE_CMD='read -r _'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="inline"
-GANG_USAGE_DISMISS_KEY=""
-SH
-cat > "$RUN_ROOT/collars/usage-nochange.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_USAGE_CMD="clear"
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="inline"
-GANG_USAGE_DISMISS_KEY=""
-SH
-cat > "$RUN_ROOT/collars/usage-occupied.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="inline"
-GANG_USAGE_DISMISS_KEY=""
-GANG_OCCUPIED_REGEX='OCCUPIED_USAGE'
-_gl_usage_occupied_input="$(declare -f collar_input)"
-eval "usage_occupied_real_input ${_gl_usage_occupied_input#collar_input}"
-collar_input() {
-  tmux capture-pane -pJ -t "$1" | grep -q OCCUPIED_USAGE && return 1
-  usage_occupied_real_input "$1"
-}
-SH
-cat > "$RUN_ROOT/collars/usage-unknown.sh" <<'SH'
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$ROOT/collars/bash.sh"
-GANG_USAGE_CMD='printf SHOULD_NOT_RUN'
-GANG_USAGE_CONFIRM_KEY=""
-GANG_USAGE_RENDER="unknown"
-GANG_USAGE_DISMISS_KEY=""
 SH

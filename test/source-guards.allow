@@ -16,7 +16,6 @@ d7d633b48ed2fa4f89e5	1	source-collision migration review: a collar without a dec
 d163257bc1f78b0259e4	1	source-collision migration review: a multiline doctrine delivers its last line
 25cc78676a072c2264dc	1	source-collision migration review: AC18 message attribution is sanitized
 cb854c673fcf40ec93e4	1	source-collision migration review: startup ends instead of polling for work
-23271e5614c2bce297af	1	source-collision migration review: status is read-only even for a recognized dialog
 0d148a1a387bd40ed4e4	1	source-collision migration review: paired stripping preserves a bare trailing dash
 096bd80fadf29e8ebc03	1	source-collision migration review: --resume replaces the default continuation
 a5fdb2c15f28fc7fcd8a	1	source-collision migration review: each drained message keeps its own sender's attribution
@@ -26,7 +25,6 @@ a85bfced6fda7229450a	1	source-collision migration review: verified send reaches 
 339c99c63ac95ad00547	1	source-collision migration review: AC16 contract pointer: $doctrine_flag doctrine, $role_flag role
 34e8f945c33aee45be15	1	source-collision migration review: AC17 identity-reserved role attaches
 fc6dd6d98ab0a2a3f8ab	1	source-collision migration review: identity absence types nothing into the claimed target
-5a3a9165b1b497844ed9	1	source-collision migration review: $mutant mutant leaves the dialog byte-for-byte on screen
 d8136bbf4a7fe9f79409	1	source-collision migration review: a live superseding replacement is delivered
 c9d66a6ccc1f3e501b88	1	source-collision migration review: the delivered message is attributed
 e0bace7d4175148ecdb2	1	source-collision migration review: the reason reaches the boundary created by the interrupt
@@ -49,7 +47,6 @@ b4004d0932c0e37f5e4e	1	source-collision migration review: the mismatch refusal t
 371196e7c4926b58d004	1	source-collision migration review: a declared slot is filled with the continuation instructions
 7548d9dfb006f816cd3b	1	source-collision migration review: AC25 the pane carries a recovery if the attachment is not there
 759379e07269cf948cef	1	source-collision migration review: AC9 composer points at the brief instead of carrying it
-501b59a0d992ba9e4eb2	1	source-collision migration review: usage readiness refusals type nothing
 e52a9a3174c0442a0fe7	1	source-collision migration review: a Gangline window derives its own sender identity
 2ce3dde474fca5516f11	1	source-collision migration review: a cross-session hitch carries operator doctrine too
 dc5733ea5dee841b1bb0	1	source-collision migration review: a later native boundary never re-sends an unverified held entry
@@ -76,12 +73,9 @@ ad5e2f67c8aa7828edba	1	source-collision migration review: so the message enters 
 105c55f812b91565b652	1	source-collision migration review: the same native stall inside the debounce is one note
 fad096affdbfc7d8f9c7	1	source-collision migration review: the target's own Stop drains what was parked for it
 6b0eceba4f4a432957c9	1	source-collision migration review: the three-message bundle stays in stamp order
-d5afdb6aefe1d5a57263	1	source-collision migration review: the post-dialog hitch delivers its startup contract
 a6a0e0da3840b4ac98ef	1	source-collision migration review: concurrent native witnesses of one kind deliver exactly one note
-515bce7aa7618ab8e6c6	1	source-collision migration review: the full-block match survives a narrow soft-wrapped pane and sends
 5bc3080ea49df301391c	1	source-collision migration review: no declaration is the silent off state
 85bd9a915d4789584808	1	source-collision migration review: Bash 3.2 can lock and deliver the startup contract
-b73815df222ea4678dd8	1	source-collision migration review: an occupied usage refusal types nothing
 d9937e5e68d132e6bc26	1	source-collision migration review: AC25 the recovery names the contract path
 e4195a871ae06b65312a	1	source-collision migration review: and the declared key actually reached the pane
 789b73cf405623f1e2d5	1	source-collision migration review: and the delivery landed under the fossil

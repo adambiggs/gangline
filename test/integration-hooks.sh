@@ -485,8 +485,8 @@ contains "a collar with no correctness source degrades loudly" \
   "$usage_absent_note" "declares no non-interactive provider-limit source"
 contains "status retains an unavailable provider-usage capability" \
   "$("$GANG" status usage-absent)" "provider usage unavailable"
-refuses "limits never substitutes the interactive usage pane" \
-  "will not substitute gang usage's composer scrape" "$GANG" limits usage-absent
+refuses "limits fabricates nothing for a collar with no source" \
+  "declares no non-interactive provider-limit source" "$GANG" limits usage-absent
 
 if invalid_usage_lights="$(GANG_USAGE_LIGHTS=95%,90% "$GANG" hitch \
     usage-invalid -c usage-lights -d /tmp 2>&1)"; then

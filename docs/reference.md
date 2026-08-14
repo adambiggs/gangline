@@ -21,10 +21,9 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
-Resolving self is not a promise that the command proceeds. `gang usage`
-self-targets and is then refused on that same agent's mid-turn evidence,
-because the caller is running in the composer the usage page would have to be
-typed into. Who the target is and what its state allows are separate answers.
+Resolving self is not a promise that the command proceeds. `gang compact`
+self-targets and is then refused, or deferred, on that same agent's own turn
+evidence. Who the target is and what its state allows are separate answers.
 
 Outside a Gangline window, a bare self-targeting command prints its synopsis and
 states that no target or Gangline agent window was available.
@@ -400,8 +399,6 @@ Prints one current state:
   witnesses active work;
 - `~idle~` — the evidence positively witnesses readiness;
 - `!occupied! (authority unknown)` — a native UI owns the composer;
-- `!occupied! (known transient: <id>)` — a collar-enumerated benign dialog is
-  visible; observation names it but presses no key;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
 
 A turn bracket left open by an interruption the harness never reported decays
@@ -457,29 +454,6 @@ readout is visible. claude-code can answer only when lights were enabled at
 hitch, because that launch choice installs its statusline beacon. Adopted
 windows answer only when their required native source is independently present.
 
-### `gang usage [name]`
-
-Drives the usage command declared by the target's harness collar and prints the
-harness's own page raw. The pane is locked for the entire operation. Gangline
-refuses a busy, unknown, occupied, changing, or non-empty composer; it
-types only after all five predicates pass. A bare `gang usage` resolves the
-calling agent like every other self target and is then refused by those same
-predicates, because that agent is necessarily running in the composer this
-command would have to drive.
-
-Modal pages are returned as the visible screen, trailing blank terminal rows
-removed, and then dismissed with the collar's key. A modal that scrolls within
-itself may contain more than Gangline can capture; attach to read that overflow.
-Inline pages are extracted from the difference between the whole scrollback
-before and after the native command, so content taller than the pane is retained.
-If tmux history rolls over and the two captures lose their common origin,
-Gangline refuses instead of printing a plausible but unbounded transcript diff.
-
-After reading either shape, Gangline verifies that the collar can read an empty
-composer again. If restoration fails, the captured content is still printed,
-the command exits non-zero, and `gang attach` is required before more input is
-safe. Collars without a verified usage declaration refuse the command.
-
 ### `gang limits [name]`
 
 Reads the non-interactive provider-limit source declared by the target's collar.
@@ -493,7 +467,6 @@ rate-limit event. That event's timestamp is the sample clock, so an idle Codex
 reading truthfully grows stale until its next API turn. It remains visible to
 this reporting command even after it is too old to drive a warning or wake. A missing source, failed
 reader, malformed row, missing reset, or missing observation time fails loudly.
-The interactive `gang usage` pane driver is never a fallback.
 
 A successful read records the most constrained native window on the target's
 tmux window. `status` and `roster` report that ephemeral evidence without
@@ -724,18 +697,11 @@ there, never in a harness-name branch in the core script.
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
 | `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
-| `GANG_DIALOGS` | newline-separated `id|marker|safe|move|confirm` known-transient records |
-| `GANG_DIALOG_LINES_<id>` | every painted line of one dialog, in order; dashes in `id` become underscores |
-| `GANG_DIALOG_HITCH_DIR_TRUST` | optional one dialog id whose directory trust was already chosen by `hitch -d` |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_MIDTURN_INPUT=park` | declares that mid-turn composer input can only stage or queue; it never authorizes a composer keystroke |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
-| `GANG_USAGE_CMD` | native command that opens the harness's usage page |
-| `GANG_USAGE_CONFIRM_KEY` | optional space-separated tmux keys that reach the usage content after submit |
-| `GANG_USAGE_RENDER` | usage page shape: `modal` or `inline` |
-| `GANG_USAGE_DISMISS_KEY` | optional tmux key that closes the page; empty when the harness restores itself |
 | `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
@@ -746,32 +712,7 @@ there, never in a harness-name branch in the core script.
 Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
 
-Each dialog record has five fields. `id` is `[a-z0-9-]+`; `marker` is a
-line-start-anchored ERE for the selected numeric row; `safe` is one declared
-option label; `move` is zero or more tmux key names; and `confirm` is one key.
-Leaving `safe`, `move`, and `confirm` all empty declares an observe-only operator
-dialog: status and roster name a matching fingerprint, while delivery refuses
-without sending a key. This is how a collar recognizes a security choice that
-only the operator may answer.
-
-The associated block contains the stable dialog fingerprint; variable prefix
-lines may be excluded, as they are for working directories and imported paths.
-Load refuses malformed or duplicate records, absent blocks, safe labels absent
-from their answerable block, invalid key names, and any answerable id, safe
-label, or block line containing
-authority language such as permission, trust, approval, authorization, access,
-elevation, grants, administration, denial, bypass, credentials, tokens, secrets,
-privileges, or sandboxing. A collar may name one record in
-`GANG_DIALOG_HITCH_DIR_TRUST`; that record alone may carry directory-trust and
-explanatory allow language because `hitch -d` already named the directory.
-Every other authority family remains forbidden in that record.
-
-Before a send, or while hitch is already waiting for a composer, Gangline may
-answer one unambiguous full-block match. Whitespace and soft wraps are
-normalized; numeric row prefixes move with the selection and are excluded from
-the fingerprint, while every label, body line, footer, and their order must
-match. Gangline re-captures after every movement key, verifies the selected
-label is `safe` immediately before confirmation, and then verifies both that
-the dialog disappeared and a composer returned. Any failed proof refuses and
-does not confirm. `status` and `roster` name recognized answerable transients
-and observe-only operator dialogs; observation never presses a key.
+Gangline does not answer native dialogs. A screen matching
+`GANG_OCCUPIED_REGEX` is occupied whoever drew it: `status` and `roster` report
+`!occupied! (authority unknown)`, delivery refuses and parks, and `hitch` keeps
+waiting and names the prompt for the operator. Answering one is `gang attach`.

@@ -17,6 +17,13 @@
 > has ruled that behaviour the design — an agent reading or stopping its own
 > state should not have to know its own name. See `docs/DECISIONS.md`, "A
 > missing name is a self target".
+> Superseded again in 2.0: §7's `gang usage` — the command that drove a
+> harness's own usage page through its composer — is deleted, along with the
+> `GANG_USAGE_CMD`, `GANG_USAGE_CONFIRM_KEY`, `GANG_USAGE_RENDER` and
+> `GANG_USAGE_DISMISS_KEY` collar declarations it consumed. `gang limits` reads
+> the same quota from each collar's non-interactive source. The known-dialog
+> registry this document specifies is deleted in 2.0 as well; see
+> `docs/DECISIONS.md`, "Occupancy is not authority".
 
 Nine operator-directed changes, each born from friction observed in a live
 marathon session. This document is the implementation contract: it leaves no

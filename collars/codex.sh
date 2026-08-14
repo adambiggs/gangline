@@ -115,8 +115,8 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # Enumerated on 0.146.0 against a cold CODEX_HOME: the sign-in menu, the
 # browser-wait screen carrying the authorize URL, the device-code screen, and
 # the API-key entry screen. NOTHING this collar declares reaches any of them —
-# collar_input keys on the same U+203A, both GANG_DIALOGS records are anchored
-# on it, and the busy footer belongs to a turn that cannot exist yet. The
+# collar_input keys on the same U+203A, and the busy footer belongs to a turn
+# that cannot exist yet. The
 # API-key screen is a real bordered text field and is still not a composer by
 # that definition, which is the definition working: gang reads it as occupied
 # (authority unknown), refuses /usage, spools rather than delivers, and hitch
@@ -127,13 +127,6 @@ GANG_OCCUPIED_REGEX='^› [0-9]+\. '
 # text: a delivered message quoting "> 1. …" would read as an occupied
 # composer inside a live session.
 GANG_COMPACT_CMD="/compact"
-# Verified on codex 0.146.0: /usage opens a selection menu with "Show usage"
-# preselected; one Enter confirms it and the content is appended to the
-# transcript with the composer already restored, so nothing dismisses it.
-GANG_USAGE_CMD="/usage"
-GANG_USAGE_CONFIRM_KEY="Enter"
-GANG_USAGE_RENDER="inline"
-GANG_USAGE_DISMISS_KEY=""
 # A rollout snapshot older than this is still printable evidence, but is not
 # current enough to drive a light or arm a reset wake. The next API turn
 # refreshes it. Local file reads need no hook throttle.
@@ -260,46 +253,16 @@ GANG_INTERRUPT_KEY="Escape"
 #     2. Trust all and continue
 #     3. Continue without trusting (hooks won't run)
 #
-# It is deliberately NOT in GANG_DIALOGS. That registry answers dialogs, and
-# bin/gang screens every record in it for authority language — this block trips
-# that screen on "trust" and "sandbox", which is the screen working, not
-# failing. A collar that pressed "Trust all and continue" would be granting the
-# operator's approval to run hooks outside the sandbox on their behalf, and
-# option 3 is a keystroke away from a codex agent with no Stop hook at all: no
-# spool drain, no deferred self-compaction, gang waiting on turn boundaries
-# that never arrive.
+# Nothing here answers it. A collar that pressed "Trust all and continue" would
+# be granting the operator's approval to run hooks outside the sandbox on their
+# behalf, and option 3 is a keystroke away from a codex agent with no Stop hook
+# at all: no spool drain, no deferred self-compaction, gang waiting on turn
+# boundaries that never arrive.
 #
 # GANG_OCCUPIED_REGEX matches this menu, so the window reads !occupied!
 # (authority unknown) and no key is sent. Hitch parks its startup contract,
 # remains in the foreground, and delivers through the composer after either
 # operator choice; it never assumes configured hooks were trusted.
-#
-# A registry that NAMED such screens without declaring a keystroke was decided
-# against: see docs/DECISIONS.md "No name-only dialog registry".
-
-# Verified against codex 0.145.0 from the live capture cited in the landing
-# commit. Numeric prefixes move with the selection and are normalized by core;
-# all three option labels and every explanatory line remain fingerprint bytes.
-# The safety-buffering prompt is PERMANENTLY UNVERIFIABLE ON DEMAND: it appears
-# when the provider is slow to start responding, and nothing here can induce
-# that. Its pin will therefore never advance on evidence, and saying so is
-# honest where a version implying a re-check nobody schedules would not be.
-GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
-directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
-GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
-GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
-Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
-Retry with a faster model
-Dismiss and keep waiting
-Learn more
-No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
-# Verified against codex 0.145.0 from the live first-run capture cited in the
-# landing commit. The cwd-bearing first line is variable and excluded; -J joins
-# the question's visual wraps before the stable block is matched.
-GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
-Yes, continue
-No, quit
-Press enter to continue'
 
 codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   local file

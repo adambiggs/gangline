@@ -188,19 +188,20 @@ dialog reads as an answer.
 
 ## Occupancy is not authority
 
-Refuse ordinary input whenever a harness-owned UI occupies the composer, but do
-not infer who may clear it. UI recognition belongs in collars, unknown authority
-fails closed, and Gangline answers only a collar-enumerated, whole-block
-fingerprint whose safe row carries no authority. Re-read the selected row before
-every key and the cleared composer after confirmation. Permission, approval,
-authorization, access, elevation, grant, administration, denial, bypass,
-credential, token, secret, privilege, and sandbox language is never an
-auto-answer surface. Directory trust is the narrow exception when a collar
-marks that one record as the directory already selected by `hitch -d`; the
-prompt asks Gangline to repeat a choice the operator or lead already made. The
-live Codex `safety-buffering-prompt` capture is the record for every other
-dialog: installed-binary string extraction undercounted its options and omitted
-`Learn more`.
+Refuse ordinary input whenever a harness-owned UI occupies the composer, and do
+not infer who may clear it. Occupancy recognition belongs in collars, as
+`GANG_OCCUPIED_REGEX`, and unknown authority fails closed.
+
+Gangline answered a collar-enumerated whole-block fingerprint through 1.x, with
+authority language mechanically forbidden and directory trust as the one narrow
+exception. 2.0 removes that: the registry, its per-dialog fingerprints, the key
+driving, and both collars' records are gone. It bought dismissing one Codex wait
+screen and repeating a directory-trust choice `hitch -d` had already made, and
+cost the most version-fragile and security-sensitive TUI machinery in core —
+per-build strings that rot into a silent fallback while we believe we have
+coverage, which is the same argument that already refused a name-only registry.
+What remains is the simpler product that was always underneath: occupied means
+occupied, whoever drew the screen, and answering one is `gang attach`.
 
 At hitch, positive evidence of a prompt without a composer is an operator
 outcome before it is a launch failure: report `gang attach` once and spend the

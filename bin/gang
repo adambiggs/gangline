@@ -33,7 +33,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -311,7 +311,6 @@ watch agents
   capture   read an agent's pane
   composer  read an agent's input box
   context   read an agent's context
-  usage     read an agent's usage page
   limits    read provider usage limits
   wait-limit resume at a provider reset
   whoami    read this pane's identity
@@ -619,26 +618,6 @@ gang context
   gang compact. Where a harness offers no
   readable source this fails loudly instead
   of inventing a number.
-EOF
-      ;;
-    usage) cat <<'EOF'
-gang usage
-  Read a harness's own usage page — what is
-  left of a plan's quota — by driving its
-  native usage command.
-
-  gang usage [name]
-
-  [name]  agent whose harness to ask
-          (default: this window)
-
-  Gang locks the pane, types the command only
-  into a composer it can prove is idle and
-  empty, prints the page, dismisses it, then
-  checks that the composer came back. Omit
-  the name and gang resolves this window and
-  then refuses it: an agent's own running
-  turn owns the box gang would type into.
 EOF
       ;;
     limits) cat <<'EOF'
@@ -1049,15 +1028,14 @@ collar_file() { # $1 = collar name -> path on stdout; yours wins over the shippe
 }
 
 load_collar() { # $1 = collar name; sets the GANG_* strategy surface
-  local f record pipes id marker marker_tail marker_atom marker_rest safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc
+  local f resume_tail
   f="$(collar_file "$1")" \
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
   GANG_MIDTURN_INPUT="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
-  GANG_STALL_TYPES="" GANG_DIALOGS="" GANG_DIALOG_HITCH_DIR_TRUST=""
-  GANG_USAGE_CMD="" GANG_USAGE_CONFIRM_KEY="" GANG_USAGE_RENDER="" GANG_USAGE_DISMISS_KEY=""
+  GANG_STALL_TYPES=""
   GANG_USAGE_LIGHT_INTERVAL=0 GANG_USAGE_LIMIT_MAX_AGE=0
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
@@ -1098,100 +1076,13 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # arrive in the composer as characters instead of as the keystroke the
   # collar meant.
   local declared key
-  for declared in GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_USAGE_DISMISS_KEY; do
+  for declared in GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY; do
     key="${!declared}"
     case "$key" in
       ''|*[!A-Za-z0-9-]*) [ -z "$key" ] \
         || die "collar '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
-  for key in $GANG_USAGE_CONFIRM_KEY; do
-    case "$key" in
-      *[!A-Za-z0-9-]*)
-        die "collar '$1' declares GANG_USAGE_CONFIRM_KEY '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
-    esac
-  done
-  while IFS= read -r record || [ -n "$record" ]; do
-    [ -n "$record" ] || continue
-    pipes="${record//[!|]/}"
-    [ "${#pipes}" -eq 4 ] \
-      || die "collar '$1' has a GANG_DIALOGS record without exactly five fields: '$record'"
-    IFS='|' read -r id marker safe move confirm <<<"$record"
-    case "$id" in ''|*[!a-z0-9-]*) die "collar '$1' has invalid dialog id '$id' (expected [a-z0-9-]+)" ;; esac
-    [ -n "$marker" ] || die "collar '$1' dialog '$id' has an empty marker"
-    case "$marker" in ^*) ;; *) die "collar '$1' dialog '$id' marker must be anchored at line start: '$marker'" ;; esac
-    marker_tail="${marker#^}"
-    # dialog_normalize removes every line's leading whitespace before this
-    # marker is evaluated. A leading whitespace atom is therefore dead unless
-    # its own following quantifier permits zero occurrences.
-    marker_atom=""
-    case "$marker_tail" in
-      ' '*) marker_atom=' ' ;;
-      '\s'*) marker_atom='\s' ;;
-      '\t'*) marker_atom='\t' ;;
-      '\ '*) marker_atom='\ ' ;;
-      '[ ]'*) marker_atom='[ ]' ;;
-      '[[:space:]]'*) marker_atom='[[:space:]]' ;;
-      '[[:blank:]]'*) marker_atom='[[:blank:]]' ;;
-    esac
-    if [ -n "$marker_atom" ]; then
-      marker_rest="${marker_tail#"$marker_atom"}"
-      case "$marker_rest" in '*'*|'?'*|'{0'*) ;;
-        *) die "collar '$1' dialog '$id' marker requires leading whitespace that dialog normalization removes: '$marker'" ;;
-      esac
-    fi
-    if [ -z "$safe" ]; then
-      [ -z "$move$confirm" ] \
-        || die "collar '$1' observe-only dialog '$id' must leave safe, move and confirm empty"
-    else
-      [ -n "$confirm" ] || die "collar '$1' dialog '$id' has an empty confirm key"
-    fi
-    case " $seen_ids " in *" $id "*) die "collar '$1' repeats dialog id '$id'" ;; esac
-    seen_ids="$seen_ids $id"
-    block_var="GANG_DIALOG_LINES_${id//-/_}"
-    block="${!block_var:-}"
-    [ -n "$block" ] || die "collar '$1' dialog '$id' has no non-empty $block_var"
-    marker_rc=0
-    printf '' | grep -Eq -- "$marker" 2>/dev/null || marker_rc=$?
-    [ "$marker_rc" -le 1 ] \
-      || die "collar '$1' dialog '$id' marker is not an ERE grep can evaluate: '$marker'"
-    if [ -n "$safe" ]; then
-      printf '%s\n' "$block" | awk '{$1=$1; if (length) print}' | grep -Fx -- "$safe" >/dev/null \
-        || die "collar '$1' dialog '$id' safe option '$safe' is not one of $block_var's normalized lines"
-    fi
-    for key in $move $confirm; do
-      case "$key" in *[!A-Za-z0-9-]*)
-        die "collar '$1' dialog '$id' declares key '$key', which is not a tmux key name" ;;
-      esac
-    done
-    if [ -z "$safe" ]; then
-      # Recognition is read-only. Authority language is forbidden only on a
-      # record Gangline can answer; an operator dialog has to name the choice
-      # it is refusing to make if status is to say what is actually on screen.
-      forbidden=""
-    elif [ "$id" = "$GANG_DIALOG_HITCH_DIR_TRUST" ]; then
-      printf '%s\n%s\n%s\n' "$id" "$safe" "$block" | grep -Eiq 'trust' \
-        || die "collar '$1' names dialog '$id' as hitch-directory trust, but its fingerprint contains no trust language"
-      # The directory was already selected by hitch -d. Permit only the trust
-      # and explanatory allow language of that one decision; every other
-      # authority family remains mechanically forbidden.
-      forbidden="$(printf '%s\n%s\n%s\n' "$id" "$safe" "$block" \
-        | grep -Eio '(permi|approv|authori|access|sandbox|credential|token|secret|elevat|escalat|grant|admin|den(y|i)|bypass|ask[[:space:]]+again|privileg)' \
-        | head -n 1)" || forbidden=""
-    else
-      forbidden="$(printf '%s\n%s\n%s\n' "$id" "$safe" "$block" \
-        | grep -Eio '(trust|permi|approv|authori|allow|access|sandbox|credential|token|secret|elevat|escalat|grant|admin|den(y|i)|bypass|ask[[:space:]]+again|privileg)' \
-        | head -n 1)" || forbidden=""
-    fi
-    [ -z "$forbidden" ] \
-      || die "collar '$1' dialog '$id' contains forbidden authority word '$forbidden' — Gangline never auto-answers permission, trust, approval, authorization, access, elevation, grant, admin, denial, bypass, credential, token, secret, privilege, or sandbox surfaces"
-  done <<<"$GANG_DIALOGS"
-  if [ -n "$GANG_DIALOG_HITCH_DIR_TRUST" ]; then
-    case " $seen_ids " in
-      *" $GANG_DIALOG_HITCH_DIR_TRUST "*) ;;
-      *) die "collar '$1' names unknown GANG_DIALOG_HITCH_DIR_TRUST '$GANG_DIALOG_HITCH_DIR_TRUST'" ;;
-    esac
-  fi
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -2241,110 +2132,6 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
   return 0
 }
 
-dialog_normalize() { # width/padding normalization; option numbering is not fingerprint
-  awk '
-    {
-      gsub(/[[:space:]]+/, " ")
-      sub(/^ /, ""); sub(/ $/, "")
-      if (!length) next
-      print
-    }
-  '
-}
-
-DIALOG_MATCH_ID="" DIALOG_MATCH_SAFE="" DIALOG_MATCH_MOVE=""
-DIALOG_MATCH_CONFIRM="" DIALOG_MATCH_BLOCK="" DIALOG_MATCH_SELECTED=""
-dialog_record_matches() { # $1 normalized capture, $2 id, $3 marker, $4 block
-  local capture="$1" id="$2" marker="$3" block="$4" line prefix stripped
-  local -a cap_lines=() block_lines=()
-  local j start markers selected="" matched=0
-  while IFS= read -r line; do cap_lines[${#cap_lines[@]}]="$line"; done <<<"$capture"
-  while IFS= read -r line; do block_lines[${#block_lines[@]}]="$line"; done \
-    < <(printf '%s\n' "$block" | dialog_normalize)
-  [ "${#block_lines[@]}" -gt 0 ] || return 1
-  [ "${#cap_lines[@]}" -ge "${#block_lines[@]}" ] || return 1
-  for ((start=0; start<=${#cap_lines[@]}-${#block_lines[@]}; start++)); do
-    markers=0 selected="" matched=1
-    for ((j=0; j<${#block_lines[@]}; j++)); do
-      line="${cap_lines[start+j]}" stripped="$line"
-      prefix="$(printf '%s\n' "$line" | grep -Eo -- "$marker" | head -n 1)" || prefix=""
-      if [ -n "$prefix" ]; then
-        markers=$((markers + 1))
-        stripped="${line#"$prefix"}"
-        selected="$stripped"
-      elif [[ "$line" =~ ^[0-9]+\.\  ]]; then
-        stripped="${line#*'. '}"
-      elif [[ "$line" == '›'* ]]; then
-        matched=0; break
-      fi
-      [ "$stripped" = "${block_lines[j]}" ] || { matched=0; break; }
-    done
-    [ "$matched" -eq 1 ] && [ "$markers" -eq 1 ] || continue
-    DIALOG_MATCH_SELECTED="$selected"
-    return 0
-  done
-  return 1
-}
-
-dialog_find() { # $1 window; set DIALOG_MATCH_* for exactly one full-block match
-  local pane normalized record id marker safe move confirm block_var block
-  local hits="" hit_count=0 selected=""
-  DIALOG_MATCH_ID="" DIALOG_MATCH_SAFE="" DIALOG_MATCH_MOVE=""
-  DIALOG_MATCH_CONFIRM="" DIALOG_MATCH_BLOCK="" DIALOG_MATCH_SELECTED=""
-  [ -n "${GANG_DIALOGS:-}" ] || return 1
-  pane="$(capture_joined "$1")" || die "cannot read pane $1 while checking known dialogs"
-  normalized="$(printf '%s\n' "$pane" | dialog_normalize)"
-  while IFS= read -r record || [ -n "$record" ]; do
-    [ -n "$record" ] || continue
-    IFS='|' read -r id marker safe move confirm <<<"$record"
-    block_var="GANG_DIALOG_LINES_${id//-/_}"; block="${!block_var}"
-    if dialog_record_matches "$normalized" "$id" "$marker" "$block"; then
-      hit_count=$((hit_count + 1)); hits="${hits:+$hits, }$id"; selected="$DIALOG_MATCH_SELECTED"
-      DIALOG_MATCH_ID="$id" DIALOG_MATCH_SAFE="$safe" DIALOG_MATCH_MOVE="$move"
-      DIALOG_MATCH_CONFIRM="$confirm" DIALOG_MATCH_BLOCK="$block" DIALOG_MATCH_SELECTED="$selected"
-    fi
-  done <<<"$GANG_DIALOGS"
-  [ "$hit_count" -le 1 ] || die "known-dialog registry is ambiguous in $(agent_name_of "$1"): $hits all match"
-  [ "$hit_count" -eq 1 ]
-}
-
-dialog_first_line_present() { # $1 window, $2 declared block
-  local first pane
-  first="$(printf '%s\n' "$2" | dialog_normalize | head -n 1)"
-  pane="$(capture_joined "$1")" || return 0
-  printf '%s\n' "$pane" | dialog_normalize | grep -Fx -- "$first" >/dev/null
-}
-
-dialog_triage() { # $1 window, $2 name, $3 locked|unlocked; 0 answered, 1 unknown
-  local wanted safe move confirm block key lock_mode="$3"
-  dialog_find "$1" || return 1
-  wanted="$DIALOG_MATCH_ID" safe="$DIALOG_MATCH_SAFE" move="$DIALOG_MATCH_MOVE"
-  confirm="$DIALOG_MATCH_CONFIRM" block="$DIALOG_MATCH_BLOCK"
-  [ -n "$safe" ] \
-    || refuse "'$2' is occupied by known operator dialog '$wanted' — Gangline recognizes it but will not answer an operator security decision; inspect it with gang attach"
-  case "$lock_mode" in locked) ;; unlocked) lock_pane "$1" ;; *) die "internal: unknown dialog lock mode '$lock_mode'" ;; esac
-  dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] || {
-    [ "$lock_mode" = locked ] || lock_release
-    return 1
-  }
-  for key in $move; do
-    tmux send-keys -t "$1" "$key"
-    dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] \
-      || die "known transient '$wanted' changed after key '$key'; confirm was NOT pressed (gang attach)"
-  done
-  dialog_find "$1" && [ "$DIALOG_MATCH_ID" = "$wanted" ] \
-    || die "known transient '$wanted' changed before confirm; confirm was NOT pressed (gang attach)"
-  [ "$DIALOG_MATCH_SELECTED" = "$safe" ] \
-    || die "known transient '$wanted' did not select safe row '$safe' after keys '${move:-<none>}'; confirm was NOT pressed (gang attach)"
-  tmux send-keys -t "$1" "$confirm"
-  ! dialog_first_line_present "$1" "$block" && composer_live "$1" \
-    || die "known transient '$wanted' did not clear to a readable composer after keys '${move:-<none>} $confirm' (gang attach)"
-  printf "answered the known transient '%s' in '%s' with its safe option (%s)\n" \
-    "$wanted" "$2" "$safe" >&2
-  [ "$lock_mode" = locked ] || lock_release
-  return 0
-}
-
 occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   if occupied_witness "$1"; then return 0; fi
   local pane
@@ -2387,27 +2174,9 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
   ! grep -q '[^[:space:]]' <<<"$box"
 }
 
-WAIT_READY_DIALOGS_ANSWERED=0
-wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet, $5 prior answers
-  local t=0 dialogs_answered="${5:-0}"
-  WAIT_READY_DIALOGS_ANSWERED="$dialogs_answered"
+wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet
+  local t=0
   while [ "$t" -lt "$2" ]; do
-    if [ -n "${3:-}" ] && dialog_find "$1" && [ -z "$DIALOG_MATCH_SAFE" ]; then
-      [ "${4:-}" = quiet ] \
-        || printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on known operator dialog '$DIALOG_MATCH_ID' — answer it with 'gang attach'; Gangline will not make this security decision")" >&2
-      # Recognition never makes an operator-owned screen a composer. In
-      # particular, a collar with no collar_input must not fall through to
-      # input_painted's intentionally permissive startup default.
-      return 5
-    # At most two distinct boot dialogs may consume this same boot budget.
-    # Recurrence cannot turn hitch into a reconciliation loop.
-    elif [ -n "${3:-}" ] && [ "$dialogs_answered" -lt 2 ] \
-      && dialog_triage "$1" "$3" unlocked; then
-      dialogs_answered=$((dialogs_answered + 1))
-      WAIT_READY_DIALOGS_ANSWERED="$dialogs_answered"
-      sleep 1; t=$((t + 1))
-      continue
-    fi
     if input_painted "$1"; then
       pane_stable "$1" && return 0
     elif [ -n "${3:-}" ] && boot_prompt_visible "$1"; then
@@ -3281,12 +3050,6 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
   case "${5:-}" in
-    screen)
-      # A modal removes the composer that ordinary delivery reads after Enter.
-      # The usage caller retains this lock and proves the native screen changed
-      # before extracting or dismissing anything, so that screen is the submit
-      # witness; every pre-Enter paste and authority guard above remains shared.
-      tmux send-keys -t "$1" Enter ;;
     # A continuation is typed at a harness that is compacting, so the harness's
     # own queue is where it is meant to wait. Parking is the landing here, not a
     # failed delivery.
@@ -3960,10 +3723,9 @@ cmd_hitch() {
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" recovery boot_dialogs=0
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" recovery
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
-  wait_ready "$id" "$boot" "$name" "" "$boot_dialogs" || ready=$?
-  boot_dialogs="$WAIT_READY_DIALOGS_ANSWERED"
+  wait_ready "$id" "$boot" "$name" || ready=$?
   recovery="most likely a first-run prompt gang does not recognize. Answer it with 'gang attach'; once the input box appears the agent is healthy — deliver its contract with 'gang send --to $name' rather than dropping it. Drop and re-hitch only if the box never appears."
   case "$ready" in
     0) ;;
@@ -3993,8 +3755,7 @@ cmd_hitch() {
            ready=1
            while [ "$ready" -ne 0 ]; do
              ready=0
-             wait_ready "$id" "$follow_boot" "$name" quiet "$boot_dialogs" || ready=$?
-             boot_dialogs="$WAIT_READY_DIALOGS_ANSWERED"
+             wait_ready "$id" "$follow_boot" "$name" quiet || ready=$?
              [ "$ready" -ne 5 ] || sleep 1
            done
            delivery_rc=0
@@ -4071,12 +3832,8 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
   # disagreement decided whether the default parked a message or dropped it.
-  if occupied "$AGENT_ID"; then
-    dialog_triage "$AGENT_ID" "$1" locked \
-      || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
-    ! occupied "$AGENT_ID" \
-      || die "known-dialog triage returned success for '$1', but its input is still occupied"
-  fi
+  ! occupied "$AGENT_ID" \
+    || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
     0) # States the fact and stops there. The instruction that used to live here
@@ -4504,169 +4261,11 @@ cmd_context() { # print the collar's native context reading, unparsed
   context_now "$AGENT_ID"
 }
 
-cmd_usage() { # drive and return the harness's own usage UI
-  local name="${1:-}" busy_rc=0 before after content="" key looks=0
-  local diff_rc=0 before_nonempty=0 restored=0 box="" restore_key
-  local submit_looks=0 empty_looks=0 unreadable=0 submitted_box="" submitted_rc=0
-  [ $# -le 1 ] || die "usage: unexpected argument '$2'"
-  if [ -z "$name" ]; then
-    name="$(self_name)" || {
-      cmd_help usage
-      printf '(no target given, and this shell is not a Gangline agent window)\n'
-      exit 1
-    }
-  fi
-  resolve "$name"
-  [ -n "$GANG_USAGE_CMD" ] \
-    || die "usage: collar '$AGENT_COLLAR' declares no GANG_USAGE_CMD, so gang does not know this harness's usage command"
-  case "$GANG_USAGE_RENDER" in
-    modal|inline) ;;
-    *) die "usage: collar '$AGENT_COLLAR' declares unknown GANG_USAGE_RENDER '$GANG_USAGE_RENDER' (expected modal or inline)" ;;
-  esac
-  declare -F collar_input >/dev/null \
-    || die "usage: collar '$AGENT_COLLAR' declares no collar_input, so gang cannot verify that '$name' restores its composer"
-
-  lock_pane "$AGENT_ID"
-  ! occupied "$AGENT_ID" \
-    || refuse "usage: '$name' is occupied (authority unknown) — a UI owns its input box, so gang will not type $GANG_USAGE_CMD into it (gang attach)"
-  busy "$AGENT_ID" || busy_rc=$?
-  case "$busy_rc" in
-    0) refuse "usage: '$name' is mid-turn, so gang will not type $GANG_USAGE_CMD into its active composer" ;;
-    1) ;;
-    2) refuse "usage: cannot determine whether '$name' is mid-turn, so gang will not type $GANG_USAGE_CMD" ;;
-    *) die "internal: busy returned unknown verdict $busy_rc" ;;
-  esac
-  composer_settled "$AGENT_ID" \
-    || refuse "usage: somebody is typing into '$name' right now, so gang will not interleave $GANG_USAGE_CMD with their draft"
-  input_clear "$AGENT_ID" \
-    || refuse "usage: the input box of '$name' is not provably empty, so gang will not append $GANG_USAGE_CMD to a draft"
-
-  before="$(tmux capture-pane -pJ -S - -t "$AGENT_ID")" \
-    || die "usage: cannot capture the scrollback of '$name' before $GANG_USAGE_CMD"
-  inject "$AGENT_ID" "$GANG_USAGE_CMD" head locked screen
-  for key in $GANG_USAGE_CONFIRM_KEY; do
-    tmux send-keys -t "$AGENT_ID" "$key" \
-      || die "usage: could not send confirmation key $key to '$name'"
-  done
-
-  # The first changed screen after Enter can be gang's own command or confirm
-  # key. Inline usage is ready only once its composer is empty. A modal removes
-  # the composer, so three consecutive unreadable looks are its submit witness.
-  while :; do
-    sleep 0.4
-    submitted_rc=0
-    submitted_box="$(collar_input "$AGENT_ID")" || submitted_rc=$?
-    if [ "$submitted_rc" -eq 0 ]; then
-      unreadable=0
-      if grep -q '[^[:space:]]' <<<"$submitted_box"; then
-        empty_looks=0
-        if box_queued "$submitted_box"; then
-          die "usage: submit NOT verified: '$GANG_USAGE_CMD' was parked in the harness queue of '$name' instead of opening usage — gang does not make its own command flushable; clear it by hand before retrying (gang attach; press Up, then C-u)"
-        fi
-      else
-        empty_looks=$((empty_looks + 1))
-        # A declared queue hint can paint after the composer first empties.
-        # Three empty readings give it the same observation window as send.
-        if [ "$GANG_USAGE_RENDER" = inline ] \
-          && { [ -z "$GANG_QUEUED_REGEX" ] || [ "$empty_looks" -ge 3 ]; }; then
-          break
-        fi
-      fi
-    else
-      empty_looks=0
-      unreadable=$((unreadable + 1))
-      submitted_box=""
-      if [ "$GANG_USAGE_RENDER" = modal ] && [ "$unreadable" -ge 3 ]; then
-        break
-      fi
-    fi
-    submit_looks=$((submit_looks + 1))
-    if [ "$submit_looks" -ge 8 ]; then
-      if [ "$submitted_rc" -ne 0 ]; then
-        if [ "$GANG_USAGE_RENDER" = inline ]; then
-          die "usage: submit NOT verified: the input box of '$name' did not become provably empty after $GANG_USAGE_CMD; this collar renders usage inline, so an unreadable box is not proof that the command entered (gang capture $name)"
-        fi
-        die "usage: submit NOT verified: the input box of '$name' neither became empty nor stayed unreadable long enough to prove that the usage modal opened (gang capture $name)"
-      fi
-      if ! grep -q '[^[:space:]]' <<<"$submitted_box"; then
-        if [ "$GANG_USAGE_RENDER" = modal ]; then
-          die "usage: the input box of '$name' became empty after $GANG_USAGE_CMD, but the declared modal never removed that box, so gang has no usage page to report (gang capture $name)"
-        fi
-        die "usage: submit NOT verified: the input box of '$name' became empty but did not stay readable long enough to rule out a parked command (gang capture $name)"
-      fi
-      if clear_box "$AGENT_ID"; then
-        die "usage: submit NOT verified: '$GANG_USAGE_CMD' was pasted into the input box of '$name' and never sent — it has been cleared back out of that box"
-      fi
-      stage_record "$AGENT_ID" "'$GANG_USAGE_CMD' is staged unsent in this box — it was pasted, never sent, and would not clear" "$submitted_box"
-      die "usage: submit NOT verified: '$GANG_USAGE_CMD' was pasted into the input box of '$name', never sent, and would not clear — it is staged there now (gang attach)"
-    fi
-  done
-
-  while :; do
-    after="$(tmux capture-pane -pJ -S - -t "$AGENT_ID")" \
-      || die "usage: cannot capture the scrollback of '$name' after $GANG_USAGE_CMD"
-    [ "$after" = "$before" ] || break
-    looks=$((looks + 1))
-    [ "$looks" -lt 5 ] \
-      || die "usage: the screen of '$name' never changed after $GANG_USAGE_CMD, so gang has no usage content to report and pressed nothing further"
-    sleep 0.4
-  done
-
-  case "$GANG_USAGE_RENDER" in
-    modal)
-      content="$(tmux capture-pane -pJ -t "$AGENT_ID" |
-        awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}')" \
-        || die "usage: cannot capture the visible usage page of '$name'"
-      ;;
-    inline)
-      [ -z "$before" ] || before_nonempty=1
-      content="$(awk -v before_nonempty="$before_nonempty" '
-        FILENAME==ARGV[1] { b[FNR]=$0; nb=FNR; next }
-        { a[FNR]=$0; na=FNR }
-        END {
-          p=0; while (p<nb && p<na && b[p+1]==a[p+1]) p++
-          if (before_nonempty && p==0) exit 42
-          s=0; while (s<nb-p && s<na-p && b[nb-s]==a[na-s]) s++
-          for (i=p+1; i<=na-s; i++) print a[i]
-        }' <(printf '%s\n' "$before") <(printf '%s\n' "$after"))" || diff_rc=$?
-      case "$diff_rc" in
-        0) ;;
-        42) die "usage: the scrollback of '$name' rolled over while gang was reading it, so gang cannot tell the usage content from the transcript around it" ;;
-        *) die "usage: could not compare the scrollback of '$name' (awk status $diff_rc)" ;;
-      esac
-      ;;
-  esac
-
-  if [ -n "$GANG_USAGE_DISMISS_KEY" ]; then
-    tmux send-keys -t "$AGENT_ID" "$GANG_USAGE_DISMISS_KEY" \
-      || die "usage: could not send dismissal key $GANG_USAGE_DISMISS_KEY to '$name'"
-  fi
-
-  looks=0
-  while [ "$looks" -lt 5 ]; do
-    if box="$(collar_input "$AGENT_ID")" && ! grep -q '[^[:space:]]' <<<"$box"; then
-      restored=1
-      break
-    fi
-    looks=$((looks + 1))
-    [ "$looks" -ge 5 ] || sleep 0.4
-  done
-  if [ "$restored" -ne 1 ]; then
-    printf '%s\n' "$content"
-    restore_key="${GANG_USAGE_DISMISS_KEY:-no dismissal key}"
-    lock_release
-    die "usage: '$name' did not restore an empty composer after $restore_key; the usage content was printed, but gang cannot safely type there again (gang attach)"
-  fi
-
-  lock_release
-  printf '%s\n' "$content"
-}
-
 usage_limits_error() { # $1 collar, $2 read status -> operator-facing cause
   case "$2" in
     2) printf "collar '%s' could not read its native provider-limit source" "$1" ;;
     3) printf "collar '%s' returned a provider-limit record Gangline cannot interpret" "$1" ;;
-    4) printf "collar '%s' declares no non-interactive provider-limit source; Gangline will not substitute gang usage's composer scrape" "$1" ;;
+    4) printf "collar '%s' declares no non-interactive provider-limit source" "$1" ;;
     5) printf "collar '%s' has only a stale provider-limit reading; refresh it with an API turn before acting" "$1" ;;
     *) printf "collar '%s' failed to read provider limits (status %s)" "$1" "$2" ;;
   esac
@@ -4875,15 +4474,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   local state busy_rc=0
   if occupied "$1"; then
     activity_hold_clear "$1"
-    if dialog_find "$1"; then
-      if [ -n "$DIALOG_MATCH_SAFE" ]; then
-        state="!occupied! (known transient: $DIALOG_MATCH_ID)"
-      else
-        state="!occupied! (known operator dialog: $DIALOG_MATCH_ID)"
-      fi
-    else
-      state="!occupied! (authority unknown)"
-    fi
+    state="!occupied! (authority unknown)"
     glyph_write "$1" "$state"
     printf '%s\n' "$state"
     return 0
@@ -5646,7 +5237,7 @@ case "$cmd" in
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
-  usage)    cmd_usage "$@" ;;
+  usage)    die "usage was retired in 2.0: it drove the harness's own usage page through the composer. 'gang limits' reads the same quota from the collar's non-interactive source." ;;
   limits)   cmd_limits "$@" ;;
   wait-limit) cmd_wait_limit "$@" ;;
   notify)   cmd_notify "$@" ;;

@@ -166,179 +166,12 @@ refuses "a missing collar_context names the collar" \
   "collar 'ctx-none' declares no collar_context" \
   "$GANG" context ctx-missing
 
-GANG_CONTEXT_LIGHTS=off "$HITCH" usage-inline -c usage-inline -d /tmp >/dev/null
-usage_inline_id="$(window_id usage-inline)"
-tmux resize-window -t "$usage_inline_id" -x 80 -y 12
-usage_marker_ready="test-usage-marker-ready-$$"
-printf -v usage_marker_cmd 'printf "INLINE_OLD_MARKER\\n"; tmux wait-for -S %q' \
-  "$usage_marker_ready"
-tmux send-keys -l -t "$usage_inline_id" "$usage_marker_cmd"
-tmux send-keys -t "$usage_inline_id" Enter
-tmux wait-for "$usage_marker_ready"
-expected_usage="$(awk 'BEGIN { for (i=1; i<=30; i++) printf "USAGE_%02d\n", i }')"
-usage_inline_out="$("$GANG" usage usage-inline)"
-equal "inline usage returns every line taller than the pane" \
-  "$expected_usage" "$(printf '%s\n' "$usage_inline_out" | sed 's/[[:space:]]*$//')"
-excludes "inline usage excludes the pre-existing transcript" \
-  "$usage_inline_out" "INLINE_OLD_MARKER"
-equal "inline usage restores an empty composer" "" \
-  "$("$GANG" composer usage-inline)"
-
-"$HITCH" usage-modal -c usage-modal -d /tmp >/dev/null
-usage_modal_out="$("$GANG" usage usage-modal)"
-equal "modal usage returns the visible page raw" \
-  $'MODAL_ONE\nMODAL_TWO' \
-  "$(printf '%s\n' "$usage_modal_out" | sed 's/[[:space:]]*$//')"
-equal "modal usage dismisses back to an empty composer" "" \
-  "$("$GANG" composer usage-modal)"
-
-"$HITCH" usage-confirm -c usage-confirm -d /tmp >/dev/null
-usage_confirm_out="$("$GANG" usage usage-confirm)"
-equal "usage presses the collar's confirmation key before capture" \
-  "CONFIRMED_USAGE" \
-  "$(printf '%s\n' "$usage_confirm_out" | sed 's/[[:space:]]*$//')"
-equal "confirmed modal usage restores an empty composer" "" \
-  "$("$GANG" composer usage-confirm)"
-
-"$HITCH" usage-stuck -c usage-stuck -d /tmp >/dev/null
-usage_stuck_stdout="$RUN_ROOT/usage-stuck.stdout"
-usage_stuck_stderr="$RUN_ROOT/usage-stuck.stderr"
-if "$GANG" usage usage-stuck >"$usage_stuck_stdout" 2>"$usage_stuck_stderr"; then
-  fail "usage refuses when its dismissal does not restore the composer" \
-    "usage unexpectedly succeeded"
-else
-  pass "usage refuses when its dismissal does not restore the composer"
-fi
-contains "failed usage restoration still prints the captured content" \
-  "$(<"$usage_stuck_stdout")" "MODAL_STUCK"
-contains "failed usage restoration names the key and gang attach" \
-  "$(<"$usage_stuck_stderr")" "after C-g"
-contains "failed usage restoration points at gang attach" \
-  "$(<"$usage_stuck_stderr")" "gang attach"
-
-usage_before_refusals="$(pane usage-inline)"
-tmux set-option -w -t "$usage_inline_id" @gl_turn "open $(date +%s)"
-refuses "usage refuses a busy target" "is mid-turn" \
-  "$GANG" usage usage-inline
-tmux set-option -w -t "$usage_inline_id" @gl_turn broken
-refuses "usage refuses a could-not-determine target" \
-  "cannot determine whether 'usage-inline' is mid-turn" \
-  "$GANG" usage usage-inline
-tmux set-option -uw -t "$usage_inline_id" @gl_turn
-equal "usage readiness refusals type nothing" \
-  "$usage_before_refusals" "$(pane usage-inline)"
-
-"$HITCH" usage-occupied -c usage-occupied -d /tmp >/dev/null
-usage_occupied_id="$(window_id usage-occupied)"
-usage_occupied_ready="test-usage-occupied-ready-$$"
-printf -v usage_occupied_cmd 'printf OCCUPIED_USAGE; tmux wait-for -S %q; IFS= read -r _' \
-  "$usage_occupied_ready"
-tmux send-keys -l -t "$usage_occupied_id" "$usage_occupied_cmd"
-tmux send-keys -t "$usage_occupied_id" Enter
-tmux wait-for "$usage_occupied_ready"
-usage_occupied_before="$(pane usage-occupied)"
-refuses "usage refuses an occupied target" "occupied (authority unknown)" \
-  "$GANG" usage usage-occupied
-equal "an occupied usage refusal types nothing" \
-  "$usage_occupied_before" "$(pane usage-occupied)"
-
-refuses "a collar with no GANG_USAGE_CMD refuses usage" \
-  "declares no GANG_USAGE_CMD" "$GANG" usage alpha
-
-# A SCREEN THAT DIFFERS BECAUSE GANG JUST TYPED INTO IT IS NOT A USAGE SCREEN.
-# Until this fixture existed, gang pressed Enter and compared the very next
-# capture, so whichever of two states that round trip caught decided which
-# refusal came out: the shell finishing first gave "never changed after clear",
-# gang looking first gave a rollover complaint about a scrollback that had not
-# rolled over. Measured at two wrong refusals in twenty-five under sustained
-# load, none in twenty quiet. Here the command never completes, so the losing
-# state is permanent and the verdict is the same every time.
-"$HITCH" usage-hold -c usage-hold -d /tmp >/dev/null
-usage_hold_id="$(window_id usage-hold)"
-usage_hold_ready="test-usage-hold-ready-$$"
-usage_hold_marker="READY_USAGE_HOLD_$$"
-printf -v usage_hold_cmd 'PROMPT_COMMAND=; PS1=%q""%q; clear' \
-  "READY_USAGE_" "HOLD_$$❯ "
-printf -v usage_hold_pipe \
-  'needle=%q; event=%q; seen=; while IFS= read -r -n 1 char; do seen="${seen}${char}"; case "$seen" in *"$needle") tmux wait-for -S "$event"; exit 0;; esac; if [ "${#seen}" -gt 256 ]; then seen="${seen: -256}"; fi; done' \
-  "$usage_hold_marker❯ " "$usage_hold_ready"
-printf -v usage_hold_pipe_shell '%q' "$usage_hold_pipe"
-tmux pipe-pane -O -t "$usage_hold_id" "bash -c $usage_hold_pipe_shell"
-tmux send-keys -l -t "$usage_hold_id" "$usage_hold_cmd"
-tmux send-keys -t "$usage_hold_id" Enter
-tmux wait-for "$usage_hold_ready"
-tmux pipe-pane -t "$usage_hold_id"
-usage_hold_stdout="$RUN_ROOT/usage-hold.stdout"
-usage_hold_stderr="$RUN_ROOT/usage-hold.stderr"
-if "$GANG" usage usage-hold \
-    >"$usage_hold_stdout" 2>"$usage_hold_stderr"; then
-  fail "usage refuses a command the harness has not taken" \
-    "usage unexpectedly succeeded"
-else
-  pass "usage refuses a command the harness has not taken"
-fi
-contains "an unconsumed command is named as an unverified submission" \
-  "$(<"$usage_hold_stderr")" "submit NOT verified"
-excludes "and is not reported as a scrollback that rolled over" \
-  "$(<"$usage_hold_stderr")" "rolled over"
-equal "an unconsumed command yields no usage content" "" \
-  "$(<"$usage_hold_stdout")"
-"$GANG" drop usage-hold >/dev/null
-
-"$HITCH" usage-nochange -c usage-nochange -d /tmp >/dev/null
-usage_nochange_id="$(window_id usage-nochange)"
-usage_nochange_ready="test-usage-nochange-ready-$$"
-usage_nochange_marker="READY_USAGE_NOCHANGE_$$"
-printf -v usage_nochange_cmd 'PROMPT_COMMAND=; PS1=%q""%q; clear' \
-  "READY_USAGE_" "NOCHANGE_$$❯ "
-printf -v usage_nochange_pipe \
-  'needle=%q; event=%q; seen=; while IFS= read -r -n 1 char; do seen="${seen}${char}"; case "$seen" in *"$needle") tmux wait-for -S "$event"; exit 0;; esac; if [ "${#seen}" -gt 256 ]; then seen="${seen: -256}"; fi; done' \
-  "$usage_nochange_marker❯ " "$usage_nochange_ready"
-printf -v usage_nochange_pipe_shell '%q' "$usage_nochange_pipe"
-tmux pipe-pane -O -t "$usage_nochange_id" \
-  "bash -c $usage_nochange_pipe_shell"
-tmux send-keys -l -t "$usage_nochange_id" "$usage_nochange_cmd"
-tmux send-keys -t "$usage_nochange_id" Enter
-tmux wait-for "$usage_nochange_ready"
-tmux pipe-pane -t "$usage_nochange_id"
-usage_nochange_stdout="$RUN_ROOT/usage-nochange.stdout"
-usage_nochange_stderr="$RUN_ROOT/usage-nochange.stderr"
-if "$GANG" usage usage-nochange \
-    >"$usage_nochange_stdout" 2>"$usage_nochange_stderr"; then
-  fail "usage refuses when the native screen never changes" \
-    "usage unexpectedly succeeded"
-else
-  pass "usage refuses when the native screen never changes"
-fi
-contains "an unchanged usage screen names the command" \
-  "$(<"$usage_nochange_stderr")" "after clear"
-equal "an unchanged usage screen prints no content" "" \
-  "$(<"$usage_nochange_stdout")"
-equal "an unchanged usage screen leaves the composer empty" "" \
-  "$("$GANG" composer usage-nochange)"
-
-tmux set-option -g history-limit 5
-"$HITCH" usage-rollover -c usage-inline -d /tmp >/dev/null
-tmux set-option -g history-limit 2000
-usage_rollover_id="$(window_id usage-rollover)"
-tmux resize-window -t "$usage_rollover_id" -x 80 -y 12
-usage_rollover_stdout="$RUN_ROOT/usage-rollover.stdout"
-usage_rollover_stderr="$RUN_ROOT/usage-rollover.stderr"
-if "$GANG" usage usage-rollover \
-    >"$usage_rollover_stdout" 2>"$usage_rollover_stderr"; then
-  fail "usage refuses a rolled-over inline scrollback" \
-    "usage unexpectedly succeeded"
-else
-  pass "usage refuses a rolled-over inline scrollback"
-fi
-contains "a rolled-over usage read names the lost origin" \
-  "$(<"$usage_rollover_stderr")" "scrollback of 'usage-rollover' rolled over"
-equal "a rolled-over usage read prints no content" "" \
-  "$(<"$usage_rollover_stdout")"
-
-"$HITCH" usage-unknown -c usage-unknown -d /tmp >/dev/null
-refuses "usage refuses an unknown render declaration" \
-  "unknown GANG_USAGE_RENDER 'unknown'" "$GANG" usage usage-unknown
+# 2.0 retired the composer-driven usage page. The verb refuses and names the
+# structured command that replaced it, rather than failing as an unknown word.
+refuses "the retired usage verb names its replacement" \
+  "'gang limits' reads the same quota" "$GANG" usage alpha
+excludes "the retired usage verb types nothing into its former target" \
+  "$(pane alpha)" "/usage"
 
 alpha_before_bare_help="$(pane alpha)"
 alpha_composer_before_bare_help="$($GANG composer alpha)"
@@ -351,13 +184,13 @@ for incoherent_bare in hitch adopt send drop; do
       "$incoherent_output" "gang $incoherent_bare"
   fi
 done
-# A COMMAND THAT TAKES ONE AGENT NAME DEFAULTS TO THE CALLER. Bare flush,
-# interrupt and usage inside an agent window therefore resolve to that agent
-# rather than printing a synopsis, and each then refuses on something the
-# fixture's own collar does not declare — which is the evidence that a target
-# was resolved at all. drop, down, adopt, hitch and send's recipient stay
-# without a self default on purpose and remain in the loop above.
-for self_bare in flush:GANG_QUEUED_REGEX interrupt:GANG_INTERRUPT_KEY usage:GANG_USAGE_CMD; do
+# A COMMAND THAT TAKES ONE AGENT NAME DEFAULTS TO THE CALLER. Bare flush and
+# interrupt inside an agent window therefore resolve to that agent rather than
+# printing a synopsis, and each then refuses on something the fixture's own
+# collar does not declare — which is the evidence that a target was resolved at
+# all. drop, down, adopt, hitch and send's recipient stay without a self default
+# on purpose and remain in the loop above.
+for self_bare in flush:GANG_QUEUED_REGEX interrupt:GANG_INTERRUPT_KEY; do
   self_bare_cmd="${self_bare%%:*}"
   self_bare_decl="${self_bare#*:}"
   if self_bare_out="$(TMUX_PANE="$alpha_tmux_pane" "$GANG" "$self_bare_cmd" 2>&1)"; then
@@ -377,14 +210,6 @@ equal "incoherent bare commands leave the composer untouched" \
 "$GANG" drop ctx-agent >/dev/null
 "$GANG" drop ctx-failing >/dev/null
 "$GANG" drop ctx-missing >/dev/null
-"$GANG" drop usage-inline >/dev/null
-"$GANG" drop usage-modal >/dev/null
-"$GANG" drop usage-confirm >/dev/null
-"$GANG" drop usage-stuck >/dev/null
-"$GANG" drop usage-occupied >/dev/null
-"$GANG" drop usage-nochange >/dev/null
-"$GANG" drop usage-rollover >/dev/null
-"$GANG" drop usage-unknown >/dev/null
 
 outside_status="$(env -u TMUX_PANE "$GANG" status 2>&1 || true)"
 contains "bare status outside an agent prints its synopsis" \
@@ -798,8 +623,9 @@ equal "a control-bearing registration never reaches the terminal raw" \
   "$(ctl_escapes "$ctl_whoami") $(ctl_escapes "$ctl_mail") $(ctl_escapes "$ctl_drop")"
 tmux kill-window -t "$ctl_id" 2>/dev/null || true
 
-# A synchronous tty fixture paints the captured Codex menu and records every
-# key Gangline sends. Each mutant changes one load-bearing observation.
+# A synchronous tty fixture paints the two menus Gangline used to answer and
+# records every key it receives. 2.0 answers neither: both are ordinary
+# occupancy, and the key log is the witness that no keystroke was sent.
 cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
@@ -811,13 +637,6 @@ import tty
 variant = os.environ.get("DIALOG_VARIANT", "known")
 log_path = os.environ["DIALOG_KEY_LOG"]
 ready = os.environ["DIALOG_READY"]
-selected = 0
-composer = False
-draft = bytearray()
-answered = 0
-safe_index = 1
-selected_glyph = "›"
-external_frame = None
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
@@ -831,45 +650,31 @@ if variant == "trust":
     ]
     labels = ["Yes, continue", "No, quit"]
     footer = "Press enter to continue"
-    safe_index = 0
-if variant == "external-import":
-    with open(os.environ["DIALOG_CAPTURE"], encoding="utf-8") as stream:
-        external_frame = stream.read().splitlines()
-    labels = ["Yes, allow external imports", "No, disable external imports"]
-    safe_index = 0
-    selected_glyph = "❯"
-if variant == "changed-byte":
-    body[0] = body[0].replace("systems", "system")
-if variant == "reordered":
-    body[0], body[1] = body[1], body[0]
-if variant == "authority":
-    body = ["Permission required before this command can run.", "Do you want to allow full access?"]
-    labels = ["Allow", "Deny", "Learn more"]
-    footer = "Choose whether to approve this permission."
-if variant == "extra-option":
-    labels.insert(2, "Open diagnostics")
 
 def paint():
-    sys.stdout.write("\x1b[2J\x1b[H")
-    if external_frame is not None:
-        for line in external_frame:
-            print(line)
-        sys.stdout.flush()
-        return
-    for line in body:
-        print("  " + line)
-    print()
-    for index, label in enumerate(labels):
-        glyph = selected_glyph if index == selected or (variant == "two-glyph" and index == 1) else " "
-        print(f"{glyph} {index + 1}. {label}")
-    print()
-    print("  " + footer)
+    # CRLF, EXPLICITLY. tty.setraw below turns off ONLCR, so a bare "\n" leaves
+    # the cursor where it was and every row after the first starts indented by
+    # the length of the one before it. A menu row that should begin at column
+    # zero would then begin wherever the previous line ended, and a
+    # line-anchored occupancy regex would match or miss by terminal width.
+    rows = ["  " + line for line in body] + [""]
+    rows += [f"{'›' if index == 0 else ' '} {index + 1}. {label}"
+             for index, label in enumerate(labels)]
+    rows += ["", "  " + footer]
+    sys.stdout.write("\x1b[2J\x1b[H" + "\r\n".join(rows) + "\r\n")
     sys.stdout.flush()
 
 def record(key):
     with open(log_path, "a", encoding="utf-8") as stream:
         stream.write(key + "\n")
 
+# THE MENU ONLY MOVES FOR AN ANSWER, and every byte that arrives is recorded
+# first, so a key Gangline should not have sent cannot be hidden by the screen
+# reacting to it: the assertions read the log as well as the pane. Enter is the
+# operator answering; the menu then gives way to a composer, which is what makes
+# the manual-clearance path deliverable.
+composer = False
+draft = bytearray()
 tty.setraw(sys.stdin.fileno())
 paint()
 subprocess.run(["tmux", "wait-for", "-S", ready], check=True)
@@ -877,7 +682,7 @@ while True:
     char = os.read(sys.stdin.fileno(), 1)
     if composer:
         if char in (b"\r", b"\n"):
-            sys.stdout.write("\r\n" + draft.decode("utf-8") + "\r\n❯ ")
+            sys.stdout.write("\r\n" + draft.decode("utf-8") + "\r\n\u276f ")
             sys.stdout.flush()
             draft.clear()
         else:
@@ -886,266 +691,66 @@ while True:
         continue
     if char == b"\x1b":
         tail = os.read(sys.stdin.fileno(), 2)
-        if tail == b"[B":
-            record("Down")
-            if variant != "wrong-move":
-                selected = min(selected + 1, len(labels) - 1)
-            paint()
-        elif tail == b"[A":
-            record("Up")
-            if variant != "wrong-move":
-                selected = max(selected - 1, 0)
-            paint()
+        record({b"[B": "Down", b"[A": "Up"}.get(tail, "Escape " + repr(tail)))
     elif char in (b"\r", b"\n"):
         record("Enter")
-        if selected == safe_index and variant != "confirm-stuck":
-            answered += 1
-            if variant == "recurring" and answered < 5:
-                recur_fifo = os.environ.get("DIALOG_RECUR_FIFO")
-                sys.stdout.write("\x1b[2J\x1b[H❯ ")
-                sys.stdout.flush()
-                if recur_fifo:
-                    with open(recur_fifo, "rb", buffering=0) as stream:
-                        stream.read(1)
-                else:
-                    subprocess.run(
-                        ["tmux", "wait-for", os.environ["DIALOG_RECUR_SIGNAL"]],
-                        check=True,
-                    )
-                selected = 0
-                paint()
-                recur_ack = os.environ.get("DIALOG_RECUR_ACK")
-                if recur_ack:
-                    with open(recur_ack, "wb", buffering=0) as stream:
-                        stream.write(b"x")
-            else:
-                composer = True
-                sys.stdout.write("\x1b[2J\x1b[H❯ ")
-                sys.stdout.flush()
-        else:
-            paint()
+        composer = True
+        sys.stdout.write("\x1b[2J\x1b[H\u276f ")
+        sys.stdout.flush()
+    else:
+        record(repr(char))
 PY
 chmod +x "$RUN_ROOT/dialog-fixture.py"
-dialog_recurring_signal="dialog-recurring-next-$$"
-
 cat > "$RUN_ROOT/collars/dialog.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog"
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
-GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter'
-GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
-Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
-Retry with a faster model
-Dismiss and keep waiting
-Learn more
-No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
 SH
-cat > "$RUN_ROOT/collars/dialog-wrong.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Up|Enter'
-SH
-cat > "$RUN_ROOT/collars/dialog-recurring.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_LAUNCH="env DIALOG_VARIANT=recurring DIALOG_KEY_LOG='$RUN_ROOT/dialog-recurring.keys' DIALOG_READY='dialog-recurring-ready-$$' DIALOG_RECUR_SIGNAL='$dialog_recurring_signal' '$RUN_ROOT/dialog-fixture.py'"
-SH
-cat > "$RUN_ROOT/collars/dialog-observe.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_DIALOGS='operator-choice|^› [0-9]+\. |||'
-GANG_DIALOG_LINES_operator_choice="\$GANG_DIALOG_LINES_safety_buffering_prompt"
-SH
-observe_boot_seen="dialog-observe-boot-seen-$$"
-observe_boot_release="dialog-observe-boot-release-$$"
-cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-observe.sh"
-unset -f collar_input
-GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='dialog-observe-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
-SH
-cat > "$RUN_ROOT/collars/dialog-leading-space.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-observe.sh"
-GANG_DIALOGS='dead-record|^ +› [0-9]+\. |||'
-GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
-SH
-cat > "$RUN_ROOT/collars/dialog-single-space.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-observe.sh"
-GANG_DIALOGS='dead-record|^ › [0-9]+\. |||'
-GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
-SH
-cat > "$RUN_ROOT/collars/dialog-class-space.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-observe.sh"
-GANG_DIALOGS='dead-record|^[[:space:]]› [0-9]+\. |||'
-GANG_DIALOG_LINES_dead_record="\$GANG_DIALOG_LINES_operator_choice"
-SH
-cat > "$RUN_ROOT/collars/dialog-optional-space.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog-observe.sh"
-GANG_DIALOGS='optional-space|^ *› [0-9]+\. |||'
-GANG_DIALOG_LINES_optional_space="\$GANG_DIALOG_LINES_operator_choice"
-SH
-# shellcheck disable=SC2154  # set in test/integration-cli.sh
-printf -v claude_external_record_q '%q' "$claude_external_record"
-# shellcheck disable=SC2154  # set in test/integration-cli.sh
-printf -v claude_external_lines_q '%q' "$claude_external_lines"
-cat > "$RUN_ROOT/collars/dialog-claude-external.sh" <<SH
-# shellcheck shell=bash
-# shellcheck disable=SC2034
-. "$RUN_ROOT/collars/dialog.sh"
-GANG_DIALOGS=$claude_external_record_q
-GANG_DIALOG_LINES_external_import_trust=$claude_external_lines_q
-SH
-mkdir -p "$RUN_ROOT/dialog-observe-bin"
-cat > "$RUN_ROOT/dialog-observe-bin/sleep" <<SH
-#!/bin/sh
-if [ ! -e "$RUN_ROOT/dialog-observe-sleep-seen" ]; then
-  : > "$RUN_ROOT/dialog-observe-sleep-seen"
-  printf '%s' "\$1" > "$RUN_ROOT/dialog-observe-sleep-argument"
-  tmux wait-for -S "$observe_boot_seen"
-  tmux wait-for "$observe_boot_release"
-fi
-exit 0
-SH
-chmod +x "$RUN_ROOT/dialog-observe-bin/sleep"
 
-for dead_marker_case in leading-space single-space class-space; do
-  if dead_marker_out="$("$GANG" hitch "dialog-$dead_marker_case" \
-      -c "dialog-$dead_marker_case" -d /tmp 2>&1)"; then
-    fail "$dead_marker_case dialog marker dead after normalization is refused" \
-      "hitch unexpectedly succeeded"
-  else
-    contains "$dead_marker_case refusal names normalization" \
-      "$dead_marker_out" "requires leading whitespace that dialog normalization removes"
-  fi
-  equal "$dead_marker_case dead marker opens no window" "" \
-    "$(window_id "dialog-$dead_marker_case")"
-done
-if "$HITCH" dialog-optional-space -c dialog-optional-space -d /tmp \
-    >/dev/null; then
-  pass "a marker allowing zero leading spaces remains loadable"
-else
-  fail "a marker allowing zero leading spaces remains loadable" \
-    "hitch refused a marker that matches normalized input"
-fi
-"$GANG" drop dialog-optional-space >/dev/null
-
-dialog_start() { # $1 agent, $2 variant, $3 collar
-  local name="$1" variant="$2" collar="$3" id command
-  "$HITCH" "$name" -c "$collar" -d /tmp >/dev/null
+dialog_start() { # $1 agent, $2 variant
+  local name="$1" variant="$2" id command
+  "$HITCH" "$name" -c dialog -d /tmp >/dev/null
   id="$(window_id "$name")"
-  case "$name" in dialog-known) tmux resize-window -t "$id" -x 48 -y 24 ;; esac
   : > "$RUN_ROOT/$name.keys"
-  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q DIALOG_CAPTURE=%q %q' \
+  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q %q' \
     "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" \
-    "$ROOT/test/fixtures/claude-external-import.txt" "$RUN_ROOT/dialog-fixture.py"
+    "$RUN_ROOT/dialog-fixture.py"
   tmux send-keys -l -t "$id" "$command"
   tmux send-keys -t "$id" Enter
   tmux wait-for "dialog-ready-$name-$$"
 }
 
-dialog_start dialog-known known dialog
-dialog_known_err="$RUN_ROOT/dialog-known.err"
-if printf 'DIALOG_BODY_REACHED' | "$GANG" send --to dialog-known --from tester \
-    --live-only --stdin >/dev/null 2>"$dialog_known_err"; then
-  pass "a fully fingerprinted known dialog is auto-answered"
-else
-  fail "a fully fingerprinted known dialog is auto-answered" \
-    "$(<"$dialog_known_err")"
-fi
-contains "the full-block match survives a narrow soft-wrapped pane and sends" \
-  "$(pane dialog-known)" "DIALOG_BODY_REACHED"
-contains "known-dialog triage names the exact registry id" \
-  "$(<"$dialog_known_err")" "safety-buffering-prompt"
-equal "known-dialog triage moves once and confirms only after verification" \
-  $'Down\nEnter' "$(<"$RUN_ROOT/dialog-known.keys")"
-"$GANG" drop dialog-known >/dev/null
-
-for mutant in extra-option reordered changed-byte two-glyph authority; do
-  dialog_start "dialog-$mutant" "$mutant" dialog
-  mutant_before="$(pane "dialog-$mutant")"
-  mutant_keys="$(<"$RUN_ROOT/dialog-$mutant.keys")"
-  if printf "MUTANT_$mutant" | "$GANG" send --to "dialog-$mutant" \
-      --from tester --live-only --stdin >/dev/null 2>&1; then
-    fail "$mutant known-dialog mutant is refused" "send unexpectedly succeeded"
+# The Codex wait screen and the directory-trust prompt are the two records the
+# shipped collar used to answer, and hitch -d used to answer the second one on
+# the operator's behalf. Both are now refused like any other occupied screen.
+for dialog_case in known trust; do
+  dialog_start "dialog-$dialog_case" "$dialog_case"
+  dialog_before="$(pane "dialog-$dialog_case")"
+  equal "a $dialog_case menu is occupancy of unknown authority" \
+    "!occupied! (authority unknown)" "$("$GANG" status "dialog-$dialog_case")"
+  dialog_live_rc=0
+  dialog_live_out="$(printf 'DIALOG_BODY_REACHED' | "$GANG" send \
+    --to "dialog-$dialog_case" --from tester --live-only --stdin 2>&1)" \
+    || dialog_live_rc=$?
+  if [ "$dialog_live_rc" -eq 0 ]; then
+    fail "a live-only send to the $dialog_case menu refuses" \
+      "send unexpectedly succeeded"
   else
-    pass "$mutant known-dialog mutant is refused"
+    contains "a live-only send to the $dialog_case menu refuses" \
+      "$dialog_live_out" "is occupied (authority unknown)"
   fi
-  equal "$mutant mutant leaves the dialog byte-for-byte on screen" \
-    "$mutant_before" "$(pane "dialog-$mutant")"
-  equal "$mutant mutant receives no auto-answer key" "$mutant_keys" \
-    "$(<"$RUN_ROOT/dialog-$mutant.keys")"
-  "$GANG" drop "dialog-$mutant" >/dev/null
+  printf 'DIALOG_BODY_PARKED' | "$GANG" send --to "dialog-$dialog_case" \
+    --from tester --stdin > "$RUN_ROOT/dialog-$dialog_case.park" 2>&1 || true
+  contains "the default send path refuses it on the same occupancy" \
+    "$(<"$RUN_ROOT/dialog-$dialog_case.park")" "is occupied (authority unknown)"
+  equal "no key reached the $dialog_case menu through any of it" "" \
+    "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
+  # source-guard: whole-surface@386affb9ca58: the claim is that NOTHING wrote to this pane, so every visible byte is the evidence and any producer would falsify it
+  equal "and the $dialog_case menu is byte-for-byte where it was" \
+    "$dialog_before" "$(pane "dialog-$dialog_case")"
+  excludes "and no part of either body reached the screen" \
+    "$(pane "dialog-$dialog_case")" "DIALOG_BODY"
+  "$GANG" drop "dialog-$dialog_case" >/dev/null
 done
-
-dialog_start dialog-wrong wrong-move dialog-wrong
-if wrong_out="$(printf WRONG_SELECTION | "$GANG" send --to dialog-wrong \
-    --from tester --live-only --stdin 2>&1)"; then
-  fail "confirm never fires while the glyph is on a non-safe row" \
-    "send unexpectedly succeeded"
-else
-  contains "the wrong-selection refusal names the dialog" \
-    "$wrong_out" "safety-buffering-prompt"
-  contains "the wrong-selection refusal points at direct inspection" \
-    "$wrong_out" "gang attach"
-fi
-equal "the wrong-selection mutant records its move but no confirm" \
-  "Up" "$(<"$RUN_ROOT/dialog-wrong.keys")"
-"$GANG" drop dialog-wrong >/dev/null
-
-dialog_start dialog-confirm-stuck confirm-stuck dialog
-if stuck_out="$(printf STUCK_CONFIRM | "$GANG" send --to dialog-confirm-stuck \
-    --from tester --live-only --stdin 2>&1)"; then
-  fail "a confirm key that does not clear the dialog fails loud" \
-    "send unexpectedly succeeded"
-else
-  contains "the uncleared-dialog refusal names the registry id" \
-    "$stuck_out" "safety-buffering-prompt"
-  contains "the uncleared-dialog refusal points at gang attach" \
-    "$stuck_out" "gang attach"
-fi
-equal "the stuck-confirm fixture received only the verified move and confirm" \
-  $'Down\nEnter' "$(<"$RUN_ROOT/dialog-confirm-stuck.keys")"
-"$GANG" drop dialog-confirm-stuck >/dev/null
-
-dialog_start dialog-status known dialog
-status_dialog_before="$(pane dialog-status)"
-contains "status names a known transient without answering it" \
-  "$("$GANG" status dialog-status)" \
-  "!occupied! (known transient: safety-buffering-prompt)"
-equal "status is read-only even for a recognized dialog" \
-  "$status_dialog_before" "$(pane dialog-status)"
-equal "status presses no dialog key" "" "$(<"$RUN_ROOT/dialog-status.keys")"
-"$GANG" drop dialog-status >/dev/null
-
-dialog_start dialog-observe known dialog-observe
-observe_before="$(pane dialog-observe)"
-contains "status names a recognized operator dialog without calling it transient" \
-  "$("$GANG" status dialog-observe)" \
-  "!occupied! (known operator dialog: operator-choice)"
-if observe_send="$(printf OBSERVE_ONLY_BODY | "$GANG" send \
-    --to dialog-observe --from tester --live-only --stdin 2>&1)"; then
-  fail "an observe-only dialog refuses delivery" "send unexpectedly succeeded"
-else
-  contains "the refusal names the operator decision Gangline will not make" \
-    "$observe_send" "known operator dialog 'operator-choice'"
-fi
-equal "observe-only recognition sends no key" "" \
-  "$(<"$RUN_ROOT/dialog-observe.keys")"
-# source-guard: whole-surface@f2d2c71674d2: no visible byte may change because observe-only recognition is forbidden to send any key
-equal "observe-only recognition leaves the operator dialog unchanged" \
-  "$observe_before" "$(pane dialog-observe)"
-"$GANG" drop dialog-observe >/dev/null
