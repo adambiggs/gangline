@@ -815,10 +815,11 @@ gang explain
   gang explain <name>
 
   Prints the agent, active pane, collar and
-  resulting state, then each collar state rule:
-  its exact regex, whether that same read used
-  it, and the first captured pane line it
-  matched.
+  resulting state, then the two collar-owned
+  rules, GANG_OCCUPIED_REGEX and
+  GANG_BUSY_REGEX: the exact regex, whether
+  that same read used it, and the first
+  captured pane line it matched.
 
   A rule can be matched, not matched, not
   declared, or not evaluated because stronger
@@ -828,8 +829,10 @@ gang explain
   accidentally diagnose a different screen.
 
   Use it when a harness update makes busy, idle
-  or occupied look wrong. It is a pure live read
-  and records no diagnostic state.
+  or occupied look wrong. It writes no
+  diagnostic record of its own; the ordinary
+  state read it runs may still refresh the
+  window glyph and the evidence status keeps.
 EOF
       ;;
     roster) cat <<'EOF'
