@@ -1,5 +1,130 @@
 # Changelog
 
+## [2.0.0](https://github.com/adambiggs/gangline/compare/gangline-v1.0.0...gangline-v2.0.0) (2026-08-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **hooks:** x` alone at the end of a message is parsed
+* **help:** `gang` with no arguments exits 0 and prints a getting-started page on stdout instead of printing the command inventory on stderr and exiting 1. Scripts that read the inventory from a bare invocation must call `gang help` or `gang --help`.
+* **gang:** gang usage is removed; use gang limits. Collars declaring GANG_DIALOGS, GANG_DIALOG_LINES_<id>, GANG_DIALOG_HITCH_DIR_TRUST, GANG_USAGE_CMD, GANG_USAGE_CONFIRM_KEY, GANG_USAGE_RENDER or GANG_USAGE_DISMISS_KEY keep working, but those declarations are no longer read. A first-run prompt that used to be answered automatically now waits for the operator: attach and answer it, and hitch delivers the parked contract.
+* **gang:** every pre-rename name listed above is removed. Rename GANG_PROFILE to GANG_COLLAR and GANG_PROFILES to GANG_COLLARS in configuration and environment, GANG_TEST_PROFILES to GANG_TEST_COLLARS, profile_input, profile_context and profile_session_id to collar_input, collar_context and collar_session_id in custom collars, -p/--profile to -c/--collar, gang profiles to gang collars, gang cutoff to gang curfew, and gang spawn to gang hitch. Drop send --spool, which has been the default since 1.0. A team running across the upgrade must be re-hitched rather than migrated in place.
+* **hooks:** `
+* **config:** remove GANG_ACTIVITY_LIMIT and GANG_CLEAR_PRESSES from Gangline config files; they remain environment-only implementation seams.
+* **occupancy:** remove GANG_OCCUPIED_LIMIT from Gangline config files; timed occupancy decay no longer exists.
+* tools/pii-scan is gone and the pii-scan CI job with it. A clone that invoked either has no in-repo replacement; use the operator's installed Snubline scanner. Repository push and pull-request CI no longer scan for PII shapes at all.
+
+### Features
+
+* **compaction:** let a harness declare its compaction instead of gang guessing ([ca9f731](https://github.com/adambiggs/gangline/commit/ca9f73122d404315e11e67f8c8d6a0ae7fe1b434))
+* **compaction:** tell the summariser what a lane needs to keep ([9346f7c](https://github.com/adambiggs/gangline/commit/9346f7cfa81aff5424bd45e98e7228e46e867bfd))
+* **compact:** land every compaction on a turn, not an empty composer ([f13e296](https://github.com/adambiggs/gangline/commit/f13e2964d6b4a3195b68547e61b0f10d451c9e6b))
+* **contract:** make brevity and direct peer traffic contract terms ([11b77d6](https://github.com/adambiggs/gangline/commit/11b77d6b178fd3f9b5905b966ac50d3ee46c6c78))
+* **contract:** put the contract in the system prompt where a collar has one ([eac1447](https://github.com/adambiggs/gangline/commit/eac1447d7b1d99ef4b4878c33728b22f491c9ad0))
+* **contract:** send agents to a contract file instead of pasting it ([8863837](https://github.com/adambiggs/gangline/commit/8863837ae7209530bb60fa2ea49134e68a11a184))
+* **gang:** add native turn barriers ([d6343fa](https://github.com/adambiggs/gangline/commit/d6343fab63d2bff05b9a5b811efb2da2fbe6fd39))
+* **gang:** add provider usage limits and reset waits ([42f0add](https://github.com/adambiggs/gangline/commit/42f0add450dd60a1bd4261573ae99c45e32ac253))
+* **gang:** default mail, flush, interrupt and usage to the calling window ([cadb911](https://github.com/adambiggs/gangline/commit/cadb91190e11ff15351ba0ce263b203b367c1224))
+* **gang:** delete known-dialog auto-answering and the composer usage page ([6683d92](https://github.com/adambiggs/gangline/commit/6683d923b1513b7eb9acd0ac51dd90d4c60b8b4e))
+* **gang:** explain collar state matches ([f7d2158](https://github.com/adambiggs/gangline/commit/f7d2158450785b80ee388209f36b0ed2d994b815))
+* **gang:** remove the 1.x published-name compatibility layer ([9df2872](https://github.com/adambiggs/gangline/commit/9df28721c3cf9297d0630791f871cb54d6b005d7))
+* **help:** answer bare gang with a getting-started page for agents ([49ae989](https://github.com/adambiggs/gangline/commit/49ae989537883ceab64418fa7c3ffc560678e99f))
+* **interrupt:** carry a reason past the queue ([fe651f5](https://github.com/adambiggs/gangline/commit/fe651f547a0a4548c7046feced613dd0d04eeb12))
+* **mail:** let an agent's own read consume its queue ([953c8e7](https://github.com/adambiggs/gangline/commit/953c8e70c264317378fd714feb867fbc853dc201))
+* **mail:** read an agent's waiting queue without touching it ([909e592](https://github.com/adambiggs/gangline/commit/909e59210eeee36dfb7feb09bbc625dc8ee486f2))
+* **roles:** attach role briefs at hitch ([ba9ce76](https://github.com/adambiggs/gangline/commit/ba9ce768fd7209c82850803d78fe3565bedd48cd))
+* **roles:** declare Claude role prompt option ([87e3851](https://github.com/adambiggs/gangline/commit/87e38517fac03271e0e8403aed004960feb11f1c))
+* **roles:** ship lead role brief ([98db5b2](https://github.com/adambiggs/gangline/commit/98db5b28febf8dfacd65dfb9e9d1a65c9b44c961))
+* **roster:** add porcelain output ([d514924](https://github.com/adambiggs/gangline/commit/d514924d592eecffa5cc1634720eec6eb8a93d51))
+* **roster:** report how long the oldest message has waited ([35d6e84](https://github.com/adambiggs/gangline/commit/35d6e8422ba4d03bb7e8a1f7eae28a2aca86581e))
+* **send:** steer a busy claude-code agent through its own queue ([cb58413](https://github.com/adambiggs/gangline/commit/cb584134026c9bf67b166b91596180222bd5b547))
+* **spool:** archive pending messages instead of unlinking them ([9d73d6e](https://github.com/adambiggs/gangline/commit/9d73d6eca02dfdb8b58fc978fae5e02775abf325))
+* **spool:** drain a whole queue as one chronological bundle ([f228ad0](https://github.com/adambiggs/gangline/commit/f228ad0f2a6f8799b0a345d732a19e91294701b1))
+* **team:** align arc ownership and review ([ae300a2](https://github.com/adambiggs/gangline/commit/ae300a245582b7bb6c1b2fa579d2c6f02062aaa5))
+* **up:** attach the lead role by default ([1d39d02](https://github.com/adambiggs/gangline/commit/1d39d023bc7500a6ac96ebe64320f759db8142d9))
+
+
+### Bug Fixes
+
+* **cli:** reject stray stable command arguments ([1b19cf2](https://github.com/adambiggs/gangline/commit/1b19cf232d11410a2561ac1e187d43db4b7c36c1))
+* **codex:** stamp sessions from hook payloads ([57a6606](https://github.com/adambiggs/gangline/commit/57a6606a82d9672323d6bb7be5338878b06dee30))
+* **collars:** decline Codex hooks for a quote-bearing root ([464ade3](https://github.com/adambiggs/gangline/commit/464ade3128f1611234d9f6b30d1948b59fa39fce))
+* **commits:** refuse indeterminate push ranges ([4633459](https://github.com/adambiggs/gangline/commit/4633459f4f21d9cfbac208fc96af4d625d99ebea))
+* **compact:** keep a deferred self-compaction across a refused boundary ([9295f8a](https://github.com/adambiggs/gangline/commit/9295f8aed33a1cf08c159e2721a1a42a9655fe90))
+* **compact:** wire the Codex bracket and settle one a refusal left open ([bb89f3c](https://github.com/adambiggs/gangline/commit/bb89f3c6862003a82e7be5e737ff3235ac2bd54d))
+* **config:** keep implementation seams out of file config ([92673a6](https://github.com/adambiggs/gangline/commit/92673a671de584f38cb50834e44a291b4fb7ae62))
+* **curfew:** name missing python dependency ([9290feb](https://github.com/adambiggs/gangline/commit/9290feb09a00274d9329f3200e5d80d11d07a716))
+* **delivery:** drain attributed steering mid-turn ([013ea06](https://github.com/adambiggs/gangline/commit/013ea062de72a7cab047f484f0ba6237a0e35643))
+* **delivery:** expose unreadable spool drains ([8a06f84](https://github.com/adambiggs/gangline/commit/8a06f84e881db5c5229ba350db2ba69f091c38da))
+* **delivery:** keep continuation verification narrow ([8988a97](https://github.com/adambiggs/gangline/commit/8988a9760f14fc3d2d838bbb6d6d398b6419ff89))
+* **delivery:** preserve gated and busy handoffs ([58801cd](https://github.com/adambiggs/gangline/commit/58801cd3ec3c6b4da07d2102bc2b0321e95da84f))
+* **delivery:** retain native steering recovery ([bed0eb5](https://github.com/adambiggs/gangline/commit/bed0eb56dae018aef815c33c9d270cc40aba0e13))
+* **down:** refuse a teardown run from inside the session ([dda0bd6](https://github.com/adambiggs/gangline/commit/dda0bd66e0d34a321dc0218050a3b02ea921c2c9))
+* **down:** require the session name a teardown ends ([791d28f](https://github.com/adambiggs/gangline/commit/791d28faf364ea210a9498790c53042cd1fb1796))
+* **flush:** distinguish a drained queue from a message never parked ([cc06378](https://github.com/adambiggs/gangline/commit/cc06378a69dd412749b1635003572a8b4a47b875))
+* **gang:** resolve an agent by its registration, not its window title ([6f4c5b2](https://github.com/adambiggs/gangline/commit/6f4c5b2af5910d90a7513f447a393846483bb748))
+* **gang:** retire the manual park recovery and trim failure-time prose ([d82b29f](https://github.com/adambiggs/gangline/commit/d82b29f1fe27acf0c399547e43fc6267a06337e1))
+* **gang:** sanitize a registration before it reaches the terminal ([d2df7c5](https://github.com/adambiggs/gangline/commit/d2df7c50bbb42b40503de61b4328d99efb8fc77d))
+* **gate:** close the ownership claims an adversarial review broke ([f7c41b3](https://github.com/adambiggs/gangline/commit/f7c41b32e9788053435b91adb600bc96eaf87975))
+* **gate:** judge a link by where it points and read the file before blocking ([2f727ad](https://github.com/adambiggs/gangline/commit/2f727ad6462a52971f42d21d1b67fa4acf38da8f))
+* **gate:** name a destination inside the tree instead of blaming the tree ([478b8df](https://github.com/adambiggs/gangline/commit/478b8df67c21338b918897f3fc680ea3a11db16b))
+* **gate:** pin the configuration once instead of closing doors one at a time ([551db3e](https://github.com/adambiggs/gangline/commit/551db3e76cf57f1e91db4324954014bd10abe8e2))
+* **gate:** pin what counts as the tree, and refuse a copy that failed ([7b17a19](https://github.com/adambiggs/gangline/commit/7b17a19a290154bc34dd5d24bf56aeb82a793b32))
+* **gate:** read the index safely, name the subtree, and own the destination ([8d3731b](https://github.com/adambiggs/gangline/commit/8d3731b1a9a7e80976402f0ec37eb58fc302ab7d))
+* **githooks:** print the global gate verdict last ([006b5d3](https://github.com/adambiggs/gangline/commit/006b5d3d212cc0772870d9e0c0e179f2065d52e6))
+* **hitch:** clear known boot dialogs ([7f713ad](https://github.com/adambiggs/gangline/commit/7f713add3894438fdf8f824ca6cddaf187b36d93))
+* **hook:** name an argument the event is not ([979e3cc](https://github.com/adambiggs/gangline/commit/979e3cc71817cb6568e8e70c0abec4024ad9c70a))
+* **hook:** report a native event shape gang cannot interpret ([6d1c233](https://github.com/adambiggs/gangline/commit/6d1c233c7b88a7f4f13ab81e1ea1524919a4191b))
+* **hooks:** a footer is the last block, not any line after a blank one ([e607653](https://github.com/adambiggs/gangline/commit/e6076533da5100002f05d7c4a5a91ebb6294826a))
+* **hooks:** enforce the BREAKING CHANGE footer a breaking subject promises ([e050651](https://github.com/adambiggs/gangline/commit/e0506518dca79b31ca1c81f0fb29486484c3c8ea))
+* **hooks:** judge pushed commits by the pushed gate and refuse a failed traversal ([f75d496](https://github.com/adambiggs/gangline/commit/f75d49652e299f8214930178c322a624f136ceb8))
+* **hooks:** let the host-global gate report progress while it runs ([3dfb705](https://github.com/adambiggs/gangline/commit/3dfb705b27f3ade79fa1fc37bc1db77a1a8719d5))
+* **hooks:** require the breaking footer to be a footer ([bd98d28](https://github.com/adambiggs/gangline/commit/bd98d28033799c2e16ada770e9d39cf4bd3b7ed1))
+* **hooks:** silence collar identity diagnostics ([4d42d68](https://github.com/adambiggs/gangline/commit/4d42d68f515d311200dc2f78daea5670eea5cbf1))
+* **installer:** replace the gang link instead of writing through it ([cdcdfdd](https://github.com/adambiggs/gangline/commit/cdcdfdd6bb13fcd12c9f743346eb370ded0b7446))
+* **interrupt:** name a bad option before resolving self ([650cf8b](https://github.com/adambiggs/gangline/commit/650cf8beba57c03b60c209ff1bab44996a7a4e79))
+* **interrupt:** stop this window's own turn with a reason ([915ab81](https://github.com/adambiggs/gangline/commit/915ab81f0cf564b6d7e484ca45126eb694d1618b))
+* **messaging:** close adversarial observability gaps ([bc6b9df](https://github.com/adambiggs/gangline/commit/bc6b9df04d7d6406e8bb5722186a070aacc7a372))
+* **messaging:** preserve atomic mail ownership ([da071a0](https://github.com/adambiggs/gangline/commit/da071a0f77a5734fa8f4a7b5821b149b5f708468))
+* **messaging:** preserve observable delivery truth ([e3ec847](https://github.com/adambiggs/gangline/commit/e3ec8474405e0e8d6d13dd2f96ae935a3c6f0c28))
+* **messaging:** tell a clipped composer from an absent one ([ed58bcd](https://github.com/adambiggs/gangline/commit/ed58bcdab6169184176943a48b99f1391957a756))
+* **occupancy:** retire permission evidence only on observation ([34fcdbf](https://github.com/adambiggs/gangline/commit/34fcdbfab05c0639bfc6a4aa7b86598c4fe35ff8))
+* **parser:** refuse arity no command consumes ([f943786](https://github.com/adambiggs/gangline/commit/f94378680060f5f65a162feb6cfb658cbd3a0dfa))
+* **pii-scan:** read diff framing instead of the +++ prefix ([43ef5ba](https://github.com/adambiggs/gangline/commit/43ef5ba8aa318e53f0288ed1ac7e6681c12266b3))
+* **prose:** remove the unearned byte ceiling ([249f0dd](https://github.com/adambiggs/gangline/commit/249f0dd422ea0eb8284ececab81ed8183bd92d44))
+* **roles:** close review coverage gaps ([c5f01e6](https://github.com/adambiggs/gangline/commit/c5f01e6f4606d71641236dc486fc5e3c3934b380))
+* **roster:** parse the padded stamp in base 10 ([c579505](https://github.com/adambiggs/gangline/commit/c579505727e09997d24e37182576af719d13afa7))
+* **send:** report what is true of the queued message before why it waited ([9f3a9a6](https://github.com/adambiggs/gangline/commit/9f3a9a66f55157871a1b4feb7d122439f9702cfd))
+* **stall:** claim the debounce before deciding on it ([d2ae34a](https://github.com/adambiggs/gangline/commit/d2ae34aab78440421bc49155f3e3f3ce781075e7))
+* **startup:** refuse without a UTF-8 locale ([392d693](https://github.com/adambiggs/gangline/commit/392d69391c5d8e7aa2a78507dcad45cd9f89d619))
+* **submit:** count the unreadable-box bound only where the read failed ([1606f40](https://github.com/adambiggs/gangline/commit/1606f40d2d356f46a1e534a45fce34cc5a500011))
+* **test:** keep the operator's /etc/bash.bashrc off every fixture Enter path ([f71a415](https://github.com/adambiggs/gangline/commit/f71a4150405179a1170fd53e8b05dcd4ec4ec481))
+* **test:** make the hermetic-shell guard test a word, and prove it ([11e6a81](https://github.com/adambiggs/gangline/commit/11e6a81bd958a83f2ab6062740b4153379724a0a))
+* **test:** report only what the unverified-submission path observed ([910e602](https://github.com/adambiggs/gangline/commit/910e60255005d324187a6acfa10055db7bea0876))
+* **test:** stop printing a cause the run never measured ([1e5cb8d](https://github.com/adambiggs/gangline/commit/1e5cb8d551021f403b1cabef6945eaae3fcfd6ea))
+* **usage:** wait for command consumption ([dc16e0a](https://github.com/adambiggs/gangline/commit/dc16e0a9c168820a23001972830a00969e9aa5b1))
+* **wait-limit:** declare the wake before arming the timer that keeps it ([37d956d](https://github.com/adambiggs/gangline/commit/37d956dd1c66c737341c9bb28c40b68de680fd61))
+* **wait-limit:** fire against the timer that armed the declaration ([b785b6d](https://github.com/adambiggs/gangline/commit/b785b6d16efde3297e357c037a5a8c5db1ade0c9))
+* **wait-limit:** read the unit's state, arm before declaring, disclose a refused callback ([d3eebef](https://github.com/adambiggs/gangline/commit/d3eebef635b7b3668953b5bcd7aae03259c0088b))
+* **wait:** bound and retire native barriers safely ([579c584](https://github.com/adambiggs/gangline/commit/579c584a6878c1ca99287c871b1afd4e1e361178))
+* **wait:** make native barriers race-safe ([bdccfa6](https://github.com/adambiggs/gangline/commit/bdccfa6b9c73e87af97cfb4fe1d4d8af3c37bfde))
+
+
+### Performance Improvements
+
+* **lint:** lint one file per shellcheck process ([5720934](https://github.com/adambiggs/gangline/commit/5720934488b12f31d88f055855665be8bf40bd16))
+
+
+### Miscellaneous Chores
+
+* release 2.0.0 ([5eed914](https://github.com/adambiggs/gangline/commit/5eed9142e8c3f3dc8da23c6412199833cfb88346))
+* **release:** cut this range as 1.1.0, not 2.0.0 ([009274f](https://github.com/adambiggs/gangline/commit/009274fedd53d4aa360db396e0db648428ee433d))
+
+
+### Code Refactoring
+
+* remove PII scanning; Snubline owns the gate ([fee26a8](https://github.com/adambiggs/gangline/commit/fee26a88b2686255f2c76a32e03e4caa91372da6))
+
 ## [1.0.0](https://github.com/adambiggs/gangline/compare/gangline-v0.8.0...gangline-v1.0.0) (2026-08-08)
 
 

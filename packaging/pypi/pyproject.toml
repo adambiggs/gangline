@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gangline"
-version = "1.0.0"
+version = "2.0.0"
 description = "Reserved. https://gangline.ai"
 # No license-files: LICENSE lives at the repo root, outside this project dir.
 license = "Apache-2.0"
