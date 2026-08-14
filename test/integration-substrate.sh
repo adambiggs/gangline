@@ -637,6 +637,12 @@ import tty
 variant = os.environ.get("DIALOG_VARIANT", "known")
 log_path = os.environ["DIALOG_KEY_LOG"]
 ready = os.environ["DIALOG_READY"]
+answered = os.environ.get("DIALOG_ANSWERED") or ""
+# A CAPTURE IS PAINTED BYTE FOR BYTE. The external-import prompt is a recorded
+# frame from the harness itself, and the point of rendering it is that the
+# shipped collar's regex meets the bytes the harness produced, not a
+# reconstruction of them.
+capture = os.environ.get("DIALOG_CAPTURE") or ""
 body = [
     "Our systems are thinking a bit more about this request before responding.",
     "Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.",
@@ -650,6 +656,12 @@ if variant == "trust":
     ]
     labels = ["Yes, continue", "No, quit"]
     footer = "Press enter to continue"
+
+def paint_capture():
+    with open(capture, encoding="utf-8") as stream:
+        rows = stream.read().splitlines()
+    sys.stdout.write("\x1b[2J\x1b[H" + "\r\n".join(rows) + "\r\n")
+    sys.stdout.flush()
 
 def paint():
     # CRLF, EXPLICITLY. tty.setraw below turns off ONLCR, so a bare "\n" leaves
@@ -676,7 +688,10 @@ def record(key):
 composer = False
 draft = bytearray()
 tty.setraw(sys.stdin.fileno())
-paint()
+if capture:
+    paint_capture()
+else:
+    paint()
 subprocess.run(["tmux", "wait-for", "-S", ready], check=True)
 while True:
     char = os.read(sys.stdin.fileno(), 1)
@@ -697,25 +712,67 @@ while True:
         composer = True
         sys.stdout.write("\x1b[2J\x1b[H\u276f ")
         sys.stdout.flush()
+        if answered:
+            subprocess.run(["tmux", "wait-for", "-S", answered], check=True)
     else:
         record(repr(char))
 PY
 chmod +x "$RUN_ROOT/dialog-fixture.py"
+# THE COLLAR DECLARES THE RECORDS THAT USED TO BE ANSWERED. A fixture collar
+# with no GANG_DIALOGS makes every "no key reached it" assertion below true of
+# a core that still had the matcher, because there would have been nothing for
+# it to match: the guard could not fail. These are the shipped Codex collar's
+# records verbatim, against the menus this fixture paints, with the keys core
+# used to press and the hitch-time directory-trust exception that let the
+# second one name trust at all. 2.0 reads none of it.
 cat > "$RUN_ROOT/collars/dialog.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog"
 GANG_OCCUPIED_REGEX='^› [0-9]+\. '
+GANG_DIALOGS='safety-buffering-prompt|^› [0-9]+\. |Dismiss and keep waiting|Down|Enter
+directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
+GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
+GANG_DIALOG_LINES_safety_buffering_prompt='Our systems are thinking a bit more about this request before responding.
+Hang tight or retry with a faster model for a quicker response, though it may be less capable of handling complex requests.
+Retry with a faster model
+Dismiss and keep waiting
+Learn more
+No action is required. Codex will keep waiting, and this menu will close when the response is ready.'
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+Yes, continue
+No, quit
+Press enter to continue'
+SH
+# An answerable record whose fingerprint carries authority language was refused
+# at load, and the refusal was the deleted machinery's central safety property.
+# There is nothing left to refuse it: the record loads and is never read. This
+# is Claude's external-import prompt, whose own collar never declared it for
+# that reason, and the capture below is the frame the harness itself printed.
+cat > "$RUN_ROOT/collars/dialog-claude.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/claude-code.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog-claude"
+GANG_RESUME_LAUNCH=""
+GANG_STOP_HOOK=""
+GANG_SELF_COMPACT=""
+GANG_DIALOGS='external-import-trust|^❯ [0-9]+\. |Yes, allow external imports||Enter'
+GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
+Yes, allow external imports
+No, disable external imports
+Enter to confirm · Esc to cancel'
 SH
 
-dialog_start() { # $1 agent, $2 variant
+dialog_start() { # $1 agent, $2 variant, $3 collar, $4 capture file
   local name="$1" variant="$2" id command
-  "$HITCH" "$name" -c dialog -d /tmp >/dev/null
+  "$HITCH" "$name" -c "${3:-dialog}" -d /tmp >/dev/null
   id="$(window_id "$name")"
   : > "$RUN_ROOT/$name.keys"
-  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q %q' \
+  printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q DIALOG_ANSWERED=%q DIALOG_CAPTURE=%q %q' \
     "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" \
+    "dialog-answered-$name-$$" "${4:-}" \
     "$RUN_ROOT/dialog-fixture.py"
   tmux send-keys -l -t "$id" "$command"
   tmux send-keys -t "$id" Enter
@@ -726,7 +783,7 @@ dialog_start() { # $1 agent, $2 variant
 # shipped collar used to answer, and hitch -d used to answer the second one on
 # the operator's behalf. Both are now refused like any other occupied screen.
 for dialog_case in known trust; do
-  dialog_start "dialog-$dialog_case" "$dialog_case"
+  dialog_start "dialog-$dialog_case" "$dialog_case" dialog
   dialog_before="$(pane "dialog-$dialog_case")"
   equal "a $dialog_case menu is occupancy of unknown authority" \
     "!occupied! (authority unknown)" "$("$GANG" status "dialog-$dialog_case")"
@@ -752,5 +809,46 @@ for dialog_case in known trust; do
     "$dialog_before" "$(pane "dialog-$dialog_case")"
   excludes "and no part of either body reached the screen" \
     "$(pane "dialog-$dialog_case")" "DIALOG_BODY"
+  # AN EMPTY LOG IS A CLAIM ABOUT THE INSTRUMENT FIRST. These are the two keys
+  # the deleted registry would have pressed at this menu, sent by hand: the log
+  # records them, so the emptiness asserted above is the absence of a keystroke
+  # rather than a fixture that stopped listening.
+  tmux send-keys -t "$(window_id "dialog-$dialog_case")" Down Enter
+  tmux wait-for "dialog-answered-dialog-$dialog_case-$$"
+  equal "the key log records the answer the operator sends by hand" \
+    $'Down\nEnter' "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
   "$GANG" drop "dialog-$dialog_case" >/dev/null
 done
+
+# The shipped Claude collar's occupancy regex is bound to a frame the harness
+# printed, through the collar itself: the fixture overrides only the launch, so
+# GANG_OCCUPIED_REGEX is the one collars/claude-code.sh ships.
+dialog_external_hitch=0
+dialog_external_load="$(dialog_start dialog-external external-import \
+  dialog-claude "$ROOT/test/fixtures/claude-external-import.txt" 2>&1)" \
+  || dialog_external_hitch=$?
+if [ "$dialog_external_hitch" -eq 0 ]; then
+  pass "a collar declaring an authority-shaped legacy record loads"
+else
+  fail "a collar declaring an authority-shaped legacy record loads" \
+    "$dialog_external_load"
+fi
+# source-guard: whole-surface@9e916c8be644: the only thing that ever writes to this pane is the fixture painting the restored capture, so any producer of this line on it is that capture reaching the screen — which is the whole claim
+contains "the captured harness frame is what is on screen" \
+  "$(pane dialog-external)" "Yes, allow external imports"
+equal "and the shipped Claude occupancy regex reads it as occupancy" \
+  "!occupied! (authority unknown)" "$("$GANG" status dialog-external)"
+dialog_external_rc=0
+dialog_external_out="$(printf 'DIALOG_BODY_EXTERNAL' | "$GANG" send \
+  --to dialog-external --from tester --live-only --stdin 2>&1)" \
+  || dialog_external_rc=$?
+if [ "$dialog_external_rc" -eq 0 ]; then
+  fail "the external-import prompt refuses delivery like any other occupancy" \
+    "send unexpectedly succeeded"
+else
+  contains "the external-import prompt refuses delivery like any other occupancy" \
+    "$dialog_external_out" "is occupied (authority unknown)"
+fi
+equal "and the record Gangline no longer reads answered nothing" "" \
+  "$(<"$RUN_ROOT/dialog-external.keys")"
+"$GANG" drop dialog-external >/dev/null
