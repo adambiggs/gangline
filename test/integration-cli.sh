@@ -37,6 +37,25 @@ contains "top-level help names the collar command" "$top_help" "collars"
 contains "top-level help names the curfew command" "$top_help" "curfew"
 excludes "top-level help omits the removed profiles name" "$top_help" "profiles"
 excludes "top-level help omits the removed cutoff name" "$top_help" "cutoff"
+# ONBOARDING IS `run gang`. No arguments used to print this same inventory to
+# stderr and exit 1, which told an agent that asking where it was had been a
+# mistake. It is a page of its own now, on stdout, and the inventory stays
+# exactly one command further on.
+welcome_rc=0
+welcome_err="$RUN_ROOT/welcome.err"
+welcome="$(env -u TMUX_PANE "$GANG" 2>"$welcome_err")" || welcome_rc=$?
+equal "bare gang answers instead of refusing" "0" "$welcome_rc"
+equal "and says nothing on stderr" "" "$(<"$welcome_err")"
+equal "the welcome page fits the phone-SSH width" "" \
+  "$(printf '%s\n' "$welcome" | help_width_failure)"
+contains "the welcome page carries the send one-liner" \
+  "$welcome" "gang send --to NAME --stdin"
+contains "it warns that reading your own mail consumes it" \
+  "$welcome" "consumes it"
+contains "it says what a refusal means" "$welcome" "did NOT happen"
+contains "and hands the inventory over to gang help" "$welcome" "gang help"
+excludes "the welcome page is not the inventory" "$welcome" "start and end a team"
+contains "which gang help still prints" "$("$GANG" help)" "start and end a team"
 contains "gang collars help prints the new synopsis" \
   "$("$GANG" collars --help)" "gang collars"
 contains "gang curfew help prints the new synopsis" \

@@ -269,6 +269,56 @@ colour() { printf "%s%s%s" "$1" "$2" "$C_OFF"; }
 
 cmd_help() { # $1 = command; empty prints the command inventory
   case "${1:-}" in
+    # THE PAGE A FRESHLY HITCHED AGENT LANDS ON. `gang` with no arguments used
+    # to print the whole inventory to stderr and exit 1, which told an agent
+    # reading it that it had done something wrong. Onboarding is now `run gang`:
+    # what you are, how to say something, how to read what was said to you, and
+    # what a refusal is. The inventory is one command further on.
+    welcome) cat <<'EOF'
+gang — you are one agent on a team
+
+Every teammate is a real CLI harness in its
+own tmux window. Gang carries messages
+between you and reports what each of you is
+doing. It does not plan or supervise work.
+
+find yourself
+    gang whoami    who this window is
+    gang roster    the team and its state
+
+say something
+    printf '%s\n' "..." |
+      gang send --to NAME --stdin
+  Delivery is verified in the target's own
+  input box. A teammate mid-turn is parked
+  and drained at its next turn boundary,
+  never interrupted.
+
+read what was sent to you
+    gang mail
+  Reading your OWN queue consumes it. Read
+  it whole: whatever you pipe away is gone.
+
+watch a teammate
+    gang status NAME   what it is doing
+    gang explain NAME  why that state
+    gang wait NAME --until idle|done
+
+what an exit code means
+    0  it happened
+    3  refusal: it did NOT happen, and
+       stderr says why
+    1  error, which is NOT proof that
+       nothing happened — read stderr
+       before retrying anything
+
+then
+    gang help            every command
+    gang <cmd> --help    one whole page
+    gang collars         harnesses to hitch
+    gang roles           briefs to hitch
+EOF
+      ;;
     '') cat <<'EOF'
 gang — drive native CLI agents in tmux
 
@@ -327,7 +377,10 @@ settings and discovery
 
 gang <command> --help is the whole page for
 one command: every flag, what it means, and
-when to reach for it.
+when to reach for it. gang with no arguments
+is the getting-started page for an agent.
+The exhaustive reference is docs/reference.md
+in the Gangline checkout.
 EOF
       ;;
     up) cat <<'EOF'
@@ -5552,8 +5605,15 @@ cmd_config() {
   printf 'roles\t%s\t%s\n' "$roles" "$state"
 }
 
-cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
+cmd="${1:-}"
 [ "$cmd" = hook ] || dirty_execution_warn
+# NO ARGUMENTS IS NOT A MISTAKE. An agent told to "run gang" is asking where it
+# is, and answering with the inventory on stderr at exit 1 tells it that asking
+# was an error. The inventory is still one command away, at gang help. The skew
+# warning above is deliberately upstream of this: the first command an agent
+# runs is where an executable diverging from HEAD is most worth hearing about.
+[ -n "$cmd" ] || { cmd_help welcome; exit 0; }
+shift || true
 if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
   cmd_help "$cmd"
   exit 0

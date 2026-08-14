@@ -5,6 +5,13 @@
 48-character line budget so it remains legible in narrow phone-SSH terminals;
 this reference carries the complete command contract.
 
+`gang` with no arguments prints a getting-started page written for an agent
+rather than an inventory: what it is, how to send, that reading its own mail
+consumes it, what each exit status means, and where the inventory is. It exits
+0 on stdout, so "run gang" is a complete onboarding instruction for a
+freshly hitched agent of any harness. The executable-skew warning is emitted
+before it, since this is the first command an agent runs.
+
 When a command's only missing argument is an agent name, an invocation from
 inside a Gangline window that omits that name targets that window. An agent
 reading or stopping its own state does not have to know its own name. What is
