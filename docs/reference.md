@@ -233,8 +233,7 @@ it is refused, the nonce-bound envelope is written to a per-target spool and
 reported as parked, not delivered. A failure after anything was typed is never
 parked, because that body's fate is unknown and a second copy would be a second
 message. Pass `--live-only` for an availability probe that must return a refusal
-to its caller instead of parking it. The deprecated `--spool` flag is accepted
-as an announced no-op.
+to its caller instead of parking it.
 
 The target's own native Stop event drains ordinary mail. Hitch itself drains a
 startup contract parked before any turn existed once it observes the composer.
@@ -694,29 +693,15 @@ operator doctrine governs any disagreement.
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_COLLARS`,
 `GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.
 
-### Deprecated names
+### Removed names
 
-The 1.0 rename keeps every old name working through 1.x. Each announces itself
-on stderr and is removed in 2.0. A setting Gangline reads once per command
-announces once; a collar declaration read for each window announces for each
-window. Setting one setting under both names — in the file, in the environment,
-or one in each — is refused rather than silently resolved.
-
-| Accepted through 1.x | 1.0 name |
-|---|---|
-| `gang profiles` | `gang collars` |
-| `gang cutoff` | `gang curfew` |
-| `-p`, `--profile` | `-c`, `--collar` |
-| `GANG_PROFILE` | `GANG_COLLAR` |
-| `GANG_PROFILES` | `GANG_COLLARS` |
-| `GANG_TEST_PROFILES` | `GANG_TEST_COLLARS` |
-| `profile_input` | `collar_input` |
-| `profile_context` | `collar_context` |
-| `profile_session_id` | `collar_session_id` |
-
-The window option `@gl_profile` and the session option `@gl_cutoff` are not
-aliases: Gangline migrates them in place the first time it reads a window or
-team carrying them, so a fleet running when the rename lands keeps working.
+The 1.0 rename kept the pre-rename spellings working through 1.x. 2.0 removes
+them: `gang profiles`, `gang cutoff`, `-p`/`--profile`, `send --spool`,
+`GANG_PROFILE`, `GANG_PROFILES`, `GANG_TEST_PROFILES`, the `profile_*` collar
+contract functions, the undocumented `spawn` alias for `hitch`, and in-place
+migration of the `@gl_profile` window option and the `@gl_cutoff` session
+option. A config file naming a removed key is refused as an unknown key; a
+removed flag or command name is refused as unknown.
 
 ## Collar contract
 

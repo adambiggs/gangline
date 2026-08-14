@@ -39,22 +39,16 @@ contains "bare capture targets the calling agent window" \
 equal "bare composer targets the calling agent window" "" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
 
-"$GANG" hitch legacy-flag -p bash -d /tmp \
-  > "$RUN_ROOT/legacy-flag.out" 2> "$RUN_ROOT/legacy-flag.err"
-contains "the hitch flag alias still opens a registered window" \
-  "$(TMUX_PANE="$(tmux list-panes -t "$(window_id legacy-flag)" -F '#{pane_id}')" \
-    "$GANG" whoami)" "collar: bash"
-contains "the hitch flag alias announces its replacement" \
-  "$(<"$RUN_ROOT/legacy-flag.err")" \
-  "hitch: -p/--profile is now -c/--collar"
-"$GANG" drop legacy-flag >/dev/null
-if both_flag_out="$("$GANG" hitch two-flags -c bash -p bash -d /tmp 2>&1)"; then
-  fail "two spellings of the hitch collar flag refuse" "hitch succeeded"
-else
-  contains "the two-spelling refusal names both flags" "$both_flag_out" \
-    "-c/--collar and -p/--profile"
-fi
-excludes "the two-spelling refusal opens no window" "$(window_names)" "two-flags"
+# 2.0 removed the pre-rename spellings. The alias no longer resolves to
+# -c/--collar, so it is refused as an unknown argument before a window exists.
+refuses "the removed hitch collar flag is an unknown argument" \
+  "hitch: unknown argument '-p'" \
+  "$GANG" hitch legacy-flag -p bash -d /tmp
+excludes "the refused legacy flag opens no window" "$(window_names)" "legacy-flag"
+refuses "and its long spelling is unknown too" \
+  "hitch: unknown argument '--profile'" \
+  "$GANG" hitch legacy-flag --profile bash -d /tmp
+excludes "the refused long spelling opens no window" "$(window_names)" "legacy-flag"
 
 # Calibrate custom-directory precedence against a state with no shadow file,
 # then make the custom bash collar emit a marker the shipped fixture cannot.
@@ -80,157 +74,67 @@ equal "a custom collar directory shadows the shipped collar" \
   "$(GANG_COLLARS="$shadow_dir" "$GANG" composer shadowed)"
 "$GANG" drop shadowed >/dev/null
 
-# Custom collars may keep the published 0.x function spelling through 1.x.
-# The ordinary command calibrates that there is a real announcement for the
-# hook-silence check below.
+# 2.0 removed the 0.x contract-function spelling. A collar that still declares
+# profile_input is no longer forwarded into collar_input: it is a collar with no
+# input reader, so the reading falls back to the whole pane instead of that
+# collar's function. The current spelling calibrates the reader first, so the
+# negative assertion below cannot pass because the instrument reads nothing.
 cat > "$RUN_ROOT/collars/legacy-contract.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-_legacy_input="\$(declare -f collar_input)"
-eval "profile_input \${_legacy_input#collar_input}"
+profile_input() { printf 'MARK_LEGACY_FORWARD'; }
 unset -f collar_input
 SH
-cat > "$RUN_ROOT/collars/dual-contract.sh" <<SH
+cat > "$RUN_ROOT/collars/current-contract.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-profile_input() { printf 'legacy'; }
+collar_input() { printf 'MARK_LEGACY_FORWARD'; }
 SH
-"$GANG" hitch legacy-contract-a -c legacy-contract -d /tmp \
-  > "$RUN_ROOT/legacy-contract-hitch.out" 2> "$RUN_ROOT/legacy-contract-hitch.err"
-contains "a legacy collar function is announced during ordinary loading" \
-  "$(<"$RUN_ROOT/legacy-contract-hitch.err")" \
-  "collar 'legacy-contract' declares profile_input"
-tmux send-keys -l -t "$(window_id legacy-contract-a)" LEGACY_INPUT
-"$GANG" composer legacy-contract-a \
-  > "$RUN_ROOT/legacy-contract-composer.out" \
-  2> "$RUN_ROOT/legacy-contract-composer.err"
-contains "profile_input forwards into the collar_input contract" \
-  "$(<"$RUN_ROOT/legacy-contract-composer.out")" "LEGACY_INPUT"
-contains "an ordinary composer command announces the legacy contract" \
-  "$(<"$RUN_ROOT/legacy-contract-composer.err")" \
-  "collar 'legacy-contract' declares profile_input"
-tmux send-keys -t "$(window_id legacy-contract-a)" C-u
-printf '%s\n' '{"hook_event_name":"Notification","notification_type":"fixture"}' \
-  | TMUX_PANE="$(tmux list-panes -t "$(window_id legacy-contract-a)" -F '#{pane_id}')" \
-    "$GANG" hook > "$RUN_ROOT/legacy-contract-hook.out" \
-    2> "$RUN_ROOT/legacy-contract-hook.err"
-equal "hook output stays silent for a legacy contract function" "" \
-  "$(<"$RUN_ROOT/legacy-contract-hook.err")"
-if dual_out="$("$GANG" hitch dual-contract -c dual-contract -d /tmp 2>&1)"; then
-  fail "a collar defining both contract spellings refuses" "hitch succeeded"
-else
-  contains "the dual-contract refusal names its collar" "$dual_out" \
-    "collar 'dual-contract' defines both collar_input and profile_input"
-fi
-excludes "the dual-contract refusal opens no window" "$(window_names)" "dual-contract"
+tmux new-window -d -t "=$GANG_SESSION" -n current-contract "PS1='❯ ' bash --norc"
+"$GANG" adopt current-contract -c current-contract >/dev/null
+equal "the reader instrument is calibrated on the current spelling" \
+  "MARK_LEGACY_FORWARD" "$("$GANG" composer current-contract 2>&1)"
+"$GANG" drop current-contract >/dev/null
+tmux new-window -d -t "=$GANG_SESSION" -n legacy-contract "PS1='❯ ' bash --norc"
+"$GANG" adopt legacy-contract -c legacy-contract > /dev/null \
+  2> "$RUN_ROOT/legacy-contract-adopt.err"
+equal "adopting a collar with only the removed spelling announces nothing" "" \
+  "$(<"$RUN_ROOT/legacy-contract-adopt.err")"
+excludes "the removed contract spelling is not forwarded into collar_input" \
+  "$("$GANG" composer legacy-contract 2>&1)" "MARK_LEGACY_FORWARD"
+"$GANG" drop legacy-contract >/dev/null
 
-"$GANG" hitch legacy-contract-b -c legacy-contract -d /tmp >/dev/null 2>&1
-"$GANG" roster > "$RUN_ROOT/legacy-roster.out" 2> "$RUN_ROOT/legacy-roster.err"
-contains "a roster over shared legacy collars announces at least once" \
-  "$(<"$RUN_ROOT/legacy-roster.err")" \
-  "collar 'legacy-contract' declares profile_input"
-new_roster_session="gangtest-new-contract-$$"
-GANG_SESSION="$new_roster_session" "$HITCH" new-contract-a -c bash -d /tmp >/dev/null
-GANG_SESSION="$new_roster_session" "$HITCH" new-contract-b -c bash -d /tmp >/dev/null
-GANG_SESSION="$new_roster_session" "$GANG" roster \
-  > "$RUN_ROOT/new-roster.out" 2> "$RUN_ROOT/new-roster.err"
-excludes "new contract collars calibrate the roster announcement" \
-  "$(<"$RUN_ROOT/new-roster.err")" "declares profile_input"
-GANG_SESSION="$new_roster_session" "$GANG" down "$new_roster_session" >/dev/null
-
-# A running pre-rename window is healed by the hook itself, with no stderr
-# announcement: internal tmux residue is Gangline's state, not operator input.
+# A running pre-rename window is no longer migrated in place: @gl_profile is
+# residue Gangline does not read, so a window carrying only that option is not
+# a registered agent and is refused rather than silently healed.
 "$HITCH" legacy-option -c bash -d /tmp >/dev/null
 legacy_option_id="$(window_id legacy-option)"
 legacy_option_pane="$(tmux list-panes -t "$legacy_option_id" -F '#{pane_id}')"
 tmux set-option -w -t "$legacy_option_id" @gl_profile bash
 tmux set-option -uw -t "$legacy_option_id" @gl_collar
+refuses "a window carrying only the removed option is not an agent" \
+  "is not a gang agent" "$GANG" status legacy-option
+equal "and the removed option is left exactly where it was, unmigrated" "bash" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
+equal "and nothing was written into the current option" "" \
+  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_collar)"
 printf '%s\n' '{"hook_event_name":"UserPromptSubmit"}' \
   | TMUX_PANE="$legacy_option_pane" "$GANG" hook \
     > "$RUN_ROOT/legacy-option-hook.out" 2> "$RUN_ROOT/legacy-option-hook.err"
-equal "a hook over @gl_profile residue is byte-silent on stderr" "" \
+equal "a hook over the removed option is byte-silent on stderr" "" \
   "$(<"$RUN_ROOT/legacy-option-hook.err")"
-contains "the residue-reading hook still writes the turn bracket" \
-  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_turn)" "open "
-equal "the hook migrates the collar value before erasing residue" "bash" \
-  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_collar)"
-equal "the migrated old window option is removed" "" \
-  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
-tmux set-option -w -t "$legacy_option_id" @gl_profile bash
-contains "equal old and new window options resolve normally" \
-  "$("$GANG" status legacy-option)" "-busy-"
-tmux set-option -w -t "$legacy_option_id" @gl_profile codex
-refuses "unequal old and new window options refuse without guessing" \
-  "carries @gl_collar 'bash' and @gl_profile 'codex'" \
-  "$GANG" status legacy-option
-tmux set-option -uw -t "$legacy_option_id" @gl_profile
-
-# Calibrate the migration-failure instrument before trusting its result. The
-# failed argv is the positive witness that migration was attempted; old-state
-# survival alone would also pass an implementation that never tried.
-migration_bin="$RUN_ROOT/migration-bin"
-migration_record="$RUN_ROOT/migration-tmux.argv"
-mkdir -p "$migration_bin"
-real_tmux="$(command -v tmux)"
-cat > "$migration_bin/tmux" <<SH
-#!/usr/bin/env bash
-# SPDX-License-Identifier: Apache-2.0
-real=$(printf '%q' "$real_tmux")
-record="\${TMUX_MIGRATION_RECORD:?}"
-if [ "\${1:-}" = set-option ]; then
-  for migration_arg in "\$@"; do
-    if [ "\$migration_arg" = @gl_collar ]; then
-      first=1
-      for recorded_arg in "\$@"; do
-        [ "\$first" -eq 1 ] || printf '\t' >> "\$record"
-        printf '%s' "\$recorded_arg" >> "\$record"
-        first=0
-      done
-      printf '\n' >> "\$record"
-      exit 97
-    fi
-  done
-fi
-exec "\$real" "\$@"
-SH
-chmod +x "$migration_bin/tmux"
-: > "$migration_record"
-if TMUX_MIGRATION_RECORD="$migration_record" "$migration_bin/tmux" \
-  set-option -w -t "$legacy_option_id" @gl_collar bash; then
-  fail "the migration wrapper's fail branch is calibrated" "intercept succeeded"
-else
-  pass "the migration wrapper's fail branch is calibrated"
-fi
-contains "the calibrated fail branch records its exact argv" \
-  "$(<"$migration_record")" \
-  $'set-option\t-w\t-t\t'"$legacy_option_id"$'\t@gl_collar\tbash'
-TMUX_MIGRATION_RECORD="$migration_record" "$migration_bin/tmux" \
-  set-option -w -t "$legacy_option_id" @gl_migration_forwarded yes
-equal "the migration wrapper forwards its unrelated branch" "yes" \
-  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_migration_forwarded)"
-tmux set-option -uw -t "$legacy_option_id" @gl_migration_forwarded
-
-: > "$migration_record"
-tmux set-option -w -t "$legacy_option_id" @gl_profile bash
-tmux set-option -uw -t "$legacy_option_id" @gl_collar
-TMUX_MIGRATION_RECORD="$migration_record" PATH="$migration_bin:$PATH" \
-  "$GANG" status legacy-option >/dev/null
-contains "status attempted the intercepted @gl_collar migration" \
-  "$(<"$migration_record")" \
-  $'set-option\t-w\t-t\t'"$legacy_option_id"$'\t@gl_collar\tbash'
-equal "a failed migration preserves the only old collar identity" "bash" \
-  "$(tmux show-options -wqv -t "$legacy_option_id" @gl_profile)"
-equal "the failed intercepted migration did not fabricate a new value" "" \
+equal "and the hook does not migrate it either" "" \
   "$(tmux show-options -wqv -t "$legacy_option_id" @gl_collar)"
 tmux set-option -w -t "$legacy_option_id" @gl_collar bash
 tmux set-option -uw -t "$legacy_option_id" @gl_profile
-migration_wrapper_sha="$(shasum -a 256 "$migration_bin/tmux" | awk '{print $1}')"
+
+# The fixture clock is an instrument, so this run says exactly which bytes it
+# ran under rather than leaving the reader to trust the name.
 sleep_stub_sha="$(shasum -a 256 "$RUN_ROOT/bin/sleep" | awk '{print $1}')"
-printf 'instrument tmux=%s sha256=%s sleep=%s sha256=%s spec-sha256=%s\n' \
-  "$migration_bin/tmux" "$migration_wrapper_sha" "$RUN_ROOT/bin/sleep" \
-  "$sleep_stub_sha" \
+printf 'instrument sleep=%s sha256=%s spec-sha256=%s\n' \
+  "$RUN_ROOT/bin/sleep" "$sleep_stub_sha" \
   '52a740a3954c18b82f2b4461d92a38dfb17d8e1655d4e5796c4d0e07f97ac995'
 
 GANG_CONTEXT_LIGHTS=off "$HITCH" ctx-agent -c ctx-known -d /tmp >/dev/null
@@ -612,24 +516,12 @@ excludes "gang composer does not blame the harness for a box it did draw" \
 
 adopt_alias_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n adopt-alias "PS1='❯ ' bash --norc")"
-"$GANG" adopt adopt-alias -p bash \
-  > "$RUN_ROOT/adopt-alias.out" 2> "$RUN_ROOT/adopt-alias.err"
-contains "the adopt flag alias registers the requested collar" \
-  "$(TMUX_PANE="$(tmux list-panes -t "$adopt_alias_id" -F '#{pane_id}')" \
-    "$GANG" whoami)" "collar: bash"
-contains "the adopt flag alias uses its own deprecation prefix" \
-  "$(<"$RUN_ROOT/adopt-alias.err")" \
-  "adopt: -p/--profile is now -c/--collar"
-"$GANG" drop adopt-alias >/dev/null
-
-adopt_conflict_id="$(tmux new-window -d -P -F '#{window_id}' \
-  -t "=$GANG_SESSION" -n adopt-conflict "PS1='❯ ' bash --norc")"
-refuses "both adopt flag spellings refuse before registration" \
-  "-c/--collar and -p/--profile" \
-  "$GANG" adopt adopt-conflict -p bash -c bash
+refuses "the removed adopt collar flag is an unknown argument" \
+  "adopt: unknown argument '-p'" \
+  "$GANG" adopt adopt-alias -p bash
 equal "the refused adopt leaves the window unregistered" "" \
-  "$(tmux show-options -wqv -t "$adopt_conflict_id" @gl_agent)"
-tmux kill-window -t "$adopt_conflict_id"
+  "$(tmux show-options -wqv -t "$adopt_alias_id" @gl_agent)"
+tmux kill-window -t "$adopt_alias_id"
 
 # composer reads the box through the collar's styled reading, not the raw
 # pane; a freshly hitched agent's box is definitively empty

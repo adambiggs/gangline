@@ -32,104 +32,16 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-DEPRECATION_NOTES=""
-DEPRECATIONS_SILENT=0
-
-deprecated() { # $1 = dedupe key, $2 = operator-facing line
-  [ "$DEPRECATIONS_SILENT" = 1 ] && return 0
-  local key
-  while IFS=$'\t' read -r key _; do
-    [ "$key" = "$1" ] && return 0
-  done <<<"$DEPRECATION_NOTES"
-  DEPRECATION_NOTES="${DEPRECATION_NOTES:+$DEPRECATION_NOTES
-}$1"$'\t'"$2"
-}
-
-deprecation_flush() {
-  local key line
-  while IFS=$'\t' read -r key line; do
-    [ -n "$key" ] || continue
-    printf '%s\n' "$line" >&2
-  done <<<"$DEPRECATION_NOTES"
-  DEPRECATION_NOTES=""
-}
-
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
-GANG_CONFIG_ALIASES='GANG_PROFILE=GANG_COLLAR GANG_PROFILES=GANG_COLLARS'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_DIALOGS GANG_DIALOG_HITCH_DIR_TRUST GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_CMD GANG_USAGE_CONFIRM_KEY GANG_USAGE_RENDER GANG_USAGE_DISMISS_KEY GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
-CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN="" CONFIG_ENV_ALIASES=""
+CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
-config_record() { # $1 key, $2 env|config, optional $3 config line, $4 alias
-  local record line
+config_record() { # $1 key, $2 env|config, optional $3 config line
+  local record
   printf -v record '%s\t%s' "$1" "$2"
   [ $# -lt 3 ] || printf -v record '%s\t%s\t%s' "$1" "$2" "$3"
-  if [ $# -ge 4 ]; then
-    line="${3:--}"
-    printf -v record '%s\t%s\t%s\t%s' "$1" "$2" "$line" "$4"
-  fi
   CONFIG_ORIGINS="${CONFIG_ORIGINS:+$CONFIG_ORIGINS
 }$record"
-}
-
-config_alias_target() { # $1 old name -> new name, or nonzero
-  local pair
-  for pair in $GANG_CONFIG_ALIASES; do
-    [ "${pair%%=*}" = "$1" ] || continue
-    printf '%s' "${pair#*=}"
-    return 0
-  done
-  return 1
-}
-
-config_alias_old() { # $1 new name -> old name, or nonzero
-  local pair
-  for pair in $GANG_CONFIG_ALIASES; do
-    [ "${pair#*=}" = "$1" ] || continue
-    printf '%s' "${pair%%=*}"
-    return 0
-  done
-  return 1
-}
-
-config_env_alias() { # $1 new name -> old env spelling used, or nonzero
-  local key old
-  while IFS=$'\t' read -r key old; do
-    [ "$key" = "$1" ] && { printf '%s' "$old"; return 0; }
-  done <<<"$CONFIG_ENV_ALIASES"
-  return 1
-}
-
-config_pair_refuse() { # $1 new, $2 old, $3 new origin, $4 old origin
-  die "Gangline config: $1 $3 and its deprecated alias $2 $4 are both set. They are one setting under two names; keep one."
-}
-
-config_env_aliases_normalize() {
-  local pair old new oldset newset value
-  for pair in $GANG_CONFIG_ALIASES; do
-    old="${pair%%=*}" new="${pair#*=}" oldset="" newset=""
-    eval "oldset=\${$old+x}; newset=\${$new+x}"
-    [ "$oldset" = x ] && [ "$newset" = x ] \
-      && config_pair_refuse "$new" "$old" "(from the environment)" "(from the environment)"
-    [ "$oldset" = x ] || continue
-    eval "value=\${$old}"
-    eval "$new=\$value"
-    export "${new?}"
-    CONFIG_ENV_ALIASES="${CONFIG_ENV_ALIASES:+$CONFIG_ENV_ALIASES
-}$new"$'\t'"$old"
-    deprecated "config:$old" "$old is now $new (from the environment); the old name still works and will be removed in 2.0."
-  done
-  # This suite-only compatibility switch is an environment escape hatch, not a
-  # persistable config key, so it deliberately stays outside GANG_CONFIG_ALIASES.
-  oldset="" newset=""
-  eval "oldset=\${GANG_TEST_PROFILES+x}; newset=\${GANG_TEST_COLLARS+x}"
-  [ "$oldset" = x ] && [ "$newset" = x ] \
-    && config_pair_refuse GANG_TEST_COLLARS GANG_TEST_PROFILES \
-      "(from the environment)" "(from the environment)"
-  if [ "$oldset" = x ]; then
-    GANG_TEST_COLLARS="$GANG_TEST_PROFILES"
-    deprecated config:GANG_TEST_PROFILES \
-      "GANG_TEST_PROFILES is now GANG_TEST_COLLARS; the old name still works and will be removed in 2.0."
-  fi
 }
 
 config_seen_line() { # $1 key -> its first line, or nonzero
@@ -151,21 +63,20 @@ config_path() { # $1 path -> operator-facing path with HOME collapsed
 }
 
 config_origin() { # $1 key -> tab-separated origin record, or nonzero
-  local key origin line alias
-  while IFS=$'\t' read -r key origin line alias; do
+  local key origin line
+  while IFS=$'\t' read -r key origin line; do
     [ "$key" = "$1" ] || continue
     printf '%s\t%s' "$key" "$origin"
     [ -z "$line" ] || printf '\t%s' "$line"
-    [ -z "$alias" ] || printf '\t%s' "$alias"
     return 0
   done <<<"$CONFIG_ORIGINS"
   return 1
 }
 
 config_origin_note() { # $1 key -> a validation-error suffix
-  local record key origin line alias file
+  local record key origin line file
   record="$(config_origin "$1")" || return 0
-  IFS=$'\t' read -r key origin line alias <<<"$record"
+  IFS=$'\t' read -r key origin line <<<"$record"
   [ "$line" != - ] || line=""
   case "$origin" in
     env) printf ' (from the environment)' ;;
@@ -177,22 +88,19 @@ config_origin_note() { # $1 key -> a validation-error suffix
 }
 
 config_env_origins() { # record environment keys the file did not also name
-  local k envset alias
+  local k envset
   for k in $GANG_CONFIG_KEYS; do
     config_origin "$k" >/dev/null 2>&1 && continue
     envset=""
     eval "envset=\${$k+set}"
-    if [ "$envset" = set ]; then
-      alias="$(config_env_alias "$k")" || alias=""
-      config_record "$k" env "" "$alias"
-    fi
+    [ "$envset" != set ] || config_record "$k" env ""
   done
   return 0
 }
 
 config_load() {
   local root_source file raw marked sentinel=$'\034' probe bytes without_nul rc
-  local line n=0 k original value previous envset alias target other_line env_alias
+  local line n=0 k value previous envset
   if [ "${GANG_CONFIG_DIR+x}" = x ]; then
     CONFIG_DIR="$GANG_CONFIG_DIR" root_source=GANG_CONFIG_DIR
   elif [ -n "${XDG_CONFIG_HOME:-}" ]; then
@@ -207,7 +115,6 @@ config_load() {
 
   CONFIG_FILE="$CONFIG_DIR/config"
   file="$CONFIG_FILE"
-  config_env_aliases_normalize
   if [ ! -e "$file" ] && [ ! -L "$file" ]; then
     config_env_origins
     return 0
@@ -252,56 +159,32 @@ config_load() {
       || die "Gangline config $file duplicates $k on lines $previous and $n"
     CONFIG_SEEN="${CONFIG_SEEN:+$CONFIG_SEEN
 }$k"$'\t'"$n"
-    original="$k" alias="" target=""
-    target="$(config_alias_target "$k")" || target=""
-    if [ -n "$target" ]; then alias="$k"; k="$target"; fi
     case " $GANG_CONFIG_KEYS " in
       *" $k "*) ;;
       *)
         case " $GANG_COLLAR_KEYS " in
           *" $k "*) die "Gangline config $file line $n: $k is a collar declaration, not operator configuration — load_collar clears it before sourcing the collar, so a value here would be discarded. Put it in a custom collar and point GANG_COLLARS at its directory." ;;
         esac
-        case "$original" in
-          GANG_TEST_COLLARS|GANG_TEST_PROFILES) die "Gangline config $file line $n: $original is a per-invocation switch for Gangline's own suite and cannot be persisted" ;;
+        case "$k" in
+          GANG_TEST_COLLARS) die "Gangline config $file line $n: $k is a per-invocation switch for Gangline's own suite and cannot be persisted" ;;
           GANG_CONFIG_DIR) die "Gangline config $file line $n: GANG_CONFIG_DIR bootstraps the config file being read and cannot be set inside it" ;;
-          GANG_MODEL|GANG_COLLAR_FILE|GANG_PROFILE_FILE) die "Gangline config $file line $n: $original is internal to Gangline and cannot be configured" ;;
-          *) die "Gangline config $file line $n has unknown key $original (settable: $GANG_CONFIG_KEYS)" ;;
+          GANG_MODEL|GANG_COLLAR_FILE) die "Gangline config $file line $n: $k is internal to Gangline and cannot be configured" ;;
+          *) die "Gangline config $file line $n has unknown key $k (settable: $GANG_CONFIG_KEYS)" ;;
         esac
         ;;
     esac
-    if [ -n "$alias" ]; then
-      other_line="$(config_seen_line "$k")" || other_line=""
-      [ -z "$other_line" ] \
-        || config_pair_refuse "$k" "$alias" "(from $file line $other_line)" "(from $file line $n)"
-      env_alias="$(config_env_alias "$k")" || env_alias=""
-      if [ -z "$env_alias" ]; then
-        envset=""; eval "envset=\${$k+set}"
-        [ "$envset" != set ] \
-          || config_pair_refuse "$k" "$alias" "(from the environment)" "(from $file line $n)"
-      fi
-    else
-      other_line="$(config_seen_line "$(config_alias_old "$k" 2>/dev/null || true)")" || other_line=""
-      [ -z "$other_line" ] \
-        || config_pair_refuse "$k" "$(config_alias_old "$k")" "(from $file line $n)" "(from $file line $other_line)"
-      env_alias="$(config_env_alias "$k")" || env_alias=""
-      [ -z "$env_alias" ] \
-        || config_pair_refuse "$k" "$env_alias" "(from $file line $n)" "(from the environment)"
-    fi
     envset=""
     eval "envset=\${$k+set}"
     if [ "$envset" = set ]; then
-      config_record "$k" env "$n" "$env_alias"
+      config_record "$k" env "$n"
     else
       eval "$k=\$value"
-      config_record "$k" config "$n" "$alias"
+      config_record "$k" config "$n"
     fi
-    [ -z "$alias" ] || deprecated "config:$alias" \
-      "$alias is now $k$(config_origin_note "$k"); the old name still works and will be removed in 2.0."
   done < "$file"
   config_env_origins
 }
 
-[ "${1:-}" != hook ] || DEPRECATIONS_SILENT=1
 config_load
 
 DEFAULT_SESSION=gangline
@@ -478,7 +361,7 @@ gang up
   gang hitch --help is the full page.
 EOF
       ;;
-    hitch|spawn) cat <<'EOF'
+    hitch) cat <<'EOF'
 gang hitch
   Add one agent to the team. Launches a
   harness in a new tmux window called <name>
@@ -824,7 +707,7 @@ gang notify
   with the team session.
 EOF
       ;;
-    curfew|cutoff) cat <<'EOF'
+    curfew) cat <<'EOF'
 gang curfew
   Set, show, or clear one wall-clock deadline
   for the whole team.
@@ -1013,7 +896,7 @@ gang down
   and run it from a shell outside tmux.
 EOF
       ;;
-    collars|profiles) cat <<'EOF'
+    collars) cat <<'EOF'
 gang collars
   List the harness collars available to
   hitch.
@@ -1166,7 +1049,7 @@ collar_file() { # $1 = collar name -> path on stdout; yours wins over the shippe
 }
 
 load_collar() { # $1 = collar name; sets the GANG_* strategy surface
-  local f record pipes id marker marker_tail marker_atom marker_rest safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc suffix new old
+  local f record pipes id marker marker_tail marker_atom marker_rest safe move confirm block_var block seen_ids="" forbidden resume_tail marker_rc
   f="$(collar_file "$1")" \
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
@@ -1180,7 +1063,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
   unset -f collar_context collar_input collar_session_id collar_usage_limits \
-    profile_context profile_input profile_session_id 2>/dev/null || true
+    2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
@@ -1189,21 +1072,6 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   case "$GANG_USAGE_LIMIT_MAX_AGE" in
     ''|*[!0-9]*) die "collar '$1' has an invalid GANG_USAGE_LIMIT_MAX_AGE declaration" ;;
   esac
-  for suffix in input context session_id; do
-    new="collar_$suffix" old="profile_$suffix"
-    if declare -F "$new" >/dev/null && declare -F "$old" >/dev/null; then
-      die "collar '$1' defines both $new and $old; they are one contract function under two names. Keep $new."
-    fi
-    if ! declare -F "$new" >/dev/null && declare -F "$old" >/dev/null; then
-      case "$suffix" in
-        input) collar_input() { profile_input "$@"; } ;;
-        context) collar_context() { profile_context "$@"; } ;;
-        session_id) collar_session_id() { profile_session_id "$@"; } ;;
-      esac
-      deprecated "collar:$1:$old" \
-        "collar '$1' declares $old; the contract function is now $new. The old name still works and will be removed in 2.0."
-    fi
-  done
   [ -n "$GANG_LAUNCH" ] || die "collar '$1' sets no GANG_LAUNCH"
   [ -z "$GANG_HARNESS_PROMPT" ] || [ -n "$GANG_ROLE_PROMPT_OPT" ] \
     || die "collar '$1' declares GANG_HARNESS_PROMPT but no GANG_ROLE_PROMPT_OPT, so gang has no system-prompt option that can carry it"
@@ -1324,7 +1192,6 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
       *) die "collar '$1' names unknown GANG_DIALOG_HITCH_DIR_TRUST '$GANG_DIALOG_HITCH_DIR_TRUST'" ;;
     esac
   fi
-  deprecation_flush
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -1411,7 +1278,7 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
 registered_identity_guard() { # $1 window, $2 requested name, $3 action, optional $4 requested collar
   local registered collar stamped
   registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
-  collar="$(collar_read "$1" "$2")" || exit 1
+  collar="$(collar_read "$1")" || exit 1
   stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
   if [ -n "$registered" ] && [ "$registered" != "$2" ]; then
     die "$3: window '$2' is registered to Gangline agent '$registered'; refusing to replace that identity with '$2'"
@@ -1437,7 +1304,7 @@ send_identity_guard() { # a pane with a contradicted native identity may not spe
   local label="${1:-send}" mismatch registered collar
   [ -n "$SEND_WINDOW" ] || return 0
   registered="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_agent 2>/dev/null)" || registered=""
-  collar="$(collar_read "$SEND_WINDOW" "$SEND_FROM")" || exit 1
+  collar="$(collar_read "$SEND_WINDOW")" || exit 1
   [ -n "$registered" ] && [ -n "$collar" ] \
     || refuse "$label: this pane has no registered Gangline agent/collar identity; a window name alone cannot attribute a message (gang whoami; then gang adopt <window-name> -c <collar>)"
   [ "$registered" = "$SEND_FROM" ] \
@@ -1601,21 +1468,8 @@ bare_name() { # $1 = a window name -> the bare agent name
   printf '%s' "$n"
 }
 
-collar_read() { # $1 window id, optional $2 operator-facing name
-  local current legacy name="${2:-}"
-  current="$(tmux show-options -wqv -t "$1" @gl_collar 2>/dev/null)" || current=""
-  legacy="$(tmux show-options -wqv -t "$1" @gl_profile 2>/dev/null)" || legacy=""
-  if [ -n "$current" ] && [ -n "$legacy" ] && [ "$current" != "$legacy" ]; then
-    [ -n "$name" ] || name="$(agent_name_of "$1")"
-    die "window '$name' carries @gl_collar '$current' and @gl_profile '$legacy'; Gangline will not guess which collar it is running (gang capture $name, then gang drop and re-hitch)."
-  fi
-  [ -n "$current" ] || current="$legacy"
-  if [ -n "$legacy" ]; then
-    if tmux set-option -w -t "$1" @gl_collar "$current" 2>/dev/null; then
-      tmux set-option -uw -t "$1" @gl_profile 2>/dev/null || true
-    fi
-  fi
-  printf '%s' "$current"
+collar_read() { # $1 window id
+  tmux show-options -wqv -t "$1" @gl_collar 2>/dev/null || true
 }
 
 # THE REGISTRATION IS THE IDENTITY; THE TITLE IS DECORATION. @gl_agent is what
@@ -1693,7 +1547,7 @@ resolve() { # $1 = agent name; sets AGENT_ID + AGENT_COLLAR and loads the collar
     || registered=""
   [ "$registered" = "$1" ] \
     || die "window '$1' exists but is not a registered Gangline agent (gang adopt $1 -c <collar>)"
-  AGENT_COLLAR="$(collar_read "$AGENT_ID" "$1")" || exit 1
+  AGENT_COLLAR="$(collar_read "$AGENT_ID")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$1' exists but is not a gang agent (gang adopt $1 -c <collar>)"
   load_collar "$AGENT_COLLAR"
@@ -1712,18 +1566,8 @@ session_live() { # exit 0 if the team's session is running
 
 CURFEW_AT=0 CURFEW_DECLARED=0
 curfew_read() { # populate the team declaration; 1 = absent, 2 = unreadable
-  local raw legacy
+  local raw
   raw="$(tmux show-options -qv -t "=$SESSION:" @gl_curfew 2>/dev/null)" || raw=""
-  legacy="$(tmux show-options -qv -t "=$SESSION:" @gl_cutoff 2>/dev/null)" || legacy=""
-  if [ -n "$raw" ] && [ -n "$legacy" ] && [ "$raw" != "$legacy" ]; then
-    die "session '$SESSION' carries @gl_curfew '$raw' and @gl_cutoff '$legacy'; Gangline will not guess which team curfew is declared (gang curfew clear, then declare it again)."
-  fi
-  [ -n "$raw" ] || raw="$legacy"
-  if [ -n "$legacy" ]; then
-    if tmux set-option -t "=$SESSION:" @gl_curfew "$raw" 2>/dev/null; then
-      tmux set-option -u -t "=$SESSION:" @gl_cutoff 2>/dev/null || true
-    fi
-  fi
   CURFEW_AT=0 CURFEW_DECLARED=0
   [ -n "$raw" ] || return 1
   read -r CURFEW_AT CURFEW_DECLARED _ <<<"$raw"
@@ -3102,7 +2946,7 @@ stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies f
 stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
   local rc=0 err="" frag
   AGENT_ID="$1"
-  AGENT_COLLAR="$(collar_read "$AGENT_ID" "$2")" || exit 1
+  AGENT_COLLAR="$(collar_read "$AGENT_ID")" || exit 1
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$2' exists but is not a gang agent (gang adopt $2 -c <collar>)"
   load_collar "$AGENT_COLLAR"
@@ -3947,22 +3791,14 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0
   local lights=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
   while [ $# -gt 0 ]; do case "$1" in
-    -c|--collar) [ "$collar_old_arg" -eq 0 ] \
-                   || die "hitch: -c/--collar and -p/--profile are the same option under two names; pass one."
-                  [ $# -ge 2 ] || die "hitch: $1 needs a value"
-                  prof="$2"; collar_arg=1; collar_new_arg=1; shift 2 ;;
-    -p|--profile) [ "$collar_new_arg" -eq 0 ] \
-                   || die "hitch: -c/--collar and -p/--profile are the same option under two names; pass one."
-                  [ $# -ge 2 ] || die "hitch: $1 needs a value"
-                  prof="$2"; collar_arg=1; collar_old_arg=1
-                  deprecated hitch:profile "hitch: -p/--profile is now -c/--collar; the old spelling still works and will be removed in 2.0."
-                  shift 2 ;;
+    -c|--collar) [ $# -ge 2 ] || die "hitch: $1 needs a value"
+                  prof="$2"; collar_arg=1; shift 2 ;;
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
@@ -3971,7 +3807,6 @@ cmd_hitch() {
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
-  deprecation_flush
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
@@ -4089,7 +3924,7 @@ cmd_hitch() {
     || launch_env="$launch_env GANG_COLLARS=$(shell_quote "$GANG_COLLARS")"
   [ -z "${GANG_LOCK_DIR:-}" ] \
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
-  GANG_LAUNCH="env -u GANG_PROFILE -u GANG_PROFILES -u GANG_TEST_PROFILES $launch_env $GANG_LAUNCH"
+  GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
 
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
@@ -4301,7 +4136,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" live_only=0 spool=0 supersede=0 rc=0 err="" frag
+  local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -4310,7 +4145,6 @@ cmd_send() {
     --stdin) [ "$use_stdin" -eq 0 ] || die "send: --stdin may be passed only once"
              use_stdin=1; shift ;;
     --live-only) live_only=1; shift ;;
-    --spool) spool=1; shift ;;
     --supersede) supersede=1; shift ;;
     *) die "send: unknown argument '$1'" ;;
   esac; done
@@ -4318,9 +4152,6 @@ cmd_send() {
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
   [ "$supersede" -eq 0 ] || [ "$live_only" -eq 0 ] \
     || die "send: --supersede replaces an older message in the spool, and --live-only never parks one"
-  if [ "$spool" -eq 1 ]; then
-    printf '%s\n' "send: --spool is the default now and does nothing; drop it, and use --live-only for a delivery that must not park." >&2
-  fi
   send_sender "$from"
   send_identity_guard
   stdin_body "send"
@@ -4621,7 +4452,6 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
   fi
   if [ "$spec" = clear ]; then
     tmux set-option -u -t "=$SESSION:" @gl_curfew 2>/dev/null || true
-    tmux set-option -u -t "=$SESSION:" @gl_cutoff 2>/dev/null || true
     printf 'curfew cleared\n'
     return 0
   fi
@@ -4632,7 +4462,6 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
   if ! tmux set-option -t "=$SESSION:" @gl_curfew "$CURFEW_PARSED $now"; then
     die "curfew: could not store the declaration for session '$SESSION'"
   fi
-  tmux set-option -u -t "=$SESSION:" @gl_cutoff 2>/dev/null || true
   CURFEW_AT="$CURFEW_PARSED" CURFEW_DECLARED="$now"
   curfew_summary "$now"; printf '\n'
 }
@@ -5314,7 +5143,7 @@ cmd_whoami() {
     exit 1
   }
   name="$(agent_name_of "$id")"
-  collar="$(collar_read "$id" "$name")" || exit 1
+  collar="$(collar_read "$id")" || exit 1
   stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
   live="$(tmux show-options -wqv -t "$id" @gl_session_live_id 2>/dev/null)" || live=""
   mismatch="$(identity_mismatch_read "$id")" || mismatch=""
@@ -5361,7 +5190,7 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
 
 roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
   local prof state spooled age="-" stamped
-  prof="$(collar_read "$1" "$2")" || exit 1
+  prof="$(collar_read "$1")" || exit 1
   if [ -z "$prof" ]; then
     prof="-" state=unadopted
   elif ! collar_file "$prof" >/dev/null; then
@@ -5382,7 +5211,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id
   local prof state detail="" spooled age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now
-  prof="$(collar_read "$1" "$2")" || exit 1
+  prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
   collar_file "$prof" >/dev/null \
@@ -5501,7 +5330,6 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  DEPRECATIONS_SILENT=1
   local payload event collar kind=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
@@ -5640,24 +5468,15 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" collar="" id collar_new_arg=0 collar_old_arg=0 rc=0
+  local name="" collar="" id rc=0
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
   while [ $# -gt 0 ]; do case "$1" in
-    -c|--collar) [ "$collar_old_arg" -eq 0 ] \
-                   || die "adopt: -c/--collar and -p/--profile are the same option under two names; pass one."
-                  [ $# -ge 2 ] || die "adopt: $1 needs a value"
-                  collar="$2"; collar_new_arg=1; shift 2 ;;
-    -p|--profile) [ "$collar_new_arg" -eq 0 ] \
-                   || die "adopt: -c/--collar and -p/--profile are the same option under two names; pass one."
-                  [ $# -ge 2 ] || die "adopt: $1 needs a value"
-                  collar="$2"; collar_old_arg=1
-                  deprecated adopt:profile "adopt: -p/--profile is now -c/--collar; the old spelling still works and will be removed in 2.0."
-                  shift 2 ;;
+    -c|--collar) [ $# -ge 2 ] || die "adopt: $1 needs a value"
+                  collar="$2"; shift 2 ;;
     *) die "adopt: unknown argument '$1'" ;;
   esac; done
-  deprecation_flush
   [ -n "$collar" ] || die "adopt: -c <collar> is required"
   ! test_only_collar "$collar" \
     || die "adopt: '$collar' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
@@ -5762,12 +5581,12 @@ config_effective() { # $1 settable key -> the value its consumers read
 }
 
 cmd_config() {
-  local k value record key origin line alias source file doctrine roles state
+  local k value record key origin line source file doctrine roles state
   [ $# -eq 0 ] || die "config: takes no arguments"
   for k in $GANG_CONFIG_KEYS; do
     value="$(config_effective "$k" | config_sanitize)"
     if record="$(config_origin "$k")"; then
-      IFS=$'\t' read -r key origin line alias <<<"$record"
+      IFS=$'\t' read -r key origin line <<<"$record"
       [ "$line" != - ] || line=""
       case "$origin" in
         env)
@@ -5782,7 +5601,6 @@ cmd_config() {
           source="$file line $line"
           ;;
       esac
-      [ -z "$alias" ] || source="$source (deprecated alias $alias)"
     else
       source="default"
     fi
@@ -5800,14 +5618,7 @@ cmd_config() {
 }
 
 cmd="${1:-}"; [ -n "$cmd" ] || usage_die; shift || true
-case "$cmd" in
-  profiles) deprecated command:profiles \
-    "gang profiles is now gang collars; the old name still works and will be removed in 2.0." ;;
-  cutoff) deprecated command:cutoff \
-    "gang cutoff is now gang curfew; the old name still works and will be removed in 2.0." ;;
-esac
 [ "$cmd" = hook ] || dirty_execution_warn
-deprecation_flush
 if [ "${1:-}" = --help ] && [ $# -eq 1 ]; then
   cmd_help "$cmd"
   exit 0
@@ -5819,7 +5630,7 @@ fi
 # a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|spawn|adopt|send|drop|down)
+    hitch|adopt|send|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -5827,7 +5638,7 @@ if [ $# -eq 0 ]; then
 fi
 case "$cmd" in
   up)       cmd_up "$@" ;;
-  hitch|spawn) cmd_hitch "$@" ;;
+  hitch)    cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
   flush)    cmd_flush "$@" ;;
@@ -5839,7 +5650,7 @@ case "$cmd" in
   limits)   cmd_limits "$@" ;;
   wait-limit) cmd_wait_limit "$@" ;;
   notify)   cmd_notify "$@" ;;
-  curfew|cutoff) cmd_curfew "$@" ;;
+  curfew)   cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;
   hook)     cmd_hook "$@" ;;
   capture)  cmd_capture "$@" ;;
@@ -5849,7 +5660,7 @@ case "$cmd" in
   attach)   cmd_attach "$@" ;;
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
-  collars|profiles) cmd_collars "$@" ;;
+  collars)  cmd_collars "$@" ;;
   roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
   -h|--help|help)

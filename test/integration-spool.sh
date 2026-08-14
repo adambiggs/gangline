@@ -136,12 +136,13 @@ contains "live-only leaves the waiting count unchanged" \
   "$("$GANG" status parker)" "spooled: 1"
 excludes "live-only typed nothing into the target" "$(pane parker)" "MARK_LIVE_ONLY"
 
+# The removed flag is refused as unknown before anything is read or parked.
 spool_noop_out="$(printf 'MARK_ANNOUNCED' |
-  "$GANG" send --to parker --from tester --spool --supersede --stdin 2>&1)"
-contains "the deprecated spool flag announces its no-op" \
-  "$spool_noop_out" "is the default now"
-contains "and the deprecated form still parks" "$spool_noop_out" "queued for parker"
-contains "its supersession leaves one replacement waiting" \
+  "$GANG" send --to parker --from tester --spool --supersede --stdin 2>&1 || true)"
+contains "the removed spool flag is an unknown argument" \
+  "$spool_noop_out" "send: unknown argument '--spool'"
+excludes "and the refused flag parked nothing" "$spool_noop_out" "queued for parker"
+contains "the waiting count is unchanged" \
   "$("$GANG" status parker)" "spooled: 1"
 
 # Two messages from one sender are two messages. Only the sender's explicit
@@ -739,11 +740,6 @@ empty_mail_out="$("$GANG" mail empty-mailbox)"
 contains "mail exits cleanly on an empty queue" \
   "$empty_mail_out" "no mail waiting for empty-mailbox"
 "$GANG" drop empty-mailbox >/dev/null
-
-# The legacy-contract fixtures finished their assertions above. Retire them so
-# this roster probe's stderr belongs only to the age world under test.
-"$GANG" drop legacy-contract-a >/dev/null
-"$GANG" drop legacy-contract-b >/dev/null
 
 # PORCELAIN IS EXACT TSV, NOT THE HUMAN GLYPH TABLE. First spend the exact-row
 # assertion against the default roster and require it to fail; only then use it

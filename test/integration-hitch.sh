@@ -1204,26 +1204,22 @@ equal "the operator can remove the team curfew" "curfew cleared" \
 equal "clearing a curfew restores silence" "no curfew declared" \
   "$("$GANG" curfew)"
 
-: > "$RUN_ROOT/cutoff-alias.err"
-cutoff_alias_out="$("$GANG" cutoff 90m 2>> "$RUN_ROOT/cutoff-alias.err")"
-contains "gang cutoff still declares the team curfew" "$cutoff_alias_out" \
-  "curfew "
-equal "one cutoff invocation announces exactly once" "1" \
-  "$(grep -c 'gang cutoff is now gang curfew' "$RUN_ROOT/cutoff-alias.err" || true)"
-"$GANG" cutoff clear >/dev/null 2>> "$RUN_ROOT/cutoff-alias.err"
-equal "two cutoff invocations each announce" "2" \
-  "$(grep -c 'gang cutoff is now gang curfew' "$RUN_ROOT/cutoff-alias.err" || true)"
+# 2.0 removed the pre-rename command name and the in-place option migration.
+refuses "the removed cutoff command name is unknown" \
+  "unknown command 'cutoff'" "$GANG" cutoff 90m
+equal "and the refused alias declared no curfew" "no curfew declared" \
+  "$("$GANG" curfew)"
 
 legacy_curfew="$(( $(date +%s) + 600 )) $(( $(date +%s) - 60 ))"
 tmux set-option -t "=$GANG_SESSION:" @gl_cutoff "$legacy_curfew"
 tmux set-option -u -t "=$GANG_SESSION:" @gl_curfew
-contains "a pre-rename team curfew survives its first read" \
-  "$("$GANG" curfew)" "curfew "
-equal "the curfew read migrates the declaration byte-exact" "$legacy_curfew" \
-  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_curfew)"
-equal "the migrated cutoff option is removed" "" \
+equal "a pre-rename team option is residue, not a declaration" \
+  "no curfew declared" "$("$GANG" curfew)"
+equal "and it is left where it was, unmigrated" "$legacy_curfew" \
   "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_cutoff)"
-"$GANG" curfew clear >/dev/null
+equal "and nothing was written into the current option" "" \
+  "$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_curfew)"
+tmux set-option -u -t "=$GANG_SESSION:" @gl_cutoff
 
 printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"

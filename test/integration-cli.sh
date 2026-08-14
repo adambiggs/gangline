@@ -17,7 +17,7 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "spawn" && $0 != "profiles" && $0 != "cutoff" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+} | awk '$0 != "hook" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush mail interrupt compact context usage limits wait-limit status capture composer whoami drop down"
 meaningful_bare_commands="up roster attach collars roles config curfew notify"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
@@ -34,8 +34,8 @@ top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
 equal "top-level help fits the phone-SSH width" "" "$top_wide"
 contains "top-level help names the collar command" "$top_help" "collars"
 contains "top-level help names the curfew command" "$top_help" "curfew"
-excludes "top-level help omits the deprecated profiles name" "$top_help" "profiles"
-excludes "top-level help omits the deprecated cutoff name" "$top_help" "cutoff"
+excludes "top-level help omits the removed profiles name" "$top_help" "profiles"
+excludes "top-level help omits the removed cutoff name" "$top_help" "cutoff"
 contains "gang collars help prints the new synopsis" \
   "$("$GANG" collars --help)" "gang collars"
 contains "gang curfew help prints the new synopsis" \
@@ -221,21 +221,26 @@ GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 collars="$(GANG_TEST_COLLARS='' "$GANG" collars | tr '\n' ' ')"
 equal "the public collar list is the supported harness set" \
   "claude-code codex opencode pi " "$collars"
-"$GANG" profiles > "$RUN_ROOT/profiles-alias.out" 2> "$RUN_ROOT/profiles-alias.err"
-equal "gang profiles aliases the collar list on stdout" \
-  "$("$GANG" collars)" "$(<"$RUN_ROOT/profiles-alias.out")"
-contains "gang profiles announces only on stderr" \
-  "$(<"$RUN_ROOT/profiles-alias.err")" \
-  "gang profiles is now gang collars; the old name still works and will be removed in 2.0."
-excludes "the gang profiles announcement does not contaminate stdout" \
-  "$(<"$RUN_ROOT/profiles-alias.out")" "removed in 2.0"
+# The 1.x compatibility layer is gone in 2.0, so every pre-rename spelling is
+# refused as unknown rather than accepted with an announcement. These assertions
+# replace the ones that proved the aliases worked: the removal is the decision
+# now, and an alias quietly coming back is what they exist to catch.
+refuses "the removed profiles command name is unknown" \
+  "unknown command 'profiles'" "$GANG" profiles
+refuses "the removed cutoff command name is unknown" \
+  "unknown command 'cutoff'" "$GANG" cutoff
+refuses "the removed spawn alias is unknown" \
+  "unknown command 'spawn'" "$GANG" spawn probe -c bash
+refuses "the removed --profile flag is unknown" \
+  "hitch: unknown argument '--profile'" "$GANG" hitch probe --profile bash
+refuses "the removed send --spool flag is unknown" \
+  "send: unknown argument '--spool'" "$GANG" send --to probe --spool --stdin
 env -u GANG_TEST_COLLARS GANG_TEST_PROFILES=1 "$GANG" collars \
   > "$RUN_ROOT/test-profiles-alias.out" 2> "$RUN_ROOT/test-profiles-alias.err"
-contains "the suite switch alias still exposes its concrete fixture" \
+excludes "the removed suite switch alias exposes no test fixture" \
   "$(<"$RUN_ROOT/test-profiles-alias.out")" "bash"
-contains "the suite switch alias announces its replacement" \
-  "$(<"$RUN_ROOT/test-profiles-alias.err")" \
-  "GANG_TEST_PROFILES is now GANG_TEST_COLLARS"
+equal "and it announces nothing, because it is not read at all" "" \
+  "$(<"$RUN_ROOT/test-profiles-alias.err")"
 
 # User configuration is parsed as a lower-precedence layer, never executed or
 # sourced. Each case names its own root so malformed fixtures cannot poison the
@@ -305,74 +310,29 @@ for environment_only in GANG_ACTIVITY_LIMIT GANG_CLEAR_PRESSES; do
     "$config_report" "$environment_only="
 done
 
-# Published config names stay live for 1.x, but two names for one setting are
-# never silently normalized. Exercise every reachable layer arrangement in
-# both directions with identical values; an unequal-only conflict check cannot
-# satisfy these fixtures.
+# 2.0 removed the pre-rename config spellings, so there is no second name for
+# one setting to normalize or conflict with. In a config file the old spelling
+# is an unknown key and refuses; in the environment it is a variable Gangline
+# does not read, and the current name answers alone.
 config_alias_root="$CONFIG_CASES/aliases"
-mkdir -p "$config_alias_root"
-config_pair_case() { # $1 new, $2 old, $3 arrangement
-  local new="$1" old="$2" arrangement="$3" root="$config_alias_root/$1-$3" out=""
-  mkdir -p "$root"
-  case "$arrangement" in
-    file-new-old)
-      printf '%s\n' "$new=same" "$old=same" > "$root/config"
-      out="$(env -u "$new" -u "$old" GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
-    file-old-new)
-      printf '%s\n' "$old=same" "$new=same" > "$root/config"
-      out="$(env -u "$new" -u "$old" GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
-    env-both)
-      out="$(env -u "$new" -u "$old" "$new=same" "$old=same" \
-        GANG_CONFIG_DIR="$root" "$GANG" config 2>&1 || true)" ;;
-    env-new-file-old)
-      printf '%s\n' "$old=same" > "$root/config"
-      out="$(env -u "$new" -u "$old" "$new=same" GANG_CONFIG_DIR="$root" \
-        "$GANG" config 2>&1 || true)" ;;
-    env-old-file-new)
-      printf '%s\n' "$new=same" > "$root/config"
-      out="$(env -u "$new" -u "$old" "$old=same" GANG_CONFIG_DIR="$root" \
-        "$GANG" config 2>&1 || true)" ;;
-  esac
-  contains "$new/$old $arrangement refuses both names" "$out" \
-    "$new"
-  contains "$new/$old $arrangement names the deprecated alias" "$out" \
-    "deprecated alias $old"
-  contains "$new/$old $arrangement is a two-name refusal" "$out" \
-    "both set"
-}
-for config_pair in 'GANG_COLLAR GANG_PROFILE' 'GANG_COLLARS GANG_PROFILES'; do
-  read -r config_new config_old <<<"$config_pair"
-  for config_arrangement in file-new-old file-old-new env-both \
-    env-new-file-old env-old-file-new; do
-    config_pair_case "$config_new" "$config_old" "$config_arrangement"
-  done
-  differing_alias_out="$(env -u "$config_new" -u "$config_old" \
-    "$config_new=new-value" "$config_old=old-value" \
-    GANG_CONFIG_DIR="$config_alias_root/differing-$config_new" \
-    "$GANG" config 2>&1 || true)"
-  contains "$config_new/$config_old differing values still refuse" \
-    "$differing_alias_out" "both set"
-done
-empty_alias_out="$(env -u GANG_COLLAR -u GANG_PROFILE GANG_COLLAR= \
-  GANG_PROFILE= GANG_CONFIG_DIR="$config_alias_root/empty-env" \
-  "$GANG" config 2>&1 || true)"
-contains "empty-but-set config aliases still conflict" "$empty_alias_out" \
-  "GANG_COLLAR"
-contains "the empty-but-set conflict names the old spelling" "$empty_alias_out" \
-  "GANG_PROFILE"
-
-old_config_root="$config_alias_root/old-file"
-mkdir -p "$old_config_root"
-printf '%s\n' 'GANG_PROFILE=bash' > "$old_config_root/config"
-env -u GANG_COLLAR -u GANG_PROFILE GANG_CONFIG_DIR="$old_config_root" \
-  "$GANG" config > "$old_config_root/out" 2> "$old_config_root/err"
-contains "gang config prints only the new key for an old file spelling" \
-  "$(<"$old_config_root/out")" $'GANG_COLLAR=bash\t'
-contains "gang config identifies the alias in the origin column" \
-  "$(<"$old_config_root/out")" "deprecated alias GANG_PROFILE"
-contains "a file config alias announces its replacement" \
-  "$(<"$old_config_root/err")" \
-  "GANG_PROFILE is now GANG_COLLAR (from $old_config_root/config line 1)"
+mkdir -p "$config_alias_root/file" "$config_alias_root/env"
+printf '%s\n' 'GANG_PROFILE=bash' > "$config_alias_root/file/config"
+refuses "a config file naming a removed key refuses as unknown" \
+  "has unknown key GANG_PROFILE" \
+  env -u GANG_COLLAR -u GANG_PROFILE GANG_CONFIG_DIR="$config_alias_root/file" \
+    "$GANG" config
+printf '%s\n' 'GANG_PROFILES=/tmp' > "$config_alias_root/file/config"
+refuses "and the plural spelling refuses the same way" \
+  "has unknown key GANG_PROFILES" \
+  env -u GANG_COLLARS -u GANG_PROFILES GANG_CONFIG_DIR="$config_alias_root/file" \
+    "$GANG" config
+removed_env_out="$(env -u GANG_COLLAR -u GANG_PROFILE GANG_COLLAR=bash \
+  GANG_PROFILE=codex GANG_CONFIG_DIR="$config_alias_root/env" \
+  "$GANG" config 2>&1)"
+contains "the removed environment spelling does not conflict with the current one" \
+  "$removed_env_out" $'GANG_COLLAR=bash\t'
+excludes "and it is not reported as an origin at all" \
+  "$removed_env_out" "GANG_PROFILE"
 
 config_escape=$'safe\033unsafe'
 sanitised_report="$(GANG_CONFIG_DIR="$CONFIG_CASES/env" \
@@ -411,12 +371,9 @@ refuses "the suite-only collar switch cannot be persisted" \
   "GANG_TEST_COLLARS is a per-invocation switch" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" collars
 printf '%s\n' 'GANG_TEST_PROFILES=1' > "$CONFIG_CASES/test-switch/config"
-refuses "the old suite-only collar switch has its own unpersistable refusal" \
-  "GANG_TEST_PROFILES is a per-invocation switch" \
+refuses "the removed suite-switch spelling refuses as an unknown key" \
+  "has unknown key GANG_TEST_PROFILES" \
   env GANG_CONFIG_DIR="$CONFIG_CASES/test-switch" "$GANG" collars
-refuses "both suite switch spellings in the environment conflict" \
-  "GANG_TEST_COLLARS" env GANG_TEST_COLLARS=1 GANG_TEST_PROFILES=1 \
-  GANG_CONFIG_DIR="$CONFIG_CASES/env" "$GANG" config
 
 mkdir -p "$CONFIG_CASES/bootstrap"
 printf '%s\n' 'GANG_CONFIG_DIR=/tmp/elsewhere' > "$CONFIG_CASES/bootstrap/config"
