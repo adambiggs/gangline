@@ -312,7 +312,7 @@ submitted "the post-second-prompt startup contract was submitted" startup-second
 # observer alive. Event barriers witness the client attach and the second shell
 # prompt (the one after the startup envelope was submitted); no Stop hook helps.
 startup_up_clear="test-startup-up-clear-$$"
-startup_up_attached="test-startup-up-attached-$$"
+startup_up_attach_outcome="test-startup-up-attach-outcome-$$"
 startup_up_delivered="test-startup-up-delivered-$$"
 cat > "$RUN_ROOT/startup-up.sh" <<SH
 #!/bin/sh
@@ -330,19 +330,41 @@ GANG_OCCUPIED_REGEX='FIRST_RUN_GATE'
 SH
 mkdir -p "$GANG_CONFIG_DIR/roles"
 printf '%s\n' 'STARTUP_UP_ROLE' > "$GANG_CONFIG_DIR/roles/startup-up.md"
-tmux set-hook -g client-attached "run-shell 'tmux wait-for -S $startup_up_attached'"
-tmux wait-for "$startup_up_attached" &
+tmux set-hook -g client-attached \
+  "set-option -g @test_startup_up_attached yes; wait-for -S $startup_up_attach_outcome"
+tmux wait-for "$startup_up_attach_outcome" &
 startup_up_attached_waiter=$!
 # An attached client adds a real terminal-render path that the suite's global
 # compressed sleep is not calibrated for. Use the production verification
 # clock and a roomy but ordinary client viewport; the suite header records why
 # a 0.05s readback under asynchronous render is unknown rather than failure.
-PATH="${PATH#"$RUN_ROOT/bin:"}" script -qec \
-  "stty rows 60 cols 200; $GANG up startup-up -c startup-up -d /tmp -r startup-up" /dev/null \
-  > "$RUN_ROOT/startup-up.out" 2>&1 &
+# `script` supplies the pty but inherits TERM. A hosted non-tty shell advertises
+# no usable terminal, so name the synthetic terminal this fixture means to
+# provide instead of asking tmux to infer one from its absent parent terminal.
+#
+# The driver exit and the attach hook signal the same outcome barrier. The hook
+# records positive attachment first; an attach refusal records its status and
+# output before releasing the barrier. Either outcome is immediate evidence, so
+# a missing client cannot strand the suite in an unbounded wait.
+(
+  startup_up_rc=0
+  TERM=xterm PATH="${PATH#"$RUN_ROOT/bin:"}" script -qec \
+    "stty rows 60 cols 200; $GANG up startup-up -c startup-up -d /tmp -r startup-up" /dev/null \
+    > "$RUN_ROOT/startup-up.out" 2>&1 || startup_up_rc=$?
+  printf '%s\n' "$startup_up_rc" > "$RUN_ROOT/startup-up.status"
+  tmux wait-for -S "$startup_up_attach_outcome"
+  exit "$startup_up_rc"
+) &
 startup_up_process=$!
 wait "$startup_up_attached_waiter"
 tmux set-hook -gu client-attached
+if [ "$(tmux show-options -gqv @test_startup_up_attached)" != yes ]; then
+  wait "$startup_up_process" 2>/dev/null || true
+  fail "gang up exposes a positively observed first-run gate in its tmux client" \
+    "synthetic client exited with status $(<"$RUN_ROOT/startup-up.status") before tmux observed client-attached: $(<"$RUN_ROOT/startup-up.out")"
+  exit 1
+fi
+tmux set-option -gu @test_startup_up_attached
 pass "gang up exposes a positively observed first-run gate in its tmux client"
 contains "gang up parks its contract before exposing the gate" \
   "$("$GANG" status startup-up)" "spooled: 1"
