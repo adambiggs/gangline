@@ -6,6 +6,16 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+fast=0
+case "${1:-}" in
+  '') ;;
+  --fast)
+    [ "$#" -eq 1 ] || { echo "lint: --fast takes no other arguments" >&2; exit 2; }
+    fast=1
+    ;;
+  *) echo "lint: unknown argument '$1'" >&2; exit 2 ;;
+esac
+
 # A gate that reads the tree it is judging must own that tree, or its verdict
 # belongs to whatever the tree happened to be at each read. test/gate.sh runs
 # the whole gate against a private snapshot of the working tree, which is how
@@ -17,7 +27,9 @@ python3 --version >/dev/null 2>&1 || {
   exit 1
 }
 python3 test/source-guards.py --discover test
-test/source-guards-fixtures.sh
+if [ "$fast" -eq 0 ]; then
+  test/source-guards-fixtures.sh
+fi
 
 # Mandatory tests consume state, not wall time. A fake clock may hand code any
 # timestamp it needs, but executable test code may not sleep, poll, or exercise
@@ -139,7 +151,28 @@ shellcheck --version >/dev/null 2>&1 || {
 # Nothing here reads across files, so a file at a time is the same verdict.
 # Keeping it that way is a size question, and test/integration.sh is the file
 # that answers it: it is split into sourced parts for exactly this reason.
-for f in $files; do
+lint_one() {
+  local f="$1"
   bash -n "$f"
   shellcheck -S warning "$f"
-done
+}
+
+if [ "$fast" -eq 1 ]; then
+  # Pre-push overlaps the one dominant file with the remaining one-at-a-time
+  # checks. It still judges the canonical file list; only the checker's own
+  # fixture suite above is left to the full gate. Concurrency is bounded at two
+  # linter processes rather than growing with the file list.
+  fast_rc=0
+  lint_one bin/gang &
+  big_pid=$!
+  for f in $files; do
+    [ "$f" = bin/gang ] && continue
+    lint_one "$f" || fast_rc=$?
+  done
+  wait "$big_pid" || fast_rc=$?
+  [ "$fast_rc" -eq 0 ] || exit "$fast_rc"
+else
+  for f in $files; do
+    lint_one "$f"
+  done
+fi

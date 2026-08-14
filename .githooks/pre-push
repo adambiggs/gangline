@@ -151,7 +151,7 @@ while read -r local_ref local_sha _remote_ref remote_sha \
   }
   if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ]; then
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-      cd "$work" && ./test/lint.sh && ./test/smoke.sh ) || fail=1
+      cd "$work" && ./test/lint.sh --fast && ./test/smoke.sh ) || fail=1
   else
     echo "pre-push: $local_sha does not carry executable test/lint.sh and test/smoke.sh gates" >&2
     fail=1

@@ -1449,6 +1449,7 @@ set -eu
 git ls-files >/dev/null
 git rev-parse --absolute-git-dir > "$PROBE_DIR/gitdir"
 git ls-files main-index-only > "$PROBE_DIR/index"
+printf '%s:%s\n' "$#" "${1:-}" > "$PROBE_DIR/lint-argv"
 SH
 cat > "$hook_repo/test/integration.sh" <<'SH'
 #!/bin/sh
@@ -1538,6 +1539,8 @@ else
 fi
 equal "pre-push lint does not read the main repository index" \
   "" "$(<"$hook_probe/index")"
+equal "pre-push selects the lint fast path" \
+  "1:--fast" "$(<"$hook_probe/lint-argv")"
 equal "pre-push runs the fast smoke from the pushed tree" \
   "smoke" "$(<"$hook_probe/smoke")"
 if [ ! -e "$hook_probe/integration" ]; then
