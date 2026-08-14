@@ -347,19 +347,9 @@ gang up
           (default: lead)
 
   Every gang hitch flag is accepted here and
-  passed through:
-
-  -c <harness>  which harness to run
-  -d <dir>      working directory
-  -m <model>    model for that harness
-  -e <effort>   reasoning-effort level
-  -r <role>     role brief (default: lead)
-  --resume      relaunch onto an existing
-                harness session
-
-  Each short flag has a long form: --collar,
-  --dir, --model, --effort, --role.
-  gang hitch --help is the full page.
+  passed through unchanged, including -r,
+  which defaults to the lead role.
+  gang hitch --help is the whole list.
 EOF
       ;;
     hitch) cat <<'EOF'
@@ -403,13 +393,10 @@ gang hitch
       roles lists them; there is no default.
   --resume [session-id]
       relaunch onto a harness session that
-      already exists rather than a fresh one.
-      Pass the id gang drop printed. The bare
-      form reads that id off a dead but still
-      registered window, so it does not
-      survive the window's removal. A harness
-      with no resume template takes neither
-      form.
+      already exists. Pass the id gang drop
+      printed; the bare form reads it off a
+      dead but still registered window, so it
+      does not survive that window's removal.
 
   Omitting -m or -e where the harness takes
   them warns: the harness then falls back to
@@ -428,10 +415,8 @@ gang adopt
   Reach for it when the harness is already
   running in a window of this team. That
   window must already carry the name
-  (tmux rename-window), and it must be a name
-  gang accepts: letters, digits, dot, dash
-  and underscore, no leading dot or dash, and
-  not hitch or gangline.
+  (tmux rename-window), spelled the way
+  gang hitch requires.
 
   -c, --collar <harness>
       which harness is running in there.
@@ -863,16 +848,14 @@ gang whoami
   gang whoami
 
   Takes no arguments, and answers only from
-  inside an agent window. Reach for it to
-  learn the name teammates address you by,
-  the session id that would resume you, or
-  why a send from this pane was refused on
-  identity grounds. Prints the agent
-  name teammates address, the pane, the
-  collar driving it, the harness session id
-  gang would resume, the newest id seen in a
+  inside an agent window. Prints the name
+  teammates address, the pane, the collar
+  driving it, the harness session id gang
+  would resume, the newest id seen in a
   native hook, the team session, and any
   recorded mismatch between those two ids.
+  Reach for it when a send from this pane
+  was refused on identity grounds.
 EOF
       ;;
     attach) cat <<'EOF'
