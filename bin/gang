@@ -717,9 +717,10 @@ gang wait
 
   An already-idle agent returns immediately.
   Otherwise the target collar must supply its
-  native Stop hook. This is a caller-chosen
+  native Stop hook and carry readable native
+  turn evidence. This is a caller-chosen
   barrier, not a watcher: gang starts no daemon
-  and records no durable wait state.
+  and records no wait option or file.
 
   done does not track turns. If the agent is
   already working, that active turn's Stop may
@@ -729,7 +730,9 @@ gang wait
 
   Unknown state, a vanished or replaced window,
   or a changed active pane fails loudly instead
-  of hanging or transferring the wait.
+  of hanging or transferring the wait. Use gang
+  drop/down for teardown; raw tmux kill commands
+  bypass Gangline's release boundary.
 EOF
       ;;
     notify) cat <<'EOF'
@@ -2146,14 +2149,13 @@ self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled
 # change behaviour for every harness declaring less. Answer it by driving a
 # deferred self-compaction with the bracket wired and watching what each one
 # contributes, not by reading this comment and agreeing with it.
-self_compact_dispatch() { # $1 = the pane a native Stop fired in, $2 = collar
-  local win request
+self_compact_dispatch() { # $1 = the window a native Stop fired in, $2 = collar
+  local win="$1" request
   # The compaction delivers, and delivery serializes on the WINDOW's lock, for
-  # the same reason spool_event resolves the window before draining: a lock
-  # named after the firing pane would not exclude an ordinary send holding the
-  # one named after its window. The spool this falls back to is keyed by
-  # window as well.
-  win="$(tmux display-message -p -t "$1" '#{window_id}' 2>/dev/null)" || return 0
+  # the same reason spool_event receives the resolved window before draining:
+  # a lock named after the firing pane would not exclude an ordinary send
+  # holding the one named after its window. The spool this falls back to is
+  # keyed by window as well.
   [ -n "$win" ] || return 0
   request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
     || request=""
@@ -2825,14 +2827,11 @@ spool_drain_dispatch() { # $1 window id, $2 collar; called only by native bounda
   disown
 }
 
-spool_event() { # $1 = the pane a native drain boundary fired in, $2 = collar
-  local win
-  # The drain delivers, and delivery serializes on the WINDOW's lock. A drain
-  # holding a lock named after the firing pane would not exclude an ordinary
-  # send holding the one named after its window.
-  win="$(tmux display-message -p -t "$1" '#{window_id}' 2>/dev/null)" || return 0
-  [ -n "$win" ] || return 0
-  spool_drain_dispatch "$win" "$2"
+spool_event() { # $1 = the window a native drain boundary fired in, $2 = collar
+  # The drain serializes on the WINDOW's lock. A lock named after the firing
+  # pane would not exclude an ordinary send holding the window-named one.
+  [ -n "$1" ] || return 0
+  spool_drain_dispatch "$1" "$2"
 }
 
 stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies for it
@@ -4737,45 +4736,74 @@ cmd_explain() {
 }
 
 # A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
-# unique wait-for channel and one pane-exited hook. Stop signals every channel
-# registered for the firing pane; pane exit signals its own hook directly. The
-# hook carries its deletion command, so a caller killed without running its EXIT
-# trap still leaves a deletion path at the target's next boundary.
+# unique wait-for channel and one sparse pane-exited hook. Stop signals every
+# channel registered for the firing pane; pane exit signals its own hook
+# directly. Sparse caller-owned keys avoid tmux's lowest-free array-slot reuse:
+# cleanup never removes a key unless its current command still names this
+# caller's channel.
 WAIT_CHANNEL=""
 WAIT_HOOK_KEY=""
 
+wait_hook_owned() { # $1 hook key, $2 channel
+  local line
+  line="$(tmux show-hooks -g "$1" 2>/dev/null)" || return 1
+  case "$line" in
+    *"wait-for -S $2 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_channel_retire() { # $1 unique channel; consume any latch this caller left
+  [ -n "$1" ] || return 0
+  # wait-for has no delete operation. Signal then consume closes ordinary abort
+  # and immediate-return paths without a lock; both calls fail quickly after
+  # server teardown. SIGKILL between native signal and this cleanup can still
+  # leave a harmless nonce-named latch until the tmux server exits.
+  tmux wait-for -S "$1" 2>/dev/null || return 0
+  tmux wait-for "$1" 2>/dev/null || true
+}
+
 wait_hook_cleanup() {
-  [ -z "$WAIT_HOOK_KEY" ] \
-    || tmux set-hook -ug "$WAIT_HOOK_KEY" 2>/dev/null || true
+  local channel="$WAIT_CHANNEL" key="$WAIT_HOOK_KEY"
+  if [ -n "$key" ] && wait_hook_owned "$key" "$channel"; then
+    tmux set-hook -ug "$key" 2>/dev/null || true
+  fi
   WAIT_CHANNEL=""
   WAIT_HOOK_KEY=""
+  wait_channel_retire "$channel"
 }
 
 wait_hook_arm() { # $1 window id, $2 pane id
-  local id="$1" pane="$2" line key command
-  WAIT_CHANNEL="gang-wait-${id#@}-${pane#%}-$(mint_nonce)"
-  # The first form closes the append/discovery race: if the pane exits before
-  # its array key can be read back, the signal is already latched for wait-for.
-  command="if-shell -F '#{==:#{hook_pane},$pane}' 'wait-for -S $WAIT_CHANNEL'"
-  tmux set-hook -ag pane-exited "$command" \
-    || die "wait: could not arm the pane-exit boundary for $pane"
-  while IFS= read -r line; do
-    case "$line" in
-      *"wait-for -S $WAIT_CHANNEL"*) key="${line%% *}"; break ;;
-    esac
-  done < <(tmux show-hooks -g pane-exited 2>/dev/null || true)
-  [ -n "${key:-}" ] || {
-    tmux wait-for -S "$WAIT_CHANNEL" 2>/dev/null || true
-    die "wait: tmux accepted the pane-exit boundary for $pane but did not expose its registration — refusing an unremovable wait"
-  }
-  WAIT_HOOK_KEY="$key"
+  local id="$1" pane="$2" nonce index key line command attempts=0
+  while [ "$attempts" -lt 8 ]; do
+    nonce="$(mint_nonce)"
+    # tmux accepts sparse numeric hook indexes. Seven hex digits stay within a
+    # portable positive integer range; the full nonce remains in the channel.
+    index=$(( 16#${nonce:0:7} + 1 ))
+    key="pane-exited[$index]"
+    line="$(tmux show-hooks -g "$key" 2>/dev/null)" || line=""
+    # show-hooks represents an unset array element as its key plus a blank
+    # command and still exits zero. Only a nonblank command owns the slot.
+    if [ -z "${line#* }" ]; then
+      WAIT_CHANNEL="gang-wait-${id#@}-${pane#%}-$nonce"
+      WAIT_HOOK_KEY="$key"
+      break
+    fi
+    attempts=$((attempts + 1))
+  done
+  [ -n "$WAIT_HOOK_KEY" ] \
+    || die "wait: could not reserve a temporary pane-exit registration for $pane"
   # tmux parses the quoted if-shell arm as a command list when the hook fires.
-  # Signal first, then remove this exact array element; operator hooks and other
-  # concurrent waiters are untouched.
+  # Signal first, then remove this exact sparse element. The readback proves
+  # tmux stored this caller's channel before state is examined.
   command="if-shell -F '#{==:#{hook_pane},$pane}' 'wait-for -S $WAIT_CHANNEL ; set-hook -ug $WAIT_HOOK_KEY'"
   tmux set-hook -g "$WAIT_HOOK_KEY" "$command" || {
     wait_hook_cleanup
-    die "wait: could not finish arming the pane-exit boundary for $pane"
+    die "wait: could not arm the pane-exit boundary for $pane"
+  }
+  wait_hook_owned "$WAIT_HOOK_KEY" "$WAIT_CHANNEL" || {
+    wait_hook_cleanup
+    die "wait: tmux did not retain the pane-exit boundary for $pane — refusing an unreachable wait"
   }
 }
 
@@ -4796,8 +4824,11 @@ wait_signal_registered() { # $1 window id, optional $2 pane id; Stop/drop deleti
       esac
     fi
     key="${line%% *}"
+    wait_hook_owned "$key" "$channel" || continue
     tmux wait-for -S "$channel" 2>/dev/null || true
-    tmux set-hook -ug "$key" 2>/dev/null || true
+    if wait_hook_owned "$key" "$channel"; then
+      tmux set-hook -ug "$key" 2>/dev/null || true
+    fi
   done < <(tmux show-hooks -g pane-exited 2>/dev/null || true)
 }
 
@@ -4836,7 +4867,7 @@ wait_target_validate() { # $1 name, $2 pinned window, $3 pinned pane
 }
 
 cmd_wait() {
-  local name="${1:-}" until="" pane state
+  local name="${1:-}" until="" pane state self="" turn_rc=0
   case "$name" in ''|-*) cmd_help wait; exit 1 ;; esac
   shift
   while [ $# -gt 0 ]; do
@@ -4854,10 +4885,24 @@ cmd_wait() {
     *) die "wait: --until must be idle or done, got '$until'" ;;
   esac
   resolve "$name"
-  [ "${GANG_STOP_HOOK:-}" = 1 ] \
-    || die "wait: collar '$AGENT_COLLAR' declares no GANG_STOP_HOOK for '$name' — no native boundary can release this barrier"
   pane="$(wait_active_pane "$AGENT_ID")" \
     || die "wait: cannot identify the active pane in '$name'"
+  self="$(self_window)" || self=""
+  [ -z "$self" ] || [ "$self" != "$AGENT_ID" ] \
+    || refuse "wait: '$name' is this agent's own window — its native Stop cannot fire while this turn is blocked inside gang wait"
+  state="$(state_now "$AGENT_ID")"
+  case "$state" in
+    '~idle~'*) return 0 ;;
+    '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
+  esac
+  [ "${GANG_STOP_HOOK:-}" = 1 ] \
+    || die "wait: collar '$AGENT_COLLAR' declares no GANG_STOP_HOOK for '$name' — no native boundary can release this barrier"
+  turn_state_read "$AGENT_ID" || turn_rc=$?
+  case "$turn_rc" in
+    0) ;;
+    1) die "wait: '$name' has no native turn evidence — a collar declaration alone cannot prove its Stop hook is installed; refusing an unbounded barrier" ;;
+    *) die "wait: '$name' has unreadable native turn evidence — refusing an unbounded barrier" ;;
+  esac
   trap 'on_exit' EXIT
   while :; do
     wait_hook_arm "$AGENT_ID" "$pane"
@@ -5366,6 +5411,12 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   fi
   tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
   case "$event" in
+    Stop|PostCompact)
+      window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
+        || window=""
+      [ -n "$window" ] || exit 0 ;;
+  esac
+  case "$event" in
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
                                   turn_state_write "$TMUX_PANE" open
                                   compaction_state_settle "$TMUX_PANE"
@@ -5374,11 +5425,10 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
           glyph_write "$TMUX_PANE" "~idle~"
-          window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" || window=""
-          [ -z "$window" ] || wait_signal_registered "$window" "$TMUX_PANE"
+          wait_signal_registered "$window" "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
-          self_compact_dispatch "$TMUX_PANE" "$collar"
-          spool_event "$TMUX_PANE" "$collar" ;;
+          self_compact_dispatch "$window" "$collar"
+          spool_event "$window" "$collar" ;;
     PreCompact) compaction_state_write "$TMUX_PANE" open
                 # The harness names its own cause in the payload, so gang never
                 # has to infer the origin from how the compaction was started.
@@ -5396,7 +5446,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
                  # A compaction produces no Stop, so without this the spool a
                  # correctly-refused delivery just filled would wait for an
                  # unrelated turn boundary that may never come.
-                 spool_event "$TMUX_PANE" "$collar" ;;
+                 spool_event "$window" "$collar" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;

@@ -752,13 +752,19 @@ the diagnostic adds no stored state.
 ## Caller barriers use temporary native events
 
 `gang wait` is an opt-in barrier, never a patrol or supervisor. Each caller owns
-a unique temporary tmux `wait-for` channel pinned to the target window and
-active pane; native Stop closes the turn before signalling it, while pane exit
-and explicit teardown release it as a loud vanished-target failure. No daemon,
-timer, or durable wait record exists. `?unknown?` is refused rather than waited
-through, and `done` deliberately promises only the next Stop — it does not claim
-to identify or own a logical turn. Tmux channel locks are excluded because a
-dead holder can leak one indefinitely.
+a unique temporary tmux `wait-for` channel and sparse hook key pinned to the
+target window and active pane; ownership is re-read before cleanup because tmux
+reuses the lowest free ordinary hook-array slot. Native Stop closes the turn
+before signalling it, while natural pane exit and Gangline teardown release it
+as a loud vanished-target failure. Direct tmux kill commands bypass that release
+and are documented as unsupported teardown for a waited target. No daemon,
+timer, option, or file records the wait. Ordinary cleanup consumes the channel
+latch; tmux offers no deletion for a latch stranded by `SIGKILL`, so that
+nonce-named memory can last until server exit. `?unknown?` and a Stop declaration
+with no native turn evidence are refused rather than waited through, and `done`
+deliberately promises only the next Stop — it does not claim to identify or own
+a logical turn. Tmux channel locks are excluded because a dead holder can leak
+one indefinitely.
 
 ## The mandatory gate fits under a memory ceiling
 

@@ -32,9 +32,23 @@ cat > "$RUN_ROOT/wait-arm-env" <<'SH'
 tmux() {
   local rc=0
   command tmux "$@" || rc=$?
-  if [ "$rc" -eq 0 ] && [ "${1:-}" = set-hook ] \
-     && [ "${2:-}" = -ag ] && [ "${3:-}" = pane-exited ]; then
-    command tmux wait-for -S "$GANG_TEST_WAIT_ARM"
+  if [ "$rc" -eq 0 ] && [ "${1:-}" = set-hook ]; then
+    case "${2:-} ${3:-}" in
+      '-ag pane-exited'|'-g pane-exited['*']')
+        [ -z "${GANG_TEST_WAIT_ARM:-}" ] \
+          || command tmux wait-for -S "$GANG_TEST_WAIT_ARM" ;;
+    esac
+  fi
+  if [ "$rc" -eq 0 ] && [ "${1:-}" = wait-for ] && [ "$#" -eq 2 ] \
+     && [ -z "${GANG_TEST_WAKE_SEEN:-}" ]; then
+    case "$2" in
+      gang-wait-*)
+        if [ -n "${GANG_TEST_AFTER_WAKE:-}" ]; then
+          GANG_TEST_WAKE_SEEN=1
+          command tmux wait-for -S "$GANG_TEST_AFTER_WAKE"
+          command tmux wait-for "$GANG_TEST_CLEANUP_RELEASE"
+        fi ;;
+    esac
   fi
   return "$rc"
 }
@@ -63,6 +77,15 @@ else
   fail "an already-idle target satisfies an idle barrier immediately" \
     "gang wait returned nonzero"
 fi
+if "$GANG" wait alpha --until "done" >/dev/null; then
+  pass "an already-idle target needs no declared Stop source"
+else
+  fail "an already-idle target needs no declared Stop source" \
+    "gang wait returned nonzero"
+fi
+refuses "an agent cannot deadlock its own turn inside a barrier" \
+  "this agent's own window" env TMUX_PANE="$waitable_pane" \
+  "$GANG" wait waitable --until "done"
 
 # EXPLAIN INSTRUMENTS THIS STATE READ, rather than taking a diagnostic capture
 # after the verdict. The fixture's own command signals only after producing the
@@ -87,8 +110,112 @@ contains "explain prints the pane fragment that matched" \
 contains "explain distinguishes a tested occupancy miss" \
   "$explain_out" "GANG_OCCUPIED_REGEX: did not match"
 
+refuses "a collar declaration without native turn evidence cannot hang a caller" \
+  "no native turn evidence" "$GANG" wait waitable --until "done"
+
+tmux set-option -w -t "$alpha_id" @gl_turn "open $(date +%s)"
 refuses "a target without a Stop source cannot arm a hanging barrier" \
   "declares no GANG_STOP_HOOK" "$GANG" wait alpha --until "done"
+tmux set-option -w -t "$alpha_id" @gl_turn "closed $(date +%s)"
+
+# IDLE RE-ARMS AFTER A BOUNDARY whose live read is still busy. The tmux shim
+# holds the waiter immediately after its first native signal, so the test can
+# open the next turn before allowing that read; the second arm is observed on
+# the same consumed-and-reusable test channel.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_arm="gang-test-wait-arm-$$-idle"
+wait_woke="gang-test-wait-woke-$$-idle"
+wait_cleanup="gang-test-wait-cleanup-$$-idle"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
+  GANG_TEST_AFTER_WAKE="$wait_woke" \
+  GANG_TEST_CLEANUP_RELEASE="$wait_cleanup" \
+  "$GANG" wait waitable --until idle \
+  >"$RUN_ROOT/wait-idle.out" 2>"$RUN_ROOT/wait-idle.err" &
+wait_idle_pid=$!
+tmux wait-for "$wait_arm"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for "$wait_woke"
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+tmux wait-for -S "$wait_cleanup"
+tmux wait-for "$wait_arm"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+if wait "$wait_idle_pid"; then
+  pass "an idle barrier re-arms while positive busy evidence remains"
+else
+  fail "an idle barrier re-arms while positive busy evidence remains" \
+    "$(<"$RUN_ROOT/wait-idle.err")"
+fi
+
+# A WAKING CALLER MUST NOT DELETE A NEW CALLER'S HOOK. A is held after Stop
+# removed and signalled its old registration; C arms in that gap. Only after C
+# owns its sparse key may A run cleanup. The second Stop must still reach C.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_arm_a="gang-test-wait-arm-$$-race-a"
+wait_woke_a="gang-test-wait-woke-$$-race-a"
+wait_cleanup_a="gang-test-wait-cleanup-$$-race-a"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_a" \
+  GANG_TEST_AFTER_WAKE="$wait_woke_a" \
+  GANG_TEST_CLEANUP_RELEASE="$wait_cleanup_a" \
+  "$GANG" wait waitable --until "done" \
+  >"$RUN_ROOT/wait-race-a.out" 2>"$RUN_ROOT/wait-race-a.err" &
+wait_race_a_pid=$!
+tmux wait-for "$wait_arm_a"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+tmux wait-for "$wait_woke_a"
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_arm_c="gang-test-wait-arm-$$-race-c"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_c" \
+  "$GANG" wait waitable --until "done" \
+  >"$RUN_ROOT/wait-race-c.out" 2>"$RUN_ROOT/wait-race-c.err" &
+wait_race_c_pid=$!
+tmux wait-for "$wait_arm_c"
+tmux wait-for -S "$wait_cleanup_a"
+if wait "$wait_race_a_pid"; then
+  pass "a released caller cleans up only its own registration"
+else
+  fail "a released caller cleans up only its own registration" \
+    "$(<"$RUN_ROOT/wait-race-a.err")"
+fi
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+if wait "$wait_race_c_pid"; then
+  pass "a later concurrent caller survives earlier cleanup"
+else
+  fail "a later concurrent caller survives earlier cleanup" \
+    "$(<"$RUN_ROOT/wait-race-c.err")"
+fi
+
+# NATURAL PROCESS EXIT is the pane-exited path itself, rather than gang drop's
+# compensating release. This drives the exact signal-then-self-remove hook body
+# used by gang wait and keeps a decoy array element beside it: the channel is
+# the event barrier, so no timing assumption stands between registration and
+# the assertion.
+"$HITCH" wait-natural -c waitable -d /tmp >/dev/null
+wait_natural_id="$(window_id wait-natural)"
+wait_natural_pane="$(tmux list-panes -t "$wait_natural_id" -F '#{pane_id}')"
+wait_natural_channel="gang-test-wait-natural-$$"
+wait_natural_key="pane-exited[$(( 1000000 + $$ ))]"
+wait_natural_decoy="pane-exited[$(( 2000000 + $$ ))]"
+tmux set-hook -g "$wait_natural_decoy" "run-shell 'true'"
+tmux set-hook -g "$wait_natural_key" \
+  "if-shell -F '#{==:#{hook_pane},$wait_natural_pane}' 'wait-for -S $wait_natural_channel ; set-hook -ug $wait_natural_key'"
+tmux send-keys -l -t "$wait_natural_pane" exit
+tmux send-keys -t "$wait_natural_pane" Enter
+tmux wait-for "$wait_natural_channel"
+if window_id wait-natural >/dev/null 2>&1; then
+  fail "natural pane exit fires the registered native boundary" \
+    "wait-natural still resolves after its pane process exited"
+else
+  pass "natural pane exit fires the registered native boundary"
+fi
+equal "the firing native hook removes only its own sparse registration" \
+  "$wait_natural_key " "$(tmux show-hooks -g "$wait_natural_key")"
+contains "a natural exit leaves an unrelated hook registration intact" \
+  "$(tmux show-hooks -g "$wait_natural_decoy")" "run-shell true"
+tmux set-hook -ug "$wait_natural_decoy"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
 refuses "unknown state is refused before a barrier can hang" \

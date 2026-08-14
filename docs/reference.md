@@ -402,11 +402,13 @@ root after its recovery or audit purpose ends; see
 
 Blocks the caller on a native target boundary without polling `status`.
 An already-idle target returns immediately for either condition. Otherwise the
-target collar must declare `GANG_STOP_HOOK=1`: each caller appends one temporary,
-uniquely named tmux `wait-for` channel, and the target's next native `Stop`
-signals it after closing the turn bracket. `idle` then re-reads live state and
-arms another boundary while positive busy or occupied evidence remains; `done`
-returns after that first Stop.
+target collar must declare `GANG_STOP_HOOK=1`, and the window must already carry
+readable native turn evidence rather than relying on that declaration alone.
+Each caller owns one temporary, uniquely named tmux `wait-for` channel and a
+sparse caller-owned hook key. The target's next native `Stop` signals it after
+closing the turn bracket. `idle` then re-reads live state and arms another
+boundary while positive busy or occupied evidence remains; `done` returns after
+that first Stop.
 
 `done` does not track turns. If the target is already working, that active
 turn's completion may match. A wait is an explicit barrier chosen by its caller,
@@ -415,10 +417,19 @@ durable state.
 
 The registration pins both the target's window id and active pane id. A missing,
 replaced, ambiguous, or pane-switched target fails loudly rather than transferring
-the wait. `?unknown?` fails instead of hanging. Pane exit, `drop`, and `down`
-release temporary registrations so teardown is also observed and reported as a
-vanished target. The implementation uses only `wait-for -S`; tmux channel locks
-are not used because a dead lock holder can leave them locked indefinitely.
+the wait. `?unknown?` fails instead of hanging. Natural pane-process exit plus
+Gangline's `drop` and `down` release temporary registrations, so those teardown
+paths are observed and reported as a vanished target. Direct `tmux kill-pane`
+and `tmux kill-window` do not emit the supported exit hook on tmux 3.2a and
+bypass Gangline's compensating release; they can leave a caller blocked and its
+temporary registration orphaned. Use `gang drop` or `gang down` for teardown.
+
+The implementation uses only `wait-for -S`; tmux channel locks are not used
+because a dead lock holder can leave them locked indefinitely. Ordinary return
+and abort paths signal and consume their nonce-named channel latch. Tmux has no
+channel-delete operation, so a caller killed with `SIGKILL` after a native
+signal can leave an unreachable latch in tmux memory until that server exits.
+No wait option, file, daemon, or timer is created.
 
 ### `gang explain <name>`
 
