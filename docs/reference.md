@@ -528,9 +528,12 @@ The timer invokes `gang wait-limit <name> --fire <reset> --unit <unit>` with the
 team's pinned session and configuration environment. Firing uses ordinary
 attributed, verified delivery, including the ordinary spool when a target is
 temporarily busy. A firing does nothing unless the agent still exists and its
-stored declaration names the same reset and the same unit, so a timer that
-outlived its tmux server cannot consume the declaration of a team recreated
-under the same session and agent name.
+stored declaration names the same reset and the same unit. The unit name is
+derived from the session, the window id and the reset, so that comparison
+refuses a timer that outlived its tmux server whenever any of the three
+differs — it does not refuse one whose team was recreated holding all three.
+The declaration is stored only after `systemd-run` accepts the timer, so a
+wake that is still being scheduled is not visible to an older callback.
 
 The unit is collected after it runs. `--clear` stops the pending timer and the
 service that timer may already have started, and it removes the declaration
