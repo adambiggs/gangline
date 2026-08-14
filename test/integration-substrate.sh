@@ -623,6 +623,18 @@ equal "a control-bearing registration never reaches the terminal raw" \
   "$(ctl_escapes "$ctl_whoami") $(ctl_escapes "$ctl_mail") $(ctl_escapes "$ctl_drop")"
 tmux kill-window -t "$ctl_id" 2>/dev/null || true
 
+# tmux versions differ at the boundary above: 3.2 returns the raw user-option
+# byte while 3.4 serializes it as the four visible characters `\033`. In the
+# latter world drop does not resolve the raw lookup name, which exposed a second
+# route to the terminal: its missing-agent error formatted the unsanitized
+# argument before cmd_drop had made its safe display copy. This independent
+# absent-name case fixes the error path in place instead of relying on either
+# tmux representation of a forged registration.
+missing_ctl_name="$(printf 'missing\033[31mrogue')"
+missing_ctl_drop="$("$GANG" drop "$missing_ctl_name" 2>&1)" || true
+equal "a missing-agent drop refusal makes its control byte visible, never active" \
+  "gang: no agent 'missing?[31mrogue'" "$missing_ctl_drop"
+
 # A synchronous tty fixture paints the two menus Gangline used to answer and
 # records every key it receives. 2.0 answers neither: both are ordinary
 # occupancy, and the key log is the witness that no keystroke was sent.

@@ -5766,7 +5766,6 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 cmd_drop() {
   local id stamped shown rc=0
   [ $# -le 1 ] || die "drop: unexpected argument '$2'"
-  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$1'"; }
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
   # here on purpose: valid_name would leave a window whose own registration is
@@ -5774,6 +5773,7 @@ cmd_drop() {
   # the only way out — which skips the archive and destroys the pending mail.
   # Droppable, contained, and printed safely is the combination that holds.
   shown="$(printf '%s' "$1" | config_sanitize)"
+  id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
   stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
   if [ -n "$stamped" ]; then
     printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$shown" "$stamped"
