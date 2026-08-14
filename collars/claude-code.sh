@@ -242,17 +242,11 @@ Enter to confirm · Esc to cancel'
 # flush it.
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
 GANG_QUEUE_RECALL_KEY="Up"
-# MID-TURN INPUT PARKS RATHER THAN SUBMITS, and that park is a landing gang can
-# watch through to its end. `=1` would be wrong here: it means text enters the
-# session directly, and on this harness a mid-turn Enter cannot submit at all —
-# it can only queue, so `=1` turns a clean spoolable refusal into a failure with
-# the body already typed. `park` says the queue is the route, and bin/gang
-# reports the park as its own state until it watches the hint clear again.
-#
-# Observed on 2.1.229: the queue drains at the harness's next MODEL-INPUT
-# boundary, which is the resolution of a whole tool batch (PostToolBatch) rather
-# than of one call, and the end of the turn when a turn makes no tool calls. A
-# batch holding several calls holds the message until the last of them returns.
+# MID-TURN ENTER CANNOT SUBMIT; it can only leave text staged or place it in the
+# harness's anonymous queue. Both occurred live while a turn repainted the
+# composer, so `park` means Gangline's attributed spool is the only safe landing
+# until a native boundary proves the turn ended. `=1` would authorize precisely
+# the composer keystroke this declaration refuses.
 GANG_MIDTURN_INPUT=park
 # Escape stops an active turn; the harness paints "esc to interrupt" while one
 # is in flight.

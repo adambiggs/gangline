@@ -713,6 +713,32 @@ the argument on stderr, stamps the window where `status` and `roster` surface
 it, and declines the event. Declining is the refusal — processing the event
 while discarding the argument is the silent acceptance the rule forbids.
 
+## Startup contracts park behind native first-run gates
+
+A first-run gate can outlive any boot bound before an agent turn exists, so a
+Stop-only spool would strand the contract and a longer wait would only move the
+failure. On positive pane evidence of an operator-owned startup prompt, hitch
+immediately commits the attributed startup envelope to the ordinary window
+spool and owns it until the universal tty surface exposes a composer. Direct
+`hitch` keeps that observer in the foreground; `up` exposes the gated window in
+its tmux client while the same invocation observes beside it. The verified
+drain retries a pre-keystroke refusal and accounts for an exact entry retired by
+a crossed native drain. This remains correct if an operator declines configured
+hooks at a native security gate, adds no harness event or persistent fact, and
+leaves the envelope inspectable if hitch is interrupted.
+Once that positive evidence commits the entry, the hitch remains its foreground
+owner without a post-gate deadline; Gangline starts no background watcher. An
+interrupted gated hitch therefore requires drop and re-hitch/resume recovery
+rather than a second hand-sent contract; resume applies only where a native
+session identity was stamped before interruption.
+Unknown stable screens still fail loudly instead of being called startup
+prompts. Spool drains take the pane delivery lock before the first claim, so
+crossed native workers cannot split or reorder the oldest-first bundle. A
+mid-turn collar that declares `park` commits to the attributed spool before any
+composer keystroke, and a native drain rechecks that the target is idle before
+claiming; the harness's anonymous input queue is recovery evidence, not a safe
+delivery route through a repainting turn.
+
 ## The mandatory gate fits under a memory ceiling
 
 `test/lint.sh` runs one `shellcheck` per file, and `test/integration.sh` is

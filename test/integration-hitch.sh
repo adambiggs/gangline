@@ -27,33 +27,37 @@ equal "the shipped Claude operator dialog remains byte-exact" \
   "$claude_external_before" "$(pane dialog-claude-external)"
 "$GANG" drop dialog-claude-external >/dev/null
 
-# Hitch names an observe-only prompt while preserving the original boot budget.
-# The sleep shim is an event barrier: the notice is already written when it
-# signals, then the fixture receives only the two manual operator keys below.
+# Hitch names and parks immediately on positive evidence of an observe-only
+# prompt. The output pipe is the event barrier: the accepted line is already
+# written when the test answers, and only those two manual keys reach the UI.
 : > "$RUN_ROOT/dialog-observe-boot.keys"
-PATH="$RUN_ROOT/dialog-observe-bin:$PATH" GANG_BOOT_TIMEOUT=3 \
-  "$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp \
-  >"$RUN_ROOT/dialog-observe-boot.out" 2>&1 &
+observe_boot_pipe="$RUN_ROOT/dialog-observe-boot.out"
+mkfifo "$observe_boot_pipe"
+exec 8<>"$observe_boot_pipe"
+"$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp >&8 2>&1 &
 observe_boot_pid=$!
-# shellcheck disable=SC2154  # set in test/integration-substrate.sh
-tmux wait-for "$observe_boot_seen"
-equal "an observe-only branch waits before testing generic readiness" \
-  "1" "$(<"$RUN_ROOT/dialog-observe-sleep-argument")"
+observe_boot_out=""
+while IFS= read -r observe_boot_line <&8; do
+  observe_boot_out="${observe_boot_out}${observe_boot_out:+$'\n'}$observe_boot_line"
+  case "$observe_boot_line" in
+    *"nothing further is needed from you"*) break ;;
+  esac
+done
+pass "an observe-only startup prompt is accepted immediately on positive evidence"
 contains "hitch names the operator dialog it is waiting on" \
-  "$(<"$RUN_ROOT/dialog-observe-boot.out")" \
+  "$observe_boot_out" \
   "known operator dialog 'operator-choice'"
 equal "hitch sends no key to the operator dialog" "" \
   "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
 observe_boot_id="$(window_id dialog-observe-boot)"
 tmux send-keys -t "$observe_boot_id" Down Enter
-# shellcheck disable=SC2154  # set in test/integration-substrate.sh
-tmux wait-for -S "$observe_boot_release"
 if wait "$observe_boot_pid"; then
   pass "hitch continues after the operator answers the recognized dialog"
 else
   fail "hitch continues after the operator answers the recognized dialog" \
-    "$(<"$RUN_ROOT/dialog-observe-boot.out")"
+    "$observe_boot_out"
 fi
+exec 8>&-
 equal "only the operator's manual answer reaches the recognized dialog" \
   $'Down\nEnter' "$(<"$RUN_ROOT/dialog-observe-boot.keys")"
 # source-guard: producer@b9a4f7b286cf: the successful hitch above is the sole producer of this nonce-addressed startup body after the fixture restores its composer
@@ -308,12 +312,369 @@ else
 fi
 contains "the resumed hitch delivers its startup contract" \
   "$(pane boot-modal)" "You are boot-modal in Gangline"
+# Positive prompt evidence now commits the contract immediately, so the old
+# "warning retracted" assertion described a pre-commit wait that no longer
+# exists. Acceptance and the later verified drain are the two truthful states.
 contains "the resumed hitch reports verified startup delivery" \
-  "$(<"$modal_output")" "delivered startup contract to boot-modal"
-contains "the resumed hitch retracts the first-run warning" \
-  "$(<"$modal_output")" "now has an input box; hitch is continuing"
+  "$(<"$modal_output")" "delivered queued startup contract to boot-modal"
+contains "the resumed hitch reports accepted-before-delivered state" \
+  "$(<"$modal_output")" "queued startup contract for boot-modal — accepted, not yet in the session"
 submitted "the resumed startup contract was submitted" boot-modal
 "$GANG" drop boot-modal >/dev/null
+
+# A FIRST-RUN GATE THAT OUTLIVES HITCH'S BOOT BUDGET has no turn and therefore
+# no Stop. The old assertion required hitch to fail and prescribe a second
+# manual `gang send`; that behavior was wrong because it dropped a fully formed
+# startup envelope. Hitch now parks it, remains the foreground owner, and keeps
+# observing the tty. This collar deliberately has no hook, proving that a Codex
+# operator choosing "continue without hooks" cannot invalidate the promise.
+startup_gate_clear="test-startup-gate-clear-$$"
+cat > "$RUN_ROOT/startup-gate.sh" <<SH
+#!/bin/sh
+printf 'FIRST_RUN_GATE\n'
+tmux wait-for "$startup_gate_clear"
+PS1='❯ ' exec bash --norc
+SH
+chmod +x "$RUN_ROOT/startup-gate.sh"
+cat > "$RUN_ROOT/collars/startup-gated.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="'$RUN_ROOT/startup-gate.sh'"
+GANG_OCCUPIED_REGEX='FIRST_RUN_GATE'
+SH
+startup_gate_pipe="$RUN_ROOT/startup-gate.out"
+mkfifo "$startup_gate_pipe"
+exec 9<>"$startup_gate_pipe"
+"$GANG" hitch startup-gated \
+  -c startup-gated -d /tmp >&9 2>&1 &
+startup_gate_hitch=$!
+startup_gate_out=""
+while IFS= read -r startup_gate_line <&9; do
+  startup_gate_out="${startup_gate_out}${startup_gate_out:+$'\n'}$startup_gate_line"
+  case "$startup_gate_line" in
+    *"nothing further is needed from you"*) break ;;
+  esac
+done
+pass "a hookless first-run gate parks its startup contract"
+contains "hitch reports the startup contract as accepted but not delivered" \
+  "$startup_gate_out" "queued startup contract for startup-gated — accepted, not yet in the session"
+contains "the only requested operator action is answering the native prompt" \
+  "$startup_gate_out" "answer the observed native startup prompt with 'gang attach'"
+contains "hitch says no second delivery action is needed" \
+  "$startup_gate_out" "nothing further is needed from you"
+contains "hitch owns delivery even when no native hook will run" \
+  "$startup_gate_out" "this hitch will deliver the contract when the composer appears"
+excludes "hitch no longer asks the operator to send the startup contract" \
+  "$startup_gate_out" "gang send --to startup-gated"
+if kill -0 "$startup_gate_hitch" 2>/dev/null; then
+  pass "hitch remains foreground while the operator owns the startup gate"
+else
+  fail "hitch remains foreground while the operator owns the startup gate" \
+    "hitch exited before the operator answered"
+fi
+contains "the undelivered startup contract is visible in the ordinary spool" \
+  "$("$GANG" status startup-gated)" "spooled: 1"
+excludes "nothing was typed through the startup gate" \
+  "$(pane startup-gated)" "You are startup-gated in Gangline"
+tmux wait-for -S "$startup_gate_clear"
+while IFS= read -r startup_gate_line <&9; do
+  startup_gate_out="${startup_gate_out}${startup_gate_out:+$'\n'}$startup_gate_line"
+  case "$startup_gate_line" in
+    *"delivered queued startup contract to startup-gated"*) break ;;
+  esac
+done
+if wait "$startup_gate_hitch"; then
+  pass "the foreground hitch completes after the operator clears the gate"
+else
+  fail "the foreground hitch completes after the operator clears the gate" \
+    "$startup_gate_out"
+fi
+exec 9>&-
+# source-guard: producer@cda0e8616113: the hookless fixture above exposes its composer only after the manual gate clears, and the nonce-addressed spool is the sole producer of this startup body
+contains "foreground hitch delivers the parked contract after the composer appears" \
+  "$(pane startup-gated)" "You are startup-gated in Gangline"
+excludes "the verified foreground drain retires the startup spool entry" \
+  "$("$GANG" status startup-gated)" "spooled:"
+submitted "the foreground-delivered startup contract was submitted" startup-gated
+"$GANG" drop startup-gated >/dev/null
+
+# A SECOND NATIVE DIALOG MAY FOLLOW THE FIRST GATE. The foreground observer
+# stays quiet after its one operator notice, but it must retain the ordinary
+# hitch triage that answers a safe row already authorised by hitch -d. This
+# models the Codex ordering where hook review precedes directory trust.
+startup_second_clear="test-startup-second-clear-$$"
+cat > "$RUN_ROOT/startup-second.sh" <<SH
+#!/bin/sh
+printf 'FIRST_RUN_GATE\n'
+tmux wait-for "$startup_second_clear"
+exec env DIALOG_VARIANT=trust \
+  DIALOG_KEY_LOG='$RUN_ROOT/startup-second.keys' \
+  DIALOG_READY='test-startup-second-ready-$$' \
+  '$RUN_ROOT/dialog-fixture.py'
+SH
+chmod +x "$RUN_ROOT/startup-second.sh"
+cat > "$RUN_ROOT/collars/startup-second.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="'$RUN_ROOT/startup-second.sh'"
+GANG_OCCUPIED_REGEX='FIRST_RUN_GATE|^› [0-9]+\. '
+GANG_DIALOGS='directory-trust-prompt|^› [0-9]+\. |Yes, continue||Enter'
+GANG_DIALOG_HITCH_DIR_TRUST=directory-trust-prompt
+GANG_DIALOG_LINES_directory_trust_prompt='Do you trust the contents of this directory? Working with untrusted contents comes with higher risk of prompt injection. Trusting the directory allows project-local config, hooks, and exec policies to load.
+Yes, continue
+No, quit
+Press enter to continue'
+SH
+: > "$RUN_ROOT/startup-second.keys"
+startup_second_pipe="$RUN_ROOT/startup-second.out"
+mkfifo "$startup_second_pipe"
+exec 8<>"$startup_second_pipe"
+"$GANG" hitch startup-second -c startup-second -d /tmp >&8 2>&1 &
+startup_second_hitch=$!
+startup_second_out=""
+while IFS= read -r startup_second_line <&8; do
+  startup_second_out="${startup_second_out}${startup_second_out:+$'\n'}$startup_second_line"
+  case "$startup_second_line" in
+    *"nothing further is needed from you"*) break ;;
+  esac
+done
+contains "the first gate commits the startup contract before its successor" \
+  "$startup_second_out" "queued startup contract for startup-second"
+tmux wait-for -S "$startup_second_clear"
+if wait "$startup_second_hitch"; then
+  pass "the foreground observer continues through a second safe dialog"
+else
+  fail "the foreground observer continues through a second safe dialog" \
+    "$startup_second_out"
+fi
+exec 8>&-
+equal "the post-gate safe dialog receives only its authorised confirm" \
+  "Enter" "$(<"$RUN_ROOT/startup-second.keys")"
+# source-guard: producer@01f66faef40a: the only startup-second body is the nonce-bound startup entry committed before the gate cleared, and the authorised-key log independently proves the successor dialog completed before this read
+contains "the startup contract follows the second dialog into the session" \
+  "$(pane startup-second)" "You are startup-second in Gangline"
+excludes "the second-dialog drain retires the startup entry" \
+  "$("$GANG" status startup-second)" "spooled:"
+submitted "the post-second-dialog startup contract was submitted" startup-second
+"$GANG" drop startup-second >/dev/null
+
+# THE SAFE-DIALOG ALLOWANCE BELONGS TO THE WHOLE HITCH, not one observation
+# slice. A broken harness that redraws the same declared transient forever must
+# receive at most two answer sequences, then stop receiving keys while the
+# startup contract remains visible and untouched. A sleep shim supplies event
+# barriers at each redraw; no timeout verdict is being inferred.
+startup_recur_clear="test-startup-recur-clear-$$"
+startup_recur_exhausted="test-startup-recur-exhausted-$$"
+startup_recur_fifo="$RUN_ROOT/startup-recur.fifo"
+startup_recur_ack="$RUN_ROOT/startup-recur-ack.fifo"
+mkfifo "$startup_recur_fifo"
+mkfifo "$startup_recur_ack"
+cat > "$RUN_ROOT/startup-recur.sh" <<SH
+#!/bin/sh
+printf 'FIRST_RUN_GATE\n'
+tmux wait-for "$startup_recur_clear"
+exec env DIALOG_VARIANT=recurring \
+  DIALOG_KEY_LOG='$RUN_ROOT/startup-recur.keys' \
+  DIALOG_READY='test-startup-recur-ready-$$' \
+  DIALOG_RECUR_SIGNAL='unused-with-fifo' \
+  DIALOG_RECUR_FIFO='$startup_recur_fifo' \
+  DIALOG_RECUR_ACK='$startup_recur_ack' \
+  '$RUN_ROOT/dialog-fixture.py'
+SH
+chmod +x "$RUN_ROOT/startup-recur.sh"
+cat > "$RUN_ROOT/collars/startup-recur.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+GANG_LAUNCH="'$RUN_ROOT/startup-recur.sh'"
+GANG_OCCUPIED_REGEX='FIRST_RUN_GATE|^› [0-9]+\. '
+SH
+mkdir -p "$RUN_ROOT/startup-recur-bin"
+cat > "$RUN_ROOT/startup-recur-bin/sleep" <<SH
+#!/bin/sh
+if [ "\${1:-}" = 1 ]; then
+  startup_recur_count="\$(wc -l < '$RUN_ROOT/startup-recur.keys')"
+  if [ "\$startup_recur_count" -gt 0 ]; then
+    printf x > '$startup_recur_fifo'
+    cat '$startup_recur_ack' >/dev/null
+  fi
+  if [ "\$startup_recur_count" -ge 4 ]; then
+    tmux wait-for -S '$startup_recur_exhausted'
+  fi
+fi
+exit 0
+SH
+chmod +x "$RUN_ROOT/startup-recur-bin/sleep"
+: > "$RUN_ROOT/startup-recur.keys"
+startup_recur_pipe="$RUN_ROOT/startup-recur.out"
+mkfifo "$startup_recur_pipe"
+exec 7<>"$startup_recur_pipe"
+PATH="$RUN_ROOT/startup-recur-bin:$PATH" GANG_BOOT_TIMEOUT=2 \
+  "$GANG" hitch startup-recur -c startup-recur -d /tmp >&7 2>&1 &
+startup_recur_hitch=$!
+startup_recur_out=""
+while IFS= read -r startup_recur_line <&7; do
+  startup_recur_out="${startup_recur_out}${startup_recur_out:+$'\n'}$startup_recur_line"
+  case "$startup_recur_line" in
+    *"nothing further is needed from you"*) break ;;
+  esac
+done
+tmux wait-for "$startup_recur_exhausted" &
+startup_recur_waiter=$!
+tmux wait-for -S "$startup_recur_clear"
+wait "$startup_recur_waiter"
+if kill -0 "$startup_recur_hitch" 2>/dev/null; then
+  pass "a recurring post-gate safe dialog exhausts without ending hitch"
+else
+  fail "a recurring post-gate safe dialog exhausts without ending hitch" \
+    "$startup_recur_out"
+fi
+equal "the whole hitch answers a recurring safe dialog at most twice" \
+  $'Down\nEnter\nDown\nEnter' "$(<"$RUN_ROOT/startup-recur.keys")"
+contains "the exhausted safe-dialog hitch keeps its contract queued" \
+  "$("$GANG" status startup-recur)" "spooled: 1"
+excludes "the exhausted dialog receives no startup-contract keystroke" \
+  "$(pane startup-recur)" "You are startup-recur in Gangline"
+kill "$startup_recur_hitch" 2>/dev/null || true
+wait "$startup_recur_hitch" 2>/dev/null || true
+exec 7>&-
+GANG_ARCHIVE_DIR="$RUN_ROOT/startup-recur-archive" \
+  "$GANG" drop startup-recur >/dev/null
+
+# `gang up` OWNS BOTH SIDES OF THE SAME FIRST-RUN GATE: its tmux client must
+# expose the prompt while the original hitch invocation keeps the contract
+# observer alive. Event barriers witness the client attach and the second shell
+# prompt (the one after the startup envelope was submitted); no Stop hook helps.
+startup_up_clear="test-startup-up-clear-$$"
+startup_up_attached="test-startup-up-attached-$$"
+startup_up_delivered="test-startup-up-delivered-$$"
+cat > "$RUN_ROOT/startup-up.sh" <<SH
+#!/bin/sh
+printf 'FIRST_RUN_GATE\n'
+tmux wait-for "$startup_up_clear"
+PS1='❯ ' exec bash --norc
+SH
+chmod +x "$RUN_ROOT/startup-up.sh"
+cat > "$RUN_ROOT/collars/startup-up.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="'$RUN_ROOT/startup-up.sh'"
+GANG_OCCUPIED_REGEX='FIRST_RUN_GATE'
+SH
+mkdir -p "$GANG_CONFIG_DIR/roles"
+printf '%s\n' 'STARTUP_UP_ROLE' > "$GANG_CONFIG_DIR/roles/startup-up.md"
+tmux set-hook -g client-attached "run-shell 'tmux wait-for -S $startup_up_attached'"
+tmux wait-for "$startup_up_attached" &
+startup_up_attached_waiter=$!
+# An attached client adds a real terminal-render path that the suite's global
+# compressed sleep is not calibrated for. Use the production verification
+# clock and a roomy but ordinary client viewport; the suite header records why
+# a 0.05s readback under asynchronous render is unknown rather than failure.
+PATH="${PATH#"$RUN_ROOT/bin:"}" script -qec \
+  "stty rows 60 cols 200; $GANG up startup-up -c startup-up -d /tmp -r startup-up" /dev/null \
+  > "$RUN_ROOT/startup-up.out" 2>&1 &
+startup_up_process=$!
+wait "$startup_up_attached_waiter"
+tmux set-hook -gu client-attached
+pass "gang up exposes a positively observed first-run gate in its tmux client"
+contains "gang up parks its contract before exposing the gate" \
+  "$("$GANG" status startup-up)" "spooled: 1"
+excludes "gang up types nothing through the native gate" \
+  "$(pane startup-up)" "You are startup-up in Gangline"
+tmux set-hook -g after-rename-window \
+  "if-shell -F '#{==:#{window_name},-startup-up-}' 'wait-for -S $startup_up_delivered' ''"
+tmux wait-for "$startup_up_delivered" &
+startup_up_delivered_waiter=$!
+tmux wait-for -S "$startup_up_clear"
+wait "$startup_up_delivered_waiter"
+tmux set-hook -gu after-rename-window
+# source-guard: producer@8e4fa6251628: the busy-glyph hook fires only after the hookless up path verifies and retires its nonce-addressed startup entry
+contains "gang up delivers the parked contract after its attached prompt clears" \
+  "$(pane startup-up)" "You are startup-up in Gangline"
+excludes "gang up retires the verified startup spool entry" \
+  "$("$GANG" status startup-up)" "spooled:"
+# `script` may close its synthetic client on stdin EOF after the delivery; an
+# already-detached client and one detached here are the same settled state.
+tmux detach-client -s "=$GANG_SESSION" 2>/dev/null || true
+wait "$startup_up_process"
+"$GANG" drop startup-up >/dev/null
+
+# A HEADLESS `up` MUST NOT ENTER THE LONG FOLLOW LOOP after its attach client
+# has already failed. The tmux shim couples that failure to clearing the gate,
+# so the old wait-until-composer shape would still terminate instead of hanging
+# the suite; only the immediate, explicit attach refusal satisfies the check.
+startup_up_headless_clear="test-startup-up-headless-clear-$$"
+cat > "$RUN_ROOT/startup-up-headless.sh" <<SH
+#!/bin/sh
+printf 'FIRST_RUN_GATE\n'
+tmux wait-for "$startup_up_headless_clear"
+PS1='❯ ' exec bash --norc
+SH
+chmod +x "$RUN_ROOT/startup-up-headless.sh"
+cat > "$RUN_ROOT/collars/startup-up-headless.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="'$RUN_ROOT/startup-up-headless.sh'"
+GANG_OCCUPIED_REGEX='FIRST_RUN_GATE'
+SH
+mkdir -p "$RUN_ROOT/headless-up-bin"
+real_tmux="$(command -v tmux)"
+cat > "$RUN_ROOT/headless-up-bin/tmux" <<SH
+#!/bin/sh
+if [ "\${1:-}" = attach ]; then
+  "$real_tmux" wait-for -S "$startup_up_headless_clear"
+  exit 17
+fi
+exec "$real_tmux" "\$@"
+SH
+chmod +x "$RUN_ROOT/headless-up-bin/tmux"
+if startup_up_headless_out="$(PATH="$RUN_ROOT/headless-up-bin:$PATH" \
+    "$GANG" up startup-up-headless -c startup-up-headless -d /tmp \
+    -r startup-up </dev/null 2>&1)"; then
+  fail "gang up refuses when its startup-prompt client cannot attach" \
+    "$startup_up_headless_out"
+else
+  pass "gang up refuses when its startup-prompt client cannot attach"
+fi
+contains "the failed attach is named before any long composer wait" \
+  "$startup_up_headless_out" \
+  "tmux could not attach a client to the startup prompt (status 17)"
+contains "the headless refusal leaves the attributed contract inspectable" \
+  "$("$GANG" status startup-up-headless)" "spooled: 1"
+# Keep this intentionally undelivered startup entry out of the suite's shared
+# teardown-archive accounting; the exact disposable window still exercises the
+# ordinary archive path, just under its fixture-owned root.
+GANG_ARCHIVE_DIR="$RUN_ROOT/headless-up-archive" \
+  "$GANG" drop startup-up-headless >/dev/null
+
+# A STABLE SCREEN IS NOT EVIDENCE OF A STARTUP PROMPT. A provider-error pane has
+# no composer and no collar-owned occupied marker, so hitch must retain its
+# fail-loud recovery instead of waiting forever on a screen it cannot name.
+startup_unknown_hold="test-startup-unknown-hold-$$"
+cat > "$RUN_ROOT/collars/startup-unknown.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'printf \"PROVIDER_ERROR\\n\"; tmux wait-for \"$startup_unknown_hold\"' fixture"
+SH
+if startup_unknown_out="$(GANG_BOOT_TIMEOUT=1 "$GANG" hitch startup-unknown \
+    -c startup-unknown -d /tmp 2>&1)"; then
+  fail "an unknown stable boot screen is not accepted as a startup gate" \
+    "$startup_unknown_out"
+else
+  pass "an unknown stable boot screen is not accepted as a startup gate"
+fi
+contains "the unknown screen retains the fail-loud recovery" \
+  "$startup_unknown_out" "showing something other than its input box"
+excludes "the unknown screen is never reported as accepted" \
+  "$startup_unknown_out" "queued startup contract"
+excludes "the unknown screen receives no parked contract" \
+  "$("$GANG" status startup-unknown)" "spooled:"
+"$GANG" drop startup-unknown >/dev/null
 
 late_observed="test-late-composer-observed-$$"
 late_launch="test-late-composer-launch-$$"
@@ -1097,4 +1458,3 @@ contains "the resume launch form is the one that ran" "$effres_line" "resume-fix
 contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null
-

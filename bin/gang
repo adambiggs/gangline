@@ -2182,7 +2182,7 @@ self_compact_after_stop() { # $1 window id, $2 collar
   # NOT AT THIS BOUNDARY, rather than not at all: a dialog on the screen and a
   # composer that has not come back are both states the next boundary may not
   # be in, so they refuse (status 3) and leave the request standing, exactly as
-  # spool_drain_after_stop leaves its messages spooled. Only a collar that has
+  # spool_drain_after_event leaves its messages spooled. Only a collar that has
   # stopped declaring this path is fatal, because no later boundary repairs it.
   case "$ready" in
     0) ;;
@@ -2286,7 +2286,7 @@ self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled
 self_compact_dispatch() { # $1 = the pane a native Stop fired in, $2 = collar
   local win request
   # The compaction delivers, and delivery serializes on the WINDOW's lock, for
-  # the same reason spool_stop resolves the window before draining: a lock
+  # the same reason spool_event resolves the window before draining: a lock
   # named after the firing pane would not exclude an ordinary send holding the
   # one named after its window. The spool this falls back to is keyed by
   # window as well.
@@ -2543,37 +2543,33 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
   ! grep -q '[^[:space:]]' <<<"$box"
 }
 
-wait_ready() { # $1 = window, $2 = timeout; optional $3 names a hitch to notify
-  local t=0 operator_reported=0 prompt_reported=0 dialogs_answered=0
+WAIT_READY_DIALOGS_ANSWERED=0
+wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet, $5 prior answers
+  local t=0 dialogs_answered="${5:-0}"
+  WAIT_READY_DIALOGS_ANSWERED="$dialogs_answered"
   while [ "$t" -lt "$2" ]; do
     if [ -n "${3:-}" ] && dialog_find "$1" && [ -z "$DIALOG_MATCH_SAFE" ]; then
-      if [ "$operator_reported" -eq 0 ]; then
-        printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on known operator dialog '$DIALOG_MATCH_ID' — answer it with 'gang attach'; Gangline will not make this security decision")" >&2
-        operator_reported=1
-      fi
+      [ "${4:-}" = quiet ] \
+        || printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on known operator dialog '$DIALOG_MATCH_ID' — answer it with 'gang attach'; Gangline will not make this security decision")" >&2
       # Recognition never makes an operator-owned screen a composer. In
       # particular, a collar with no collar_input must not fall through to
       # input_painted's intentionally permissive startup default.
-      sleep 1; t=$((t + 1))
-      continue
+      return 5
     # At most two distinct boot dialogs may consume this same boot budget.
     # Recurrence cannot turn hitch into a reconciliation loop.
     elif [ -n "${3:-}" ] && [ "$dialogs_answered" -lt 2 ] \
       && dialog_triage "$1" "$3" unlocked; then
       dialogs_answered=$((dialogs_answered + 1))
+      WAIT_READY_DIALOGS_ANSWERED="$dialogs_answered"
       sleep 1; t=$((t + 1))
       continue
     fi
     if input_painted "$1"; then
-      if pane_stable "$1"; then
-        [ "$operator_reported" -eq 0 ] && [ "$prompt_reported" -eq 0 ] \
-          || printf '%s\n' "$(colour "$C_OK" "'$3' now has an input box; hitch is continuing")" >&2
-        return 0
-      fi
-    elif [ -n "${3:-}" ] && [ "$prompt_reported" -eq 0 ] \
-      && boot_prompt_visible "$1"; then
-      printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on a first-run prompt — answer it with 'gang attach'; hitch will keep waiting for its input box")" >&2
-      prompt_reported=1
+      pane_stable "$1" && return 0
+    elif [ -n "${3:-}" ] && boot_prompt_visible "$1"; then
+      [ "${4:-}" = quiet ] \
+        || printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on a first-run prompt — answer it with 'gang attach'; hitch will keep waiting for its input box")" >&2
+      return 5
     fi
     sleep 1; t=$((t + 1))
   done
@@ -2603,7 +2599,31 @@ binary_skew_note() { # $1 = window, $2 = current id; print an identity warning
   fi
 }
 
-on_exit() { lock_release; }
+HITCH_UP_MODE=0
+HITCH_ATTACH_PID=""
+HITCH_ATTACH_STATE=""
+HITCH_SWITCHED=0
+hitch_up_state_clear() {
+  [ -n "$HITCH_ATTACH_STATE" ] || return 0
+  rm -f -- "$HITCH_ATTACH_STATE/client" "$HITCH_ATTACH_STATE/exit"
+  rmdir -- "$HITCH_ATTACH_STATE" 2>/dev/null || true
+  HITCH_ATTACH_STATE=""
+}
+
+hitch_up_abort() { # detach only the external client this invocation created
+  local client=""
+  if [ -n "$HITCH_ATTACH_STATE" ] && [ -s "$HITCH_ATTACH_STATE/client" ]; then
+    client="$(cat "$HITCH_ATTACH_STATE/client")"
+    [ -z "$client" ] || tmux detach-client -t "$client" 2>/dev/null || true
+  fi
+  if [ -n "$HITCH_ATTACH_PID" ]; then
+    wait "$HITCH_ATTACH_PID" 2>/dev/null || true
+    HITCH_ATTACH_PID=""
+  fi
+  hitch_up_state_clear
+}
+
+on_exit() { lock_release; hitch_up_abort; }
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
   if declare -F collar_input >/dev/null; then collar_input "$1"
@@ -2622,20 +2642,6 @@ box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a 
   [ -n "$GANG_QUEUED_REGEX" ] || return 1
   re_match GANG_QUEUED_REGEX "$1"
 }
-
-# Set by send_live for the mid-turn steering path: whether this delivery may
-# land in the harness's own queue, and whether it did. Declared here because
-# `set -u` makes an unset read a crash rather than a fallback.
-MIDTURN_PARK=0
-SUBMIT_PARKED=0
-# Whether the caller asked to retire its own earlier waiting messages. The
-# native queue is anonymous, so no keystroke gang can send retracts a body from
-# it; the park path reads this and refuses rather than half-honouring the flag.
-SEND_SUPERSEDE=0
-# --live-only is the explicit probe for a delivery that must reach the session
-# now. A park is exactly what it is asking gang not to do, so it never takes
-# the steering path.
-SEND_LIVE_ONLY=0
 
 LOCK_PATH=""
 lock_release() { [ -z "$LOCK_PATH" ] || rm -f -- "$LOCK_PATH"; LOCK_PATH=""; }
@@ -2710,13 +2716,15 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # every refusal on the delivery path happens before a single keystroke, so
 # nothing was typed and the body is still the sender's. `send` parks that exact
 # nonce-bound envelope beside the delivery locks by default, and the target's
-# own native Stop event carries it through the same verified path at the next
-# turn boundary.
+# own native boundary carries it through the same verified path. Ordinary mail
+# drains at Stop; hitch remains foreground to drain a startup contract once the
+# first composer appears.
 #
-# This is not a retry manager: nothing polls, nothing schedules, and nothing
-# watches the target. The only thing that ever drains a spool is a turn
-# boundary the harness itself announces. A collar with no Stop hook still gets
-# a live attempt, but a refusal cannot be parked where nothing would drain it.
+# The spool is not a retry manager: ordinary mail drains only at a native
+# boundary the harness announces. The pre-turn exception remains inside the
+# foreground hitch command that already observes boot; no watcher survives it.
+# A collar with no Stop hook still gets a live send attempt, but an ordinary
+# refusal cannot be parked where nothing would drain it.
 #
 # Entries are named by a fixed-width nanosecond stamp, so the glob that reads
 # them is already oldest-first. They live under a token minted into the target's
@@ -2880,7 +2888,8 @@ spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting 
   done
 }
 
-spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
+SPOOL_ENTRY=""
+spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENTRY
   local stamp entry tmp
   spool_establish "$1"
   stamp="$(spool_stamp)"
@@ -2894,6 +2903,7 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment
   # Committed by rename, so a drain can never read a half-written entry.
   mv -- "$tmp" "$entry" \
     || die "cannot commit a spooled message into $SPOOL_DIR"
+  SPOOL_ENTRY="$entry"
 }
 
 ARCHIVE_DIR=""
@@ -2943,25 +2953,48 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
 }
 
 spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
-  local e claim rc err failed bundle="" frags="" claims="" n=0 nl=$'\n'
-  spool_existing "$1" || return 0
-  [ -d "$SPOOL_DIR" ] || return 0
-  # CLAIMED FIRST, ALL OF THEM. The claim rename is what makes ownership
-  # atomic, and it must span the whole bundle: an entry left live while its
-  # neighbours are being delivered is one a second drain can send again.
+  local e claim rc err failed busy_rc=0 bundle="" frags="" claims="" n=0 nl=$'\n'
+  spool_existing "$1" || return 4
+  [ -d "$SPOOL_DIR" ] || return 4
+  # LOCK BEFORE THE FIRST CLAIM. The queue is one oldest-first submission, so
+  # two native edges must not split its files into two bundles before inject
+  # serializes only their pastes. Every ordinary sender uses this same lock.
+  lock_pane "$1"
+  # READ UNDER THE SAME HOLD AS THE CLAIM. A sender can finish between a
+  # boundary's readiness check and this worker taking the lock; treating that
+  # moving target as idle would recreate the mid-turn composer handoff this
+  # spool exists to avoid. Foreground startup drains use this function too, so
+  # the invariant cannot drift between the two paths.
+  busy "$1" || busy_rc=$?
+  case "$busy_rc" in
+    1) ;;
+    0) printf 'spool drain stopped before claiming: the target still has a live turn; the spool remains waiting\n' >&2
+       lock_release
+       return 3 ;;
+    2) printf 'spool drain stopped before claiming: the target is not provably idle; the spool remains waiting\n' >&2
+       lock_release
+       return 3 ;;
+    *) die "internal: busy returned unknown verdict $busy_rc" ;;
+  esac
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
     claim="$SPOOL_DIR/sending-${e##*/}"
-    mv -- "$e" "$claim" 2>/dev/null || continue   # another drain took it first
+    mv -- "$e" "$claim" 2>/dev/null || continue
     spool_read "$claim"
     bundle="${bundle:+$bundle$nl$nl}$SPOOL_BODY"
     frags="${frags:+$frags, }$SPOOL_FRAG"
     claims="${claims:+$claims$nl}$claim"
     n=$((n + 1))
   done
-  [ "$n" -gt 0 ] || return 0
+  if [ "$n" -eq 0 ]; then
+    lock_release
+    return 4
+  fi
   rc=0
-  err="$(inject "$1" "$bundle" 2>&1)" || rc=$?
+  # The nested shell captures inject's diagnostic. It must not inherit the
+  # parent's EXIT trap: this worker owns the lock until claims are retired or
+  # returned, and inject's `locked` mode deliberately leaves it in place.
+  err="$(trap - EXIT; inject "$1" "$bundle" "" locked 2>&1)" || rc=$?
   case "$rc" in
     0) while IFS= read -r claim; do
          [ -n "$claim" ] || continue
@@ -2983,6 +3016,7 @@ $claims
 EOF
        printf 'spool drain stopped with %s message(s) still waiting: %s\n' \
          "$n" "${err##*$'\n'}" >&2
+       lock_release
        return 3 ;;
     *) # Unverified: the bundle may or may not have landed, so every entry in it
        # is held where a person can read it rather than sent again.
@@ -2995,11 +3029,13 @@ $claims
 EOF
        printf "a bundle of %s spooled message(s) was not verified and is held in %s (%s): %s\n" \
          "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
+       lock_release
        return 1 ;;
   esac
+  lock_release
 }
 
-spool_drain_after_stop() { # $1 window id, $2 collar
+spool_drain_after_event() { # $1 window id, $2 collar
   local ready=0 box_rc=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   load_collar "$2"
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
@@ -3012,35 +3048,33 @@ spool_drain_after_stop() { # $1 window id, $2 collar
     # healthy retry strands the queue behind every later boundary. Keep every
     # entry live and unclaimed, but leave a failure fact status can expose.
     if ! declare -F collar_input >/dev/null; then
-      printf "collar '%s' declares no collar_input; the native turn boundary exposed no composer Gangline can address, so no delivery was attempted and the spool remains waiting\n" \
+      printf "collar '%s' declares no collar_input; the native delivery boundary exposed no composer Gangline can address, so no delivery was attempted and the spool remains waiting\n" \
         "$2" >&2
       return 1
     fi
     collar_input "$1" >/dev/null || box_rc=$?
     [ "$box_rc" -ne 0 ] \
       || return 3
-    printf 'the native turn boundary did not expose a readable composer (collar_input status %s); no delivery was attempted and the spool remains waiting\n' \
+    printf 'the native delivery boundary did not expose a readable composer (collar_input status %s); no delivery was attempted and the spool remains waiting\n' \
       "$box_rc" >&2
     return 1
   fi
   spool_drain "$1"
 }
 
-spool_drain_dispatch() { # $1 window id, $2 collar; called only by Stop
-  # No in-progress flag. Concurrent drains are already excluded by the pane
-  # delivery lock: a second one refuses there, returns with everything still
-  # spooled, and the next turn boundary is the next attempt. A flag would add
-  # nothing except a state that outlives a killed worker and wedges the spool
-  # silently — status would keep reporting messages that nothing would ever
-  # drain again.
+spool_drain_dispatch() { # $1 window id, $2 collar; called only by native boundaries
+  # No in-progress flag. The pane lock is taken before any claim, so a crossed
+  # worker refuses without touching the queue. A flag would add a state that
+  # outlives a killed worker and wedges the spool silently.
   [ "$(spool_count "$1")" -gt 0 ] || return 0
   (
     trap '' HUP INT TERM
     local err="" rc=0
-    err="$(spool_drain_after_stop "$1" "$2" 2>&1)" || rc=$?
+    err="$(spool_drain_after_event "$1" "$2" 2>&1)" || rc=$?
     case "$rc" in
       0) tmux set-option -uw -t "$1" @gl_spool_failed 2>/dev/null || true ;;
       3) ;;
+      4) ;;
       *) err="${err##*$'\n'}"
          [ -n "$err" ] || err="the spool drain failed"
          tmux set-option -w -t "$1" @gl_spool_failed "$err" 2>/dev/null || true ;;
@@ -3050,7 +3084,7 @@ spool_drain_dispatch() { # $1 window id, $2 collar; called only by Stop
   disown
 }
 
-spool_stop() { # $1 = the pane a native Stop fired in, $2 = collar
+spool_event() { # $1 = the pane a native drain boundary fired in, $2 = collar
   local win
   # The drain delivers, and delivery serializes on the WINDOW's lock. A drain
   # holding a lock named after the firing pane would not exclude an ordinary
@@ -3350,7 +3384,7 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 }
 
 inject() { # $1 window, $2 text, $3 head, $4 locked,
-           # $5 witness: screen if UI proves submit, queued if a park is a landing
+           # $5 witness: screen if UI proves submit, queued for compaction input
   local buf="gang-$$" frag before before_rc=0 after tname keep_lock=0
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
@@ -3413,12 +3447,9 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     # own queue is where it is meant to wait. Parking is the landing here, not a
     # failed delivery.
     queued) submit_verify "$1" "$after" "$frag" paste park_ok ;;
-    # A peer's message typed during a witnessed turn. The harness parks it and
-    # drains it at its own next boundary, so a park is a landing here too — but
-    # a sender was told something, which the compaction continuation's author
-    # never was. That is why this mode watches for the drain instead of
-    # stopping at the park, and reports which of the two it saw.
-    steer) submit_verify "$1" "$after" "$frag" paste steer ;;
+    # Ordinary delivery accepts only a verified submission. A harness queue is
+    # recovery state, not a landing: busy `park` collars spool before reaching
+    # this function, so a queued reading here is unexpected and fails closed.
     '') submit_verify "$1" "$after" "$frag" paste ;;
     *) die "internal: inject received unknown witness mode '$5'" ;;
   esac
@@ -3436,8 +3467,7 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall, $5 park_ok to accept a parked landing,
-                  # steer to watch a park through to its drain
+                  # $4 paste|recall, $5 park_ok to accept a parked landing
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
   tname="$(agent_name_of "$1")"
   case "$4" in
@@ -3479,52 +3509,6 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # harness's own parked-input hint. A parked message renders in the
   # transcript exactly like a submitted one, so this composer reading is the
   # one place the two states differ.
-  # QUEUED IS NOT DELIVERED; QUEUED-THEN-WATCHED-TO-DRAIN IS. The steering path
-  # types into a witnessed turn, where this harness cannot submit at all — it
-  # can only park. So an empty composer proves NOTHING here, and the two
-  # readings that mean something are the hint appearing and the hint clearing
-  # again. Seeing both is a stronger chain than an ordinary delivery's, which
-  # only ever sees the box empty. Seeing neither is a harness gang no longer
-  # models, and it fails loudly rather than reporting a submission.
-  if [ "${5:-}" = steer ]; then
-    local slooks=0 parked_box=""
-    while :; do
-      if box_queued "$posted"; then
-        [ -n "$parked_box" ] || parked_box="$2"
-        # Recorded the moment gang knows a park happened AND which body it
-        # parked — the same instant, and the only one, that submit_parked
-        # records it on the failing path.
-        tmux set-option -w -t "$1" @gl_parked "$2" 2>/dev/null || true
-        tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
-      elif [ -n "$parked_box" ]; then
-        # The hint was there and is gone: the harness drained its queue into
-        # the session while gang was watching. That is the whole chain.
-        tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
-        tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
-        stage_forget "$1"
-        return 0
-      fi
-      slooks=$((slooks + 1))
-      [ "$slooks" -lt "${GANG_STEER_LOOKS:-8}" ] || break
-      sleep 0.4
-      posted="$(landing_zone "$1")" || {
-        stage_record "$1" "'$3' was $verb and Enter sent into a running turn, but the box stopped reading back — whether it entered the session or sits in the harness's queue is unknown" ""
-        die "submit NOT verified: the input box of $tname stopped reading back while gang was watching its queue — whether '$3' entered the session or sits in the harness's queue is unknown (gang capture $tname)"
-      }
-    done
-    if [ -z "$parked_box" ]; then
-      # Never parked, and this harness cannot have submitted mid-turn. Gang is
-      # looking at a rendering it does not model — most likely the collar's
-      # queue hint no longer matches — and it says so instead of inventing a
-      # delivery out of an empty box.
-      stage_record "$1" "'$3' was $verb and Enter sent into a running turn, and the harness's declared queue hint never appeared — gang cannot tell whether it entered the session" ""
-      die "submit NOT verified: '$3' was $verb into the input box of $tname during a running turn and the harness's declared parked-input hint (GANG_QUEUED_REGEX) never appeared. Mid-turn input on this collar can only park, so an empty box is not proof of submission — the declared evidence has stopped matching this harness version (gang capture $tname)"
-    fi
-    # Still parked at the bound. Not delivered, not failed: accepted by the
-    # harness's queue, with the body recorded so a later read can close it.
-    SUBMIT_PARKED=1
-    return 0
-  fi
   if [ -n "$GANG_QUEUED_REGEX" ] && [ "${5:-}" != park_ok ]; then
     local qlooks=0
     while :; do
@@ -3930,6 +3914,38 @@ effort_levels() { # print the levels the collar says this harness takes
   GANG_MODEL="$1" sh -c "$GANG_EFFORT_CMD" 2>/dev/null
 }
 
+hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
+  local channel notify attach_rc=0
+  [ "$HITCH_UP_MODE" -eq 1 ] || return 0
+  if [ -n "${TMUX:-}" ]; then
+    tmux switch-client -t "=$SESSION" \; select-window -t "$1" \
+      || die "up: could not switch to the startup prompt"
+    HITCH_SWITCHED=1
+  else
+    HITCH_ATTACH_STATE="$(mktemp -d "${TMPDIR:-/tmp}/gang-up-attach.XXXXXX")" \
+      || die "up: cannot create transient state for its tmux client"
+    channel="gang-up-attach-$(mint_nonce)"
+    notify="printf '%s\\n' '#{client_name}' > '$HITCH_ATTACH_STATE/client'; tmux wait-for -S '$channel'"
+    (
+      local rc=0
+      tmux attach -t "=$SESSION" \; select-window -t "$1" \; run-shell "$notify" \
+        || rc=$?
+      printf '%s\n' "$rc" > "$HITCH_ATTACH_STATE/exit"
+      tmux wait-for -S "$channel" 2>/dev/null || true
+      exit "$rc"
+    ) &
+    HITCH_ATTACH_PID=$!
+    tmux wait-for "$channel"
+    if [ ! -s "$HITCH_ATTACH_STATE/client" ]; then
+      [ ! -s "$HITCH_ATTACH_STATE/exit" ] \
+        || attach_rc="$(cat "$HITCH_ATTACH_STATE/exit")"
+      hitch_up_abort
+      die "up: tmux could not attach a client to the startup prompt (status $attach_rc)"
+    fi
+    trap 'on_exit' EXIT
+  fi
+}
+
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 collar_new_arg=0 collar_old_arg=0 pane_dead lookup_rc=0
   local lights=""
@@ -4109,14 +4125,66 @@ cmd_hitch() {
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" recovery
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" recovery boot_dialogs=0
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
-  wait_ready "$id" "$boot" "$name" || ready=$?
+  wait_ready "$id" "$boot" "$name" "" "$boot_dialogs" || ready=$?
+  boot_dialogs="$WAIT_READY_DIALOGS_ANSWERED"
   recovery="most likely a first-run prompt gang does not recognize. Answer it with 'gang attach'; once the input box appears the agent is healthy — deliver its contract with 'gang send --to $name' rather than dropping it. Drop and re-hitch only if the box never appears."
   case "$ready" in
     0) ;;
+    1) die "'$name' is running but its input box did not become ready, so its startup message was not delivered — $recovery" ;;
     2) die "'$name' is up but is showing something other than its input box, so its startup message was not delivered — $recovery" ;;
-    *) die "'$name' is running but its input box did not become ready, so its startup message was not delivered — $recovery" ;;
+    5)
+         # COMMIT BEFORE REPORTING ACCEPTANCE. Hitch remains the foreground
+         # owner of this startup: it keeps observing through the same universal
+         # tty surface until the composer appears, so delivery does not depend
+         # on a hook the operator may decline at the native security gate. If
+         # hitch is interrupted, the attributed envelope remains inspectable in
+         # the ordinary spool instead of being dropped.
+         envelope hitch "$msg"
+         spool_write "$id" hitch "$ENVELOPE" "startup contract"
+         local startup_entry="$SPOOL_ENTRY" startup_dir="$SPOOL_DIR" startup_base
+         startup_base="${startup_entry##*/}"
+         local startup_action="answer the observed native startup prompt with 'gang attach'"
+         [ "$HITCH_UP_MODE" -eq 0 ] \
+           || startup_action="answer the observed native startup prompt in the tmux client this up invocation opens"
+         printf '%s\n%s\n' \
+           "$(colour "$C_OK" "queued startup contract for $name — accepted, not yet in the session")" \
+           "$(colour "$C_DIM" "($(spool_count "$id") waiting) $startup_action; this hitch will deliver the contract when the composer appears, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
+         hitch_up_attach "$id"
+         local follow_boot="$boot"
+         [ "$follow_boot" -gt 0 ] || follow_boot=1
+         while :; do
+           ready=1
+           while [ "$ready" -ne 0 ]; do
+             ready=0
+             wait_ready "$id" "$follow_boot" "$name" quiet "$boot_dialogs" || ready=$?
+             boot_dialogs="$WAIT_READY_DIALOGS_ANSWERED"
+             [ "$ready" -ne 5 ] || sleep 1
+           done
+           delivery_rc=0
+           delivery_err="$(spool_drain "$id" 2>&1)" || delivery_rc=$?
+           case "$delivery_rc" in
+             0) break ;;
+             3) continue ;;
+             4) if ! spool_existing "$id" || [ "$SPOOL_DIR" != "$startup_dir" ] \
+                   || [ ! -d "$startup_dir" ]; then
+                  fail 1 "startup contract to '$name' cannot be accounted for after its composer appeared: its original spool is no longer attached to the window"
+                fi
+                if [ -e "$startup_entry" ] || [ -e "$startup_dir/sending-$startup_base" ] \
+                  || [ -e "$startup_dir/failed-$startup_base" ]; then
+                  fail 1 "startup contract to '$name' is still held in its spool after another delivery worker crossed this hitch"
+                fi
+                break ;;
+             *) delivery_err="${delivery_err#gang: }"
+                fail "$delivery_rc" "startup contract to '$name' remains in spool state after its composer appeared: ${delivery_err:-delivery failed without an error}" ;;
+           esac
+         done
+         glyph_write "$id" "-busy-"
+         [ "$HITCH_UP_MODE" -eq 1 ] \
+           || printf '%s\n' "$(colour "$C_OK" "delivered queued startup contract to $name")"
+         return 0 ;;
+    *) die "internal: wait_ready returned unknown verdict $ready" ;;
   esac
   envelope hitch "$msg"
   delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)" || delivery_rc=$?
@@ -4129,9 +4197,20 @@ cmd_hitch() {
 }
 
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
-  local name="lead" id rc=0
+  local name="lead" id rc=0 attach_rc=0
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
+  HITCH_UP_MODE=1
+  HITCH_ATTACH_PID=""
+  HITCH_ATTACH_STATE=""
+  HITCH_SWITCHED=0
   cmd_hitch "$name" -r lead "$@"
+  if [ -n "$HITCH_ATTACH_PID" ]; then
+    wait "$HITCH_ATTACH_PID" || attach_rc=$?
+    HITCH_ATTACH_PID=""
+    hitch_up_state_clear
+    return "$attach_rc"
+  fi
+  [ "$HITCH_SWITCHED" -eq 0 ] || return 0
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "up: '$name' vanished between hitch and attach"; }
   if [ -n "${TMUX:-}" ]; then
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
@@ -4139,12 +4218,10 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
-send_live() { # $1 = target name, $2 = locked when the caller already holds the
-              # pane lock; AGENT_ID and ENVELOPE set.
-              # 3 = refused, nothing typed. 4 = typed, and the harness parked it
-              # in its own queue: accepted, not yet in the session.
+send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
+              # AGENT_ID and ENVELOPE set.
+              # 3 = refused, nothing typed
   local busy_rc=0 box="" keep_lock=0
-  MIDTURN_PARK=0 SUBMIT_PARKED=0
   # THE CALLER MAY OWN THE LOCK. Where the queue choice and the claim have to be
   # one critical section, the lock is taken before this function and outlives
   # it: a command substitution's exit does not fire the EXIT trap that would
@@ -4175,39 +4252,9 @@ send_live() { # $1 = target name, $2 = locked when the caller already holds the
        # saying so, because there the message really was not taken.
        case "${GANG_MIDTURN_INPUT:-}" in
          1) ;;
-         park)
-           # --live-only asked for a delivery that must not park, and this
-           # branch can only park. Refusing keeps that probe's answer honest:
-           # it prints its own NOT-parked line and nothing was typed.
-           [ "$SEND_LIVE_ONLY" -eq 0 ] \
-             || refuse "'$1' is not safely reachable mid-turn"
-           # A harness that parks mid-turn input in its own queue gives gang a
-           # landing it can watch rather than a submission it cannot prove. Two
-           # things must be true first, and both are read under the lock this
-           # function is holding, so the answer cannot change between the check
-           # and the typing.
-           #
-           # THE SPOOL IS THE ORDERING AUTHORITY. A body typed into the harness
-           # now would drain at the target's next tool batch, while anything
-           # already spooled waits for its Stop — so parking ahead of a waiting
-           # message delivers the newer one first. Refusing here is not a
-           # failure: it spools this message behind the older ones, in order.
-           [ "$(spool_count "$AGENT_ID")" -eq 0 ] \
-             || refuse "'$1' already has spooled messages waiting, and they drain at its next turn boundary — typing this one into its queue now would reach it first. Nothing was typed and the body is still the sender's"
-           # ONE OUTSTANDING BODY. The harness's queue hint says something is
-           # parked, never what or how many, and the recall key returns the
-           # whole queue at once — so a second body would leave gang unable to
-           # say which one its record names.
-           [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked 2>/dev/null)" ] \
-             || refuse "'$1' already has a message parked in its harness queue that gang has not yet watched drain — a second one would leave gang unable to say which body its record names. Nothing was typed and the body is still the sender's"
-           # --supersede retires this sender's earlier waiting messages. Gang
-           # can do that to its own spool, where every entry is attributed;
-           # the harness's queue is anonymous and its recall key returns the
-           # whole of it, so nothing gang types could retract one body from it.
-           # Spooling instead keeps the flag's promise exactly.
-           [ "$SEND_SUPERSEDE" -eq 0 ] \
-             || refuse "'$1' is mid-turn and --supersede cannot be honoured in a harness queue: gang can retire an attributed message from its own spool, but nothing it types retracts one body from the harness's anonymous queue. Nothing was typed and the body is still the sender's"
-           MIDTURN_PARK=1 ;;
+         park) [ "${3:-}" != live-only ] \
+                 || refuse "'$1' is not safely reachable mid-turn; --live-only did not park it"
+               refuse "'$1' is mid-turn; its attributed Gangline spool is the only landing that requires no composer keystroke" ;;
          *) refuse "'$1' is not safely reachable mid-turn" ;;
        esac ;;
     2) # Could-not-determine is not busy. An expired witness is stale owned
@@ -4241,15 +4288,6 @@ send_live() { # $1 = target name, $2 = locked when the caller already holds the
     1) ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
-  if [ "$MIDTURN_PARK" -eq 1 ]; then
-    inject "$AGENT_ID" "$ENVELOPE" "" locked steer
-    [ "$keep_lock" -eq 1 ] || lock_release
-    # 4 is neither delivered nor refused: the body was typed and the harness
-    # took it into its own queue. The caller reports that as its own state and
-    # must not spool a second copy of it.
-    [ "$SUBMIT_PARKED" -eq 0 ] || return 4
-    return 0
-  fi
   inject "$AGENT_ID" "$ENVELOPE" "" locked
   [ "$keep_lock" -eq 1 ] || lock_release
   # No @gl_turn write exists anywhere on this path — not here, and not in the
@@ -4292,8 +4330,7 @@ cmd_send() {
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
   envelope "$SEND_FROM" "$body"
   if [ "$live_only" -eq 1 ]; then
-    SEND_LIVE_ONLY=1
-    send_live "$name"
+    send_live "$name" "" live-only
     printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
   fi
@@ -4307,7 +4344,6 @@ cmd_send() {
   # about to commit. A command substitution's exit does not fire the EXIT trap,
   # so the lock taken here survives the call and covers both.
   lock_pane "$AGENT_ID"
-  SEND_SUPERSEDE="$supersede"
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
   # keystroke, so the body is provably still the sender's; a hard failure means
   # something was already typed and its fate is unknown, and parking that would
@@ -4318,18 +4354,6 @@ cmd_send() {
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
-       return 0 ;;
-    4) # THE THIRD STATE. Typed, and the harness took it into its own queue
-       # while gang watched. Not delivered — gang did not see it enter the
-       # session — and not failed, because the body is in the harness's hands
-       # rather than lost. Exit 0: the sender must not send it again, exactly
-       # as for a spooled message.
-       [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
-       lock_release
-       [ -z "$err" ] || printf '%s\n' "$err" >&2
-       printf '%s\n%s\n' \
-         "$(colour "$C_OK" "parked in the harness queue of $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
-         "$(colour "$C_DIM" "(gang watched the harness take it; it enters the session at that agent's next tool batch or turn boundary, and nothing further is needed from you. Until then 'gang roster' shows it parked.)")"
        return 0 ;;
     3) ;;
     *) lock_release
@@ -5146,9 +5170,9 @@ cmd_status() {
   spooled="$(spool_count "$AGENT_ID")"
   if [ "$spooled" -ne 0 ]; then
     if age="$(spool_oldest_age "$AGENT_ID")"; then
-      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary; the oldest has waited $(human_seconds "$age")")"
+      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next verified delivery opportunity; the oldest has waited $(human_seconds "$age")")"
     else
-      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next turn boundary")"
+      printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next verified delivery opportunity")"
     fi
   fi
   held="$(spool_held "$AGENT_ID")"
@@ -5541,7 +5565,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           glyph_write "$TMUX_PANE" "~idle~"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$collar"
-          spool_stop "$TMUX_PANE" "$collar" ;;
+          spool_event "$TMUX_PANE" "$collar" ;;
     PreCompact) compaction_state_write "$TMUX_PANE" open
                 # The harness names its own cause in the payload, so gang never
                 # has to infer the origin from how the compaction was started.
@@ -5559,7 +5583,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
                  # A compaction produces no Stop, so without this the spool a
                  # correctly-refused delivery just filled would wait for an
                  # unrelated turn boundary that may never come.
-                 spool_stop "$TMUX_PANE" "$collar" ;;
+                 spool_event "$TMUX_PANE" "$collar" ;;
     PermissionRequest) occupied_raise_write "$TMUX_PANE"
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;

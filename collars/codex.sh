@@ -247,14 +247,14 @@ GANG_INTERRUPT_KEY="Escape"
 # /<session-flags>/config.toml:<event>:0:0 — it does not move with the
 # checkout, which is what makes a pre-seeded trust table addressable at all.
 # What varies is the VALUE: a hash over the hook COMMAND, which embeds $ROOT,
-# and over the EVENT, so the four events wired above need four distinct hashes.
+# and over the EVENT, so each event wired above needs its own hash.
 # It is deterministic — no salt, no nonce; the same root recomputed in a fresh
 # sandbox reproduces the same bytes. A checkout whose commands have been
 # trusted once boots straight to its composer; a fresh clone, a moved checkout,
 # a container, or any edit to the command above meets this first:
 #
 #     Hooks need review
-#     4 hooks are new or changed.
+#     N hooks are new or changed.
 #     Hooks can run outside the sandbox after you trust them.
 #   › 1. Review hooks
 #     2. Trust all and continue
@@ -269,11 +269,10 @@ GANG_INTERRUPT_KEY="Escape"
 # spool drain, no deferred self-compaction, gang waiting on turn boundaries
 # that never arrive.
 #
-# What gang does today: GANG_OCCUPIED_REGEX matches this menu, so the window
-# reads !occupied! (authority unknown), delivery is refused and hitch fails.
-# Safe, and unhelpful — the operator sees a state word rather than the one-line
-# instruction, which is to run codex once in this checkout and choose "Review
-# hooks".
+# GANG_OCCUPIED_REGEX matches this menu, so the window reads !occupied!
+# (authority unknown) and no key is sent. Hitch parks its startup contract,
+# remains in the foreground, and delivers through the composer after either
+# operator choice; it never assumes configured hooks were trusted.
 #
 # A registry that NAMED such screens without declaring a keystroke was decided
 # against: see docs/DECISIONS.md "No name-only dialog registry".

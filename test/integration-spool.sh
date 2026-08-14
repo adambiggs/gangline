@@ -41,6 +41,11 @@ else
 fi
 contains "because live-only never parks" "$super_out" "--live-only never parks"
 
+cross_ready_one="test-cross-ready-one-$$"
+cross_ready_two="test-cross-ready-two-$$"
+cross_release="test-cross-release-$$"
+cross_holder_claimed="test-cross-holder-claimed-$$"
+cross_holder_release="test-cross-holder-release-$$"
 cat > "$RUN_ROOT/collars/spoolable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -53,6 +58,15 @@ collar_input() { # once per armed drain, report what the spool and the lock look
   local lock dir live=no holder="" waiting=0 f
   [ ! -f "$RUN_ROOT/unreadable-drain" ] || return 1
   lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
+  if [ -f "$RUN_ROOT/cross-block" ]; then
+    if mkdir "$RUN_ROOT/cross-slot-one" 2>/dev/null; then
+      tmux wait-for -S "$cross_ready_one"
+    else
+      tmux wait-for -S "$cross_ready_two"
+    fi
+    tmux wait-for -L "$cross_release"
+    tmux wait-for -U "$cross_release"
+  fi
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
     rm -f "$RUN_ROOT/claim-watch"
     dir="$GANG_LOCK_DIR/spool/\$(tmux show-options -wqv -t "\$1" @gl_spool)"
@@ -61,6 +75,16 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     [ -n "\$holder" ] && kill -0 "\$holder" 2>/dev/null && live=yes
     printf 'holder-alive=%s claimed=%s\n' "\$live" "\$waiting" \
       > "$RUN_ROOT/claim-observed"
+  fi
+  if [ -f "$RUN_ROOT/cross-holder" ] && [ -L "\$lock" ]; then
+    rm -f "$RUN_ROOT/cross-holder"
+    dir="$GANG_LOCK_DIR/spool/\$(tmux show-options -wqv -t "\$1" @gl_spool)"
+    waiting=0
+    for f in "\$dir"/sending-*; do [ -f "\$f" ] && waiting=\$((waiting + 1)); done
+    printf 'claimed=%s\n' "\$waiting" > "$RUN_ROOT/cross-holder-observed"
+    tmux wait-for -S "$cross_holder_claimed"
+    tmux wait-for -L "$cross_holder_release"
+    tmux wait-for -U "$cross_holder_release"
   fi
   spool_real_input "\$1"
 }
@@ -226,6 +250,90 @@ bundle_order="$(printf '%s\n' "$bundle_pane" |
 equal "the three-message bundle stays in stamp order" \
   "MARK_BUNDLE_ONE MARK_BUNDLE_TWO MARK_BUNDLE_THREE " "$bundle_order"
 
+# TWO NATIVE BOUNDARIES CROSS BEFORE DRAIN READINESS. Both workers pass the
+# dispatcher's non-empty precheck and are released together. The winner is held
+# inside inject while the loser finishes, proving the loser touched no entry;
+# an mv witness independently proves every claim happened under the pane lock.
+tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
+printf 'MARK_CROSS_ONE' |
+  "$GANG" send --to parker --from tester --stdin >/dev/null
+printf 'MARK_CROSS_TWO' |
+  "$GANG" send --to parker --from other --stdin >/dev/null
+printf 'MARK_CROSS_THREE' |
+  "$GANG" send --to parker --from third --stdin >/dev/null
+tmux send-keys -t "$parker_id" C-u
+cross_lock="$GANG_LOCK_DIR/$(printf '%s' "$parker_id" | tr -c 'A-Za-z0-9' '_').lock"
+cross_log="$RUN_ROOT/cross-claims"
+real_mv="$(command -v mv)"
+cat > "$RUN_ROOT/bin/mv" <<SH
+#!/bin/sh
+dest=""
+for arg do dest="\$arg"; done
+case "\$dest" in
+  "\${GANG_CROSS_SPOOL:-}"/sending-*)
+    if [ -L "\${GANG_CROSS_LOCK:-}" ]; then
+      printf 'locked\n' >> "\$GANG_CROSS_LOG"
+    else
+      printf 'unlocked\n' >> "\$GANG_CROSS_LOG"
+    fi ;;
+esac
+exec "$real_mv" "\$@"
+SH
+chmod +x "$RUN_ROOT/bin/mv"
+: > "$RUN_ROOT/cross-block"
+: > "$RUN_ROOT/cross-holder"
+rm -rf -- "$RUN_ROOT/cross-slot-one"
+tmux wait-for -L "$cross_release"
+tmux wait-for -L "$cross_holder_release"
+tmux wait-for "$cross_ready_one" &
+cross_ready_one_waiter=$!
+tmux wait-for "$cross_ready_two" &
+cross_ready_two_waiter=$!
+tmux wait-for "$cross_holder_claimed" &
+cross_holder_waiter=$!
+tmux wait-for "gang-spool-drain-$parker_id" &
+cross_loser_waiter=$!
+cross_hook_env=(
+  "GANG_CROSS_LOCK=$cross_lock"
+  "GANG_CROSS_SPOOL=$parker_spool_dir"
+  "GANG_CROSS_LOG=$cross_log"
+  "TMUX_PANE=$parker_pane_id"
+)
+printf '%s' '{"hook_event_name":"Stop"}' |
+  env "${cross_hook_env[@]}" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Stop"}' |
+  env "${cross_hook_env[@]}" "$GANG" hook >/dev/null
+wait "$cross_ready_one_waiter"
+wait "$cross_ready_two_waiter"
+rm -f -- "$RUN_ROOT/cross-block"
+tmux wait-for -U "$cross_release"
+wait "$cross_holder_waiter"
+wait "$cross_loser_waiter"
+contains "one crossed worker owns the whole queue before the loser finishes" \
+  "$(cat "$RUN_ROOT/cross-holder-observed")" "claimed=3"
+# source-guard: producer@9213715b1b14: the fixture mv shim records the pane-lock symlink at each claim rename, and no other path writes this log
+equal "every crossed-dispatch claim occurs under the pane lock" "3" \
+  "$(grep -c '^locked$' "$cross_log")"
+excludes "no crossed worker claims before owning the pane lock" \
+  "$(cat "$cross_log")" "unlocked"
+tmux wait-for "gang-spool-drain-$parker_id" &
+cross_winner_waiter=$!
+tmux wait-for -U "$cross_holder_release"
+wait "$cross_winner_waiter"
+rm -f -- "$RUN_ROOT/bin/mv"
+cross_pane="$(pane parker)"
+# source-guard: producer@e10d2a56bcab: the three unique markers above exist only in the queue released through the crossed workers, whose pane lock and claims were observed directly
+contains "the crossed workers submit the complete queue" \
+  "$cross_pane" "MARK_CROSS_THREE"
+cross_order="$(printf '%s\n' "$cross_pane" |
+  grep -oE 'MARK_CROSS_ONE|MARK_CROSS_TWO|MARK_CROSS_THREE' |
+  awk '!seen[$0]++' | tr '\n' ' ')"
+# source-guard: producer@bc6b9765db17: the three unique queued markers are the only producers matched from the pane, and their committed spool stamps define the expected order
+equal "the crossed dispatch preserves one oldest-first bundle" \
+  "MARK_CROSS_ONE MARK_CROSS_TWO MARK_CROSS_THREE " "$cross_order"
+excludes "the crossed dispatch leaves no second live bundle" \
+  "$("$GANG" status parker)" "spooled:"
+
 # A refused bundle returns every claim to its own live stamp.
 tmux send-keys -l -t "$parker_id" 'HUMAN_DRAFT'
 printf 'MARK_REFUSED_ONE' |
@@ -285,7 +393,7 @@ unreadable_drain_status="$("$GANG" status parker)"
 contains "an unreadable composer after Stop leaves the message waiting" \
   "$unreadable_drain_status" "spooled: 1"
 contains "and records the failed drain instead of silently retrying forever" \
-  "$unreadable_drain_status" "native turn boundary did not expose a readable composer"
+  "$unreadable_drain_status" "native delivery boundary did not expose a readable composer"
 rm -f -- "$RUN_ROOT/unreadable-drain"
 tmux wait-for "gang-spool-drain-$parker_id" &
 unreadable_recovery_waiter=$!
@@ -1010,4 +1118,3 @@ printf 'MARK_LINGERS' |
   "$GANG" send --to lingering --from tester --stdin >/dev/null
 # shellcheck disable=SC2034  # read in test/integration-hooks.sh, which accounts for this spool at teardown
 lingering_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lingering_id" @gl_spool)"
-

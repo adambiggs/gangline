@@ -1009,14 +1009,23 @@ while True:
         if selected == safe_index and variant != "confirm-stuck":
             answered += 1
             if variant == "recurring" and answered < 5:
+                recur_fifo = os.environ.get("DIALOG_RECUR_FIFO")
                 sys.stdout.write("\x1b[2J\x1b[H❯ ")
                 sys.stdout.flush()
-                subprocess.run(
-                    ["tmux", "wait-for", os.environ["DIALOG_RECUR_SIGNAL"]],
-                    check=True,
-                )
+                if recur_fifo:
+                    with open(recur_fifo, "rb", buffering=0) as stream:
+                        stream.read(1)
+                else:
+                    subprocess.run(
+                        ["tmux", "wait-for", os.environ["DIALOG_RECUR_SIGNAL"]],
+                        check=True,
+                    )
                 selected = 0
                 paint()
+                recur_ack = os.environ.get("DIALOG_RECUR_ACK")
+                if recur_ack:
+                    with open(recur_ack, "wb", buffering=0) as stream:
+                        stream.write(b"x")
             else:
                 composer = True
                 sys.stdout.write("\x1b[2J\x1b[H❯ ")
@@ -1248,4 +1257,3 @@ equal "observe-only recognition sends no key" "" \
 equal "observe-only recognition leaves the operator dialog unchanged" \
   "$observe_before" "$(pane dialog-observe)"
 "$GANG" drop dialog-observe >/dev/null
-

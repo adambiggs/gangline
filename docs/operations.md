@@ -28,10 +28,26 @@ hook and reports only permission requests. An unknown Codex dialog can therefore
 refuse delivery without raising a stall note.
 
 During hitch, a first-run prompt is reported as soon as Gangline has positive
-pane evidence rather than a merely blank startup screen. Leave hitch running,
-use `gang attach` to answer the native prompt, and the same hitch will report
-when the input box appears and deliver the startup contract if that happens
-before `GANG_BOOT_TIMEOUT` expires.
+pane evidence rather than a merely blank startup screen. At that point it parks
+the startup contract instead of dropping it. Leave a direct `hitch` running and
+use `gang attach` to answer the native prompt. `gang up` exposes the gated agent
+in its tmux client automatically, so answer the prompt there. The same
+invocation delivers once the composer appears, even if the native choice
+disables hooks; a transient draft or modal makes it wait and retry without
+typing. Once positive prompt evidence commits the contract, that foreground
+wait has no time bound: `GANG_BOOT_TIMEOUT` becomes the length of each
+observation slice, not a deadline that drops ownership. Run a hitch that may
+meet first-run authority from an operator terminal; an agent that invokes it
+remains occupied until the operator answers, by design, because Gangline starts
+no background watcher.
+Do not send a second copy by hand. `gang roster` and `gang status <name>` show
+the contract queued until the verified drain completes. Interrupting hitch
+leaves that attributed envelope in the spool for inspection rather than
+silently discarding it, but also leaves no process that will drain it before a
+turn exists. Recover an interrupted gated hitch by dropping that exact window
+and re-hitching after resolving the native gate. Use `--resume` only when drop
+prints a stamped native-session line; a pre-turn gate normally has no native
+identity to resume. Do not send a replacement contract by hand.
 
 Native sandboxes must be able to reach the tmux server and the `gang` executable.
 For Codex, this commonly means the tmux socket and Gangline checkout need to be

@@ -535,15 +535,11 @@ contains "with the composer agreeing: it is still sitting there" \
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 
-# QUEUED IS NOT DELIVERED; QUEUED-THEN-WATCHED-TO-DRAIN IS. A collar declaring
-# GANG_MIDTURN_INPUT=park says its harness cannot submit during a turn at all —
-# it can only queue — so a park there is a landing gang watches rather than a
-# failure. The rule the third state must not weaken is the report: "delivered"
-# still requires gang to have seen the body leave the queue.
-# The fixture raises its hint while the strand exists and LOWERS it when the
-# strand goes, because a drain is the whole subject here — the queue-rc above
-# only ever raises. The prompt hook also signals a channel once it has redrawn,
-# so a test can wait for the new composer rather than sleep for it.
+# A BUSY COMPOSER IS NOT A DELIVERY SURFACE. A collar declaring
+# GANG_MIDTURN_INPUT=park says that Gangline may accept the body while a turn is
+# live, but the safe landing is Gangline's attributed spool before any composer
+# keystroke. The collar's native queue declaration remains recovery evidence
+# for an unexpected queue; it is not the ordinary mid-turn route.
 cat > "$RUN_ROOT/steer-rc" <<'RC'
 HISTCONTROL=ignorespace
 PROMPT_COMMAND='if [ -f "$STEER_STRAND" ]; then PS1="❯ Press up to edit queued messages"; else PS1="❯ "; fi
@@ -567,160 +563,71 @@ SH
 : > "$RUN_ROOT/steer-signal"
 "$HITCH" steer -c steering -d /tmp >/dev/null
 steer_id="$(window_id steer)"
-# A WITNESSED turn, not a suspected one. The park path is entered only on a
-# positive busy verdict, because an idle target would submit rather than queue
-# and the "no hint appeared" guard below would then cry failure over a message
-# that landed.
+steer_pane_id="$(tmux list-panes -t "$steer_id" -F '#{pane_id}')"
+# TWO LIVE SENDS WERE OBSERVED STAGED IN A REPAINTING CLAUDE COMPOSER, requiring
+# the operator to press Enter. The old assertions below treated the harness's
+# anonymous mid-turn queue as a successful third state; that was wrong because
+# the post-paste read can vanish before Enter and leave exactly that stranded
+# body. A witnessed turn now commits to Gangline's attributed spool before any
+# keystroke, whatever queue evidence the collar knows how to recover later.
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
-: > "$RUN_ROOT/steer-strand"
-# One look: the fixture's composer is already parked, so the watch finds the
-# hint and reports the park rather than waiting out a drain that will not come.
-# source-guard: producer@777bc4014c47: every claim here is bound to the window it names — the third-state sentence is read from THIS send's own captured output rather than from any pane, the parked record is read from steer's own @gl_parked, and the roster claims read steer's own row through steer_row rather than the whole table, where another agent's row could have satisfied them
-if steer_out="$(printf 'MARK_STEER' | GANG_STEER_LOOKS=1 "$GANG" send --to steer --from tester --stdin 2>&1)"; then
+if steer_out="$(printf 'MARK_STEER' | "$GANG" send --to steer --from tester --stdin 2>&1)"; then
   steer_rc=0
 else
   steer_rc=$?
 fi
-equal "a park mid-turn is accepted, not refused" "0" "$steer_rc"
-contains "and is reported as its own state rather than as a delivery" \
-  "$steer_out" "parked in the harness queue of steer"
-excludes "never as one" "$steer_out" "delivered to steer"
-# The BODY, not the hint. This is the reading flush will compare a recalled
-# composer against, so it has to be the box with the message in it — the same
-# thing submit_parked records on the failing path.
-contains "the body gang watched the harness take is recorded" \
-  "$(tmux show-options -wqv -t "$steer_id" @gl_parked)" "MARK_STEER"
-steer_row() { "$GANG" roster | grep '^steer  *' || :; }
-# The fixture redraws its composer on its next prompt, so a strand that has
-# gone away only stops showing once the shell has prompted again. Bound to
-# steer's own window: flush_settle above belongs to a window this block dropped.
-# Empty a steer window's spool before dropping it: a drop archives whatever is
-# waiting, and these fixtures are not the subject of the archive guards further
-# down. Clearing here keeps this block's leftovers out of their counts.
-steer_drop() {
-  local d
-  d="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$(window_id "$1")" @gl_spool)"
-  rm -f "$d"/* 2>/dev/null || :
-  "$GANG" drop "$1" >/dev/null
-}
-steer_settled=0
-steer_settle() { # returns once the fixture has redrawn its composer
-  steer_settled=$((steer_settled + 1))
-  local chan="test-steer-$steer_settled-$$"
-  printf '%s' "$chan" > "$RUN_ROOT/steer-signal"
-  tmux send-keys -t "$steer_id" Enter
-  tmux wait-for "$chan"
-}
-contains "and roster says so as a boolean, never a count" \
-  "$(steer_row)" "parked"
-excludes "so nothing invents a number the harness never reports" \
-  "$(steer_row)" "parked="
-
-# THE THIRD STATE IS CLOSED BY A LATER READ, not by a watcher. The strand going
-# away is what a drained queue looks like from outside; the next command that
-# reports on the window re-reads the composer and retires the record.
-rm -f "$RUN_ROOT/steer-strand"
-steer_settle
-excludes "a drained queue stops being reported as parked" \
-  "$(steer_row)" "parked"
-equal "and the record is retired rather than left standing" "" \
+equal "a busy park send is accepted into Gangline's spool" "0" "$steer_rc"
+contains "the busy send reports the attributed queue" "$steer_out" "queued for steer"
+excludes "the busy send never claims live delivery" "$steer_out" "delivered to steer"
+# source-guard: producer@fa75d92a1c9d: MARK_STEER is unique to the busy send above, and this pane is its only possible composer target before the spool drains
+excludes "the busy route types no byte into the repainting composer" \
+  "$(pane steer)" "MARK_STEER"
+contains "the exact body waits in one attributed spool entry" \
+  "$("$GANG" mail steer)" "MARK_STEER"
+contains "status exposes one waiting message" "$("$GANG" status steer)" "spooled: 1"
+equal "the native anonymous-queue record is never opened" "" \
   "$(tmux show-options -wqv -t "$steer_id" @gl_parked)"
-equal "leaving the mark that says it drained, not that it never existed" "1" \
-  "$(tmux show-options -wqv -t "$steer_id" @gl_parked_drained)"
 
-# THE SPOOL IS THE ORDERING AUTHORITY. A body typed into the harness now drains
-# at that agent's next batch, while anything already spooled waits for its Stop —
-# so parking ahead of a waiting message would deliver the newer one first.
-: > "$RUN_ROOT/steer-strand"
-# Seed the spool the only way a park collar can: a refusal that happens before
-# any keystroke. A half-written draft is one, so this message is spooled rather
-# than typed, and the next send meets a NON-EMPTY spool.
-tmux send-keys -l -t "$steer_id" "HUMAN_DRAFT_HOLDING_THE_BOX"
-printf 'MARK_OLDER' | "$GANG" send --to steer --from tester --stdin >/dev/null 2>&1 || :
-steer_spooled="$(steer_row)"
-contains "an older message waiting makes the next one spool behind it" \
-  "$steer_spooled" "spooled="
-tmux send-keys -t "$steer_id" C-u
-steer_settle
+# PostCompact can be a native delivery boundary while the turn bracket is still
+# open. It must not hand the spool to that live composer; Stop closes the turn,
+# and only that later verified opportunity may claim and submit the body.
+tmux wait-for "gang-spool-drain-$steer_id" &
+steer_busy_drain_waiter=$!
+printf '%s' '{"hook_event_name":"PostCompact"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$steer_busy_drain_waiter"
+contains "a boundary during the live turn leaves the spool untouched" \
+  "$("$GANG" status steer)" "spooled: 1"
+# source-guard: producer@9a2fd1044e0e: MARK_STEER still has only the one spooled producer, and PostCompact above is the only boundary allowed before this read
+excludes "the live-turn boundary types nothing into the composer" \
+  "$(pane steer)" "MARK_STEER"
+tmux wait-for "gang-spool-drain-$steer_id" &
+steer_stop_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$steer_stop_drain_waiter"
+# source-guard: producer@7f2d438cb178: the single MARK_STEER spool entry above is the only producer, and the Stop barrier completed its verified drain before this read
+contains "the first idle boundary submits the spooled body" \
+  "$(pane steer)" "MARK_STEER"
+excludes "the verified idle drain retires the spool entry" \
+  "$("$GANG" status steer)" "spooled:"
+# source-guard: producer@065dfc6db782: MARK_STEER has one producer above, and the completed Stop-drain barrier makes every occurrence in this target pane an effect of that one handoff
+equal "the spool-to-composer handoff submits exactly once" "1" \
+  "$(pane steer | grep -o MARK_STEER | wc -l | tr -d ' ')"
+
+# --live-only remains a no-park probe: during the next witnessed turn it refuses
+# before typing and adds no spool entry.
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
-if steer_order="$(printf 'MARK_NEWER' | GANG_STEER_LOOKS=1 "$GANG" send --to steer --from tester --stdin 2>&1)"; then
-  steer_order_rc=0
-else
-  steer_order_rc=$?
-fi
-equal "the later message is accepted" "0" "$steer_order_rc"
-excludes "but never by jumping the queue into the harness" \
-  "$steer_order" "parked in the harness queue"
-contains "it joins the spool the older one is waiting in" "$steer_order" "queued for steer"
-
-# ONE OUTSTANDING BODY. The hint says something is parked and never what or how
-# many, and the recall key returns the whole queue at once, so a second body
-# would leave gang unable to say which one its record names.
-steer_drop steer
-# The strand is shared fixture state: leave it raised and the next window boots
-# into a composer that already reads as parked, so its startup contract cannot
-# be delivered. Each window raises it only once it is up.
-rm -f "$RUN_ROOT/steer-strand"
-"$HITCH" steer2 -c steering -d /tmp >/dev/null
-steer2_id="$(window_id steer2)"
-: > "$RUN_ROOT/steer-strand"
-tmux set-option -w -t "$steer2_id" @gl_turn "open $(date +%s)"
-printf 'MARK_FIRST' | GANG_STEER_LOOKS=1 "$GANG" send --to steer2 --from tester --stdin >/dev/null 2>&1 || :
-if steer_second="$(printf 'MARK_SECOND' | GANG_STEER_LOOKS=1 "$GANG" send --to steer2 --from tester --stdin 2>&1)"; then :; fi
-excludes "a second body is not parked on top of the first" \
-  "$steer_second" "parked in the harness queue"
-contains "it waits in the spool instead, named for the reason" \
-  "$steer_second" "queued for steer2"
-
-# --supersede RETIRES AN ATTRIBUTED MESSAGE, and the harness's queue is
-# anonymous: nothing gang types retracts one body from it. Spooling keeps the
-# flag's promise exactly rather than half-honouring it.
-steer_drop steer2
-rm -f "$RUN_ROOT/steer-strand"
-"$HITCH" steer3 -c steering -d /tmp >/dev/null
-: > "$RUN_ROOT/steer-strand"
-tmux set-option -w -t "$(window_id steer3)" @gl_turn "open $(date +%s)"
-if steer_sup="$(printf 'MARK_SUP' | GANG_STEER_LOOKS=1 "$GANG" send --to steer3 --from tester --supersede --stdin 2>&1)"; then :; fi
-excludes "--supersede never parks in a queue it cannot retract from" \
-  "$steer_sup" "parked in the harness queue"
-contains "and says which promise it is keeping" "$steer_sup" "queued for steer3"
-
-# --live-only IS THE PROBE FOR A DELIVERY THAT MUST NOT PARK, and this path can
-# only park. Its answer stays the NOT-parked line, with nothing typed.
-if steer_live="$(printf 'MARK_LIVE' | "$GANG" send --to steer3 --from tester --live-only --stdin 2>&1)"; then
+if steer_live="$(printf 'MARK_LIVE' | "$GANG" send --to steer --from tester --live-only --stdin 2>&1)"; then
   steer_live_rc=0
 else
   steer_live_rc=$?
 fi
 equal "--live-only refuses rather than parking" "3" "$steer_live_rc"
-contains "naming the mid-turn reason" "$steer_live" "not safely reachable mid-turn"
-
-# FAIL LOUD WHEN THE DECLARED EVIDENCE STOPS MATCHING. Mid-turn input on a park
-# collar can only queue, so an empty composer after the Enter is not proof of a
-# submission — it is a rendering gang no longer models. Reporting a delivery
-# there would be the one lie this whole path exists to prevent.
-#
-# A FRESH window, because the ordering guard above is checked first: a target
-# already carrying spooled work refuses before it ever types, and this case has
-# to reach the typing to say anything about the evidence.
-steer_drop steer3
-rm -f "$RUN_ROOT/steer-strand"
-"$HITCH" steer4 -c steering -d /tmp >/dev/null
-tmux set-option -w -t "$(window_id steer4)" @gl_turn "open $(date +%s)"
-if steer_blind="$(printf 'MARK_BLIND' | GANG_STEER_LOOKS=1 "$GANG" send --to steer4 --from tester --stdin 2>&1)"; then
-  steer_blind_rc=0
-else
-  steer_blind_rc=$?
-fi
-if [ "$steer_blind_rc" -eq 0 ]; then
-  fail "a park collar whose hint never appears fails loudly" "send reported success"
-else
-  pass "a park collar whose hint never appears fails loudly"
-fi
-contains "naming the declaration that stopped matching" \
-  "$steer_blind" "GANG_QUEUED_REGEX"
-excludes "and never calling it a delivery" "$steer_blind" "delivered to steer4"
-steer_drop steer4
+contains "the live-only refusal names the no-keystroke landing" \
+  "$steer_live" "--live-only did not park it"
+excludes "live-only leaves no queued copy" "$("$GANG" status steer)" "spooled:"
+"$GANG" drop steer >/dev/null
 
 # A keystroke gang cannot send by name is a broken declaration, refused before
 # any window opens: tmux would deliver the letters into the composer instead.
@@ -865,4 +772,3 @@ for unstopping_collar in opencode pi; do
   equal "the $unstopping_collar collar declares no interrupt key until one is verified" \
     "" "$unstopping_key"
 done
-

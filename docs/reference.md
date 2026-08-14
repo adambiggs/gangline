@@ -42,7 +42,9 @@ because its caller is a harness configuration rather than a person; see below.
 Hitches the team's lead, names its window `lead` when omitted, then attaches or
 switches the current tmux client to it. It attaches the shipped `lead` role by
 default; an explicit `-r` or `--role` selects another role. `GANG_COLLAR`
-selects the harness.
+selects the harness. If a native first-run gate appears, `up` exposes it before
+waiting for startup-contract delivery, so answering that prompt remains the
+only operator step.
 
 ### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
 
@@ -75,12 +77,25 @@ File-layer settings therefore reach nested hitches. Other per-invocation
 environment overrides do not become sticky inside the agent.
 
 If a first-run prompt owns the screen before the composer appears, `hitch`
-directs the operator to `gang attach` once the collar's occupied pattern
-provides positive pane evidence, then keeps waiting within the original
-`GANG_BOOT_TIMEOUT`. Clearing the prompt lets that same hitch report the
-recovered input box and deliver its startup contract. If the bound expires
-first, the window is left for inspection and the error gives the attach, drop,
-and re-hitch recovery.
+directs the operator to `gang attach` as soon as the collar's occupied pattern
+provides positive pane evidence. It immediately parks the attributed contract
+in the window's ordinary spool: answering the native prompt is the only manual
+step. Direct `hitch` stays in the foreground; `gang up` exposes that gated
+window in its tmux client while the same invocation observes beside it. The
+verified drain runs when the composer appears and retries pre-keystroke
+refusals, so delivery does not depend on a native hook the operator may decline.
+After positive gate evidence, the foreground wait is deliberately unbounded;
+`GANG_BOOT_TIMEOUT` is then one observation slice. Gangline starts no watcher,
+so interrupting that hitch leaves the attributed entry inspectable but not
+owned by a future drain before the target has a turn. Drop and re-hitch (or use
+the printed `--resume` form only if a native session was stamped) to recover
+that interrupted case. A pre-turn gate normally has no resumable identity.
+`gang up` needs a terminal for the tmux client that exposes the prompt; without
+one it refuses and leaves the contract queued rather than pretending the prompt
+was exposed.
+If hitch has no positive prompt evidence, it fails with the manual attach/send
+recovery because it cannot truthfully call an unknown stable screen a startup
+gate.
 
 - `-c` selects the harness, by the name of the collar that drives it.
 - `-d` selects the harness working directory.
@@ -221,15 +236,18 @@ message. Pass `--live-only` for an availability probe that must return a refusal
 to its caller instead of parking it. The deprecated `--spool` flag is accepted
 as an announced no-op.
 
-The target's own native Stop event drains its spool, oldest first, through the
-verified delivery path. Each entry is claimed before it is delivered, so no
-later drain can send a body this one may already have landed. A refused drain
-returns its entry to the spool for the next turn boundary. A drain that cannot
-read a composer after the native boundary leaves its entries waiting and records
-a visible drain failure; it never types through that uncertainty. A drain that
-cannot verify, or one that dies between the submission and the entry's retirement,
-leaves that entry held: `status` says its delivery was not verified and may
-still have arrived, `status` and `roster` report how many are held, the bodies
+The target's own native Stop event drains ordinary mail. Hitch itself drains a
+startup contract parked before any turn existed once it observes the composer.
+Both use the same oldest-first verified delivery path. The pane delivery lock is
+taken before the first entry is claimed and held through delivery and claim
+retirement, so crossed native workers cannot split or reorder the queue. A
+refused drain returns its entry to the spool for the next turn boundary. A drain
+that cannot read a composer after the native boundary leaves its entries waiting
+and records a visible drain failure; it never types through that uncertainty. A
+drain that cannot verify, or one that dies between the submission and the
+entry's retirement, leaves that entry held: `status` says its delivery was not
+verified and may still have arrived, `status` and `roster` report how many are
+held, the bodies
 stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
 harness may accept a submission into its own queue and drain it later; read the
 target before re-sending by hand.
@@ -574,7 +592,8 @@ standard input and takes no arguments. An invocation carrying one is an
 invocation Gangline cannot read: the argument is named on stderr and recorded on
 the window for `status` and `roster`, and the event is not acted on. It is the
 one command that does not die on unconsumed arity, because a hook must not be
-fatal to the harness that fired it; declining the event is the refusal. Prompt/tool events open the turn fact, Stop closes it and may
+fatal to the harness that fired it; declining the event is the refusal.
+Prompt/tool events open the turn fact, Stop closes it and may
 dispatch deferred self-compaction and a spool drain, and permission requests
 raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
 it and drains. A harness that refuses a compaction raises the opening event and
@@ -623,7 +642,7 @@ Exactly these keys are settable:
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
-| `GANG_BOOT_TIMEOUT` | `30` | harness startup readiness bound in seconds |
+| `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound |
@@ -725,6 +744,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_DIALOG_HITCH_DIR_TRUST` | optional one dialog id whose directory trust was already chosen by `hitch -d` |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
+| `GANG_MIDTURN_INPUT=park` | declares that mid-turn composer input can only stage or queue; it never authorizes a composer keystroke |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
 | `GANG_USAGE_CMD` | native command that opens the harness's usage page |
