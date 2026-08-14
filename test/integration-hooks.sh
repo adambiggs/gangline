@@ -739,6 +739,7 @@ equal "the mixed-unit refusal opens no window" "" \
 # Provider-usage lights use a collar's non-interactive correctness source. The
 # native rows carry their own observation and reset clocks; status and roster
 # only report the last sampled fact and never drive a pane while observing.
+usage_limits_source="$RUN_ROOT/usage-limits.rows"
 cat > "$RUN_ROOT/collars/usage-lights.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -750,16 +751,17 @@ collar_usage_limits() {
   calls="\$(tmux show-options -wqv -t "\$1" @test_usage_calls 2>/dev/null)"
   case "\$calls" in ''|*[!0-9]*) calls=0 ;; esac
   tmux set-option -w -t "\$1" @test_usage_calls "\$(( calls + 1 ))"
-  tmux show-options -wqv -t "\$1" @test_usage
+  cat '$usage_limits_source'
 }
 SH
 usage_now="$(date +%s)"
 GANG_USAGE_LIGHTS=90%,95% "$HITCH" usage-lit -c usage-lights -d /tmp >/dev/null
 usage_lit_id="$(window_id usage-lit)"
 usage_lit_pane="$(tmux list-panes -t "$usage_lit_id" -F '#{pane_id}')"
-tmux set-option -w -t "$usage_lit_id" @test_usage \
-  "Current session"$'\t'"91"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
-"Current week"$'\t'"80"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+printf '%s\n' \
+  "Current session"$'\t'"91"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
+  "Current week"$'\t'"80"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now" \
+  > "$usage_limits_source"
 usage_yellow="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
 contains "a native provider reading crosses the configured yellow band" \
@@ -769,9 +771,10 @@ usage_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
 equal "a provider-usage edge is emitted once per usage epoch" "" "$usage_repeat"
 equal "a heavyweight native reader is throttled between nearby hooks" "1" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @test_usage_calls)"
-tmux set-option -w -t "$usage_lit_id" @test_usage \
-  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
-"Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+printf '%s\n' \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
+  "Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now" \
+  > "$usage_limits_source"
 tmux set-option -w -t "$usage_lit_id" @gl_usage_checked "$(( usage_now - 60 ))"
 usage_red="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
@@ -785,8 +788,13 @@ contains "roster carries the provider-usage warning at a glance" \
 usage_limits_out="$("$GANG" limits usage-lit)"
 contains "limits prints the collar's native reset and sample age" \
   "$usage_limits_out" "Current session: 95% used"
-tmux set-option -w -t "$usage_lit_id" @test_usage \
-  $'provider\033[31mred\033[0m\t95\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"
+# A tmux user option is not a byte-exact instrument across the supported
+# versions: 3.2 prints its ESC byte raw while 3.4 serializes it as `\033`.
+# Feed the collar from the fixture-owned native-source file so this guard always
+# proves Gangline replaced an actual control byte, not tmux's printable form.
+printf '%s\n' \
+  $'provider\033[31mred\033[0m\t95\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
+  > "$usage_limits_source"
 sanitized_usage_limits="$("$GANG" limits usage-lit)"
 case "$sanitized_usage_limits" in
   *$'\033'*) fail "provider labels cannot write terminal control bytes" \
@@ -796,16 +804,18 @@ esac
 contains "provider label controls become visible placeholders" \
   "$sanitized_usage_limits" "provider?[31mred?[0m"
 
-tmux set-option -w -t "$usage_lit_id" @test_usage \
-  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$(( usage_now - 301 ))"
+printf '%s\n' \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$(( usage_now - 301 ))" \
+  > "$usage_limits_source"
 tmux set-option -w -t "$usage_lit_id" @gl_usage_checked "$(( usage_now - 60 ))"
 usage_stale="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
 contains "a stale native event cannot drive a usage light" \
   "$usage_stale" "too old to act on"
-tmux set-option -w -t "$usage_lit_id" @test_usage \
-  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now"$'\n'\
-"Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now"
+printf '%s\n' \
+  "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
+  "Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now" \
+  > "$usage_limits_source"
 
 GANG_USAGE_LIGHTS=90%,95% "$HITCH" usage-absent -c stallable -d /tmp >/dev/null
 usage_absent_id="$(window_id usage-absent)"
