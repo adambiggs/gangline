@@ -275,12 +275,14 @@ cmd_help() { # $1 = command; empty prints the command inventory
     # what you are, how to say something, how to read what was said to you, and
     # what a refusal is. The inventory is one command further on.
     welcome) cat <<'EOF'
-gang — you are one agent on a team
+gang — a team of CLI agents in tmux
 
-Every teammate is a real CLI harness in its
-own tmux window. Gang carries messages
-between you and reports what each of you is
-doing. It does not plan or supervise work.
+Every agent is a real CLI harness in its own
+tmux window. Gang carries messages between
+them and reports what each is doing. It does
+not plan or supervise their work. Run this
+from inside one of those windows and you are
+one of them; gang whoami says which.
 
 find yourself
     gang whoami    who this window is
@@ -290,9 +292,12 @@ say something
     printf '%s\n' "..." |
       gang send --to NAME --stdin
   Delivery is verified in the target's own
-  input box. A teammate mid-turn is parked
-  and drained at its next turn boundary,
-  never interrupted.
+  input box, and never interrupts a turn. A
+  teammate that cannot take it now is parked
+  and drained at its next turn boundary —
+  where its harness reports that boundary.
+  Where it cannot, exit 3 says NOT parked and
+  the message is still yours to send.
 
 read what was sent to you
     gang mail
