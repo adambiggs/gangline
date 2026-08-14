@@ -1541,6 +1541,24 @@ equal "and refuses a breaking line glued to the body" \
 The old path is gone.
 BREAKING CHANGE: callers must pass --to.
 ')"
+# `git interpret-trailers --parse` reads the block at the END of the message.
+# A breaking line with ordinary prose after it is not in that block, however
+# many blank lines precede it.
+equal "and refuses a breaking footer with body prose after it" \
+  "refused-placement" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+BREAKING CHANGE: callers must pass --to.
+
+This also tidies the spool.
+')"
+equal "another trailer after the footer keeps it a footer" \
+  "accepted" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+BREAKING CHANGE: callers must pass --to.
+Refs: #14
+')"
 equal "a comment between body and footer does not unmake the footer" \
   "accepted" \
   "$(commit_msg_verdict 'feat(send)!: breaks callers

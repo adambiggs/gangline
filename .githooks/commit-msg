@@ -59,21 +59,36 @@ if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; the
     # decide this.
     awk '
       /^#/ { next }
-      {
-        if (kept > 0 && blank && $0 ~ /^BREAKING[ -]CHANGE: .+$/) { found = 1 }
-        blank = ($0 ~ /^[[:space:]]*$/)
-        kept++
+      { line[++n] = $0 }
+      END {
+        for (i = 2; i <= n; i++) {
+          if (line[i] !~ /^BREAKING[ -]CHANGE: .+$/) continue
+          if (line[i - 1] !~ /^[[:space:]]*$/) continue
+          # AND NOTHING BUT FOOTER MAY FOLLOW IT. A blank line above is half of
+          # the definition; prose below puts the line back in the body, and
+          # git interpret-trailers reads the block from the end.
+          trailing = 1
+          for (j = i + 1; j <= n; j++) {
+            if (line[j] ~ /^[[:space:]]*$/) continue
+            if (line[j] ~ /^[[:space:]]/) continue
+            if (line[j] ~ /^[A-Za-z][A-Za-z0-9-]*: /) continue
+            trailing = 0
+            break
+          }
+          if (trailing) { found = 1; break }
+        }
+        exit(found ? 0 : 1)
       }
-      END { exit(found ? 0 : 1) }
     ' < "$1" && exit 0
     cat >&2 <<EOF
 commit-msg: the BREAKING CHANGE: line is body prose, not a footer
 
   ${subject}
 
-A footer is separated from the body by a blank line — that separation is what
-makes it a trailer rather than a sentence. Move it to the end of the message
-with a blank line above it:
+A footer is the last block of the message, separated from the body by a blank
+line, with nothing after it but other trailers. That position is what makes it
+a trailer rather than a sentence, and what git interpret-trailers reads. Move
+it to the end:
 
   <body>
 
