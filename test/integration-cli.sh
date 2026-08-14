@@ -735,11 +735,10 @@ claude_midturn="$(ROOT="$ROOT" bash -c \
 # can only queue, and the queue drains by itself at the next tool batch or turn
 # boundary. So the old value denied a landing gang can watch end to end.
 #
-# `1` would be the other wrong answer, and worse than the old one: it means text
-# enters the session directly, sending this collar down a path whose own queue
-# check then fails with the body already typed and NOT spooled. `park` is the
-# third answer, and the three are mutually exclusive readings of one question.
-equal "Claude delivery enters through the harness's own queue" "park" "$claude_midturn"
+# `1` would still be wrong: it types directly, before attribution owns a safe
+# landing. The live ruling is `steer`: commit to Gangline's spool first, then a
+# free composer may accept the claimed entry as native mid-turn steering.
+equal "Claude delivery attributes before native mid-turn steering" "steer" "$claude_midturn"
 claude_queued="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_QUEUED_REGEX:-}"' fixture "$claude_collar")"
 if [ -n "$claude_queued" ]; then

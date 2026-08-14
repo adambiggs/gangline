@@ -78,10 +78,12 @@ themselves with `--from`. Delivery succeeds only after the target composer
 visibly accepts the paste and submission.
 
 A target that cannot take input right now gets the message parked by default:
-it waits in the target's spool, and the target's own native turn boundary
-delivers it through the same verified path — so nobody has to write a retry
-loop around a command that refuses on purpose. `--live-only` refuses instead
-of parking when a message is only worth sending now.
+it waits in the target's spool, and the target's own native delivery
+opportunities carry it through the same verified path. A collar may declare
+that a free composer accepts native mid-turn steering; attribution still lands
+in the spool before the first keystroke. Drafts and tmux copy-mode remain
+parked. `--live-only` refuses instead of parking when a message is only worth
+sending now.
 
 Observe and control the team without replacing the harness interface:
 

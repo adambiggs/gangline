@@ -231,7 +231,7 @@ GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/fl
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 collar_input() { # a composer that spans lines, and reads as the hint when empty
-  local box
+  local box n
   box="\$(tmux capture-pane -pJ -t "\$1" | awk '
     { line[NR] = \$0
       if (index(\$0, "❯")) start = NR
@@ -246,12 +246,48 @@ collar_input() { # a composer that spans lines, and reads as the hint when empty
     printf 'Press up to edit queued messages'
     return 0
   fi
+  # A Claude redraw can expose an absent frame and then its old empty box before
+  # the completed multi-line composer. Tickets make those frames deterministic:
+  # no fixture loop or clock decides when the final reading appears.
+  if [ -f "$RUN_ROOT/redraw-arm" ] && printf '%s' "\$box" | grep -q MARK_REDRAW; then
+    n="\$(cat "$RUN_ROOT/redraw-tickets")"
+    if [ "\$n" -gt 0 ]; then
+      printf '%s' "\$((n - 1))" > "$RUN_ROOT/redraw-tickets"
+      case "\$n" in
+        3|1) return 1 ;;
+        2) printf ''; return 0 ;;
+      esac
+    fi
+  fi
   printf '%s' "\$box" | tr -d '\302\240'
 }
 SH
 : > "$RUN_ROOT/flush-signal"
 "$HITCH" parked -c flushable -d /tmp >/dev/null
 parked_id="$(window_id parked)"
+
+# POST-PASTE READ-BACK SURVIVES TRANSIENT REDRAW FRAMES. The body is long and
+# multi-line so this takes the same collar path as the three live strands that
+# motivated the guard. The collar above returns unreadable, unchanged, then
+# unreadable again after it first sees the paste; only its fourth reading is the
+# completed composer. The test drives no polling and advances no clock.
+printf '3' > "$RUN_ROOT/redraw-tickets"
+: > "$RUN_ROOT/redraw-arm"
+if redraw_out="$(printf '%s\n' \
+  'MARK_REDRAW head' 'line 02' 'line 03' 'line 04' 'line 05' 'line 06' \
+  'line 07' 'line 08' 'line 09' 'line 10' 'line 11' 'MARK_REDRAW tail' |
+  "$GANG" send --to parked --from tester --stdin 2>&1)"; then
+  pass "a long multi-line paste survives transient Claude redraw frames"
+else
+  fail "a long multi-line paste survives transient Claude redraw frames" "$redraw_out"
+fi
+equal "all three false redraw frames were consumed before submission" "0" \
+  "$(<"$RUN_ROOT/redraw-tickets")"
+equal "the recovered read-back leaves no staged uncertainty" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)"
+equal "the recovered multi-line composer was submitted" "" \
+  "$("$GANG" composer parked)"
+rm -f "$RUN_ROOT/redraw-arm"
 
 # The fixture raises and lowers its strand from a prompt hook, so a world that
 # arranges one has to know that hook has finished before it looks. The barrier
@@ -535,88 +571,69 @@ contains "with the composer agreeing: it is still sitting there" \
 tmux send-keys -t "$parked_id" C-u
 "$GANG" drop parked >/dev/null
 
-# A BUSY COMPOSER IS NOT A DELIVERY SURFACE. A collar declaring
-# GANG_MIDTURN_INPUT=park says that Gangline may accept the body while a turn is
-# live, but the safe landing is Gangline's attributed spool before any composer
-# keystroke. The collar's native queue declaration remains recovery evidence
-# for an unexpected queue; it is not the ordinary mid-turn route.
+# ATTRIBUTION LANDS BEFORE MID-TURN STEERING. A steering-capable collar may
+# accept a claimed spool through a free composer while its turn stays open. A
+# draft, tmux mode, or collar without that declaration still parks without a
+# keystroke. PostToolUse is the later native opportunity: it must drain without
+# waiting for a Stop to repair the continuously refreshed open-turn record.
 cat > "$RUN_ROOT/steer-rc" <<'RC'
 HISTCONTROL=ignorespace
-PROMPT_COMMAND='if [ -f "$STEER_STRAND" ]; then PS1="❯ Press up to edit queued messages"; else PS1="❯ "; fi
-if [ -s "$STEER_SIGNAL" ]; then _steer_chan="$(cat "$STEER_SIGNAL")"; : > "$STEER_SIGNAL"
-  tmux wait-for -S "$_steer_chan"; fi'
+PS1='❯ '
 RC
 cat > "$RUN_ROOT/collars/steering.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'STEER_STRAND=$RUN_ROOT/steer-strand STEER_SIGNAL=$RUN_ROOT/steer-signal ENV=$RUN_ROOT/steer-rc exec bash --posix' fixture"
-GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
-GANG_QUEUE_RECALL_KEY="Up"
-GANG_MIDTURN_INPUT=park
-# Declared so a refused message can park in gang's OWN spool: spool_available
-# gates on it, and the ordering guard below needs a non-empty spool to exist
-# before it can prove the native path yields to one. Nothing drains it here —
-# this fixture raises no Stop — and nothing in this block asks it to.
+GANG_LAUNCH="sh -c 'ENV=$RUN_ROOT/steer-rc exec bash --posix' fixture"
+GANG_MIDTURN_INPUT=steer
 GANG_STOP_HOOK=1
+_gl_steer_real="\$(declare -f collar_input)"
+eval "steer_real_input \${_gl_steer_real#collar_input}"
+collar_input() { # record the ownership facts at the first claimed box read
+  local lock dir holder="" live=no claimed=0 f
+  if [ -f "$RUN_ROOT/steer-claim-watch" ]; then
+    lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
+    if [ -L "\$lock" ]; then
+      dir="$GANG_LOCK_DIR/spool/\$(tmux show-options -wqv -t "\$1" @gl_spool)"
+      for f in "\$dir"/sending-*; do [ -f "\$f" ] && claimed=\$((claimed + 1)); done
+      if [ "\$claimed" -gt 0 ]; then
+        rm -f "$RUN_ROOT/steer-claim-watch"
+        holder="\$(readlink "\$lock" 2>/dev/null)" || holder=""
+        [ -n "\$holder" ] && kill -0 "\$holder" 2>/dev/null && live=yes
+        printf 'holder-alive=%s claimed=%s\n' "\$live" "\$claimed" \
+          > "$RUN_ROOT/steer-claim-observed"
+      fi
+    fi
+  fi
+  steer_real_input "\$1"
+}
 SH
-: > "$RUN_ROOT/steer-signal"
 "$HITCH" steer -c steering -d /tmp >/dev/null
 steer_id="$(window_id steer)"
 steer_pane_id="$(tmux list-panes -t "$steer_id" -F '#{pane_id}')"
-# TWO LIVE SENDS WERE OBSERVED STAGED IN A REPAINTING CLAUDE COMPOSER, requiring
-# the operator to press Enter. The old assertions below treated the harness's
-# anonymous mid-turn queue as a successful third state; that was wrong because
-# the post-paste read can vanish before Enter and leave exactly that stranded
-# body. A witnessed turn now commits to Gangline's attributed spool before any
-# keystroke, whatever queue evidence the collar knows how to recover later.
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
+: > "$RUN_ROOT/steer-claim-watch"
 if steer_out="$(printf 'MARK_STEER' | "$GANG" send --to steer --from tester --stdin 2>&1)"; then
   steer_rc=0
 else
   steer_rc=$?
 fi
-equal "a busy park send is accepted into Gangline's spool" "0" "$steer_rc"
-contains "the busy send reports the attributed queue" "$steer_out" "queued for steer"
-excludes "the busy send never claims live delivery" "$steer_out" "delivered to steer"
-# source-guard: producer@fa75d92a1c9d: MARK_STEER is unique to the busy send above, and this pane is its only possible composer target before the spool drains
-excludes "the busy route types no byte into the repainting composer" \
-  "$(pane steer)" "MARK_STEER"
-contains "the exact body waits in one attributed spool entry" \
-  "$("$GANG" mail steer)" "MARK_STEER"
-contains "status exposes one waiting message" "$("$GANG" status steer)" "spooled: 1"
-equal "the native anonymous-queue record is never opened" "" \
-  "$(tmux show-options -wqv -t "$steer_id" @gl_parked)"
-
-# PostCompact can be a native delivery boundary while the turn bracket is still
-# open. It must not hand the spool to that live composer; Stop closes the turn,
-# and only that later verified opportunity may claim and submit the body.
-tmux wait-for "gang-spool-drain-$steer_id" &
-steer_busy_drain_waiter=$!
-printf '%s' '{"hook_event_name":"PostCompact"}' |
-  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
-wait "$steer_busy_drain_waiter"
-contains "a boundary during the live turn leaves the spool untouched" \
-  "$("$GANG" status steer)" "spooled: 1"
-# source-guard: producer@9a2fd1044e0e: MARK_STEER still has only the one spooled producer, and PostCompact above is the only boundary allowed before this read
-excludes "the live-turn boundary types nothing into the composer" \
-  "$(pane steer)" "MARK_STEER"
-tmux wait-for "gang-spool-drain-$steer_id" &
-steer_stop_drain_waiter=$!
-printf '%s' '{"hook_event_name":"Stop"}' |
-  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
-wait "$steer_stop_drain_waiter"
-# source-guard: producer@7f2d438cb178: the single MARK_STEER spool entry above is the only producer, and the Stop barrier completed its verified drain before this read
-contains "the first idle boundary submits the spooled body" \
-  "$(pane steer)" "MARK_STEER"
-excludes "the verified idle drain retires the spool entry" \
+equal "a free steering composer accepts a busy send" "0" "$steer_rc"
+contains "the foreground send reports the verified mid-turn handoff" \
+  "$steer_out" "collar-declared mid-turn input"
+# source-guard: producer@0a69b90f8810: this send is the sole MARK_STEER producer, and the adjacent claim log independently proves the pane handoff came from its attributed spool
+contains "the claimed mid-turn handoff reaches the target" "$(pane steer)" "MARK_STEER"
+excludes "the verified handoff retires its spool entry" \
   "$("$GANG" status steer)" "spooled:"
-# source-guard: producer@065dfc6db782: MARK_STEER has one producer above, and the completed Stop-drain barrier makes every occurrence in this target pane an effect of that one handoff
-equal "the spool-to-composer handoff submits exactly once" "1" \
+# source-guard: producer@b7771528892a: MARK_STEER has one producer above, and the claim log plus retired spool bind every target-pane occurrence to that one handoff
+equal "the steering handoff submits exactly once" "1" \
   "$(pane steer | grep -o MARK_STEER | wc -l | tr -d ' ')"
+contains "the pane lock is live when the steering entry is read" \
+  "$(<"$RUN_ROOT/steer-claim-observed")" "holder-alive=yes"
+contains "and attribution is claimed before that composer read" \
+  "$(<"$RUN_ROOT/steer-claim-observed")" "claimed=1"
 
-# --live-only remains a no-park probe: during the next witnessed turn it refuses
-# before typing and adds no spool entry.
+# --live-only has no attributed landing and therefore never steers.
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
 if steer_live="$(printf 'MARK_LIVE' | "$GANG" send --to steer --from tester --live-only --stdin 2>&1)"; then
   steer_live_rc=0
@@ -625,9 +642,107 @@ else
 fi
 equal "--live-only refuses rather than parking" "3" "$steer_live_rc"
 contains "the live-only refusal names the no-keystroke landing" \
-  "$steer_live" "--live-only did not park it"
+  "$steer_live" "cannot use the attributed spool"
 excludes "live-only leaves no queued copy" "$("$GANG" status steer)" "spooled:"
+
+# COPY-MODE OWNS THE PANE. The default send may park, but neither that live
+# attempt nor a PostToolUse drain may claim or type until the operator leaves
+# the mode. The mode itself must survive both attempts unchanged.
+tmux copy-mode -t "$steer_id"
+equal "the copy-mode world is genuinely in tmux mode" "1" \
+  "$(tmux display-message -p -t "$steer_id" '#{pane_in_mode}')"
+copy_out="$(printf 'MARK_COPY_MODE' |
+  "$GANG" send --to steer --from tester --stdin 2>&1)"
+contains "a live send in copy-mode parks without typing" "$copy_out" "queued for steer"
+contains "the copy-mode refusal names tmux ownership" "$copy_out" "tmux mode owns"
+equal "the live attempt preserves copy-mode" "1" \
+  "$(tmux display-message -p -t "$steer_id" '#{pane_in_mode}')"
+excludes "copy-mode receives no body or Enter" "$(pane steer)" "MARK_COPY_MODE"
+contains "the refused body remains live in the spool" \
+  "$("$GANG" status steer)" "spooled: 1"
+tmux wait-for "gang-spool-drain-$steer_id" &
+copy_drain_waiter=$!
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$copy_drain_waiter"
+equal "a native drain preserves copy-mode too" "1" \
+  "$(tmux display-message -p -t "$steer_id" '#{pane_in_mode}')"
+contains "the copy-mode drain leaves the entry unclaimed and live" \
+  "$("$GANG" status steer)" "spooled: 1"
+excludes "the refused native drain types nothing" "$(pane steer)" "MARK_COPY_MODE"
+tmux send-keys -X -t "$steer_id" cancel
+tmux wait-for "gang-spool-drain-$steer_id" &
+copy_release_waiter=$!
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$copy_release_waiter"
+# source-guard: producer@9d9ca4a93dff: MARK_COPY_MODE has one spooled producer, and the completed PostToolUse barrier after mode cancellation is its only successful drain
+contains "the next safe native opportunity delivers after copy-mode" \
+  "$(pane steer)" "MARK_COPY_MODE"
+# source-guard: producer@11cf7ab17966: the single MARK_COPY_MODE entry was live before the completed release barrier and retired after it, binding every occurrence to one handoff
+equal "that deferred body submits exactly once" "1" \
+  "$(pane steer | grep -o MARK_COPY_MODE | wc -l | tr -d ' ')"
+excludes "the deferred copy-mode entry is retired" \
+  "$("$GANG" status steer)" "spooled:"
+
+# A HUMAN DRAFT is another occupied composer. Clearing it exposes a free box;
+# PostToolUse drains while @gl_turn stays open, closing the issue-#133 shape.
+tmux send-keys -l -t "$steer_id" HUMAN_DRAFT_BLOCK
+draft_steer="$(printf 'MARK_POST_TOOL' |
+  "$GANG" send --to steer --from tester --stdin 2>&1)"
+contains "a drafted steering composer parks" "$draft_steer" "queued for steer"
+excludes "the draft path types no message bytes" "$(pane steer)" "MARK_POST_TOOL"
+tmux send-keys -t "$steer_id" C-u
+tmux wait-for "gang-spool-drain-$steer_id" &
+post_tool_waiter=$!
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$steer_pane_id" "$GANG" hook >/dev/null
+wait "$post_tool_waiter"
+equal "PostToolUse leaves the turn record continuously open" "open" \
+  "$(tmux show-options -wqv -t "$steer_id" @gl_turn | cut -d' ' -f1)"
+# source-guard: producer@6628b93910fb: MARK_POST_TOOL has one spooled producer and the completed PostToolUse barrier is its only drain
+contains "the open-turn PostToolUse drains the free composer" \
+  "$(pane steer)" "MARK_POST_TOOL"
+# source-guard: producer@7af7dd8d2694: the one MARK_POST_TOOL entry is retired beside an open turn only after the completed native barrier, binding every occurrence to that handoff
+equal "the stale-turn-shape handoff submits exactly once" "1" \
+  "$(pane steer | grep -o MARK_POST_TOOL | wc -l | tr -d ' ')"
+excludes "and retires its attributed entry" "$("$GANG" status steer)" "spooled:"
 "$GANG" drop steer >/dev/null
+
+# PARK REMAINS THE DECLARATION FOR A COLLAR THAT CANNOT TAKE MID-TURN INPUT.
+cat > "$RUN_ROOT/collars/park-only.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_MIDTURN_INPUT=park
+GANG_STOP_HOOK=1
+SH
+"$HITCH" park-only -c park-only -d /tmp >/dev/null
+park_only_id="$(window_id park-only)"
+park_only_pane="$(tmux list-panes -t "$park_only_id" -F '#{pane_id}')"
+tmux set-option -w -t "$park_only_id" @gl_turn "open $(date +%s)"
+park_only_out="$(printf 'MARK_PARK_ONLY' |
+  "$GANG" send --to park-only --from tester --stdin 2>&1)"
+contains "a park collar keeps its busy send attributed" "$park_only_out" "queued for park-only"
+excludes "park authorizes no mid-turn composer key" \
+  "$(pane park-only)" "MARK_PARK_ONLY"
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$park_only_pane" "$GANG" hook >/dev/null
+contains "PostToolUse does not drain a park-only collar" \
+  "$("$GANG" status park-only)" "spooled: 1"
+tmux wait-for "gang-spool-drain-$park_only_id" &
+park_only_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$park_only_pane" "$GANG" hook >/dev/null
+wait "$park_only_waiter"
+# source-guard: producer@a550dad49d99: MARK_PARK_ONLY has one spooled producer and the completed Stop barrier is its only permitted drain
+contains "the park collar drains at the idle boundary" \
+  "$(pane park-only)" "MARK_PARK_ONLY"
+# source-guard: producer@f753d5255c86: the one MARK_PARK_ONLY entry cannot drain at PostToolUse and retires only after the completed Stop barrier
+equal "the park-only handoff submits exactly once" "1" \
+  "$(pane park-only | grep -o MARK_PARK_ONLY | wc -l | tr -d ' ')"
+"$GANG" drop park-only >/dev/null
 
 # A keystroke gang cannot send by name is a broken declaration, refused before
 # any window opens: tmux would deliver the letters into the composer instead.

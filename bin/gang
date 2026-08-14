@@ -1179,6 +1179,10 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     ''|1) ;;
     *) die "collar '$1' sets unknown GANG_STOP_HOOK '$GANG_STOP_HOOK' (expected 1 or unset)" ;;
   esac
+  case "$GANG_MIDTURN_INPUT" in
+    ''|1|park|steer) ;;
+    *) die "collar '$1' sets unknown GANG_MIDTURN_INPUT '$GANG_MIDTURN_INPUT' (expected 1, park, steer, or unset)" ;;
+  esac
   # A key gang sends by NAME, never as literal text: tmux resolves Up, Escape
   # and C-c from this word, and anything outside the key-name alphabet would
   # arrive in the composer as characters instead of as the keystroke the
@@ -2381,6 +2385,17 @@ landing_zone() { # $1 = window id; the input box, or the whole pane if none is d
   else capture_joined "$1"; fi
 }
 
+pane_mode_free() { # $1 = window id; 0 only when tmux will route keys to the pty
+  local mode
+  mode="$(tmux display-message -p -t "$1" '#{pane_in_mode}' 2>/dev/null)" \
+    || die "cannot read tmux mode state for pane $1 — refusing to send a key whose recipient is unknown"
+  case "$mode" in
+    0) return 0 ;;
+    1) return 1 ;;
+    *) die "tmux returned unreadable pane_in_mode state '$mode' for pane $1 — refusing to send a key whose recipient is unknown" ;;
+  esac
+}
+
 # A harness may accept the Enter and PARK the message in its own input queue:
 # claude's queue strand (observed on 2.1.223) renders the parked body in the
 # transcript styled exactly like a submitted prompt and empties the composer,
@@ -2703,14 +2718,28 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
   tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
 }
 
-spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
-  local e claim rc err failed busy_rc=0 bundle="" frags="" claims="" n=0 nl=$'\n'
+spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
+  local e claim rc err failed busy_rc=0 witness="" keep_lock=0
+  local bundle="" frags="" claims="" n=0 nl=$'\n'
   spool_existing "$1" || return 4
   [ -d "$SPOOL_DIR" ] || return 4
   # LOCK BEFORE THE FIRST CLAIM. The queue is one oldest-first submission, so
   # two native edges must not split its files into two bundles before inject
   # serializes only their pastes. Every ordinary sender uses this same lock.
-  lock_pane "$1"
+  case "${2:-}" in
+    '') lock_pane "$1" ;;
+    locked) [ -n "$LOCK_PATH" ] || die "internal: spool_drain called locked without a pane lock"
+            keep_lock=1 ;;
+    *) die "internal: spool_drain received unknown lock mode '$2'" ;;
+  esac
+  # Copy-mode and its cousins are operator-owned tmux UI, not the target pty.
+  # Refuse before the first claim: no entry leaves the live queue, no paste or
+  # Enter is interpreted as a mode command, and scroll/selection is preserved.
+  if ! pane_mode_free "$1"; then
+    printf 'spool drain stopped before claiming: tmux mode owns the target pane; the spool remains waiting\n' >&2
+    [ "$keep_lock" -eq 1 ] || lock_release
+    return 3
+  fi
   # READ UNDER THE SAME HOLD AS THE CLAIM. A sender can finish between a
   # boundary's readiness check and this worker taking the lock; treating that
   # moving target as idle would recreate the mid-turn composer handoff this
@@ -2719,12 +2748,21 @@ spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
   busy "$1" || busy_rc=$?
   case "$busy_rc" in
     1) ;;
-    0) printf 'spool drain stopped before claiming: the target still has a live turn; the spool remains waiting\n' >&2
-       lock_release
-       return 3 ;;
-    2) printf 'spool drain stopped before claiming: the target is not provably idle; the spool remains waiting\n' >&2
-       lock_release
-       return 3 ;;
+    0|2)
+       if [ "${GANG_MIDTURN_INPUT:-}" = steer ] \
+          && ! occupied "$1" && composer_settled "$1" && input_clear "$1"; then
+         # The collar declares that Enter against this free mid-turn composer
+         # is native steering. Attribution still landed first, under this lock.
+         witness=steer
+       else
+         if [ "$busy_rc" -eq 0 ]; then
+           printf 'spool drain stopped before claiming: the target still has a live turn and no free collar-declared steering composer; the spool remains waiting\n' >&2
+         else
+           printf 'spool drain stopped before claiming: the target is not provably idle and has no free collar-declared steering composer; the spool remains waiting\n' >&2
+         fi
+         [ "$keep_lock" -eq 1 ] || lock_release
+         return 3
+       fi ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   for e in "$SPOOL_DIR"/[0-9]*; do
@@ -2738,14 +2776,14 @@ spool_drain() { # $1 = window id; the whole queue, oldest first, as one delivery
     n=$((n + 1))
   done
   if [ "$n" -eq 0 ]; then
-    lock_release
+    [ "$keep_lock" -eq 1 ] || lock_release
     return 4
   fi
   rc=0
   # The nested shell captures inject's diagnostic. It must not inherit the
   # parent's EXIT trap: this worker owns the lock until claims are retired or
   # returned, and inject's `locked` mode deliberately leaves it in place.
-  err="$(trap - EXIT; inject "$1" "$bundle" "" locked 2>&1)" || rc=$?
+  err="$(trap - EXIT; inject "$1" "$bundle" "" locked "$witness" 2>&1)" || rc=$?
   case "$rc" in
     0) while IFS= read -r claim; do
          [ -n "$claim" ] || continue
@@ -2767,7 +2805,7 @@ $claims
 EOF
        printf 'spool drain stopped with %s message(s) still waiting: %s\n' \
          "$n" "${err##*$'\n'}" >&2
-       lock_release
+       [ "$keep_lock" -eq 1 ] || lock_release
        return 3 ;;
     *) # Unverified: the bundle may or may not have landed, so every entry in it
        # is held where a person can read it rather than sent again.
@@ -2780,15 +2818,21 @@ $claims
 EOF
        printf "a bundle of %s spooled message(s) was not verified and is held in %s (%s): %s\n" \
          "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
-       lock_release
+       [ "$keep_lock" -eq 1 ] || lock_release
        return 1 ;;
   esac
-  lock_release
+  [ "$keep_lock" -eq 1 ] || lock_release
 }
 
-spool_drain_after_event() { # $1 window id, $2 collar
+spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
   local ready=0 box_rc=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   load_collar "$2"
+  if [ "${3:-}" = midturn ]; then
+    [ "$GANG_MIDTURN_INPUT" = steer ] \
+      || die "collar '$2' no longer declares steering input for its mid-turn drain"
+    spool_drain "$1"
+    return
+  fi
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   wait_ready "$1" "$boot" || ready=$?
   if [ "$ready" -ne 0 ]; then
@@ -2813,7 +2857,7 @@ spool_drain_after_event() { # $1 window id, $2 collar
   spool_drain "$1"
 }
 
-spool_drain_dispatch() { # $1 window id, $2 collar; called only by native boundaries
+spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn
   # No in-progress flag. The pane lock is taken before any claim, so a crossed
   # worker refuses without touching the queue. A flag would add a state that
   # outlives a killed worker and wedges the spool silently.
@@ -2821,7 +2865,7 @@ spool_drain_dispatch() { # $1 window id, $2 collar; called only by native bounda
   (
     trap '' HUP INT TERM
     local err="" rc=0
-    err="$(spool_drain_after_event "$1" "$2" 2>&1)" || rc=$?
+    err="$(spool_drain_after_event "$1" "$2" "${3:-}" 2>&1)" || rc=$?
     case "$rc" in
       0) tmux set-option -uw -t "$1" @gl_spool_failed 2>/dev/null || true ;;
       3) ;;
@@ -2835,11 +2879,11 @@ spool_drain_dispatch() { # $1 window id, $2 collar; called only by native bounda
   disown
 }
 
-spool_event() { # $1 = the window a native drain boundary fired in, $2 = collar
+spool_event() { # $1 window a native opportunity fired in, $2 collar, optional $3
   # The drain serializes on the WINDOW's lock. A lock named after the firing
   # pane would not exclude an ordinary send holding the window-named one.
   [ -n "$1" ] || return 0
-  spool_drain_dispatch "$1" "$2"
+  spool_drain_dispatch "$1" "$2" "${3:-}"
 }
 
 stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies for it
@@ -3106,6 +3150,7 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
   while [ "$n" -lt "$presses" ]; do
     input_clear "$1" && return 0
     before="$(collar_input "$1")" || return 1
+    pane_mode_free "$1" || return 1
     tmux send-keys -t "$1" C-u
     sleep 0.4
     after="$(collar_input "$1")" || return 1
@@ -3132,8 +3177,9 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 }
 
 inject() { # $1 window, $2 text, $3 head, $4 locked,
-           # $5 witness: screen if UI proves submit, queued for compaction input
-  local buf="gang-$$" frag before before_rc=0 after tname keep_lock=0
+           # $5 witness: queued for compaction, steer for attributed mid-turn input
+  local buf="gang-$$" frag before before_rc=0 after after_rc=0 paste_looks=0
+  local tname keep_lock=0
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   tname="$(agent_name_of "$1")"
@@ -3142,6 +3188,8 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     locked) [ -n "$LOCK_PATH" ] || die "internal: inject called locked without a pane lock"; keep_lock=1 ;;
     *) die "internal: inject received unknown lock mode '$4'" ;;
   esac
+  pane_mode_free "$1" \
+    || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
   ! occupied "$1" \
     || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
   composer_settled "$1" \
@@ -3171,11 +3219,21 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     || refuse "refusing to deliver '$frag' to $tname: its input box cannot be read [$(box_class "$1" "" "$tname" "$before_rc")]. Nothing was typed and the body is still the sender's"
   printf '%s' "$2" | tmux load-buffer -b "$buf" -
   tmux paste-buffer -p -d -b "$buf" -t "$1"
-  sleep 0.4
-  after="$(landing_zone "$1")" || {
+  # Claude Code redraws a large multi-line composer in more than one frame.
+  # A missing frame or the old empty one is not yet evidence that the paste
+  # failed. Bound the rereads exactly as submission verification is bounded;
+  # only the final unresolved state opens @gl_staged and fails closed.
+  while [ "$paste_looks" -lt 15 ]; do
+    sleep 0.4
+    after_rc=0
+    after="$(landing_zone "$1")" || after_rc=$?
+    [ "$after_rc" -ne 0 ] || [ "$after" = "$before" ] || break
+    paste_looks=$((paste_looks + 1))
+  done
+  if [ "$after_rc" -ne 0 ]; then
     stage_record "$1" "'$frag' was pasted into this box and the box could not be read afterwards — it may be sitting there unsent" ""
     die "cannot read the input box of $tname after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $tname)"
-  }
+  fi
   if [ "$after" = "$before" ]; then
     stage_record "$1" "'$frag' was pasted into this box and it read back unchanged — either nothing landed or this box cannot be read reliably, so it may be sitting there unsent" ""
     die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $tname)"
@@ -3184,11 +3242,19 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
     die "refusing to submit '$frag': a modal took the screen of $tname while the paste was landing — the Enter that would have answered it was not sent, so the paste is staged unsent in that box (gang attach; gang clears it on the next safe delivery once the modal is gone)"
   fi
+  pane_mode_free "$1" || {
+    stage_record "$1" "'$frag' is staged unsent in this box — tmux mode took the pane before Enter could be sent" "$after"
+    die "refusing to submit '$frag': tmux mode took the pane of $tname after the paste landed. Enter was NOT sent into operator-owned mode state; the paste is staged in the composer underneath (leave copy-mode, then gang attach)"
+  }
   case "${5:-}" in
     # A continuation is typed at a harness that is compacting, so the harness's
     # own queue is where it is meant to wait. Parking is the landing here, not a
     # failed delivery.
     queued) submit_verify "$1" "$after" "$frag" paste park_ok ;;
+    # A peer envelope entered only after its attributed spool was claimed.
+    # The collar declares that Enter during a turn is accepted as native
+    # steering, whether the next box frame is empty or shows its queue hint.
+    steer) submit_verify "$1" "$after" "$frag" paste park_ok ;;
     # Ordinary delivery accepts only a verified submission. A harness queue is
     # recovery state, not a landing: busy `park` collars spool before reaching
     # this function, so a queued reading here is unexpected and fails closed.
@@ -3218,6 +3284,10 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
             stuck="" mayclear=0 ;;
     *) die "internal: submit_verify was given mode '$4'" ;;
   esac
+  pane_mode_free "$1" || {
+    stage_record "$1" "'$3' is staged unsent in this box — tmux mode took the pane before Enter could be sent" "$2"
+    die "submit NOT performed: tmux mode owns the pane of $tname, so Enter was NOT sent; the $noun is staged in the composer underneath (leave copy-mode, then gang attach)"
+  }
   tmux send-keys -t "$1" Enter
   while :; do
     sleep 0.4
@@ -3979,6 +4049,9 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
        # saying so, because there the message really was not taken.
        case "${GANG_MIDTURN_INPUT:-}" in
          1) ;;
+         steer) [ "${3:-}" != live-only ] \
+                  || refuse "'$1' is mid-turn; --live-only cannot use the attributed spool that makes steering safe"
+                refuse "'$1' is mid-turn; collar-declared steering starts only after the envelope commits to its attributed Gangline spool" ;;
          park) [ "${3:-}" != live-only ] \
                  || refuse "'$1' is not safely reachable mid-turn; --live-only did not park it"
                refuse "'$1' is mid-turn; its attributed Gangline spool is the only landing that requires no composer keystroke" ;;
@@ -4029,6 +4102,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 
 cmd_send() {
   local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag
+  local drain_rc=0 drain_err="" next_opportunity="next completes a turn"
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -4094,6 +4168,24 @@ cmd_send() {
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
+  # Steering-capable collars still land without a keystroke: the committed
+  # spool entry is now the ordering authority. While this same pane lock is
+  # held, try the whole queue. A free composer drains it now; copy-mode, a
+  # draft, or any other pre-keystroke refusal leaves every entry live.
+  if [ "$GANG_MIDTURN_INPUT" = steer ]; then
+    next_opportunity="next exposes a free composer at a native delivery opportunity"
+    drain_err="$(trap - EXIT; spool_drain "$AGENT_ID" locked 2>&1)" || drain_rc=$?
+    case "$drain_rc" in
+      0) lock_release
+         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
+         return 0 ;;
+      3) err="$drain_err" ;;
+      *) lock_release
+         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
+         exit "$drain_rc" ;;
+    esac
+  fi
   # The commit is done; the decision it was made against cannot change now.
   lock_release
   # Exit 0 must not say "refused" — the message was accepted; the word
@@ -4102,7 +4194,7 @@ cmd_send() {
   # another one never drains.
   printf '%s\n%s\n' \
     "$(colour "$C_OK" "queued for $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
-    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' next completes a turn, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
+    "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
 # The recovery gang already diagnoses, performed as a verified operation rather
@@ -4143,6 +4235,8 @@ cmd_flush() {
     || die "flush: cannot read the input box of $name — the harness is not taking input (gang capture $name)"
   box_queued "$box" \
     || refuse "flush: the composer of '$name' shows none of the parked-queue evidence its collar declares, so there is nothing to recover and gang will not press $GANG_QUEUE_RECALL_KEY blindly (gang capture $name)"
+  pane_mode_free "$AGENT_ID" \
+    || refuse "flush: tmux mode owns the pane of '$name', so $GANG_QUEUE_RECALL_KEY would act on operator-owned mode state instead of recalling the parked message; leave copy-mode, then retry"
   tmux send-keys -t "$AGENT_ID" "$GANG_QUEUE_RECALL_KEY"
   # The recall key has to visibly load something before there is anything to
   # read back. A composer that never changed is not a mismatch and not a
@@ -4239,6 +4333,8 @@ cmd_interrupt() {
   # a native dialog reads as an answer, and gang does not answer dialogs.
   ! occupied "$AGENT_ID" \
     || refuse "interrupt: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_INTERRUPT_KEY would answer that UI rather than stop a turn (gang attach)"
+  pane_mode_free "$AGENT_ID" \
+    || refuse "interrupt: tmux mode owns the pane of '$name', so $GANG_INTERRUPT_KEY would act on operator-owned mode state instead of the harness; leave copy-mode, then retry"
   tmux send-keys -t "$AGENT_ID" "$GANG_INTERRUPT_KEY" \
     || die "interrupt: could not send $GANG_INTERRUPT_KEY to $name"
   # CLEARED, NOT CLOSED. The interrupted turn is one the harness will never
@@ -5482,7 +5578,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   fi
   tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
   case "$event" in
-    Stop|PostCompact)
+    PostToolUse|Stop|PostCompact)
       window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
         || window=""
       [ -n "$window" ] || exit 0 ;;
@@ -5491,7 +5587,13 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
                                   turn_state_write "$TMUX_PANE" open
                                   compaction_state_settle "$TMUX_PANE"
-                                  glyph_write "$TMUX_PANE" "-busy-" ;;
+                                  glyph_write "$TMUX_PANE" "-busy-"
+                                  if [ "$event" = PostToolUse ]; then
+                                    ( load_collar "$collar"
+                                      [ "$GANG_MIDTURN_INPUT" != steer ] \
+                                        || spool_event "$window" "$collar" midturn
+                                    ) || true
+                                  fi ;;
     Stop) turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"

@@ -134,11 +134,12 @@ obstruction is gone, never retroactive proof the recorded body was delivered.
 A refusal happens before any keystroke, so the body is still the sender's and
 parking it loses nothing; a failure after a paste has an unknown fate, and a
 second copy of a message that may have landed is worse than one loud failure.
-Parking is the default and `--live-only` is the explicit probe. It drains only
-on the target's own native Stop event and delivers through the ordinary verified
-path — no poller, scheduler, or watcher. A collar whose harness announces no
-turn boundary degrades to live-only and names the missing declaration rather
-than holding a message nothing would drain. An entry is claimed out of
+Parking is the default and `--live-only` is the explicit probe. Every collar
+drains on the target's native Stop event; a `steer` collar may also drain at
+PostToolUse when its composer is free, after attribution has committed the
+entry. There is no poller, scheduler, or watcher. A collar whose harness
+announces no delivery boundary degrades to live-only and names the missing
+declaration rather than holding a message nothing would drain. An entry is claimed out of
 the spool before it is delivered, because ownership has to span the submission
 AND the retirement: the pane lock is released inside the delivery, so anything
 still live afterwards could be sent again by the next drain or the next
@@ -735,10 +736,13 @@ session identity was stamped before interruption.
 Unknown stable screens still fail loudly instead of being called startup
 prompts. Spool drains take the pane delivery lock before the first claim, so
 crossed native workers cannot split or reorder the oldest-first bundle. A
-mid-turn collar that declares `park` commits to the attributed spool before any
-composer keystroke, and a native drain rechecks that the target is idle before
-claiming; the harness's anonymous input queue is recovery evidence, not a safe
-delivery route through a repainting turn.
+mid-turn collar may declare `steer`: the envelope commits to the attributed
+spool before any composer keystroke, then a free composer may accept its claim
+as native steering. PostToolUse is a delivery opportunity even while the native
+turn record remains open. `park`, an occupied composer, and tmux copy-mode leave
+the entry live; Gangline never cancels operator-owned mode state. Post-paste
+verification tolerates bounded unreadable or unchanged redraw frames, then
+opens the staged-unknown record and fails closed if no changed composer appears.
 
 ## State explanations instrument the classified read
 

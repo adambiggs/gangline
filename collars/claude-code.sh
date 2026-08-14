@@ -224,12 +224,15 @@ GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # flush it.
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*$'
 GANG_QUEUE_RECALL_KEY="Up"
-# MID-TURN ENTER CANNOT SUBMIT; it can only leave text staged or place it in the
-# harness's anonymous queue. Both occurred live while a turn repainted the
-# composer, so `park` means Gangline's attributed spool is the only safe landing
-# until a native boundary proves the turn ended. `=1` would authorize precisely
-# the composer keystroke this declaration refuses.
-GANG_MIDTURN_INPUT=park
+# MID-TURN INPUT IS NATIVE STEERING, but attribution lands before its first
+# keystroke. Driven on 2.1.232: with a turn live and the composer free, Claude
+# accepts Enter as queued steering and consumes it at its next tool batch. The
+# `steer` declaration makes Gangline commit the envelope to its attributed
+# spool first, then claim that entry under the same pane lock before typing.
+# A draft, tmux mode, or unreadable composer leaves it live for a later native
+# opportunity. This is deliberately not `=1`, whose direct path types before
+# the attributed spool owns anything.
+GANG_MIDTURN_INPUT=steer
 # Escape stops an active turn; the harness paints "esc to interrupt" while one
 # is in flight.
 GANG_INTERRUPT_KEY="Escape"

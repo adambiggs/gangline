@@ -186,9 +186,12 @@ Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
-Gangline refuses a missing or occupied composer, a human draft, unknown
-state, and unsafe mid-turn input. A collar may declare that its native harness
-accepts ordinary mid-turn input.
+Gangline refuses a missing or occupied composer, a human draft, tmux copy-mode,
+unknown state, and unsafe mid-turn input. Copy-mode is operator-owned: Gangline
+does not cancel it, and checks `#{pane_in_mode}` before every paste, submit,
+queue-recall, clear, and interrupt key. A collar may declare that its native
+harness accepts ordinary mid-turn input, or that a free mid-turn composer
+accepts attributed spool entries as native steering.
 
 A refusal on a box that is not provably empty classifies what Gangline read, in
 one word with the look or recovery that settles it: `draft` (a human line
@@ -218,11 +221,12 @@ native hooks and no mid-turn-input declaration whose pane keeps a matching
 busy marker stays refused until the marker scrolls off or the agent is
 dropped.
 
-Queued is not delivered: where a collar declares queue evidence, a harness
-that parks the submission in its own input queue is reported as a failed
-delivery naming the `gang flush` recovery, both before pasting and after the Enter —
-never as a success. An unreadable verification capture after the Enter is
-ambiguity and fails the same way.
+An unexpected queue is not delivered: where a collar declares queue evidence,
+an ordinary submission the harness parks is reported as a failed delivery
+naming the `gang flush` recovery, both before pasting and after Enter. The
+exception is a claim that arrived through a collar's explicit `steer` path;
+there, native mid-turn queueing is the declared destination. An unreadable
+verification capture after Enter remains ambiguity and fails closed.
 
 This detection is scoped to verified harness renderings: the claude-code pin
 is the composer hint observed on 2.1.223, and a harness version whose
@@ -236,19 +240,25 @@ retroactive proof that the recorded body was delivered.
 
 A refused delivery parks by default. The live delivery is attempted first; if
 it is refused, the nonce-bound envelope is written to a per-target spool and
-reported as parked, not delivered. A failure after anything was typed is never
-parked, because that body's fate is unknown and a second copy would be a second
-message. Pass `--live-only` for an availability probe that must return a refusal
-to its caller instead of parking it.
+reported as parked, not delivered. A `steer` collar then tries the whole queue
+under that same pane lock: only a free composer may take its already-attributed
+claim. A failure after anything was typed is never parked, because that body's
+fate is unknown and a second copy would be a second message. Pass `--live-only`
+for an availability probe that must return a refusal to its caller instead of
+parking it; without the spool, it cannot use steering.
 
-The target's own native Stop event drains ordinary mail. Hitch itself drains a
-startup contract parked before any turn existed once it observes the composer.
-Both use the same oldest-first verified delivery path. The pane delivery lock is
-taken before the first entry is claimed and held through delivery and claim
-retirement, so crossed native workers cannot split or reorder the queue. A
-refused drain returns its entry to the spool for the next turn boundary. A drain
-that cannot read a composer after the native boundary leaves its entries waiting
-and records a visible drain failure; it never types through that uncertainty. A
+The target's own native Stop event drains ordinary mail. On a `steer` collar,
+PostToolUse also tries the spool while the turn remains open; a free composer
+accepts its claim as native steering, while an occupied composer defers without
+typing. Hitch itself drains a startup contract parked before any turn existed
+once it observes the composer. Every route uses the same oldest-first verified
+delivery path. The pane delivery lock is taken before the first entry is
+claimed and held through delivery and claim retirement, so crossed native
+workers cannot split or reorder the queue. Copy-mode and other pre-keystroke
+refusals leave entries live and unclaimed for the next native opportunity. A
+drain that cannot read a composer after an idle native boundary leaves its
+entries waiting and records a visible drain failure; it never types through
+that uncertainty. A
 drain that cannot verify, or one that dies between the submission and the
 entry's retirement, leaves that entry held: `status` says its delivery was not
 verified and may still have arrived, `status` and `roster` report how many are
@@ -304,8 +314,8 @@ answering busy until its bound expires nor a written one answering idle. State
 then comes from the pane: a harness that stopped goes idle, and one that
 ignored the key stays busy and unreachable. Whether the harness stops remains
 the harness's verdict. A collar that declares no interrupt key refuses the
-command, and an occupied composer refuses it too — that keystroke is often what
-a native dialog reads as an answer.
+command, and an occupied composer or tmux mode refuses it too — that keystroke
+is often what a native dialog or copy-mode reads as an answer.
 
 With `-m`, Gangline attributes the reason like an ordinary message, holds one
 pane lock across the stop key and the boundary it creates, then delivers the
@@ -313,7 +323,7 @@ reason before releasing that lock. The reason is never spooled: a queued stop
 would arrive after the work it was meant to stop. If the composer does not
 return or delivery cannot be verified, the reason is printed back to the caller
 in full and reported as not delivered and not parked. Existing backlog remains
-untouched for the next native turn boundary.
+untouched for the next native delivery opportunity.
 
 Omitting the name stops the calling window's own turn, with or without a
 reason. A reason that returns to its own author is refused on `send` and
@@ -385,7 +395,7 @@ Prints every message waiting in that agent's spool, oldest first, then every
 held entry, each with its sender and its entry filename, each body exactly as it
 would go onto the wire. Another agent's or the operator's read is inspection and
 touches nothing. The addressee's own read is delivery: it consumes each waiting
-entry so the native turn boundary cannot deliver the same message again. Before
+entry so a later native delivery opportunity cannot deliver the same message again. Before
 printing an entry, it moves it into a human-readable directory under
 `GANG_ARCHIVE_DIR`; the path and its explicit deletion command go to stderr, so
 an ordinary stdout filter cannot destroy the only copy or hide its recovery
@@ -776,6 +786,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
 | `GANG_MIDTURN_INPUT=park` | declares that mid-turn composer input can only stage or queue; it never authorizes a composer keystroke |
+| `GANG_MIDTURN_INPUT=steer` | commit to the attributed spool first, then allow a free composer to accept its claim as native mid-turn steering; PostToolUse supplies later opportunities |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
 | `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |

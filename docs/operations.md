@@ -104,6 +104,7 @@ Delivery refuses when:
 
 - a native dialog or picker owns input;
 - a person has a draft in the composer;
+- tmux copy-mode or another tmux mode owns the pane;
 - the target cannot safely accept mid-turn input;
 - the state evidence is unknown; or
 - another delivery owns that pane's lock.
@@ -124,11 +125,13 @@ TASK
 ```
 
 The live delivery is tried first. If it is refused, the message is parked and
-reported as parked; the target's own native turn boundary drains it through the
-same verified path. Add `--supersede` when the newer message should replace the
-sender's earlier waiting ones. An unattended sender does not have to re-send a
-bounced message by hand. Pass `--live-only` only when a caller needs a refusal
-to come back rather than park.
+reported as parked. Stop drains every collar through the same verified path; a
+`steer` collar also tries at PostToolUse while the turn remains open, but only
+after a free composer can take the already-attributed claim. A draft or tmux
+copy-mode leaves the entry live. Add `--supersede` when the newer message should
+replace the sender's earlier waiting ones. An unattended sender does not have
+to re-send a bounced message by hand. Pass `--live-only` only when a caller
+needs a refusal to come back rather than park.
 
 Do not write a retry loop around `gang send`. Spooling exists so that loop does
 not have to, and a loop that re-sends after a failure — as opposed to a refusal
