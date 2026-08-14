@@ -229,15 +229,6 @@ ROOT="$(gang_root "${BASH_SOURCE[0]}")"
 [ -d "$ROOT/collars" ] \
   || die "no collars/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 
-invoked="${BASH_SOURCE[0]}"
-case "$invoked" in
-  /*) ;;
-  */*) invoked="$PWD/$invoked" ;;
-  *) invoked="$(command -v -- "$invoked")" || die "cannot resolve the invoked gang path"
-     case "$invoked" in /*) ;; *) invoked="$PWD/$invoked" ;; esac ;;
-esac
-INVOKED_BIN_DIR="$(cd -P "$(dirname "$invoked")" && pwd)"
-
 binary_id() { # executable content witness, or an explicit unavailable value
   local output checksum size
   output="$(cksum "$ROOT/bin/gang" 2>/dev/null)" \
@@ -5899,7 +5890,7 @@ cmd_config() {
 }
 
 cmd_upgrade() {
-  local mode="" tmp rc=0
+  local mode="" tmp rc=0 invoked invoked_bin_dir
   case "$#:${1:-}" in
     0:) ;;
     1:--check) mode=--check ;;
@@ -5908,15 +5899,30 @@ cmd_upgrade() {
   esac
   [ -r "$ROOT/install.sh" ] \
     || die "upgrade: cannot read the installer at $ROOT/install.sh"
+  invoked="${BASH_SOURCE[0]}"
+  case "$invoked" in
+    /*) ;;
+    */*) invoked="$PWD/$invoked" ;;
+    *) invoked="$(command -v -- "$invoked")" \
+         || die "upgrade: cannot resolve the invoked gang path"
+       case "$invoked" in /*) ;; *) invoked="$PWD/$invoked" ;; esac ;;
+  esac
+  invoked_bin_dir="$(cd -P "$(dirname "$invoked")" && pwd)" \
+    || die "upgrade: cannot resolve the command directory containing $invoked"
   tmp="$(mktemp "${TMPDIR:-/tmp}/gangline-upgrade.XXXXXX")" \
     || die "upgrade: could not create a temporary installer"
   cp "$ROOT/install.sh" "$tmp" || {
     rm -f -- "$tmp"
     die "upgrade: could not copy the installer before replacing $ROOT"
   }
-  GANGLINE_HOME="$ROOT" GANGLINE_BIN="$INVOKED_BIN_DIR" \
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'rm -f -- "$tmp"' EXIT
+  GANGLINE_UPGRADE=1 GANGLINE_HOME="$ROOT" GANGLINE_BIN="$invoked_bin_dir" \
     sh "$tmp" ${mode:+"$mode"} || rc=$?
   rm -f -- "$tmp"
+  trap - EXIT HUP INT TERM
   return "$rc"
 }
 

@@ -819,8 +819,10 @@ and avoids adding a cache, timer, startup tax, or self-watching component.
 
 ## Pre-push proves the fast boundary
 
-The repository pre-push hook runs the outer contribution gate, lint, a command
-smoke, and commit-message checks against the pushed tree. It names the full
-integration suite it skipped; CI runs that suite on pushes to `main`. The local
-boundary stays quick enough to use on every push while the complete suite still
-records a verdict on the exact integrated branch state.
+The repository pre-push hook runs the outer contribution gate, production and
+hook lint, a command smoke, and commit-message checks against the pushed tree.
+It names the test lint, checker self-tests, and integration suite it skipped;
+CI runs full lint and integration on pushes to `main`. Release Please is a job
+in that same workflow and needs both verdicts before it can publish. The local
+boundary stays quick enough to use on every push without overlapping the
+memory-heavy shell linters, while the complete gate also runs the smoke.

@@ -405,7 +405,7 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
 #
 # A function body is one command, so it is read whole before any of it runs.
 # Everything that can wait goes inside, and the call is the last line in the
-# file, so once the run reaches the suite there is nothing left to read.
+# file, so once the run reaches the snapshot gates there is nothing left to read.
 main() {
   case "${1:-}" in
     --assert-owned)
@@ -442,7 +442,7 @@ main() {
     -h|--help)
       printf '%s\n' \
         'usage: test/gate.sh [--snapshot DIR | --assert-owned | --assert-unmoved IDENTITY]' \
-        '  (no argument)     snapshot this working tree and run lint + integration there' \
+        '  (no argument)     snapshot this tree and run lint + smoke + integration there' \
         '  --snapshot DIR    build that snapshot in DIR and stop' \
         '  --assert-owned    print this tree'"'"'s identity, or refuse a tree that is moving' \
         '  --assert-unmoved  refuse if the identity is no longer the one given'
@@ -480,13 +480,13 @@ main() {
   printf 'gate: source tree %s\n' "$source_state"
 
   rc=0
-  ( cd "$SNAP" && ./test/lint.sh && ./test/integration.sh ) || rc=$?
+  ( cd "$SNAP" && ./test/lint.sh && ./test/smoke.sh && ./test/integration.sh ) || rc=$?
   if [ "$rc" -ne 0 ]; then
     keep=1
     printf '\ngate: REFUSED (status %s)\n' "$rc" >&2
     exit "$rc"
   fi
-  printf '\ngate: the snapshot passed lint and the integration suite.\n'
+  printf '\ngate: the snapshot passed lint, smoke, and the integration suite.\n'
 }
 
 # The exit shares this line, so it is read with the call rather than after it:

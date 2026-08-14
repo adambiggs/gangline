@@ -55,8 +55,8 @@ if [ -n "$outer" ]; then
   fi
 fi
 
-echo "pre-push: running lint and the fast smoke." >&2
-echo "pre-push: skipping the full integration suite; CI runs it on pushes to main." >&2
+echo "pre-push: test-fixture lint, source-guard self-tests, and full integration are skipped locally." >&2
+echo "pre-push: CI runs full lint and integration on pushes to main." >&2
 
 is_zero_oid() {
   case "$1" in ''|*[!0]*) return 1 ;; *) return 0 ;; esac
@@ -150,6 +150,7 @@ while read -r local_ref local_sha _remote_ref remote_sha \
     fail=1; continue
   }
   if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ]; then
+    echo "pre-push: running pushed-tree fast lint and smoke for $local_ref." >&2
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
       cd "$work" && ./test/lint.sh --fast && ./test/smoke.sh ) || fail=1
   else

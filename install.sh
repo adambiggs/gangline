@@ -81,6 +81,17 @@ print((current > latest) - (current < latest))
   *) die "unknown argument '$1'" ;;
 esac
 
+case "${GANGLINE_UPGRADE:-0}" in 0|1) ;; *) die "GANGLINE_UPGRADE is internal and must be 0 or 1" ;; esac
+if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ]; then
+  [ -d "$HOME_DIR/.git" ] \
+    || die "gang upgrade requires an installer-managed release at $HOME_DIR"
+  git -C "$HOME_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
+    || die "gang upgrade cannot verify the installed release at $HOME_DIR"
+  branch="$(git -C "$HOME_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
+  [ -z "$branch" ] \
+    || die "gang upgrade refuses branch checkout '$branch' at $HOME_DIR; update it with: git -C '$HOME_DIR' pull --ff-only"
+fi
+
 tag="$(latest_release_tag)"
 
 need tmux
@@ -102,8 +113,19 @@ if [ -d "$HOME_DIR/.git" ]; then
     || die "could not inspect the existing install at $HOME_DIR"
   [ -z "$state" ] || die "$HOME_DIR has local changes; move them aside before upgrading"
   echo "installing $tag over $HOME_DIR"
-  git -C "$HOME_DIR" fetch --depth 1 --quiet "$REPO" "refs/tags/$tag" \
-    || die "could not fetch $tag from $REPO"
+  shallow="$(git -C "$HOME_DIR" rev-parse --is-shallow-repository)" \
+    || die "could not determine whether $HOME_DIR is shallow"
+  case "$shallow" in
+    true)
+      git -C "$HOME_DIR" fetch --depth 1 --quiet "$REPO" "refs/tags/$tag" \
+        || die "could not fetch $tag from $REPO"
+      ;;
+    false)
+      git -C "$HOME_DIR" fetch --quiet "$REPO" "refs/tags/$tag" \
+        || die "could not fetch $tag from $REPO"
+      ;;
+    *) die "could not interpret the shallow-repository state '$shallow' for $HOME_DIR" ;;
+  esac
   git -C "$HOME_DIR" checkout --detach --quiet FETCH_HEAD \
     || die "could not check out release $tag in $HOME_DIR"
 else

@@ -614,7 +614,14 @@ cat > "$gate_run/test/integration.sh" <<SH
 printf 'integration\n' >> "$gate_order"
 printf 'integration %s\n' "\$PWD" >> "$gate_where"
 SH
-chmod +x "$gate_run/test/lint.sh" "$gate_run/test/integration.sh"
+cat > "$gate_run/test/smoke.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'smoke\n' >> "$gate_order"
+printf 'smoke %s\n' "\$PWD" >> "$gate_where"
+SH
+chmod +x "$gate_run/test/lint.sh" "$gate_run/test/smoke.sh" \
+  "$gate_run/test/integration.sh"
 git -C "$gate_run" init -q
 git -C "$gate_run" add -A
 git -C "$gate_run" -c user.name=fixture -c user.email=fixture@example.invalid \
@@ -623,14 +630,15 @@ printf 'uncommitted while the gate runs\n' > "$gate_run/scratch.txt"
 : > "$gate_order"
 : > "$gate_where"
 gate_default_out="$("$gate_run/test/gate.sh" 2>&1)"
-equal "the no-argument gate runs lint and then the suite, in that order" \
-  "$(printf 'lint\nintegration')" "$(<"$gate_order")"
+equal "the no-argument gate runs lint, smoke, and then the suite, in that order" \
+  "$(printf 'lint\nsmoke\nintegration')" "$(<"$gate_order")"
 # WHERE they ran is the claim, and the gate's own report cannot witness it: that
 # line prints the SOURCE path whatever directory the gates were run from.
 gate_lint_where="$(awk '$1 == "lint" { print $2; exit }' "$gate_where")"
+gate_smoke_where="$(awk '$1 == "smoke" { print $2; exit }' "$gate_where")"
 gate_suite_where="$(awk '$1 == "integration" { print $2; exit }' "$gate_where")"
-equal "and runs both of them from one and the same directory" \
-  "$gate_lint_where" "$gate_suite_where"
+equal "and runs all three from one and the same directory" \
+  "$gate_lint_where $gate_lint_where" "$gate_smoke_where $gate_suite_where"
 if [ -n "$gate_lint_where" ] && [ "$gate_lint_where" != "$gate_run" ]; then
   pass "and that directory is the copy, not the tree it was copied from"
 else
@@ -641,7 +649,7 @@ contains "the gate names the tree it copied" "$gate_default_out" "$gate_run"
 contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
-  "$gate_default_out" "passed lint and the integration suite"
+  "$gate_default_out" "passed lint, smoke, and the integration suite"
 
 # THE GATE IS THE ONE FILE A TEAMMATE'S SAVE CAN STILL CORRUPT. Bash reads a
 # script while it runs it, so an edit landing mid-run is read from a stale byte
@@ -675,7 +683,8 @@ cat > "$gate_edit/test/integration.sh" <<'SH'
 # SPDX-License-Identifier: Apache-2.0
 exit 0
 SH
-chmod +x "$gate_edit/test/lint.sh" "$gate_edit/test/integration.sh" \
+cp "$gate_edit/test/integration.sh" "$gate_edit/test/smoke.sh"
+chmod +x "$gate_edit/test/lint.sh" "$gate_edit/test/smoke.sh" "$gate_edit/test/integration.sh" \
   "$gate_edit/test/gate.sh"
 git -C "$gate_edit" init -q
 git -C "$gate_edit" add -A
@@ -748,4 +757,3 @@ refuses "lint refuses a tree it would not own" \
   "would not own the tree it is testing" "$gate_wire/test/lint.sh"
 refuses "the mandatory suite refuses a tree it would not own" \
   "would not own the tree it is testing" "$gate_wire/test/integration.sh"
-

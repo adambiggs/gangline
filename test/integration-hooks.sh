@@ -1261,11 +1261,15 @@ no_outer_rc=0
 no_outer_output="$(printf '%s\n' "$deletion_record" |
   GIT_CONFIG_GLOBAL="$empty_global" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
-# The local hook now owes the operator an explicit account of the expensive
-# suite it leaves to main CI, even when this push carries only a deletion.
+# A deletion-only push runs no pushed-tree lint or smoke. It still owes the
+# operator an exact account of the local checks omitted on every push.
 equal "no global hook still lets the local gate decide" "0" "$no_outer_rc"
 contains "the local hook names the integration suite it skipped" \
-  "$no_outer_output" "skipping the full integration suite; CI runs it on pushes to main"
+  "$no_outer_output" "full integration are skipped locally"
+contains "the local hook names the CI boundary without claiming this push reaches it" \
+  "$no_outer_output" "CI runs full lint and integration on pushes to main"
+excludes "a deletion-only push does not claim it ran lint or smoke" \
+  "$no_outer_output" "running pushed-tree fast lint and smoke"
 
 # `ln -sf` DEREFERENCES a symlink-to-directory: with the destination already a
 # link to a directory it writes <that directory>/gang and leaves the link
@@ -1311,6 +1315,16 @@ GANGLINE_REPO="$installer_root/missing-network-source" \
   "$installer_bin/gang" collars >/dev/null 2>&1 || ordinary_release_rc=$?
 equal "ordinary gang commands make no release-network call" "0" "$ordinary_release_rc"
 
+developer_branch_before="$(git -C "$installer_src" symbolic-ref --short HEAD)"
+developer_shallow_before="$(git -C "$installer_src" rev-parse --is-shallow-repository)"
+developer_history_before="$(git -C "$installer_src" rev-list --count HEAD)"
+developer_upgrade_rc=0
+developer_upgrade_out="$(GANGLINE_REPO="$installer_src" \
+  "$installer_src/bin/gang" upgrade 2>&1)" || developer_upgrade_rc=$?
+equal "gang upgrade refuses a developer branch without detaching or shallowing it" \
+  "refused $developer_branch_before $developer_shallow_before $developer_history_before named" \
+  "$([ "$developer_upgrade_rc" -ne 0 ] && printf refused || printf upgraded) $(git -C "$installer_src" symbolic-ref --short HEAD) $(git -C "$installer_src" rev-parse --is-shallow-repository) $(git -C "$installer_src" rev-list --count HEAD) $([[ "$developer_upgrade_out" = *'git -C'*'pull --ff-only'* ]] && printf named || printf unnamed)"
+
 current_release_check="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade --check)"
 contains "gang upgrade --check reports a current release" \
   "$current_release_check" "1.1.0 is the latest release"
@@ -1323,6 +1337,62 @@ GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade >/dev/null
 equal "gang upgrade installs the available release over the current install" \
   "1.2.0 tagged" \
   "$(cat "$installer_root/home/version.txt") $([ "$(git -C "$installer_root/home" rev-parse HEAD)" = "$(git -C "$installer_src" rev-list -n 1 gangline-v1.2.0)" ] && printf tagged || printf other)"
+
+unstable_src="$installer_root/unstable-src"
+git init -q "$unstable_src"
+git -C "$unstable_src" config user.name 'Gangline installer test'
+git -C "$unstable_src" config user.email 'installer@fixture.invalid'
+printf '%s\n' prerelease > "$unstable_src/content"
+git -C "$unstable_src" add content
+git -C "$unstable_src" commit -qm 'test: prerelease-only source'
+git -C "$unstable_src" tag gangline-v8.0.0-rc.1
+unstable_rc=0
+unstable_out="$(GANGLINE_REPO="$unstable_src" GANGLINE_HOME="$installer_root/home" \
+  sh "$ROOT/install.sh" --check 2>&1)" || unstable_rc=$?
+equal "the installer refuses a source with no stable release tag" \
+  "refused named" \
+  "$([ "$unstable_rc" -ne 0 ] && printf refused || printf accepted) $([[ "$unstable_out" = *'could not determine a stable'* ]] && printf named || printf unnamed)"
+
+unreachable_rc=0
+unreachable_out="$(GANGLINE_REPO="$installer_root/unreachable-source" \
+  GANGLINE_HOME="$installer_root/home" sh "$ROOT/install.sh" --check 2>&1)" \
+  || unreachable_rc=$?
+equal "the installer refuses an unreachable release source" \
+  "refused named" \
+  "$([ "$unreachable_rc" -ne 0 ] && printf refused || printf accepted) $([[ "$unreachable_out" = *'could not read release tags'* ]] && printf named || printf unnamed)"
+
+malformed_bin="$installer_root/malformed-bin"
+real_git="$(command -v git)"
+mkdir -p "$malformed_bin"
+cat > "$malformed_bin/git" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+if [ "\${1:-}" = ls-remote ]; then
+  printf 'malformed release advertisement\n'
+  exit 0
+fi
+exec "$real_git" "\$@"
+SH
+chmod +x "$malformed_bin/git"
+malformed_rc=0
+malformed_out="$(PATH="$malformed_bin:$PATH" GANGLINE_REPO="$installer_src" \
+  GANGLINE_HOME="$installer_root/home" sh "$ROOT/install.sh" --check 2>&1)" \
+  || malformed_rc=$?
+equal "the installer refuses malformed release-tag output" \
+  "refused named" \
+  "$([ "$malformed_rc" -ne 0 ] && printf refused || printf accepted) $([[ "$malformed_out" = *'could not determine a stable'* ]] && printf named || printf unnamed)"
+
+dirty_home="$installer_root/dirty-home"
+dirty_bin="$installer_root/dirty-bin"
+GANGLINE_REPO="$installer_src" GANGLINE_HOME="$dirty_home" \
+  GANGLINE_BIN="$dirty_bin" sh "$ROOT/install.sh" >/dev/null 2>&1
+printf '%s\n' dirty >> "$dirty_home/version.txt"
+dirty_rc=0
+dirty_out="$(GANGLINE_REPO="$installer_src" GANGLINE_HOME="$dirty_home" \
+  GANGLINE_BIN="$dirty_bin" sh "$ROOT/install.sh" 2>&1)" || dirty_rc=$?
+equal "the installer refuses local changes instead of replacing them" \
+  "refused named dirty" \
+  "$([ "$dirty_rc" -ne 0 ] && printf refused || printf replaced) $([[ "$dirty_out" = *'has local changes'* ]] && printf named || printf unnamed) $(tail -n 1 "$dirty_home/version.txt")"
 
 installer_dir_bin="$installer_root/bin-dir"
 mkdir -p "$installer_dir_bin/gang"
@@ -1526,6 +1596,8 @@ if hook_out="$({
 else
   fail "pre-push ignores an unrelated advertised commit absent locally" "$hook_out"
 fi
+contains "a checked ref announces the fast lint and smoke it actually runs" \
+  "$hook_out" "running pushed-tree fast lint and smoke"
 hook_gitdir="$(<"$hook_probe/gitdir")"
 case "$hook_gitdir" in
   "$hook_repo/.git/worktrees/"*)
@@ -1548,6 +1620,21 @@ if [ ! -e "$hook_probe/integration" ]; then
 else
   fail "pre-push skips the full integration suite" \
     "the integration fixture ran during pre-push"
+fi
+
+shell_workflow="$(cat "$ROOT/.github/workflows/shell.yml")"
+release_job="$(printf '%s\n' "$shell_workflow" | sed -n '/^  release-please:/,$p')"
+contains "release publication waits for both main-push verification jobs" \
+  "$release_job" "needs: [check, integration]"
+contains "release publication stays scoped to a main push" \
+  "$release_job" "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+contains "main integration has a measured CI ceiling" \
+  "$shell_workflow" "timeout-minutes: 15"
+if [ ! -e "$ROOT/.github/workflows/release.yml" ]; then
+  pass "no independent release workflow can bypass the integration verdict"
+else
+  fail "no independent release workflow can bypass the integration verdict" \
+    ".github/workflows/release.yml still exists"
 fi
 
 # The message gate is the PUSHED one, for the same reason lint is: a working

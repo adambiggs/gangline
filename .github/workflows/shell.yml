@@ -5,10 +5,15 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 # Linux and macOS cover the GNU and BSD userlands Gangline supports.
 # The macOS cell is disabled pending the suite-portability fixes tracked in
 # https://github.com/adambiggs/gangline/issues/110 — the PR that closes #110
 # re-enables it by restoring macos-latest to the matrix below.
+# Release Please owns release PRs, tags, GitHub Releases, and declared version
+# updates, but only after this same main-push run passes both verification jobs.
 
 jobs:
   check:
@@ -19,8 +24,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
-        with:
-          fetch-depth: 0   # install.sh clones from this checkout
 
       - name: Dependencies
         run: |
@@ -81,5 +84,21 @@ jobs:
           command -v tmux >/dev/null || sudo apt-get install -y tmux
 
       - name: Integration test
-        timeout-minutes: 5
+        # Measured 3m45s for integration.sh and 4m09s for the capped complete
+        # gate on 2026-08-14. Fifteen minutes leaves at least 3x that observed
+        # integration runtime so a slow runner fails by assertion, not truncation.
+        timeout-minutes: 15
         run: test/integration.sh
+
+  release-please:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, integration]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # tag, and create the GitHub Release
+      pull-requests: write   # maintain the release PR
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

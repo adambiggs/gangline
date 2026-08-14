@@ -53,7 +53,9 @@ its current release to that tag; local changes in the install tree are refused.
 release over the tree and command link currently running. Both are explicit
 network operations. Gangline performs no automatic release check during other
 commands. `GANGLINE_REPO` continues to select a different tagged source for a
-custom install.
+custom install. `gang upgrade` refuses a branch checkout and points to
+`git pull --ff-only`; only the detached release tree produced by the installer
+is replaced.
 
 ## Lifecycle
 

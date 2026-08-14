@@ -74,10 +74,11 @@ test/gate.sh
 ```
 
 It copies the working tree — uncommitted work included — into a private
-snapshot and runs `test/lint.sh` and `test/integration.sh` from the copy, so
-the complete gate is runnable *before* a commit. Run the two scripts directly
-only against a tree that is already settled; they refuse a tree they would not
-own and say so.
+snapshot and runs `test/lint.sh`, `test/smoke.sh`, and `test/integration.sh`
+from the copy, so
+the complete gate is runnable *before* a commit. Run `test/lint.sh` and
+`test/integration.sh` directly only against a tree that is already settled;
+they refuse a tree they would not own and say so.
 
 Mandatory tests contain no sleeps, polling, or timeout scenarios and must remain
 well below their hard ceiling. Use immediate state, event barriers, or fake

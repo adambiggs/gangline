@@ -13,9 +13,10 @@ git config core.hooksPath .githooks
 
 The hooks are not enabled automatically. `.githooks/pre-push` is the
 authoritative list of local push gates: the operator's outer contribution gate,
-syntax and lint, the fast executable smoke, and commit messages. It names the
-full integration suite it skips; CI runs that suite on every push to `main`.
-Do not bypass the hook with `--no-verify`.
+production and hook lint, the fast executable smoke, and commit messages. It
+names the test lint, checker self-tests, and full integration suite it skips;
+CI runs those checks on every push to `main`. Do not bypass the hook with
+`--no-verify`.
 
 ## Scope and implementation
 
@@ -48,7 +49,8 @@ test/gate.sh
 ```
 
 It snapshots the working tree, uncommitted work included, into a private copy,
-commits it there, and runs `test/lint.sh` and `test/integration.sh` from that
+commits it there, and runs `test/lint.sh`, `test/smoke.sh`, and
+`test/integration.sh` from that
 copy. The complete gate is therefore runnable before a commit, and no edit
 landing mid-run can change what executes. `test/lint.sh` and
 `test/integration.sh` still run directly against an already-settled tree, and

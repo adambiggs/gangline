@@ -158,19 +158,16 @@ lint_one() {
 }
 
 if [ "$fast" -eq 1 ]; then
-  # Pre-push overlaps the one dominant file with the remaining one-at-a-time
-  # checks. It still judges the canonical file list; only the checker's own
-  # fixture suite above is left to the full gate. Concurrency is bounded at two
-  # linter processes rather than growing with the file list.
-  fast_rc=0
-  lint_one bin/gang &
-  big_pid=$!
+  # Pre-push keeps production, hook, lint-entry, and smoke files on the
+  # canonical list's one-process-at-a-time memory discipline. Test fixtures and
+  # the source-guard checker's own fixtures are left to full lint in CI.
   for f in $files; do
-    [ "$f" = bin/gang ] && continue
-    lint_one "$f" || fast_rc=$?
+    case "$f" in
+      test/lint.sh|test/smoke.sh) ;;
+      test/*) continue ;;
+    esac
+    lint_one "$f"
   done
-  wait "$big_pid" || fast_rc=$?
-  [ "$fast_rc" -eq 0 ] || exit "$fast_rc"
 else
   for f in $files; do
     lint_one "$f"
