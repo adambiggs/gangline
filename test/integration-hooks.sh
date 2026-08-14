@@ -18,8 +18,16 @@ turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
 contains "a native stop hook closes the turn record" "$turn_closed" "closed"
 
 # WAIT IS AN OPT-IN EVENT BARRIER. The test observes successful hook arming
-# through another latched tmux channel, so no sleep, polling, or timeout stands
-# between the background caller and the native Stop it means to consume.
+# through another latched tmux channel, so no sleep or polling stands between
+# the background caller and the native Stop it means to consume. Each real
+# waiter also carries a short fail-loud production bound: a regression becomes
+# one red assertion instead of owning the suite indefinitely.
+#
+# TIMING MARGIN, measured 2026-08-14 on the host tmux 3.2a private socket:
+# quiet-box latency is not consumed on this event-driven path; 20 complete
+# `gang hook` Stop invocations took 110ms mean / 114ms max. The test bound is
+# 5s and the production default is 300s, so the measured path has 43x / 2631x
+# headroom respectively. Event barriers, not elapsed time, trigger every pass.
 cat > "$RUN_ROOT/collars/waitable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -30,21 +38,38 @@ GANG_OCCUPIED_REGEX='EXPLAIN_OCCUPIED_[0-9]+'
 SH
 cat > "$RUN_ROOT/wait-arm-env" <<'SH'
 tmux() {
-  local rc=0
-  command tmux "$@" || rc=$?
-  if [ "$rc" -eq 0 ] && [ "${1:-}" = set-hook ]; then
-    case "${2:-} ${3:-}" in
-      '-ag pane-exited'|'-g pane-exited['*']')
+  local rc=0 waits=0
+  if [ "${1:-}" = wait-for ] && [ "$#" -eq 2 ]; then
+    case "$2" in
+      gang-wait-*)
+        if [ -n "${GANG_TEST_WAIT_TRACE:-}" ]; then
+          printf '%s\n' "$2" >> "$GANG_TEST_WAIT_TRACE"
+          waits="$(awk -v channel="$2" \
+            '$0 == channel { count++ } END { print count + 0 }' \
+            "$GANG_TEST_WAIT_TRACE")"
+          # Drive the dangerous cleanup call to a loud return. The production
+          # bug ignored this status and continued; the trace assertion below
+          # still caught the second wait without hanging the suite.
+          [ "${GANG_TEST_REFUSE_REWAIT:-}" != 1 ] || [ "$waits" -le 1 ] \
+            || return 97
+        fi
+        # This is the actual blocking edge. Signalling from set-hook was too
+        # early: production could observe a driven Stop before reaching this
+        # call, correctly return idle, and leave the test waiting for a wake
+        # branch no process would ever enter.
         [ -z "${GANG_TEST_WAIT_ARM:-}" ] \
           || command tmux wait-for -S "$GANG_TEST_WAIT_ARM" ;;
     esac
   fi
-  if [ "$rc" -eq 0 ] && [ "${1:-}" = wait-for ] && [ "$#" -eq 2 ] \
-     && [ -z "${GANG_TEST_WAKE_SEEN:-}" ]; then
+  command tmux "$@" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "${1:-}" = wait-for ] && [ "$#" -eq 2 ]; then
     case "$2" in
       gang-wait-*)
-        if [ -n "${GANG_TEST_AFTER_WAKE:-}" ]; then
-          GANG_TEST_WAKE_SEEN=1
+        if [ -n "${GANG_TEST_AFTER_WAKE:-}" ] \
+           && { [ -z "${GANG_TEST_WAKE_SEEN_FILE:-}" ] \
+                || [ ! -e "$GANG_TEST_WAKE_SEEN_FILE" ]; }; then
+          [ -z "${GANG_TEST_WAKE_SEEN_FILE:-}" ] \
+            || : > "$GANG_TEST_WAKE_SEEN_FILE"
           command tmux wait-for -S "$GANG_TEST_AFTER_WAKE"
           command tmux wait-for "$GANG_TEST_CLEANUP_RELEASE"
         fi ;;
@@ -58,8 +83,10 @@ waitable_id="$(window_id waitable)"
 waitable_pane="$(tmux list-panes -t "$waitable_id" -F '#{pane_id}')"
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm="gang-test-wait-arm-$$-done"
+wait_trace="$RUN_ROOT/wait-native-waits"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
-  "$GANG" wait waitable --until "done" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  "$GANG" wait waitable --until "done" --timeout 5 \
   >"$RUN_ROOT/wait-done.out" 2>"$RUN_ROOT/wait-done.err" &
 wait_done_pid=$!
 tmux wait-for "$wait_arm"
@@ -71,6 +98,8 @@ else
   fail "a caller-chosen done barrier is released by the target's Stop" \
     "$(<"$RUN_ROOT/wait-done.err")"
 fi
+equal "a released barrier never waits again while cleaning its channel" \
+  "1" "$(wc -l < "$wait_trace" | tr -d ' ')"
 if "$GANG" wait waitable --until idle >/dev/null; then
   pass "an already-idle target satisfies an idle barrier immediately"
 else
@@ -85,6 +114,11 @@ else
 fi
 refuses "an agent cannot deadlock its own turn inside a barrier" \
   "this agent's own window" env TMUX_PANE="$waitable_pane" \
+  "$GANG" wait waitable --until "done"
+refuses "a zero-padded explicit bound cannot disable the boundary" \
+  "positive whole number" "$GANG" wait waitable --until "done" --timeout 00
+refuses "a zero-padded default bound cannot disable the boundary" \
+  "positive whole number" env GANG_TURN_LIMIT=000 \
   "$GANG" wait waitable --until "done"
 
 # EXPLAIN INSTRUMENTS THIS STATE READ, rather than taking a diagnostic capture
@@ -129,7 +163,9 @@ wait_cleanup="gang-test-wait-cleanup-$$-idle"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
   GANG_TEST_AFTER_WAKE="$wait_woke" \
   GANG_TEST_CLEANUP_RELEASE="$wait_cleanup" \
-  "$GANG" wait waitable --until idle \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  GANG_TEST_WAKE_SEEN_FILE="$RUN_ROOT/wait-wake-seen-idle" \
+  "$GANG" wait waitable --until idle --timeout 5 \
   >"$RUN_ROOT/wait-idle.out" 2>"$RUN_ROOT/wait-idle.err" &
 wait_idle_pid=$!
 tmux wait-for "$wait_arm"
@@ -158,7 +194,9 @@ wait_cleanup_a="gang-test-wait-cleanup-$$-race-a"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_a" \
   GANG_TEST_AFTER_WAKE="$wait_woke_a" \
   GANG_TEST_CLEANUP_RELEASE="$wait_cleanup_a" \
-  "$GANG" wait waitable --until "done" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  GANG_TEST_WAKE_SEEN_FILE="$RUN_ROOT/wait-wake-seen-race-a" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
   >"$RUN_ROOT/wait-race-a.out" 2>"$RUN_ROOT/wait-race-a.err" &
 wait_race_a_pid=$!
 tmux wait-for "$wait_arm_a"
@@ -168,7 +206,8 @@ tmux wait-for "$wait_woke_a"
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm_c="gang-test-wait-arm-$$-race-c"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm_c" \
-  "$GANG" wait waitable --until "done" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  "$GANG" wait waitable --until "done" --timeout 5 \
   >"$RUN_ROOT/wait-race-c.out" 2>"$RUN_ROOT/wait-race-c.err" &
 wait_race_c_pid=$!
 tmux wait-for "$wait_arm_c"
@@ -189,33 +228,64 @@ else
 fi
 
 # NATURAL PROCESS EXIT is the pane-exited path itself, rather than gang drop's
-# compensating release. This drives the exact signal-then-self-remove hook body
-# used by gang wait and keeps a decoy array element beside it: the channel is
-# the event barrier, so no timing assumption stands between registration and
-# the assertion.
+# compensating release. Drive it through gang wait so the test covers the exact
+# signal-then-self-remove hook body wait_hook_arm emitted, with a decoy array
+# element beside it. The wait-arm channel is raised only at the blocking call,
+# so no timing assumption stands between registration and process exit.
 "$HITCH" wait-natural -c waitable -d /tmp >/dev/null
 wait_natural_id="$(window_id wait-natural)"
 wait_natural_pane="$(tmux list-panes -t "$wait_natural_id" -F '#{pane_id}')"
-wait_natural_channel="gang-test-wait-natural-$$"
-wait_natural_key="pane-exited[$(( 1000000 + $$ ))]"
 wait_natural_decoy="pane-exited[$(( 2000000 + $$ ))]"
 tmux set-hook -g "$wait_natural_decoy" "run-shell 'true'"
-tmux set-hook -g "$wait_natural_key" \
-  "if-shell -F '#{==:#{hook_pane},$wait_natural_pane}' 'wait-for -S $wait_natural_channel ; set-hook -ug $wait_natural_key'"
+tmux set-option -w -t "$wait_natural_id" @gl_turn "open $(date +%s)"
+wait_arm="gang-test-wait-arm-$$-natural"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  "$GANG" wait wait-natural --until "done" --timeout 5 \
+  >"$RUN_ROOT/wait-natural.out" 2>"$RUN_ROOT/wait-natural.err" &
+wait_natural_pid=$!
+tmux wait-for "$wait_arm"
+contains "gang wait arms its production natural-exit hook" \
+  "$(tmux show-hooks -g pane-exited)" \
+  "gang-wait-${wait_natural_id#@}-${wait_natural_pane#%}-"
 tmux send-keys -l -t "$wait_natural_pane" exit
 tmux send-keys -t "$wait_natural_pane" Enter
-tmux wait-for "$wait_natural_channel"
+if wait "$wait_natural_pid"; then
+  fail "a natural pane exit releases gang wait as a vanished target" \
+    "gang wait unexpectedly returned success"
+else
+  contains "a natural pane exit releases gang wait as a vanished target" \
+    "$(<"$RUN_ROOT/wait-natural.err")" "vanished"
+fi
 if window_id wait-natural >/dev/null 2>&1; then
   fail "natural pane exit fires the registered native boundary" \
     "wait-natural still resolves after its pane process exited"
 else
   pass "natural pane exit fires the registered native boundary"
 fi
-equal "the firing native hook removes only its own sparse registration" \
-  "$wait_natural_key " "$(tmux show-hooks -g "$wait_natural_key")"
+excludes "the firing native hook removes its sparse registration" \
+  "$(tmux show-hooks -g pane-exited)" \
+  "gang-wait-${wait_natural_id#@}-${wait_natural_pane#%}-"
 contains "a natural exit leaves an unrelated hook registration intact" \
   "$(tmux show-hooks -g "$wait_natural_decoy")" "run-shell true"
 tmux set-hook -ug "$wait_natural_decoy"
+
+# THE PRODUCTION BOUND FAILS LOUD WITHOUT WAITING HERE. A fake timeout drives
+# its one defined verdict immediately; the command must remove its hook and name
+# both the target and bound rather than becoming another quiet forever-wait.
+wait_timeout_bin="$RUN_ROOT/wait-timeout-bin"
+mkdir -p "$wait_timeout_bin"
+cat > "$wait_timeout_bin/timeout" <<'SH'
+#!/bin/sh
+exit 124
+SH
+chmod +x "$wait_timeout_bin/timeout"
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+refuses "a missing native boundary reaches its fail-loud caller bound" \
+  "no native boundary from 'waitable' within 9 seconds" \
+  env PATH="$wait_timeout_bin:$PATH" "$GANG" wait waitable --until "done" --timeout 9
+excludes "a bounded refusal removes its temporary native hook" \
+  "$(tmux show-hooks -g pane-exited)" "gang-wait-${waitable_id#@}-${waitable_pane#%}-"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
 refuses "unknown state is refused before a barrier can hang" \
@@ -223,7 +293,8 @@ refuses "unknown state is refused before a barrier can hang" \
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm="gang-test-wait-arm-$$-vanish"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
-  "$GANG" wait waitable --until "done" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  "$GANG" wait waitable --until "done" --timeout 5 \
   >"$RUN_ROOT/wait-vanish.out" 2>"$RUN_ROOT/wait-vanish.err" &
 wait_vanish_pid=$!
 tmux wait-for "$wait_arm"
@@ -234,6 +305,47 @@ if wait "$wait_vanish_pid"; then
 else
   contains "a vanished target releases the barrier loudly" \
     "$(<"$RUN_ROOT/wait-vanish.err")" "vanished"
+fi
+
+# A WHOLE TMUX SERVER CAN DISAPPEAR WITHOUT RUNNING ANY GANG HOOK. Use a second
+# explicitly named disposable server so this proof does not destroy the suite's
+# own substrate. Its waiter is observed at the actual blocking edge, then EOF
+# from that exact server must become a loud nonzero result without a clock.
+wait_server_root="$RUN_ROOT/wait-server-vanish"
+wait_server_session="gangtest-wait-server-vanish-$$"
+wait_server_socket="$wait_server_root/tmux-$(id -u)/default"
+mkdir -p "$wait_server_root"
+TMUX_TMPDIR="$wait_server_root" tmux new-session -d \
+  -s "$wait_server_session" -n wait-server 'exec bash --noprofile --norc'
+wait_server_id="$(TMUX_TMPDIR="$wait_server_root" tmux display-message -p \
+  -t "=$wait_server_session:wait-server" '#{window_id}')"
+TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+  @gl_agent wait-server
+TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+  @gl_collar waitable
+TMUX_TMPDIR="$wait_server_root" tmux set-option -w -t "$wait_server_id" \
+  @gl_turn "open $(date +%s)"
+wait_server_arm="gang-test-wait-arm-$$-server-vanish"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_server_arm" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  TMUX_TMPDIR="$wait_server_root" GANG_SESSION="$wait_server_session" \
+  "$GANG" wait wait-server --until "done" --timeout 5 \
+  >"$RUN_ROOT/wait-server.out" 2>"$RUN_ROOT/wait-server.err" &
+wait_server_pid=$!
+TMUX_TMPDIR="$wait_server_root" tmux wait-for "$wait_server_arm"
+tmux -S "$wait_server_socket" kill-server
+if wait "$wait_server_pid"; then
+  fail "a vanished tmux server fails its blocked waiter loudly" \
+    "gang wait unexpectedly returned success"
+else
+  wait_server_err="$(<"$RUN_ROOT/wait-server.err")"
+  case "$wait_server_err" in
+    *"gang: wait:"*"'wait-server'"*)
+      pass "a vanished tmux server fails its blocked waiter loudly" ;;
+    *)
+      fail "a vanished tmux server fails its blocked waiter loudly" \
+        "expected gang wait to name wait-server, got [$wait_server_err]" ;;
+  esac
 fi
 
 # Stall lights forward only native awaiting-input witnesses to one optional

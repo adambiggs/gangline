@@ -398,7 +398,7 @@ names the read-scoped root and the exact command that deletes it. Delete that
 root after its recovery or audit purpose ends; see
 [Operations](operations.md#sending-messages-safely) for retention.
 
-### `gang wait <name> --until idle|done`
+### `gang wait <name> --until idle|done [--timeout <seconds>]`
 
 Blocks the caller on a native target boundary without polling `status`.
 An already-idle target returns immediately for either condition. Otherwise the
@@ -412,8 +412,9 @@ that first Stop.
 
 `done` does not track turns. If the target is already working, that active
 turn's completion may match. A wait is an explicit barrier chosen by its caller,
-not a supervisor: Gangline starts no daemon, creates no timer, and records no
-durable state.
+not a supervisor: Gangline starts no daemon and records no durable state. Each
+boundary has a foreground fail-loud deadline. `--timeout` chooses its positive
+whole number of seconds; without the flag, `GANG_TURN_LIMIT` supplies the bound.
 
 The registration pins both the target's window id and active pane id. A missing,
 replaced, ambiguous, or pane-switched target fails loudly rather than transferring
@@ -421,15 +422,18 @@ the wait. `?unknown?` fails instead of hanging. Natural pane-process exit plus
 Gangline's `drop` and `down` release temporary registrations, so those teardown
 paths are observed and reported as a vanished target. Direct `tmux kill-pane`
 and `tmux kill-window` do not emit the supported exit hook on tmux 3.2a and
-bypass Gangline's compensating release; they can leave a caller blocked and its
-temporary registration orphaned. Use `gang drop` or `gang down` for teardown.
+bypass Gangline's compensating release. The foreground deadline then refuses
+loudly and removes the temporary hook; use `gang drop` or `gang down` to observe
+teardown immediately.
 
 The implementation uses only `wait-for -S`; tmux channel locks are not used
-because a dead lock holder can leave them locked indefinitely. Ordinary return
-and abort paths signal and consume their nonce-named channel latch. Tmux has no
-channel-delete operation, so a caller killed with `SIGKILL` after a native
-signal can leave an unreachable latch in tmux memory until that server exits.
-No wait option, file, daemon, or timer is created.
+because a dead lock holder can leave them locked indefinitely. A successful
+wait consumes its native signal exactly once; cleanup never signals and waits
+on the channel again, because that can race the returning waiter and block
+forever. Tmux has no channel-delete operation, so a caller killed or bounded at
+the same instant as a native signal can leave an unreachable nonce-named latch
+in tmux memory until that server exits. No wait option, file, or daemon is
+created; the deadline process lives only as long as the foreground command.
 
 ### `gang explain <name>`
 
@@ -550,8 +554,11 @@ stored declaration names the same reset and the same unit. The unit name is
 derived from the session, the window id and the reset, so that comparison
 refuses a timer that outlived its tmux server whenever any of the three
 differs — it does not refuse one whose team was recreated holding all three.
-The declaration is stored only after `systemd-run` accepts the timer, so a
-wake that is still being scheduled is not visible to an older callback.
+The declaration is stored before `systemd-run` arms the timer, after the
+transient unit derived from that name is stopped and proven gone. An older
+callback therefore cannot consume the new declaration, while a reset arriving
+during arming finds and delivers it. A failed declaration write leaves nothing
+armed; a failed timer arm clears both declaration options and refuses.
 
 The unit is collected after it runs. `--clear` stops the pending timer and the
 service that timer may already have started, and it removes the declaration
@@ -686,7 +693,7 @@ Exactly these keys are settable:
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
-| `GANG_TURN_LIMIT` | `300` | native turn-fact bound |
+| `GANG_TURN_LIMIT` | `300` | native turn-fact bound and default `gang wait` boundary timeout |
 
 Collar declarations are refused because `load_collar` clears them before
 sourcing the selected collar; put those values in a custom collar and point

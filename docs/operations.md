@@ -37,7 +37,9 @@ gang wait worker --until done
 accepts the next Stop, including the active turn's completion when the agent was
 already working; it does not assign or track a turn. Unknown evidence and a
 vanished or replaced target fail loudly. A hookless collar cannot supply the
-boundary and is refused before the command blocks.
+boundary and is refused before the command blocks. Each boundary also has a
+fail-loud foreground deadline: pass `--timeout <seconds>` for a caller-specific
+bound, or omit it to use `GANG_TURN_LIMIT`.
 
 During hitch, a first-run prompt is reported as soon as Gangline has positive
 pane evidence rather than a merely blank startup screen. At that point it parks

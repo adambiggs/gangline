@@ -716,6 +716,7 @@ gang wait
   Block on one agent's native turn boundary.
 
   gang wait <name> --until idle|done
+            [--timeout <seconds>]
 
   idle  return when a live state read is idle
   done  return at the next Stop boundary
@@ -737,7 +738,9 @@ gang wait
   or a changed active pane fails loudly instead
   of hanging or transferring the wait. Use gang
   drop/down for teardown; raw tmux kill commands
-  bypass Gangline's release boundary.
+  bypass Gangline's release boundary. A boundary
+  that does not arrive before the timeout also
+  fails loudly; the default is GANG_TURN_LIMIT.
 EOF
       ;;
     notify) cat <<'EOF'
@@ -4805,16 +4808,6 @@ wait_hook_owned() { # $1 hook key, $2 channel
   esac
 }
 
-wait_channel_retire() { # $1 unique channel; consume any latch this caller left
-  [ -n "$1" ] || return 0
-  # wait-for has no delete operation. Signal then consume closes ordinary abort
-  # and immediate-return paths without a lock; both calls fail quickly after
-  # server teardown. SIGKILL between native signal and this cleanup can still
-  # leave a harmless nonce-named latch until the tmux server exits.
-  tmux wait-for -S "$1" 2>/dev/null || return 0
-  tmux wait-for "$1" 2>/dev/null || true
-}
-
 wait_hook_cleanup() {
   local channel="$WAIT_CHANNEL" key="$WAIT_HOOK_KEY"
   if [ -n "$key" ] && wait_hook_owned "$key" "$channel"; then
@@ -4822,7 +4815,6 @@ wait_hook_cleanup() {
   fi
   WAIT_CHANNEL=""
   WAIT_HOOK_KEY=""
-  wait_channel_retire "$channel"
 }
 
 wait_hook_arm() { # $1 window id, $2 pane id
@@ -4918,8 +4910,22 @@ wait_target_validate() { # $1 name, $2 pinned window, $3 pinned pane
   AGENT_COLLAR="$collar"
 }
 
+wait_boundary() { # $1 channel, $2 timeout seconds, $3 target name
+  local rc=0
+  # A fresh Bash keeps the deadline process able to terminate the blocking tmux
+  # client while preserving the same BASH_ENV seam the integration fixture uses
+  # to drive native boundaries. Gang itself already consumed that environment
+  # at startup; the child grants it no new authority.
+  timeout --foreground "$2" bash -c 'tmux wait-for "$1"' _ "$1" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    124) die "wait: no native boundary from '$3' within $2 seconds — its turn may still be running, the target may have vanished outside gang drop/down, or its Stop hook may not be firing" ;;
+    *) die "wait: tmux stopped waiting for '$3' before its boundary fired (status $rc)" ;;
+  esac
+}
+
 cmd_wait() {
-  local name="${1:-}" until="" pane state self="" turn_rc=0
+  local name="${1:-}" until="" bound="$GANG_TURN_LIMIT" bound_given=0 pane state self="" turn_rc=0
   case "$name" in ''|-*) cmd_help wait; exit 1 ;; esac
   shift
   while [ $# -gt 0 ]; do
@@ -4928,6 +4934,11 @@ cmd_wait() {
         [ $# -ge 2 ] || die "wait: --until needs idle or done"
         [ -z "$until" ] || die "wait: --until was given more than once"
         until="$2"; shift 2 ;;
+      --timeout)
+        [ $# -ge 2 ] || die "wait: --timeout needs a positive whole number of seconds"
+        [ "$bound_given" -eq 0 ] || die "wait: --timeout was given more than once"
+        bound_given=1
+        bound="$2"; shift 2 ;;
       *) die "wait: unexpected argument '$1'" ;;
     esac
   done
@@ -4936,6 +4947,15 @@ cmd_wait() {
     '') die "wait: --until idle|done is required" ;;
     *) die "wait: --until must be idle or done, got '$until'" ;;
   esac
+  case "$bound" in
+    ''|*[!0-9]*) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
+  esac
+  case "$bound" in
+    *[1-9]*) ;;
+    *) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
+  esac
+  command -v timeout >/dev/null 2>&1 \
+    || die "wait: timeout is required to put a fail-loud bound on the native barrier"
   resolve "$name"
   pane="$(wait_active_pane "$AGENT_ID")" \
     || die "wait: cannot identify the active pane in '$name'"
@@ -4964,8 +4984,7 @@ cmd_wait() {
       '~idle~'*) wait_hook_cleanup; trap - EXIT; return 0 ;;
       '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
     esac
-    tmux wait-for "$WAIT_CHANNEL" \
-      || die "wait: tmux stopped waiting for '$name' before its boundary fired"
+    wait_boundary "$WAIT_CHANNEL" "$bound" "$name"
     wait_hook_cleanup
     wait_target_validate "$name" "$AGENT_ID" "$pane"
     state="$(state_now "$AGENT_ID")"
