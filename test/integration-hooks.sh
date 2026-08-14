@@ -725,7 +725,21 @@ usage_timer_args="$RUN_ROOT/usage-timer.args"
 usage_timer_stops="$RUN_ROOT/usage-timer.stops"
 usage_timer_predecl="$RUN_ROOT/usage-timer.predecl"
 usage_real_date="$(command -v date)"
+usage_real_tmux="$(command -v tmux)"
 mkdir -p "$usage_timer_bin"
+# A TMUX THAT FAILS ONE NAMED WRITE. The rollback for a declaration that cannot
+# be stored is otherwise unreachable: every set-option in this suite succeeds,
+# and a path with no way to fail is a path with no evidence behind it.
+cat > "$usage_timer_bin/tmux" <<SH
+#!/bin/sh
+if [ -n "\${GANG_TEST_TMUX_FAIL:-}" ] && [ "\$1" = set-option ]; then
+  for arg in "\$@"; do
+    [ "\$arg" = "\$GANG_TEST_TMUX_FAIL" ] || continue
+    exit 17
+  done
+fi
+exec "$usage_real_tmux" "\$@"
+SH
 cat > "$usage_timer_bin/systemd-run" <<SH
 #!/bin/sh
 printf '%s\n' "\$@" > "$usage_timer_args"
@@ -735,6 +749,15 @@ printf '%s\n' "\$@" > "$usage_timer_args"
 # that window.
 tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake \
   > "$usage_timer_predecl" 2>/dev/null || : > "$usage_timer_predecl"
+# THE RESET CAN ARRIVE WHILE THE TIMER IS BEING CREATED. systemd-run returns
+# when the start job is queued, not while the calendar time is still in the
+# future, so the callback can run before wait-limit has returned. That instant
+# is driven here rather than waited for: the recorded callback tail is executed
+# with the clock already at the reset.
+if [ -n "\${GANG_TEST_FIRE_INSIDE:-}" ]; then
+  GANG_TEST_NOW="\$GANG_TEST_FIRE_INSIDE" sh -c 'exec "\$@"' _ \
+    \$(tail -n 7 "$usage_timer_args")
+fi
 SH
 # The fake systemctl is a state machine, not a yes-man: a committed fixture
 # where every stop succeeds cannot tell a unit that is gone from one that is
@@ -764,7 +787,7 @@ else
 fi
 SH
 chmod +x "$usage_timer_bin/systemd-run" "$usage_timer_bin/systemctl" \
-  "$usage_timer_bin/date"
+  "$usage_timer_bin/date" "$usage_timer_bin/tmux"
 usage_wait_out="$(PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
   --resume 'Resume the assigned usage-light fixture.')"
 contains "wait-limit reports the native window it scheduled" \
@@ -789,8 +812,17 @@ equal "the timer callback is gang's own wait-limit" "yes" \
 equal "and its tail carries the reset and the unit it was armed as" \
   "wait-limit usage-lit --fire $usage_wake_reset --unit $usage_wake_unit" \
   "$(tail -n 6 "$usage_timer_args" | tr '\n' ' ' | sed 's/ $//')"
-equal "no wake was declared before the timer that keeps it was armed" "" \
-  "$(<"$usage_timer_predecl")"
+# THE ORDER IS THE OPPOSITE OF WHAT THIS GUARD FIRST ASSERTED. Declaring after
+# arming was meant to keep an older callback from consuming a fresh
+# declaration; it instead left the instant below, where the callback finds
+# nothing and the declaration written after it promises a wake already thrown
+# away. The declaration comes first again, and the older-callback case is
+# closed by proving that unit name gone before the write rather than by racing
+# it — which the stop operands recorded below are the evidence for.
+equal "the declaration exists before the timer that keeps it is armed" \
+  "$usage_wake_unit" "$(cut -f2 < "$usage_timer_predecl")"
+equal "and the unit it names is the one being armed" \
+  "$usage_wake_unit" "$(awk -F= '/^--unit=/ { print $2 }' "$usage_timer_args")"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$usage_lit_pane" "$GANG" hook >/dev/null
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
@@ -839,6 +871,7 @@ equal "a fired reset wake retires its tmux declaration" "" \
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
 usage_clear_unit="$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake |
   cut -f2)"
+: > "$usage_timer_stops"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit --clear >/dev/null
 # The unit name appears in every recorded invocation, so `stop` is read as the
 # word before its operand rather than searched for anywhere in the file.
@@ -847,6 +880,61 @@ equal "wait-limit clear stops the exact transient timer and its service" \
 $usage_clear_unit.service" \
   "$(awk '/^stop$/ { if ((getline unit) > 0) print unit }' "$usage_timer_stops")"
 equal "clearing a reset wake retires its tmux declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+# THE NAME IS DERIVED, SO A PREVIOUS ARMING AT THIS RESET HELD IT TOO. Whatever
+# still answers to it has to be gone before a declaration names it, or that
+# older callback fires against a wake it never armed. Nothing else stops the
+# name that is about to be taken: --clear only stops what the STORED
+# declaration named.
+: > "$usage_timer_stops"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit >/dev/null
+usage_arm_unit="$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake |
+  cut -f2)"
+equal "arming stops the derived unit name before declaring it" \
+  "$usage_arm_unit.timer
+$usage_arm_unit.service" \
+  "$(awk '/^stop$/ { if ((getline unit) > 0) print unit }' "$usage_timer_stops" |
+     tail -n 2)"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit --clear >/dev/null
+
+# A RESET THAT ARRIVES DURING ARMING must be answered by the callback, not
+# stranded behind a declaration written after it. The fake runs the callback it
+# recorded, with the clock at the reset, before returning.
+: > "$usage_timer_stops"
+usage_race_out="$(GANG_TEST_FIRE_INSIDE="$usage_wake_reset" \
+  PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit usage-lit \
+  --resume 'RACE_RESUME_BODY reached the agent.' 2>&1)"
+# source-guard: producer@e5814d337b24: the body is unique to this arming, and the emptied declaration asserted beside it is the independent witness that this callback consumed that record rather than that unrelated text is on the screen
+contains "a reset during arming is delivered, not stranded" \
+  "$(pane_all usage-lit)" "RACE_RESUME_BODY reached the agent."
+equal "and leaves no declaration promising a wake that already fired" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+contains "and wait-limit says so rather than reporting it scheduled" \
+  "$usage_race_out" "rather than scheduled"
+
+# THE DECLARATION THAT CANNOT BE STORED. Nothing is armed at that point by
+# design, so the refusal has to leave neither option behind nor a timer.
+: > "$usage_timer_args"
+usage_store_rc=0
+GANG_TEST_TMUX_FAIL=@gl_usage_wake PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --resume 'never stored' >/dev/null 2>&1 \
+  || usage_store_rc=$?
+equal "a declaration that cannot be stored refuses" "refused" \
+  "$([ "$usage_store_rc" -ne 0 ] && printf refused || printf accepted)"
+equal "and arms no timer behind the refusal" "" "$(<"$usage_timer_args")"
+equal "and leaves no declaration" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+equal "and leaves no orphan resume body" "" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake_body)"
+usage_body_rc=0
+GANG_TEST_TMUX_FAIL=@gl_usage_wake_body PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit usage-lit --resume 'never stored either' >/dev/null 2>&1 \
+  || usage_body_rc=$?
+equal "a resume turn that cannot be stored refuses too" "refused" \
+  "$([ "$usage_body_rc" -ne 0 ] && printf refused || printf accepted)"
+equal "with no timer armed" "" "$(<"$usage_timer_args")"
+equal "and no declaration promising it" "" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
 
 # A COLLECTED UNIT IS THE STATE --clear ASKED FOR. `systemctl stop` reports a

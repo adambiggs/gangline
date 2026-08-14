@@ -4450,8 +4450,60 @@ usage_wake_read() { # $1 window -> reset<TAB>unit<TAB>label; 1 absent, 2 invalid
   printf '%s\t%s\t%s' "$reset" "$unit" "$label"
 }
 
+USAGE_UNIT_TROUBLE="" # what usage_unit_stop could not put beyond doubt
+USAGE_UNIT_RECOVER="" # the command that shows or ends what it left behind
+
+usage_unit_stop() { # $1 = transient unit basename; 0 only when provably gone
+  local u state still="" unreadable=""
+  USAGE_UNIT_TROUBLE="" USAGE_UNIT_RECOVER=""
+  if ! command -v systemctl >/dev/null 2>&1; then
+    USAGE_UNIT_TROUBLE="systemctl is not available, so $1.timer can be neither stopped nor read"
+    USAGE_UNIT_RECOVER="remove the transient unit by hand"
+    return 1
+  fi
+  # BOTH HALVES OF A TRANSIENT TIMER. Stopping only `$1.timer` leaves the
+  # `$1.service` it has already triggered running, and that callback goes on
+  # holding the name this unit is about to be reused under.
+  #
+  # A failed stop is not a failure by itself: a unit that already fired and was
+  # collected is not loaded, and `systemctl stop` reports that as an error
+  # while reporting exactly the state the caller asked for.
+  for u in "$1.timer" "$1.service"; do
+    systemctl --user stop "$u" >/dev/null 2>&1 && continue
+    # THE STATE WORD, NOT THE EXIT STATUS. `is-active` exits nonzero for a unit
+    # that is gone AND for a query that could not run at all — no user bus, a
+    # manager that is not answering, a systemctl that is not the one this
+    # session talks to. Reading only the status turns the second into "gone",
+    # and answers "cleared" in exactly the case where the timer is most likely
+    # still armed.
+    #
+    # Only `inactive` and `failed` are gone. `unknown` is not: systemd printed
+    # it for a failed property query as well as for a unit it had never heard
+    # of, and Gangline states no minimum systemd version, so it is reported
+    # rather than trusted. An unrecognised word is quoted back, because a state
+    # this reader has not been taught is a different problem from no answer.
+    state="$(systemctl --user is-active "$u" 2>/dev/null)" || true
+    case "$state" in
+      active|activating|deactivating|reloading|maintenance|refreshing)
+        still="${still:+$still }$u" ;;
+      inactive|failed) ;;
+      *) unreadable="${unreadable:+$unreadable }$u${state:+ (reported '$state')}" ;;
+    esac
+  done
+  if [ -n "$still" ]; then
+    USAGE_UNIT_TROUBLE="$still is still running and will fire once"
+    USAGE_UNIT_RECOVER="systemctl --user stop $still"
+  fi
+  if [ -n "$unreadable" ]; then
+    USAGE_UNIT_TROUBLE="${USAGE_UNIT_TROUBLE:+$USAGE_UNIT_TROUBLE, and }the state of $unreadable could not be read, so it may still be armed"
+    USAGE_UNIT_RECOVER="${USAGE_UNIT_RECOVER:+$USAGE_UNIT_RECOVER; }systemctl --user list-units --all '$1*'"
+  fi
+  [ -n "$USAGE_UNIT_TROUBLE" ] || return 0
+  return 1
+}
+
 usage_wake_cancel() { # $1 window, $2 loud|quiet
-  local record rc=0 reset unit label u state still="" unreadable="" trouble="" recover=""
+  local record rc=0 gone=0 reset unit label trouble="" recover=""
   record="$(usage_wake_read "$1")" || rc=$?
   [ "$rc" -ne 1 ] || return 0
   if [ "$rc" -eq 2 ]; then
@@ -4459,35 +4511,7 @@ usage_wake_cancel() { # $1 window, $2 loud|quiet
     die "wait-limit: the stored wake declaration is unreadable; inspect @gl_usage_wake on $(agent_name_of "$1")"
   fi
   IFS=$'\t' read -r reset unit label <<<"$record"
-  if command -v systemctl >/dev/null 2>&1; then
-    # BOTH HALVES OF A TRANSIENT TIMER. Stopping only `$unit.timer` leaves the
-    # `$unit.service` it has already triggered running, and that callback races
-    # this clear for the declaration it is about to remove.
-    #
-    # A failed stop is not a failure by itself: a unit that already fired and
-    # was collected is not loaded, and `systemctl stop` reports that as an
-    # error while reporting exactly the state the caller asked for. Only a unit
-    # still active after the stop is one the operator has to hear about.
-    for u in "$unit.timer" "$unit.service"; do
-      systemctl --user stop "$u" >/dev/null 2>&1 && continue
-      # THE STATE WORD, NOT THE EXIT STATUS. `is-active` exits nonzero for a
-      # unit that is gone AND for a query that could not run at all — no user
-      # bus, a manager that is not answering, a systemctl that is not the one
-      # this session talks to. Reading only the status turns the second into
-      # "gone", and reports a cleared wake in exactly the case where the timer
-      # is most likely still armed. An empty or unrecognised answer is neither
-      # armed nor gone: it is the instrument failing, and it is reported as
-      # itself.
-      state="$(systemctl --user is-active "$u" 2>/dev/null)" || true
-      case "$state" in
-        active|activating|deactivating|reloading) still="${still:+$still }$u" ;;
-        inactive|failed|unknown|not-found|dead) ;;
-        *) unreadable="${unreadable:+$unreadable }$u" ;;
-      esac
-    done
-  elif [ "$2" = loud ]; then
-    die "wait-limit: systemctl is required to clear transient timer $unit.timer"
-  fi
+  usage_unit_stop "$unit" || gone=1
   # THE DECLARATION IS CLEARED EITHER WAY. `--clear` is a request to stop
   # promising a wake, and status, roster and the next wait-limit all read this
   # option: leaving it behind because a stop failed reports a wake nothing is
@@ -4495,15 +4519,8 @@ usage_wake_cancel() { # $1 window, $2 loud|quiet
   tmux set-option -uw -t "$1" @gl_usage_wake 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_body 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_failed 2>/dev/null || true
-  if [ -n "$still" ]; then
-    trouble="$still is still running and will fire once"
-    recover="systemctl --user stop $still"
-  fi
-  if [ -n "$unreadable" ]; then
-    trouble="${trouble:+$trouble, and }the state of $unreadable could not be read, so it may still be armed"
-    recover="${recover:+$recover; }systemctl --user list-units --all '$unit*'"
-  fi
-  [ -n "$trouble" ] || return 0
+  [ "$gone" -eq 1 ] || return 0
+  trouble="$USAGE_UNIT_TROUBLE" recover="$USAGE_UNIT_RECOVER"
   [ "$2" = quiet ] \
     || die "wait-limit: the wake declaration for $label was cleared, but $trouble; recover with: $recover"
   printf 'gang: WARNING: the usage wake declaration for %s was cleared, but %s (%s)\n' \
@@ -4552,7 +4569,7 @@ usage_wake_fire() { # $1 name, $2 exact reset, $3 the unit systemd is running
 }
 
 cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
-  local name="" resume="" clear=0 fire="" fired_unit="" rc=0 cause now unit record reset state legacy_id wake_rc
+  local name="" resume="" clear=0 fire="" fired_unit="" fired=0 rc=0 cause now unit record reset state legacy_id wake_rc
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "wait-limit: --resume needs a value"
@@ -4611,6 +4628,40 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
     || die "wait-limit: systemd-run is required for a transient user timer; no timer was created"
   usage_wake_cancel "$AGENT_ID" loud
   unit="$(usage_wake_unit "$AGENT_ID" "$USAGE_LIMIT_RESET")"
+  # THE UNIT NAME IS DERIVED, NOT REMEMBERED. usage_wake_cancel above stopped
+  # whatever the STORED declaration named; this is the name the new timer will
+  # take, and a previous arming of this window at this reset derived exactly it.
+  # If that one lost its declaration — cleared by hand, or a fired callback that
+  # could not deliver — nothing above has seen it, and it can still run a
+  # callback under this name. It has to be gone before a declaration naming it
+  # exists, because the callback's only test is that name.
+  usage_unit_stop "$unit" \
+    || die "wait-limit: $USAGE_UNIT_TROUBLE, so no wake was scheduled under that name; recover with: $USAGE_UNIT_RECOVER"
+  # THE DECLARATION IS WRITTEN BEFORE THE TIMER IS ARMED, body first.
+  # `systemd-run` returns when the start job is queued, not while the calendar
+  # time is still in the future: a reset that arrives during arming runs the
+  # callback before this function returns. A callback that finds no declaration
+  # consumes nothing and says nothing, and the declaration written after it
+  # would then promise a wake that has already been thrown away. Writing first
+  # makes that callback deliver the wake it was armed for.
+  #
+  # Body first so a callback can never find a declaration whose resume turn has
+  # not been stored yet, and take the default instead of the one the caller
+  # asked for.
+  wake_rc=0
+  if [ -n "$resume" ]; then
+    tmux set-option -w -t "$AGENT_ID" @gl_usage_wake_body "$resume" || wake_rc=$?
+    [ "$wake_rc" -eq 0 ] \
+      || die "wait-limit: the resume turn could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
+  else
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
+  fi
+  tmux set-option -w -t "$AGENT_ID" @gl_usage_wake \
+    "$USAGE_LIMIT_RESET"$'\t'"$unit"$'\t'"$USAGE_LIMIT_LABEL" || wake_rc=$?
+  if [ "$wake_rc" -ne 0 ]; then
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
+    die "wait-limit: the wake declaration could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
+  fi
   local -a timer=(systemd-run --user --collect --unit="$unit"
     --on-calendar="@$USAGE_LIMIT_RESET" --timer-property=AccuracySec=1s
     --property=Type=oneshot --setenv="GANG_SESSION=$SESSION"
@@ -4621,31 +4672,27 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
   [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
   [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
   timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET" --unit "$unit")
-  "${timer[@]}" >/dev/null \
-    || die "wait-limit: systemd-run did not accept the transient timer; no wake is scheduled"
-  # THE DECLARATION IS WRITTEN ONLY AFTER THE TIMER EXISTS. Written first, it is
-  # a promise of a wake that arming may still fail to create — and a live
-  # callback from an earlier timer reads it in that window and consumes it. The
-  # opposite order has one exposure, an armed timer whose declaration could not
-  # be stored, and that one is recoverable here: stop the timer and refuse,
-  # rather than leave an unannounced unit to fire into a team that never asked.
-  wake_rc=0
-  tmux set-option -w -t "$AGENT_ID" @gl_usage_wake \
-    "$USAGE_LIMIT_RESET"$'\t'"$unit"$'\t'"$USAGE_LIMIT_LABEL" || wake_rc=$?
-  if [ "$wake_rc" -eq 0 ]; then
-    if [ -n "$resume" ]; then
-      tmux set-option -w -t "$AGENT_ID" @gl_usage_wake_body "$resume" || wake_rc=$?
-    else
-      tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
-    fi
+  if ! "${timer[@]}" >/dev/null; then
+    # NOTHING IS ARMED, SO NOTHING MAY STILL BE PROMISED. The declaration exists
+    # at this point by design; arming refused, so it goes.
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake 2>/dev/null || true
+    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
+    die "wait-limit: systemd-run did not accept the transient timer; no wake is scheduled"
   fi
-  if [ "$wake_rc" -ne 0 ]; then
-    systemctl --user stop "$unit.timer" >/dev/null 2>&1 || true
-    die "wait-limit: the transient timer was created but its declaration could not be stored on $name (tmux set-option exited $wake_rc); $unit.timer was stopped and no wake is scheduled"
-  fi
+  # A RESET THAT ARRIVED DURING ARMING HAS ALREADY BEEN ANSWERED. The callback
+  # ran against the declaration written above and consumed it, so calling this
+  # a scheduled wake would name a timer that has already fired.
+  rc=0
+  usage_wake_read "$AGENT_ID" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 1 ] || fired=1
   if usage_lights_for "$AGENT_ID"; then state="$(usage_limit_state)"; else state=sampled; fi
   usage_limit_record "$AGENT_ID" "$state" || true
   reset="$(usage_limit_format_epoch "$USAGE_LIMIT_RESET")"
+  if [ "$fired" -eq 1 ]; then
+    printf "%s reset at %s while the timer was being armed; the resume turn was delivered to %s rather than scheduled\n" \
+      "$USAGE_LIMIT_LABEL" "$reset" "$name"
+    return
+  fi
   printf "provider-reset wake scheduled for %s at %s (%s, %s%% used)\n" \
     "$name" "$reset" "$USAGE_LIMIT_LABEL" "$USAGE_LIMIT_USED"
 }
