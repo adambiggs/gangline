@@ -1233,6 +1233,7 @@ commit_msg_verdict() { # $1 = whole message
   out="$("$ROOT/.githooks/commit-msg" "$msg_file" 2>&1)" || rc=$?
   [ "$rc" -eq 0 ] && { printf 'accepted'; return 0; }
   case "$out" in
+    *'not a footer'*) printf 'refused-placement' ;;
     *'no BREAKING CHANGE: footer'*) printf 'refused-footer' ;;
     *) printf 'refused-other' ;;
   esac
@@ -1261,6 +1262,25 @@ BREAKING-CHANGE: callers must pass --to.
 ')"
 equal "and a nonbreaking subject still needs no footer" \
   "accepted" "$(commit_msg_verdict 'fix(spool): ordinary change
+')"
+# A FOOTER IS A PLACE. Glued to the end of a paragraph it is a sentence that
+# begins with those words: `git interpret-trailers` does not see it, and the
+# gate that accepted it called it a footer in its own diagnostic.
+equal "and refuses a breaking line glued to the body" \
+  "refused-placement" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+The old path is gone.
+BREAKING CHANGE: callers must pass --to.
+')"
+equal "a comment between body and footer does not unmake the footer" \
+  "accepted" \
+  "$(commit_msg_verdict 'feat(send)!: breaks callers
+
+The old path is gone.
+
+# Please enter the commit message for your changes.
+BREAKING CHANGE: callers must pass --to.
 ')"
 
 # GATED TEARDOWN. `down` is the one irreversible verb, so it is exercised

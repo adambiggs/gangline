@@ -49,7 +49,38 @@ if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; the
     echo "commit-msg: cannot read the message file ($1): grep exited $frc" >&2
     exit 1
   fi
-  [ "$frc" -eq 0 ] && exit 0
+  if [ "$frc" -eq 0 ]; then
+    # A FOOTER IS A PLACE, NOT A SPELLING. The line above proves the text is
+    # somewhere in the message; a trailer glued to the end of a paragraph is
+    # body prose that happens to start with those words, and tooling that reads
+    # trailers — `git interpret-trailers`, Release Please — will not see it.
+    # Comment lines are transparent because git's cleanup removes them before
+    # the message is stored, so a comment between body and footer must not
+    # decide this.
+    awk '
+      /^#/ { next }
+      {
+        if (kept > 0 && blank && $0 ~ /^BREAKING[ -]CHANGE: .+$/) { found = 1 }
+        blank = ($0 ~ /^[[:space:]]*$/)
+        kept++
+      }
+      END { exit(found ? 0 : 1) }
+    ' < "$1" && exit 0
+    cat >&2 <<EOF
+commit-msg: the BREAKING CHANGE: line is body prose, not a footer
+
+  ${subject}
+
+A footer is separated from the body by a blank line — that separation is what
+makes it a trailer rather than a sentence. Move it to the end of the message
+with a blank line above it:
+
+  <body>
+
+  BREAKING CHANGE: <what breaks and what callers must change>
+EOF
+    exit 1
+  fi
   cat >&2 <<EOF
 commit-msg: a breaking subject carries no BREAKING CHANGE: footer
 
