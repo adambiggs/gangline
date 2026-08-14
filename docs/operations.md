@@ -25,6 +25,20 @@ declared notifications and permission requests, while Codex has no Notification
 hook and reports only permission requests. An unknown Codex dialog can therefore
 refuse delivery without raising a stall note.
 
+When another action should start only after an agent settles, use an explicit
+barrier instead of repeatedly sampling status:
+
+```sh
+gang wait worker --until idle
+gang wait worker --until done
+```
+
+`idle` waits through native Stop boundaries until a live read is idle. `done`
+accepts the next Stop, including the active turn's completion when the agent was
+already working; it does not assign or track a turn. Unknown evidence and a
+vanished or replaced target fail loudly. A hookless collar cannot supply the
+boundary and is refused before the command blocks.
+
 During hitch, a first-run prompt is reported as soon as Gangline has positive
 pane evidence rather than a merely blank startup screen. At that point it parks
 the startup contract instead of dropping it. Leave a direct `hitch` running and

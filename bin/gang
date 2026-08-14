@@ -308,6 +308,7 @@ talk to agents
 watch agents
   roster    list the team and its state
   status    inspect one agent's state
+  wait      wait for an agent boundary
   capture   read an agent's pane
   composer  read an agent's input box
   context   read an agent's context
@@ -664,6 +665,32 @@ gang wait-limit
   declaration either way. A unit still running
   afterwards is reported with the systemctl
   command that stops it.
+EOF
+      ;;
+    wait) cat <<'EOF'
+gang wait
+  Block on one agent's native turn boundary.
+
+  gang wait <name> --until idle|done
+
+  idle  return when a live state read is idle
+  done  return at the next Stop boundary
+
+  An already-idle agent returns immediately.
+  Otherwise the target collar must supply its
+  native Stop hook. This is a caller-chosen
+  barrier, not a watcher: gang starts no daemon
+  and records no durable wait state.
+
+  done does not track turns. If the agent is
+  already working, that active turn's Stop may
+  satisfy it. idle re-reads after each Stop and
+  waits again while positive busy or occupied
+  evidence remains.
+
+  Unknown state, a vanished or replaced window,
+  or a changed active pane fails loudly instead
+  of hanging or transferring the wait.
 EOF
       ;;
     notify) cat <<'EOF'
@@ -2242,7 +2269,7 @@ hitch_up_abort() { # detach only the external client this invocation created
   hitch_up_state_clear
 }
 
-on_exit() { lock_release; hitch_up_abort; }
+on_exit() { lock_release; hitch_up_abort; wait_hook_cleanup; }
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
   if declare -F collar_input >/dev/null; then collar_input "$1"
@@ -4526,6 +4553,152 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   printf '%s\n' "$state"
 }
 
+# A WAIT IS A TEMPORARY TMUX BARRIER, NOT TEAM STATE. Each caller owns one
+# unique wait-for channel and one pane-exited hook. Stop signals every channel
+# registered for the firing pane; pane exit signals its own hook directly. The
+# hook carries its deletion command, so a caller killed without running its EXIT
+# trap still leaves a deletion path at the target's next boundary.
+WAIT_CHANNEL=""
+WAIT_HOOK_KEY=""
+
+wait_hook_cleanup() {
+  [ -z "$WAIT_HOOK_KEY" ] \
+    || tmux set-hook -ug "$WAIT_HOOK_KEY" 2>/dev/null || true
+  WAIT_CHANNEL=""
+  WAIT_HOOK_KEY=""
+}
+
+wait_hook_arm() { # $1 window id, $2 pane id
+  local id="$1" pane="$2" line key command
+  WAIT_CHANNEL="gang-wait-${id#@}-${pane#%}-$(mint_nonce)"
+  # The first form closes the append/discovery race: if the pane exits before
+  # its array key can be read back, the signal is already latched for wait-for.
+  command="if-shell -F '#{==:#{hook_pane},$pane}' 'wait-for -S $WAIT_CHANNEL'"
+  tmux set-hook -ag pane-exited "$command" \
+    || die "wait: could not arm the pane-exit boundary for $pane"
+  while IFS= read -r line; do
+    case "$line" in
+      *"wait-for -S $WAIT_CHANNEL"*) key="${line%% *}"; break ;;
+    esac
+  done < <(tmux show-hooks -g pane-exited 2>/dev/null || true)
+  [ -n "${key:-}" ] || {
+    tmux wait-for -S "$WAIT_CHANNEL" 2>/dev/null || true
+    die "wait: tmux accepted the pane-exit boundary for $pane but did not expose its registration — refusing an unremovable wait"
+  }
+  WAIT_HOOK_KEY="$key"
+  # tmux parses the quoted if-shell arm as a command list when the hook fires.
+  # Signal first, then remove this exact array element; operator hooks and other
+  # concurrent waiters are untouched.
+  command="if-shell -F '#{==:#{hook_pane},$pane}' 'wait-for -S $WAIT_CHANNEL ; set-hook -ug $WAIT_HOOK_KEY'"
+  tmux set-hook -g "$WAIT_HOOK_KEY" "$command" || {
+    wait_hook_cleanup
+    die "wait: could not finish arming the pane-exit boundary for $pane"
+  }
+}
+
+wait_signal_registered() { # $1 window id, optional $2 pane id; Stop/drop deletion path
+  local id="$1" pane="${2:-}" line key channel
+  while IFS= read -r line; do
+    [[ "$line" =~ wait-for[[:space:]]-S[[:space:]](gang-wait-[0-9]+-[0-9]+-[0-9a-f]{8}) ]] \
+      || continue
+    channel="${BASH_REMATCH[1]}"
+    case "$channel" in
+      "gang-wait-${id#@}-"*) ;;
+      *) continue ;;
+    esac
+    if [ -n "$pane" ]; then
+      case "$channel" in
+        "gang-wait-${id#@}-${pane#%}-"*) ;;
+        *) continue ;;
+      esac
+    fi
+    key="${line%% *}"
+    tmux wait-for -S "$channel" 2>/dev/null || true
+    tmux set-hook -ug "$key" 2>/dev/null || true
+  done < <(tmux show-hooks -g pane-exited 2>/dev/null || true)
+}
+
+wait_active_pane() { # $1 window id -> its one active pane
+  local pane
+  pane="$(tmux list-panes -t "$1" -f '#{pane_active}' -F '#{pane_id}' 2>/dev/null)" \
+    || return 1
+  case "$pane" in
+    %*) [[ "${pane#%}" =~ ^[0-9]+$ ]] || return 1; printf '%s' "$pane" ;;
+    *) return 1 ;;
+  esac
+}
+
+wait_target_validate() { # $1 name, $2 pinned window, $3 pinned pane
+  local name="$1" pinned_id="$2" pinned_pane="$3" id pane rc=0 collar
+  id="$(win_id "$name")" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) die "wait: '$name' vanished while the barrier was armed" ;;
+    2) die "wait: '$name' became ambiguous while the barrier was armed" ;;
+    3) die "wait: '$name' no longer names its registered agent while the barrier was armed" ;;
+    *) die "wait: could not resolve '$name' after the barrier fired" ;;
+  esac
+  [ "$id" = "$pinned_id" ] \
+    || die "wait: '$name' was replaced ($pinned_id became $id) while the barrier was armed"
+  pane="$(wait_active_pane "$id")" \
+    || die "wait: cannot identify the active pane in '$name' after the barrier fired"
+  [ "$pane" = "$pinned_pane" ] \
+    || die "wait: '$name' changed active pane ($pinned_pane became $pane) while the barrier was armed"
+  collar="$(collar_read "$id" 2>/dev/null)" \
+    || die "wait: '$name' lost its collar while the barrier was armed"
+  [ -n "$collar" ] || die "wait: '$name' lost its collar while the barrier was armed"
+  load_collar "$collar"
+  AGENT_ID="$id"
+  AGENT_COLLAR="$collar"
+}
+
+cmd_wait() {
+  local name="${1:-}" until="" pane state
+  case "$name" in ''|-*) cmd_help wait; exit 1 ;; esac
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --until)
+        [ $# -ge 2 ] || die "wait: --until needs idle or done"
+        [ -z "$until" ] || die "wait: --until was given more than once"
+        until="$2"; shift 2 ;;
+      *) die "wait: unexpected argument '$1'" ;;
+    esac
+  done
+  case "$until" in
+    idle|done) ;;
+    '') die "wait: --until idle|done is required" ;;
+    *) die "wait: --until must be idle or done, got '$until'" ;;
+  esac
+  resolve "$name"
+  [ "${GANG_STOP_HOOK:-}" = 1 ] \
+    || die "wait: collar '$AGENT_COLLAR' declares no GANG_STOP_HOOK for '$name' — no native boundary can release this barrier"
+  pane="$(wait_active_pane "$AGENT_ID")" \
+    || die "wait: cannot identify the active pane in '$name'"
+  trap 'on_exit' EXIT
+  while :; do
+    wait_hook_arm "$AGENT_ID" "$pane"
+    wait_target_validate "$name" "$AGENT_ID" "$pane"
+    state="$(state_now "$AGENT_ID")"
+    case "$state" in
+      '~idle~'*) wait_hook_cleanup; trap - EXIT; return 0 ;;
+      '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
+    esac
+    tmux wait-for "$WAIT_CHANNEL" \
+      || die "wait: tmux stopped waiting for '$name' before its boundary fired"
+    wait_hook_cleanup
+    wait_target_validate "$name" "$AGENT_ID" "$pane"
+    state="$(state_now "$AGENT_ID")"
+    case "$state" in
+      '?unknown?'*) die "wait: '$name' is $state after its boundary — refusing to consume unknown as completion" ;;
+    esac
+    if [ "$until" = "done" ]; then trap - EXIT; return 0; fi
+    case "$state" in
+      '~idle~'*) trap - EXIT; return 0 ;;
+    esac
+  done
+}
+
 paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
     '!occupied!'*) colour "$C_BAD" "$1" ;;
@@ -4957,7 +5130,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload event collar kind=""
+  local payload event collar kind="" window=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
   # its caller is a harness configuration and law 7 keeps hooks non-fatal. It
@@ -5018,6 +5191,8 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
           glyph_write "$TMUX_PANE" "~idle~"
+          window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" || window=""
+          [ -z "$window" ] || wait_signal_registered "$window" "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           self_compact_dispatch "$TMUX_PANE" "$collar"
           spool_event "$TMUX_PANE" "$collar" ;;
@@ -5147,11 +5322,15 @@ cmd_drop() {
   spool_archive "$id"
   spool_forget "$id"
   tmux kill-window -t "$id"
+  # kill-window does not promise pane-exited on every supported tmux. Any
+  # registration its native hook did not already consume is released here,
+  # after the identity is gone so the waiter cannot mistake teardown for done.
+  wait_signal_registered "$id"
   printf '%s\n' "$(colour "$C_OK" "dropped $shown")"
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw names="" self=""
+  local named="${1:-}" id raw names="" self="" wait_ids=""
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -5169,11 +5348,13 @@ cmd_down() { # inverse of up: end the whole team's session
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
+    wait_ids="$wait_ids $id"
     usage_wake_cancel "$id" quiet
     spool_archive "$id"
     spool_forget "$id"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
   tmux kill-session -t "=$SESSION"
+  for id in $wait_ids; do wait_signal_registered "$id"; done
 }
 
 cmd_attach() {
@@ -5257,7 +5438,7 @@ fi
 # a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|send|drop|down)
+    hitch|adopt|send|wait|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -5276,6 +5457,7 @@ case "$cmd" in
   usage)    die "usage was retired in 2.0: it drove the harness's own usage page through the composer. 'gang limits' reads the same quota from the collar's non-interactive source." ;;
   limits)   cmd_limits "$@" ;;
   wait-limit) cmd_wait_limit "$@" ;;
+  wait)     cmd_wait "$@" ;;
   notify)   cmd_notify "$@" ;;
   curfew)   cmd_curfew "$@" ;;
   status)   cmd_status "$@" ;;

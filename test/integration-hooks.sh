@@ -17,6 +17,72 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
 contains "a native stop hook closes the turn record" "$turn_closed" "closed"
 
+# WAIT IS AN OPT-IN EVENT BARRIER. The test observes successful hook arming
+# through another latched tmux channel, so no sleep, polling, or timeout stands
+# between the background caller and the native Stop it means to consume.
+cat > "$RUN_ROOT/collars/waitable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+SH
+cat > "$RUN_ROOT/wait-arm-env" <<'SH'
+tmux() {
+  local rc=0
+  command tmux "$@" || rc=$?
+  if [ "$rc" -eq 0 ] && [ "${1:-}" = set-hook ] \
+     && [ "${2:-}" = -ag ] && [ "${3:-}" = pane-exited ]; then
+    command tmux wait-for -S "$GANG_TEST_WAIT_ARM"
+  fi
+  return "$rc"
+}
+SH
+"$HITCH" waitable -c waitable -d /tmp >/dev/null
+waitable_id="$(window_id waitable)"
+waitable_pane="$(tmux list-panes -t "$waitable_id" -F '#{pane_id}')"
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_arm="gang-test-wait-arm-$$-done"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
+  "$GANG" wait waitable --until "done" \
+  >"$RUN_ROOT/wait-done.out" 2>"$RUN_ROOT/wait-done.err" &
+wait_done_pid=$!
+tmux wait-for "$wait_arm"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+if wait "$wait_done_pid"; then
+  pass "a caller-chosen done barrier is released by the target's Stop"
+else
+  fail "a caller-chosen done barrier is released by the target's Stop" \
+    "$(<"$RUN_ROOT/wait-done.err")"
+fi
+if "$GANG" wait waitable --until idle >/dev/null; then
+  pass "an already-idle target satisfies an idle barrier immediately"
+else
+  fail "an already-idle target satisfies an idle barrier immediately" \
+    "gang wait returned nonzero"
+fi
+refuses "a target without a Stop source cannot arm a hanging barrier" \
+  "declares no GANG_STOP_HOOK" "$GANG" wait alpha --until "done"
+
+tmux set-option -w -t "$waitable_id" @gl_turn malformed
+refuses "unknown state is refused before a barrier can hang" \
+  "refusing to hang" "$GANG" wait waitable --until idle
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_arm="gang-test-wait-arm-$$-vanish"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_arm" \
+  "$GANG" wait waitable --until "done" \
+  >"$RUN_ROOT/wait-vanish.out" 2>"$RUN_ROOT/wait-vanish.err" &
+wait_vanish_pid=$!
+tmux wait-for "$wait_arm"
+"$GANG" drop waitable >/dev/null
+if wait "$wait_vanish_pid"; then
+  fail "a vanished target releases the barrier loudly" \
+    "gang wait unexpectedly returned success"
+else
+  contains "a vanished target releases the barrier loudly" \
+    "$(<"$RUN_ROOT/wait-vanish.err")" "vanished"
+fi
+
 # Stall lights forward only native awaiting-input witnesses to one optional
 # declared target. Every outcome is synchronous: the hook returns after the
 # note is accepted live, parked, or recorded as failed.

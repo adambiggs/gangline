@@ -740,6 +740,17 @@ composer keystroke, and a native drain rechecks that the target is idle before
 claiming; the harness's anonymous input queue is recovery evidence, not a safe
 delivery route through a repainting turn.
 
+## Caller barriers use temporary native events
+
+`gang wait` is an opt-in barrier, never a patrol or supervisor. Each caller owns
+a unique temporary tmux `wait-for` channel pinned to the target window and
+active pane; native Stop closes the turn before signalling it, while pane exit
+and explicit teardown release it as a loud vanished-target failure. No daemon,
+timer, or durable wait record exists. `?unknown?` is refused rather than waited
+through, and `done` deliberately promises only the next Stop — it does not claim
+to identify or own a logical turn. Tmux channel locks are excluded because a
+dead holder can leak one indefinitely.
+
 ## The mandatory gate fits under a memory ceiling
 
 `test/lint.sh` runs one `shellcheck` per file, and `test/integration.sh` is

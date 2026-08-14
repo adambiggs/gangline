@@ -18,7 +18,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `send`, `down` | Print help; the missing name is not a self target. |
+| `hitch`, `adopt`, `send`, `wait`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
@@ -390,6 +390,28 @@ Read archives are durable and have no automatic expiry. Their stderr notice
 names the read-scoped root and the exact command that deletes it. Delete that
 root after its recovery or audit purpose ends; see
 [Operations](operations.md#sending-messages-safely) for retention.
+
+### `gang wait <name> --until idle|done`
+
+Blocks the caller on a native target boundary without polling `status`.
+An already-idle target returns immediately for either condition. Otherwise the
+target collar must declare `GANG_STOP_HOOK=1`: each caller appends one temporary,
+uniquely named tmux `wait-for` channel, and the target's next native `Stop`
+signals it after closing the turn bracket. `idle` then re-reads live state and
+arms another boundary while positive busy or occupied evidence remains; `done`
+returns after that first Stop.
+
+`done` does not track turns. If the target is already working, that active
+turn's completion may match. A wait is an explicit barrier chosen by its caller,
+not a supervisor: Gangline starts no daemon, creates no timer, and records no
+durable state.
+
+The registration pins both the target's window id and active pane id. A missing,
+replaced, ambiguous, or pane-switched target fails loudly rather than transferring
+the wait. `?unknown?` fails instead of hanging. Pane exit, `drop`, and `down`
+release temporary registrations so teardown is also observed and reported as a
+vanished target. The implementation uses only `wait-for -S`; tmux channel locks
+are not used because a dead lock holder can leave them locked indefinitely.
 
 ### `gang status [name]`
 
