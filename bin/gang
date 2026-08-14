@@ -229,6 +229,15 @@ ROOT="$(gang_root "${BASH_SOURCE[0]}")"
 [ -d "$ROOT/collars" ] \
   || die "no collars/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 
+invoked="${BASH_SOURCE[0]}"
+case "$invoked" in
+  /*) ;;
+  */*) invoked="$PWD/$invoked" ;;
+  *) invoked="$(command -v -- "$invoked")" || die "cannot resolve the invoked gang path"
+     case "$invoked" in /*) ;; *) invoked="$PWD/$invoked" ;; esac ;;
+esac
+INVOKED_BIN_DIR="$(cd -P "$(dirname "$invoked")" && pwd)"
+
 binary_id() { # executable content witness, or an explicit unavailable value
   local output checksum size
   output="$(cksum "$ROOT/bin/gang" 2>/dev/null)" \
@@ -380,6 +389,9 @@ settings and discovery
   collars   list available harness collars
   roles     list available role briefs
   config    show effective configuration
+
+installation
+  upgrade   install or check the latest release
 
 gang <command> --help is the whole page for
 one command: every flag, what it means, and
@@ -1032,6 +1044,29 @@ gang config
   or the environment. Then whether the operator
   doctrine file and roles directory are
   present, with the path to each slot.
+EOF
+      ;;
+    upgrade) cat <<'EOF'
+gang upgrade
+  Install the latest stable Gangline release
+  over the tree this command is running from.
+
+  gang upgrade
+  gang upgrade --check
+
+  Both forms explicitly contact the configured
+  source to read gangline-v* release tags.
+  Ordinary gang commands make no update check
+  and no network call.
+
+  --check  report whether a newer release is
+           available without changing files.
+
+  A custom install keeps using GANGLINE_REPO
+  when that variable is present. The install
+  directory and command link are derived from
+  this running command, so the release lands
+  over the current install.
 EOF
       ;;
     *) die "no help for unknown command '$1'" ;;
@@ -5863,6 +5898,28 @@ cmd_config() {
   printf 'roles\t%s\t%s\n' "$roles" "$state"
 }
 
+cmd_upgrade() {
+  local mode="" tmp rc=0
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--check) mode=--check ;;
+    1:*) die "upgrade: unexpected argument '$1'" ;;
+    *) die "upgrade: unexpected argument '$2'" ;;
+  esac
+  [ -r "$ROOT/install.sh" ] \
+    || die "upgrade: cannot read the installer at $ROOT/install.sh"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gangline-upgrade.XXXXXX")" \
+    || die "upgrade: could not create a temporary installer"
+  cp "$ROOT/install.sh" "$tmp" || {
+    rm -f -- "$tmp"
+    die "upgrade: could not copy the installer before replacing $ROOT"
+  }
+  GANGLINE_HOME="$ROOT" GANGLINE_BIN="$INVOKED_BIN_DIR" \
+    sh "$tmp" ${mode:+"$mode"} || rc=$?
+  rm -f -- "$tmp"
+  return "$rc"
+}
+
 cmd="${1:-}"
 [ "$cmd" = hook ] || dirty_execution_warn
 # NO ARGUMENTS IS NOT A MISTAKE. An agent told to "run gang" is asking where it
@@ -5918,6 +5975,7 @@ case "$cmd" in
   collars)  cmd_collars "$@" ;;
   roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
+  upgrade)  cmd_upgrade "$@" ;;
   -h|--help|help)
             [ $# -le 1 ] || die "help: unexpected argument '$2'"
             cmd_help "${1:-}" ;;

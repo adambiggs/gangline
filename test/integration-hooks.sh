@@ -1146,16 +1146,16 @@ outer_success_output="$(printf '%s\n' "$deletion_record" |
 equal "an ambient delegation marker cannot suppress the outer gate" \
   "argv:origin|/tmp/remote
 $deletion_record" "$(cat "$delegation_record")"
-# The outer gate's own two lines are the whole of this reading: no banner, no
-# duplicate, no wrapping, nothing else. Exactly one dimension is normalised away
-# and it is the only one that is not determined — with the output inherited
-# rather than captured, the outer hook's stdout is block-buffered into this
-# capture pipe while its stderr is not, so which marker lands first is a
-# property of stdio, not of Gangline. Sorting settles that and nothing else.
-equal "the outer gate's two lines are the whole of the output, once each" \
+# The local gate now owes the operator its own skipped-suite notice, so isolate
+# the outer gate's markers and retain the original once-each proof. Their order
+# is the only undetermined dimension: inherited stdout may be block-buffered
+# while stderr is not, so sorting settles that and nothing else.
+equal "the outer gate's two lines appear once each" \
   "OUTER_STDERR_MARKER
 OUTER_STDOUT_MARKER" \
-  "$(printf '%s\n' "$outer_success_output" | LC_ALL=C sort)"
+  "$(printf '%s\n' "$outer_success_output" \
+    | sed -n '/^OUTER_STDERR_MARKER$/p; /^OUTER_STDOUT_MARKER$/p' \
+    | LC_ALL=C sort)"
 
 # Exercise the ordering property with local output after the outer gate. An
 # empty-tree commit has no suite, so Gangline's own missing-gate refusal is the
@@ -1188,11 +1188,11 @@ order_output="$(
     "$ROOT/.githooks/pre-push" origin "$order_remote" 2>&1
 )" || true
 order_gate_line="$(printf '%s\n' "$order_output" |
-  awk '/carries no test\/lint.sh/ { print NR; exit }')"
+  awk '/does not carry executable test\/lint.sh/ { print NR; exit }')"
 order_marker_line="$(printf '%s\n' "$order_output" |
   awk '/OUTER-VERDICT-MARKER/ { print NR; exit }')"
 contains "the ordering fixture reaches Gangline's own gate" \
-  "$order_output" "carries no test/lint.sh"
+  "$order_output" "does not carry executable test/lint.sh"
 contains "the ordering fixture reaches the outer gate" \
   "$order_output" "OUTER-VERDICT-MARKER"
 equal "the outer verdict is printed before Gangline's own output" \
@@ -1261,8 +1261,11 @@ no_outer_rc=0
 no_outer_output="$(printf '%s\n' "$deletion_record" |
   GIT_CONFIG_GLOBAL="$empty_global" \
   "$ROOT/.githooks/pre-push" origin /tmp/remote 2>&1)" || no_outer_rc=$?
-equal "no global hook is a silent no-op before Gangline's gates" \
-  "0|" "$no_outer_rc|$no_outer_output"
+# The local hook now owes the operator an explicit account of the expensive
+# suite it leaves to main CI, even when this push carries only a deletion.
+equal "no global hook still lets the local gate decide" "0" "$no_outer_rc"
+contains "the local hook names the integration suite it skipped" \
+  "$no_outer_output" "skipping the full integration suite; CI runs it on pushes to main"
 
 # `ln -sf` DEREFERENCES a symlink-to-directory: with the destination already a
 # link to a directory it writes <that directory>/gang and leaves the link
@@ -1271,17 +1274,22 @@ equal "no global hook is a silent no-op before Gangline's gates" \
 installer_root="$RUN_ROOT/installer"
 installer_src="$installer_root/src"
 mkdir -p "$installer_src/bin"
-cat > "$installer_src/bin/gang" <<'SH'
-#!/bin/sh
-# SPDX-License-Identifier: Apache-2.0
-echo bash
-SH
-chmod +x "$installer_src/bin/gang"
+cp "$ROOT/bin/gang" "$installer_src/bin/gang"
+cp "$ROOT/install.sh" "$installer_src/install.sh"
+cp -R "$ROOT/collars" "$installer_src/collars"
+printf '%s\n' 1.0.0 > "$installer_src/version.txt"
 git init -q "$installer_src"
 git -C "$installer_src" config user.name 'Gangline installer test'
 git -C "$installer_src" config user.email 'installer@fixture.invalid'
 git -C "$installer_src" add .
 git -C "$installer_src" commit -qm 'test: installer source fixture'
+git -C "$installer_src" tag gangline-v1.0.0
+printf '%s\n' 1.1.0 > "$installer_src/version.txt"
+git -C "$installer_src" commit -qam 'test: newer installer release'
+git -C "$installer_src" tag gangline-v1.1.0
+printf '%s\n' 1.2.0 > "$installer_src/version.txt"
+git -C "$installer_src" commit -qam 'test: unreleased installer head'
+git -C "$installer_src" tag gangline-v9.0.0-rc.1
 
 installer_bin="$installer_root/bin"
 installer_decoy="$installer_root/decoy"
@@ -1294,6 +1302,27 @@ GANGLINE_REPO="$installer_src" \
 equal "the installer replaces a symlinked destination instead of writing through it" \
   "0 absent $installer_root/ho""me/bin/gang" \
   "$installer_rc $([ -e "$installer_decoy/gang" ] && printf written || printf absent) $(readlink "$installer_bin/gang" || true)"
+equal "the installer selects the latest stable release rather than repository HEAD" \
+  "1.1.0 tagged" \
+  "$(cat "$installer_root/home/version.txt") $([ "$(git -C "$installer_root/home" rev-parse HEAD)" = "$(git -C "$installer_src" rev-list -n 1 gangline-v1.1.0)" ] && printf tagged || printf other)"
+
+ordinary_release_rc=0
+GANGLINE_REPO="$installer_root/missing-network-source" \
+  "$installer_bin/gang" collars >/dev/null 2>&1 || ordinary_release_rc=$?
+equal "ordinary gang commands make no release-network call" "0" "$ordinary_release_rc"
+
+current_release_check="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade --check)"
+contains "gang upgrade --check reports a current release" \
+  "$current_release_check" "1.1.0 is the latest release"
+
+git -C "$installer_src" tag gangline-v1.2.0
+available_release_check="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade --check)"
+contains "gang upgrade --check reports the available release" \
+  "$available_release_check" "1.1.0 -> 1.2.0"
+GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade >/dev/null
+equal "gang upgrade installs the available release over the current install" \
+  "1.2.0 tagged" \
+  "$(cat "$installer_root/home/version.txt") $([ "$(git -C "$installer_root/home" rev-parse HEAD)" = "$(git -C "$installer_src" rev-list -n 1 gangline-v1.2.0)" ] && printf tagged || printf other)"
 
 installer_dir_bin="$installer_root/bin-dir"
 mkdir -p "$installer_dir_bin/gang"
@@ -1333,6 +1362,7 @@ gate_repo() { # $1 name
 exit 0
 SH
   cp "$repo/test/lint.sh" "$repo/test/integration.sh"
+  cp "$repo/test/lint.sh" "$repo/test/smoke.sh"
   chmod +x "$repo/test/"*.sh "$repo/.githooks/commit-msg"
   printf '%s\n' clean > "$repo/content"
   git -C "$repo" add .
@@ -1423,9 +1453,17 @@ SH
 cat > "$hook_repo/test/integration.sh" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-exit 0
+: "${PROBE_DIR:?}"
+printf 'integration\n' > "$PROBE_DIR/integration"
+exit 97
 SH
-chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh"
+cat > "$hook_repo/test/smoke.sh" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+: "${PROBE_DIR:?}"
+printf 'smoke\n' > "$PROBE_DIR/smoke"
+SH
+chmod +x "$hook_repo/test/lint.sh" "$hook_repo/test/integration.sh" "$hook_repo/test/smoke.sh"
 git -C "$hook_repo" init -q
 git -C "$hook_repo" config user.name 'Gangline Test'
 git -C "$hook_repo" config user.email 'gangline-test@example.invalid'
@@ -1500,6 +1538,14 @@ else
 fi
 equal "pre-push lint does not read the main repository index" \
   "" "$(<"$hook_probe/index")"
+equal "pre-push runs the fast smoke from the pushed tree" \
+  "smoke" "$(<"$hook_probe/smoke")"
+if [ ! -e "$hook_probe/integration" ]; then
+  pass "pre-push skips the full integration suite"
+else
+  fail "pre-push skips the full integration suite" \
+    "the integration fixture ran during pre-push"
+fi
 
 # The message gate is the PUSHED one, for the same reason lint is: a working
 # tree carries edits nobody is sending. The two copies are made to disagree in
@@ -1516,6 +1562,7 @@ cat > "$msg_repo/test/lint.sh" <<'SH'
 exit 0
 SH
 cp "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh"
+cp "$msg_repo/test/lint.sh" "$msg_repo/test/smoke.sh"
 msg_gate() { # $1 destination path, $2 verdict, $3 marker
   cat > "$1" <<SH
 #!/bin/sh
@@ -1525,7 +1572,7 @@ SH
   chmod +x "$1"
 }
 msg_gate "$msg_repo/.githooks/commit-msg" 1 'committed-gate: refusing'
-chmod +x "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh"
+chmod +x "$msg_repo/test/lint.sh" "$msg_repo/test/integration.sh" "$msg_repo/test/smoke.sh"
 printf '%s\n' base > "$msg_repo/content"
 git -C "$msg_repo" add .
 git -C "$msg_repo" commit -qm 'test: pushed message gate base'
@@ -1575,6 +1622,7 @@ cat > "$walk_repo/test/lint.sh" <<'SH'
 exit 0
 SH
 cp "$walk_repo/test/lint.sh" "$walk_repo/test/integration.sh"
+cp "$walk_repo/test/lint.sh" "$walk_repo/test/smoke.sh"
 chmod +x "$walk_repo/test/"*.sh "$walk_repo/.githooks/commit-msg"
 printf '%s\n' a > "$walk_repo/content"
 git -C "$walk_repo" add .

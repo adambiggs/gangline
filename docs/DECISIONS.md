@@ -808,3 +808,19 @@ statement to its path on purpose. A move is settled by showing that the
 multiset of reviewed statements is unchanged and carrying each review note onto
 its new key — never by regenerating the ledger, which would launder an
 unreviewed guard through a mechanical step.
+
+## Release installs are explicit and tag-bound
+
+`install.sh` and `gang upgrade` resolve the greatest stable semantic
+`gangline-vMAJOR.MINOR.PATCH` tag and install that commit, never the moving
+`main` branch. `gang upgrade --check` is the sole availability probe; ordinary
+commands stay offline. A named operator action keeps network failure visible
+and avoids adding a cache, timer, startup tax, or self-watching component.
+
+## Pre-push proves the fast boundary
+
+The repository pre-push hook runs the outer contribution gate, lint, a command
+smoke, and commit-message checks against the pushed tree. It names the full
+integration suite it skipped; CI runs that suite on pushes to `main`. The local
+boundary stays quick enough to use on every push while the complete suite still
+records a verdict on the exact integrated branch state.

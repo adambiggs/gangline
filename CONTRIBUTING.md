@@ -12,7 +12,10 @@ git config core.hooksPath .githooks
 ```
 
 The hooks are not enabled automatically. `.githooks/pre-push` is the
-authoritative list of local push gates. Do not bypass it with `--no-verify`.
+authoritative list of local push gates: the operator's outer contribution gate,
+syntax and lint, the fast executable smoke, and commit messages. It names the
+full integration suite it skips; CI runs that suite on every push to `main`.
+Do not bypass the hook with `--no-verify`.
 
 ## Scope and implementation
 

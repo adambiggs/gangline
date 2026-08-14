@@ -26,7 +26,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
 self-targets and is then refused, or deferred, on that same agent's own turn
@@ -40,6 +40,20 @@ accepted and discarded: a word Gangline drops silently has told its caller that
 the word was understood, and the reading that comes back is then of something
 nobody asked for. `gang hook` names it and declines the event instead of dying,
 because its caller is a harness configuration rather than a person; see below.
+
+## Installation
+
+The bootstrap command in `README.md` downloads `install.sh` from `main`, but the
+installer resolves the newest stable `gangline-vMAJOR.MINOR.PATCH` tag and puts
+that release in the install tree. An existing install is moved directly from
+its current release to that tag; local changes in the install tree are refused.
+
+`gang upgrade --check` contacts the same repository and compares the installed
+`version.txt` with its latest stable release. `gang upgrade` installs that
+release over the tree and command link currently running. Both are explicit
+network operations. Gangline performs no automatic release check during other
+commands. `GANGLINE_REPO` continues to select a different tagged source for a
+custom install.
 
 ## Lifecycle
 

@@ -1,6 +1,9 @@
 name: shell
 
-on: [push, pull_request]
+on:
+  push:
+    branches: [main]
+  pull_request:
 
 # Linux and macOS cover the GNU and BSD userlands Gangline supports.
 # The macOS cell is disabled pending the suite-portability fixes tracked in
@@ -63,11 +66,19 @@ jobs:
       - name: Syntax and lint
         run: test/lint.sh
 
-      - name: Installer
+      - name: Fast smoke
+        run: test/smoke.sh
+
+  integration:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Dependencies
         run: |
-          GANGLINE_REPO="$PWD" GANGLINE_HOME="$RUNNER_TEMP/gangline" \
-            GANGLINE_BIN="$RUNNER_TEMP/bin" sh install.sh
-          "$RUNNER_TEMP/bin/gang" collars
+          set -eu
+          command -v tmux >/dev/null || sudo apt-get install -y tmux
 
       - name: Integration test
         timeout-minutes: 5

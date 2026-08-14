@@ -55,6 +55,9 @@ if [ -n "$outer" ]; then
   fi
 fi
 
+echo "pre-push: running lint and the fast smoke." >&2
+echo "pre-push: skipping the full integration suite; CI runs it on pushes to main." >&2
+
 is_zero_oid() {
   case "$1" in ''|*[!0]*) return 1 ;; *) return 0 ;; esac
 }
@@ -146,11 +149,11 @@ while read -r local_ref local_sha _remote_ref remote_sha \
     echo "pre-push: cannot check out $local_sha into a worktree, so nothing was linted" >&2
     fail=1; continue
   }
-  if [ -x "$work/test/lint.sh" ]; then
+  if [ -x "$work/test/lint.sh" ] && [ -x "$work/test/smoke.sh" ]; then
     ( unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
-      cd "$work" && ./test/lint.sh && ./test/integration.sh ) || fail=1
+      cd "$work" && ./test/lint.sh && ./test/smoke.sh ) || fail=1
   else
-    echo "pre-push: $local_sha carries no test/lint.sh, so nothing was linted" >&2
+    echo "pre-push: $local_sha does not carry executable test/lint.sh and test/smoke.sh gates" >&2
     fail=1
   fi
   # The same conventional-commits gate CI runs over the same destination-bound
@@ -200,7 +203,8 @@ while read -r local_ref local_sha _remote_ref remote_sha \
 done < "$tmp/stdin"
 
 if [ "$fail" -ne 0 ]; then
-  echo "pre-push: refusing — the checks above are the ones CI runs on this push." >&2
+  echo "pre-push: refusing — lint, smoke, or commit-message checks failed." >&2
+  echo "          The full integration suite was skipped; CI runs it on pushes to main." >&2
   echo "          push anyway with: git push --no-verify" >&2
   exit 1
 fi

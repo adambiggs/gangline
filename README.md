@@ -47,6 +47,11 @@ supported harness.
 curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
 ```
 
+The bootstrap script installs the latest stable `gangline-v*` GitHub release,
+not the current `main` branch. Later, `gang upgrade --check` checks explicitly
+for a newer release and `gang upgrade` installs it. Other commands do not check
+the network.
+
 Or run [`bin/gang`](bin/gang) directly from a clone. `gang collars` lists the
 available harness collars.
 

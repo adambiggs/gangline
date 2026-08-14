@@ -20,7 +20,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
-meaningful_bare_commands="up roster attach collars roles config curfew notify"
+meaningful_bare_commands="up roster attach collars roles config curfew notify upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -162,6 +162,7 @@ arity_probes=(
   "collars|STRAY|collars: takes no arguments"
   "roles|STRAY|roles: takes no arguments"
   "config|STRAY|config: takes no arguments"
+  "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
 )
 arity_probe_commands="$(printf '%s\n' "${arity_probes[@]}" | cut -d'|' -f1 | sort -u)"
 equal "every dispatched operator command refuses arity it cannot consume" \
