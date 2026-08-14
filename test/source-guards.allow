@@ -56,7 +56,6 @@ f6ff6d1a6b0bebabc8e1	1	source-collision migration review: bare addressing resolv
 300b56544ad93d4513f6	1	source-collision migration review: the recovered pane's attributed message reaches its peer
 b4915fc43c2c6b3926ba	1	source-collision migration review: which name the durable state a lane is resumed from
 24e3aefcba58b65dad86	1	source-collision migration review: a notification kind outside the collar declaration raises nothing
-28a213d1f81d53e3cc23	1	source-collision migration review: native Stop submits the deferred self-compaction command
 87882d26420bd2f04aa9	1	source-collision migration review: incoherent bare commands leave the calling pane untouched
 5d46a95576b076c1bc63	1	source-collision migration review: the deferred self-compaction request is made while the pane paints busy
 6720b7eeae7e5ec09321	1	source-collision migration review: a continuation turn is typed behind the compaction command

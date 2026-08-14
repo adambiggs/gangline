@@ -775,15 +775,16 @@ contains "on the parked-queue evidence, before anything is typed" \
 
 # A self-request made inside an agent's own pane must not submit the native
 # command during that turn. Stop consumes it once, after which a one-shot worker
-# submits the collar command and exits. Both waits below are tmux event barriers,
-# not clocks or polling loops.
-self_executed="test-self-compact-executed-$$"
+# submits the collar command and exits. The worker's unconditional exit barrier
+# establishes when its execution artifact can be read without ever waiting on a
+# conditional event that a correctly refused submission cannot raise.
+self_executed="$RUN_ROOT/self-compact-executed"
 self_busy="$RUN_ROOT/self-compact-busy"
 cat > "$RUN_ROOT/collars/deferred.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_COMPACT_CMD="printf SELF_COMPACT; tmux wait-for -S $self_executed"
+GANG_COMPACT_CMD="printf SELF_COMPACT; : > $self_executed"
 GANG_SELF_COMPACT=deferred
 GANG_BUSY_REGEX='BUSY_DEFERRED'
 _gl_self_input="\$(declare -f collar_input)"
@@ -820,14 +821,15 @@ tmux wait-for "$self_released"
 if [ -n "$self_request" ]; then
   tmux wait-for "gang-self-compact-$self_request" &
   self_dispatch_waiter=$!
-  tmux wait-for "$self_executed" &
-  self_execute_waiter=$!
   printf '%s' '{"hook_event_name":"Stop"}' |
     TMUX_PANE="$self_tmux_pane" "$GANG" hook >/dev/null
-  wait "$self_execute_waiter"
   wait "$self_dispatch_waiter"
-  contains "native Stop submits the deferred self-compaction command" \
-    "$(pane selfable)" "SELF_COMPACT"
+  if [ -e "$self_executed" ]; then
+    pass "native Stop submits the deferred self-compaction command"
+  else
+    fail "native Stop submits the deferred self-compaction command" \
+      "the worker exited without the collar command's execution artifact"
+  fi
   equal "the one-shot self-compaction worker exits without an error" "" \
     "$(tmux show-options -wqv -t "$self_id" @gl_self_compact_failed)"
 else
@@ -842,14 +844,14 @@ fi
 # it had compacted, nothing retried, and the only record was a tmux option no
 # agent reads. A draft in the box is the ordinary case at a Stop, because a
 # Stop is exactly when an operator is mid-reply.
-drafted_executed="test-drafted-executed-$$"
+drafted_executed="$RUN_ROOT/self-drafted-executed"
 drafted_busy="$RUN_ROOT/self-drafted-busy"
 drafted_draft="$RUN_ROOT/self-drafted-draft"
 cat > "$RUN_ROOT/collars/drafted.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_COMPACT_CMD="printf DRAFTED_COMPACT; tmux wait-for -S $drafted_executed"
+GANG_COMPACT_CMD="printf DRAFTED_COMPACT; : > $drafted_executed"
 GANG_SELF_COMPACT=deferred
 GANG_STOP_HOOK=1
 GANG_BUSY_REGEX='BUSY_DRAFTED'
@@ -909,25 +911,33 @@ if [ -n "$drafted_request" ]; then
   # keyed to it would hang instead of failing. The claim above already reports
   # that; this one refuses to arm a wait it cannot satisfy.
   if [ -n "$drafted_retry" ]; then
-    # The collar's compact command signals this barrier itself, so waiting on
-    # it is the compaction running rather than its text appearing on a pane
-    # that was also typed into.
-    tmux wait-for "$drafted_executed" &
-    drafted_execute_waiter=$!
+    # A retry can legitimately lose the window delivery lock to the failure
+    # note's spool drain. The worker's own EXIT barrier is unconditional; the
+    # compact command's execution artifact is not. Waiting on the latter would
+    # hang forever after a correctly reported second refusal, so read which of
+    # the two honest outcomes the completed worker established instead.
     tmux wait-for "gang-self-compact-$drafted_retry" &
     drafted_retry_waiter=$!
     printf '%s' '{"hook_event_name":"Stop"}' |
       TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
     wait "$drafted_retry_waiter"
-    wait "$drafted_execute_waiter"
-    equal "a submitted compaction consumes the request" "" \
-      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
-    equal "a submitted compaction clears the recorded failure" "" \
-      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)"
+    if [ -e "$drafted_executed" ]; then
+      equal "a submitted retry consumes the request" "" \
+        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+      equal "a submitted retry clears the recorded failure" "" \
+        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)"
+    else
+      equal "a retry refused by lock contention keeps the request" \
+        "$drafted_retry" \
+        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+      contains "a retry refused by lock contention records its outcome" \
+        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)" \
+        "still scheduled"
+    fi
   else
-    fail "a submitted compaction consumes the request" \
+    fail "a submitted retry consumes the request" \
       "the deferred request was dropped, so no later boundary could run it"
-    fail "a submitted compaction clears the recorded failure" \
+    fail "a submitted retry clears the recorded failure" \
       "the deferred request was dropped, so no later boundary could run it"
   fi
 else
@@ -968,4 +978,3 @@ equal "the undeferred path stamps no pending self-compaction request" "" \
   "$(tmux show-options -wqv -t "$nodeferred_id" @gl_self_compact_requested)"
 tmux wait-for -S "$nodeferred_release"
 "$GANG" drop nodeferred >/dev/null
-
