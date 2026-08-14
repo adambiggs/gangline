@@ -650,7 +650,7 @@ contains "and attribution is claimed before that composer read" \
 # the steering body until its next tool batch. That is a successful handoff,
 # but the exact composer read-back must remain available to status and flush
 # after the spool claim retires. The fixture makes the queue hint follow only
-# the marked paste, so park_ok is load-bearing rather than inert.
+# the marked paste, so park_record is load-bearing rather than inert.
 printf await > "$RUN_ROOT/steer-queue-arm"
 tmux set-option -w -t "$steer_id" @gl_turn "open $(date +%s)"
 if printf 'MARK_STEER_PARK' |
