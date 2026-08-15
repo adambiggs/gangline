@@ -605,6 +605,47 @@ options and die with the window. Status and roster expose pending, overdue,
 unreadable, and failed wake states. A user manager or timer creation failure is
 an error and leaves no wake declaration.
 
+`status` reads the declared unit as well as the declaration whenever the reset
+is still in the future. The declaration lives on the tmux window and the timer
+lives in the user manager, so a manager restarted under a surviving tmux server
+leaves a declaration promising a wake nothing will deliver. A unit that reports
+inactive or failed is named as armed nowhere; a state that cannot be read at all
+is reported unverified rather than assumed. A reset that has already passed is
+not checked, because a fired unit is expected to be gone.
+
+### `GANG_AUTO_RESUME`
+
+An operator-declared provider-used percentage arms the wake above without anyone
+typing `wait-limit`. It is off unless declared, is stamped on the window at
+hitch or adopt time like the usage lights, and is a separate declaration from
+them: warning an agent and arming its return are different decisions at
+different percentages, and an agent may run auto-resume with the lights off.
+
+At the first sample at or above the threshold whose reset is still in the
+future, the agent's own turn hook re-enters `gang wait-limit` for that agent and
+reports the result in the same turn. Arming happens once per provider window:
+the reset that was decided for is recorded on the window, so later samples in
+the same window arm nothing, and a wake cleared with `--clear` is not armed
+again over the operator. A refused arm is reported in the turn, recorded where
+status reads it, and not retried for that window.
+
+A reading too old to act on arms nothing. A collar may cap the age of
+actionable evidence, and Codex's percentage comes from a session event that goes
+stale while the agent is idle. A stale percentage is poor evidence for a
+threshold decision even though a still-future absolute reset remains sufficient
+to arm against once that decision has been made, so the sample is refused and
+the agent is told, rather than arming from a number that may no longer hold.
+
+This is deliberately an over-approximation of the provider limit. Gangline
+cannot observe the harness's own refusal — the only in-band evidence is pane
+prose, which is not a data contract — and an agent that has been refused takes
+no further turns, so the last moment Gangline can arm from the agent's own hook
+is before the cap rather than at it. A continuation may therefore arrive at a
+reset for an agent that never capped; it carries the ordinary continuation turn
+and lands on the ordinary spool. If a provider window goes from below the
+threshold to exhausted between two samples, nothing is armed, and status shows
+no pending wake; the threshold is the operator's lever, as it is for the lights.
+
 ### `gang roster`
 
 Prints every session window with its collar and current state. Unadopted windows
@@ -722,6 +763,7 @@ Exactly these keys are settable:
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
+| `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |

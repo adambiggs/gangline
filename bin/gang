@@ -32,7 +32,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -258,6 +258,7 @@ GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
+GANG_AUTO_RESUME="${GANG_AUTO_RESUME:-off}"
 GANG_STALL_REPEAT=600
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -3577,6 +3578,37 @@ usage_lights_for() { # $1 = window; load its hitch-time setting
   usage_lights_parse "${spec:-off}"
 }
 
+# AUTO-RESUME IS ONE THRESHOLD, DECLARED SEPARATELY FROM THE LIGHTS. Warning an
+# agent and arming its return are different decisions taken at different
+# percentages: an operator may want a checkpoint reminder well before the point
+# where committing to a wake at the reported reset is worth it. Coupling them
+# would force one number to mean both.
+AUTO_RESUME_AT=0
+auto_resume_parse() { # $1 = off or one provider-used percentage
+  local at
+  AUTO_RESUME_AT=0
+  case "$1" in
+    off|'') return 1 ;;
+    *%)
+      at="${1%\%}"
+      case "$at" in
+        ''|*[!0-9]*)
+          die "GANG_AUTO_RESUME must be off or one percentage, for example 97%$(config_origin_note GANG_AUTO_RESUME)" ;;
+      esac
+      [ "$at" -gt 0 ] && [ "$at" -le 100 ] \
+        || die "GANG_AUTO_RESUME must be a percentage from 1 to 100, got '$1'$(config_origin_note GANG_AUTO_RESUME)"
+      AUTO_RESUME_AT="$at"
+      return 0 ;;
+    *) die "GANG_AUTO_RESUME must be off or one percentage, for example 97%$(config_origin_note GANG_AUTO_RESUME)" ;;
+  esac
+}
+
+auto_resume_for() { # $1 = window; load its hitch-time setting
+  local spec
+  spec="$(tmux show-options -wqv -t "$1" @gl_auto_resume 2>/dev/null)" || spec=""
+  auto_resume_parse "${spec:-off}"
+}
+
 USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
 usage_limits_read() { # $1 window, collar loaded; select the most constrained row
   local rows line label used reset observed fields clean_rows="" best_used=-1 best_reset=-1 found=0 now
@@ -3642,9 +3674,46 @@ usage_limit_fail_record() { # $1 window, $2 operator-facing failure
   tmux set-option -w -t "$1" @gl_usage_failed "$note" 2>/dev/null || true
 }
 
-usage_light_note() { # $1 collar; sample and append one provider-use edge
-  local rc=0 state previous note agent now checked
-  usage_lights_for "$TMUX_PANE" || return 0
+auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
+  # ARMING RE-ENTERS THE CLI RATHER THAN COPYING IT. `gang wait-limit` holds the
+  # whole ordering a wake depends on — stop the derived unit and prove it gone,
+  # write the declaration before systemd-run so a reset arriving during arming
+  # is still delivered, clear both options if arming refuses. A second in-process
+  # copy of that sequence is a copy that can drift from it, and this one would
+  # run unattended where nobody is reading. The cost is one extra native limit
+  # read, which the marker below spends once per provider window.
+  local armed name out rc=0
+  armed="$(tmux show-options -wqv -t "$1" @gl_auto_resume_armed 2>/dev/null)" || armed=""
+  [ "$armed" != "$2" ] || return 1
+  name="$(agent_name_of "$1")"
+  out="$("$ROOT/bin/gang" wait-limit "$name" 2>&1)" || rc=$?
+  # BOTH TERMINAL OUTCOMES CLOSE THE WINDOW. A refusal that left no marker would
+  # relaunch a headless provider read at every sample for as long as the agent
+  # stayed above the threshold, and would repeat itself into every turn. It is
+  # loud once, on the window and in this turn, and the operator arms by hand.
+  # A cleared wake keeps its marker on purpose: `--clear` is a decision, and
+  # re-arming over it would answer the operator by overruling them.
+  tmux set-option -w -t "$1" @gl_auto_resume_armed "$2" 2>/dev/null || true
+  out="$(printf '%s' "$out" | config_sanitize)"
+  if [ "$rc" -eq 0 ]; then
+    printf 'Auto-resume armed at %s%% used: %s' "$AUTO_RESUME_AT" "$out"
+    return 0
+  fi
+  tmux set-option -w -t "$1" @gl_usage_wake_failed \
+    "auto-resume could not arm a wake: $out" 2>/dev/null || true
+  printf 'Auto-resume could NOT arm a provider-reset wake: %s. Nothing is scheduled; arm it by hand with gang wait-limit %s.' \
+    "$out" "$name"
+  return 2
+}
+
+usage_light_note() { # $1 collar; sample provider use, then light and arm from it
+  local rc=0 state previous note agent now checked lights=0 arm=0 subject arm_note arm_rc=0
+  if usage_lights_for "$TMUX_PANE"; then lights=1; fi
+  if auto_resume_for "$TMUX_PANE"; then arm=1; fi
+  [ "$lights" -eq 1 ] || [ "$arm" -eq 1 ] || return 0
+  # THE SUBJECT IS WHICHEVER CONSUMER ASKED FOR THE READING. An operator running
+  # auto-resume with the lights off must not be told that lights are unavailable.
+  if [ "$lights" -eq 1 ]; then subject="Usage lights"; else subject="Auto-resume"; fi
   load_collar "$1"
   if [ "$GANG_USAGE_LIGHT_INTERVAL" -gt 0 ]; then
     now="$(date +%s)"
@@ -3668,8 +3737,21 @@ usage_light_note() { # $1 collar; sample and append one provider-use edge
     || previous=""
   case "$rc" in
     0)
-      state="$(usage_limit_state)"
+      if [ "$lights" -eq 1 ]; then state="$(usage_limit_state)"; else state=sampled; fi
       usage_limit_record "$TMUX_PANE" "$state" || return 0
+      # ARMING IS DECIDED BEFORE THE LIGHT EDGES. A light returns early for every
+      # state it has nothing new to say about — below its yellow, or an edge it
+      # already reported — and an auto-resume threshold the operator set anywhere
+      # under those states would never be reached through them.
+      if [ "$arm" -eq 1 ] && [ "$USAGE_LIMIT_USED" -ge "$AUTO_RESUME_AT" ] \
+        && [ "$USAGE_LIMIT_RESET" -gt "$now" ]; then
+        arm_note="$(auto_resume_arm "$TMUX_PANE" "$USAGE_LIMIT_RESET")" || arm_rc=$?
+        if [ "$arm_rc" -ne 1 ] && [ -n "$arm_note" ]; then
+          ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$arm_note"
+        fi
+      fi
+      [ "$lights" -eq 1 ] || return 0
       if [ "$state" = below ]; then
         tmux set-option -uw -t "$TMUX_PANE" @gl_usage_notified 2>/dev/null || true
         return 0
@@ -3682,10 +3764,10 @@ usage_light_note() { # $1 collar; sample and append one provider-use edge
         red) note="Red usage light: $USAGE_LIMIT_LABEL is ${USAGE_LIMIT_USED}% used. Finish the current arc and stop before the provider limit; inspect or schedule its reset with gang limits $agent and gang wait-limit $agent." ;;
       esac
       ;;
-    2) state=unavailable; note="Usage lights unavailable: the collar's native provider-limit reader failed. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
-    3) state=invalid; note="Usage lights unavailable: the collar returned a provider-limit record Gangline cannot interpret. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
-    4) state=unavailable; note="Usage lights unavailable: this collar declares no non-interactive provider-limit source; Gangline will not substitute a composer scrape." ;;
-    5) state=stale; note="Usage lights unavailable: the collar's newest provider-limit reading is too old to act on. Refresh the harness with an API turn, then inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    2) state=unavailable; note="$subject unavailable: the collar's native provider-limit reader failed. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    3) state=invalid; note="$subject unavailable: the collar returned a provider-limit record Gangline cannot interpret. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    4) state=unavailable; note="$subject unavailable: this collar declares no non-interactive provider-limit source; Gangline will not substitute a composer scrape." ;;
+    5) state=stale; note="$subject unavailable: the collar's newest provider-limit reading is too old to act on. Refresh the harness with an API turn, then inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
     *) return 0 ;;
   esac
   if [ "$rc" -ne 0 ]; then
@@ -3833,6 +3915,7 @@ cmd_hitch() {
   esac; done
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
+  auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_collar "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
@@ -3975,6 +4058,9 @@ cmd_hitch() {
   fi
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
+  fi
+  if [ "$GANG_AUTO_RESUME" != off ]; then
+    tmux set-option -w -t "$id" @gl_auto_resume "$GANG_AUTO_RESUME"
   fi
   exists "$name" || {
     lookup_rc=$?
@@ -5197,7 +5283,7 @@ usage_limit_status_report() { # $1 window
 }
 
 usage_wake_status_report() { # $1 window
-  local record rc=0 reset unit label now when left failed
+  local record rc=0 reset unit label now when left failed unit_state
   record="$(usage_wake_read "$1")" || rc=$?
   if [ "$rc" -eq 2 ]; then
     printf '%s\n' "$(colour "$C_BAD" "provider-reset wake UNREADABLE: inspect @gl_usage_wake")"
@@ -5206,6 +5292,30 @@ usage_wake_status_report() { # $1 window
     now="$(date +%s)" when="$(usage_limit_format_epoch "$reset")"
     if [ "$reset" -gt "$now" ]; then left="$(human_seconds $(( reset - now ))) remaining"; else left="OVERDUE"; fi
     printf '%s\n' "$(colour "$C_WORK" "provider-reset wake: $label at $when — $left; transient unit $unit.timer")"
+    # A DECLARATION IS NOT A TIMER. The declaration lives on the tmux window and
+    # the timer lives in the user manager, and the manager can be restarted
+    # under a tmux server that survives it. Reporting the declaration alone then
+    # promises a wake that nothing will deliver. Only a still-future reset is
+    # checked: a passed one is expected to have fired and been collected.
+    #
+    # THE STATE WORD, NOT THE EXIT STATUS, for the reason usage_unit_stop gives:
+    # `is-active` exits nonzero both for a unit that is gone and for a query
+    # that could not run, and reading the status alone reports "gone" in exactly
+    # the case where the timer is most likely still armed.
+    if [ "$reset" -gt "$now" ]; then
+      if ! command -v systemctl >/dev/null 2>&1; then
+        printf '%s\n' "$(colour "$C_BAD" "provider-reset wake UNVERIFIED: systemctl is not available, so $unit.timer cannot be read")"
+      else
+        unit_state="$(systemctl --user is-active "$unit.timer" 2>/dev/null)" || true
+        case "$unit_state" in
+          active|activating|reloading|refreshing) ;;
+          inactive|failed)
+            printf '%s\n' "$(colour "$C_BAD" "provider-reset wake ARMED NOWHERE: $unit.timer is $unit_state, so the declared wake will not fire; reschedule with gang wait-limit $(agent_name_of "$1")")" ;;
+          *)
+            printf '%s\n' "$(colour "$C_BAD" "provider-reset wake UNVERIFIED: $unit.timer reported '${unit_state:-no state}', so whether it is still armed could not be read")" ;;
+        esac
+      fi
+    fi
   fi
   failed="$(tmux show-options -wqv -t "$1" @gl_usage_wake_failed 2>/dev/null)" || failed=""
   [ -z "$failed" ] \
@@ -5760,8 +5870,12 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   stamp_binary_id "$id"
   spool_mint "$id"
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
+  auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
+  fi
+  if [ "$GANG_AUTO_RESUME" != off ]; then
+    tmux set-option -w -t "$id" @gl_auto_resume "$GANG_AUTO_RESUME"
   fi
   state_now "$id" >/dev/null
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
@@ -5848,6 +5962,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;
+    GANG_AUTO_RESUME) printf '%s' "$GANG_AUTO_RESUME" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;

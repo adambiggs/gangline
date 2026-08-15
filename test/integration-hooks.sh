@@ -864,6 +864,13 @@ exec "$usage_real_tmux" "\$@"
 SH
 cat > "$usage_timer_bin/systemd-run" <<SH
 #!/bin/sh
+# A REFUSED ARM. The recorded argv is emptied rather than left behind, so an
+# assertion that nothing was armed reads the absence instead of the last
+# successful arming's arguments.
+if [ -n "\${GANG_TEST_SYSTEMD_RUN_FAIL:-}" ]; then
+  : > "$usage_timer_args"
+  exit 9
+fi
 printf '%s\n' "\$@" > "$usage_timer_args"
 # THE ORDER IS WITNESSED FROM INSIDE THE ARMING. A declaration that already
 # exists at this instant is a promise of a wake made before anything was armed
@@ -890,6 +897,8 @@ printf '%s\n' "\$@" >> "$usage_timer_stops"
 case "\${GANG_TEST_SYSTEMCTL:-ok}" in
   gone)  # the unit already fired and was collected: stop fails, nothing is active
     case "\$*" in *is-active*) echo inactive; exit 3 ;; *) exit 5 ;; esac ;;
+  armed) # a pending transient timer: waiting for its calendar time is active
+    case "\$*" in *is-active*) echo active; exit 0 ;; *) exit 0 ;; esac ;;
   stuck) # the stop failed and the unit is still running
     case "\$*" in *is-active*) echo active; exit 0 ;; *) exit 5 ;; esac ;;
   blind) # THE QUERY ITSELF CANNOT RUN — no user bus, no manager to answer.
@@ -1105,6 +1114,228 @@ else
 fi
 equal "and that declaration is cleared anyway" "" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_wake)"
+
+# AUTO-RESUME ARMS THE WAKE THAT ALREADY EXISTS. Gangline cannot observe the
+# harness's own refusal — the only in-band evidence of it is pane prose, which
+# is refused as a data contract — and a capped agent takes no further turns, so
+# the last moment gang can act from the agent's own hook is BEFORE the cap. The
+# threshold is therefore an over-approximation on purpose: a resume turn may
+# arrive at a reset for an agent that never actually capped. It carries the
+# ordinary continuation, and it lands on the ordinary spool.
+#
+# THE THRESHOLD IS DECLARED SEPARATELY FROM THE LIGHTS, and this agent is
+# hitched with the lights OFF so that decoupling is what the assertions below
+# are reading rather than a light edge that happens to coincide.
+auto_now="$(date +%s)"
+auto_reset=$(( auto_now + 900 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 96 "$auto_reset" "$auto_now" \
+  > "$usage_limits_source"
+GANG_AUTO_RESUME=95% "$HITCH" auto-res -c usage-lights -d /tmp >/dev/null
+auto_id="$(window_id auto-res)"
+auto_pane="$(tmux list-panes -t "$auto_id" -F '#{pane_id}')"
+: > "$usage_timer_args"
+auto_calls_before="$(tmux show-options -wqv -t "$auto_id" @test_usage_calls)"
+case "$auto_calls_before" in ''|*[!0-9]*) auto_calls_before=0 ;; esac
+auto_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "auto-resume arms a reset wake from the agent's own turn" \
+  "$auto_note" "Auto-resume armed at 95% used"
+auto_wake="$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+equal "and the declaration names the reset that was sampled" \
+  "$auto_reset" "$(cut -f1 <<<"$auto_wake")"
+equal "and the window it decided for is recorded against re-arming" \
+  "$auto_reset" "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
+contains "through gang's own arming path rather than a second copy of it" \
+  "$(<"$usage_timer_args")" "--collect"
+# ONE EXTRA NATIVE READ, NOT NONE AND NOT ONE PER SAMPLE. Re-entering the CLI
+# costs a second reading of the collar's source; that cost is the evidence that
+# the arming ran through wait-limit instead of an in-process shortcut.
+equal "arming spends exactly one extra native read" "2" \
+  "$(( $(tmux show-options -wqv -t "$auto_id" @test_usage_calls) - auto_calls_before ))"
+
+: > "$usage_timer_args"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+equal "a provider window is armed once, not once per sample" "" "$auto_repeat"
+equal "and no second timer is armed for the same reset" "" "$(<"$usage_timer_args")"
+
+# THE OPERATOR'S CLEAR STANDS. Re-arming over a --clear would answer the
+# operator by overruling them, and the marker is what keeps that from happening.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+: > "$usage_timer_args"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook >/dev/null
+equal "a cleared wake is not re-armed behind the operator" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+equal "and nothing was armed behind that clear" "" "$(<"$usage_timer_args")"
+
+# A NEW PROVIDER WINDOW IS A NEW DECISION. The marker is the reset, so the next
+# window re-arms without the operator touching anything.
+auto_reset_next=$(( auto_now + 20000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 97 "$auto_reset_next" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+: > "$usage_timer_args"
+auto_next_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "the next provider window arms again" "$auto_next_note" "Auto-resume armed"
+equal "and the fresh declaration names the new reset" "$auto_reset_next" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+
+# THE POINT OF THE WHOLE ARC, and it consumes THE DECLARATION THE HOOK JUST
+# WROTE. Firing a wake that `wait-limit` had been told to arm by hand proves
+# only that firing works; the mutation run caught exactly that, passing this
+# assertion with auto-resume disabled. It runs here, against the arming above,
+# so that nothing but auto-resume can satisfy it.
+auto_fire_record="$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+IFS=$'\t' read -r auto_fire_reset auto_fire_unit _ <<<"$auto_fire_record"
+GANG_TEST_NOW="$auto_fire_reset" PATH="$usage_timer_bin:$PATH" \
+  "$GANG" wait-limit auto-res --fire "$auto_fire_reset" \
+  --unit "$auto_fire_unit" >/dev/null
+# source-guard: producer@8d3690d819ed: the needle is the default wake body, which only a fired wake types, and the emptied declaration asserted immediately below is the independent witness that this fire consumed that record rather than that unrelated text is on the screen
+contains "an auto-armed wake resumes the agent at the reset" \
+  "$(pane_all auto-res)" "continue only if work remains"
+equal "and retires the declaration it consumed" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+
+# BELOW THE DECLARED THRESHOLD NOTHING IS ARMED. Without this the assertions
+# above pass for an arming that fires unconditionally.
+auto_reset_low=$(( auto_now + 30000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 94 "$auto_reset_low" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+: > "$usage_timer_args"
+auto_low_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+excludes "below the declared threshold nothing is armed" \
+  "$auto_low_note" "Auto-resume armed"
+equal "and no wake is declared under it" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+
+# A READING TOO OLD TO ACT ON ARMS NOTHING. The percentage is what the
+# threshold decision is made from, and a stale one may no longer hold; the
+# absolute reset staying valid is a fact about arming, not about deciding.
+auto_reset_stale=$(( auto_now + 35000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_stale" "$(( auto_now - 301 ))" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+: > "$usage_timer_args"
+auto_stale_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "a stale reading is refused rather than armed from" \
+  "$auto_stale_note" "too old to act on"
+excludes "and the refusal is named for auto-resume, not the lights" \
+  "$auto_stale_note" "Usage lights unavailable"
+equal "a stale reading arms nothing" "" "$(<"$usage_timer_args")"
+equal "and declares no wake" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+
+# AUTO-RESUME IS OFF UNTIL THE OPERATOR DECLARES IT. An agent hitched without
+# the choice arms nothing at any percentage.
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$(( auto_now + 900 ))" "$auto_now" \
+  > "$usage_limits_source"
+"$HITCH" auto-off -c usage-lights -d /tmp >/dev/null
+auto_off_id="$(window_id auto-off)"
+auto_off_pane="$(tmux list-panes -t "$auto_off_id" -F '#{pane_id}')"
+: > "$usage_timer_args"
+auto_off_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_off_pane" "$GANG" hook)"
+equal "an undeclared auto-resume samples nothing and arms nothing" "" \
+  "$auto_off_note"
+equal "and declares no wake at 99% used" "" \
+  "$(tmux show-options -wqv -t "$auto_off_id" @gl_usage_wake)"
+equal "and no timer was armed for it" "" "$(<"$usage_timer_args")"
+
+# STATUS PROVES THE TIMER, NOT JUST THE DECLARATION. The declaration lives on
+# the tmux window and the timer lives in the user manager; the manager can be
+# restarted under a tmux server that outlives it, and the declaration alone
+# then promises a wake nothing will deliver.
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 97 "$(( auto_now + 40000 ))" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res >/dev/null
+auto_status_armed="$(GANG_TEST_SYSTEMCTL=armed PATH="$usage_timer_bin:$PATH" \
+  "$GANG" status auto-res)"
+contains "status reports the pending wake" \
+  "$auto_status_armed" "provider-reset wake:"
+excludes "and a verified timer adds no alarm to it" \
+  "$auto_status_armed" "ARMED NOWHERE"
+auto_status_gone="$(GANG_TEST_SYSTEMCTL=gone PATH="$usage_timer_bin:$PATH" \
+  "$GANG" status auto-res)"
+contains "a declaration whose timer is gone is not reported as scheduled" \
+  "$auto_status_gone" "ARMED NOWHERE"
+auto_status_blind="$(GANG_TEST_SYSTEMCTL=blind PATH="$usage_timer_bin:$PATH" \
+  "$GANG" status auto-res)"
+contains "and a unit state that cannot be read is not read as armed" \
+  "$auto_status_blind" "UNVERIFIED"
+
+# A SOURCE THAT CANNOT ANSWER IS NAMED FOR THE CONSUMER THAT ASKED. An operator
+# running auto-resume with the lights off must not be told that lights failed.
+contains "an unavailable source still names the lights when they are on" \
+  "$usage_absent_note" "Usage lights unavailable"
+GANG_AUTO_RESUME=95% "$HITCH" auto-absent -c stallable -d /tmp >/dev/null
+auto_absent_pane="$(tmux list-panes -t "$(window_id auto-absent)" -F '#{pane_id}')"
+auto_absent_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$auto_absent_pane" "$GANG" hook)"
+contains "and names auto-resume when that is what asked" \
+  "$auto_absent_note" "Auto-resume unavailable"
+
+# A REFUSED ARM IS LOUD ONCE, NOT SILENT AND NOT EVERY SAMPLE. Retrying a
+# headless provider read at every turn for as long as the agent stays above the
+# threshold is its own failure, so the decision is closed either way.
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 98 "$(( auto_now + 50000 ))" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+tmux set-option -uw -t "$auto_id" @gl_usage_wake_failed 2>/dev/null || true
+auto_fail_note="$(GANG_TEST_SYSTEMD_RUN_FAIL=1 PATH="$usage_timer_bin:$PATH" \
+  sh -c 'printf "%s" "{\"hook_event_name\":\"PostToolUse\"}" |
+    TMUX_PANE="'"$auto_pane"'" "'"$GANG"'" hook')"
+contains "a refused arm says so in the turn it happened in" \
+  "$auto_fail_note" "Auto-resume could NOT arm"
+contains "and records the refusal where status is looking" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_failed)" \
+  "auto-resume could not arm a wake"
+contains "and status carries it" \
+  "$("$GANG" status auto-res)" "provider-reset wake failed"
+equal "a refused arm leaves no declaration promising a wake" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+: > "$usage_timer_args"
+auto_fail_repeat="$(GANG_TEST_SYSTEMD_RUN_FAIL=1 PATH="$usage_timer_bin:$PATH" \
+  sh -c 'printf "%s" "{\"hook_event_name\":\"PostToolUse\"}" |
+    TMUX_PANE="'"$auto_pane"'" "'"$GANG"'" hook')"
+equal "and the refusal is not retried at the next sample" "" "$auto_fail_repeat"
+equal "with nothing armed behind it" "" "$(<"$usage_timer_args")"
+
+# THE THRESHOLD IS REFUSED AT HITCH, the last cheap place to refuse it.
+if auto_high="$(GANG_AUTO_RESUME=101% "$GANG" hitch \
+    auto-invalid -c usage-lights -d /tmp 2>&1)"; then
+  fail "an out-of-range auto-resume threshold is refused" "hitch succeeded"
+else
+  contains "an out-of-range auto-resume threshold is refused" \
+    "$auto_high" "must be a percentage from 1 to 100"
+fi
+if auto_word="$(GANG_AUTO_RESUME=soon "$GANG" hitch \
+    auto-invalid -c usage-lights -d /tmp 2>&1)"; then
+  fail "an auto-resume threshold that is not a percentage is refused" \
+    "hitch succeeded"
+else
+  contains "an auto-resume threshold that is not a percentage is refused" \
+    "$auto_word" "must be off or one percentage"
+fi
+equal "an invalid auto-resume spec opens no window" "" \
+  "$(window_id auto-invalid)"
+contains "gang config exposes the auto-resume choice" \
+  "$("$GANG" config)" "GANG_AUTO_RESUME"
 
 cat > "$usage_timer_bin/systemd-run" <<'SH'
 #!/bin/sh

@@ -166,6 +166,14 @@ gang wait-limit worker
 provider-reset wait is one transient systemd user timer; it delivers an
 attributed continuation through the ordinary Gangline path and then disappears.
 
+`GANG_AUTO_RESUME="97%"` arms that wait automatically, once per provider window,
+from the agent's own turn — so a team keeps working across provider windows with
+nobody at the keyboard:
+
+```sh
+GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code
+```
+
 ## Safety model
 
 Gangline is single-tenant and provides attribution, not authentication. It

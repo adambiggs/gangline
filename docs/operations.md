@@ -296,6 +296,34 @@ These lights use the same collar correctness source as `gang limits`. They do
 not type `/usage`, scrape a pane, poll in the background, or infer a limit from
 quiet terminal activity.
 
+## Optional automatic resume at a provider reset
+
+Auto-resume is disabled unless the operator declares a used percentage at hitch
+or adopt time:
+
+```sh
+GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code
+```
+
+At or above that percentage the agent's own turn hook arms the same transient
+timer `gang wait-limit` arms, once per provider window, and says so in that
+turn. At the reset the agent receives the ordinary continuation asking it to
+re-read its assignment and continue only if work remains. Nothing polls and no
+process stays running between the arming and the reset.
+
+It is independent of `GANG_USAGE_LIGHTS`; declare both when the team should be
+warned before it is resumed. `gang status` shows the pending wake and, while the
+reset is still ahead, whether the transient unit that keeps it still exists.
+`gang wait-limit <name> --clear` cancels a wake and is not overridden: that
+provider window will not be armed again.
+
+Two limits are worth knowing before relying on it unattended. A provider window
+that is exhausted between two samples is never seen at the threshold and arms
+nothing, so choose the percentage with the sampling interval in mind. And a wake
+survives exactly what the team survives — the declaration dies with the tmux
+window and the timer dies with the user manager, and a host restart takes both
+along with the team the resume was for.
+
 ## Optional team curfew
 
 Declare one wall-clock endpoint when a team is timeboxed:

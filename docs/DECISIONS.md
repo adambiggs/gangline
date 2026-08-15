@@ -264,6 +264,28 @@ roster, and provide exact cancellation. Do not run a Gangline watcher, daemon,
 or retry loop; a removed or superseded target makes a stale one-shot firing a
 no-op.
 
+## An automatic resume is an arming threshold, not a cap detector
+
+Let an operator declare one provider-used percentage that arms the existing
+reset wake from the agent's own turn hook, separately from the warning
+thresholds. Gangline cannot witness the provider's refusal: the only in-band
+evidence is pane prose, already refused as a data contract, and a refused agent
+takes no further turns, so no hook fires after the cap. Arming therefore happens
+at the last percentage observable while the agent still runs, and the resulting
+continuation may reach an agent that never capped — accepted, because it rides
+the ordinary spool and the alternatives are a threshold that can never fire and
+a scrape. Arm once per provider window, keyed on the reset that was decided for,
+so a cleared wake is not re-armed over the operator and a refusal is not
+retried. Re-enter the CLI to arm rather than copying its ordering discipline
+into a second path that can drift from it.
+
+## A promised wake is read from the unit, not only the declaration
+
+A pending declaration on a tmux window and the transient timer that keeps it can
+outlive each other, and the declaration alone then reports a wake nothing will
+deliver. Status reads the unit whenever the reset is still ahead, and separates
+gone from unreadable rather than merging them into an answer.
+
 ## Effort is the collar's word
 
 A reasoning-effort choice rides hitch beside the model choice, but the collar
