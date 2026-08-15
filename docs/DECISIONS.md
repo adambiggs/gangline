@@ -308,6 +308,37 @@ refusal; positive ownership of a later automatic turn does. This is immediate
 collar-native discrimination, not a watcher or a general retry policy; collars
 with no structural record declare no equivalent.
 
+## Auto-resume has three accepted follow-ups
+
+- **Two unit-state arms lack direct evidence.** The automatic-wake branch is
+  driven for an active timer preserving its continuation and a failed timer
+  being replaced, but not separately for `inactive` replacement or unreadable
+  state preservation. This is non-blocking because the two decisions are
+  already exercised through their sibling states and use the same fake
+  `systemctl` vocabulary as status and cancellation. Closing the mutation gap
+  costs two immediate fixtures; it needs no production surface.
+- **Replacing a dead operator wake does not disclose the discarded body.** A
+  provably dead timer cannot deliver its custom `--resume` body, so replacing it
+  is the correct recovery and no live operator decision is overridden. The
+  successful hook advisory nevertheless names only the new automatic wake.
+  Disclosure costs carrying the replacement fact out of the shared arming
+  transaction and one assertion on the resulting note.
+- **Claude re-scans the bound transcript on every ordinary idle event.** The
+  structural reader parses the whole JSONL transcript even when no error record
+  exists. It is non-blocking for correctness because it makes one finite-file
+  pass, fails closed, and starts no watcher or retry chain, but it is hot-path
+  work whose CPU and I/O cost grows with the session, while concurrent idle
+  events add Python processes to an already memory-constrained host.
+  This is the highest-priority follow-up on constrained hosts. Removing the
+  growth costs either a proven bounded-tail rule or incremental state with
+  explicit rotation, truncation, and deletion semantics.
+
+The continuation marker is visible to the agent in its own transcript. An agent
+that reads it can in principle reproduce it, so it is an ownership witness under
+Gangline's single-tenant trust model, not an authentication boundary. Hiding or
+authenticating it would require a different native witness and must not be
+smuggled in as anti-tamper machinery.
+
 ## Effort is the collar's word
 
 A reasoning-effort choice rides hitch beside the model choice, but the collar
