@@ -36,16 +36,34 @@ fi
 # so it cannot be written against a fake clock — but the rule below was never
 # about all test code, it was about the MANDATORY suite, which the same comment
 # says by calling real harness probes operator commands rather than part of it.
-# The exemption therefore holds only while the lane stays outside the gate, and
-# that is asserted here rather than left to whoever edits gate.sh next: the day
-# someone wires the lane in, this refuses instead of quietly admitting seconds
-# of TUI boot into every pre-commit run.
+# The exemption therefore holds only while the lane stays outside the automatic
+# paths, and that is asserted here rather than left to whoever edits them next:
+# the day someone wires the lane in, this refuses instead of quietly admitting
+# seconds of TUI boot into every pre-commit run.
+#
+# WHAT THIS CAN AND CANNOT SEE. It reads the files that run without anyone
+# choosing to — the gate and the suites it calls, CI, and the hooks — and looks
+# for the lane's name in them. A call assembled from a variable or reached
+# through a helper this list does not name would pass it. The check is a
+# tripwire on the ordinary way in, not a proof of unreachability; the rule it
+# guards is stated in CONTRIBUTING.md and this only catches the common breach.
 E2E_LANE=test/e2e.sh
-if [ -f "$E2E_LANE" ] && grep -q 'e2e' test/gate.sh; then
-  printf '%s\n' \
-    "lint: $E2E_LANE is exempt from the wall-time rule ONLY while it stays out of the mandatory gate, and test/gate.sh now names it." \
-    "Either take it back out of the gate, or remove the exemption below and make the lane clock-free." >&2
-  exit 1
+if [ -f "$E2E_LANE" ]; then
+  auto_hits=""
+  for f in test/gate.sh test/smoke.sh test/integration.sh \
+    .github/workflows/*.yml .github/workflows/*.sh .githooks/*; do
+    [ -f "$f" ] || continue
+    grep -Hn 'e2e\.sh' "$f" >/dev/null 2>&1 || continue
+    auto_hits="${auto_hits}${auto_hits:+
+}$(grep -Hn 'e2e\.sh' "$f")"
+  done
+  if [ -n "$auto_hits" ]; then
+    printf '%s\n' \
+      "lint: $E2E_LANE is exempt from the wall-time rule ONLY while it stays opt-in, and something that runs automatically now names it:" \
+      "$auto_hits" \
+      "Either take it back out, or remove the exemption below and make the lane clock-free." >&2
+    exit 1
+  fi
 fi
 
 # Mandatory tests consume state, not wall time. A fake clock may hand code any
