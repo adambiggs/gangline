@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0](https://github.com/adambiggs/gangline/compare/gangline-v2.0.0...gangline-v2.1.0) (2026-08-14)
+
+
+### Features
+
+* install tagged releases and streamline verification ([818215a](https://github.com/adambiggs/gangline/commit/818215ab2186912833026c379e7a471326c1394e))
+
+
+### Bug Fixes
+
+* **drop:** sanitize missing target errors ([fc4df09](https://github.com/adambiggs/gangline/commit/fc4df098e2b1fe972721aa87f7b019a9240d4bfc))
+* **identity:** sanitize resolver diagnostics ([453fa27](https://github.com/adambiggs/gangline/commit/453fa27fb454c6b5063b4a7a52b0b8db768dbfb1))
+* **release:** protect upgrades and publication ([e12d0b8](https://github.com/adambiggs/gangline/commit/e12d0b87e63baefda089205dc15bd7c0d6874d05))
+
+
+### Performance Improvements
+
+* **hooks:** meet the fast push boundary ([2c0109b](https://github.com/adambiggs/gangline/commit/2c0109bf3b44155595f0f13a0c2be3d1783c5f69))
+
+
+### Miscellaneous Chores
+
+* release 2.1.0 ([bc99ed0](https://github.com/adambiggs/gangline/commit/bc99ed09c6e006cb615379d0c7d7b9ae95d15a85))
+
 ## [2.0.0](https://github.com/adambiggs/gangline/compare/gangline-v1.0.0...gangline-v2.0.0) (2026-08-14)
 
 
