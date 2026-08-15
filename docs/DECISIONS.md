@@ -983,3 +983,33 @@ No, hitch correctly reports a native first-run prompt, and an unattended lane
 waits for an operator who is never coming. The harness identifies a key by its
 last twenty characters, so the lane records the answer the same way alongside
 the onboarding and trust flags.
+
+## A request log is only evidence once it separates whose request it was
+
+An aggregated log answers "did these words reach the server", which is not the
+question any assertion means to ask. The harness counts tokens and titles
+sessions with bodies that quote the same prompt, so a search over every record
+can be satisfied by a request the agent's turn never made — and a log records
+arrival, so it can also be satisfied by a request the harness is still blocked
+on. The stub therefore marks each record with whether it was the agent's own
+turn and writes a second record when the answer is fully sent, and the lane
+reads only completed agent turns. Two facts that must hold together are asserted
+against one record, not against the log twice.
+
+## An answer that names its request is what a pane check needs
+
+Every completion this stub writes looks alike, and booting already put one on
+the pane, so a check for the answer's prefix passes whether or not the turn
+under test was ever drawn. Each answer carries the sequence number of the
+request it answers and the stub tells the lane which request it froze, so a
+scenario can name one turn's reply instead of accepting any.
+
+## A budget that cannot be spent is not a bound
+
+The lane's bounded waits discarded exhaustion and let the following read decide,
+so a wait that used its entire allowance still passed on the extra moment the
+last nap gave it. Exhaustion is now a failure in its own right, and the
+assertion after it stays only to report what was true when the wait gave up.
+The same rule closes the run: cleanup that fails, a signal handler that returns
+into a torn-down world, and a scenario list that selects nothing are all ways of
+finishing without reporting, and each one now ends the run with a reason.

@@ -108,13 +108,27 @@ turn bracket still describe the harness that is installed.
 It is opt-in. It is not wired into `test/gate.sh` and not run in CI, because a
 real boot costs seconds and the lane holds a turn open on purpose. It takes the
 host's heavy-test lock itself, the same way the gate does, so it never runs
-beside the mandatory suite. `test/lint.sh` exempts this one file from the
-timing ban and refuses if it ever appears in `test/gate.sh`.
+beside the mandatory suite; that lock file is a shared inode created on first
+use and deliberately never unlinked, because removing it after unlocking lets
+the next run lock a fresh file beside a waiter still holding the old one.
 
-Its waits are bounded and print the reads each one actually used, so a lane
-drifting toward its budget is visible before it flakes. The stub's request log
-is the instrument: assertions read what entered the model's context rather than
-what a pane appeared to show.
+`test/lint.sh` exempts this one file from the timing ban, and refuses if the
+gate, the suites it calls, CI, or the hooks name the lane. That tripwire reads
+those files for the lane's name; a call assembled from a variable or reached
+through a helper it does not name would pass it. Keeping the lane opt-in is the
+rule, and the check catches the ordinary way of breaking it.
+
+Every wait is bounded, including the heavy lock and the release of a held turn,
+and each prints the reads it actually used, so a lane drifting toward its budget
+is visible before it flakes. Exhausting a budget fails the run on its own; a
+bound nobody can spend is only informational.
+
+The stub's request log is the instrument: assertions read what entered the
+model's context rather than what a pane appeared to show. It distinguishes the
+agent's own turns from the harness's side errands, and arrival from completion,
+because the harness also counts tokens and titles sessions with bodies that
+quote the same text. An assertion against the unfiltered log is a claim about
+whichever request happened to carry the words.
 
 To prove the offline claim rather than assume it, run the lane in a network
 namespace that has loopback and nothing else:
