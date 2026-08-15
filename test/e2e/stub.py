@@ -14,6 +14,14 @@ never by a scenario language. Three markers exist and each is hardcoded below.
 The request log is the lane's primary instrument. Every request body reaching
 this server is written to it, so a test can assert on what actually entered the
 model's context rather than on what a pane appeared to show.
+
+A log line is one of three phases. A `request` line carries the path, whether
+the body was the agent's own turn or one of the harness's side errands, and
+whether this server understood it at all; a `held` line names the request being
+frozen; a `complete` line says a request was answered to the last byte. Arrival
+and delivery are therefore distinguishable, and so are the agent's turns from
+everything else the harness asks for — without which "the model saw it" is a
+claim about the wrong request.
 """
 
 import argparse
@@ -64,13 +72,18 @@ class StubServer(ThreadingHTTPServer):
         """
         return not self.turn_sentinel or self.turn_sentinel in text
 
-    def hold(self):
-        """Announce the live turn, then block until the lane releases it.
+    def hold(self, seq):
+        """Announce the live turn by number, then block until it is released.
 
         Opening a FIFO for writing blocks until a reader arrives and opening
         one for reading blocks until a writer does, so this pair is a two-way
         barrier: the lane learns the turn is live from the turn itself, and the
         turn ends when the lane says so. Neither side polls.
+
+        THE NUMBER IS THE POINT. The lane cannot otherwise tell which request
+        it froze, and every completion this stub writes looks alike apart from
+        it. Sending the sequence number here is what lets a test name the held
+        turn instead of accepting any turn's answer as evidence.
 
         AT MOST ONE REQUEST EVER HOLDS. Every later turn replays the whole
         conversation, marker included, so a marker-matching hold would fire
@@ -82,9 +95,10 @@ class StubServer(ThreadingHTTPServer):
             if self.held_once:
                 return
             self.held_once = True
+        self.recorder.record({"phase": "held", "for": seq})
         if self.held:
-            with open(self.held, "wb"):
-                pass
+            with open(self.held, "wb") as announce:
+                announce.write(f"{seq}\n".encode("utf-8"))
         if self.gate:
             with open(self.gate, "rb"):
                 pass
@@ -235,9 +249,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.split("?", 1)[0]
         text = prompt_text(body)
         entry = {
+            "phase": "request",
             "path": path,
+            "method": "POST",
             "model": body.get("model"),
             "stream": bool(body.get("stream")),
+            # WHOSE REQUEST THIS IS, decided here rather than by a test reading
+            # the text back. The lane's assertions are only worth their words if
+            # "the model saw it" means the agent's own turn saw it, and the
+            # sentinel that separates a turn from a side errand lives here.
+            "turn": self.stub.is_agent_turn(text),
             "text": text,
         }
 
@@ -256,6 +277,27 @@ class Handler(BaseHTTPRequestHandler):
                     "error": {
                         "type": "not_found_error",
                         "message": f"e2e stub does not implement {path}",
+                    },
+                },
+            )
+            return
+
+        # A PLAUSIBLE ANSWER TO AN UNRECOGNISED REQUEST IS THE FAILURE MODE.
+        # Answering 200 to a body this stub did not understand would let the
+        # dialect drift under the lane while every scenario stayed green, so a
+        # Messages request missing either field the dialect requires is
+        # rejected and marked, and the lane treats a marked request as a fault.
+        missing = [f for f in ("model", "messages") if not body.get(f)]
+        if missing:
+            entry["unrecognised"] = True
+            self.stub.recorder.record(entry)
+            self.send_json(
+                400,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": f"e2e stub requires {', '.join(missing)}",
                     },
                 },
             )
@@ -282,11 +324,15 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if HOLD_MARKER in text and self.stub.is_agent_turn(text):
+        if HOLD_MARKER in text and entry["turn"]:
             # The turn stays live on screen for exactly as long as the lane
             # needs it, and the lane is told the moment it becomes live.
-            self.stub.hold()
+            self.stub.hold(seq)
 
+        # EVERY COMPLETION SAYS WHICH REQUEST IT ANSWERS. A pane check for a
+        # bare prefix would be satisfied by any earlier answer still on the
+        # screen, including the startup turn's; with the number in the text a
+        # test can demand the answer to the turn it actually drove.
         model = body.get("model") or "claude-e2e-stub"
         if not body.get("stream"):
             self.send_json(
@@ -302,16 +348,24 @@ class Handler(BaseHTTPRequestHandler):
                     "usage": {"input_tokens": 1, "output_tokens": 1},
                 },
             )
+            self.stub.recorder.record({"phase": "complete", "for": seq})
             return
 
         self.start_stream()
         for event in message_events(model, f"{REPLY_PREFIX} {seq}"):
             self.chunk(event)
         self.end_chunks()
+        # RECORDED ONLY ONCE THE LAST BYTE IS AWAY. A request log records
+        # arrival, and arrival is not delivery: a turn the harness is still
+        # blocked on would otherwise satisfy every assertion made about it.
+        # This line is what lets a test say the model answered.
+        self.stub.recorder.record({"phase": "complete", "for": seq})
 
     def do_GET(self):  # noqa: N802 - base class name
         path = self.path.split("?", 1)[0]
-        self.stub.recorder.record({"path": path, "method": "GET", "unrecognised": True})
+        self.stub.recorder.record(
+            {"phase": "request", "path": path, "method": "GET", "unrecognised": True}
+        )
         self.send_json(
             404,
             {

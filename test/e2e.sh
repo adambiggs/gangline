@@ -39,21 +39,42 @@ STUB="$ROOT/test/e2e/stub.py"
 # box. `-o` closes the lock descriptor before exec, so the tmux server this
 # lane starts does not inherit it and cannot hold the lock after the run ends:
 # an inherited flock descriptor wedges the heavy lock until that server exits.
+#
+# THE LOCK FILE IS A PERMANENT SHARED INODE, created on first use and never
+# unlinked. Removing it after unlocking is the classic two-inode race: a waiter
+# already blocked on the old inode is holding a lock nobody else can see, and
+# the next run locks a fresh file and starts beside it.
+#
+# BOUNDED, LIKE EVERY OTHER WAIT HERE. A stale holder — the gate's tmux server
+# outliving a killed run has done exactly this — would otherwise park an
+# unattended lane forever before a single trap exists to clean up after it.
 HEAVY_LOCK="${GANG_E2E_LOCK:-/tmp/gangline-heavy.lock}"
+E2E_LOCK_WAIT="${GANG_E2E_LOCK_WAIT:-900}"
 if [ "${GANG_E2E_LOCKED:-0}" != 1 ]; then
   command -v flock >/dev/null 2>&1 \
     || { echo "e2e: flock is required to serialize a real harness run" >&2; exit 1; }
   export GANG_E2E_LOCKED=1
   echo "e2e: taking $HEAVY_LOCK — one harness at a time, so this waits on the gate" >&2
-  exec flock -o "$HEAVY_LOCK" "$0" "$@"
+  exec flock -o -w "$E2E_LOCK_WAIT" "$HEAVY_LOCK" "$0" "$@" || {
+    echo "e2e: $HEAVY_LOCK was held for ${E2E_LOCK_WAIT}s — find the holder with: fuser -v $HEAVY_LOCK" >&2
+    exit 1
+  }
 fi
 
 command -v claude >/dev/null 2>&1 \
   || { echo "e2e: claude is not installed, so there is no harness to drive" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 \
   || { echo "e2e: python3 cannot run here, so the stub server cannot start" >&2; exit 1; }
+# Teardown proves the harness has left before it removes the world underneath
+# it, and a lane that cannot prove that reports a clean exit it never checked.
+[ -d /proc ] \
+  || { echo "e2e: /proc is required to tell a departed harness from a leaked one" >&2; exit 1; }
 
-HARNESS_BUILD="$(claude --version 2>/dev/null || echo unknown)"
+# THE BUILD UNDER TEST IS PART OF THE RESULT. Every marker this lane exercises
+# belongs to a specific claude-code, so a run that cannot name the build it drove
+# proves nothing that can be recorded — and an unknown is not a pass.
+HARNESS_BUILD="$(claude --version 2>/dev/null)" && [ -n "$HARNESS_BUILD" ] \
+  || { echo "e2e: claude could not report its version, so this run could not be attributed to a build" >&2; exit 1; }
 
 checks=0
 fails=0
@@ -99,28 +120,86 @@ settle() { # $1 label, rest: predicate command -> 0 when it holds
   return 1
 }
 
+# A BUDGET NOBODY SPENDS IS THE ONLY HONEST ONE. Exhausting the reads means the
+# lane waited its whole allowance and the thing still had not happened; the
+# assertion that follows may then pass anyway, because the last read's nap gave
+# the world one more moment. That is how a documented bound quietly becomes
+# informational, so exhaustion is a failure here in its own right and the
+# following assertion stays only to say what was true when it gave up.
+settled() {
+  settle "$@" || fail "$1: the bounded wait exhausted its budget" \
+    "$E2E_READS reads at ${E2E_NAP}s each were not enough"
+}
+
 RUN_ROOT=""
 STUB_PID=""
+leaked=0
 
 teardown() {
-  [ -z "$STUB_PID" ] || kill "$STUB_PID" 2>/dev/null || true
-  if [ -n "${TMUX_SOCKET:-}" ]; then
-    tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+  if [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; then
+    settle "stub exit" not_running "$STUB_PID" || leaked=1
   fi
-  # THE HARNESS OUTLIVES ITS PANE BY A MOMENT. A killed claude is still
-  # flushing its own config directory when the window is already gone, so the
-  # first removal can lose that race and take the run's exit status with it —
-  # which is how a fully green scenario first reported failure here. Retry,
-  # and if the directory still will not go, say so by name instead of leaving
-  # it behind silently.
-  if [ -n "$RUN_ROOT" ] && ! rm -rf -- "$RUN_ROOT" 2>/dev/null; then
-    settle "teardown" rm -rf -- "$RUN_ROOT" \
-      || printf 'e2e: COULD NOT REMOVE %s — delete it by hand\n' "$RUN_ROOT" >&2
+  if [ -n "${TMUX_SOCKET:-}" ] && [ -S "$TMUX_SOCKET" ]; then
+    tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+    # A SWALLOWED kill-server IS INDISTINGUISHABLE FROM A SERVER THAT NEVER
+    # DIED, and this lane runs a real harness inside that server. Ask the
+    # socket rather than trusting the exit status of the command that was
+    # supposed to close it.
+    settle "tmux exit" server_gone || leaked=1
+  fi
+  # THE HARNESS OUTLIVES ITS PANE, AND REMOVAL IS NOT THE TEST. A killed claude
+  # is still flushing its own config directory after the window is gone, so a
+  # removal can succeed and the harness then put the directory back — which it
+  # did: roots holding nothing but claude/projects outlived runs that reported a
+  # clean teardown, and nothing noticed. Wait for the harness to be gone first,
+  # then remove, then say by name what is left if anything is.
+  if [ -n "$RUN_ROOT" ]; then
+    settle "harness exit" harness_gone || leaked=1
+    rm -rf -- "$RUN_ROOT" 2>/dev/null || settle "teardown" rm -rf -- "$RUN_ROOT" || true
+    if [ -e "$RUN_ROOT" ]; then
+      printf 'e2e: COULD NOT REMOVE %s — delete it by hand\n' "$RUN_ROOT" >&2
+      leaked=1
+    fi
   fi
   RUN_ROOT=""
   STUB_PID=""
 }
-trap teardown EXIT HUP INT TERM
+
+not_running() { ! kill -0 "$1" 2>/dev/null; }
+server_gone() { ! tmux -S "$TMUX_SOCKET" list-sessions >/dev/null 2>&1; }
+# NOTHING IS STILL STANDING IN THIS RUN'S WORLD. The harness is the only process
+# launched with a working directory inside the temp root — the lane and every
+# gang it runs stay in the checkout — so an open cwd there is the harness itself,
+# asked directly rather than inferred from the exit of the terminal it was drawn
+# in. A cwd whose directory has already been removed still reads as that path.
+harness_gone() {
+  local proc link
+  for proc in /proc/[0-9]*; do
+    link="$(readlink "$proc/cwd" 2>/dev/null)" || continue
+    case "$link" in "$RUN_ROOT" | "$RUN_ROOT"/*) return 1 ;; esac
+  done
+  return 0
+}
+
+# A LEAK MUST BE ABLE TO REDDEN THE RUN. Cleanup that quietly fails leaves a
+# real harness and a real tmux server behind on the operator's box while the
+# lane reports success, so the last word on the way out is the leak's.
+on_exit() {
+  local rc=$?
+  teardown
+  [ "$leaked" -eq 0 ] || {
+    echo "e2e: cleanup left something behind — the run is not green" >&2
+    exit 1
+  }
+  exit "$rc"
+}
+# A TRAP THAT ONLY CLEANS UP IS NOT A TRAP. Returning from a signal handler
+# resumes the script, so an interrupted lane would tear its world down and then
+# carry on running scenarios against it while the parent holding the heavy lock
+# still waited. Leave by the door.
+on_signal() { teardown; exit 130; }
+trap on_exit EXIT
+trap on_signal HUP INT TERM
 
 AGENT=dog
 HOLD_MARKER=GANGLINE-E2E-HOLD
@@ -222,7 +301,44 @@ PY
   export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 }
 
-world_down() { teardown; }
+world_down() {
+  teardown
+  [ "$leaked" -eq 0 ] || {
+    fail "the scenario's world did not come down" \
+      "a stub, a tmux server or a temp root outlived it — see the message above"
+    leaked=0
+  }
+}
+
+# THE STUB IS PART OF THE FIXTURE AND CAN FAIL QUIETLY. An unrecognised path, a
+# body whose required fields have moved, a traceback in a worker thread: each
+# one leaves a scenario's assertions technically true while the dialect drifts
+# out from under them. "Fails loudly" is a claim about a check somebody makes,
+# so this is that check.
+stub_sound() { # $1 scenario name
+  local odd
+  odd="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    line = line.strip()
+    if not line:
+        continue
+    entry = json.loads(line)
+    if entry.get("unrecognised"):
+        print(entry.get("method", "?"), entry.get("path", "?"))
+' "$REQ_LOG" | sort -u | tr '\n' ' ')"
+  equal "$1: the stub understood every request the harness sent" "" "$odd"
+  if kill -0 "$STUB_PID" 2>/dev/null; then
+    pass "$1: the stub server outlived the scenario it served"
+  else
+    fail "$1: the stub server died mid-scenario" "$(tail -3 "$RUN_ROOT/stub.err")"
+  fi
+  if grep -q Traceback "$RUN_ROOT/stub.err" 2>/dev/null; then
+    fail "$1: the stub raised while answering" "$(tail -12 "$RUN_ROOT/stub.err")"
+  else
+    pass "$1: the stub answered without raising"
+  fi
+}
 
 # EVERY LAUNCH CHOICE IS MADE HERE. hitch warns when a supported choice is
 # omitted and lets the collar pick, and a lane that took a silent default would
@@ -235,9 +351,13 @@ world_down() { teardown; }
 # settings-error dialog, and the run sat on it until an outer timeout killed
 # it. A lane that hangs reports nothing, so this fails instead — and prints the
 # frame that stopped it, since the whole question is which prompt appeared.
+#
+# `-k` MAKES THE BOUND A BOUND. timeout's first signal is a request, and a
+# process that declines it keeps the lane waiting exactly as long as no bound
+# at all would have.
 E2E_HITCH_LIMIT="${GANG_E2E_HITCH_LIMIT:-120}"
 hitch_agent() {
-  timeout "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
+  timeout -k 10 "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
     -m "${GANG_E2E_MODEL:-claude-sonnet-4-5}" -e "${GANG_E2E_EFFORT:-low}"
 }
 
@@ -250,7 +370,7 @@ booted() { # 0 when a real agent is hitched and at rest, 1 with the reason said
     note "$("$GANG" capture "$AGENT" 40 2>&1 | tail -12)"
     return 1
   fi
-  settle "$1 idle" is_state idle || true
+  settled "$1 idle" is_state idle
   return 0
 }
 
@@ -264,18 +384,44 @@ say() { # $1 prompt text -> submitted as the operator
   printf '%s' "$1" | "$GANG" send --to "$AGENT" --from operator --stdin
 }
 
-# THE INSTRUMENT. Everything the harness asked the model for, in order. A
+# THE INSTRUMENT. The agent's own completed turns, in order, flattened. A
 # scenario asserts against this rather than against the screen, because a pane
 # shows what was drawn and this shows what was actually sent.
+#
+# THREE FILTERS, AND EVERY ONE OF THEM CARRIES A CLAIM.
+#
+# The path, because the harness also asks this server to count tokens, and a
+# count carries the whole prompt without ever putting it in front of a model.
+#
+# The turn flag, because the harness runs side errands — the session-title call
+# quotes the user's message verbatim — and a string found only there proves the
+# text reached an errand, not the agent.
+#
+# The completion, because a request log records ARRIVAL. Reading text out of a
+# request the harness is still blocked on would let a permanently held turn
+# satisfy every assertion made about it.
+#
+# Search the unfiltered log and any of the three can supply the words the test
+# is looking for while the turn under test never carried them.
 requests() { python3 -c '
 import json, sys
+
+lines = []
 for line in open(sys.argv[1], encoding="utf-8"):
     line = line.strip()
     if line:
-        print(json.loads(line)["text"].replace("\n", " "))
-' "$REQ_LOG"; }
+        lines.append(json.loads(line))
 
-request_count() { grep -c '"path": "/v1/messages"' "$REQ_LOG" 2>/dev/null || true; }
+answered = {e["for"] for e in lines if e.get("phase") == "complete"}
+for entry in lines:
+    if entry.get("phase") != "request":
+        continue
+    if entry.get("path") != "/v1/messages" or not entry.get("turn"):
+        continue
+    if entry["seq"] not in answered:
+        continue
+    print(entry["text"].replace("\n", " "))
+' "$REQ_LOG"; }
 
 # The stub opens the held FIFO for writing the instant it starts holding a
 # response, so reading it returns exactly when the turn is live on screen. No
@@ -285,14 +431,29 @@ request_count() { grep -c '"path": "/v1/messages"' "$REQ_LOG" 2>/dev/null || tru
 # making a request this stub recognises as the agent's own turn, the read below
 # would otherwise block forever and the lane would look wedged rather than
 # broken. The bound is generous against a measured sub-second arrival.
+#
+# IT ALSO SAYS WHICH REQUEST IT FROZE. Without that number the lane can only
+# ask whether some turn was answered, and the answer to the boot turn is still
+# on the same pane; with it, a scenario names the turn it drove.
 E2E_HOLD_LIMIT="${GANG_E2E_HOLD_LIMIT:-60}"
+HELD_SEQ=""
 await_held() {
-  timeout "$E2E_HOLD_LIMIT" cat "$HELD" >/dev/null && return 0
+  HELD_SEQ="$(timeout "$E2E_HOLD_LIMIT" cat "$HELD" 2>/dev/null | tr -dc '0-9')"
+  [ -n "$HELD_SEQ" ] && return 0
   fail "the turn never reached the stub" \
     "no request matched the hold marker and the agent-turn sentinel in ${E2E_HOLD_LIMIT}s"
   return 1
 }
-release_held() { : > "$GATE"; }
+# BOUNDED FOR THE SAME REASON THE READ IS. Opening a FIFO for writing blocks
+# until a reader arrives, so a stub that died after announcing the hold and
+# before opening the gate would park this line forever.
+release_held() {
+  # shellcheck disable=SC2016 # the path is passed as an argument, not expanded here
+  timeout "$E2E_HOLD_LIMIT" bash -c ': > "$1"' _ "$GATE" && return 0
+  fail "the held turn could not be released" \
+    "nothing opened the gate for reading in ${E2E_HOLD_LIMIT}s; the stub is gone"
+  return 1
+}
 
 # ---------------------------------------------------------------- scenario 1
 # BOOT REACHES A COMPOSER AND GANGLINE SEES IT. hitch does not return until it
@@ -310,6 +471,7 @@ scenario_boot() {
   contains "boot: the standing contract reached the model" \
     "$sent" "Gangline contract"
   contains "boot: the agent was told its own name" "$sent" "You are $AGENT in Gangline"
+  stub_sound boot
   world_down
 }
 
@@ -324,7 +486,7 @@ scenario_turn() {
   if ! booted turn; then world_down; return; fi
 
   say "$HOLD_MARKER please hold" >/dev/null
-  await_held
+  if ! await_held; then world_down; return; fi
   equal "turn: a live turn reads busy" busy "$(state)"
 
   local wait_rc=0
@@ -334,7 +496,7 @@ scenario_turn() {
   settle "wait armed" wait_armed || {
     fail "turn: gang wait never armed a boundary" "no channel appeared in tmux hooks"
     kill "$wait_pid" 2>/dev/null || true
-    release_held
+    release_held || true
     world_down
     return
   }
@@ -351,13 +513,20 @@ scenario_turn() {
   wait "$wait_pid" || wait_rc=$?
   equal "turn: the done wait returned on the native Stop" 0 "$wait_rc"
   equal "turn: the agent reads idle after its turn" idle "$(state)"
-  # The reply prefix exists only in this stub's completions. The lane never
-  # types it — not in a prompt, not in an envelope, not in the contract — so no
-  # keystroke this suite makes can put it on the pane, and the only route from
-  # the stub to this surface is the harness rendering the answer.
-  # source-guard: whole-surface@6386eeff5e7a: only the stub emits this prefix and the lane never types it, so any producer that put it on the pane is the harness rendering a completion
-  contains "turn: the harness rendered the stub's completion" \
-    "$("$GANG" capture "$AGENT" 200)" "$REPLY_PREFIX"
+  # THE ANSWER TO THIS TURN, NOT TO SOME TURN. The prefix alone is on the pane
+  # already: booting delivered a startup contract and the stub answered it, so a
+  # bare-prefix check would pass even if the held turn's completion were never
+  # drawn at all. The stub numbers every answer and told the lane which request
+  # it froze, so the string below exists only if the harness rendered the reply
+  # to the turn this scenario drove.
+  #
+  # The lane never types that string — not in a prompt, not in an envelope, not
+  # in the contract — so the only route from the stub to this surface is the
+  # harness rendering the answer.
+  # source-guard: whole-surface@234c84c39d32: only the stub emits this numbered prefix and the lane never types it, so any producer that put it on the pane is the harness rendering that completion
+  contains "turn: the harness rendered this turn's own completion" \
+    "$("$GANG" capture "$AGENT" 200)" "$REPLY_PREFIX $HELD_SEQ"
+  stub_sound turn
   world_down
 }
 
@@ -383,7 +552,7 @@ scenario_bricked() {
   if ! booted bricked; then world_down; return; fi
 
   say "$ERROR_MARKER now" >/dev/null
-  settle "bricked classified" is_state bricked || true
+  settled "bricked classified" is_state bricked
   local reading
   reading="$(state)"
   equal "bricked: a fatal provider answer reads bricked" bricked "$reading"
@@ -412,6 +581,7 @@ scenario_bricked() {
     contains "bricked: gang wait refuses a fatal turn by name" \
       "$(cat "$RUN_ROOT/wait.out")" "fatal turn"
   fi
+  stub_sound bricked
   world_down
 }
 
@@ -427,7 +597,7 @@ scenario_midturn() {
   if ! booted midturn; then world_down; return; fi
 
   say "$HOLD_MARKER hold for the courier" >/dev/null
-  await_held
+  if ! await_held; then world_down; return; fi
   equal "midturn: the turn is live" busy "$(state)"
 
   local send_rc=0 token=E2E-COURIER-TOKEN
@@ -449,18 +619,27 @@ scenario_midturn() {
   "$GANG" wait "$AGENT" --until "done" --timeout 120 >/dev/null 2>&1 || rc=$?
   equal "midturn: the held turn reached its boundary once released" 0 "$rc"
   # The held turn ends first; the steered envelope becomes the turn after it.
-  settle "midturn envelope sent" envelope_in_requests "$token" || true
+  settled "midturn envelope sent" envelope_in_requests "$token"
 
+  # ONE REQUEST HAS TO CARRY BOTH. Asking the log separately for the token and
+  # for the attribution lets two different requests answer — and the harness
+  # makes requests of its own that quote the operator's text — so the envelope
+  # could arrive stripped of its sender while both checks passed. The pair is
+  # the claim: a completed turn of the agent's own that carried the envelope
+  # with its attribution intact.
   local sent
-  sent="$(requests)"
-  contains "midturn: the envelope reached the model" "$sent" "$token"
-  contains "midturn: it arrived attributed to its sender" "$sent" "gang:courier"
+  sent="$(requests | grep -- "$token" || true)"
+  contains "midturn: the envelope reached the model on the agent's own turn" \
+    "$sent" "$token"
+  contains "midturn: that same turn carried its sender's attribution" \
+    "$sent" "gang:courier"
   # THE ENVELOPE'S OWN TURN HAS TO FINISH TOO, and this is what catches a lane
   # that asserted on a request the harness was still blocked on: the request
   # log records a request when it ARRIVES, so a permanently held turn would
   # satisfy every check above it while leaving the agent stuck.
-  settle "midturn settled" is_state idle || true
+  settled "midturn settled" is_state idle
   equal "midturn: the agent came back to rest afterwards" idle "$(state)"
+  stub_sound midturn
   world_down
 }
 
@@ -479,7 +658,14 @@ run() { # $1 scenario name, validated against the list above before it is called
 
 chosen="$SCENARIOS"
 [ "$#" -eq 0 ] || chosen="$*"
-for scenario in $chosen; do
+# AN EMPTY ARGUMENT IS NOT AN EMPTY SUITE. `test/e2e.sh "$maybe_scenario"` with
+# nothing in the variable used to select no scenarios, run none, and exit green
+# on a count of zero — a caller asking for one thing and being told everything
+# was fine. Splitting here turns that into the argument error it always was.
+# shellcheck disable=SC2086 # the scenario list is deliberately word-split
+set -- $chosen
+[ "$#" -gt 0 ] || { echo "e2e: no scenario named '' (have: $SCENARIOS)" >&2; exit 2; }
+for scenario in "$@"; do
   run "$scenario"
 done
 
@@ -488,4 +674,8 @@ if [ -n "$margins" ]; then
   printf 'bounded waits, reads used of %s at %ss each:\n%s\n' \
     "$E2E_READS" "$E2E_NAP" "$margins"
 fi
+# A RUN THAT ASSERTED NOTHING IS NOT A PASS. Zero checks means every scenario
+# returned before its first assertion, which is a broken lane wearing a green
+# exit status.
+[ "$checks" -gt 0 ] || { echo "e2e: no scenario made a single check" >&2; exit 1; }
 [ "$fails" -eq 0 ]
