@@ -3,6 +3,30 @@
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
 GANG_MODEL_OPT="-m"
+# Observed on OpenCode 1.14.41: `opencode models` prints one bare
+# provider/model id per line with no header.
+collar_models() {
+  python3 - <<'PY'
+import subprocess
+
+try:
+    result = subprocess.run(
+        ["opencode", "models"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+    )
+except (subprocess.TimeoutExpired, OSError, UnicodeError):
+    raise SystemExit(1)
+if result.returncode:
+    raise SystemExit(result.returncode)
+rows = result.stdout.splitlines()
+if not rows or any(not row or row != row.strip() or any(c.isspace() for c in row) for row in rows):
+    raise SystemExit(1)
+print(*rows, sep="\n")
+PY
+}
 GANG_BUSY_REGEX="esc interrupt"
 GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"

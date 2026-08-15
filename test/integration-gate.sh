@@ -629,7 +629,24 @@ git -C "$gate_run" -c user.name=fixture -c user.email=fixture@example.invalid \
 printf 'uncommitted while the gate runs\n' > "$gate_run/scratch.txt"
 : > "$gate_order"
 : > "$gate_where"
-gate_default_out="$("$gate_run/test/gate.sh" 2>&1)"
+gate_flock_bin="$RUN_ROOT/gate-flock-bin"
+gate_flock_args="$RUN_ROOT/gate-flock-args"
+mkdir -p "$gate_flock_bin"
+cat > "$gate_flock_bin/flock" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$gate_flock_args"
+[ "\${1:-}" = -o ] || exit 91
+shift
+[ "\${1:-}" = /tmp/gangline-heavy.lock ] || exit 92
+shift
+exec "\$@"
+SH
+chmod +x "$gate_flock_bin/flock"
+gate_default_out="$(env -u _GANGLINE_GATE_LOCKED \
+  PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
+equal "the ordinary gate owns a close-on-exec heavy-test lock" \
+  "$(printf '%s\n' -o /tmp/gangline-heavy.lock "$gate_run/test/gate.sh")" \
+  "$(<"$gate_flock_args")"
 equal "the no-argument gate runs lint, smoke, and then the suite, in that order" \
   "$(printf 'lint\nsmoke\nintegration')" "$(<"$gate_order")"
 # WHERE they ran is the claim, and the gate's own report cannot witness it: that

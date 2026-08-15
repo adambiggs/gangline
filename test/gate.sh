@@ -37,6 +37,21 @@ set -euo pipefail
 
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
 
+# THE ORDINARY GATE OWNS THE HOST'S HEAVY-TEST LOCK. Keeping acquisition here
+# means callers cannot accidentally omit the descriptor rule. `flock -o`
+# retains the lock in its small parent while closing the lock fd in this script,
+# so disposable tmux servers spawned by integration cannot inherit the open
+# file description and keep the lock alive after a killed gate. Helper modes do
+# not run the heavy suite and need no lock. The marker deliberately remains in
+# the process tree: nested gate fixtures are already serialized by this parent.
+GATE_HEAVY_LOCK=/tmp/gangline-heavy.lock
+if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
+  command -v flock >/dev/null 2>&1 \
+    || { echo "gate: flock is required to serialize the mandatory suite" >&2; exit 1; }
+  export _GANGLINE_GATE_LOCKED=1
+  exec flock -o "$GATE_HEAVY_LOCK" "$0"
+fi
+
 # WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
 # private GIT_CONFIG_GLOBAL partway through its own setup, so a check inheriting
 # it would answer one question before that line and a different one after, and

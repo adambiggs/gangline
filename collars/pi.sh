@@ -3,6 +3,38 @@
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="pi"
 GANG_MODEL_OPT="--model"
+# Observed on Pi 0.80.6: `pi --list-models` prints the six-column table parsed
+# below; provider plus model is the native selection id.
+collar_models() {
+  python3 - <<'PY'
+import os
+import subprocess
+
+env = os.environ.copy()
+env["NO_COLOR"] = "1"
+try:
+    result = subprocess.run(
+        ["pi", "--list-models"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+        env=env,
+    )
+except (subprocess.TimeoutExpired, OSError, UnicodeError):
+    raise SystemExit(1)
+if result.returncode:
+    raise SystemExit(result.returncode)
+lines = result.stdout.splitlines()
+header = ["provider", "model", "context", "max-out", "thinking", "images"]
+if not lines or lines[0].split() != header:
+    raise SystemExit(1)
+rows = [line.split() for line in lines[1:]]
+if not rows or any(len(row) != len(header) for row in rows):
+    raise SystemExit(1)
+print(*(f"{row[0]}/{row[1]}" for row in rows), sep="\n")
+PY
+}
 GANG_BUSY_REGEX="Working\\.\\.\\."
 GANG_COMPACT_CMD="/compact"
 GANG_MIDTURN_INPUT=1

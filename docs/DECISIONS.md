@@ -708,6 +708,12 @@ relative symlink is judged by where it points, not by whether the source end of
 it exists: a dangling one resolves against the destination's parent and can read
 bytes the source never held.
 
+The no-argument gate also takes the shared heavy-test lock itself through
+`flock -o`; callers run `test/gate.sh` directly. Closing the descriptor in the
+command process keeps disposable tmux servers from inheriting the open file
+description and retaining the lock after the gate wrapper dies. Read-only and
+snapshot helper modes do not take the heavy lock.
+
 ## Commit gates require a destination boundary
 
 Check Conventional Commits over an exact event range and refuse an unusable or
@@ -832,6 +838,29 @@ matching line from that exact capture. It does not take a later diagnostic
 snapshot that could describe a different TUI frame. Rules bypassed by stronger
 native evidence are named as not evaluated rather than fabricated as misses;
 the diagnostic adds no stored state.
+
+## Model discovery and validation stay collar-native
+
+A complete native model catalog is a collar reader, normalized to exact model
+ids with optional per-model efforts. `gang models` prints it and hitch requires
+an exact match before opening a window. A harness with no complete catalog may
+publish only documented aliases and a native recognition check; discovery says
+the list is incomplete, and recognition never claims provider or account
+availability. Failed, empty, duplicate, or malformed evidence is unknown and
+refused. Core carries no harness model vocabulary.
+
+## Fatal turns are a live collar state
+
+An optional collar reader classifies native fatal-turn evidence as matched,
+absent, or unreadable. A match becomes `!bricked!` before ordinary busy paint;
+unreadable becomes `?unknown?`, and transient errors remain absent unless the
+collar proves otherwise. The state is recomputed by observation and stores no
+watcher record. Claude seeks backward to the newest complete top-level semantic
+transcript record; an in-flight unterminated append is not a record, while
+complete malformed data stays unknown. Meta notices and tool-result-only records
+cannot clear the state, a newer real user turn outranks an old failure, and a
+retryable API error cannot be borrowed as selected-model evidence or auto-resumed
+as if replay could repair the selected model.
 
 ## Caller barriers use temporary native events
 

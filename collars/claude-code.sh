@@ -29,6 +29,11 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 GANG_MODEL_OPT="--model"
+# Claude exposes no complete model catalog. These are the aliases its own
+# --help documents; a full name can still be recognized by the native checker
+# below, but it cannot be discovered here and recognition does not prove the
+# current account may use it.
+GANG_MODEL_ALIASES=$'fable\nopus\nsonnet'
 GANG_ROLE_PROMPT_OPT="--append-system-prompt"
 GANG_HARNESS_PROMPT="Claude Code's task list is scoped to this harness session. Agents in other Gangline windows cannot read it, so do not cite its task IDs to them."
 # AWAITING INPUT IS THE HARNESS'S OWN WORD. Observed on claude-code 2.1.224:
@@ -109,6 +114,131 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
   printf '%s' "$file"
 }
 
+# FATAL TURN EVIDENCE IS THE NEWEST TOP-LEVEL SEMANTIC RECORD, not pane paint.
+# Observed on claude-code 2.1.233: an unrecognized launch model writes a
+# synthetic assistant record with isApiErrorMessage=true, error=model_not_found
+# and the message checked below. A following real user turn outranks that
+# failure while recovery is running; isMeta local-command notices and
+# tool_result-only user records are not turns. A later ordinary assistant record
+# clears it. Rate limits and retryable API errors have other error names and
+# never enter this branch. Missing pre-session evidence abstains; a bound
+# transcript Gangline cannot interpret returns unknown instead of absence.
+collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
+  local file
+  file="$(claude_session_file "$1")" || return 1
+  python3 - "$file" <<'PY'
+import json
+import re
+import sys
+
+def newest_complete_records(path):
+    # Claude appends JSONL. A final line without its newline is still in flight,
+    # not a malformed record; discard only that suffix. Walk backward so a
+    # long-lived transcript does not make every state read scan from byte zero.
+    with open(path, "rb") as transcript:
+        transcript.seek(0, 2)
+        end = transcript.tell()
+        if end:
+            transcript.seek(end - 1)
+        if end and transcript.read(1) != b"\n":
+            # Find the newline before the in-flight suffix without loading that
+            # suffix, which itself may be much larger than one read chunk.
+            probe = end
+            end = 0
+            while probe:
+                size = min(probe, 64 * 1024)
+                probe -= size
+                transcript.seek(probe)
+                chunk = transcript.read(size)
+                split = chunk.rfind(b"\n")
+                if split >= 0:
+                    end = probe + split + 1
+                    break
+        position = end
+        carry = b""
+        while position:
+            size = min(position, 64 * 1024)
+            position -= size
+            transcript.seek(position)
+            data = transcript.read(size) + carry
+            lines = data.split(b"\n")
+            carry = lines.pop(0) if position else b""
+            for raw in reversed(lines):
+                if raw.strip():
+                    yield raw.decode("utf-8")
+
+
+def semantic(record):
+    if record.get("isSidechain") is True or record.get("isMeta") is True:
+        return False
+    kind = record.get("type")
+    if kind == "assistant":
+        return True
+    if kind != "user":
+        return False
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return True
+    if not isinstance(content, list) or not content:
+        raise ValueError("user record has no readable content")
+    kinds = []
+    for item in content:
+        kind = item.get("type") if isinstance(item, dict) else None
+        if not isinstance(kind, str) or not kind:
+            raise ValueError("user content item has no readable type")
+        kinds.append(kind)
+    if all(kind == "tool_result" for kind in kinds):
+        return False
+    if any(kind == "text" for kind in kinds):
+        return True
+    raise ValueError("user record has an unrecognized content shape")
+
+
+latest = None
+try:
+    for raw in newest_complete_records(sys.argv[1]):
+        record = json.loads(raw)
+        if not isinstance(record, dict):
+            raise ValueError("record is not an object")
+        if semantic(record):
+            latest = record
+            break
+except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+    print("bound Claude transcript is unreadable")
+    raise SystemExit(2)
+
+if latest is None or latest.get("type") != "assistant":
+    raise SystemExit(1)
+if latest.get("isApiErrorMessage") is not True:
+    raise SystemExit(1)
+if latest.get("error") != "model_not_found":
+    raise SystemExit(1)
+
+message = latest.get("message")
+content = message.get("content") if isinstance(message, dict) else None
+if not isinstance(content, list):
+    print("model_not_found record has no readable message content")
+    raise SystemExit(2)
+texts = [
+    item.get("text") for item in content
+    if isinstance(item, dict) and item.get("type") == "text"
+    and isinstance(item.get("text"), str)
+]
+pattern = re.compile(
+    r"^There's an issue with the selected model \(([^()\n]+)\)\. "
+    r"It may not exist or you may not have access to it\. "
+    r"Run /model to pick a different model\.$"
+)
+matches = [pattern.fullmatch(text) for text in texts]
+matches = [match for match in matches if match is not None]
+if len(matches) != 1:
+    print("model_not_found record has an unrecognized message shape")
+    raise SystemExit(2)
+print(f"selected model '{matches[0].group(1)}' was rejected (model_not_found)")
+PY
+}
+
 collar_auto_resume_record() { # $1 target, $2 Notification kind -> failed-turn UUID
   local file
   [ "$2" = idle_prompt ] || return 1
@@ -137,6 +267,11 @@ error = latest.get("error")
 record_id = latest.get("uuid")
 if latest.get("isApiErrorMessage") is not True or not isinstance(error, str) or not error:
     raise SystemExit(1)
+# A selected-model failure cannot be repaired by replaying the same turn. The
+# live fatal reader reports it; auto-resume must not spend its one continuation
+# or repaint the window idle first.
+if error == "model_not_found":
+    raise SystemExit(1)
 if not isinstance(record_id, str) or not record_id:
     raise SystemExit(2)
 print(record_id)
@@ -151,6 +286,41 @@ if not isinstance(value, str) or not value:
     raise SystemExit(2)
 print(value, end="")
 '
+}
+# MODEL RECOGNITION WITHOUT AN API CALL. Observed on claude-code 2.1.233:
+# `claude --model ID -p ""` aborts because the print prompt is empty. Before
+# that common abort, an unrecognized id emits the native warning below. Both
+# paths exit nonzero in this build, so output is the evidence. A changed abort
+# shape is unknown rather than recognition inferred from silence.
+collar_model_check() { # $1 model; 0 recognized, 1 unrecognized, 2 unknown
+  python3 - "$1" <<'PY'
+import subprocess
+import sys
+
+try:
+    result = subprocess.run(
+        ["claude", "--model", sys.argv[1], "-p", ""],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=10,
+    )
+except (subprocess.TimeoutExpired, OSError, UnicodeError):
+    print("native recognition check could not run")
+    raise SystemExit(2)
+
+output = result.stdout
+if (
+    "is not a model this version of Claude Code recognizes" in output
+    or "[claude-code:unrecognized_model]" in output
+):
+    print("native validator rejected it as unrecognized")
+    raise SystemExit(1)
+if "Input must be provided either through stdin or as a prompt argument" in output:
+    raise SystemExit(0)
+print("native recognition check returned an unreadable result")
+raise SystemExit(2)
+PY
 }
 # REASONING EFFORT. The option includes its separator because bin/gang joins it
 # to the level with no space; the joined --effort=<level> form is accepted by

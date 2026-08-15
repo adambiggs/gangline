@@ -19,6 +19,10 @@ if [ "${1:-}" = "--help" ]; then
   printf '  --effort <level>                      Effort level for the current session\n                                        (low, medium, high, xhigh, max)\n'
   exit 0
 fi
+if [ "${1:-}" = "--model" ] && [ "${3:-}" = "-p" ]; then
+  printf 'Error: Input must be provided either through stdin or as a prompt argument when using --print\n'
+  exit 1
+fi
 PS1='stub ' exec bash --norc
 SH
 if tmux_path="$(tmux show-environment -g PATH 2>/dev/null)"; then

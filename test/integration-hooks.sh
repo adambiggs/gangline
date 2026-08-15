@@ -35,6 +35,24 @@ cat > "$RUN_ROOT/collars/waitable.sh" <<SH
 GANG_STOP_HOOK=1
 GANG_BUSY_REGEX='EXPLAIN_BUSY_[0-9]+'
 GANG_OCCUPIED_REGEX='EXPLAIN_OCCUPIED_[0-9]+'
+eval "\$(declare -f collar_input | sed '1s/collar_input/waitable_base_input/')"
+collar_input() {
+  [ ! -e "$RUN_ROOT/waitable-no-composer" ] || return 1
+  waitable_base_input "\$@"
+}
+collar_bricked() {
+  local evidence=""
+  evidence="\$(cat "$RUN_ROOT/brick-evidence" 2>/dev/null)" || evidence=""
+  case "\$evidence" in
+    fatal) printf "selected model 'fixture-bad' was rejected"; return 0 ;;
+    unknown) printf 'fixture fatal evidence unreadable'; return 2 ;;
+    fatal-empty) return 0 ;;
+    absent-cause) printf 'impossible clean-session cause'; return 1 ;;
+    unknown-empty) return 2 ;;
+    invalid-verdict) return 7 ;;
+    *) return 1 ;;
+  esac
+}
 SH
 cat > "$RUN_ROOT/wait-arm-env" <<'SH'
 tmux() {
@@ -143,6 +161,75 @@ contains "explain prints the pane fragment that matched" \
   "$explain_out" "fragment: EXPLAIN_BUSY_42"
 contains "explain distinguishes a tested occupancy miss" \
   "$explain_out" "GANG_OCCUPIED_REGEX: did not match"
+contains "explain distinguishes a tested fatal-evidence miss" \
+  "$explain_out" "collar_bricked: did not match"
+
+printf '%s' fatal > "$RUN_ROOT/brick-evidence"
+brick_status="$("$GANG" status waitable)"
+contains "status surfaces a fatal-turn session as bricked" \
+  "$brick_status" "!bricked! (selected model 'fixture-bad' was rejected)"
+contains "the human roster surfaces the same bricked state" \
+  "$("$GANG" roster)" "!bricked!"
+equal "porcelain gives the fatal state its stable word" "bricked" \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "waitable" { print $3 }')"
+
+# A NATIVE RECOVERY UI OWNS THE COMPOSER even when the previous turn is fatal.
+# Hold a shell command after it paints the fixture occupancy marker so the Bash
+# prompt is positively absent during the same state read.
+occupied_painted="gang-test-bricked-occupied-painted-$$"
+occupied_release="gang-test-bricked-occupied-release-$$"
+: > "$RUN_ROOT/waitable-no-composer"
+printf -v occupied_command \
+  "printf 'EXPLAIN_OCCUPIED_7\\n'; tmux wait-for -S %q; tmux wait-for %q" \
+  "$occupied_painted" "$occupied_release"
+tmux send-keys -l -t "$waitable_pane" "$occupied_command"
+tmux send-keys -t "$waitable_pane" Enter
+tmux wait-for "$occupied_painted"
+contains "an occupied recovery UI outranks fatal-turn evidence" \
+  "$("$GANG" status waitable)" "!occupied! (authority unknown)"
+occupied_explain="$("$GANG" explain waitable)"
+contains "explain records the occupancy rule that outranked fatal evidence" \
+  "$occupied_explain" "GANG_OCCUPIED_REGEX: matched"
+contains "explain leaves fatal evidence unevaluated after occupancy settles state" \
+  "$occupied_explain" "collar_bricked: not evaluated"
+tmux wait-for -S "$occupied_release"
+# The blocking command has ended once the shell accepts this next command. It
+# prints the fixture composer before signalling, giving the following state
+# read immediate positive readiness evidence without a sleep or poll.
+composer_repainted="gang-test-bricked-composer-repainted-$$"
+printf -v composer_command "printf '❯ '; tmux wait-for -S %q" \
+  "$composer_repainted"
+tmux send-keys -l -t "$waitable_pane" "$composer_command"
+tmux send-keys -t "$waitable_pane" Enter
+tmux wait-for "$composer_repainted"
+rm -f -- "$RUN_ROOT/waitable-no-composer"
+
+brick_explain="$("$GANG" explain waitable)"
+contains "explain names the collar fatal reader that matched" \
+  "$brick_explain" "collar_bricked: matched"
+contains "explain prints the collar's fatal-turn cause" \
+  "$brick_explain" "cause: selected model 'fixture-bad' was rejected"
+refuses "wait refuses a bricked target instead of arming a boundary" \
+  "a fatal turn cannot reach the requested boundary" \
+  "$GANG" wait waitable --until "done"
+
+printf '%s' fatal-empty > "$RUN_ROOT/brick-evidence"
+refuses "a fatal verdict without a cause is malformed collar evidence" \
+  "reported a fatal turn without a cause" "$GANG" status waitable
+printf '%s' absent-cause > "$RUN_ROOT/brick-evidence"
+refuses "an absent verdict cannot smuggle a fatal cause" \
+  "printed a cause while reporting no fatal turn" "$GANG" status waitable
+printf '%s' unknown-empty > "$RUN_ROOT/brick-evidence"
+refuses "an unknown fatal verdict requires an operator-facing cause" \
+  "reported unknown without a cause" "$GANG" status waitable
+printf '%s' invalid-verdict > "$RUN_ROOT/brick-evidence"
+refuses "an undeclared fatal-reader verdict is refused" \
+  "returned unknown verdict 7" "$GANG" status waitable
+
+printf '%s' unknown > "$RUN_ROOT/brick-evidence"
+contains "an unreadable fatal source stays unknown instead of becoming busy" \
+  "$("$GANG" status waitable)" "?unknown? (fixture fatal evidence unreadable)"
+rm -f -- "$RUN_ROOT/brick-evidence"
 
 refuses "a collar declaration without native turn evidence cannot hang a caller" \
   "no native turn evidence" "$GANG" wait waitable --until "done"

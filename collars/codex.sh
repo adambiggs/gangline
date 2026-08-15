@@ -41,6 +41,54 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 GANG_MODEL_OPT="-m"
+# The native JSON catalog is complete for this installed harness. Each row
+# carries its slug and the reasoning efforts that exact model advertises, so
+# `gang models` can show both and hitch can refuse an id absent from the same
+# source before opening a window. Observed on codex 0.146.0.
+collar_models() {
+  python3 - <<'PY'
+import json
+import subprocess
+
+try:
+    result = subprocess.run(
+        ["codex", "debug", "models"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=10,
+    )
+except (subprocess.TimeoutExpired, OSError, UnicodeError):
+    raise SystemExit(1)
+if result.returncode:
+    raise SystemExit(result.returncode)
+try:
+    catalog = json.loads(result.stdout)
+except (TypeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(1)
+models = catalog.get("models") if isinstance(catalog, dict) else None
+if not isinstance(models, list) or not models:
+    raise SystemExit(1)
+seen = set()
+for item in models:
+    if not isinstance(item, dict):
+        raise SystemExit(1)
+    slug = item.get("slug")
+    rows = item.get("supported_reasoning_levels")
+    if not isinstance(slug, str) or not slug or slug in seen:
+        raise SystemExit(1)
+    if not isinstance(rows, list):
+        raise SystemExit(1)
+    levels = []
+    for row in rows:
+        effort = row.get("effort") if isinstance(row, dict) else None
+        if not isinstance(effort, str) or not effort or effort in levels:
+            raise SystemExit(1)
+        levels.append(effort)
+    seen.add(slug)
+    print(slug, *([",".join(levels)] if levels else []), sep="\t")
+PY
+}
 # REASONING EFFORT IS MODEL-SCOPED. The option includes its separator because
 # bin/gang joins it to the level with no space. Unquoted `high` reached
 # turn_context.payload.effort as "high"; an unquoted invented value reached the

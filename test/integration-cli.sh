@@ -20,7 +20,7 @@ dispatch_commands="$({
     '
 } | awk '$0 != "hook" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
-meaningful_bare_commands="up roster attach collars roles config curfew notify upgrade"
+meaningful_bare_commands="up roster attach collars models roles config curfew notify upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
@@ -34,6 +34,7 @@ top_help="$($GANG --help)"
 top_wide="$(printf '%s\n' "$top_help" | help_width_failure)"
 equal "top-level help fits the phone-SSH width" "" "$top_wide"
 contains "top-level help names the collar command" "$top_help" "collars"
+contains "top-level help names the model command" "$top_help" "models"
 contains "top-level help names the curfew command" "$top_help" "curfew"
 excludes "top-level help omits the removed profiles name" "$top_help" "profiles"
 excludes "top-level help omits the removed cutoff name" "$top_help" "cutoff"
@@ -58,6 +59,8 @@ excludes "the welcome page is not the inventory" "$welcome" "start and end a tea
 contains "which gang help still prints" "$("$GANG" help)" "start and end a team"
 contains "gang collars help prints the new synopsis" \
   "$("$GANG" collars --help)" "gang collars"
+contains "gang models help prints the discovery synopsis" \
+  "$("$GANG" models --help)" "gang models"
 contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
 contains "gang roster help names its scripting mode" \
@@ -160,6 +163,7 @@ arity_probes=(
   "drop|ghost STRAY|drop: unexpected argument 'STRAY'"
   "down|ghost STRAY|down: unexpected argument 'STRAY'"
   "collars|STRAY|collars: takes no arguments"
+  "models|STRAY|models: unexpected argument 'STRAY'"
   "roles|STRAY|roles: takes no arguments"
   "config|STRAY|config: takes no arguments"
   "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
@@ -740,6 +744,10 @@ claude_midturn="$(ROOT="$ROOT" bash -c \
 # landing. The live ruling is `steer`: commit to Gangline's spool first, then a
 # free composer may accept the claimed entry as native mid-turn steering.
 equal "Claude delivery attributes before native mid-turn steering" "steer" "$claude_midturn"
+claude_model_aliases="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; printf "%s" "${GANG_MODEL_ALIASES:-}"' fixture "$claude_collar")"
+equal "the Claude collar declares only its documented model aliases" \
+  $'fable\nopus\nsonnet' "$claude_model_aliases"
 claude_queued="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "${GANG_QUEUED_REGEX:-}"' fixture "$claude_collar")"
 if [ -n "$claude_queued" ]; then
@@ -828,6 +836,116 @@ claude_failed="$(PATH="$CLAUDE_STUB/bin:$PATH" sh -c "$claude_effort_cmd")"
 equal "correct help from a failed producer yields nothing rather than a vocabulary" \
   "" "$claude_failed"
 
+cat > "$CLAUDE_STUB/bin/claude" <<'SH'
+#!/bin/sh
+case "$2" in
+  opus-5)
+    printf '"opus-5" is not a model this version of Claude Code recognizes\n' ;;
+esac
+printf 'Error: Input must be provided either through stdin or as a prompt argument when using --print\n'
+exit 1
+SH
+claude_recognized="$(PATH="$CLAUDE_STUB/bin:$PATH" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    collar_model_check opus
+    printf "%s" "$?"
+  ' fixture "$claude_collar")"
+equal "Claude's empty-prompt native probe recognizes a documented alias" \
+  "0" "$claude_recognized"
+claude_unrecognized="$(PATH="$CLAUDE_STUB/bin:$PATH" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    output="$(collar_model_check opus-5)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+equal "Claude's native warning rejects an invented model id despite its exit status" \
+  $'1\tnative validator rejected it as unrecognized' "$claude_unrecognized"
+
+claude_brick_transcript="$RUN_ROOT/claude-model-brick.jsonl"
+cat > "$claude_brick_transcript" <<'JSONL'
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"work"}}
+{"type":"assistant","uuid":"fatal-model-record","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"fixture","content":"done"}]}}
+{"type":"user","isSidechain":false,"isMeta":true,"message":{"role":"user","content":"<local-command-caveat>DO NOT respond to these messages</local-command-caveat>"}}
+{"type":"system","subtype":"turn_duration"}
+JSONL
+# An append without its terminating newline is not yet a JSONL record. The
+# reader must ignore this in-flight suffix while retaining the fatal record.
+printf '%s' '{"type":"assistant","isSidechain":false' >> "$claude_brick_transcript"
+claude_brick_read="$(CLAUDE_TRANSCRIPT="$claude_brick_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    collar_bricked fixture
+  ' fixture "$claude_collar")"
+# source-guard: producer@1eee9490261d: the exact transcript fixture independently supplies the newest top-level model_not_found record, followed only by records the native transcript marks non-semantic and one incomplete append
+equal "Claude keeps fatal model evidence across non-turn records and an in-flight append" \
+  "selected model 'opus-5' was rejected (model_not_found)" "$claude_brick_read"
+
+claude_recovery_transcript="$RUN_ROOT/claude-model-recovery.jsonl"
+cat > "$claude_recovery_transcript" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"recovery turn"}}
+JSONL
+claude_recovery_read="$(CLAUDE_TRANSCRIPT="$claude_recovery_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@99fb655af212: the fixture supplies a real string-content user turn newer than the fatal assistant record
+equal "a real newer Claude user turn clears older fatal model evidence" \
+  $'1\t' "$claude_recovery_read"
+
+claude_malformed_transcript="$RUN_ROOT/claude-model-malformed.jsonl"
+cat > "$claude_malformed_transcript" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
+{"type":"assistant"
+JSONL
+claude_malformed_read="$(CLAUDE_TRANSCRIPT="$claude_malformed_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@70b77ad72519: the fixture supplies a newline-terminated malformed record newer than the fatal assistant record
+equal "a complete malformed Claude record remains loud unknown evidence" \
+  $'2\tbound Claude transcript is unreadable' "$claude_malformed_read"
+
+claude_auto_fatal_transcript="$RUN_ROOT/claude-auto-resume-model-fatal.jsonl"
+cat > "$claude_auto_fatal_transcript" <<'JSONL'
+{"type":"assistant","uuid":"fatal-model-record","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
+JSONL
+claude_auto_fatal="$(CLAUDE_TRANSCRIPT="$claude_auto_fatal_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_auto_resume_record fixture idle_prompt)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@a38d42d05df7: the fixture supplies a complete fatal error record with an otherwise resumable UUID
+equal "Claude auto-resume refuses selected-model failures" $'1\t' \
+  "$claude_auto_fatal"
+
+claude_retry_transcript="$RUN_ROOT/claude-retry-error.jsonl"
+cat > "$claude_retry_transcript" <<'JSONL'
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"work"}}
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"rate_limit","message":{"content":[{"type":"text","text":"Retrying in 2s"}]}}
+JSONL
+claude_retry_read="$(CLAUDE_TRANSCRIPT="$claude_retry_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@15da07e96e08: the exact transcript fixture independently supplies the newest top-level transient rate-limit record
+equal "Claude's transient rate-limit record is not fatal model evidence" \
+  $'1\t' "$claude_retry_read"
+
 codex_collar="$ROOT/collars/codex.sh"
 codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"
@@ -861,6 +979,10 @@ cat <<'JSON'
 JSON
 SH
 chmod +x "$CODEX_CATALOG_STUB/bin/codex"
+codex_models="$(PATH="$CODEX_CATALOG_STUB/bin:$PATH" ROOT="$ROOT" \
+  bash -c '. "$1"; collar_models' fixture "$codex_collar")"
+equal "the Codex native catalog carries every slug and its own efforts" \
+  $'gpt-5.6-sol\tlow,medium,xhigh\ngpt-5.6-mini\tlow' "$codex_models"
 codex_levels="$(GANG_MODEL=gpt-5.6-sol PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
   sh -c "$codex_effort_cmd" | tr '\n' ' ')"
 equal "the Codex effort vocabulary binds the exact model hitch will launch" \
@@ -878,6 +1000,30 @@ for unverified_collar in opencode pi; do
   equal "the $unverified_collar collar declares no effort spelling until one is verified" \
     "" "$unverified_effort"
 done
+
+MODEL_LIST_STUB="$RUN_ROOT/model-list-stub"
+mkdir -p "$MODEL_LIST_STUB"
+cat > "$MODEL_LIST_STUB/opencode" <<'SH'
+#!/bin/sh
+printf 'anthropic/claude-sonnet\nopenai/gpt-5\n'
+SH
+cat > "$MODEL_LIST_STUB/pi" <<'SH'
+#!/bin/sh
+cat <<'ROWS'
+provider   model           context  max-out  thinking  images
+anthropic  claude-sonnet  200K     64K      yes       yes
+openai     gpt-5           400K     128K     yes       yes
+ROWS
+SH
+chmod +x "$MODEL_LIST_STUB/opencode" "$MODEL_LIST_STUB/pi"
+opencode_models="$(PATH="$MODEL_LIST_STUB:$PATH" \
+  bash -c '. "$1"; collar_models' fixture "$ROOT/collars/opencode.sh")"
+equal "the OpenCode collar preserves native provider/model ids" \
+  $'anthropic/claude-sonnet\nopenai/gpt-5' "$opencode_models"
+pi_models="$(PATH="$MODEL_LIST_STUB:$PATH" \
+  bash -c '. "$1"; collar_models' fixture "$ROOT/collars/pi.sh")"
+equal "the Pi collar joins its native provider and model columns" \
+  $'anthropic/claude-sonnet\nopenai/gpt-5' "$pi_models"
 codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
 cat > "$codex_context_fixture" <<'JSONL'
 {"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":50000},"model_context_window":300000}}}
@@ -984,6 +1130,49 @@ contains "Claude names a missing bound runner" "$claude_missing_bound" \
 
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
+cat > "$RUN_ROOT/collars/cataloged.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_MODEL_OPT='--model'
+collar_models() { printf 'zeta\tlow,high\nalpha\n'; }
+SH
+cataloged_models="$($GANG models -c cataloged 2> "$RUN_ROOT/cataloged-models.err")"
+equal "model discovery sorts a collar's complete native catalog" \
+  $'alpha\nzeta\tlow,high' "$cataloged_models"
+equal "a valid complete catalog needs no diagnostic" "" \
+  "$(grep -v '^gang: WARNING: executing dirty ' "$RUN_ROOT/cataloged-models.err")"
+
+cat > "$RUN_ROOT/collars/empty-models.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_MODEL_OPT='--model'
+collar_models() { :; }
+SH
+refuses "an empty native model catalog is unknown, not an empty success" \
+  "model enumeration produced no ids" "$GANG" models -c empty-models
+
+cat > "$RUN_ROOT/collars/malformed-models.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_MODEL_OPT='--model'
+collar_models() { printf 'same\nsame\n'; }
+SH
+refuses "duplicate native model ids make the collar catalog unreadable" \
+  "returned a model catalog Gangline cannot interpret" \
+  "$GANG" models -c malformed-models
+
+claude_alias_err="$RUN_ROOT/claude-alias-models.err"
+claude_alias_models="$($GANG models -c claude-code 2> "$claude_alias_err")"
+equal "Claude discovery prints only aliases documented by its native help" \
+  $'fable\nopus\nsonnet' "$claude_alias_models"
+contains "Claude discovery says full model names cannot be enumerated" \
+  "$(<"$claude_alias_err")" "cannot enumerate full model names"
+contains "Claude discovery separates recognition from account availability" \
+  "$(<"$claude_alias_err")" "not availability to this account"
+
 cat > "$RUN_ROOT/collars/ctx-known.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034

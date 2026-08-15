@@ -1208,6 +1208,73 @@ cat > "$RUN_ROOT/collars/choices.sh" <<SH
 . "$RUN_ROOT/collars/efforted.sh"
 GANG_MODEL_OPT='--model'
 SH
+cat > "$RUN_ROOT/collars/unchecked-model.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_MODEL_OPT='--model'
+SH
+if unchecked_model_out="$("$GANG" hitch unchecked-model -c unchecked-model \
+    -d /tmp -m exact 2>&1)"; then
+  fail "a model option with no collar validation cannot open a window" \
+    "hitch accepted an unchecked model"
+else
+  pass "a model option with no collar validation cannot open a window"
+fi
+contains "the unchecked-model refusal names both supported validation contracts" \
+  "$unchecked_model_out" "neither collar_models nor collar_model_check"
+equal "an unverifiable model leaves no window behind" "" \
+  "$(window_id unchecked-model)"
+
+cat > "$RUN_ROOT/collars/catalog-model.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/unchecked-model.sh"
+collar_models() { printf 'exact\nneighbor\n'; }
+SH
+if catalog_bad_out="$("$GANG" hitch catalog-bad -c catalog-model \
+    -d /tmp -m invented 2>&1)"; then
+  fail "a model absent from a complete native catalog is refused" \
+    "hitch accepted an absent model"
+else
+  pass "a model absent from a complete native catalog is refused"
+fi
+contains "the absent-model refusal points to deterministic discovery" \
+  "$catalog_bad_out" "gang models -c catalog-model"
+equal "a model refused by the catalog leaves no window behind" "" \
+  "$(window_id catalog-bad)"
+"$HITCH" catalog-ok -c catalog-model -d /tmp -m exact >/dev/null
+contains "an exact catalog model reaches the native launch option" \
+  "$(tmux display-message -p -t "$(window_id catalog-ok)" '#{pane_start_command}')" \
+  "--model exact"
+"$GANG" drop catalog-ok >/dev/null
+
+cat > "$RUN_ROOT/collars/checked-model.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/unchecked-model.sh"
+collar_model_check() {
+  case "\$1" in
+    exact) return 0 ;;
+    invented) printf 'fixture rejected it'; return 1 ;;
+    *) printf 'fixture could not read recognition'; return 2 ;;
+  esac
+}
+SH
+refuses "a native recognition checker can reject a model without enumerating" \
+  "fixture rejected it" "$GANG" hitch checked-bad -c checked-model \
+  -d /tmp -m invented
+equal "a recognition rejection leaves no window behind" "" \
+  "$(window_id checked-bad)"
+refuses "an unreadable recognition result stays unknown" \
+  "could not determine whether model 'unreadable' is recognized" \
+  "$GANG" hitch checked-unknown -c checked-model -d /tmp -m unreadable
+equal "an unknown recognition result leaves no window behind" "" \
+  "$(window_id checked-unknown)"
+"$HITCH" checked-ok -c checked-model -d /tmp -m exact >/dev/null
+"$GANG" drop checked-ok >/dev/null
+
 "$GANG" hitch choiceboth -c choices -d /tmp \
   >/dev/null 2> "$RUN_ROOT/choiceboth.err"
 contains "a hitch warns for every supported choice the collar would default" \

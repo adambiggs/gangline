@@ -26,7 +26,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
 self-targets and is then refused, or deferred, on that same agent's own turn
@@ -122,6 +122,12 @@ gate.
 - `-c` selects the harness, by the name of the collar that drives it.
 - `-d` selects the harness working directory.
 - `-m` passes a harness-native model choice through the collar's model option.
+  Before a window opens, a complete collar catalog must contain that exact id.
+  A harness with no complete catalog may instead expose a native recognition
+  check. Recognition proves that the installed harness understands the name,
+  not that the current account may use it; an unreadable check is unknown and
+  refused rather than treated as acceptance. A model option with neither form
+  of validation is refused. Use `gang models -c <harness>` for discovery.
 - `-e` passes a harness-native reasoning-effort level through the collar's
   effort option, joined with no space, on the plain and `--resume` launch forms
   alike. The collar prints its level vocabulary and a level outside it is
@@ -405,11 +411,13 @@ action. Declaring again replaces and restarts the span; `clear` removes it.
 Gang-managed tmux windows wrap the bare agent name in the glyph of the state
 Gangline last witnessed: `-name-`, `~name~`, `!name!`, or `?name?`. This is an
 at-a-glance hint and can be stale between existing observation points and native
-hook events; `gang roster` remains the live-computed truth. Addressing always
-uses the bare name, so `gang send --to pii-impl` never changes. tmux appends its
-own flags after the name: a last-active busy window renders as `3:-name--`, where
-the trailing pair is tmux's flag rather than part of the agent name. Gangline
-does not set the operator's tmux status formats.
+hook events; `gang roster` remains the live-computed truth. Both occupied and
+bricked use the snagged-line `!` glyph because either needs operator attention;
+the live roster word distinguishes them. Addressing always uses the bare name,
+so `gang send --to pii-impl` never changes. tmux appends its own flags after the
+name: a last-active busy window renders as `3:-name--`, where the trailing pair
+is tmux's flag rather than part of the agent name. Gangline does not set the
+operator's tmux status formats.
 
 ### `gang mail [name]`
 
@@ -450,13 +458,13 @@ whole number of seconds; without the flag, `GANG_TURN_LIMIT` supplies the bound.
 
 The registration pins both the target's window id and active pane id. A missing,
 replaced, ambiguous, or pane-switched target fails loudly rather than transferring
-the wait. `?unknown?` fails instead of hanging. Natural pane-process exit plus
-Gangline's `drop` and `down` release temporary registrations, so those teardown
-paths are observed and reported as a vanished target. Direct `tmux kill-pane`
-and `tmux kill-window` do not emit the supported exit hook on tmux 3.2a and
-bypass Gangline's compensating release. The foreground deadline then refuses
-loudly and removes the temporary hook; use `gang drop` or `gang down` to observe
-teardown immediately.
+the wait. `?unknown?` and `!bricked!` fail instead of hanging. Natural
+pane-process exit plus Gangline's `drop` and `down` release temporary
+registrations, so those teardown paths are observed and reported as a vanished
+target. Direct `tmux kill-pane` and `tmux kill-window` do not emit the supported
+exit hook on tmux 3.2a and bypass Gangline's compensating release. The foreground
+deadline then refuses loudly and removes the temporary hook; use `gang drop` or
+`gang down` to observe teardown immediately.
 
 The implementation uses only `wait-for -S`; tmux channel locks are not used
 because a dead lock holder can leave them locked indefinitely. A successful
@@ -470,11 +478,12 @@ created; the deadline process lives only as long as the foreground command.
 ### `gang explain <name>`
 
 Runs the ordinary live state classification once and prints the agent, pinned
-active pane, collar, and resulting state. It then reports both collar-owned
-state rules, `GANG_OCCUPIED_REGEX` and `GANG_BUSY_REGEX`, as matched, did not
-match, not declared, or not evaluated because higher-priority evidence settled
-that part of the classification first. A matched rule includes its exact ERE and
-the first pane line that matched.
+active pane, collar, and resulting state. It then reports the optional collar
+fatal-turn reader and both collar-owned state rules, `GANG_OCCUPIED_REGEX` and
+`GANG_BUSY_REGEX`, as matched, did not match, not declared, not evaluated
+because higher-priority evidence settled that part of the classification first,
+or could not determine. Matched fatal evidence includes its cause. A matched
+regex includes its exact ERE and the first pane line that matched.
 
 The diagnostic instruments the regex evaluations inside that same state read.
 It does not recapture the pane afterward, so a moving TUI cannot make the
@@ -492,7 +501,22 @@ Prints one current state:
   witnesses active work;
 - `~idle~` — the evidence positively witnesses readiness;
 - `!occupied! (authority unknown)` — a native UI owns the composer;
+- `!bricked! (...)` — collar-native fatal evidence says the current session's
+  turns cannot succeed until its cause is repaired;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
+
+Fatal evidence is checked after native UI occupancy and before ordinary busy
+paint. That lets an operator-owned recovery UI remain occupied while preventing
+an instant fatal turn from masquerading as work. A collar reader has three
+outcomes: matched with a cause, absent, or unknown with a cause. Unknown remains
+`?unknown?`; it is never spent as either a fatal match or a clean session.
+The claude-code collar seeks backward to the newest complete top-level semantic
+transcript record. An unterminated final JSONL append is not yet a record;
+complete malformed records remain unknown. `isMeta` local-command notices and
+tool-result-only user records are not turns. A selected-model API error is
+fatal, a newer real user turn proves recovery has begun, and other API errors
+such as rate limits are not this fatal shape. Selected-model failures are also
+ineligible for automatic continuation because replay cannot repair the choice.
 
 A turn bracket left open by an interruption the harness never reported decays
 once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
@@ -681,7 +705,8 @@ and the age of its oldest waiting entry.
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
 `state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
-word: `busy`, `idle`, `occupied`, or `unknown` for the four human glyph states;
+word: `busy`, `idle`, `occupied`, `bricked`, or `unknown` for the five human
+glyph states;
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
 `spooled` is an integer. `oldest_age_s` is integer seconds or `-` for an empty
 queue or an unreadable age. `session_id` is the exact stamp or `UNSTAMPED`.
@@ -708,6 +733,22 @@ declares no `collar_input`.
 
 Lists shipped and custom harness collars. The Bash substrate fixture is hidden
 unless `GANG_TEST_COLLARS=1`.
+
+### `gang models [-c <harness>]`
+
+Reads the selected collar's native model catalog and prints deterministic,
+sorted TSV. The first field is the exact model id accepted by `gang hitch -m`;
+an optional second field is that model's comma-separated reasoning-effort
+vocabulary. Codex reads its JSON catalog, OpenCode uses its native model-list
+command, and Pi parses the provider and model columns of its native table.
+Failed, empty, duplicate, or malformed native output fails loudly and is never
+partially printed as a catalog.
+
+Some harnesses expose recognition but no complete list. Such a collar may
+declare documented aliases: `gang models` prints those aliases and says on
+stderr that full names cannot be enumerated. Its native recognition check can
+still refuse an unrecognized `-m` before hitch, but it cannot prove provider or
+account access. The claude-code collar has this shape.
 
 ### `gang roles`
 
@@ -857,12 +898,16 @@ there, never in a harness-name branch in the core script.
 | `GANG_LAUNCH` | required native launch command |
 | `GANG_RESUME_LAUNCH` | optional explicit native resume template containing exactly one `{{session_id}}` slot |
 | `GANG_MODEL_OPT` | optional native model flag |
+| `GANG_MODEL_ALIASES` | optional newline-separated documented aliases when the harness has no complete catalog; discovery labels them as incomplete |
+| `collar_models` | print the complete native catalog as `model-id[<TAB>comma-separated-efforts]`; nonzero, empty, duplicate, or malformed output is unknown and refused |
+| `collar_model_check model` | when no complete catalog exists, return 0 recognized, 1 unrecognized, or 2 unknown; recognition is not account availability |
 | `GANG_EFFORT_OPT` | optional native effort option, declared whole with its separator; the level joins with no space |
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
 | `GANG_ROLE_PROMPT_OPT` | optional native option whose next argument is a system-prompt addition passed by value |
 | `GANG_HARNESS_PROMPT` | optional harness-specific prose included in that system-prompt addition; requires `GANG_ROLE_PROMPT_OPT` |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
+| `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |

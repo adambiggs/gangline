@@ -33,7 +33,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -379,6 +379,7 @@ settings and discovery
   notify    set or show the stall-note target
   curfew    set or show the team curfew
   collars   list available harness collars
+  models    list a collar's native model ids
   roles     list available role briefs
   config    show effective configuration
 
@@ -444,8 +445,10 @@ gang hitch
       directory the harness starts in
       (default: this one).
   -m, --model <model>
-      model name, handed to the harness as
-      its own option.
+      model name, validated by the collar and
+      handed to the harness as its own option.
+      Discover ids with gang models
+      -c <harness>.
   -e, --effort <level>
       reasoning-effort level, from that
       harness's own vocabulary; checked
@@ -812,9 +815,11 @@ gang status
           window)
 
   One state line: -busy-, ~idle~, !occupied!
-  where a native UI owns the input box, or
-  ?unknown? where the evidence cannot settle
-  it. Then anything else worth knowing —
+  where a native UI owns the input box,
+  !bricked! where fatal turn evidence says no
+  turn can succeed, or ?unknown? where the
+  evidence cannot settle it. Then anything else
+  worth knowing —
   input gang could not deliver and what is in
   that box now, messages waiting or held,
   a self-compaction pending or failed, a
@@ -831,11 +836,11 @@ gang explain
   gang explain <name>
 
   Prints the agent, active pane, collar and
-  resulting state, then the two collar-owned
-  rules, GANG_OCCUPIED_REGEX and
-  GANG_BUSY_REGEX: the exact regex, whether
-  that same read used it, and the first
-  captured pane line it matched.
+  resulting state, then the collar-owned fatal
+  reader and the GANG_OCCUPIED_REGEX and
+  GANG_BUSY_REGEX rules: whether that same read
+  used them, the fatal cause, or the exact regex
+  and first captured pane line it matched.
 
   A rule can be matched, not matched, not
   declared, or not evaluated because stronger
@@ -1002,6 +1007,27 @@ gang collars
   listed name to gang hitch -c. Your own
   collars, from GANG_COLLARS, win over the
   shipped ones by name.
+EOF
+      ;;
+    models) cat <<'EOF'
+gang models
+  List the model ids a harness can enumerate.
+
+  gang models [-c <harness>]
+
+  -c, --collar <harness>
+      harness to ask (default: GANG_COLLAR).
+
+  Output is sorted TSV: model id, then an
+  optional comma-separated effort vocabulary.
+  A collar with aliases but no complete native
+  catalog prints those aliases and says on
+  stderr that full names cannot be enumerated.
+
+  Hitch validates -m against a complete catalog.
+  A collar may instead declare a native model
+  recognition check, which cannot prove account
+  access.
 EOF
       ;;
     roles) cat <<'EOF'
@@ -1173,10 +1199,12 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
   GANG_STALL_TYPES=""
   GANG_USAGE_LIGHT_INTERVAL=0 GANG_USAGE_LIMIT_MAX_AGE=0
-  GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
+  GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_MODEL_ALIASES=""
+  GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
-  unset -f collar_context collar_input collar_session_id collar_usage_limits \
+  unset -f collar_context collar_input collar_session_id collar_models \
+    collar_model_check collar_bricked collar_usage_limits \
     collar_usage_limits_error 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
@@ -1690,6 +1718,8 @@ EXPLAIN_BUSY_RESULT=""
 EXPLAIN_BUSY_FRAGMENT=""
 EXPLAIN_OCCUPIED_RESULT=""
 EXPLAIN_OCCUPIED_FRAGMENT=""
+EXPLAIN_BRICKED_RESULT=""
+EXPLAIN_BRICKED_CAUSE=""
 
 explain_match_record() { # $1 collar variable, $2 grep verdict, $3 first matching line
   local variable="$1" verdict="$2" fragment="$3" result
@@ -2317,6 +2347,42 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   fi
   if input_painted "$1"; then return 1; fi
   ! busy_painted "$1"
+}
+
+BRICKED_WHAT="fatal-turn cause unavailable"
+
+bricked() { # $1 window, collar loaded; 0 fatal, 1 absent, 2 unknown
+  local output="" rc=0
+  BRICKED_WHAT="fatal-turn cause unavailable"
+  declare -F collar_bricked >/dev/null || return 1
+  output="$(collar_bricked "$1")" || rc=$?
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0)
+      [ -n "$output" ] \
+        || die "collar_bricked in $GANG_COLLAR_FILE reported a fatal turn without a cause"
+      BRICKED_WHAT="$output"
+      if [ "$EXPLAINING" -eq 1 ]; then
+        EXPLAIN_BRICKED_RESULT=matched
+        EXPLAIN_BRICKED_CAUSE="$output"
+      fi
+      return 0 ;;
+    1)
+      [ -z "$output" ] \
+        || die "collar_bricked in $GANG_COLLAR_FILE printed a cause while reporting no fatal turn"
+      [ "$EXPLAINING" -ne 1 ] || EXPLAIN_BRICKED_RESULT="did not match"
+      return 1 ;;
+    2)
+      [ -n "$output" ] \
+        || die "collar_bricked in $GANG_COLLAR_FILE reported unknown without a cause"
+      BRICKED_WHAT="$output"
+      if [ "$EXPLAINING" -eq 1 ]; then
+        EXPLAIN_BRICKED_RESULT="could not determine"
+        EXPLAIN_BRICKED_CAUSE="$output"
+      fi
+      return 2 ;;
+    *) die "collar_bricked in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
 }
 
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
@@ -4032,6 +4098,121 @@ advisory_reply() { # $1 event, $2 collar; emit at most one native hook payload
     "$1" "$ADVISORY_NOTE"
 }
 
+# A MODEL CATALOG IS A COMPLETE NATIVE VOCABULARY, not a remembered list.
+# `collar_models` prints one model id per line and may add a tab-separated,
+# comma-delimited effort vocabulary. Core validates that narrow interchange
+# before either showing it or spending it as a hitch refusal. A collar whose
+# harness cannot enumerate may instead declare aliases for discovery and a
+# three-way `collar_model_check`: 0 recognized, 1 unrecognized, 2 unknown.
+# Recognition is deliberately not availability; only the provider can answer
+# whether this account may use a recognized full model name.
+model_rows_normalize() { # $1 raw rows -> sorted, validated rows; 1 = malformed
+  local raw="$1" line id details normalized="" seen=$'\n' number=0
+  [ -n "$raw" ] || return 1
+  while IFS= read -r line || [ -n "$line" ]; do
+    number=$(( number + 1 ))
+    case "$line" in
+      ''|*$'\r'*|*$'\t'*$'\t'*)
+        printf 'gang: model catalog row %s is not one or two nonempty TSV fields\n' \
+          "$number" >&2
+        return 1 ;;
+    esac
+    if [[ "$line" == *$'\t'* ]]; then
+      id="${line%%$'\t'*}"
+      details="${line#*$'\t'}"
+      [ -n "$details" ] || {
+        printf 'gang: model catalog row %s has an empty effort field\n' \
+          "$number" >&2
+        return 1
+      }
+    else
+      id="$line" details=""
+    fi
+    case "$id" in
+      ''|*[!A-Za-z0-9._:/@-]*)
+        printf "gang: model catalog row %s has unusable id '%s'\n" \
+          "$number" "$(printf '%s' "$id" | config_sanitize)" >&2
+        return 1 ;;
+    esac
+    case "$details" in
+      *[!A-Za-z0-9._:/@,-]*)
+        printf 'gang: model catalog row %s has an unusable effort field\n' \
+          "$number" >&2
+        return 1 ;;
+      *) ;;
+    esac
+    case "$details" in ,*|*,|*,,*)
+      printf 'gang: model catalog row %s has an empty effort name\n' \
+        "$number" >&2
+      return 1 ;;
+    esac
+    case "$seen" in
+      *$'\n'"$id"$'\n'*)
+        printf "gang: model catalog repeats id '%s'\n" "$id" >&2
+        return 1 ;;
+    esac
+    seen="$seen$id"$'\n'
+    normalized="$normalized$id${details:+$'\t'$details}"$'\n'
+  done <<<"$raw"
+  printf '%s' "$normalized" | LC_ALL=C sort
+}
+
+models_read() { # collar loaded -> complete normalized catalog; 2 producer, 3 empty, 5 malformed
+  local raw="" rc=0
+  declare -F collar_models >/dev/null || return 4
+  raw="$(collar_models)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'gang: collar model enumerator failed (status %s)\n' "$rc" >&2
+    return 2
+  fi
+  if [ -z "$raw" ]; then
+    printf 'gang: collar model enumerator produced no model ids\n' >&2
+    return 3
+  fi
+  model_rows_normalize "$raw" || return 5
+}
+
+models_read_error() { # $1 collar, $2 models_read status -> operator phrase
+  case "$2" in
+    2) printf "collar '%s' model enumeration failed" "$1" ;;
+    3) printf "collar '%s' model enumeration produced no ids" "$1" ;;
+    4) printf "collar '%s' declares no complete model enumerator" "$1" ;;
+    5) printf "collar '%s' returned a model catalog Gangline cannot interpret" "$1" ;;
+    *) printf "collar '%s' model enumeration failed with unknown status %s" "$1" "$2" ;;
+  esac
+}
+
+model_catalog_has() { # $1 exact id, $2 normalized catalog
+  local wanted="$1" row
+  while IFS= read -r row; do
+    [ "${row%%$'\t'*}" = "$wanted" ] && return 0
+  done <<<"$2"
+  return 1
+}
+
+validate_model_choice() { # $1 collar name, $2 model; collar loaded
+  local prof="$1" model="$2" catalog="" output="" rc=0 reason
+  if declare -F collar_models >/dev/null; then
+    catalog="$(models_read)" || rc=$?
+    [ "$rc" -eq 0 ] \
+      || die "hitch: $(models_read_error "$prof" "$rc"), so gang cannot validate model '$model'"
+    model_catalog_has "$model" "$catalog" \
+      || die "hitch: '$model' is not a model collar '$prof' enumerates (gang models -c $prof)"
+    return 0
+  fi
+  if declare -F collar_model_check >/dev/null; then
+    output="$(collar_model_check "$model")" || rc=$?
+    reason="$(printf '%s' "$output" | config_sanitize)"
+    case "$rc" in
+      0) return 0 ;;
+      1) die "hitch: model '$model' is not recognized by collar '$prof'${reason:+ — $reason}" ;;
+      2) die "hitch: collar '$prof' could not determine whether model '$model' is recognized${reason:+ — $reason}" ;;
+      *) die "hitch: collar '$prof' returned unknown model-check status $rc for '$model'" ;;
+    esac
+  fi
+  die "hitch: collar '$prof' declares GANG_MODEL_OPT but neither collar_models nor collar_model_check, so gang cannot validate model '$model'"
+}
+
 # A reasoning effort is one concept every harness spells differently and values
 # differently, so the collar owns BOTH: the option, and the command that says
 # which levels exist. Core holds neither vocabulary, because codex's is
@@ -4174,6 +4355,7 @@ cmd_hitch() {
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: collar '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
+    validate_model_choice "$prof" "$model"
     GANG_LAUNCH="$GANG_LAUNCH $GANG_MODEL_OPT $model"
   fi
   # Effort rides the model's path, and the POSITION is the argument rather than
@@ -5169,6 +5351,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
     -busy-*) glyph=- ;;
     '~idle~'*) glyph='~' ;;
     '!occupied!'*) glyph='!' ;;
+    '!bricked!'*) glyph='!' ;;
     '?unknown?'*) glyph='?' ;;
     *) return 0 ;;
   esac
@@ -5183,7 +5366,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
 STATE_NOW_RESULT=""
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0
+  local state busy_rc=0 bricked_rc=0
   STATE_NOW_RESULT=""
   if occupied "$1"; then
     activity_hold_clear "$1"
@@ -5193,6 +5376,24 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     printf '%s\n' "$state"
     return 0
   fi
+  bricked "$1" || bricked_rc=$?
+  case "$bricked_rc" in
+    0)
+      activity_hold_clear "$1"
+      state="!bricked! ($BRICKED_WHAT)"
+      glyph_write "$1" "$state"
+      STATE_NOW_RESULT="$state"
+      printf '%s\n' "$state"
+      return 0 ;;
+    1) ;;
+    2)
+      state="?unknown? ($BRICKED_WHAT)"
+      glyph_write "$1" "$state"
+      STATE_NOW_RESULT="$state"
+      printf '%s\n' "$state"
+      return 0 ;;
+    *) die "internal: bricked returned unknown verdict $bricked_rc" ;;
+  esac
   busy "$1" "${2:-}" || busy_rc=$?
   case "$busy_rc" in
     0) state="-busy-" ;;
@@ -5215,6 +5416,12 @@ explain_rule_report() { # $1 variable, $2 result, $3 matching fragment
   fi
 }
 
+explain_bricked_report() {
+  printf 'collar_bricked: %s\n' "$EXPLAIN_BRICKED_RESULT"
+  [ -z "$EXPLAIN_BRICKED_CAUSE" ] \
+    || printf '  cause: %s\n' "$EXPLAIN_BRICKED_CAUSE"
+}
+
 cmd_explain() {
   local name="${1:-}" pane
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
@@ -5235,6 +5442,12 @@ cmd_explain() {
     EXPLAIN_OCCUPIED_RESULT="not declared"
   fi
   EXPLAIN_OCCUPIED_FRAGMENT=""
+  if declare -F collar_bricked >/dev/null; then
+    EXPLAIN_BRICKED_RESULT="not evaluated"
+  else
+    EXPLAIN_BRICKED_RESULT="not declared"
+  fi
+  EXPLAIN_BRICKED_CAUSE=""
   # Pass the pinned pane rather than the window id. Current Gangline state
   # normally follows a window's active pane; a diagnostic must not explain a
   # different pane merely because selection changed between its two regexes.
@@ -5244,6 +5457,7 @@ cmd_explain() {
     "$name" "$pane" "$AGENT_COLLAR" "$STATE_NOW_RESULT"
   explain_rule_report GANG_OCCUPIED_REGEX \
     "$EXPLAIN_OCCUPIED_RESULT" "$EXPLAIN_OCCUPIED_FRAGMENT"
+  explain_bricked_report
   explain_rule_report GANG_BUSY_REGEX \
     "$EXPLAIN_BUSY_RESULT" "$EXPLAIN_BUSY_FRAGMENT"
 }
@@ -5423,6 +5637,7 @@ cmd_wait() {
   state="$(state_now "$AGENT_ID")"
   case "$state" in
     '~idle~'*) return 0 ;;
+    '!bricked!'*) die "wait: '$name' is $state — a fatal turn cannot reach the requested boundary" ;;
     '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
   esac
   [ "${GANG_STOP_HOOK:-}" = 1 ] \
@@ -5440,6 +5655,7 @@ cmd_wait() {
     state="$(state_now "$AGENT_ID")"
     case "$state" in
       '~idle~'*) wait_hook_cleanup; trap - EXIT; return 0 ;;
+      '!bricked!'*) die "wait: '$name' is $state — a fatal turn cannot reach the requested boundary" ;;
       '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
     esac
     wait_boundary "$WAIT_CHANNEL" "$bound" "$name"
@@ -5447,6 +5663,7 @@ cmd_wait() {
     wait_target_validate "$name" "$AGENT_ID" "$pane"
     state="$(state_now "$AGENT_ID")"
     case "$state" in
+      '!bricked!'*) die "wait: '$name' is $state after its boundary — the turn ended fatally" ;;
       '?unknown?'*) die "wait: '$name' is $state after its boundary — refusing to consume unknown as completion" ;;
     esac
     if [ "$until" = "done" ]; then trap - EXIT; return 0; fi
@@ -5459,6 +5676,7 @@ cmd_wait() {
 paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
     '!occupied!'*) colour "$C_BAD" "$1" ;;
+    '!bricked!'*) colour "$C_BAD" "$1" ;;
     '?unknown?'*) colour "$C_BAD" "$1" ;;
     '-busy-'*) colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
@@ -5770,6 +5988,7 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
     -busy-*) printf busy ;;
     '~idle~'*) printf idle ;;
     '!occupied!'*) printf occupied ;;
+    '!bricked!'*) printf bricked ;;
     '?unknown?'*) printf unknown ;;
     *) die "internal: no porcelain word for state '$1'" ;;
   esac
@@ -6182,6 +6401,45 @@ cmd_collars() {
   list_collars
 }
 
+cmd_models() {
+  local prof="${GANG_COLLAR:-claude-code}" collar_arg=0 catalog="" rc=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      -c|--collar)
+        [ $# -ge 2 ] || die "models: $1 needs a value"
+        [ "$collar_arg" -eq 0 ] || die "models: -c may be passed only once"
+        prof="$2" collar_arg=1; shift 2 ;;
+      *) die "models: unexpected argument '$1'" ;;
+    esac
+  done
+  if [ "$collar_arg" -eq 0 ]; then
+    collar_file "$prof" >/dev/null \
+      || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
+  fi
+  load_collar "$prof"
+  [ -n "$GANG_MODEL_OPT" ] \
+    || die "models: collar '$prof' declares no model choice"
+  if declare -F collar_models >/dev/null; then
+    catalog="$(models_read)" || rc=$?
+    [ "$rc" -eq 0 ] || die "models: $(models_read_error "$prof" "$rc")"
+    printf '%s\n' "$catalog"
+    return 0
+  fi
+  if [ -n "$GANG_MODEL_ALIASES" ]; then
+    catalog="$(model_rows_normalize "$GANG_MODEL_ALIASES")" || rc=$?
+    [ "$rc" -eq 0 ] \
+      || die "models: collar '$prof' returned aliases Gangline cannot interpret"
+    printf '%s\n' "$catalog"
+    printf "gang: NOTE: collar '%s' cannot enumerate full model names; listed documented aliases only.\n" \
+      "$prof" >&2
+    if declare -F collar_model_check >/dev/null; then
+      printf 'gang: NOTE: hitch validates native model recognition, not availability to this account.\n' >&2
+    fi
+    return 0
+  fi
+  die "models: collar '$prof' cannot enumerate model ids and declares no documented aliases"
+}
+
 config_sanitize() { # stdin -> terminal-safe, single-line text
   LC_ALL=C tr '\000-\010\012-\037\177' '?' | tr '\011' ' '
 }
@@ -6331,6 +6589,7 @@ case "$cmd" in
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;
+  models)   cmd_models "$@" ;;
   roles)    cmd_roles "$@" ;;
   config)   cmd_config "$@" ;;
   upgrade)  cmd_upgrade "$@" ;;

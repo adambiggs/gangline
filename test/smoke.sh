@@ -10,6 +10,8 @@ trap 'rm -rf -- "$CONFIG_ROOT"' EXIT HUP INT TERM
 
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" help >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" collars >/dev/null
+GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" models -c claude-code \
+  >/dev/null 2>&1
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" roles >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" config >/dev/null
 
