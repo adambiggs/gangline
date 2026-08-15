@@ -31,6 +31,23 @@ if [ "$fast" -eq 0 ]; then
   test/source-guards-fixtures.sh
 fi
 
+# THE OPT-IN E2E LANE IS THE ONE FILE ALLOWED TO SPEND WALL TIME, and this is
+# the check that keeps that exemption honest. It drives a real claude-code TUI,
+# so it cannot be written against a fake clock — but the rule below was never
+# about all test code, it was about the MANDATORY suite, which the same comment
+# says by calling real harness probes operator commands rather than part of it.
+# The exemption therefore holds only while the lane stays outside the gate, and
+# that is asserted here rather than left to whoever edits gate.sh next: the day
+# someone wires the lane in, this refuses instead of quietly admitting seconds
+# of TUI boot into every pre-commit run.
+E2E_LANE=test/e2e.sh
+if [ -f "$E2E_LANE" ] && grep -q 'e2e' test/gate.sh; then
+  printf '%s\n' \
+    "lint: $E2E_LANE is exempt from the wall-time rule ONLY while it stays out of the mandatory gate, and test/gate.sh now names it." \
+    "Either take it back out of the gate, or remove the exemption below and make the lane clock-free." >&2
+  exit 1
+fi
+
 # Mandatory tests consume state, not wall time. A fake clock may hand code any
 # timestamp it needs, but executable test code may not sleep, poll, or exercise
 # timeout behaviour. Real harness probes are operator commands, not this suite.
@@ -39,6 +56,7 @@ fi
 timing_hits=""
 for f in test/*.sh .github/workflows/*.sh; do
   [ -f "$f" ] || continue
+  [ "$f" = "$E2E_LANE" ] && continue
   hits="$(awk '
     /^[[:space:]]*#/ { next }
     {
