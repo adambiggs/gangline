@@ -921,6 +921,8 @@ fi
 
 claude_limits_stub="$RUN_ROOT/claude-limits-stub"
 mkdir -p "$claude_limits_stub"
+claude_timeout_args="$RUN_ROOT/claude-timeout.args"
+: > "$claude_timeout_args"
 cat > "$claude_limits_stub/claude" <<'SH'
 #!/bin/sh
 cat <<'OUT'
@@ -931,7 +933,12 @@ Current week (all models): 96% used · resets Aug 19, 10am (America/Vancouver)
 Current week (Fable): 3% used · resets Aug 19, 10am (America/Vancouver)
 OUT
 SH
-chmod +x "$claude_limits_stub/claude"
+cat > "$claude_limits_stub/timeout" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> "$claude_timeout_args"
+case "\$1" in 1|50) shift; exec "\$@" ;; *) exit 2 ;; esac
+SH
+chmod +x "$claude_limits_stub/claude" "$claude_limits_stub/timeout"
 claude_limits="$(PATH="$claude_limits_stub:$PATH" GANG_TEST_COLLARS='' ROOT="$ROOT" \
   bash -c '. "$1"; collar_usage_limits ignored' fixture "$claude_collar")"
 contains "Claude provider limits use the headless native usage command" \
@@ -941,6 +948,30 @@ contains "Claude provider limits accept a reset hour with no minute field" \
 equal "Claude throttles its heavyweight usage-light subprocess" "60" \
   "$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
     '. "$1"; printf "%s" "$GANG_USAGE_LIGHT_INTERVAL"' fixture "$claude_collar")"
+equal "Claude uses the bound runner's portable form with hook margin" \
+  $'1 true\n50 claude -p /usage' "$(<"$claude_timeout_args")"
+
+claude_bad_timeout="$RUN_ROOT/claude-bad-timeout"
+mkdir -p "$claude_bad_timeout"
+cat > "$claude_bad_timeout/timeout" <<'SH'
+#!/bin/sh
+exit 2
+SH
+chmod +x "$claude_bad_timeout/timeout"
+claude_bad_bound="$(PATH="$claude_bad_timeout:$PATH" \
+  GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c '
+    . "$1"
+    collar_usage_limits ignored >/dev/null 2>&1
+    rc=$?
+    printf "%s\t" "$rc"
+    collar_usage_limits_error "$rc"
+  ' fixture "$claude_collar")"
+contains "Claude names an installed but incompatible bound runner" \
+  "$claude_bad_bound" $'65\t'"collar 'claude-code' found a 'timeout' command"
+claude_missing_bound="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; collar_usage_limits_error 64' fixture "$claude_collar")"
+contains "Claude names a missing bound runner" "$claude_missing_bound" \
+  "requires the 'timeout' command"
 
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"

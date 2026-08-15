@@ -288,9 +288,11 @@ once until usage falls below yellow. The last native reading or loud
 unavailability remains visible in `gang status`; `gang roster` carries yellow,
 red, and unavailable states without performing a new read.
 
-Claude's headless read launches the harness, so hook-driven lights reuse a
-sample for one minute instead of launching it after every tool call. Explicit
-`gang limits` and `gang wait-limit` commands always take a fresh reading.
+Claude's headless read launches the harness behind a portable 50-second process
+bound, so hook-driven lights reuse a sample for one minute instead of launching
+it after every tool call. Explicit `gang limits` and `gang wait-limit` commands
+always take a fresh reading. A missing or incompatible `timeout` command is
+named as that dependency failure, not misreported as a native harness failure.
 
 These lights use the same collar correctness source as `gang limits`. They do
 not type `/usage`, scrape a pane, poll in the background, or infer a limit from
@@ -319,7 +321,9 @@ matched. One error UUID receives one attributed continuation. Its visible
 Gangline envelope is also the ownership marker: if that continuation dies,
 there is no second hop. An unreadable transcript, unverified marker, refused
 delivery, or exhausted hop is fail-closed and appears in `gang status`; roster
-adds `auto-resume-failed`. A later ordinary prompt starts a new episode.
+adds `auto-resume-failed`. A later ordinary prompt starts a new episode without
+erasing that refusal record; a later positively owned automatic continuation or
+dropping the window retires it.
 
 Claude Code is the live consumer for stream-failure recovery. Codex exposes no
 native failed-turn record that can distinguish dead, running, and killed work,
@@ -331,7 +335,9 @@ It is independent of `GANG_USAGE_LIGHTS`; declare both when the team should be
 warned before it is resumed. `gang status` shows the pending wake and, while the
 reset is still ahead, whether the transient unit that keeps it still exists.
 `gang wait-limit <name> --clear` cancels a wake and is not overridden: that
-provider window will not be armed again.
+provider window will not be armed again. An existing manual wake also wins over
+automatic arming. Gangline records the sampled provider window as handled but
+does not stop its timer or replace an optional `--resume` turn.
 
 Two limits are worth knowing before relying on it unattended. A provider window
 that is exhausted between two samples is never seen at the threshold and arms

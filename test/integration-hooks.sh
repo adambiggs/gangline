@@ -829,6 +829,32 @@ contains "status retains an unavailable provider-usage capability" \
 refuses "limits fabricates nothing for a collar with no source" \
   "declares no non-interactive provider-limit source" "$GANG" limits usage-absent
 
+# A COLLAR CAN NAME A FAILED READER DEPENDENCY instead of collapsing it into a
+# harness failure. The raw collar status survives the common parser boundary
+# and reaches the same diagnostic in a native hook and the explicit CLI.
+cat > "$RUN_ROOT/collars/usage-bound-fail.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_STOP_HOOK=1
+GANG_USAGE_LIGHT_INTERVAL=0
+collar_usage_limits() { return 65; }
+collar_usage_limits_error() {
+  [ "\$1" -eq 65 ] || return 1
+  printf "collar 'usage-bound-fail' found an incompatible 'timeout' command"
+}
+SH
+GANG_USAGE_LIGHTS=90%,95% "$HITCH" usage-bound-fail \
+  -c usage-bound-fail -d /tmp >/dev/null
+usage_bound_pane="$(tmux list-panes -t "$(window_id usage-bound-fail)" -F '#{pane_id}')"
+usage_bound_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$usage_bound_pane" "$GANG" hook)"
+contains "a native hook names an unusable reader dependency" \
+  "$usage_bound_note" "incompatible 'timeout' command"
+refuses "limits names the same unusable reader dependency" \
+  "incompatible 'timeout' command" "$GANG" limits usage-bound-fail
+"$GANG" drop usage-bound-fail >/dev/null
+
 if invalid_usage_lights="$(GANG_USAGE_LIGHTS=95%,90% "$GANG" hitch \
     usage-invalid -c usage-lights -d /tmp 2>&1)"; then
   fail "decreasing provider-usage thresholds are refused" "hitch succeeded"
@@ -1359,6 +1385,7 @@ contains "and names auto-resume when that is what asked" \
 # A REFUSED ARM IS LOUD ONCE, NOT SILENT AND NOT EVERY SAMPLE. Retrying a
 # headless provider read at every turn for as long as the agent stays above the
 # threshold is its own failure, so the decision is closed either way.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
 printf '%s\t%s\t%s\t%s\n' \
   "Current session" 98 "$(( auto_now + 50000 ))" "$auto_now" \
   > "$usage_limits_source"
@@ -1402,6 +1429,58 @@ excludes "status no longer reports the recovered failure" \
   "$(GANG_TEST_SYSTEMCTL=armed PATH="$usage_timer_bin:$PATH" "$GANG" status auto-res)" \
   "provider-reset wake failed"
 
+# AN EXISTING MANUAL WAKE IS AUTHORITATIVE. Automatic sampling may close its
+# once-per-provider decision, but it cannot stop the timer or replace --resume's
+# operator-authored continuation with the generic one.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+auto_reset_manual=$(( auto_now + 65000 ))
+auto_manual_body="Finish the operator-declared migration, then report."
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_manual" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
+  --resume "$auto_manual_body" >/dev/null
+auto_manual_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_manual_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "automatic arming leaves an existing manual wake authoritative" \
+  "$auto_manual_note" "left the existing provider-reset wake"
+equal "the manual resume turn survives automatic sampling" "$auto_manual_body" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_body)"
+equal "the manual declaration still names its original reset" "$auto_reset_manual" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+equal "automatic sampling arms no replacement timer" "$auto_manual_arms_before" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+equal "the preserved manual wake closes automatic re-arming for that window" \
+  "$auto_reset_manual" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+
+# A GOOD AUTO-RESUME-ONLY SAMPLE ENDS A READER-FAILURE EPOCH even when usage
+# lights are off. A later recurrence is therefore loud again.
+tmux set-option -uw -t "$auto_id" @gl_usage_notified 2>/dev/null || true
+: > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_reader_fail_first="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "an auto-resume reader failure is initially loud" \
+  "$auto_reader_fail_first" "Auto-resume unavailable"
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 1 "$(( auto_now + 66000 ))" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_reader_recovered="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+equal "a good auto-resume-only sample needs no recovery prose" "" \
+  "$auto_reader_recovered"
+: > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_reader_fail_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "a reader failure after recovery is loud again" \
+  "$auto_reader_fail_again" "Auto-resume unavailable"
+
 # CLAUDE STREAM FAILURES HAVE A NATIVE TWO-PART WITNESS: idle_prompt says the
 # interactive harness is waiting, and the newest top-level assistant record says
 # whether the turn died. This fixture uses the shipped Claude transcript and
@@ -1438,6 +1517,8 @@ collar_usage_limits() {
 SH
 cat > "$auto_stream_transcript" <<'JSONL'
 {"type":"assistant","uuid":"success-a","isSidechain":false,"message":{"role":"assistant"}}
+{"type":"assistant","uuid":"not-api-a","isSidechain":false,"error":"server_error","isApiErrorMessage":false,"message":{"role":"assistant"}}
+{"type":"assistant","uuid":"side-error-a","isSidechain":true,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
 {"type":"system","uuid":"after-success","parentUuid":"success-a","subtype":"turn_duration"}
 JSONL
 GANG_AUTO_RESUME=95% "$HITCH" auto-stream -c auto-stream -d /tmp >/dev/null
@@ -1456,8 +1537,8 @@ PY
 auto_stream_before="$(pane_all auto-stream)"
 printf '%s' "$auto_stream_notification" |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
-# source-guard: whole-surface@ab83d490b0f4: the claim is that this native idle event changes no visible producer anywhere in the pane, so the complete unchanged surface is the intended evidence
-equal "an ordinary idle notification submits no continuation" \
+# source-guard: whole-surface@124ef6746234: the claim is that these rejected native error shapes change no visible producer anywhere in the pane, so the complete unchanged surface is the intended evidence
+equal "a non-API top-level error and a newer sidechain API error submit no continuation" \
   "$auto_stream_before" "$(pane_all auto-stream)"
 # source-guard: producer@52289f6a66f8: auto_stream_notification independently supplies this exact transcript_path through the native payload immediately above
 equal "the Claude hook binds its exact transcript path" \
@@ -1482,6 +1563,8 @@ auto_stream_marker="$(tmux show-options -wqv -t "$auto_stream_id" \
   @gl_auto_resume_prompt)"
 contains "the continuation carries Gangline's owned envelope marker" \
   "$auto_stream_marker" "[gang:auto-resume#"
+equal "a pending native ownership witness is not misreported as a refusal" "" \
+  "$(tmux show-options -wqv -t "$auto_stream_id" @gl_auto_resume_failed)"
 
 # Bash has no native hook of its own, so drive the exact UserPromptSubmit the
 # real harness fires for the submitted envelope. The real dying-stream proof is
@@ -1529,6 +1612,8 @@ equal "a repeated idle notification cannot retry the same error record" \
 # be guessed into a second hop.
 printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"auto-stream-session","prompt":"ordinary operator turn"}' |
   TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+contains "an ordinary prompt opens a new episode without erasing the refusal record" \
+  "$("$GANG" status auto-stream)" "one-hop guard refused another continuation"
 tmux set-option -w -t "$auto_stream_id" @gl_auto_resume_prompt \
   '[gang:auto-resume#owned] marked continuation [/gang:auto-resume#owned]'
 printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"auto-stream-session"}' |

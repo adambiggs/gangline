@@ -554,12 +554,13 @@ It prints one native window per line with percent used, the reset in local time,
 and the age of the native sample. The command may target an agent mid-turn
 because it never drives that agent's composer.
 
-Claude Code's collar runs the harness's headless usage command behind a
-fail-loud process bound, so a wedged reader makes the source unavailable rather
-than holding a native hook indefinitely. Codex's collar
-reads the exact target rollout stamped by its native hook and selects the newest
-rate-limit event. That event's timestamp is the sample clock, so an idle Codex
-reading truthfully grows stale until its next API turn. It remains visible to
+Claude Code's collar runs the harness's headless usage command behind a portable
+50-second process bound, so a wedged reader makes the source unavailable before
+Claude's native hook bound. A missing or incompatible `timeout` command is
+reported by name. Codex's collar reads the exact target rollout stamped by its
+native hook and selects the newest rate-limit event. That event's timestamp is
+the sample clock, so an idle Codex reading truthfully grows stale until its next
+API turn. It remains visible to
 this reporting command even after it is too old to drive a warning or wake. A missing source, failed
 reader, malformed row, missing reset, or missing observation time fails loudly.
 
@@ -626,11 +627,14 @@ different percentages, and an agent may run auto-resume with the lights off.
 At the first sample at or above the threshold whose reset is still in the
 future, the agent's own turn hook passes that validated sample through the same
 arming transaction as `gang wait-limit` and reports the result in the same
-turn. It takes no second native reading while arming. Arming happens once per provider window:
-the reset that was decided for is recorded on the window, so later samples in
-the same window arm nothing, and a wake cleared with `--clear` is not armed
-again over the operator. A refused arm is reported in the turn, recorded where
-status reads it, and not retried for that window.
+turn. It takes no second native reading while arming. Arming happens once per
+provider window: the reset that was decided for is recorded on the window, so
+later samples in the same window arm nothing, and a wake cleared with `--clear`
+is not armed again over the operator. An existing manual wake is also
+authoritative: automatic sampling records its provider window as handled but
+does not stop its timer or replace its optional `--resume` body. A refused arm
+is reported in the turn, recorded where status reads it, and not retried for
+that window.
 
 A reading too old to act on arms nothing. A collar may cap the age of
 actionable evidence, and Codex's percentage comes from a session event that goes
@@ -648,8 +652,10 @@ The exact attributed envelope is recorded before submission and must match the
 next native prompt byte-for-byte. If that owned continuation fails, or ownership
 cannot be established, no next continuation is sent; `status` reports
 `automatic resume refused` and roster reports `auto-resume-failed`. A later
-ordinary native prompt clears the one-hop episode. Collars without both native
-readers do not attempt stream-failure recovery.
+ordinary native prompt clears the one-hop episode but preserves that refusal
+record until a later automatic continuation is positively owned or the window
+is dropped. Collars without both native readers do not attempt stream-failure
+recovery.
 
 This is deliberately an over-approximation of the provider limit. Gangline
 cannot observe the harness's own refusal — the only in-band evidence is pane
@@ -869,6 +875,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
 | `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |
+| `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents, or fail if absent |

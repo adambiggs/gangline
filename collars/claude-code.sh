@@ -221,10 +221,12 @@ GANG_USAGE_LIGHT_INTERVAL=60
 collar_usage_limits() { # $1 = unused target; print label<TAB>used<TAB>reset<TAB>observed
   local output
   # This reader runs inside native hooks when lights or auto-resume are enabled.
-  # A wedged headless harness must return a loud unavailable reading instead of
-  # holding the hook forever; timeout is the process boundary, not a retry.
-  command -v timeout >/dev/null 2>&1 || return 1
-  output="$(timeout --foreground 60 claude -p '/usage')" || return 1
+  # Leave margin inside Claude's native hook bound, and use only timeout's
+  # portable SECONDS COMMAND form: BusyBox implements it but not --foreground.
+  # Dependency failures have their own status and operator-facing explanation.
+  command -v timeout >/dev/null 2>&1 || return 64
+  timeout 1 true >/dev/null 2>&1 || return 65
+  output="$(timeout 50 claude -p '/usage')" || return 1
   printf '%s\n' "$output" | python3 -c '
 from datetime import datetime, timedelta
 import re
@@ -260,6 +262,14 @@ observed = int(now.timestamp())
 for label, used, reset in rows:
     print(label, used, reset, observed, sep="\t")
 '
+}
+
+collar_usage_limits_error() { # $1 = collar_usage_limits exit status
+  case "$1" in
+    64) printf "collar 'claude-code' requires the 'timeout' command to bound its native provider-limit reader, but timeout is not installed" ;;
+    65) printf "collar 'claude-code' found a 'timeout' command that cannot run the portable 'timeout seconds command' form required to bound its native provider-limit reader" ;;
+    *) return 1 ;;
+  esac
 }
 GANG_OCCUPIED_REGEX='^ +❯|Esc to'
 # BEFORE A SESSION EXISTS. Enumerated on claude-code 2.1.226 against a cold

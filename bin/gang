@@ -1177,7 +1177,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
   unset -f collar_context collar_input collar_session_id collar_usage_limits \
-    2>/dev/null || true
+    collar_usage_limits_error 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
@@ -3624,10 +3624,10 @@ auto_resume_prompt_witness() { # $1 pane, $2 collar, $3 UserPromptSubmit payload
     || pending=""
   if [ -z "$pending" ]; then
     # A prompt with no Gangline-owned marker starts a new operator/agent turn.
-    # It repairs a previous one-hop refusal; only the failed automatic turn was
-    # closed, not auto-resume for the rest of the window's lifetime.
+    # It opens a fresh one-hop episode, but it does not erase a refusal the
+    # operator has not necessarily seen yet. A later positively owned automatic
+    # turn clears that record; dropping the window retires all of its state.
     tmux set-option -uw -t "$1" @gl_auto_resume_own_turn 2>/dev/null || true
-    tmux set-option -uw -t "$1" @gl_auto_resume_failed 2>/dev/null || true
     return 0
   fi
   load_collar "$2"
@@ -3727,17 +3727,13 @@ auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resu
   case "$rc" in
     0)
       tmux set-option -w -t "$window" @gl_auto_resume_error "$record" 2>/dev/null || true
-      pending="$(tmux show-options -wqv -t "$window" @gl_auto_resume_prompt 2>/dev/null)" \
-        || pending=""
       own="$(tmux show-options -wqv -t "$window" @gl_auto_resume_own_turn 2>/dev/null)" \
         || own=""
-      if [ -n "$pending" ]; then
-        auto_resume_failed_write "$window" \
-          "the continuation for failed record $record was submitted, but no matching native prompt marker has been witnessed yet; any failure is fail-closed until it is"
-      elif [ "$own" != 1 ]; then
-        auto_resume_failed_write "$window" \
-          "the continuation for failed record $record was submitted, but its native prompt ownership is unverified; any failure is fail-closed"
-      else
+      # Submission and the native UserPromptSubmit hook are separate processes.
+      # Pending is expected here and already makes a later failure fail closed;
+      # calling it a refusal races the witness and can leave a false alarm after
+      # the witness succeeded. Only positive ownership retires an older alarm.
+      if [ "$own" = 1 ]; then
         tmux set-option -uw -t "$window" @gl_auto_resume_failed 2>/dev/null || true
       fi
       event_claim_release
@@ -3762,11 +3758,14 @@ auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resu
 }
 
 USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
+USAGE_LIMIT_READER_STATUS=0
 usage_limits_read() { # $1 window, collar loaded; select the most constrained row
   local rows line label used reset observed fields clean_rows="" best_used=-1 best_reset=-1 found=0 now
   USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
+  USAGE_LIMIT_READER_STATUS=0
   declare -F collar_usage_limits >/dev/null || return 4
-  rows="$(collar_usage_limits "$1")" || return 2
+  rows="$(collar_usage_limits "$1")" \
+    || { USAGE_LIMIT_READER_STATUS=$?; return 2; }
   [ -n "$rows" ] || return 2
   now="$(date +%s)"
   while IFS= read -r line || [ -n "$line" ]; do
@@ -3837,11 +3836,23 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   # options have no compare-and-set; without this claim both processes can read
   # the old marker and arm the same reset. A killed holder is reclaimed by the
   # next hook, so no in-progress bit can wedge the window.
-  local armed name out rc=0
+  local armed name out rc=0 existing_rc=0
   event_claim auto-resume "$1" usage-wake || return 1
   armed="$(tmux show-options -wqv -t "$1" @gl_auto_resume_armed 2>/dev/null)" || armed=""
   if [ "$armed" = "$2" ]; then event_claim_release; return 1; fi
   name="$(agent_name_of "$1")"
+  usage_wake_read "$1" >/dev/null || existing_rc=$?
+  if [ "$existing_rc" -eq 0 ]; then
+    # A MANUAL WAKE IS THE OPERATOR'S DECISION. Re-entering the shared arm
+    # transaction would first cancel it and could silently discard --resume's
+    # body. Mark this provider window handled without touching the declaration,
+    # its transient unit, or its continuation.
+    tmux set-option -w -t "$1" @gl_auto_resume_armed "$2" 2>/dev/null || true
+    event_claim_release
+    printf 'Auto-resume left the existing provider-reset wake for %s unchanged at %s%% used; the operator-declared wake remains authoritative.' \
+      "$name" "$AUTO_RESUME_AT"
+    return 0
+  fi
   out="$(usage_wake_arm "$1" "$name" "" 2>&1)" || rc=$?
   # BOTH TERMINAL OUTCOMES CLOSE THE WINDOW. A refusal that left no marker would
   # relaunch a headless provider read at every sample for as long as the agent
@@ -3866,7 +3877,7 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
 }
 
 usage_light_note() { # $1 collar; sample provider use, then light and arm from it
-  local rc=0 state previous note agent now checked lights=0 arm=0 subject arm_note arm_rc=0
+  local rc=0 state previous note cause agent now checked lights=0 arm=0 subject arm_note arm_rc=0
   if usage_lights_for "$TMUX_PANE"; then lights=1; fi
   if auto_resume_for "$TMUX_PANE"; then arm=1; fi
   [ "$lights" -eq 1 ] || [ "$arm" -eq 1 ] || return 0
@@ -3910,7 +3921,13 @@ usage_light_note() { # $1 collar; sample provider use, then light and arm from i
 }$arm_note"
         fi
       fi
-      [ "$lights" -eq 1 ] || return 0
+      if [ "$lights" -ne 1 ]; then
+        # A good auto-resume-only sample ends the previous reader-failure epoch.
+        # Without this state transition, the next recurrence is suppressed as
+        # a duplicate even though a successful reading intervened.
+        tmux set-option -w -t "$TMUX_PANE" @gl_usage_notified sampled 2>/dev/null || true
+        return 0
+      fi
       if [ "$state" = below ]; then
         tmux set-option -uw -t "$TMUX_PANE" @gl_usage_notified 2>/dev/null || true
         return 0
@@ -3923,7 +3940,9 @@ usage_light_note() { # $1 collar; sample provider use, then light and arm from i
         red) note="Red usage light: $USAGE_LIMIT_LABEL is ${USAGE_LIMIT_USED}% used. Finish the current arc and stop before the provider limit; inspect or schedule its reset with gang limits $agent and gang wait-limit $agent." ;;
       esac
       ;;
-    2) state=unavailable; note="$subject unavailable: the collar's native provider-limit reader failed. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
+    2) state=unavailable
+       cause="$(usage_limits_error "$1" "$rc")"
+       note="$subject unavailable: $cause. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
     3) state=invalid; note="$subject unavailable: the collar returned a provider-limit record Gangline cannot interpret. Inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
     4) state=unavailable; note="$subject unavailable: this collar declares no non-interactive provider-limit source; Gangline will not substitute a composer scrape." ;;
     5) state=stale; note="$subject unavailable: the collar's newest provider-limit reading is too old to act on. Refresh the harness with an API turn, then inspect with gang limits $(agent_name_of "$TMUX_PANE")." ;;
@@ -4794,6 +4813,12 @@ cmd_context() { # print the collar's native context reading, unparsed
 }
 
 usage_limits_error() { # $1 collar, $2 read status -> operator-facing cause
+  local detail=""
+  if [ "$2" -eq 2 ] && declare -F collar_usage_limits_error >/dev/null; then
+    detail="$(collar_usage_limits_error "$USAGE_LIMIT_READER_STATUS")" || detail=""
+    detail="$(printf '%s' "$detail" | config_sanitize)"
+    if [ -n "$detail" ]; then printf '%s' "$detail"; return; fi
+  fi
   case "$2" in
     2) printf "collar '%s' could not read its native provider-limit source" "$1" ;;
     3) printf "collar '%s' returned a provider-limit record Gangline cannot interpret" "$1" ;;

@@ -280,6 +280,9 @@ retried. One shared transaction serves the manual command and the hook: it
 accepts the already-validated sample instead of taking a second native reading
 that could cross a provider reset, and overlapping hooks serialize the marker
 check with the arm.
+An existing manual wake is the operator's decision and wins over that automatic
+transaction: mark the sampled window handled without cancelling its timer or
+replacing its optional continuation.
 
 ## A promised wake is read from the unit, not only the declaration
 
@@ -300,8 +303,10 @@ ordinary attributed continuation per error UUID. The continuation's own
 Gangline envelope is recorded before submission and compared byte-for-byte with
 the native prompt event; a failure of that owned turn gets no second hop. When
 ownership cannot be proved, fail closed and record the refusal for status and
-roster. This is immediate collar-native discrimination, not a watcher or a
-general retry policy; collars with no structural record declare no equivalent.
+roster. An ordinary prompt opens a new episode but does not erase an unseen
+refusal; positive ownership of a later automatic turn does. This is immediate
+collar-native discrimination, not a watcher or a general retry policy; collars
+with no structural record declare no equivalent.
 
 ## Effort is the collar's word
 
