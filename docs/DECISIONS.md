@@ -930,3 +930,56 @@ CI runs full lint and integration on pushes to `main`. Release Please is a job
 in that same workflow and needs both verdicts before it can publish. The local
 boundary stays quick enough to use on every push without overlapping the
 memory-heavy shell linters, while the complete gate also runs the smoke.
+
+## Real harness proof is one opt-in lane against a local model server
+
+Every mandatory test drives a fixture: a shell pretending to be a harness, an
+immediate clock, a pane whose transitions are synchronous. That is the right
+trade for a gate everyone runs, and it leaves the collar unproven — the pane
+regexes, the native hook wiring, the turn bracket and the transcript readers all
+describe a harness no mandatory test ever starts. `test/e2e.sh` boots the real
+one against `test/e2e/stub.py` instead of a provider, so the proof costs no
+network, no account and no money.
+
+It stays out of `test/gate.sh`. A real boot costs seconds and the lane holds a
+turn open deliberately, which is exactly what the mandatory suite forbids;
+`test/lint.sh` grants this one file the timing exemption and refuses if the file
+ever appears in the gate, so the exemption cannot outlive its reason.
+
+The stub answers on markers the lane puts in the prompt, hardcoded, rather than
+through a scenario language. Its request log is the instrument: a claim that an
+envelope was delivered is settled by finding it in what the harness actually
+sent, not by reading it off a pane that shows only what was typed.
+
+## A held response is the only honest way to freeze a turn
+
+Scenarios that need a live turn — mid-turn steering, a wait that must block —
+cannot get one from a sleep, because the thing being measured is whether
+Gangline observes a turn that is genuinely in flight. The stub holds its
+response open on a FIFO pair instead. Opening a FIFO for writing blocks until a
+reader arrives and opening one for reading blocks until a writer does, so the
+lane learns the turn is live from the turn itself and ends it when the
+assertions are done. Neither side polls, and the turn is live for exactly the
+window under test.
+
+## Not every request carrying the prompt is the agent's turn
+
+Observed on claude-code 2.1.233: each submitted prompt also triggers a small
+auxiliary session-title completion whose body quotes the user's message, and it
+arrives BEFORE the real turn. A stub keying on prompt text alone holds that one,
+releases the lane, and lets the turn it meant to freeze run unheld — with every
+assertion still passing, because a request log records arrival rather than
+completion. The lane therefore identifies the agent's own turn by the standing
+contract the collar passes through `--append-system-prompt`, read from
+`CONTRACT.md` at run time so a reworded contract breaks loudly instead of
+quietly reclassifying every request as a side errand.
+
+## An API key in the environment is a first-run gate
+
+A cold `CLAUDE_CONFIG_DIR` draws onboarding rather than a composer, which the
+claude-code collar already enumerates. A seeded one still stops: given
+`ANTHROPIC_API_KEY`, the harness draws a two-choice approval box defaulting to
+No, hitch correctly reports a native first-run prompt, and an unattended lane
+waits for an operator who is never coming. The harness identifies a key by its
+last twenty characters, so the lane records the answer the same way alongside
+the onboarding and trust flags.

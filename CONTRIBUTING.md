@@ -91,6 +91,42 @@ The following rules are mandatory:
 `test/lint.sh` enforces the shell timing ban across `test/` and executable CI
 helpers. `.github/workflows/shell.yml` enforces the suite ceiling.
 
+### The offline end-to-end lane
+
+```sh
+test/e2e.sh            # every scenario
+test/e2e.sh bricked    # one by name
+```
+
+`test/e2e.sh` is the sanctioned real-harness smoke in executable form. It boots
+a real claude-code TUI in a disposable tmux session on a private socket and
+points it at `test/e2e/stub.py`, a local server speaking the Anthropic Messages
+dialect, so a run needs no network, no account, and no money. It proves what a
+fixture cannot: that the collar, the pane reading, the native hooks, and the
+turn bracket still describe the harness that is installed.
+
+It is opt-in. It is not wired into `test/gate.sh` and not run in CI, because a
+real boot costs seconds and the lane holds a turn open on purpose. It takes the
+host's heavy-test lock itself, the same way the gate does, so it never runs
+beside the mandatory suite. `test/lint.sh` exempts this one file from the
+timing ban and refuses if it ever appears in `test/gate.sh`.
+
+Its waits are bounded and print the reads each one actually used, so a lane
+drifting toward its budget is visible before it flakes. The stub's request log
+is the instrument: assertions read what entered the model's context rather than
+what a pane appeared to show.
+
+To prove the offline claim rather than assume it, run the lane in a network
+namespace that has loopback and nothing else:
+
+```sh
+unshare -rn sh -c 'ip link set lo up; exec test/e2e.sh'
+```
+
+Inside it a route to any external address does not exist and DNS cannot
+resolve, so a harness that had quietly depended on reaching a provider fails
+there instead of passing here.
+
 ## Commits
 
 Use Conventional Commits:
