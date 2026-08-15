@@ -1443,9 +1443,10 @@ PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
 auto_manual_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
 tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
 auto_manual_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
-  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+  GANG_TEST_SYSTEMCTL=armed PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
 contains "automatic arming leaves an existing manual wake authoritative" \
-  "$auto_manual_note" "left the existing provider-reset wake"
+  "$auto_manual_note" "left the existing future provider-reset wake"
 equal "the manual resume turn survives automatic sampling" "$auto_manual_body" \
   "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_body)"
 equal "the manual declaration still names its original reset" "$auto_reset_manual" \
@@ -1455,6 +1456,68 @@ equal "automatic sampling arms no replacement timer" "$auto_manual_arms_before" 
 equal "the preserved manual wake closes automatic re-arming for that window" \
   "$auto_reset_manual" \
   "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+
+# AN OVERDUE DECLARATION IS RESIDUE, NOT AN AUTHORITATIVE WAKE. A callback can
+# leave it behind after the timer was collected, and a host can sleep through
+# its reset. Neither may disable automatic arming for every later window.
+auto_reset_overdue_source=$(( auto_now + 67000 ))
+auto_overdue_body="This stale continuation must not survive."
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_overdue_source" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
+  --resume "$auto_overdue_body" >/dev/null
+auto_overdue_record="$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
+IFS=$'\t' read -r _ auto_overdue_unit auto_overdue_label <<<"$auto_overdue_record"
+tmux set-option -w -t "$auto_id" @gl_usage_wake \
+  "$(( auto_now - 1 ))"$'\t'"$auto_overdue_unit"$'\t'"$auto_overdue_label"
+auto_reset_after_overdue=$(( auto_now + 68000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_after_overdue" "$auto_now" \
+  > "$usage_limits_source"
+auto_overdue_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_overdue_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "an overdue declaration does not disable the next provider window" \
+  "$auto_overdue_note" "Auto-resume armed"
+equal "the overdue declaration is replaced by the fresh reset" \
+  "$auto_reset_after_overdue" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+equal "its stale custom continuation is not carried into the automatic wake" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_body)"
+equal "and exactly one replacement timer is armed" \
+  "$(( auto_overdue_arms_before + 1 ))" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+
+# A FUTURE DECLARATION WHOSE TIMER FAILED IS EQUALLY DEAD. Status calls this
+# ARMED NOWHERE; automatic arming must recover it without preserving its body.
+auto_reset_failed_source=$(( auto_now + 69000 ))
+auto_failed_body="This failed timer cannot deliver me."
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_failed_source" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
+  --resume "$auto_failed_body" >/dev/null
+auto_reset_after_failed=$(( auto_now + 70000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_after_failed" "$auto_now" \
+  > "$usage_limits_source"
+auto_failed_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_failed_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_SYSTEMCTL=failed PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "a failed future timer does not suppress automatic recovery" \
+  "$auto_failed_note" "Auto-resume armed"
+equal "the failed declaration is replaced by the fresh reset" \
+  "$auto_reset_after_failed" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+equal "and exactly one recovery timer is armed" \
+  "$(( auto_failed_arms_before + 1 ))" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
 
 # A GOOD AUTO-RESUME-ONLY SAMPLE ENDS A READER-FAILURE EPOCH even when usage

@@ -968,10 +968,19 @@ claude_bad_bound="$(PATH="$claude_bad_timeout:$PATH" \
   ' fixture "$claude_collar")"
 contains "Claude names an installed but incompatible bound runner" \
   "$claude_bad_bound" $'65\t'"collar 'claude-code' found a 'timeout' command"
-claude_missing_bound="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
-  '. "$1"; collar_usage_limits_error 64' fixture "$claude_collar")"
+claude_no_bound_runner="$RUN_ROOT/claude-no-bound-runner"
+mkdir -p "$claude_no_bound_runner"
+claude_shell="$(command -v bash)"
+claude_missing_bound="$(PATH="$claude_no_bound_runner" \
+  GANG_TEST_COLLARS='' ROOT="$ROOT" "$claude_shell" -c '
+    . "$1"
+    collar_usage_limits ignored >/dev/null 2>&1
+    rc=$?
+    printf "%s\t" "$rc"
+    collar_usage_limits_error "$rc"
+  ' fixture "$claude_collar")"
 contains "Claude names a missing bound runner" "$claude_missing_bound" \
-  "requires the 'timeout' command"
+  $'64\t'"collar 'claude-code' requires the 'timeout' command"
 
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"

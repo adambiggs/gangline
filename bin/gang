@@ -3825,6 +3825,27 @@ usage_limit_fail_record() { # $1 window, $2 operator-facing failure
   tmux set-option -w -t "$1" @gl_usage_failed "$note" 2>/dev/null || true
 }
 
+usage_wake_existing_authoritative() { # $1 window; 0 preserve, 1 replace
+  local record reset unit now state
+  record="$(usage_wake_read "$1")" || return 1
+  IFS=$'\t' read -r reset unit _ <<<"$record"
+  now="$(date +%s)"
+  [ "$reset" -gt "$now" ] || return 1
+
+  # A FUTURE DECLARATION IS PRESERVED UNLESS ITS TIMER IS PROVABLY DEAD.
+  # The user manager can disappear under the tmux server, leaving a shaped
+  # declaration whose inactive/failed timer cannot deliver it. That residue is
+  # not a wake and must not disable automatic arming for every later provider
+  # window. Conversely, an unreadable manager is not permission to cancel a
+  # possibly-live operator wake and discard its --resume body.
+  command -v systemctl >/dev/null 2>&1 || return 0
+  state="$(systemctl --user is-active "$unit.timer" 2>/dev/null)" || true
+  case "$state" in
+    inactive|failed) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   # THE SAMPLED RESET GOES THROUGH THE ONE ARMING TRANSACTION. Re-reading here
   # can cross a provider rollover: the threshold decision then belongs to reset
@@ -3836,20 +3857,19 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   # options have no compare-and-set; without this claim both processes can read
   # the old marker and arm the same reset. A killed holder is reclaimed by the
   # next hook, so no in-progress bit can wedge the window.
-  local armed name out rc=0 existing_rc=0
+  local armed name out rc=0
   event_claim auto-resume "$1" usage-wake || return 1
   armed="$(tmux show-options -wqv -t "$1" @gl_auto_resume_armed 2>/dev/null)" || armed=""
   if [ "$armed" = "$2" ]; then event_claim_release; return 1; fi
   name="$(agent_name_of "$1")"
-  usage_wake_read "$1" >/dev/null || existing_rc=$?
-  if [ "$existing_rc" -eq 0 ]; then
-    # A MANUAL WAKE IS THE OPERATOR'S DECISION. Re-entering the shared arm
-    # transaction would first cancel it and could silently discard --resume's
-    # body. Mark this provider window handled without touching the declaration,
-    # its transient unit, or its continuation.
+  if usage_wake_existing_authoritative "$1"; then
+    # Re-entering the shared arm transaction would first cancel this future
+    # wake and could silently discard --resume's body. Mark this provider
+    # window handled without touching the declaration, its transient unit, or
+    # its continuation. Dead and overdue residue does not take this branch.
     tmux set-option -w -t "$1" @gl_auto_resume_armed "$2" 2>/dev/null || true
     event_claim_release
-    printf 'Auto-resume left the existing provider-reset wake for %s unchanged at %s%% used; the operator-declared wake remains authoritative.' \
+    printf 'Auto-resume left the existing future provider-reset wake for %s unchanged at %s%% used; automatic arming will not override that wake.' \
       "$name" "$AUTO_RESUME_AT"
     return 0
   fi
