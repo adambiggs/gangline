@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Gangline — native coding agents in tmux</title>
-  <meta name="description" content="A local substrate for long-running teams of native CLI coding agents: tmux lifecycle, attributed verified delivery, observation, and native compaction.">
+  <title>Gangline — coding agents in one tmux session</title>
+  <meta name="description" content="Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux session. Send work by name, watch it land, keep agents going for hours. No daemon, no database.">
   <style>
     :root { color-scheme: light dark; --accent:#6ea8fe; --dim:#888; --rule:#7774; --code:#7771; }
     * { box-sizing:border-box; }
@@ -29,24 +29,21 @@
 <body>
 <main>
   <h1>gangline</h1>
-  <p class="tag">Native coding agents. One local tmux substrate.</p>
+  <p class="tag">Put your coding agents in one room.</p>
 
   <nav>
     <a href="#demo">demo</a>
     <a href="#start">start</a>
-    <a href="#surface">surface</a>
+    <a href="#surface">what it does</a>
     <a href="#long">long sessions</a>
     <a href="https://github.com/adambiggs/gangline">github</a>
   </nav>
 
   <p>Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one
-  tmux session. Each keeps its native terminal, tools, permissions,
-  subscription, and context. Gangline provides lifecycle, attributed verified
-  delivery, direct observation, and native compaction.</p>
+  tmux session, so they can hand each other work by name and you can watch the
+  whole thing happen.</p>
 
-  <p>It is substrate, not an agent coordinator. There is no task graph, role
-  doctrine, deadline manager, patrol, daemon, or database. The operator and
-  native harnesses remain in control.</p>
+  <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh</code></pre>
 
   <section id="demo">
     <h2>Demo</h2>
@@ -56,18 +53,21 @@
              aria-label="A Codex lead delegates work through Gangline to a Codex worker, receives its attributed report in a new turn, verifies the result, and returns idle.">
         <source src="demo.mp4" type="video/mp4">
       </video>
-      <p>One goal, two native Codex sessions. The worker's attributed report
-      starts the lead's next turn; delivery, pane output, and final state are
-      real.</p>
+      <p>One goal, two Codex sessions. The lead hands off the work, the worker
+      reports back under its own name, the lead checks the result and goes
+      quiet. Nothing here is re-enacted.</p>
     </div>
   </section>
 
   <section id="start">
     <h2>Start</h2>
-    <pre><code>curl -fsSL https://raw.githubusercontent.com/adambiggs/gangline/main/install.sh | sh
+    <p>Open a team in the repo the agents should work in. <code>gang up</code>
+    starts the lead and drops you into its window.</p>
 
-cd ~/your/repo
+    <pre><code>cd ~/your/repo
 gang up</code></pre>
+
+    <p>Add another agent and give it something to do.</p>
 
     <pre><code>gang hitch worker -c codex -d "$PWD"
 
@@ -79,49 +79,68 @@ gang roster</code></pre>
   </section>
 
   <section id="surface">
-    <h2>The surface</h2>
+    <h2>What it does</h2>
     <ul>
-      <li><code>gang up</code>, <code>gang hitch</code>, <code>gang adopt</code>,
-        <code>gang attach</code>, <code>gang drop</code>, and <code>gang down</code>
-        control native tmux windows.</li>
-      <li><code>gang send</code> derives the sender inside the team and reports success
-        only after the target composer visibly accepts and submits the message.</li>
-      <li><code>gang status</code>, <code>gang roster</code>, and
-        <code>gang capture</code> expose conservative current state.</li>
-      <li><code>gang compact</code> invokes the harness's own compaction mechanism.</li>
-      <li><code>gang curfew</code> declares one optional team deadline and exposes
-        yellow and red advisory edges without enforcing it.</li>
-      <li><code>gang collars</code> lists the available harness integrations.</li>
-      <li>Collars contain harness-specific launch syntax, native hooks, and TUI
-        observation. The core has no harness-name branches.</li>
+      <li><strong>Delivers work by name.</strong> A message is typed into that
+        agent's own terminal, signed with the sender's name. It reads like
+        anything else you would type there — no side channel, no protocol for
+        anyone to learn.</li>
+      <li><strong>Tells you it actually landed.</strong> A send counts as sent
+        only once the message is visibly in the composer and submitted. Gangline
+        will not type into a box it cannot read, or over a line you half
+        finished — the message waits for an opening it can verify instead of
+        landing in the middle of someone's work.</li>
+      <li><strong>Lets you read over their shoulder.</strong> Every agent is a
+        real tmux window. <code>gang attach</code> to watch one work,
+        <code>gang roster</code> to see who is busy and who is waiting.</li>
+      <li><strong>Adds and removes agents mid-run.</strong>
+        <code>gang hitch reviewer -c codex</code> opens another harness on the
+        same repo, and <code>gang drop reviewer</code> closes it again.</li>
+      <li><strong>Gets a run through the night.</strong> An agent watching its
+        context fill can compact at a checkpoint it chooses and carry on, and
+        one that spends its provider quota can be woken when that quota
+        resets.</li>
     </ul>
+
+    <p>What it deliberately isn't: there is no task graph, no supervisor, no
+    daemon, and no database. Gangline connects native agents; it does not manage
+    them. It hands out no work, chases nobody, enforces no deadline, and never
+    answers a permission prompt or loosens a harness's sandbox. Each agent keeps
+    the terminal, tools, permissions, and subscription it already had.</p>
   </section>
 
   <section id="long">
     <h2>Long sessions</h2>
-    <p>Agents get one short startup contract: their name, how to send an
-    attributed message, and how to request native compaction. Codex
-    self-compaction crosses its native Stop boundary so <code>/compact</code> is
-    submitted only after the requesting turn releases the composer.</p>
+    <p>A team that runs for hours hits two walls: the context window and the
+    provider limit. Gangline helps with both without taking the decision away
+    from the agent.</p>
 
-    <p>Optional context lights are off by default. Percentage thresholds let one
-    setting serve harnesses with different native windows; absolute token
-    thresholds remain available for one observed window. Keep both edges high,
-    but below the harness's observed automatic-compaction boundary:</p>
+    <p>Turn on context lights and an agent is told once when it crosses yellow
+    and once when it crosses red. What it does about that is its own call: when
+    it wants the room back it runs <code>gang compact</code>, which fires the
+    harness's real compaction command — the same one you would type yourself.
+    Set both edges high, but below the point where the harness would compact on
+    its own:</p>
 
     <pre><code>GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex</code></pre>
 
-    <p>The lights are advisory and edge-triggered. The agent decides when to
-    compact.</p>
+    <p>The provider limit is the other wall. When an agent's own usage crosses
+    the percentage you named, Gangline can set a one-shot wake for that window's
+    reset and send the agent back to work when it fires — so a team can carry on
+    across a limit with nobody at the keyboard:</p>
 
-    <p>A team may also declare a wall-clock curfew. Yellow appears halfway
-    through the declared span and red after four-fifths; nothing stops
+    <pre><code>GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code</code></pre>
+
+    <p>If you want the team to know the clock, declare one curfew. Yellow lands
+    halfway through the span and red after four-fifths, and agents whose harness
+    reports its own turn boundaries are told once at each edge. Nothing stops
     automatically.</p>
 
     <pre><code>gang curfew 2h</code></pre>
   </section>
 
-  <p class="dim">One Bash CLI over tmux. State dies with its window or team.</p>
+  <p class="dim">One Bash script over tmux. State dies with its window or
+  team.</p>
 
   <footer>
     <a href="https://github.com/adambiggs/gangline">source</a> ·
