@@ -2972,24 +2972,25 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
 # witness of the same kind for the same window IS the duplicate the debounce
 # suppresses. The key is window AND kind, so a different kind is never held up
 # behind one that is already in flight.
-STALL_CLAIM=""
-stall_claim() { # $1 raising window, $2 kind; 0 = this process owns the decision
-  local base path holder
+EVENT_CLAIM=""
+event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decision
+  local family="$1" base path holder
+  case "$family" in stall|auto-resume) ;; *) return 1 ;; esac
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
   lock_base "$base" || return 1
   lock_self_pid
-  path="$base/stall-$(printf '%s' "$1-$2" | tr -c 'A-Za-z0-9' '_').claim"
-  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null && { STALL_CLAIM="$path"; return 0; }
+  path="$base/$family-$(printf '%s' "$2-$3" | tr -c 'A-Za-z0-9' '_').claim"
+  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null && { EVENT_CLAIM="$path"; return 0; }
   [ -L "$path" ] || return 1
   holder="$(readlink "$path" 2>/dev/null)" || holder=""
   case "$holder" in ''|*[!0-9]*) return 1 ;; esac
   ! kill -0 "$holder" 2>/dev/null || return 1   # a live note of this kind is in flight
   rm -f -- "$path"
   ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null || return 1
-  STALL_CLAIM="$path"
+  EVENT_CLAIM="$path"
 }
 
-stall_claim_release() { [ -z "$STALL_CLAIM" ] || rm -f -- "$STALL_CLAIM"; STALL_CLAIM=""; }
+event_claim_release() { [ -z "$EVENT_CLAIM" ] || rm -f -- "$EVENT_CLAIM"; EVENT_CLAIM=""; }
 
 stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
   local raising="$1" raising_win="" kind="$2" notify target
@@ -3009,9 +3010,9 @@ stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
     return 0
   }
   [ "$target" != "$raising_win" ] || return 0
-  stall_claim "$raising_win" "$kind" || return 0
+  event_claim stall "$raising_win" "$kind" || return 0
   stall_note_claimed "$raising" "$raising_win" "$kind" "$notify" "$target" || true
-  stall_claim_release
+  event_claim_release
   return 0
 }
 
@@ -3609,6 +3610,157 @@ auto_resume_for() { # $1 = window; load its hitch-time setting
   auto_resume_parse "${spec:-off}"
 }
 
+auto_resume_failed_write() { # $1 window, rest = operator-facing failure
+  local win="$1"; shift
+  local note
+  note="$(printf '%s' "$*" | config_sanitize)"
+  tmux set-option -w -t "$win" @gl_auto_resume_failed "$note" 2>/dev/null || true
+}
+
+auto_resume_prompt_witness() { # $1 pane, $2 collar, $3 UserPromptSubmit payload
+  local pending submitted="" rc=0
+  auto_resume_for "$1" || return 0
+  pending="$(tmux show-options -wqv -t "$1" @gl_auto_resume_prompt 2>/dev/null)" \
+    || pending=""
+  if [ -z "$pending" ]; then
+    # A prompt with no Gangline-owned marker starts a new operator/agent turn.
+    # It repairs a previous one-hop refusal; only the failed automatic turn was
+    # closed, not auto-resume for the rest of the window's lifetime.
+    tmux set-option -uw -t "$1" @gl_auto_resume_own_turn 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_auto_resume_failed 2>/dev/null || true
+    return 0
+  fi
+  load_collar "$2"
+  if ! declare -F collar_auto_resume_prompt >/dev/null; then
+    rc=2
+  else
+    submitted="$(collar_auto_resume_prompt "$1" "$3")" || rc=$?
+  fi
+  tmux set-option -uw -t "$1" @gl_auto_resume_prompt 2>/dev/null || true
+  if [ "$rc" -eq 0 ] && [ "$submitted" = "$pending" ]; then
+    tmux set-option -w -t "$1" @gl_auto_resume_own_turn 1 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_auto_resume_failed 2>/dev/null || true
+    return 0
+  fi
+  # FAIL CLOSED FOR THIS TURN. A missing/changed prompt field makes "Gangline's
+  # continuation" and "somebody else's prompt" indistinguishable. Treating it
+  # as somebody else's is the branch that can create an unattended retry chain.
+  tmux set-option -w -t "$1" @gl_auto_resume_own_turn unknown 2>/dev/null || true
+  auto_resume_failed_write "$1" \
+    "the native prompt event could not be matched byte-for-byte to Gangline's marked continuation; this turn will not be auto-resumed if it fails"
+}
+
+auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resumed
+  local pane="$1" collar="$2" kind="$3" record="" record_rc=0 window="" handled=""
+  local own="" pending="" name body err="" rc=0
+  auto_resume_for "$pane" || return 1
+  load_collar "$collar"
+  declare -F collar_auto_resume_record >/dev/null || return 1
+  record="$(collar_auto_resume_record "$pane" "$kind")" || record_rc=$?
+  case "$record_rc" in
+    0) ;;
+    1) return 1 ;; # ordinary idle: the newest top-level assistant record succeeded
+    2) auto_resume_failed_write "$pane" \
+         "the idle notification's native transcript could not be read structurally, so Gangline cannot determine whether the turn failed and will not auto-resume it"
+       return 1 ;;
+    *) auto_resume_failed_write "$pane" \
+         "the collar returned an unknown failed-turn verdict ($record_rc), so Gangline will not auto-resume it"
+       return 1 ;;
+  esac
+  case "$record" in ''|*[!A-Za-z0-9._:-]*)
+    auto_resume_failed_write "$pane" \
+      "the collar returned an unreadable failed-turn identity, so Gangline will not auto-resume it"
+    return 1 ;;
+  esac
+  window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" || window=""
+  [ -n "$window" ] || return 1
+  event_claim auto-resume "$window" "stream-$record" || return 1
+  handled="$(tmux show-options -wqv -t "$window" @gl_auto_resume_error 2>/dev/null)" \
+    || handled=""
+  if [ "$handled" = "$record" ]; then event_claim_release; return 1; fi
+  # THE ERROR RECORD PLUS IDLE NOTIFICATION IS THE MISSING TURN BOUNDARY. Claude
+  # emits no Stop for this path, so the old open bracket would make ordinary
+  # verified delivery refuse the very composer the harness has declared idle.
+  # Close only after the record claim and duplicate check: a repeated old
+  # notification must not close the automatic continuation now in flight.
+  turn_state_write "$window" closed
+  glyph_write "$window" "~idle~"
+  own="$(tmux show-options -wqv -t "$window" @gl_auto_resume_own_turn 2>/dev/null)" \
+    || own=""
+  pending="$(tmux show-options -wqv -t "$window" @gl_auto_resume_prompt 2>/dev/null)" \
+    || pending=""
+  if [ "$own" = 1 ]; then
+    tmux set-option -w -t "$window" @gl_auto_resume_error "$record" 2>/dev/null || true
+    tmux set-option -uw -t "$window" @gl_auto_resume_own_turn 2>/dev/null || true
+    tmux set-option -uw -t "$window" @gl_auto_resume_prompt 2>/dev/null || true
+    auto_resume_failed_write "$window" \
+      "Gangline's one automatic continuation also ended in a provider API error; the one-hop guard refused another continuation for record $record"
+    event_claim_release
+    return 1
+  fi
+  if [ -n "$pending" ] || [ -n "$own" ]; then
+    tmux set-option -w -t "$window" @gl_auto_resume_error "$record" 2>/dev/null || true
+    tmux set-option -uw -t "$window" @gl_auto_resume_own_turn 2>/dev/null || true
+    tmux set-option -uw -t "$window" @gl_auto_resume_prompt 2>/dev/null || true
+    auto_resume_failed_write "$window" \
+      "Gangline could not positively determine whether failed record $record belongs to its own continuation; the fail-closed one-hop guard refused another continuation"
+    event_claim_release
+    return 1
+  fi
+
+  name="$(agent_name_of "$window")"
+  body="A provider stream failure ended the previous turn. Re-read your assignment and continue only if work remains. Treat any action whose result you did not observe as unknown before repeating it."
+  AGENT_ID="$window" AGENT_COLLAR="$collar"
+  envelope auto-resume "$body"
+  # THE ENVELOPE IS THE OWNED MARKER. It is the exact attributed continuation
+  # Gangline submits and is already visible to the receiving agent; keeping it
+  # on the window until UserPromptSubmit compares the native prompt avoids
+  # inferring ownership from event timing or prose.
+  tmux set-option -w -t "$window" @gl_auto_resume_prompt "$ENVELOPE" 2>/dev/null || {
+    auto_resume_failed_write "$window" \
+      "Gangline could not record its continuation marker, so the fail-closed one-hop guard refused to submit record $record"
+    event_claim_release
+    return 1
+  }
+  err="$(send_live "$name" "" live-only 2>&1)" || rc=$?
+  err="${err##*$'\n'}"
+  case "$rc" in
+    0)
+      tmux set-option -w -t "$window" @gl_auto_resume_error "$record" 2>/dev/null || true
+      pending="$(tmux show-options -wqv -t "$window" @gl_auto_resume_prompt 2>/dev/null)" \
+        || pending=""
+      own="$(tmux show-options -wqv -t "$window" @gl_auto_resume_own_turn 2>/dev/null)" \
+        || own=""
+      if [ -n "$pending" ]; then
+        auto_resume_failed_write "$window" \
+          "the continuation for failed record $record was submitted, but no matching native prompt marker has been witnessed yet; any failure is fail-closed until it is"
+      elif [ "$own" != 1 ]; then
+        auto_resume_failed_write "$window" \
+          "the continuation for failed record $record was submitted, but its native prompt ownership is unverified; any failure is fail-closed"
+      else
+        tmux set-option -uw -t "$window" @gl_auto_resume_failed 2>/dev/null || true
+      fi
+      event_claim_release
+      return 0 ;;
+    3)
+      tmux set-option -uw -t "$window" @gl_auto_resume_prompt 2>/dev/null || true
+      auto_resume_failed_write "$window" \
+        "the continuation for failed record $record was not submitted: ${err:-the composer was not safely reachable}; a later idle notification may retry it"
+      event_claim_release
+      return 1 ;;
+    *)
+      # Something may have been typed. Close this record rather than risk a
+      # duplicate, and leave ownership unknown so a resulting failure cannot
+      # open the second hop.
+      tmux set-option -w -t "$window" @gl_auto_resume_error "$record" 2>/dev/null || true
+      tmux set-option -w -t "$window" @gl_auto_resume_own_turn unknown 2>/dev/null || true
+      auto_resume_failed_write "$window" \
+        "the continuation for failed record $record was not verified after submission began: ${err:-delivery failed}; Gangline will not send it again"
+      event_claim_release
+      return 1 ;;
+  esac
+}
+
 USAGE_LIMIT_LABEL="" USAGE_LIMIT_USED=0 USAGE_LIMIT_RESET=0 USAGE_LIMIT_OBSERVED=0 USAGE_LIMIT_ROWS=""
 usage_limits_read() { # $1 window, collar loaded; select the most constrained row
   local rows line label used reset observed fields clean_rows="" best_used=-1 best_reset=-1 found=0 now
@@ -3675,18 +3827,22 @@ usage_limit_fail_record() { # $1 window, $2 operator-facing failure
 }
 
 auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
-  # ARMING RE-ENTERS THE CLI RATHER THAN COPYING IT. `gang wait-limit` holds the
-  # whole ordering a wake depends on — stop the derived unit and prove it gone,
-  # write the declaration before systemd-run so a reset arriving during arming
-  # is still delivered, clear both options if arming refuses. A second in-process
-  # copy of that sequence is a copy that can drift from it, and this one would
-  # run unattended where nobody is reading. The cost is one extra native limit
-  # read, which the marker below spends once per provider window.
+  # THE SAMPLED RESET GOES THROUGH THE ONE ARMING TRANSACTION. Re-reading here
+  # can cross a provider rollover: the threshold decision then belongs to reset
+  # A while wait-limit arms B, and a marker for A permits B to be armed again.
+  # usage_wake_arm is also the manual command's implementation, so preserving
+  # one reading does not create a second copy of its ordering discipline.
+  #
+  # THE MARKER CHECK AND ARM ARE ONE CLAIM. Native hooks can overlap, and tmux
+  # options have no compare-and-set; without this claim both processes can read
+  # the old marker and arm the same reset. A killed holder is reclaimed by the
+  # next hook, so no in-progress bit can wedge the window.
   local armed name out rc=0
+  event_claim auto-resume "$1" usage-wake || return 1
   armed="$(tmux show-options -wqv -t "$1" @gl_auto_resume_armed 2>/dev/null)" || armed=""
-  [ "$armed" != "$2" ] || return 1
+  if [ "$armed" = "$2" ]; then event_claim_release; return 1; fi
   name="$(agent_name_of "$1")"
-  out="$("$ROOT/bin/gang" wait-limit "$name" 2>&1)" || rc=$?
+  out="$(usage_wake_arm "$1" "$name" "" 2>&1)" || rc=$?
   # BOTH TERMINAL OUTCOMES CLOSE THE WINDOW. A refusal that left no marker would
   # relaunch a headless provider read at every sample for as long as the agent
   # stayed above the threshold, and would repeat itself into every turn. It is
@@ -3696,11 +3852,14 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   tmux set-option -w -t "$1" @gl_auto_resume_armed "$2" 2>/dev/null || true
   out="$(printf '%s' "$out" | config_sanitize)"
   if [ "$rc" -eq 0 ]; then
+    event_claim_release
     printf 'Auto-resume armed at %s%% used: %s' "$AUTO_RESUME_AT" "$out"
     return 0
   fi
+  tmux set-option -uw -t "$1" @gl_usage_wake_failed_unit 2>/dev/null || true
   tmux set-option -w -t "$1" @gl_usage_wake_failed \
     "auto-resume could not arm a wake: $out" 2>/dev/null || true
+  event_claim_release
   printf 'Auto-resume could NOT arm a provider-reset wake: %s. Nothing is scheduled; arm it by hand with gang wait-limit %s.' \
     "$out" "$name"
   return 2
@@ -4765,6 +4924,7 @@ usage_wake_cancel() { # $1 window, $2 loud|quiet
   tmux set-option -uw -t "$1" @gl_usage_wake 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_body 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_usage_wake_failed 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_usage_wake_failed_unit 2>/dev/null || true
   [ "$gone" -eq 1 ] || return 0
   trouble="$USAGE_UNIT_TROUBLE" recover="$USAGE_UNIT_RECOVER"
   [ "$2" = quiet ] \
@@ -4804,18 +4964,105 @@ usage_wake_fire() { # $1 name, $2 exact reset, $3 the unit systemd is running
     tmux set-option -uw -t "$id" @gl_usage_wake 2>/dev/null || true
     tmux set-option -uw -t "$id" @gl_usage_wake_body 2>/dev/null || true
     tmux set-option -uw -t "$id" @gl_usage_wake_failed 2>/dev/null || true
+    tmux set-option -uw -t "$id" @gl_usage_wake_failed_unit 2>/dev/null || true
     printf '%s\n' "$err"
     return 0
   fi
   err="$(printf '%s' "$err" | config_sanitize)"
   tmux set-option -w -t "$id" @gl_usage_wake_failed \
     "reset arrived but the resume turn was NOT accepted: $err" 2>/dev/null || true
+  tmux set-option -w -t "$id" @gl_usage_wake_failed_unit "$unit" 2>/dev/null || true
   printf 'gang: wait-limit fire failed for %s: %s\n' "$name" "$err" >&2
   return 1
 }
 
+usage_wake_arm() { # $1 window, $2 name, $3 optional body; selected usage globals set
+  local id="$1" name="$2" resume="$3" now unit record reset state wake_rc=0 rc=0 fired=0 failure_unit
+  now="$(date +%s)"
+  [ "$USAGE_LIMIT_RESET" -gt "$now" ] \
+    || die "wait-limit: the most constrained native reading ($USAGE_LIMIT_LABEL at ${USAGE_LIMIT_USED}% used) reset already passed; wait for the harness to publish a fresh provider-limit event"
+  command -v systemd-run >/dev/null 2>&1 \
+    || die "wait-limit: systemd-run is required for a transient user timer; no timer was created"
+  usage_wake_cancel "$id" loud
+  unit="$(usage_wake_unit "$id" "$USAGE_LIMIT_RESET")"
+  # THE UNIT NAME IS DERIVED, NOT REMEMBERED. usage_wake_cancel above stopped
+  # whatever the STORED declaration named; this is the name the new timer will
+  # take, and a previous arming of this window at this reset derived exactly it.
+  # If that one lost its declaration — cleared by hand, or a fired callback that
+  # could not deliver — nothing above has seen it, and it can still run a
+  # callback under this name. It has to be gone before a declaration naming it
+  # exists, because the callback's only test is that name.
+  usage_unit_stop "$unit" \
+    || die "wait-limit: $USAGE_UNIT_TROUBLE, so no wake was scheduled under that name; recover with: $USAGE_UNIT_RECOVER"
+  # THE DECLARATION IS WRITTEN BEFORE THE TIMER IS ARMED, body first.
+  # `systemd-run` returns when the start job is queued, not while the calendar
+  # time is still in the future: a reset that arrives during arming runs the
+  # callback before this function returns. A callback that finds no declaration
+  # consumes nothing and says nothing, and the declaration written after it
+  # would then promise a wake that has already been thrown away. Writing first
+  # makes that callback deliver the wake it was armed for.
+  #
+  # Body first so a callback can never find a declaration whose resume turn has
+  # not been stored yet, and take the default instead of the one the caller
+  # asked for.
+  if [ -n "$resume" ]; then
+    tmux set-option -w -t "$id" @gl_usage_wake_body "$resume" || wake_rc=$?
+    [ "$wake_rc" -eq 0 ] \
+      || die "wait-limit: the resume turn could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
+  else
+    tmux set-option -uw -t "$id" @gl_usage_wake_body 2>/dev/null || true
+  fi
+  tmux set-option -w -t "$id" @gl_usage_wake \
+    "$USAGE_LIMIT_RESET"$'\t'"$unit"$'\t'"$USAGE_LIMIT_LABEL" || wake_rc=$?
+  if [ "$wake_rc" -ne 0 ]; then
+    tmux set-option -uw -t "$id" @gl_usage_wake_body 2>/dev/null || true
+    die "wait-limit: the wake declaration could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
+  fi
+  local -a timer=(systemd-run --user --collect --unit="$unit"
+    --on-calendar="@$USAGE_LIMIT_RESET" --timer-property=AccuracySec=1s
+    --property=Type=oneshot --setenv="GANG_SESSION=$SESSION"
+    --setenv="GANG_CONFIG_DIR=$CONFIG_DIR" --setenv="PATH=$PATH")
+  [ -z "${TMUX:-}" ] || timer+=(--setenv="TMUX=$TMUX")
+  [ -z "${TMUX_TMPDIR:-}" ] || timer+=(--setenv="TMUX_TMPDIR=$TMUX_TMPDIR")
+  [ -z "${GANG_COLLARS:-}" ] || timer+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
+  [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
+  [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
+  timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET" --unit "$unit")
+  if ! "${timer[@]}" >/dev/null; then
+    # NOTHING IS ARMED, SO NOTHING MAY STILL BE PROMISED. The declaration exists
+    # at this point by design; arming refused, so it goes.
+    tmux set-option -uw -t "$id" @gl_usage_wake 2>/dev/null || true
+    tmux set-option -uw -t "$id" @gl_usage_wake_body 2>/dev/null || true
+    die "wait-limit: systemd-run did not accept the transient timer; no wake is scheduled"
+  fi
+  # A FAILED CALLBACK FROM THIS UNIT IS CURRENT, NOT THE STALE FAILURE THIS ARM
+  # supersedes. The callback stamps its unit beside the prose, so an accepted
+  # later arm can clear an old alarm without racing a reset that arrived inside
+  # systemd-run and failed to deliver.
+  failure_unit="$(tmux show-options -wqv -t "$id" @gl_usage_wake_failed_unit 2>/dev/null)" || failure_unit=""
+  if [ "$failure_unit" != "$unit" ]; then
+    tmux set-option -uw -t "$id" @gl_usage_wake_failed 2>/dev/null || true
+    tmux set-option -uw -t "$id" @gl_usage_wake_failed_unit 2>/dev/null || true
+  fi
+  # A RESET THAT ARRIVED DURING ARMING HAS ALREADY BEEN ANSWERED. The callback
+  # ran against the declaration written above and consumed it, so calling this
+  # a scheduled wake would name a timer that has already fired.
+  usage_wake_read "$id" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -ne 1 ] || fired=1
+  if usage_lights_for "$id"; then state="$(usage_limit_state)"; else state=sampled; fi
+  usage_limit_record "$id" "$state" || true
+  reset="$(usage_limit_format_epoch "$USAGE_LIMIT_RESET")"
+  if [ "$fired" -eq 1 ]; then
+    printf "%s reset at %s while the timer was being armed; the resume turn was delivered to %s rather than scheduled\n" \
+      "$USAGE_LIMIT_LABEL" "$reset" "$name"
+    return
+  fi
+  printf "provider-reset wake scheduled for %s at %s (%s, %s%% used)\n" \
+    "$name" "$reset" "$USAGE_LIMIT_LABEL" "$USAGE_LIMIT_USED"
+}
+
 cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
-  local name="" resume="" clear=0 fire="" fired_unit="" fired=0 rc=0 cause now unit record reset state legacy_id wake_rc
+  local name="" resume="" clear=0 fire="" fired_unit="" rc=0 cause record legacy_id
   case "${1:-}" in ''|-*) ;; *) name="$1"; shift ;; esac
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "wait-limit: --resume needs a value"
@@ -4846,6 +5093,7 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
       legacy_id="$(win_id "$name")" || legacy_id=""
       [ -z "$legacy_id" ] || tmux set-option -w -t "$legacy_id" @gl_usage_wake_failed \
         "reset arrived, but the timer predates 2.0 and named no unit, so the wake was refused; reschedule it with: gang wait-limit $name" 2>/dev/null || true
+      [ -z "$legacy_id" ] || tmux set-option -uw -t "$legacy_id" @gl_usage_wake_failed_unit 2>/dev/null || true
       die "wait-limit: --fire requires the --unit that armed it, so a stale timer cannot consume another declaration"
     fi
     usage_wake_fire "$name" "$fire" "$fired_unit"
@@ -4867,80 +5115,7 @@ cmd_wait_limit() { # schedule, clear, or internally fire one provider-reset wake
     usage_limit_fail_record "$AGENT_ID" "$cause"
     die "wait-limit: $cause"
   fi
-  now="$(date +%s)"
-  [ "$USAGE_LIMIT_RESET" -gt "$now" ] \
-    || die "wait-limit: the most constrained native reading ($USAGE_LIMIT_LABEL at ${USAGE_LIMIT_USED}% used) reset already passed; wait for the harness to publish a fresh provider-limit event"
-  command -v systemd-run >/dev/null 2>&1 \
-    || die "wait-limit: systemd-run is required for a transient user timer; no timer was created"
-  usage_wake_cancel "$AGENT_ID" loud
-  unit="$(usage_wake_unit "$AGENT_ID" "$USAGE_LIMIT_RESET")"
-  # THE UNIT NAME IS DERIVED, NOT REMEMBERED. usage_wake_cancel above stopped
-  # whatever the STORED declaration named; this is the name the new timer will
-  # take, and a previous arming of this window at this reset derived exactly it.
-  # If that one lost its declaration — cleared by hand, or a fired callback that
-  # could not deliver — nothing above has seen it, and it can still run a
-  # callback under this name. It has to be gone before a declaration naming it
-  # exists, because the callback's only test is that name.
-  usage_unit_stop "$unit" \
-    || die "wait-limit: $USAGE_UNIT_TROUBLE, so no wake was scheduled under that name; recover with: $USAGE_UNIT_RECOVER"
-  # THE DECLARATION IS WRITTEN BEFORE THE TIMER IS ARMED, body first.
-  # `systemd-run` returns when the start job is queued, not while the calendar
-  # time is still in the future: a reset that arrives during arming runs the
-  # callback before this function returns. A callback that finds no declaration
-  # consumes nothing and says nothing, and the declaration written after it
-  # would then promise a wake that has already been thrown away. Writing first
-  # makes that callback deliver the wake it was armed for.
-  #
-  # Body first so a callback can never find a declaration whose resume turn has
-  # not been stored yet, and take the default instead of the one the caller
-  # asked for.
-  wake_rc=0
-  if [ -n "$resume" ]; then
-    tmux set-option -w -t "$AGENT_ID" @gl_usage_wake_body "$resume" || wake_rc=$?
-    [ "$wake_rc" -eq 0 ] \
-      || die "wait-limit: the resume turn could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
-  else
-    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
-  fi
-  tmux set-option -w -t "$AGENT_ID" @gl_usage_wake \
-    "$USAGE_LIMIT_RESET"$'\t'"$unit"$'\t'"$USAGE_LIMIT_LABEL" || wake_rc=$?
-  if [ "$wake_rc" -ne 0 ]; then
-    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
-    die "wait-limit: the wake declaration could not be stored on $name (tmux set-option exited $wake_rc); no wake was scheduled"
-  fi
-  local -a timer=(systemd-run --user --collect --unit="$unit"
-    --on-calendar="@$USAGE_LIMIT_RESET" --timer-property=AccuracySec=1s
-    --property=Type=oneshot --setenv="GANG_SESSION=$SESSION"
-    --setenv="GANG_CONFIG_DIR=$CONFIG_DIR" --setenv="PATH=$PATH")
-  [ -z "${TMUX:-}" ] || timer+=(--setenv="TMUX=$TMUX")
-  [ -z "${TMUX_TMPDIR:-}" ] || timer+=(--setenv="TMUX_TMPDIR=$TMUX_TMPDIR")
-  [ -z "${GANG_COLLARS:-}" ] || timer+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
-  [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
-  [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
-  timer+=("$ROOT/bin/gang" wait-limit "$name" --fire "$USAGE_LIMIT_RESET" --unit "$unit")
-  if ! "${timer[@]}" >/dev/null; then
-    # NOTHING IS ARMED, SO NOTHING MAY STILL BE PROMISED. The declaration exists
-    # at this point by design; arming refused, so it goes.
-    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake 2>/dev/null || true
-    tmux set-option -uw -t "$AGENT_ID" @gl_usage_wake_body 2>/dev/null || true
-    die "wait-limit: systemd-run did not accept the transient timer; no wake is scheduled"
-  fi
-  # A RESET THAT ARRIVED DURING ARMING HAS ALREADY BEEN ANSWERED. The callback
-  # ran against the declaration written above and consumed it, so calling this
-  # a scheduled wake would name a timer that has already fired.
-  rc=0
-  usage_wake_read "$AGENT_ID" >/dev/null 2>&1 || rc=$?
-  [ "$rc" -ne 1 ] || fired=1
-  if usage_lights_for "$AGENT_ID"; then state="$(usage_limit_state)"; else state=sampled; fi
-  usage_limit_record "$AGENT_ID" "$state" || true
-  reset="$(usage_limit_format_epoch "$USAGE_LIMIT_RESET")"
-  if [ "$fired" -eq 1 ]; then
-    printf "%s reset at %s while the timer was being armed; the resume turn was delivered to %s rather than scheduled\n" \
-      "$USAGE_LIMIT_LABEL" "$reset" "$name"
-    return
-  fi
-  printf "provider-reset wake scheduled for %s at %s (%s, %s%% used)\n" \
-    "$name" "$reset" "$USAGE_LIMIT_LABEL" "$USAGE_LIMIT_USED"
+  usage_wake_arm "$AGENT_ID" "$name" "$resume"
 }
 
 glyph_write() { # $1 = window id, $2 = state phrase
@@ -5323,7 +5498,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed hook_failed mismatch skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch skew="" current
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -5387,6 +5562,9 @@ cmd_status() {
   stall_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_stall_failed)"
   [ -z "$stall_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "stall note NOT accepted: $stall_failed")"
+  auto_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_auto_resume_failed)"
+  [ -z "$auto_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "automatic resume refused: $auto_failed")"
   hook_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_hook_failed)"
   [ -z "$hook_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "native event NOT interpreted: $hook_failed")"
@@ -5599,6 +5777,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
     || detail="$detail stall-note-failed"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_auto_resume_failed)" ] \
+    || detail="$detail auto-resume-failed"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_hook_failed)" ] \
     || detail="$detail hook-failed"
   usage_record="$(usage_limit_record_read "$1")" || usage_rc=$?
@@ -5732,6 +5912,9 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   collar="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
   [ -n "$collar" ] || exit 0
   hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
+  if [ "$event" = UserPromptSubmit ]; then
+    ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
+  fi
   if [ "$event" = Notification ]; then
     kind="$(printf '%s' "$payload" \
       | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
@@ -5796,9 +5979,14 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
                        glyph_write "$TMUX_PANE" "!occupied!"
                        stall_note "$TMUX_PANE" permission_prompt ;;
     Notification) ( load_collar "$collar"
-                    case " $GANG_STALL_TYPES " in
-                      *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
-                    esac
+                    resumed=0
+                    auto_resume_stream_note "$TMUX_PANE" "$collar" "$kind" \
+                      && resumed=1
+                    if [ "$resumed" -eq 0 ]; then
+                      case " $GANG_STALL_TYPES " in
+                        *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
+                      esac
+                    fi
                   ) || true ;;
   esac
   case "$event" in

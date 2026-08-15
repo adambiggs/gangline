@@ -79,12 +79,77 @@ GANG_STALL_TYPES="permission_prompt idle_prompt elicitation_dialog agent_needs_i
 # rather than a gap.
 
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
-  printf '%s' "$2" | python3 -c '
+  local value transcript
+  value="$(printf '%s' "$2" | python3 -c '
 import json, sys
 value = json.load(sys.stdin).get("session_id", "")
 if not isinstance(value, str) or not value:
     raise SystemExit(1)
 print(value)
+')" || return 1
+  transcript="$(printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("transcript_path")
+if value is None:
+    raise SystemExit(0)
+if not isinstance(value, str):
+    raise SystemExit(1)
+print(value, end="")
+')" || return 1
+  if [ -n "$transcript" ]; then
+    tmux set-option -w -t "$1" @gl_session "$transcript" || return 1
+  fi
+  printf '%s\n' "$value"
+}
+
+claude_session_file() { # $1 = tmux target -> hook-bound transcript path
+  local file
+  file="$(tmux show-options -wqv -t "$1" @gl_session)" || file=""
+  [ -n "$file" ] && [ -f "$file" ] || return 1
+  printf '%s' "$file"
+}
+
+collar_auto_resume_record() { # $1 target, $2 Notification kind -> failed-turn UUID
+  local file
+  [ "$2" = idle_prompt ] || return 1
+  file="$(claude_session_file "$1")" || return 2
+  python3 - "$file" <<'PY'
+import json
+import sys
+
+latest = None
+try:
+    with open(sys.argv[1], encoding="utf-8") as transcript:
+        for raw in transcript:
+            if not raw.strip():
+                continue
+            record = json.loads(raw)
+            if not isinstance(record, dict):
+                raise ValueError("record is not an object")
+            if record.get("type") == "assistant" and record.get("isSidechain") is not True:
+                latest = record
+except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+    raise SystemExit(2)
+
+if latest is None:
+    raise SystemExit(1)
+error = latest.get("error")
+record_id = latest.get("uuid")
+if latest.get("isApiErrorMessage") is not True or not isinstance(error, str) or not error:
+    raise SystemExit(1)
+if not isinstance(record_id, str) or not record_id:
+    raise SystemExit(2)
+print(record_id)
+PY
+}
+
+collar_auto_resume_prompt() { # $1 target unused, $2 UserPromptSubmit payload
+  printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("prompt")
+if not isinstance(value, str) or not value:
+    raise SystemExit(2)
+print(value, end="")
 '
 }
 # REASONING EFFORT. The option includes its separator because bin/gang joins it
@@ -155,7 +220,11 @@ GANG_USAGE_LIGHT_INTERVAL=60
 # carries percent used, a reset wall clock, and its IANA timezone.
 collar_usage_limits() { # $1 = unused target; print label<TAB>used<TAB>reset<TAB>observed
   local output
-  output="$(claude -p '/usage')" || return 1
+  # This reader runs inside native hooks when lights or auto-resume are enabled.
+  # A wedged headless harness must return a loud unavailable reading instead of
+  # holding the hook forever; timeout is the process boundary, not a retry.
+  command -v timeout >/dev/null 2>&1 || return 1
+  output="$(timeout --foreground 60 claude -p '/usage')" || return 1
   printf '%s\n' "$output" | python3 -c '
 from datetime import datetime, timedelta
 import re

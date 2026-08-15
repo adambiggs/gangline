@@ -844,6 +844,7 @@ equal "an invalid provider-usage spec opens no window" "" \
 # firing is then driven directly against the already-established reset state.
 usage_timer_bin="$RUN_ROOT/usage-timer-bin"
 usage_timer_args="$RUN_ROOT/usage-timer.args"
+usage_timer_arms="$RUN_ROOT/usage-timer.arms"
 usage_timer_stops="$RUN_ROOT/usage-timer.stops"
 usage_timer_predecl="$RUN_ROOT/usage-timer.predecl"
 usage_real_date="$(command -v date)"
@@ -872,6 +873,12 @@ if [ -n "\${GANG_TEST_SYSTEMD_RUN_FAIL:-}" ]; then
   exit 9
 fi
 printf '%s\n' "\$@" > "$usage_timer_args"
+printf 'arm\n' >> "$usage_timer_arms"
+if [ -n "\${GANG_TEST_ROLL_USAGE_RESET:-}" ]; then
+  printf '%s\t%s\t%s\t%s\n' "Current session" 97 \
+    "\$GANG_TEST_ROLL_USAGE_RESET" "\$GANG_TEST_ROLL_USAGE_NOW" \
+    > "$usage_limits_source"
+fi
 # THE ORDER IS WITNESSED FROM INSIDE THE ARMING. A declaration that already
 # exists at this instant is a promise of a wake made before anything was armed
 # to keep it — and an older callback that is still live reads it in exactly
@@ -887,6 +894,10 @@ if [ -n "\${GANG_TEST_FIRE_INSIDE:-}" ]; then
   GANG_TEST_NOW="\$GANG_TEST_FIRE_INSIDE" sh -c 'exec "\$@"' _ \
     \$(tail -n 7 "$usage_timer_args")
 fi
+if [ -n "\${GANG_TEST_ARM_INSIDE:-}" ]; then
+  tmux wait-for -S "\$GANG_TEST_ARM_INSIDE"
+  tmux wait-for "\$GANG_TEST_ARM_RELEASE"
+fi
 SH
 # The fake systemctl is a state machine, not a yes-man: a committed fixture
 # where every stop succeeds cannot tell a unit that is gone from one that is
@@ -899,6 +910,8 @@ case "\${GANG_TEST_SYSTEMCTL:-ok}" in
     case "\$*" in *is-active*) echo inactive; exit 3 ;; *) exit 5 ;; esac ;;
   armed) # a pending transient timer: waiting for its calendar time is active
     case "\$*" in *is-active*) echo active; exit 0 ;; *) exit 0 ;; esac ;;
+  failed) # a timer whose service failed is just as unable to keep the promise
+    case "\$*" in *is-active*) echo failed; exit 3 ;; *) exit 5 ;; esac ;;
   stuck) # the stop failed and the unit is still running
     case "\$*" in *is-active*) echo active; exit 0 ;; *) exit 5 ;; esac ;;
   blind) # THE QUERY ITSELF CANNOT RUN — no user bus, no manager to answer.
@@ -1148,11 +1161,62 @@ equal "and the window it decided for is recorded against re-arming" \
   "$auto_reset" "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
 contains "through gang's own arming path rather than a second copy of it" \
   "$(<"$usage_timer_args")" "--collect"
-# ONE EXTRA NATIVE READ, NOT NONE AND NOT ONE PER SAMPLE. Re-entering the CLI
-# costs a second reading of the collar's source; that cost is the evidence that
-# the arming ran through wait-limit instead of an in-process shortcut.
-equal "arming spends exactly one extra native read" "2" \
+# ONE NATIVE READ MAKES BOTH THE DECISION AND THE ARM. A second read can cross
+# the reset boundary and arm one provider window while stamping another.
+equal "arming spends no second native read" "1" \
   "$(( $(tmux show-options -wqv -t "$auto_id" @test_usage_calls) - auto_calls_before ))"
+
+# A PROVIDER ROLLOVER DURING ARMING CANNOT REWRITE THE DECISION. The fake moves
+# the native source from A to B inside systemd-run, after the hook sampled A but
+# before the timer is accepted. The declaration and marker must both remain A;
+# B is a fresh decision for the next hook, not the timer this one was asked to
+# arm.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+auto_reset_roll_a=$(( auto_now + 11000 ))
+auto_reset_roll_b=$(( auto_now + 21000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 97 "$auto_reset_roll_a" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_roll_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_ROLL_USAGE_RESET="$auto_reset_roll_b" \
+  GANG_TEST_ROLL_USAGE_NOW="$auto_now" PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "a rollover during arming still arms the sampled window" \
+  "$auto_roll_note" "Auto-resume armed"
+equal "the rollover declaration names sampled reset A" "$auto_reset_roll_a" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+equal "and its once marker names the reset actually armed" "$auto_reset_roll_a" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
+
+# TWO OVERLAPPING HOOKS SHARE ONE CHECK-AND-ARM CLAIM. The first is held after
+# the native decision and inside systemd-run; the second is then admitted past
+# the sampling throttle and must still arm nothing for that same reset.
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+auto_reset_overlap=$(( auto_now + 22000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 97 "$auto_reset_overlap" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+: > "$usage_timer_arms"
+auto_arm_inside="gang-test-auto-arm-inside-$$"
+auto_arm_release="gang-test-auto-arm-release-$$"
+( printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_ARM_INSIDE="$auto_arm_inside" \
+  GANG_TEST_ARM_RELEASE="$auto_arm_release" PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook > "$RUN_ROOT/auto-arm-first.out" ) &
+auto_arm_pid=$!
+tmux wait-for "$auto_arm_inside"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_overlap_second="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+tmux wait-for -S "$auto_arm_release"
+wait "$auto_arm_pid"
+equal "overlapping hooks arm one timer for one provider window" "1" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+equal "the losing overlapping hook says nothing" "" "$auto_overlap_second"
+equal "and the accepted timer names the shared reset" "$auto_reset_overlap" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
 
 : > "$usage_timer_args"
 tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
@@ -1272,6 +1336,10 @@ auto_status_gone="$(GANG_TEST_SYSTEMCTL=gone PATH="$usage_timer_bin:$PATH" \
   "$GANG" status auto-res)"
 contains "a declaration whose timer is gone is not reported as scheduled" \
   "$auto_status_gone" "ARMED NOWHERE"
+auto_status_failed="$(GANG_TEST_SYSTEMCTL=failed PATH="$usage_timer_bin:$PATH" \
+  "$GANG" status auto-res)"
+contains "a failed timer is also named as armed nowhere" \
+  "$auto_status_failed" "ARMED NOWHERE"
 auto_status_blind="$(GANG_TEST_SYSTEMCTL=blind PATH="$usage_timer_bin:$PATH" \
   "$GANG" status auto-res)"
 contains "and a unit state that cannot be read is not read as armed" \
@@ -1315,6 +1383,191 @@ auto_fail_repeat="$(GANG_TEST_SYSTEMD_RUN_FAIL=1 PATH="$usage_timer_bin:$PATH" \
     TMUX_PANE="'"$auto_pane"'" "'"$GANG"'" hook')"
 equal "and the refusal is not retried at the next sample" "" "$auto_fail_repeat"
 equal "with nothing armed behind it" "" "$(<"$usage_timer_args")"
+
+# A FAILURE BELONGS TO THE ATTEMPT THAT PRODUCED IT. Once a later provider
+# window is accepted, the obsolete alarm must not survive beside the fresh
+# declaration and contradict the hook's success report.
+auto_reset_recovered=$(( auto_now + 60000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_recovered" "$auto_now" \
+  > "$usage_limits_source"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_recovered_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "a later provider window can recover from an arming failure" \
+  "$auto_recovered_note" "Auto-resume armed"
+equal "the successful arm retires the obsolete failure" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_failed)"
+excludes "status no longer reports the recovered failure" \
+  "$(GANG_TEST_SYSTEMCTL=armed PATH="$usage_timer_bin:$PATH" "$GANG" status auto-res)" \
+  "provider-reset wake failed"
+
+# CLAUDE STREAM FAILURES HAVE A NATIVE TWO-PART WITNESS: idle_prompt says the
+# interactive harness is waiting, and the newest top-level assistant record says
+# whether the turn died. This fixture uses the shipped Claude transcript and
+# prompt readers with Bash only as the disposable composer, so no provider or
+# subscription is involved in the mandatory suite.
+auto_stream_transcript="$RUN_ROOT/auto-stream.jsonl"
+cat > "$RUN_ROOT/collars/auto-stream.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/claude-code.sh"
+. "$ROOT/collars/bash.sh"
+GANG_RESUME_LAUNCH=""
+GANG_MODEL_OPT=""
+GANG_EFFORT_OPT=""
+GANG_EFFORT_CMD=""
+GANG_ROLE_PROMPT_OPT=""
+GANG_HARNESS_PROMPT=""
+GANG_OCCUPIED_REGEX=""
+GANG_QUEUED_REGEX=""
+GANG_QUEUE_RECALL_KEY=""
+GANG_INTERRUPT_KEY=""
+GANG_QUIET_AT_REST=0
+GANG_COMPACT_CMD=""
+GANG_SELF_COMPACT=""
+GANG_STOP_HOOK=1
+GANG_STALL_TYPES="idle_prompt"
+GANG_MIDTURN_INPUT=1
+GANG_USAGE_LIGHT_INTERVAL=0
+GANG_USAGE_LIMIT_MAX_AGE=0
+collar_usage_limits() {
+  now="\$(date +%s)"
+  printf '%s\t%s\t%s\t%s\n' "Test window" 1 "\$(( now + 3600 ))" "\$now"
+}
+SH
+cat > "$auto_stream_transcript" <<'JSONL'
+{"type":"assistant","uuid":"success-a","isSidechain":false,"message":{"role":"assistant"}}
+{"type":"system","uuid":"after-success","parentUuid":"success-a","subtype":"turn_duration"}
+JSONL
+GANG_AUTO_RESUME=95% "$HITCH" auto-stream -c auto-stream -d /tmp >/dev/null
+auto_stream_id="$(window_id auto-stream)"
+auto_stream_pane="$(tmux list-panes -t "$auto_stream_id" -F '#{pane_id}')"
+auto_stream_notification="$(python3 - "$auto_stream_transcript" <<'PY'
+import json, sys
+print(json.dumps({
+    "hook_event_name": "Notification",
+    "notification_type": "idle_prompt",
+    "session_id": "auto-stream-session",
+    "transcript_path": sys.argv[1],
+}))
+PY
+)"
+auto_stream_before="$(pane_all auto-stream)"
+printf '%s' "$auto_stream_notification" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+# source-guard: whole-surface@ab83d490b0f4: the claim is that this native idle event changes no visible producer anywhere in the pane, so the complete unchanged surface is the intended evidence
+equal "an ordinary idle notification submits no continuation" \
+  "$auto_stream_before" "$(pane_all auto-stream)"
+# source-guard: producer@52289f6a66f8: auto_stream_notification independently supplies this exact transcript_path through the native payload immediately above
+equal "the Claude hook binds its exact transcript path" \
+  "$auto_stream_transcript" \
+  "$(tmux show-options -wqv -t "$auto_stream_id" @gl_session)"
+
+cat >> "$auto_stream_transcript" <<'JSONL'
+{"type":"assistant","uuid":"partial-a","isSidechain":false,"message":{"role":"assistant"}}
+{"type":"assistant","uuid":"error-a","isSidechain":false,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant","content":[{"type":"text","text":"wording is not a contract"}]}}
+{"type":"system","uuid":"duration-a","parentUuid":"error-a","subtype":"turn_duration"}
+{"type":"last-prompt","lastPrompt":"fixture","leafUuid":"duration-a"}
+JSONL
+printf '%s' "$auto_stream_notification" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+auto_stream_after="$(pane_all auto-stream)"
+# source-guard: producer@c4684922211a: @gl_auto_resume_error is asserted immediately below as the independent native-record witness that this hook produced the continuation
+contains "a structurally failed idle turn receives one continuation" \
+  "$auto_stream_after" "A provider stream failure ended the previous turn"
+equal "the error UUID is the once-ever identity" "error-a" \
+  "$(tmux show-options -wqv -t "$auto_stream_id" @gl_auto_resume_error)"
+auto_stream_marker="$(tmux show-options -wqv -t "$auto_stream_id" \
+  @gl_auto_resume_prompt)"
+contains "the continuation carries Gangline's owned envelope marker" \
+  "$auto_stream_marker" "[gang:auto-resume#"
+
+# Bash has no native hook of its own, so drive the exact UserPromptSubmit the
+# real harness fires for the submitted envelope. The real dying-stream proof is
+# separate; here the marker transition is immediate, deterministic state.
+auto_stream_prompt="$(python3 - "$auto_stream_marker" <<'PY'
+import json, sys
+print(json.dumps({
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "auto-stream-session",
+    "prompt": sys.argv[1],
+}))
+PY
+)"
+printf '%s' "$auto_stream_prompt" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+equal "the native prompt identifies Gangline's own continuation" "1" \
+  "$(tmux show-options -wqv -t "$auto_stream_id" @gl_auto_resume_own_turn)"
+
+cat >> "$auto_stream_transcript" <<'JSONL'
+{"type":"assistant","uuid":"error-b","isSidechain":false,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
+{"type":"system","uuid":"duration-b","parentUuid":"error-b","subtype":"turn_duration"}
+JSONL
+auto_stream_hop_before="$(pane_all auto-stream)"
+printf '%s' "$auto_stream_notification" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+# source-guard: whole-surface@3d7f5fabf28a: the one-hop claim forbids every new visible producer, so byte-equality of the complete pane is the intended evidence
+equal "a failed automatic continuation is not given a second hop" \
+  "$auto_stream_hop_before" "$(pane_all auto-stream)"
+equal "the one-hop refusal closes that error UUID" "error-b" \
+  "$(tmux show-options -wqv -t "$auto_stream_id" @gl_auto_resume_error)"
+contains "status exposes the one-hop refusal" \
+  "$("$GANG" status auto-stream)" "one-hop guard refused another continuation"
+contains "roster carries the automatic-resume refusal" \
+  "$("$GANG" roster | grep '^auto-stream ')" "auto-resume-failed"
+
+auto_stream_hop_repeat="$(pane_all auto-stream)"
+printf '%s' "$auto_stream_notification" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+# source-guard: whole-surface@65b439e89ea7: the duplicate claim forbids every new visible producer, so byte-equality of the complete pane is the intended evidence
+equal "a repeated idle notification cannot retry the same error record" \
+  "$auto_stream_hop_repeat" "$(pane_all auto-stream)"
+
+# AN UNREADABLE OWNERSHIP EVENT FAILS CLOSED FOR THAT TURN and records why.
+# A later ordinary prompt can repair the episode, but this failed turn cannot
+# be guessed into a second hop.
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"auto-stream-session","prompt":"ordinary operator turn"}' |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$auto_stream_id" @gl_auto_resume_prompt \
+  '[gang:auto-resume#owned] marked continuation [/gang:auto-resume#owned]'
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"auto-stream-session"}' |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+contains "an unreadable ownership event records its fail-closed verdict" \
+  "$("$GANG" status auto-stream)" "could not be matched byte-for-byte"
+cat >> "$auto_stream_transcript" <<'JSONL'
+{"type":"assistant","uuid":"error-c","isSidechain":false,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
+JSONL
+auto_stream_unknown_before="$(pane_all auto-stream)"
+printf '%s' "$auto_stream_notification" |
+  TMUX_PANE="$auto_stream_pane" "$GANG" hook >/dev/null
+# source-guard: whole-surface@f9b34c016ecf: fail-closed means this event may add no visible producer at all, so the complete unchanged pane is the intended evidence
+equal "unknown prompt ownership never opens another automatic hop" \
+  "$auto_stream_unknown_before" "$(pane_all auto-stream)"
+contains "the refused unknown ownership remains operator-visible" \
+  "$("$GANG" status auto-stream)" "could not positively determine"
+
+"$HITCH" auto-stream-off -c auto-stream -d /tmp >/dev/null
+auto_stream_off_id="$(window_id auto-stream-off)"
+auto_stream_off_pane="$(tmux list-panes -t "$auto_stream_off_id" -F '#{pane_id}')"
+auto_stream_off_before="$(pane_all auto-stream-off)"
+printf '%s' "$(python3 - "$auto_stream_transcript" <<'PY'
+import json, sys
+print(json.dumps({
+    "hook_event_name": "Notification",
+    "notification_type": "idle_prompt",
+    "session_id": "auto-stream-off-session",
+    "transcript_path": sys.argv[1],
+}))
+PY
+)" | TMUX_PANE="$auto_stream_off_pane" "$GANG" hook >/dev/null
+# source-guard: whole-surface@fef9194e9e4b: opt-out means the native failure may change no visible producer anywhere in this pane, so complete byte-equality is the intended evidence
+equal "stream-failure continuation is off until auto-resume is declared" \
+  "$auto_stream_off_before" "$(pane_all auto-stream-off)"
+equal "an opted-out stream failure records no handled UUID" "" \
+  "$(tmux show-options -wqv -t "$auto_stream_off_id" @gl_auto_resume_error)"
+"$GANG" drop auto-stream-off >/dev/null
+"$GANG" drop auto-stream >/dev/null
 
 # THE THRESHOLD IS REFUSED AT HITCH, the last cheap place to refuse it.
 if auto_high="$(GANG_AUTO_RESUME=101% "$GANG" hitch \

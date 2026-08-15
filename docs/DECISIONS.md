@@ -276,8 +276,10 @@ continuation may reach an agent that never capped — accepted, because it rides
 the ordinary spool and the alternatives are a threshold that can never fire and
 a scrape. Arm once per provider window, keyed on the reset that was decided for,
 so a cleared wake is not re-armed over the operator and a refusal is not
-retried. Re-enter the CLI to arm rather than copying its ordering discipline
-into a second path that can drift from it.
+retried. One shared transaction serves the manual command and the hook: it
+accepts the already-validated sample instead of taking a second native reading
+that could cross a provider reset, and overlapping hooks serialize the marker
+check with the arm.
 
 ## A promised wake is read from the unit, not only the declaration
 
@@ -285,6 +287,21 @@ A pending declaration on a tmux window and the transient timer that keeps it can
 outlive each other, and the declaration alone then reports a wake nothing will
 deliver. Status reads the unit whenever the reset is still ahead, and separates
 gone from unreadable rather than merging them into an answer.
+
+## A dead Claude stream resumes from two native witnesses, for one hop
+
+Claude Code emits no Stop when a provider stream dies, but its later
+`idle_prompt` notification binds the transcript path and the newest top-level
+assistant record carries `error`, `isApiErrorMessage`, and a UUID. Require both:
+the notification proves the interactive harness is waiting, and the structural
+record distinguishes a dead turn from ordinary idleness without matching its
+prose. Under `GANG_AUTO_RESUME`, close that missing turn boundary and submit one
+ordinary attributed continuation per error UUID. The continuation's own
+Gangline envelope is recorded before submission and compared byte-for-byte with
+the native prompt event; a failure of that owned turn gets no second hop. When
+ownership cannot be proved, fail closed and record the refusal for status and
+roster. This is immediate collar-native discrimination, not a watcher or a
+general retry policy; collars with no structural record declare no equivalent.
 
 ## Effort is the collar's word
 

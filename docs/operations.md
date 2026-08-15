@@ -311,6 +311,22 @@ turn. At the reset the agent receives the ordinary continuation asking it to
 re-read its assignment and continue only if work remains. Nothing polls and no
 process stays running between the arming and the reset.
 
+For claude-code, the same declaration also covers a provider stream that dies
+mid-turn. The native `idle_prompt` notification says the harness is waiting and
+binds its transcript; Gangline resumes only when that transcript's newest
+top-level assistant record is structurally an API error. Error prose is never
+matched. One error UUID receives one attributed continuation. Its visible
+Gangline envelope is also the ownership marker: if that continuation dies,
+there is no second hop. An unreadable transcript, unverified marker, refused
+delivery, or exhausted hop is fail-closed and appears in `gang status`; roster
+adds `auto-resume-failed`. A later ordinary prompt starts a new episode.
+
+Claude Code is the live consumer for stream-failure recovery. Codex exposes no
+native failed-turn record that can distinguish dead, running, and killed work,
+so Gangline does not infer parity. The transcript binding, handled-error UUID,
+one-hop marker, and any refusal live on the tmux window and die when that window
+is dropped.
+
 It is independent of `GANG_USAGE_LIGHTS`; declare both when the team should be
 warned before it is resumed. `gang status` shows the pending wake and, while the
 reset is still ahead, whether the transient unit that keeps it still exists.

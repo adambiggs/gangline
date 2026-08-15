@@ -554,7 +554,9 @@ It prints one native window per line with percent used, the reset in local time,
 and the age of the native sample. The command may target an agent mid-turn
 because it never drives that agent's composer.
 
-Claude Code's collar runs the harness's headless usage command. Codex's collar
+Claude Code's collar runs the harness's headless usage command behind a
+fail-loud process bound, so a wedged reader makes the source unavailable rather
+than holding a native hook indefinitely. Codex's collar
 reads the exact target rollout stamped by its native hook and selects the newest
 rate-limit event. That event's timestamp is the sample clock, so an idle Codex
 reading truthfully grows stale until its next API turn. It remains visible to
@@ -622,8 +624,9 @@ them: warning an agent and arming its return are different decisions at
 different percentages, and an agent may run auto-resume with the lights off.
 
 At the first sample at or above the threshold whose reset is still in the
-future, the agent's own turn hook re-enters `gang wait-limit` for that agent and
-reports the result in the same turn. Arming happens once per provider window:
+future, the agent's own turn hook passes that validated sample through the same
+arming transaction as `gang wait-limit` and reports the result in the same
+turn. It takes no second native reading while arming. Arming happens once per provider window:
 the reset that was decided for is recorded on the window, so later samples in
 the same window arm nothing, and a wake cleared with `--clear` is not armed
 again over the operator. A refused arm is reported in the turn, recorded where
@@ -635,6 +638,18 @@ stale while the agent is idle. A stale percentage is poor evidence for a
 threshold decision even though a still-future absolute reset remains sufficient
 to arm against once that decision has been made, so the sample is refused and
 the agent is told, rather than arming from a number that may no longer hold.
+
+On claude-code this declaration also opts into one-hop recovery from a provider
+stream failure. `idle_prompt` supplies the native idle witness and transcript
+path; the collar selects the newest non-sidechain assistant record and returns
+its UUID only when `error` is nonempty and `isApiErrorMessage` is true. Gangline
+then closes the missing turn bracket and submits one continuation for that UUID.
+The exact attributed envelope is recorded before submission and must match the
+next native prompt byte-for-byte. If that owned continuation fails, or ownership
+cannot be established, no next continuation is sent; `status` reports
+`automatic resume refused` and roster reports `auto-resume-failed`. A later
+ordinary native prompt clears the one-hop episode. Collars without both native
+readers do not attempt stream-failure recovery.
 
 This is deliberately an over-approximation of the provider limit. Gangline
 cannot observe the harness's own refusal — the only in-band evidence is pane
@@ -859,6 +874,8 @@ there, never in a harness-name branch in the core script.
 | `collar_input target` | print human-authored composer contents, or fail if absent |
 | `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
+| `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
+| `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |
 
 Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.

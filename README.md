@@ -174,6 +174,10 @@ nobody at the keyboard:
 GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code
 ```
 
+On claude-code the same opt-in also resumes one turn whose provider stream ends
+with a native API-error record. If that continuation fails too, Gangline stops
+after that one hop and leaves the refusal in `status` rather than retrying.
+
 ## Safety model
 
 Gangline is single-tenant and provides attribution, not authentication. It
