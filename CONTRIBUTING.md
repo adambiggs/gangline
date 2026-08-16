@@ -18,6 +18,17 @@ names the test lint, checker self-tests, and full integration suite it skips;
 CI runs those checks on every push to `main`. Do not bypass the hook with
 `--no-verify`.
 
+Git opens the connection to the remote before the hook runs, and the outer
+contribution gate can spend minutes in inference while that connection sits
+idle. Configure SSH keepalives, or a green gate is followed by
+`Connection to github.com closed by remote host`, the ref never lands, and the
+retry pays for the gate again:
+
+```sh
+git config --global core.sshCommand \
+  'ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20'
+```
+
 ## Scope and implementation
 
 - Add only behaviour with a current, concrete consumer.
