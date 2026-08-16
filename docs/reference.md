@@ -784,7 +784,12 @@ never the closing one, so any turn event also settles a bracket left open.
 Permission occupancy has no timed decay: a readable composer clears it, and a
 malformed witness refuses rather than becoming ordinary absence.
 Awaiting-input events listed by `GANG_STALL_TYPES`, plus permission requests,
-raise a stall note only when `gang notify` has declared a target.
+raise a stall note only when `gang notify` has declared a target. A collar that
+declares no `GANG_STALL_TYPES` raises none, because its harness exposes no
+awaiting-input event to wire: an agent of that collar going idle — after a
+self-compaction as much as after any other turn — tells nobody, and whoever is
+waiting on it has to look. That is a property of the harness rather than of the
+collar; each collar records what it was able to verify about its own event set.
 Hooks are silent unless an enabled context light or declared team-time light
 crosses an edge. Context-source warm-up is silent until the first native turn
 completes; an unreadable source after that boundary fails visibly.
