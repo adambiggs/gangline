@@ -261,6 +261,16 @@ refuses "the removed --profile flag is unknown" \
   "hitch: unknown argument '--profile'" "$GANG" hitch probe --profile bash
 refuses "the removed send --spool flag is unknown" \
   "send: unknown argument '--spool'" "$GANG" send --to probe --spool --stdin
+
+# A BODY WHERE A FLAG GOES IS THE MISTAKE THIS REFUSAL CATCHES, so it names
+# where the body should have gone. A flag-shaped unknown is a different mistake
+# and keeps the bare refusal.
+refuses "a positional body names the way to send one" \
+  "gang send --to <name> --stdin" "$GANG" send --to probe "hello there"
+positional_out="$("$GANG" send --to probe --stdin -x 2>&1)" || :
+excludes "while a flag-shaped unknown argument is left alone" \
+  "$positional_out" "reads it from stdin"
+
 env -u GANG_TEST_COLLARS GANG_TEST_PROFILES=1 "$GANG" collars \
   > "$RUN_ROOT/test-profiles-alias.out" 2> "$RUN_ROOT/test-profiles-alias.err"
 excludes "the removed suite switch alias exposes no test fixture" \

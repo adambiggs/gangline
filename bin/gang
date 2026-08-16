@@ -4663,7 +4663,12 @@ cmd_send() {
              use_stdin=1; shift ;;
     --live-only) live_only=1; shift ;;
     --supersede) supersede=1; shift ;;
-    *) die "send: unknown argument '$1'" ;;
+    # A BODY IS THE LIKELY MISTAKE, so the refusal that catches it names the
+    # remedy. Anything not shaped like a flag is what someone typed where the
+    # body goes, and the whole body then comes back at them as "unknown
+    # argument" with nothing saying where it should have gone instead.
+    -*) die "send: unknown argument '$1'" ;;
+    *) die "send: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang send --to <name> --stdin" ;;
   esac; done
   [ -n "$name" ] || die "send: target required (--to <name>)"
   [ "$use_stdin" -eq 1 ] || die "send: message body required on stdin"
