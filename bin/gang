@@ -4801,6 +4801,18 @@ cmd_flush() {
   frag="${parked%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   lock_pane "$AGENT_ID"
+  # A PARK UNDER A RUNNING TURN IS THE HARNESS WORKING. Every precondition
+  # below this one describes the input box, and a busy target passes all of
+  # them — so flush recalled the body, pressed Enter, the harness parked it
+  # again because a turn was running, and submit_verify read that second park
+  # as a queue nothing can drain. Its verdict is to drop the agent and hitch
+  # --resume, which ends a live turn and loses the parked body; in the run this
+  # was measured on, the same queue drained by itself thirteen seconds later.
+  # The verdict is right about a target at rest that re-parks, so the refusal
+  # goes here instead: before the recall key, where nothing has been typed.
+  turn_state_read "$AGENT_ID" || TURN_STATE=""
+  [ "$TURN_STATE" != open ] \
+    || refuse "flush: the turn of '$name' is still running, so its harness is parking what it is handed — which is the harness working, not a queue that cannot drain. Pressing $GANG_QUEUE_RECALL_KEY here would park the message again and prove nothing. The queue may drain at a native boundary while the turn continues; if it has not, flush once '$name' is at rest (gang status $name)"
   ! occupied "$AGENT_ID" \
     || refuse "flush: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_QUEUE_RECALL_KEY would answer that UI instead of loading the parked message (gang attach)"
   composer_settled "$AGENT_ID" \

@@ -368,6 +368,29 @@ contains "naming the record it will not proceed without" \
   "$unrecorded_out" "no record of a message parked"
 tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
 
+# A PARK UNDER A RUNNING TURN IS THE HARNESS WORKING, and every other flush
+# precondition describes the input box, which a busy target satisfies. Recalling
+# here re-parks on the Enter, and the re-park is what the terminal verdict —
+# drop the agent, hitch --resume — reads as a queue nothing can drain. The
+# bracket is set here rather than waited for, so this carries no sleep.
+tmux set-option -w -t "$parked_id" @gl_turn "open $(date +%s)"
+if busy_flush_out="$("$GANG" flush parked 2>&1)"; then
+  busy_flush_rc=0
+else
+  busy_flush_rc=$?
+fi
+equal "flush against a running turn refuses rather than diagnosing" "3" \
+  "$busy_flush_rc"
+contains "naming the turn, not the queue" \
+  "$busy_flush_out" "turn of 'parked' is still running"
+excludes "and never tells the operator to drop a working agent" \
+  "$busy_flush_out" "gang drop"
+equal "and the record it would have recalled is untouched" "$parked_record" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+
+# Keyed on the bracket being OPEN, not on it being there at all: the case below
+# is the whole recovery, and it runs with a closed bracket recorded.
+tmux set-option -w -t "$parked_id" @gl_turn "closed $(date +%s)"
 : > "$RUN_ROOT/flush-drain"
 if flush_out="$("$GANG" flush parked 2>&1)"; then
   pass "flush recovers the parked message as a verified operation"
@@ -379,6 +402,7 @@ equal "a verified flush retires the parked record" "" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
 equal "and the staged record with it" "" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)"
+tmux set-option -uw -t "$parked_id" @gl_turn
 
 # The composer must still read as parked. With the queue drained, there is
 # nothing to recover, and a recorded body is not evidence that outlives it.
