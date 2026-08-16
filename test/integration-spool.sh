@@ -975,25 +975,29 @@ else
     "$superseder_spool no longer holds it"
 fi
 
-# The other half: a retirement that fails AFTER the replacement is committed
-# must lose nothing either, and must say so rather than reporting a clean send.
+# The other half: a retirement that cannot finish must not leave the sender's
+# older body and the replacement for it BOTH waiting where a drain reads. The
+# retirement is PREPARED FIRST — the predecessors move out of the drainable
+# namespace before anything is delivered or written — because the live path has
+# no staging step to stand behind and no second chance after a keystroke. So a
+# supersession that cannot retire costs nothing at all: it refuses before a body
+# exists, rather than leaving a fragment for somebody to find and account for.
 # A bodyless entry is what the sweep cannot read past, and its stamp puts it
 # first in the oldest-first walk.
 printf 'tester\n\n' > "$superseder_spool/00000000000000000001-deadbeef"
 if halfway_out="$(printf 'MARK_COMMITTED_REPLACEMENT' |
   "$GANG" send --to superseder --from tester --supersede --stdin 2>&1)"; then
-  fail "a retirement that fails after the commit is reported" \
+  fail "a retirement that cannot finish refuses the supersession" \
     "send reported success"
 else
-  pass "a retirement that fails after the commit is reported"
+  pass "a retirement that cannot finish refuses the supersession"
 fi
-contains "saying the replacement is parked rather than lost" \
-  "$halfway_out" "IS parked as"
+contains "saying plainly that nothing was sent" "$halfway_out" "nothing was sent"
 if grep -rq MARK_COMMITTED_REPLACEMENT "$superseder_spool"; then
-  pass "and the replacement really is on disk"
+  fail "and no body was written for a supersession that could not be honoured" \
+    "$superseder_spool holds a replacement nothing accepted"
 else
-  fail "and the replacement really is on disk" \
-    "$superseder_spool does not hold it"
+  pass "and no body was written for a supersession that could not be honoured"
 fi
 if grep -rq MARK_PREDECESSOR "$superseder_spool"; then
   pass "and nothing it could not retire was destroyed"
@@ -1001,8 +1005,197 @@ else
   fail "and nothing it could not retire was destroyed" \
     "$superseder_spool no longer holds the predecessor"
 fi
+halfway_drainable=0
+halfway_predecessors=0
+for halfway_entry in "$superseder_spool"/[0-9]*; do
+  [ -f "$halfway_entry" ] || continue
+  grep -q MARK_COMMITTED_REPLACEMENT "$halfway_entry" \
+    && halfway_drainable=$((halfway_drainable + 1))
+  grep -q MARK_PREDECESSOR "$halfway_entry" \
+    && halfway_predecessors=$((halfway_predecessors + 1))
+done
+equal "the body it could not retire is still the one a drain would claim" "1" \
+  "$halfway_predecessors"
+equal "and the replacement is not waiting in that namespace beside it" "0" \
+  "$halfway_drainable"
+halfway_aside=0
+for halfway_entry in "$superseder_spool"/.retiring-*; do
+  [ -e "$halfway_entry" ] || [ -L "$halfway_entry" ] || continue
+  halfway_aside=$((halfway_aside + 1))
+done
+equal "and the refusal left nothing set aside behind it" "0" "$halfway_aside"
 rm -f -- "$superseder_spool/00000000000000000001-deadbeef"
+rm -f -- "$superseder_spool"/.writing-*
+
+# AND THE ORDER OF THE FAILURE MUST NOT DECIDE WHAT A REFUSAL COSTS. The case
+# above fails on the FIRST entry the sweep reads, so nothing has been retired
+# when it gives up — the one arrangement that cannot see a retirement already
+# half done. Put the unreadable entry LAST and the sweep has already passed a
+# real predecessor of the same sender: retiring as it walked would destroy that
+# predecessor and then refuse, leaving nothing parked in its place. That is the
+# loss this issue is about, moved from before the write into the middle of the
+# sweep.
+printf 'tester\n\n' > "$superseder_spool/99999999999999999999-deadbeef"
+if printf 'MARK_TRAILING_REPLACEMENT' |
+  "$GANG" send --to superseder --from tester --supersede --stdin >/dev/null 2>&1; then
+  fail "a sweep that fails after passing a predecessor refuses too" \
+    "send reported success"
+else
+  pass "a sweep that fails after passing a predecessor refuses too"
+fi
+trailing_predecessors=0
+trailing_replacements=0
+for trailing_entry in "$superseder_spool"/[0-9]*; do
+  [ -f "$trailing_entry" ] || continue
+  grep -q MARK_PREDECESSOR "$trailing_entry" \
+    && trailing_predecessors=$((trailing_predecessors + 1))
+  grep -q MARK_TRAILING_REPLACEMENT "$trailing_entry" \
+    && trailing_replacements=$((trailing_replacements + 1))
+done
+equal "the predecessor the sweep had already reached is still where a drain claims it" \
+  "1" "$trailing_predecessors"
+equal "and the replacement that could not supersede it did not park either" "0" \
+  "$trailing_replacements"
+trailing_aside=0
+for trailing_entry in "$superseder_spool"/.retiring-*; do
+  [ -e "$trailing_entry" ] || [ -L "$trailing_entry" ] || continue
+  trailing_aside=$((trailing_aside + 1))
+done
+equal "with nothing left set aside where no drain would ever look" "0" \
+  "$trailing_aside"
+rm -f -- "$superseder_spool/99999999999999999999-deadbeef"
+rm -f -- "$superseder_spool"/.writing-*
+
+# THE OTHER SEAM IN THE SAME TRANSACTION: the park itself. By the time the
+# replacement is renamed into the drainable namespace the predecessors are
+# already set aside, so a rename that fails there is the one moment when a
+# refusal could still leave them retired for a message that was never accepted.
+# Only the commit is broken — a stub that failed every mv would break the
+# retirement too and this case would never reach the seam it is about.
+mkdir -p "$RUN_ROOT/nocommit"
+cat > "$RUN_ROOT/nocommit/mv" <<SH
+#!/bin/sh
+REAL="$(command -v mv)"
+SH
+cat >> "$RUN_ROOT/nocommit/mv" <<'SH'
+for a in "$@"; do
+  case "$a" in
+    *"/.writing-"*) exit 1 ;;
+  esac
+done
+exec "$REAL" "$@"
+SH
+chmod +x "$RUN_ROOT/nocommit/mv"
+if nocommit_out="$(printf 'MARK_UNCOMMITTED_REPLACEMENT' |
+  PATH="$RUN_ROOT/nocommit:$PATH" "$GANG" send --to superseder --from tester \
+    --supersede --stdin 2>&1)"; then
+  fail "a replacement that cannot be parked is refused" "send reported success"
+else
+  pass "a replacement that cannot be parked is refused"
+fi
+# Pins the seam: a send that died before the retirement ran would say nothing
+# about whether a retirement can outlive a refused park.
+contains "and the park is what it died on, after the retirement had run" \
+  "$nocommit_out" "cannot commit a spooled message"
+nocommit_predecessors=0
+for nocommit_entry in "$superseder_spool"/[0-9]*; do
+  [ -f "$nocommit_entry" ] || continue
+  grep -q MARK_PREDECESSOR "$nocommit_entry" \
+    && nocommit_predecessors=$((nocommit_predecessors + 1))
+done
+equal "the predecessor it had already retired is back where a drain claims it" \
+  "1" "$nocommit_predecessors"
+nocommit_aside=0
+for nocommit_entry in "$superseder_spool"/.retiring-*; do
+  [ -e "$nocommit_entry" ] || [ -L "$nocommit_entry" ] || continue
+  nocommit_aside=$((nocommit_aside + 1))
+done
+equal "and none of it was left set aside" "0" "$nocommit_aside"
+rm -f -- "$superseder_spool"/.writing-*
+
+# THE LIVE PATH HAS NO SECOND CHANCE, so its retirement cannot be an afterthought.
+# Everything above refuses before a keystroke and falls back to the spool; here
+# the composer is free, so the body would be TYPED AND SUBMITTED, and a sweep run
+# afterwards that could not finish would leave every predecessor still queued to
+# arrive after it — the supersession quietly not honoured, and a refusal printed
+# for a message that was in fact delivered, which invites the sender to send it
+# again. What must happen instead is that the retirement is prepared first and
+# nothing is typed at all.
+tmux send-keys -t "$superseder_id" C-u
+printf 'tester\n\n' > "$superseder_spool/99999999999999999999-deadbeef"
+if live_super_out="$(printf 'MARK_LIVE_REPLACEMENT' |
+  "$GANG" send --to superseder --from tester --supersede --stdin 2>&1)"; then
+  fail "a live send whose retirement cannot be prepared is refused" \
+    "send reported success"
+else
+  pass "a live send whose retirement cannot be prepared is refused"
+fi
+contains "saying plainly that nothing was sent" "$live_super_out" "nothing was sent"
+excludes "and the body never reached the target's composer" \
+  "$(pane_all superseder)" "MARK_LIVE_REPLACEMENT"
+live_super_predecessors=0
+for live_super_entry in "$superseder_spool"/[0-9]*; do
+  [ -f "$live_super_entry" ] || continue
+  grep -q MARK_PREDECESSOR "$live_super_entry" \
+    && live_super_predecessors=$((live_super_predecessors + 1))
+done
+equal "with the predecessor it would have superseded still waiting" "1" \
+  "$live_super_predecessors"
+live_super_aside=0
+for live_super_entry in "$superseder_spool"/.retiring-*; do
+  [ -e "$live_super_entry" ] || [ -L "$live_super_entry" ] || continue
+  live_super_aside=$((live_super_aside + 1))
+done
+equal "and nothing left set aside on the way out" "0" "$live_super_aside"
+rm -f -- "$superseder_spool/99999999999999999999-deadbeef"
 "$GANG" drop superseder >/dev/null
+
+# THE ONE CASE WHERE A SUPERSESSION REALLY DOES LEAVE MAIL UNDELIVERABLE. Every
+# path above puts the predecessors back; if putting one back is itself what
+# fails, the body is still on disk and teardown will still archive it, but no
+# drain will ever claim it again. Nothing can make that outcome good — what
+# separates it from silent loss is the refusal naming the file, so this fixture
+# is about the diagnostic, which is the only thing standing between a stranded
+# message and nobody knowing. The rollback is failed on its own: setting an entry
+# aside moves TO .retiring-, putting it back moves FROM it, so a stub keyed on
+# the SOURCE breaks only the restore and lets the sweep run exactly as it would.
+"$HITCH" norollback -c nodrain -d /tmp >/dev/null
+norollback_id="$(window_id norollback)"
+norollback_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$norollback_id" @gl_spool)"
+# The draft is what makes this the PARKING decision rather than a live one: with
+# a free composer the body is delivered and the retirement finalised, and the
+# arm under test — the one that gives up after the entries have been set aside —
+# is never reached.
+tmux send-keys -l -t "$norollback_id" 'HUMAN_DRAFT'
+printf 'tester\nolder\n[gang:tester#deadbeef] MARK_STRANDED_PREDECESSOR' \
+  > "$norollback_spool/00000000000000000042-deadbeef"
+mkdir -p "$RUN_ROOT/norollback"
+cat > "$RUN_ROOT/norollback/mv" <<SH
+#!/bin/sh
+REAL="$(command -v mv)"
+SH
+cat >> "$RUN_ROOT/norollback/mv" <<'SH'
+case "$2" in */.retiring-*) exit 1 ;; esac
+exec "$REAL" "$@"
+SH
+chmod +x "$RUN_ROOT/norollback/mv"
+if norollback_out="$(printf 'MARK_UNDELIVERED' |
+  PATH="$RUN_ROOT/norollback:$PATH" "$GANG" send --to norollback --from tester \
+    --supersede --stdin 2>&1)"; then
+  fail "a supersession to a target nothing would drain is refused" \
+    "send reported success"
+else
+  pass "a supersession to a target nothing would drain is refused"
+fi
+contains "and a restore it could not make is named, not swallowed" \
+  "$norollback_out" ".retiring-00000000000000000042-deadbeef"
+contains "saying the message is on disk and no longer deliverable" \
+  "$norollback_out" "no longer deliverable"
+[ -f "$norollback_spool/.retiring-00000000000000000042-deadbeef" ] \
+  && pass "with the body still on disk for teardown to archive" \
+  || fail "with the body still on disk for teardown to archive" \
+    "the predecessor is not in $norollback_spool either"
+"$GANG" drop norollback >/dev/null
 
 # AN AGENT NAME BECOMES A PATH COMPONENT. spool_archive names the archive
 # subdirectory after the agent whose mail it is holding, so a "name" carrying a

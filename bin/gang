@@ -2512,7 +2512,7 @@ hitch_up_abort() { # detach only the external client this invocation created
   hitch_up_state_clear
 }
 
-on_exit() { lock_release; hitch_up_abort; wait_hook_cleanup; }
+on_exit() { spool_retire_abort; lock_release; hitch_up_abort; wait_hook_cleanup; }
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
   if declare -F collar_input >/dev/null; then collar_input "$1"
@@ -2877,34 +2877,113 @@ spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes 
 }
 
 SPOOL_SUPERSEDE_ERROR=""
-spool_supersede_try() { # $1 window, $2 sender, optional $3 = an entry to keep
+spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting entries
   # WHY THIS HAS A NON-DYING FORM, like spool_read above it. cmd_send calls it
-  # AFTER committing the replacement, and what it has to report there is about
-  # the pair — a failure here still leaves a message parked and deliverable.
-  # Wrapping the dying form in a command substitution to recover its message
-  # would inherit the EXIT trap, and on_exit unlinks the pane lock this caller
-  # holds across the drain that follows.
-  local e
-  SPOOL_SUPERSEDE_ERROR=""
+  # between staging the replacement and parking it, and what it has to report
+  # there is about the pair — the body it wrote and the predecessor it could not
+  # retire — so the failure has to come back as a value this caller can still act
+  # on. Recovering the message by wrapping the dying form in a command
+  # substitution would mean parsing a captured diagnostic to decide control flow;
+  # setting a variable beside it is the same shape spool_read_try already has and
+  # needs no parsing. (An earlier note here claimed the substitution would fire
+  # this caller's EXIT trap and drop its pane lock. That is not so — a command
+  # substitution's subshell resets caught traps, which is exactly what the note
+  # at send_live says. The shape is right; that was not the reason.)
+  #
+  # AND WHY IT RETIRES IN TWO STEPS. Unlinking as the walk goes made the ORDER
+  # of the entries decide what a refusal costs: a sweep that removed a real
+  # predecessor and then met an unreadable entry returned failure with that
+  # predecessor already destroyed and — since the replacement is not parked on a
+  # failure — nothing at all in its place. That is the loss this whole issue is
+  # about, moved from before the write to the middle of the sweep. So the walk
+  # only moves entries OUT of the [0-9]* namespace, where no drain reads them
+  # and nothing has yet been destroyed; if any step fails, every one it moved
+  # goes back. Nothing is unlinked until the caller has the replacement safely
+  # parked and calls spool_retire_commit.
+  local e base held="" nl=$'\n'
+  SPOOL_SUPERSEDE_ERROR=""; SPOOL_RETIRED=""
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
+  # NO ENTRY TO EXCLUDE. The sweep used to be handed the replacement's own name
+  # to skip, because the replacement was already parked in this namespace when
+  # the sweep ran. It is not any more — cmd_send stages it and parks it after —
+  # so every [0-9]* entry from this sender here is genuinely an older one.
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
-    [ "$e" != "${3:-}" ] || continue
-    spool_read_try "$e" || { SPOOL_SUPERSEDE_ERROR="$SPOOL_READ_ERROR"; return 1; }
+    spool_read_try "$e" || { SPOOL_SUPERSEDE_ERROR="$SPOOL_READ_ERROR"; break; }
     [ "$SPOOL_SENDER" = "$2" ] || continue
-    rm -f -- "$e" \
-      || { SPOOL_SUPERSEDE_ERROR="cannot supersede the spooled message $e"; return 1; }
+    base="${e##*/}"
+    mv -- "$e" "$SPOOL_DIR/.retiring-$base" \
+      || { SPOOL_SUPERSEDE_ERROR="cannot supersede the spooled message $e"; break; }
+    held="$held$base$nl"
   done
+  SPOOL_RETIRED="$held"
+  if [ -n "$SPOOL_SUPERSEDE_ERROR" ]; then
+    spool_retire_rollback \
+      || SPOOL_SUPERSEDE_ERROR="$SPOOL_SUPERSEDE_ERROR ($SPOOL_ROLLBACK_ERROR)"
+    return 1
+  fi
+  return 0
 }
 
-spool_supersede() { # $1 window id, $2 sender; retire that sender's waiting entries
-  spool_supersede_try "$@" || die "$SPOOL_SUPERSEDE_ERROR"
+SPOOL_RETIRED="" SPOOL_ROLLBACK_ERROR=""
+spool_retire_rollback() { # put every set-aside predecessor back where a drain reads
+  # THE RETIREMENT IS NOT FINAL UNTIL THE REPLACEMENT IS. Anything that goes
+  # wrong between the two — an entry the sweep cannot read, a park that fails —
+  # has to leave the sender's older mail exactly as deliverable as it found it,
+  # because on those paths nothing is parked to supersede it. A restore that
+  # itself fails leaves the body on disk under a name teardown archives, so it
+  # is still not lost; it is no longer deliverable, and saying so is the
+  # difference between a reported partial state and a silent one.
+  local back failed=""
+  SPOOL_ROLLBACK_ERROR=""
+  [ -n "$SPOOL_RETIRED" ] || return 0
+  while IFS= read -r back; do
+    [ -n "$back" ] || continue
+    mv -- "$SPOOL_DIR/.retiring-$back" "$SPOOL_DIR/$back" 2>/dev/null \
+      || failed="$failed $SPOOL_DIR/.retiring-$back"
+  done <<< "$SPOOL_RETIRED"
+  SPOOL_RETIRED=""
+  [ -z "$failed" ] || {
+    SPOOL_ROLLBACK_ERROR="and these messages could not be put back where a drain would claim them, so they are on disk but no longer deliverable:$failed"
+    return 1
+  }
+  return 0
 }
 
-SPOOL_ENTRY=""
-spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENTRY
-  local stamp entry tmp
+spool_retire_commit() { # unlink what spool_supersede_try moved aside; 1 = some remain
+  local t left=""
+  [ -n "$SPOOL_RETIRED" ] || return 0
+  while IFS= read -r t; do
+    [ -n "$t" ] || continue
+    rm -f -- "$SPOOL_DIR/.retiring-$t" || left="$left $SPOOL_DIR/.retiring-$t"
+  done <<< "$SPOOL_RETIRED"
+  SPOOL_RETIRED=""
+  [ -z "$left" ] || { SPOOL_SUPERSEDE_ERROR="superseded messages were retired but could not be removed; they are inert where they are and teardown will archive them:$left"; return 1; }
+  return 0
+}
+
+spool_retire_abort() { # an open retirement must not outlive the command that opened it
+  # ANY EXIT, not the ones a caller can see coming. Between the sweep and the
+  # finalize there are several dying paths — an unstampable entry, a failed
+  # write, a die deeper in delivery — and on every one of them the sender's older
+  # mail is sitting outside the namespace a drain reads, retired for a message
+  # that was never accepted. Putting it back from the exit trap covers all of
+  # them at once, including the ones nobody has enumerated, and costs nothing
+  # when no retirement is open. It runs before the pane lock is dropped, so the
+  # restore happens inside the same critical section that moved them.
+  [ -n "$SPOOL_RETIRED" ] || return 0
+  spool_retire_rollback || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
+}
+
+SPOOL_ENTRY="" SPOOL_STAGED=""
+# WRITING AND PARKING ARE TWO STEPS BECAUSE --supersede NEEDS TO STAND BETWEEN
+# THEM. spool_stage puts the whole body on disk under a name no drain reads;
+# spool_commit renames it into the [0-9]* namespace, which is the act that makes
+# it deliverable. Everything that is not superseding calls spool_write and sees
+# one operation.
+spool_stage() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_STAGED
+  local stamp tmp
   spool_establish "$1"
   # THE EMPTY ARM BELOW IS ONLY REACHABLE BECAUSE OF THIS `|| stamp=""`. An
   # assignment from a command substitution carries the substitution's status,
@@ -2918,11 +2997,31 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENT
   tmp="$SPOOL_DIR/.writing-$$-$stamp"
   printf '%s\n%s\n%s\n' "$2" "$4" "$3" > "$tmp" \
     || die "cannot write a spooled message into $SPOOL_DIR"
-  entry="$SPOOL_DIR/$stamp-$(mint_nonce)"
+  SPOOL_STAGED="$tmp"
+  SPOOL_ENTRY="$SPOOL_DIR/$stamp-$(mint_nonce)"
+}
+
+SPOOL_COMMIT_ERROR=""
+spool_commit_try() { # park the staged body under the name spool_stage reserved for it
+  SPOOL_COMMIT_ERROR=""
+  [ -n "$SPOOL_STAGED" ] || die "internal: spool_commit called with nothing staged"
   # Committed by rename, so a drain can never read a half-written entry.
-  mv -- "$tmp" "$entry" \
-    || die "cannot commit a spooled message into $SPOOL_DIR"
-  SPOOL_ENTRY="$entry"
+  # NON-DYING, because --supersede has a retirement standing open across it: if
+  # this rename fails the caller has to put the predecessors back before it
+  # reports anything, and a die here would end the process with them set aside.
+  if ! mv -- "$SPOOL_STAGED" "$SPOOL_ENTRY"; then
+    SPOOL_COMMIT_ERROR="cannot commit a spooled message into $SPOOL_DIR"
+    return 1
+  fi
+  SPOOL_STAGED=""
+  return 0
+}
+
+spool_commit() { spool_commit_try || die "$SPOOL_COMMIT_ERROR"; }
+
+spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENTRY
+  spool_stage "$@"
+  spool_commit
 }
 
 ARCHIVE_DIR=""
@@ -4826,7 +4925,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 
 cmd_send() {
   local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag
-  local drain_rc=0 drain_err="" next_opportunity="next completes a turn"
+  local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
           [ -z "$name" ] || die "send: --to may be passed only once"
@@ -4870,23 +4969,48 @@ cmd_send() {
   # about to commit. A command substitution's exit does not fire the EXIT trap,
   # so the lock taken here survives the call and covers both.
   lock_pane "$AGENT_ID"
+  # THE RETIREMENT IS PREPARED BEFORE ANYTHING IS DELIVERED, and it has to be,
+  # because the live path has no second chance. Retiring AFTER send_live meant a
+  # sweep that met an unreadable entry rolled back and refused with the new body
+  # already typed and submitted: every predecessor still queued to arrive after
+  # it, the supersession silently not honoured, and a refusal printed for a
+  # message that had in fact been delivered — which invites the sender to send it
+  # again. Preparing first makes the whole thing one decision: the predecessors
+  # move out of the drainable namespace here, and if that cannot be done nothing
+  # is typed at all. send_live does not read the spool, so moving them changes
+  # nothing about the delivery it chooses.
+  if [ "$supersede" -ne 0 ] && ! spool_supersede_try "$AGENT_ID" "$SEND_FROM"; then
+    lock_release
+    die "$SPOOL_SUPERSEDE_ERROR — so nothing was sent: --supersede promised the recipient would see this message INSTEAD of your older waiting ones, and it cannot be delivered without retiring them. Nothing was typed and nothing was retired. Read what could not be retired, then send again"
+  fi
   # Only a REFUSAL is spoolable. Every refusal on this path happens before a
   # keystroke, so the body is provably still the sender's; a hard failure means
   # something was already typed and its fate is unknown, and parking that would
   # queue a second copy of a message that may already have landed.
   err="$(send_live "$name" locked 2>&1)" || rc=$?
   case "$rc" in
-    0) [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+    0) # Delivered. The retirement it was conditional on is now final.
+       [ "$supersede" -eq 0 ] || spool_retire_commit \
+         || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
-    *) lock_release
+    *) # A ROLLBACK THAT FAILS IS NEWS. spool_retire_rollback clears the record of
+       # what it moved whether or not it got everything back, so the exit trap
+       # cannot report what this arm swallows: discarding its diagnostic would
+       # leave the sender's older mail under .retiring-, undeliverable and unnamed,
+       # on a path that already knows something went wrong.
+       [ "$supersede" -eq 0 ] || spool_retire_rollback \
+         || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
+       lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        exit "$rc" ;;
   esac
   if ! spool_available "$AGENT_ID" "$name"; then
+    [ "$supersede" -eq 0 ] || spool_retire_rollback \
+      || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
     lock_release
     [ -z "$err" ] || printf '%s\n' "$err" >&2
     printf 'send: NOT parked — %s. Send again when '\''%s'\'' is idle.\n' \
@@ -4895,18 +5019,30 @@ cmd_send() {
   fi
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-  # ACCEPTED IS WHAT LICENSES THE RETIREMENT, and on this path acceptance is
-  # still in the future until spool_write commits. Retiring first meant every
-  # way spool_write can die — an unusable stamp, the temporary write, the
-  # commit rename — left the sender's older messages already deleted with
-  # nothing parked in their place. The subshell is what lets the report be
-  # about the pair: spool_read and rm die inside it, and the entry this send
-  # just committed is excluded from the sweep it shares a sender and a
-  # namespace with.
-  spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
-  [ "$supersede" -eq 0 ] \
-    || spool_supersede_try "$AGENT_ID" "$SEND_FROM" "$SPOOL_ENTRY" \
-    || die "$SPOOL_SUPERSEDE_ERROR — this send IS parked as $SPOOL_ENTRY and will be delivered; do not send it again. What could not be retired is still waiting beside it, so the recipient may see an older message from you as well"
+  # THE PARK IS THE LAST STEP OF A TRANSACTION THAT IS ALREADY OPEN. The sweep
+  # above has moved this sender's older bodies out of the [0-9]* namespace, so
+  # nothing can drain them and nothing has been destroyed; what remains is to put
+  # this body where a drain WILL claim it, and only then make the retirement
+  # final.
+  #
+  # The order matters in both directions. Retiring before the body exists loses
+  # mail: every way the write can die — an unusable stamp, the temporary write,
+  # the commit rename — would leave the sender's older messages already gone with
+  # nothing in their place. Parking before the retirement is final delivers BOTH:
+  # predecessor and replacement side by side, where the very next native boundary
+  # claims the whole queue as one bundle and delivers the superseded body too —
+  # the failed supersession arriving as a successful one. Staging the body, then
+  # committing it, then unlinking what was set aside is the single ordering that
+  # is safe against both.
+  spool_stage "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
+  if ! spool_commit_try; then
+    commit_err="$SPOOL_COMMIT_ERROR"
+    [ "$supersede" -eq 0 ] || spool_retire_rollback \
+      || commit_err="$commit_err — $SPOOL_ROLLBACK_ERROR"
+    die "$commit_err — this send was NOT parked and your body is still written at $SPOOL_STAGED. Nothing it would have superseded was retired"
+  fi
+  [ "$supersede" -eq 0 ] || spool_retire_commit \
+    || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
   # Steering-capable collars still land without a keystroke: the committed
   # spool entry is now the ordering authority. While this same pane lock is
   # held, try the whole queue. A free composer drains it now; copy-mode, a

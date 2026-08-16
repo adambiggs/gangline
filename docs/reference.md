@@ -295,12 +295,29 @@ stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
 harness may accept a submission into its own queue and drain it later; read the
 target before re-sending by hand.
 
-`--supersede` retires the same sender's earlier waiting messages after the newer
-message is accepted, whether the newer one parks or is delivered live. It is
-scoped to the sender, not to a subject: a sender with two unrelated messages
-waiting for one target loses the first when the second carries the flag, whether
-that second message parks or is delivered live. Pass it only when the newer
-message genuinely replaces everything that sender has parked.
+`--supersede` retires the same sender's earlier waiting messages once the newer
+message is accepted, whether the newer one parks or is delivered live. The
+retirement and the acceptance happen together or not at all. The sender's older
+messages are first moved out of the namespace a drain reads — reversibly, with
+nothing destroyed — and only then is delivery attempted: live if the target's
+composer is free, otherwise the body is written and parked. The retirement
+becomes final once that has succeeded. So a supersession that cannot retire
+refuses before anything is typed or written at all, and a delivery that fails
+after the move puts the older messages back where a drain will claim them. The
+recipient never sees a superseded message and the message that replaced it as
+one bundle, and no refusal leaves the older ones silently retired.
+
+A refusal that happens after the body has been written names the file it is in.
+A refusal from the retirement preflight names none, because at that point no body
+has been written. In the one case where restoring a moved message also fails,
+gang says which messages it could not put back: those are still on disk and are
+archived at teardown, but they are no longer deliverable, so that refusal is the
+notice to go and read them.
+
+It is scoped to the sender, not to a subject: a sender with two unrelated
+messages waiting for one target loses the first when the second carries the flag,
+whether that second message parks or is delivered live. Pass it only when the
+newer message genuinely replaces everything that sender has parked.
 
 A collar that declares no `GANG_STOP_HOOK` still receives the ordinary live
 attempt. If that attempt is refused, Gangline exits with the refusal, says the
