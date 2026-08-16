@@ -2787,7 +2787,12 @@ SPOOL_ENTRY=""
 spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENTRY
   local stamp entry tmp
   spool_establish "$1"
-  stamp="$(spool_stamp)"
+  # THE EMPTY ARM BELOW IS ONLY REACHABLE BECAUSE OF THIS `|| stamp=""`. An
+  # assignment from a command substitution carries the substitution's status,
+  # and `set -e` ends the process on it — so a python3 that cannot run killed
+  # gang here with status 1 and nothing on stderr, and the refusal written for
+  # exactly that case never printed.
+  stamp="$(spool_stamp)" || stamp=""
   case "$stamp" in
     ''|*[!0-9]*) die "cannot stamp a spool entry — python3 has to run for gang to order a spool oldest-first, and a message it could not then deliver in order will not be parked" ;;
   esac
