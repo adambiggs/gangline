@@ -954,11 +954,11 @@ sent, not by reading it off a pane that shows only what was typed.
 ## Latest claude-code is probed outside the mandatory contribution path
 
 The offline e2e lane runs daily and on dispatch in its own workflow, which
-installs the npm `latest` claude-code release. Harness and collar drift then
-becomes visible within a day without adding real-TUI wall time to pushes, pull
-requests, hooks, or `test/gate.sh`. The workflow records the harness build and
-runner environment before the lane so a failure can distinguish a moved
-harness surface from a changed runner substrate.
+installs the npm `latest` claude-code release. Harness and collar drift is then
+probed within a day without adding real-TUI wall time to pushes, pull requests,
+hooks, or `test/gate.sh`. The workflow records the harness build and runner
+environment before the lane so a failure can distinguish a moved harness
+surface from a changed runner substrate.
 
 ## A held response is the only honest way to freeze a turn
 

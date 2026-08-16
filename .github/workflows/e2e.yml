@@ -17,11 +17,9 @@ concurrency:
 jobs:
   claude-code:
     runs-on: ubuntu-latest
-    # The complete lane measured 33s locally on 2026-08-15. Fifteen minutes
-    # leaves more than 25x that margin for a cold runner and package install;
-    # the lane's tighter internal bounds should normally fail first and name
-    # the harness frame or event that did not arrive.
-    timeout-minutes: 15
+    # The complete lane measured 33s locally on 2026-08-15. Twenty minutes
+    # bounds a wedged setup too; the lane step has its own smaller ceiling.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
 
@@ -48,4 +46,20 @@ jobs:
           locale
 
       - name: Offline end-to-end lane
+        timeout-minutes: 15
+        env:
+          # A fresh runner has no legitimate lock holder. Keep this bound below
+          # the step ceiling so contention reports its owner instead of being
+          # erased by the outer timeout.
+          GANG_E2E_LOCK_WAIT: 60
+          GANG_E2E_ARTIFACT_DIR: ${{ runner.temp }}/gangline-e2e-artifacts
         run: test/e2e.sh
+
+      - name: Retain failed-lane evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-e2e-diagnostics
+          path: ${{ runner.temp }}/gangline-e2e-artifacts
+          if-no-files-found: ignore
+          retention-days: 7

@@ -34,6 +34,16 @@ unset TMUX TMUX_PANE
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
 STUB="$ROOT/test/e2e/stub.py"
+E2E_ARTIFACT_DIR="${GANG_E2E_ARTIFACT_DIR:-}"
+case "$E2E_ARTIFACT_DIR" in
+  '') E2E_ARTIFACT_RUN="" ;;
+  /*) E2E_ARTIFACT_RUN="$E2E_ARTIFACT_DIR/run-$$" ;;
+  *) echo "e2e: GANG_E2E_ARTIFACT_DIR must be an absolute path" >&2; exit 2 ;;
+esac
+if [ -n "$E2E_ARTIFACT_RUN" ]; then
+  mkdir -p -- "$E2E_ARTIFACT_RUN" \
+    || { echo "e2e: cannot create diagnostic root $E2E_ARTIFACT_RUN" >&2; exit 1; }
+fi
 
 # ONE HARNESS AT A TIME. A real claude-code process is heavy enough that two
 # lanes, or this lane beside the mandatory suite's tmux server, can starve the
@@ -134,9 +144,44 @@ settled() {
 
 RUN_ROOT=""
 STUB_PID=""
+WORLD_NAME=""
 leaked=0
+artifact_failed=0
+
+preserve_world() {
+  [ -n "$E2E_ARTIFACT_RUN" ] || return 0
+  local dest file geometry
+  dest="$E2E_ARTIFACT_RUN/$WORLD_NAME"
+  mkdir -p -- "$dest" || return 1
+
+  if ! timeout -k 2 10 "$GANG" capture "$AGENT" 200 \
+    >"$dest/pane.txt" 2>&1; then
+    printf '%s\n' 'e2e: pane capture was unavailable at teardown' \
+      >>"$dest/pane.txt" || return 1
+  fi
+  geometry="$(timeout -k 2 10 tmux display-message -p \
+    -t "$GANG_SESSION:$AGENT.0" '#{pane_width}x#{pane_height}' \
+    2>/dev/null || printf unavailable)"
+  printf 'scenario=%s\nharness=%s\ntmux=%s\npane=%s\n' \
+    "$WORLD_NAME" "$HARNESS_BUILD" "$(tmux -V)" "$geometry" \
+    >"$dest/environment.txt" || return 1
+
+  for file in requests.jsonl stub.out stub.err hitch.out wait.out send.out; do
+    [ ! -f "$RUN_ROOT/$file" ] || cp -- "$RUN_ROOT/$file" "$dest/$file" \
+      || return 1
+  done
+  if [ -d "$RUN_ROOT/claude/projects" ]; then
+    cp -R -- "$RUN_ROOT/claude/projects" "$dest/transcripts" || return 1
+  fi
+  return 0
+}
 
 teardown() {
+  if [ -n "$RUN_ROOT" ] && ! preserve_world; then
+    printf 'e2e: could not preserve diagnostics under %s\n' \
+      "$E2E_ARTIFACT_RUN" >&2
+    artifact_failed=1
+  fi
   if [ -n "$STUB_PID" ] && kill "$STUB_PID" 2>/dev/null; then
     settle "stub exit" not_running "$STUB_PID" || leaked=1
   fi
@@ -164,6 +209,7 @@ teardown() {
   fi
   RUN_ROOT=""
   STUB_PID=""
+  WORLD_NAME=""
 }
 
 not_running() { ! kill -0 "$1" 2>/dev/null; }
@@ -188,6 +234,10 @@ harness_gone() {
 on_exit() {
   local rc=$?
   teardown
+  [ "$artifact_failed" -eq 0 ] || {
+    echo "e2e: requested diagnostics could not be preserved — the run is not green" >&2
+    exit 1
+  }
   [ "$leaked" -eq 0 ] || {
     echo "e2e: cleanup left something behind — the run is not green" >&2
     exit 1
@@ -214,7 +264,8 @@ STUB_API_KEY=sk-ant-e2e-stub-0000000000000000
 # claude config, its own tmux server, its own session name. Nothing a scenario
 # leaves behind can be read by the next one, so a green scenario is green on
 # its own evidence.
-world_up() {
+world_up() { # $1 scenario name, used only to label optional diagnostics
+  WORLD_NAME="$1"
   RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-e2e.XXXXXX")"
   REQ_LOG="$RUN_ROOT/requests.jsonl"
   GATE="$RUN_ROOT/gate"
@@ -259,6 +310,9 @@ with open(path, "w", encoding="utf-8") as handle:
             "hasCompletedOnboarding": True,
             "theme": "dark",
             "autoUpdates": False,
+            # This seed was calibrated on a native install. Scheduled CI
+            # deliberately submits the same cold config to npm-global; if the
+            # harness starts treating the label as authority, boot must fail.
             "installMethod": "native",
             # A KEY IN THE ENVIRONMENT IS A FIRST-RUN GATE OF ITS OWN, and not
             # one the collar can answer: the harness draws a two-choice
@@ -304,6 +358,11 @@ PY
 
 world_down() {
   teardown
+  [ "$artifact_failed" -eq 0 ] || {
+    fail "the scenario's diagnostics could not be preserved" \
+      "the requested artifact root is incomplete — see the message above"
+    artifact_failed=0
+  }
   [ "$leaked" -eq 0 ] || {
     fail "the scenario's world did not come down" \
       "a stub, a tmux server or a temp root outlived it — see the message above"
@@ -462,7 +521,7 @@ release_held() {
 # status is the first half of the proof; the request log is the second, and the
 # stronger one — the contract did not merely reach a box, it reached the model.
 scenario_boot() {
-  world_up
+  world_up boot
   if ! booted boot; then world_down; return; fi
   pass "boot: hitch delivered a startup contract to a real claude-code"
   equal "boot: the booted agent reads idle" idle "$(state)"
@@ -483,7 +542,7 @@ scenario_boot() {
 # caller's channel. What returns the wait is therefore the harness's own Stop
 # hook and nothing else.
 scenario_turn() {
-  world_up
+  world_up turn
   if ! booted turn; then world_down; return; fi
 
   say "$HOLD_MARKER please hold" >/dev/null
@@ -549,7 +608,7 @@ wait_armed() { # the caller's channel is stored in a tmux pane-exited hook
 # silence — which is why the reading is asserted exactly rather than accepted
 # from a list.
 scenario_bricked() {
-  world_up
+  world_up bricked
   if ! booted bricked; then world_down; return; fi
 
   say "$ERROR_MARKER now" >/dev/null
@@ -594,7 +653,7 @@ scenario_bricked() {
 # harness sent it to the model on the following turn, with its attribution
 # intact, which is the property the whole system exists to provide.
 scenario_midturn() {
-  world_up
+  world_up midturn
   if ! booted midturn; then world_down; return; fi
 
   say "$HOLD_MARKER hold for the courier" >/dev/null

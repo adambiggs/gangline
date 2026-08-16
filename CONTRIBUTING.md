@@ -110,6 +110,11 @@ request CI, because a real boot costs seconds and the lane holds a turn open on
 purpose. The isolated `offline e2e` workflow runs it daily and on dispatch after
 installing the current npm `latest` claude-code release. This keeps harness
 drift visible without turning a real TUI into a mandatory contribution gate.
+On a failed run the workflow retains each scenario's pane, request log, stub
+output, harness transcript, and measured tmux geometry for seven days; on
+success the runner's ephemeral copies die with the job. A local caller that
+sets `GANG_E2E_ARTIFACT_DIR` owns that directory and removes it after its
+evidence is no longer needed.
 
 The lane takes the host's heavy-test lock itself, the same way the gate does, so
 it never runs beside the mandatory suite; that lock file is a shared inode

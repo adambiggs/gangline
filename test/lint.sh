@@ -72,14 +72,20 @@ if [ -f "$E2E_LANE" ]; then
       exit 1
     fi
     e2e_triggers="$(awk '
-      /^on:[[:space:]]*$/ { in_on = 1; next }
+      /^on:[[:space:]]*$/ { in_on = 1; saw_on = 1; next }
       in_on && /^[^[:space:]#]/ { in_on = 0 }
-      in_on && /^  [^[:space:]#][^:]*:[[:space:]]*$/ {
+      !in_on { next }
+      /^[[:space:]]*$/ || /^[[:space:]]*#/ { next }
+      /^  [[:alnum:]_-]+:[[:space:]]*$/ {
         trigger = $0
         sub(/^  /, "", trigger)
         sub(/:[[:space:]]*$/, "", trigger)
         print trigger
+        next
       }
+      /^    / { next }
+      { print "<unreadable line " FNR ">" }
+      END { if (!saw_on) print "<no readable on block>" }
     ' "$E2E_WORKFLOW" | sort)"
     expected_triggers="$(printf '%s\n' schedule workflow_dispatch)"
     if [ "$e2e_triggers" != "$expected_triggers" ]; then
