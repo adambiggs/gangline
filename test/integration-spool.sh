@@ -511,6 +511,78 @@ done
 equal "dropping an empty queue creates no archive directory" \
   "$archive_count" "$archive_count_after_empty"
 
+# A SPOOL DIRECTORY OUTLIVES THE WINDOW THAT NAMED IT. Only drop and down
+# delete one, so a window killed any other way strands its directory under the
+# spool root — and spool_establish adopts the directory its token names rather
+# than insisting on creating it, so a token minted onto a stray hands the new
+# agent the dead one's waiting mail. The stub below replaces the mint's entropy
+# with a counter and pre-seeds a directory for EVERY value that counter can
+# produce, so a mint that publishes without consulting the filesystem lands on
+# a stray whichever draw it happens to take. Past the sequence the stub is the
+# real od again, so the mint that does consult it reaches an unoccupied name —
+# and so wait_hook_arm, which indexes a tmux hook by the nonce and retries a
+# taken index only eight times, still gets the entropy it needs. The counter
+# file is what arms the stub: removing it after the hitch returns od to the
+# real one for every later check, and for the fixture pane that inherited this
+# PATH.
+mkdir -p "$RUN_ROOT/mintbin"
+cat > "$RUN_ROOT/mintbin/od" <<SH
+#!/bin/sh
+REAL="$(command -v od)"
+counter="$RUN_ROOT/mint-counter"
+SH
+cat >> "$RUN_ROOT/mintbin/od" <<'SH'
+[ -f "$counter" ] || exec "$REAL" "$@"
+n=$(( $(cat "$counter") + 1 ))
+printf '%s' "$n" > "$counter"
+[ "$n" -le 255 ] || exec "$REAL" "$@"
+printf ' %02x 00 00 00\n' "$n"
+SH
+chmod +x "$RUN_ROOT/mintbin/od"
+mint_seeded=255
+mint_seed_n=1
+while [ "$mint_seed_n" -le "$mint_seeded" ]; do
+  mint_seed_dir="$GANG_LOCK_DIR/spool/$(printf '%02x000000' "$mint_seed_n")"
+  mkdir -p "$mint_seed_dir"
+  printf 'ghost\nstranded\n[gang:ghost#deadbeef] MARK_STRANDED [/gang:ghost#deadbeef]\n' \
+    > "$mint_seed_dir/00000000000000000001-deadbeef"
+  mint_seed_n=$((mint_seed_n + 1))
+done
+printf '0' > "$RUN_ROOT/mint-counter"
+PATH="$RUN_ROOT/mintbin:$PATH" "$HITCH" collider -c spoolable -d /tmp >/dev/null
+mint_calls="$(cat "$RUN_ROOT/mint-counter")"
+rm -f "$RUN_ROOT/mint-counter"
+collider_token="$(tmux show-options -wqv -t "$(window_id collider)" @gl_spool)"
+case "$collider_token" in
+  ??000000) fail "a mint skips past every identity already on disk" \
+              "published '$collider_token', which names a directory that was already there" ;;
+  *) pass "a mint skips past every identity already on disk" ;;
+esac
+# The counter is what proves the stub was reached at all: without it, a token
+# outside the sequence is what an unstubbed run produces too.
+[ "$mint_calls" -gt "$mint_seeded" ] \
+  && pass "and it re-mints rather than publishing the first name it draws" \
+  || fail "and it re-mints rather than publishing the first name it draws" \
+    "the mint drew $mint_calls times over $mint_seeded occupied names"
+# Read AFTER the drop, because that is where an adoption does its damage: a
+# window holding a stray's token archives and deletes the stray on the way out,
+# so the stranded mail is gone under the dead agent's name.
+"$GANG" drop collider >/dev/null
+mint_intact=1
+mint_seed_n=1
+while [ "$mint_seed_n" -le "$mint_seeded" ]; do
+  mint_seed_dir="$GANG_LOCK_DIR/spool/$(printf '%02x000000' "$mint_seed_n")"
+  grep -q MARK_STRANDED "$mint_seed_dir/00000000000000000001-deadbeef" 2>/dev/null \
+    || mint_intact=0
+  mint_seed_n=$((mint_seed_n + 1))
+done
+equal "and dropping it takes no stranded spool with it" "1" "$mint_intact"
+mint_seed_n=1
+while [ "$mint_seed_n" -le "$mint_seeded" ]; do
+  rm -rf -- "$GANG_LOCK_DIR/spool/$(printf '%02x000000' "$mint_seed_n")"
+  mint_seed_n=$((mint_seed_n + 1))
+done
+
 # AN AGENT NAME BECOMES A PATH COMPONENT. spool_archive names the archive
 # subdirectory after the agent whose mail it is holding, so a "name" carrying a
 # parent reference moves pending messages out of the archive root entirely — on

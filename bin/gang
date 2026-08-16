@@ -2634,10 +2634,23 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   # message is waiting while it sits in a directory nothing points at and no
   # drop or down will ever delete. Minting it once, before the window can have
   # a second writer, removes the race rather than narrowing it.
-  local token
+  # A DIRECTORY OUTLIVES THE WINDOW THAT NAMED IT. Only drop and down remove a
+  # spool, so any other death — an external kill-window, a tmux server that
+  # goes away — strands its directory under the spool root forever. spool_
+  # establish creates or ADOPTS the directory its token names, so a token
+  # minted onto one of those strays would hand a new agent the dead one's
+  # waiting mail to drain. Minting past what is already on disk is what stops
+  # that; a stray is static, so looking is enough to rule it out.
+  local token root
   token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
   [ -z "$token" ] || return 0
-  tmux set-option -w -t "$1" @gl_spool "$(mint_nonce)" \
+  root="$(spool_root_of)"
+  while :; do
+    token="$(mint_nonce)"
+    [ -n "$token" ] || die "cannot mint a spool identity for this window"
+    [ -e "$root/$token" ] || break
+  done
+  tmux set-option -w -t "$1" @gl_spool "$token" \
     || die "cannot record the spool identity for this window"
 }
 
