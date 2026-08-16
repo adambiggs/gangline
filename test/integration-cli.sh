@@ -271,6 +271,18 @@ positional_out="$("$GANG" send --to probe --stdin -x 2>&1)" || :
 excludes "while a flag-shaped unknown argument is left alone" \
   "$positional_out" "reads it from stdin"
 
+# EVERY REFUSAL PRINTS THROUGH ONE FUNCTION, and operator bytes reach it from
+# every argument parser there is. What is asserted here is that function's
+# property; one parser is just the way to reach it.
+control_out="$("$GANG" drop probe \
+  "$(printf 'STRAY\033[31mPAINT\ngang: this line is not gang')" 2>&1)" || :
+excludes "an operator argument emits no terminal control bytes" \
+  "$control_out" "$(printf '\033')"
+contains "while its readable text still names what was refused" \
+  "$control_out" "STRAY"
+contains "and a pasted newline cannot forge a line of gang's own" \
+  "$control_out" "gang: gang: this line is not gang"
+
 env -u GANG_TEST_COLLARS GANG_TEST_PROFILES=1 "$GANG" collars \
   > "$RUN_ROOT/test-profiles-alias.out" 2> "$RUN_ROOT/test-profiles-alias.err"
 excludes "the removed suite switch alias exposes no test fixture" \

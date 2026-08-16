@@ -22,13 +22,28 @@ die() { fail 1 "$@"; }
 
 refuse() { fail 3 "$@"; }
 
+# OPERATOR BYTES REACH HERE, from twenty-odd argument parsers that interpolate
+# what they were handed into the refusal that names it. Sanitizing at the one
+# place they all print through is the check none of them can forget, and it is
+# the only shape of this that a new parser inherits for free. Newlines survive:
+# a captured diagnostic carries its own layout and flattening it would lose
+# what it was laid out to say. They cost nothing here because every line gets
+# the prefix, so a pasted newline cannot forge a line that reads as gang's —
+# an injected "gang: all fine" arrives as "gang: gang: all fine".
 fail() { # $1 = exit status, rest = message
-  local code="$1"; shift
-  if [ -t 2 ] && [ -z "${NO_COLOR:-}" ]; then
-    printf '\033[31mgang:\033[0m %s\n' "$*" >&2
-  else
-    printf 'gang: %s\n' "$*" >&2
-  fi
+  local code="$1" prefix='gang:' line rest; shift
+  [ ! -t 2 ] || [ -n "${NO_COLOR:-}" ] || prefix=$'\033[31mgang:\033[0m'
+  # BUILT-INS ONLY. Half of what this function exists to report is a missing
+  # dependency, and gang's own refusal for one names the tool it could not
+  # find — so a sanitizer that shelled out to tr would be silent in exactly
+  # the case where the diagnostic is the whole product.
+  rest="$*"
+  while :; do
+    line="${rest%%$'\n'*}"
+    printf '%s %s\n' "$prefix" "${line//[[:cntrl:]]/?}" >&2
+    [ "$rest" != "$line" ] || break
+    rest="${rest#*$'\n'}"
+  done
   exit "$code"
 }
 
