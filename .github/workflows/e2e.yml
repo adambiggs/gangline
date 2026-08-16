@@ -1,0 +1,51 @@
+name: offline e2e
+
+on:
+  schedule:
+    - cron: '17 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A dispatch and the day's scheduled probe exercise the same moving harness.
+# Let the first finish so neither run can disguise the other's teardown.
+concurrency:
+  group: offline-e2e
+  cancel-in-progress: false
+
+jobs:
+  claude-code:
+    runs-on: ubuntu-latest
+    # The complete lane measured 33s locally on 2026-08-15. Fifteen minutes
+    # leaves more than 25x that margin for a cold runner and package install;
+    # the lane's tighter internal bounds should normally fail first and name
+    # the harness frame or event that did not arrive.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies and latest Claude Code
+        run: |
+          set -euo pipefail
+          command -v tmux >/dev/null || sudo apt-get install -y tmux
+          npm install --global @anthropic-ai/claude-code@latest
+
+      - name: Record the runner and harness
+        run: |
+          set -euo pipefail
+          printf 'runner image: %s %s\n' "${ImageOS:-unknown}" "${ImageVersion:-unknown}"
+          uname -a
+          node --version
+          npm --version
+          python3 --version
+          tmux -V
+          claude --version
+          locale
+
+      - name: Offline end-to-end lane
+        run: test/e2e.sh

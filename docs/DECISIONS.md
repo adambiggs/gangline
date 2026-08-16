@@ -951,6 +951,15 @@ through a scenario language. Its request log is the instrument: a claim that an
 envelope was delivered is settled by finding it in what the harness actually
 sent, not by reading it off a pane that shows only what was typed.
 
+## Latest claude-code is probed outside the mandatory contribution path
+
+The offline e2e lane runs daily and on dispatch in its own workflow, which
+installs the npm `latest` claude-code release. Harness and collar drift then
+becomes visible within a day without adding real-TUI wall time to pushes, pull
+requests, hooks, or `test/gate.sh`. The workflow records the harness build and
+runner environment before the lane so a failure can distinguish a moved
+harness surface from a changed runner substrate.
+
 ## A held response is the only honest way to freeze a turn
 
 Scenarios that need a live turn — mid-turn steering, a wait that must block —

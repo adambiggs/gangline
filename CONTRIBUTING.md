@@ -105,18 +105,25 @@ dialect, so a run needs no network, no account, and no money. It proves what a
 fixture cannot: that the collar, the pane reading, the native hooks, and the
 turn bracket still describe the harness that is installed.
 
-It is opt-in. It is not wired into `test/gate.sh` and not run in CI, because a
-real boot costs seconds and the lane holds a turn open on purpose. It takes the
-host's heavy-test lock itself, the same way the gate does, so it never runs
-beside the mandatory suite; that lock file is a shared inode created on first
-use and deliberately never unlinked, because removing it after unlocking lets
-the next run lock a fresh file beside a waiter still holding the old one.
+It is opt-in locally and is not wired into `test/gate.sh`, push CI, or pull
+request CI, because a real boot costs seconds and the lane holds a turn open on
+purpose. The isolated `offline e2e` workflow runs it daily and on dispatch after
+installing the current npm `latest` claude-code release. This keeps harness
+drift visible without turning a real TUI into a mandatory contribution gate.
+
+The lane takes the host's heavy-test lock itself, the same way the gate does, so
+it never runs beside the mandatory suite; that lock file is a shared inode
+created on first use and deliberately never unlinked, because removing it after
+unlocking lets the next run lock a fresh file beside a waiter still holding the
+old one.
 
 `test/lint.sh` exempts this one file from the timing ban, and refuses if the
-gate, the suites it calls, CI, or the hooks name the lane. That tripwire reads
-those files for the lane's name; a call assembled from a variable or reached
-through a helper it does not name would pass it. Keeping the lane opt-in is the
-rule, and the check catches the ordinary way of breaking it.
+gate, the suites it calls, hooks, or any workflow except the isolated e2e
+workflow names the lane. It also requires that workflow to expose exactly the
+schedule and dispatch triggers. That tripwire reads those files for the lane's
+name; a call assembled from a variable or reached through a helper it does not
+name would pass it. Keeping the lane out of mandatory paths is the rule, and
+the check catches the ordinary way of breaking it.
 
 Every wait is bounded, including the heavy lock and the release of a held turn,
 and each prints the reads it actually used, so a lane drifting toward its budget

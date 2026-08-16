@@ -31,38 +31,63 @@ if [ "$fast" -eq 0 ]; then
   test/source-guards-fixtures.sh
 fi
 
-# THE OPT-IN E2E LANE IS THE ONE FILE ALLOWED TO SPEND WALL TIME, and this is
-# the check that keeps that exemption honest. It drives a real claude-code TUI,
-# so it cannot be written against a fake clock — but the rule below was never
-# about all test code, it was about the MANDATORY suite, which the same comment
-# says by calling real harness probes operator commands rather than part of it.
-# The exemption therefore holds only while the lane stays outside the automatic
-# paths, and that is asserted here rather than left to whoever edits them next:
-# the day someone wires the lane in, this refuses instead of quietly admitting
-# seconds of TUI boot into every pre-commit run.
+# THE E2E LANE IS THE ONE FILE ALLOWED TO SPEND WALL TIME, and this is the check
+# that keeps that exemption honest. It drives a real claude-code TUI, so it
+# cannot be written against a fake clock — but the rule below was never about
+# all test code, it was about the MANDATORY suite. One isolated daily/dispatch
+# workflow runs the lane specifically because real harness time is its subject;
+# the exemption still holds only while the lane stays outside the gate, hooks,
+# and push/PR workflows.
 #
-# WHAT THIS CAN AND CANNOT SEE. It reads the files that run without anyone
-# choosing to — the gate and the suites it calls, CI, and the hooks — and looks
-# for the lane's name in them. A call assembled from a variable or reached
-# through a helper this list does not name would pass it. The check is a
-# tripwire on the ordinary way in, not a proof of unreachability; the rule it
-# guards is stated in CONTRIBUTING.md and this only catches the common breach.
+# WHAT THIS CAN AND CANNOT SEE. It reads the ordinary automatic paths and looks
+# for the lane's name, exempting only the named workflow after proving that
+# workflow exposes exactly schedule and workflow_dispatch. A call assembled
+# from a variable or reached through a helper this list does not name would
+# pass it. The check is a tripwire on the ordinary way in, not a proof of
+# unreachability; the rule it guards is stated in CONTRIBUTING.md.
 E2E_LANE=test/e2e.sh
+E2E_WORKFLOW=.github/workflows/e2e.yml
 if [ -f "$E2E_LANE" ]; then
   auto_hits=""
   for f in test/gate.sh test/smoke.sh test/integration.sh \
-    .github/workflows/*.yml .github/workflows/*.sh .githooks/*; do
+    .github/workflows/*.yml .github/workflows/*.yaml \
+    .github/workflows/*.sh .githooks/*; do
     [ -f "$f" ] || continue
+    [ "$f" = "$E2E_WORKFLOW" ] && continue
     grep -Hn 'e2e\.sh' "$f" >/dev/null 2>&1 || continue
     auto_hits="${auto_hits}${auto_hits:+
 }$(grep -Hn 'e2e\.sh' "$f")"
   done
   if [ -n "$auto_hits" ]; then
     printf '%s\n' \
-      "lint: $E2E_LANE is exempt from the wall-time rule ONLY while it stays opt-in, and something that runs automatically now names it:" \
+      "lint: $E2E_LANE may run only in $E2E_WORKFLOW outside explicit local use, and another automatic path now names it:" \
       "$auto_hits" \
-      "Either take it back out, or remove the exemption below and make the lane clock-free." >&2
+      "Take it back out; the lane must stay outside the gate, hooks, and push/PR workflows." >&2
     exit 1
+  fi
+
+  if [ -f "$E2E_WORKFLOW" ]; then
+    if ! grep -Eq '^[[:space:]]+run: test/e2e\.sh[[:space:]]*$' "$E2E_WORKFLOW"; then
+      echo "lint: $E2E_WORKFLOW does not run $E2E_LANE directly" >&2
+      exit 1
+    fi
+    e2e_triggers="$(awk '
+      /^on:[[:space:]]*$/ { in_on = 1; next }
+      in_on && /^[^[:space:]#]/ { in_on = 0 }
+      in_on && /^  [^[:space:]#][^:]*:[[:space:]]*$/ {
+        trigger = $0
+        sub(/^  /, "", trigger)
+        sub(/:[[:space:]]*$/, "", trigger)
+        print trigger
+      }
+    ' "$E2E_WORKFLOW" | sort)"
+    expected_triggers="$(printf '%s\n' schedule workflow_dispatch)"
+    if [ "$e2e_triggers" != "$expected_triggers" ]; then
+      printf '%s\n' \
+        "lint: $E2E_WORKFLOW must expose exactly schedule and workflow_dispatch; found:" \
+        "${e2e_triggers:-<none>}" >&2
+      exit 1
+    fi
   fi
 fi
 

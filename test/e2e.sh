@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 #
-# OPT-IN END-TO-END LANE. Not part of test/gate.sh and not part of CI.
+# ISOLATED END-TO-END LANE. Not part of test/gate.sh or push/PR CI; locally it
+# runs only when chosen, while scheduled CI drives it once daily and on dispatch.
 #
 # Everything else in test/ proves Gangline against fixtures: a shell pretending
 # to be a harness, a fake clock, a pane whose every transition is synchronous.
