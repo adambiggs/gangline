@@ -607,6 +607,112 @@ equal "a fragment teardown cannot account for is archived, not deleted" \
   || fail "and the spool it was in is gone once nothing is left in it" \
     "$strays_spool survived"
 
+# THE NAME THAT MAKES A FRAGMENT VISIBLE MUST NOT NAME SOMETHING ELSE. Stripping
+# the leading dot maps `.foo` and `foo` onto one destination, and an ordinary mv
+# replaces the first archive file with the second. The spool then empties, the
+# rmdir succeeds, and teardown reports a clean archive with one message gone —
+# the same silent loss the whole archive-every-child rule exists to stop, this
+# time inside the rule.
+"$HITCH" twinned -c spoolable -d /tmp >/dev/null
+twinned_id="$(window_id twinned)"
+twinned_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$twinned_id" @gl_spool)"
+mkdir -p "$twinned_spool"
+printf 'tester\nhidden half\n[gang:tester#deadbeef] MARK_HIDDEN_TWIN' \
+  > "$twinned_spool/.writing-1234-00000000000000000011"
+printf 'tester\nvisible half\n[gang:tester#deadbeef] MARK_VISIBLE_TWIN' \
+  > "$twinned_spool/writing-1234-00000000000000000011"
+"$GANG" drop twinned >/dev/null
+twinned_kept=0
+for twinned_entry in "$GANG_ARCHIVE_DIR"/*/twinned/*; do
+  [ -f "$twinned_entry" ] && twinned_kept=$((twinned_kept + 1))
+done
+equal "two children wanting one archive name are both kept" "2" "$twinned_kept"
+grep -rq MARK_VISIBLE_TWIN "$GANG_ARCHIVE_DIR" \
+  && pass "the child that was already visible is not overwritten" \
+  || fail "the child that was already visible is not overwritten" \
+    "MARK_VISIBLE_TWIN is in no archived file"
+grep -rq MARK_HIDDEN_TWIN "$GANG_ARCHIVE_DIR" \
+  && pass "and the hidden one arrives beside it under a name of its own" \
+  || fail "and the hidden one arrives beside it under a name of its own" \
+    "MARK_HIDDEN_TWIN is in no archived file"
+twinned_hidden=0
+for twinned_entry in "$GANG_ARCHIVE_DIR"/*/twinned/.*; do
+  [ -f "$twinned_entry" ] && twinned_hidden=$((twinned_hidden + 1))
+done
+equal "with nothing left hidden in a directory a person reads with ls" "0" \
+  "$twinned_hidden"
+
+# THE EDGES OF THAT SAME RULE, each of which can be broken on its own while the
+# pair above stays green. `..foo` is a child the archive's own ..?* glob brings
+# in and one stripped dot leaves it hidden; a name of nothing but dots strips to
+# nothing at all, and an empty name is not a visible one either. And a name is
+# taken by anything that answers to it: a relative symlink stops resolving the
+# moment it is moved into the archive, after which an existence test that does
+# not ask about links calls the name free and the next child is moved over it.
+"$HITCH" edged -c spoolable -d /tmp >/dev/null
+edged_id="$(window_id edged)"
+edged_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$edged_id" @gl_spool)"
+mkdir -p "$edged_spool" "$GANG_LOCK_DIR/linktarget"
+printf 'tester\ndoubly hidden\n[gang:tester#deadbeef] MARK_DOUBLE_DOT' \
+  > "$edged_spool/..writing-1234-00000000000000000021"
+printf 'tester\nno name at all\n[gang:tester#deadbeef] MARK_ALL_DOTS' \
+  > "$edged_spool/..."
+# Resolves here, so the archive walk accepts it as a file; its target is
+# reached by a relative path that no longer exists once it has been moved.
+printf 'tester\nlink target\n[gang:tester#deadbeef] MARK_LINK_TARGET\n' \
+  > "$GANG_LOCK_DIR/linktarget/realfile"
+ln -s ../../linktarget/realfile "$edged_spool/danglepair"
+printf 'tester\nsecond claimant\n[gang:tester#deadbeef] MARK_LINK_TWIN' \
+  > "$edged_spool/.danglepair"
+"$GANG" drop edged >/dev/null
+edged_hidden=0
+for edged_entry in "$GANG_ARCHIVE_DIR"/*/edged/.*; do
+  [ -e "$edged_entry" ] || [ -L "$edged_entry" ] || continue
+  case "${edged_entry##*/}" in .|..) continue ;; esac
+  edged_hidden=$((edged_hidden + 1))
+done
+equal "a child behind two dots is archived visibly, not merely one dot shallower" \
+  "0" "$edged_hidden"
+grep -rq MARK_DOUBLE_DOT "$GANG_ARCHIVE_DIR" \
+  && pass "and its body is what arrived under that visible name" \
+  || fail "and its body is what arrived under that visible name" \
+    "MARK_DOUBLE_DOT is in no archived file"
+# Named exactly, so this stays red for the two-dot case alone even if the
+# all-dots fallback beside it is what someone else changed.
+edged_doubled=0
+for edged_entry in "$GANG_ARCHIVE_DIR"/*/edged/writing-1234-00000000000000000021; do
+  [ -f "$edged_entry" ] && edged_doubled=$((edged_doubled + 1))
+done
+equal "under the name that is left when every leading dot is gone" "1" \
+  "$edged_doubled"
+grep -rq MARK_ALL_DOTS "$GANG_ARCHIVE_DIR" \
+  && pass "a child whose whole name is dots is archived under a name of its own" \
+  || fail "a child whose whole name is dots is archived under a name of its own" \
+    "MARK_ALL_DOTS is in no archived file"
+grep -rq MARK_LINK_TWIN "$GANG_ARCHIVE_DIR" \
+  && pass "and a name held by a link that no longer resolves is not treated as free" \
+  || fail "and a name held by a link that no longer resolves is not treated as free" \
+    "MARK_LINK_TWIN is in no archived file"
+edged_links=0
+for edged_entry in "$GANG_ARCHIVE_DIR"/*/edged/*; do
+  [ -L "$edged_entry" ] && edged_links=$((edged_links + 1))
+done
+equal "with the link itself still there rather than replaced by its rival" "1" \
+  "$edged_links"
+# EVERY ONE OF THEM UNDER THE AGENT THAT OWNED IT, AND NONE OF THEM MERGED. The
+# greps above answer "is this body anywhere in the archive", which stays true
+# for a child that landed beside the wrong agent or on top of another one; the
+# count is what says four children went in and four came out, in the directory
+# a person reads to find that agent's mail.
+edged_kept=0
+for edged_entry in "$GANG_ARCHIVE_DIR"/*/edged/* "$GANG_ARCHIVE_DIR"/*/edged/.[!.]*; do
+  [ -e "$edged_entry" ] || [ -L "$edged_entry" ] || continue
+  edged_kept=$((edged_kept + 1))
+done
+equal "and all four children archived under the agent whose spool they were in" \
+  "4" "$edged_kept"
+rm -rf -- "$GANG_LOCK_DIR/linktarget"
+
 # The fragment is the reachable case; the class is anything the archive cannot
 # move. Teardown refuses on those rather than deleting a directory whose
 # contents it never read.

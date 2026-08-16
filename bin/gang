@@ -2849,7 +2849,7 @@ archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its direc
 }
 
 spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local e entry name dest moved=0
+  local e entry name dest dest_base dest_name dest_n moved=0
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   # EVERY CHILD, not the names gang expects. A whitelist here turns "this is
@@ -2878,8 +2878,39 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
     # so a .writing- fragment carried over verbatim would be saved and hidden
     # by the same move — the count below would say it was kept and the
     # directory would look empty to whoever went to read it.
+    #
+    # AND UNDER A NAME NOTHING ELSE HERE HOLDS. Making a name visible is a
+    # many-to-one map: `.foo` and `foo` are two children of one spool and both
+    # want to be `foo`, and plain mv answers that by destroying the first with
+    # the second. The spool then empties, the rmdir below succeeds, and teardown
+    # reports a clean archive with a message gone — the exact silent loss the
+    # archive-every-child rule above exists to stop, reintroduced by the rename
+    # that carries it out. So the visible name is a request, and a taken one is
+    # answered with a suffix instead of a casualty. Nothing else writes into
+    # this directory — archive_establish minted it under a nonce and only this
+    # loop has been in it — so looking before moving is enough to settle it.
     entry="${e##*/}"
-    mv -- "$e" "$dest/${entry#.}" \
+    dest_base="$entry"
+    # EVERY leading dot, not one. `..foo` is a child the ..?* glob above brings
+    # in, and stripping a single dot leaves it hidden in the archive — visible
+    # is the property, so it has to be stripped down to one.
+    while [ "${dest_base#.}" != "$dest_base" ]; do dest_base="${dest_base#.}"; done
+    # A name of nothing but dots strips down to nothing, and an empty base is
+    # not a visible name: the suffix loop below would hand it `.2`, which is
+    # hidden again, and a bare `$dest/` would make mv keep the basename it was
+    # trying to leave behind. So it gets a name of its own instead.
+    [ -n "$dest_base" ] || dest_base="dotted"
+    dest_name="$dest_base"
+    dest_n=1
+    # -L AS WELL AS -e. A child of the spool may be a symlink, and a relative one
+    # stops resolving the moment it is moved here — after which -e alone calls
+    # its name free and the next child is moved straight over it. A name is taken
+    # if anything answers to it, resolvable or not; lock_base checks the same way.
+    while [ -e "$dest/$dest_name" ] || [ -L "$dest/$dest_name" ]; do
+      dest_n=$((dest_n + 1))
+      dest_name="$dest_base.$dest_n"
+    done
+    mv -- "$e" "$dest/$dest_name" \
       || die "cannot archive the pending message $e to $dest — nothing further has been ended, and the message is still where it was"
     moved=$((moved + 1))
   done
