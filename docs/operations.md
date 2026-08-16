@@ -541,6 +541,51 @@ that stopped reads idle, and one that ignored the key stays busy and refuses
 delivery. Gangline refuses to interrupt an occupied composer, because that
 keystroke is often what a native dialog reads as an answer.
 
+### The whole team vanished at once
+
+Every window gone with no `gang down`, no stall, and free memory still showing in
+`free -h` is the signature of `systemd-oomd`, not of Gangline. The tmux server
+and every agent in it share one cgroup — the login session scope that started the
+server — and `oomd` kills a cgroup whole, so one decision takes the team with no
+partial survival and no signal an agent could catch.
+
+Name the killer before assuming anything else:
+
+```sh
+journalctl -b -1 --no-pager | grep 'systemd-oomd.*Killed'
+oomctl
+```
+
+`oomctl` prints the live policy. Where `/user.slice` is a swap-monitored cgroup,
+`oomd` kills on *swap* used rather than on free memory, and it selects the
+descendant holding the most of it — which is the team. Idle daemons that swap out
+and never fault back hold that counter high on their own, so the crossing can
+arrive while the team is doing nothing unusual and correlate with whatever the
+operator happened to be doing at the time.
+
+`ManagedOOMPreference=avoid` and `=omit` do not rescue a team, and they fail
+quietly. `systemd-oomd` ignores those attributes unless the unit's cgroup is
+owned by root, which a `--user` unit's cgroup is not; the property reads back as
+set while nothing honors it. Read the attribute `oomd` actually consults rather
+than the unit's own answer:
+
+```sh
+getfattr -n user.oomd_omit /sys/fs/cgroup/<unit-cgroup-path>
+```
+
+The levers that work are the operator's — the policy on `/user.slice`, headroom
+in the swap counter, and caps on whatever fills it. Placement is worth reading
+either way, because a path naming a session scope means the team dies with a
+login session it has usually already outlived:
+
+```sh
+cat /proc/$(tmux display-message -p '#{pid}')/cgroup
+```
+
+Clearing swap with `swapoff -a && swapon -a` zeroes the counter and buys minutes.
+It is a reset, not a repair, and it forces every swapped page back into memory
+first.
+
 ### The tmux server was lost
 
 Gangline persists no roster. Recreate only the agents the operator chooses:
