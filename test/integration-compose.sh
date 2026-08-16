@@ -222,7 +222,6 @@ if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
 _flush_probe() {   # what the composer holds, read where input ordering places it
-  printf '%s' "$READLINE_LINE" > "$FLUSH_PROBE"
   tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
 }
 bind -x '"\C-t": _flush_probe'
@@ -231,7 +230,7 @@ cat > "$RUN_ROOT/collars/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE=$RUN_ROOT/flush-probe FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 collar_input() { # a composer that spans lines, and reads as the hint when empty
@@ -313,12 +312,11 @@ flush_probe() {
   flush_probed=$((flush_probed + 1))
   local chan="test-flush-probe-$flush_probed-$$"
   printf '%s' "$chan" > "$RUN_ROOT/flush-probe-chan"
-  : > "$RUN_ROOT/flush-probe"
   tmux wait-for "$chan" &
   local waiter=$!
   tmux send-keys -t "$parked_id" C-t
   wait "$waiter"
-  cat "$RUN_ROOT/flush-probe" 2>/dev/null || true
+  "$GANG" composer parked
 }
 
 flush_settled=0

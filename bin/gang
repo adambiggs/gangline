@@ -1400,6 +1400,10 @@ prose_check() { # $1 path, $2 label, optional display path; populate PROSE or PR
     *"$sentinel") PROSE="${marked%"$sentinel"}" ;;
     *) PROSE_ERROR="internal: the prose sentinel was lost while reading $display"; return 1 ;;
   esac
+  if ! python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file"; then
+    PROSE_ERROR="$label $display is not valid UTF-8"
+    return 1
+  fi
   probe="$(printf '%s' "$PROSE" | tr -d '\11\12')"
   case "$probe" in
     *[[:cntrl:]]*)
@@ -1407,10 +1411,6 @@ prose_check() { # $1 path, $2 label, optional display path; populate PROSE or PR
       return 1
       ;;
   esac
-  if ! python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < "$file"; then
-    PROSE_ERROR="$label $display is not valid UTF-8"
-    return 1
-  fi
 }
 
 prose_read() { # $1 path, $2 label, optional display path; populate PROSE or fail

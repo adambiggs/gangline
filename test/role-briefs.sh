@@ -659,6 +659,15 @@ ac24() {
   rmdir "$config/CONTRACT.md"
 
   rc=0
+  printf '\301\037' > "$config/CONTRACT.md"
+  out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac24-utf8 -c bash -d /tmp 2>&1)" || rc=$?
+  [ "$rc" -ne 0 ] && pass "AC24 invalid UTF-8 operator contract refuses" \
+    || fail "AC24 invalid UTF-8 operator contract refuses" "$out"
+  contains "AC24 invalid UTF-8 refusal names its defect" "$out" "not valid UTF-8"
+  excludes "AC24 invalid UTF-8 contract opens no window" \
+    "$(window_names)" "role-ac24-utf8"
+
+  rc=0
   : > "$config/CONTRACT.md"
   out="$(GANG_CONFIG_DIR="$config" "$GANG" hitch role-ac24b -c bash -d /tmp 2>&1)" || rc=$?
   [ "$rc" -ne 0 ] && pass "AC24 empty operator contract refuses" \
