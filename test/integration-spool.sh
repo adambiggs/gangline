@@ -29,9 +29,23 @@ fi
 contains "naming the declaration a drain would need" "$nohook_out" "GANG_STOP_HOOK"
 contains "and says the message was not parked" "$nohook_out" "NOT parked"
 excludes "the refusing target received no body" "$(pane nodrain)" "MARK_NOHOOK"
-[ ! -d "$nodrain_spool" ] \
-  && pass "nothing undrainable was put on disk" \
-  || fail "nothing undrainable was put on disk" "$nodrain_spool exists"
+# THE EXPECTATION THIS CHECK WAS ALWAYS ABOUT, now measured directly. It used
+# to read the DIRECTORY's absence, which answered the right question only while
+# the directory was created by the first parked message. It is now created at
+# hitch, because a published spool identity with nothing on disk is a name a
+# later mint draws again and hands to a second window. So the directory is an
+# identity and its presence says nothing about mail; what must still be true —
+# and is what the refusal above promises — is that this spool holds NOTHING, no
+# entry a drain could claim and no child of any kind. A directory that exists
+# and is empty is not an undrainable message, and the count below cannot be
+# passed by the same conflation the old form allowed.
+nodrain_children=0
+for nodrain_entry in "$nodrain_spool"/* "$nodrain_spool"/.[!.]* "$nodrain_spool"/..?*; do
+  # -L TOO: a dangling symlink is a child, and -e alone answers no for one.
+  [ -e "$nodrain_entry" ] || [ -L "$nodrain_entry" ] || continue
+  nodrain_children=$((nodrain_children + 1))
+done
+equal "nothing undrainable was put on disk" "0" "$nodrain_children"
 "$GANG" drop nodrain >/dev/null
 if super_out="$(printf 'MARK_LONE_SUPERSEDE' |
   "$GANG" send --to alpha --from tester --supersede --live-only --stdin 2>&1)"; then
@@ -582,6 +596,180 @@ while [ "$mint_seed_n" -le "$mint_seeded" ]; do
   rm -rf -- "$GANG_LOCK_DIR/spool/$(printf '%02x000000' "$mint_seed_n")"
   mint_seed_n=$((mint_seed_n + 1))
 done
+
+# AN IDENTITY IS RESERVED WHERE IT IS PUBLISHED, NOT WHERE THE FIRST MESSAGE
+# LANDS. The check above is a look at the filesystem, and it can only see what
+# is already there: a window that has been hitched and has never been sent
+# anything carries a published token and nothing on disk. A later mint draws,
+# sees no directory, and publishes the same name — the two windows do not have
+# to be hitched together, because the first one's directory stays absent until
+# somebody sends it mail. The reservation is what closes that, and it has to be
+# the same operation as the look, or the gap is only narrower.
+"$HITCH" reserving -c spoolable -d /tmp >/dev/null
+reserving_token="$(tmux show-options -wqv -t "$(window_id reserving)" @gl_spool)"
+[ -n "$reserving_token" ] \
+  && pass "a hitch publishes a spool identity" \
+  || fail "a hitch publishes a spool identity" "no token on the window"
+[ -d "$GANG_LOCK_DIR/spool/$reserving_token" ] \
+  && pass "and reserves it on disk before any message is parked" \
+  || fail "and reserves it on disk before any message is parked" \
+    "$GANG_LOCK_DIR/spool/$reserving_token does not exist, so a later mint can draw it"
+# A RESERVATION MUST NOT OUTLIVE THE PUBLICATION IT WAS TAKEN FOR. mkdir claims
+# the name before the window carries it, so between those two steps gang owns a
+# directory nothing points at. If publishing dies there and the directory stays,
+# that name is burned and an empty spool is stranded under the root for good.
+# Only tmux can fail that step, so tmux is what is stubbed — and only for the
+# one option write, so everything the hitch does before it still happens.
+mkdir -p "$RUN_ROOT/nopublish"
+cat > "$RUN_ROOT/nopublish/tmux" <<SH
+#!/bin/sh
+REAL="$(command -v tmux)"
+SH
+cat >> "$RUN_ROOT/nopublish/tmux" <<'SH'
+# The publication exactly: set-option -w ... @gl_spool <token>. The unset that
+# teardown does carries -uw and is left alone, so this breaks the one write the
+# fixture is about and nothing else.
+if [ "$1" = set-option ] && [ "$2" = -w ]; then
+  for a in "$@"; do
+    [ "$a" = @gl_spool ] && exit 1
+  done
+fi
+exec "$REAL" "$@"
+SH
+chmod +x "$RUN_ROOT/nopublish/tmux"
+nopublish_before="$(ls -1a "$GANG_LOCK_DIR/spool" | sort | tr '\n' ' ')"
+if PATH="$RUN_ROOT/nopublish:$PATH" "$HITCH" nopublish -c spoolable -d /tmp \
+    >/dev/null 2>&1; then
+  fail "a hitch that cannot publish its spool identity does not report success" \
+    "hitch reported success"
+else
+  pass "a hitch that cannot publish its spool identity does not report success"
+fi
+equal "and the reservation it had already taken is released, not stranded" \
+  "$nopublish_before" "$(ls -1a "$GANG_LOCK_DIR/spool" | sort | tr '\n' ' ')"
+"$GANG" drop nopublish >/dev/null 2>&1 || :
+
+# THE WINDOWS THAT WERE ALREADY UP WHEN THIS RULE ARRIVED. gang is a script read
+# from disk, so an upgrade lands on a running team between one command and the
+# next, and every window already hitched carries a published token with no
+# directory behind it. Nothing ever mints for those windows again, so the
+# reservation alone does not reach them: mkdir would SUCCEED on that free name
+# and hand a second window the same spool. What a live window has published is
+# taken whether or not anything on disk says so, and the draw has to read that.
+# The od stub is how the draw is aimed at the name in question; the counter
+# proves it was reached rather than missed.
+"$HITCH" legacy -c spoolable -d /tmp >/dev/null
+legacy_token="$(tmux show-options -wqv -t "$(window_id legacy)" @gl_spool)"
+# The pre-upgrade world, reconstructed: published, with nothing on disk holding
+# it. Tolerant of there being nothing to remove, so this fixture still reaches
+# its own assertion when the reservation it is calibrating has been reverted.
+rmdir "$GANG_LOCK_DIR/spool/$legacy_token" 2>/dev/null || :
+mkdir -p "$RUN_ROOT/legacybin"
+cat > "$RUN_ROOT/legacybin/od" <<SH
+#!/bin/sh
+REAL="$(command -v od)"
+counter="$RUN_ROOT/legacy-counter"
+token="$legacy_token"
+SH
+cat >> "$RUN_ROOT/legacybin/od" <<'SH'
+[ -f "$counter" ] || exec "$REAL" "$@"
+n=$(( $(cat "$counter") + 1 ))
+printf '%s' "$n" > "$counter"
+[ "$n" -le 40 ] || exec "$REAL" "$@"
+printf ' %s %s %s %s\n' \
+  "$(printf '%s' "$token" | cut -c1-2)" "$(printf '%s' "$token" | cut -c3-4)" \
+  "$(printf '%s' "$token" | cut -c5-6)" "$(printf '%s' "$token" | cut -c7-8)"
+SH
+chmod +x "$RUN_ROOT/legacybin/od"
+printf '0' > "$RUN_ROOT/legacy-counter"
+PATH="$RUN_ROOT/legacybin:$PATH" "$HITCH" newcomer -c spoolable -d /tmp >/dev/null
+legacy_calls="$(cat "$RUN_ROOT/legacy-counter")"
+rm -f "$RUN_ROOT/legacy-counter"
+newcomer_token="$(tmux show-options -wqv -t "$(window_id newcomer)" @gl_spool)"
+# THE INSTRUMENT, not the outcome. The stub answers the first forty draws with
+# the one token, so a mint that refuses it has to keep drawing and burn all
+# forty before a real one is reached; a hitch that never puts that token to the
+# mint spends only the handful of nonces it needs. Passing forty is therefore
+# evidence about WHICH consumer drew it, which the published name alone cannot
+# give: without this, a token that was never offered to spool_mint at all would
+# look exactly like one it correctly refused.
+[ "$legacy_calls" -gt 40 ] \
+  && pass "the spool mint is what drew the forced token, and kept redrawing" \
+  || fail "the spool mint is what drew the forced token, and kept redrawing" \
+    "only $legacy_calls draws were taken, so the mint never reached the stub"
+if [ "$newcomer_token" = "$legacy_token" ]; then
+  fail "a mint refuses a token a live window has already published" \
+    "newcomer drew $legacy_token, which 'legacy' is using with no directory behind it"
+else
+  pass "a mint refuses a token a live window has already published"
+fi
+"$GANG" drop newcomer >/dev/null
+
+# AN IDENTITY ALREADY ON A WINDOW IS NOT EVIDENCE GANG PUT IT THERE. @gl_spool is
+# a tmux option and gang is not the only writer a tmux server has; nothing in the
+# registration guards covers it. A window set to a live agent's identity and then
+# adopted would be enrolled onto that agent's spool, and the two would drain each
+# other's mail — the same harm as a repeated mint, reached without waiting for a
+# nonce to collide. And a value that is not a token at all becomes a path here,
+# so it is refused where it is read rather than after it has been joined to one.
+# 'reserving' rather than 'legacy': the impersonated agent has to be one whose
+# reservation is intact, and legacy's was removed above on purpose to build the
+# pre-upgrade world.
+impostor_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n impostor "PS1='❯ ' bash --norc")"
+tmux set-option -w -t "$impostor_id" @gl_spool "$reserving_token"
+if impostor_out="$("$GANG" adopt impostor -c spoolable 2>&1)"; then
+  fail "adopting a window carrying another agent's spool identity is refused" \
+    "adopt reported success"
+else
+  pass "adopting a window carrying another agent's spool identity is refused"
+fi
+contains "naming the identity that is already held" "$impostor_out" \
+  "$reserving_token"
+equal "and the agent that holds it keeps it" "$reserving_token" \
+  "$(tmux show-options -wqv -t "$(window_id reserving)" @gl_spool)"
+[ -d "$GANG_LOCK_DIR/spool/$reserving_token" ] \
+  && pass "with its reservation untouched by the refusal" \
+  || fail "with its reservation untouched by the refusal" \
+    "$GANG_LOCK_DIR/spool/$reserving_token is gone"
+tmux set-option -w -t "$impostor_id" @gl_spool '../escaped'
+if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
+  fail "a spool identity that is not one gang minted is refused before it is a path" \
+    "adopt reported success"
+else
+  pass "a spool identity that is not one gang minted is refused before it is a path"
+fi
+[ ! -e "$GANG_LOCK_DIR/spool/../escaped" ] \
+  && pass "and nothing was created outside the spool root" \
+  || fail "and nothing was created outside the spool root" \
+    "$GANG_LOCK_DIR/escaped exists"
+# A RESERVATION HAS TO BE WHERE EVERY DELIVERING PROCESS LOOKS FOR IT. -d and -O
+# both follow a link, so a well-formed token whose path is a symlink to some
+# other directory this user owns would read as an identity already reserved —
+# and then be refused by lock_base the first time a message tried to land in it.
+# Refusing it at the mint is the same no-split-location rule, applied where the
+# identity is taken rather than where the mail arrives.
+ln -s "$RUN_ROOT" "$GANG_LOCK_DIR/spool/deadbeef"
+tmux set-option -w -t "$impostor_id" @gl_spool deadbeef
+if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
+  fail "a spool identity whose path is a link is not a reservation" \
+    "adopt reported success"
+else
+  pass "a spool identity whose path is a link is not a reservation"
+fi
+[ -L "$GANG_LOCK_DIR/spool/deadbeef" ] \
+  && pass "and the refusal did not replace the link it refused on" \
+  || fail "and the refusal did not replace the link it refused on" \
+    "$GANG_LOCK_DIR/spool/deadbeef is no longer a symlink"
+rm -f -- "$GANG_LOCK_DIR/spool/deadbeef"
+tmux kill-window -t "$impostor_id"
+"$GANG" drop legacy >/dev/null 2>&1 || :
+
+"$GANG" drop reserving >/dev/null
+[ ! -d "$GANG_LOCK_DIR/spool/$reserving_token" ] \
+  && pass "and the reservation is released with the window that held it" \
+  || fail "and the reservation is released with the window that held it" \
+    "$GANG_LOCK_DIR/spool/$reserving_token survived the drop"
 
 # WHAT TEARDOWN CANNOT NAME, TEARDOWN MUST NOT DESTROY. spool_write stages
 # every entry as a dot-file and commits it by rename, so a write that dies in

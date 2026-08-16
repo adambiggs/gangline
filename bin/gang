@@ -2663,6 +2663,27 @@ spool_available() { # $1 = window id, $2 = target name; 0 = a parked message wou
   return 0
 }
 
+SPOOL_TOKEN_HOLDERS=""
+spool_token_holders() { # $1 token, optional $2 = a window id that may hold it
+  # THE TMUX SERVER IS THE REGISTER OF PUBLISHED SPOOL IDENTITIES. Nothing on
+  # disk records which window a reservation was taken for, so "is this name
+  # somebody else's" can only be answered by asking the windows. Reported as a
+  # list rather than a yes/no because the refusals that use it have to name who
+  # is holding it for an operator to be able to act.
+  local me="" wid wtok
+  SPOOL_TOKEN_HOLDERS=""
+  [ -n "$1" ] || return 0
+  if [ -n "${2:-}" ]; then
+    me="$(tmux display-message -p -t "$2" '#{window_id}' 2>/dev/null)" || me="$2"
+  fi
+  while read -r wid wtok; do
+    [ -n "$wtok" ] || continue
+    [ "$wtok" = "$1" ] || continue
+    [ -z "$me" ] || [ "$wid" != "$me" ] || continue
+    SPOOL_TOKEN_HOLDERS="$SPOOL_TOKEN_HOLDERS $wid"
+  done <<< "$(tmux list-windows -a -F '#{window_id} #{@gl_spool}' 2>/dev/null || :)"
+}
+
 spool_mint() { # $1 = window id; the spool identity, minted where nothing races it
   # AT HITCH AND ADOPT, never at send. Two refused sends arriving
   # together would each see no token, mint their own, and overwrite the window
@@ -2675,19 +2696,85 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   # goes away — strands its directory under the spool root forever. spool_
   # establish creates or ADOPTS the directory its token names, so a token
   # minted onto one of those strays would hand a new agent the dead one's
-  # waiting mail to drain. Minting past what is already on disk is what stops
-  # that; a stray is static, so looking is enough to rule it out.
-  local token root
+  # waiting mail to drain.
+  #
+  # SO THE DIRECTORY IS THE RESERVATION, TAKEN HERE. Looking is not enough, and
+  # not because two mints might race: a window hitched and never sent anything
+  # carries a published token and NOTHING on disk, because the directory used to
+  # wait for the first parked message. A mint an hour later draws that same name,
+  # looks, sees nothing, and publishes it too — and the two windows share one
+  # spool the moment either of them first parks mail, with only per-window pane
+  # locks between them. mkdir is the look and the claim in one operation, so the
+  # name a window holds is a name no later mint can be handed. An empty
+  # directory costs nothing downstream: spool_drain_dispatch returns on a count
+  # of zero before it spawns a worker, so no native boundary is sent through the
+  # pane lock for a queue that has never held anything.
+  local token root live nl=$'\n'
   token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
-  [ -z "$token" ] || return 0
   root="$(spool_root_of)"
+  lock_base "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$root"
+  if [ -n "$token" ]; then
+    # A TOKEN PUBLISHED BEFORE THIS RULE EXISTED HAS NO RESERVATION. gang is a
+    # script read from disk, so an upgrade reaches a running team between one
+    # command and the next: every window already up carries a name nothing on
+    # disk is holding. Repairing it whenever a mint touches the window is the
+    # cheap half of closing that; the walk below is the half that matters,
+    # because nothing ever calls mint on those windows again.
+    #
+    # WHAT IS ALREADY ON THE WINDOW IS NOT EVIDENCE THAT GANG PUT IT THERE. This
+    # is a tmux option and gang is not the only writer a tmux server has, so it
+    # is validated exactly where spool_existing validates it — before it becomes
+    # a path. A value carrying a separator or a parent reference would otherwise
+    # make this mkdir claim a directory outside the spool root entirely.
+    case "$token" in
+      *[!a-f0-9]*) die "the spool identity recorded on this window is '$token', which is not one gang minted — refusing to reserve a directory it cannot account for. Clear @gl_spool on the window and hitch or adopt it again" ;;
+    esac
+    # AND A WELL-FORMED TOKEN CAN STILL BELONG TO SOMEBODY ELSE. Nothing in the
+    # registration guards covers @gl_spool, so an unregistered window can be set
+    # to a live agent's identity and adopted; the mkdir below would then find the
+    # existing directory, and returning on that would enrol two windows on one
+    # spool, each draining the other's mail. That is the same harm as a repeated
+    # mint, reached without needing a nonce collision, so it is refused here.
+    spool_token_holders "$token" "$1"
+    [ -z "$SPOOL_TOKEN_HOLDERS" ] \
+      || die "this window's spool identity '$token' is already held by$SPOOL_TOKEN_HOLDERS — refusing to enrol two windows on one spool, where each would drain mail addressed to the other. Clear @gl_spool on this window, then adopt it again to be given one of its own"
+    mkdir -m 700 "$root/$token" 2>/dev/null && return 0
+    # EEXIST is the repair succeeding on a reservation that is already there. Any
+    # other reason it could not be taken is a spool this window cannot be said to
+    # own, and saying so beats returning as though the identity were reserved.
+    # NOT THROUGH A LINK: -d and -O both follow one, so a token path pointing at
+    # some other owned directory would read as repaired here and then be refused
+    # by lock_base when the first message tried to land. A reservation that is
+    # somewhere other than where the delivering processes look is not one, which
+    # is the same rule lock_base already keeps.
+    [ ! -L "$root/$token" ] && [ -d "$root/$token" ] && [ -O "$root/$token" ] \
+      || die "cannot reserve the spool identity '$token' this window already carries: $root/$token is not a directory this user owns — every gang process delivering to this window has to find the spool at that exact path, and gang will not treat a link or a foreign directory as a reservation"
+    return 0
+  fi
+  # WHAT A LIVE WINDOW HAS PUBLISHED IS TAKEN, RESERVED OR NOT. Until every
+  # window predating the reservation rule has been dropped, a published token
+  # with no directory is exactly the name this loop would otherwise consider
+  # free — mkdir would succeed on it and two windows would share one spool. The
+  # tmux server is the register of those names, so it is read here and the draw
+  # avoids them. A window minting its own identity is not in this list yet, so
+  # this cannot make a mint avoid itself.
+  live="$(tmux list-windows -a -F '#{@gl_spool}' 2>/dev/null)" || live=""
   while :; do
     token="$(mint_nonce)"
     [ -n "$token" ] || die "cannot mint a spool identity for this window"
-    [ -e "$root/$token" ] || break
+    case "$nl$live$nl" in
+      *"$nl$token$nl"*) continue ;;
+    esac
+    mkdir -m 700 "$root/$token" 2>/dev/null && break
+    [ -e "$root/$token" ] \
+      || die "cannot reserve a spool identity under $root — every gang process delivering to this window has to agree on that path, so gang will not quietly pick another: point GANG_LOCK_DIR at somewhere writable."
   done
+  # PUBLISHED SECOND. The reservation is what makes the name unrepeatable, so a
+  # failure to publish must not leave one behind that nothing will ever release.
   tmux set-option -w -t "$1" @gl_spool "$token" \
-    || die "cannot record the spool identity for this window"
+    || { rmdir -- "$root/$token" 2>/dev/null || :
+         die "cannot record the spool identity for this window"; }
 }
 
 spool_establish() { # $1 = window id; SPOOL_DIR = its spool, created and owned by us
