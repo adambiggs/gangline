@@ -634,6 +634,82 @@ window_id unaccountable >/dev/null \
 rm -rf -- "$unaccountable_spool/debris"
 "$GANG" drop unaccountable >/dev/null
 
+# ACCEPTED IS WHAT LICENSES A RETIREMENT. --supersede used to unlink the
+# sender's waiting entries before the replacement was written, and spool_write
+# can still die three ways after that point — so the sender's queued traffic
+# went and nothing took its place. The stamp is the clean injection: it fails
+# after where the sweep used to run and before any entry exists.
+"$HITCH" superseder -c spoolable -d /tmp >/dev/null
+superseder_id="$(window_id superseder)"
+superseder_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$superseder_id" @gl_spool)"
+tmux send-keys -l -t "$superseder_id" 'HUMAN_DRAFT'
+printf 'MARK_PREDECESSOR' |
+  "$GANG" send --to superseder --from tester --stdin >/dev/null
+mkdir -p "$RUN_ROOT/nostamp"
+# Only the stamp fails. gang reads its config through python3 too, so a stub
+# that failed everything would kill the send before it ever reached the spool
+# and this case would pass without exercising the ordering at all.
+cat > "$RUN_ROOT/nostamp/python3" <<SH
+#!/bin/sh
+case "\$*" in *time_ns*) exit 1 ;; esac
+exec "$(command -v python3)" "\$@"
+SH
+chmod +x "$RUN_ROOT/nostamp/python3"
+nostamp_rc=0
+printf 'MARK_UNSTAMPED_REPLACEMENT' |
+  PATH="$RUN_ROOT/nostamp:$PATH" "$GANG" send --to superseder --from tester \
+    --supersede --stdin > "$RUN_ROOT/nostamp.out" 2> "$RUN_ROOT/nostamp.err" \
+  || nostamp_rc=$?
+nostamp_out="$(cat "$RUN_ROOT/nostamp.err" "$RUN_ROOT/nostamp.out")"
+if [ "$nostamp_rc" -eq 0 ]; then
+  fail "a replacement that cannot be stamped is not accepted" \
+    "send reported success"
+else
+  pass "a replacement that cannot be stamped is not accepted"
+fi
+# Pins the injection: a send that died somewhere earlier would never have
+# reached the retirement, and this case would say nothing about its ordering.
+case "$nostamp_out" in
+  *"cannot stamp a spool entry"*) pass "and the stamp is what it died on" ;;
+  *) fail "and the stamp is what it died on" \
+       "exit $nostamp_rc, said: [$nostamp_out]" ;;
+esac
+if grep -rq MARK_PREDECESSOR "$superseder_spool"; then
+  pass "so the message it would have replaced is still waiting"
+else
+  fail "so the message it would have replaced is still waiting" \
+    "$superseder_spool no longer holds it"
+fi
+
+# The other half: a retirement that fails AFTER the replacement is committed
+# must lose nothing either, and must say so rather than reporting a clean send.
+# A bodyless entry is what the sweep cannot read past, and its stamp puts it
+# first in the oldest-first walk.
+printf 'tester\n\n' > "$superseder_spool/00000000000000000001-deadbeef"
+if halfway_out="$(printf 'MARK_COMMITTED_REPLACEMENT' |
+  "$GANG" send --to superseder --from tester --supersede --stdin 2>&1)"; then
+  fail "a retirement that fails after the commit is reported" \
+    "send reported success"
+else
+  pass "a retirement that fails after the commit is reported"
+fi
+contains "saying the replacement is parked rather than lost" \
+  "$halfway_out" "IS parked as"
+if grep -rq MARK_COMMITTED_REPLACEMENT "$superseder_spool"; then
+  pass "and the replacement really is on disk"
+else
+  fail "and the replacement really is on disk" \
+    "$superseder_spool does not hold it"
+fi
+if grep -rq MARK_PREDECESSOR "$superseder_spool"; then
+  pass "and nothing it could not retire was destroyed"
+else
+  fail "and nothing it could not retire was destroyed" \
+    "$superseder_spool no longer holds the predecessor"
+fi
+rm -f -- "$superseder_spool/00000000000000000001-deadbeef"
+"$GANG" drop superseder >/dev/null
+
 # AN AGENT NAME BECOMES A PATH COMPONENT. spool_archive names the archive
 # subdirectory after the agent whose mail it is holding, so a "name" carrying a
 # parent reference moves pending messages out of the archive root entirely — on

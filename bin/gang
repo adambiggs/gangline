@@ -2771,16 +2771,30 @@ spool_read() { # $1 = entry path; its sender, fragment, and envelope as it goes 
   spool_read_try "$1" || die "$SPOOL_READ_ERROR"
 }
 
-spool_supersede() { # $1 = window id, $2 = sender; retire that sender's waiting entries
+SPOOL_SUPERSEDE_ERROR=""
+spool_supersede_try() { # $1 window, $2 sender, optional $3 = an entry to keep
+  # WHY THIS HAS A NON-DYING FORM, like spool_read above it. cmd_send calls it
+  # AFTER committing the replacement, and what it has to report there is about
+  # the pair — a failure here still leaves a message parked and deliverable.
+  # Wrapping the dying form in a command substitution to recover its message
+  # would inherit the EXIT trap, and on_exit unlinks the pane lock this caller
+  # holds across the drain that follows.
   local e
+  SPOOL_SUPERSEDE_ERROR=""
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   for e in "$SPOOL_DIR"/[0-9]*; do
     [ -f "$e" ] || continue
-    spool_read "$e"
+    [ "$e" != "${3:-}" ] || continue
+    spool_read_try "$e" || { SPOOL_SUPERSEDE_ERROR="$SPOOL_READ_ERROR"; return 1; }
     [ "$SPOOL_SENDER" = "$2" ] || continue
-    rm -f -- "$e" || die "cannot supersede the spooled message $e"
+    rm -f -- "$e" \
+      || { SPOOL_SUPERSEDE_ERROR="cannot supersede the spooled message $e"; return 1; }
   done
+}
+
+spool_supersede() { # $1 window id, $2 sender; retire that sender's waiting entries
+  spool_supersede_try "$@" || die "$SPOOL_SUPERSEDE_ERROR"
 }
 
 SPOOL_ENTRY=""
@@ -4745,8 +4759,18 @@ cmd_send() {
   fi
   frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-  [ "$supersede" -eq 0 ] || spool_supersede "$AGENT_ID" "$SEND_FROM"
+  # ACCEPTED IS WHAT LICENSES THE RETIREMENT, and on this path acceptance is
+  # still in the future until spool_write commits. Retiring first meant every
+  # way spool_write can die — an unusable stamp, the temporary write, the
+  # commit rename — left the sender's older messages already deleted with
+  # nothing parked in their place. The subshell is what lets the report be
+  # about the pair: spool_read and rm die inside it, and the entry this send
+  # just committed is excluded from the sweep it shares a sender and a
+  # namespace with.
   spool_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag"
+  [ "$supersede" -eq 0 ] \
+    || spool_supersede_try "$AGENT_ID" "$SEND_FROM" "$SPOOL_ENTRY" \
+    || die "$SPOOL_SUPERSEDE_ERROR — this send IS parked as $SPOOL_ENTRY and will be delivered; do not send it again. What could not be retired is still waiting beside it, so the recipient may see an older message from you as well"
   # Steering-capable collars still land without a keystroke: the committed
   # spool entry is now the ordering authority. While this same pane lock is
   # held, try the whole queue. A free composer drains it now; copy-mode, a
