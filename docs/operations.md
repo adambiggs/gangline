@@ -543,50 +543,47 @@ keystroke is often what a native dialog reads as an answer.
 
 ### The whole team vanished at once
 
-Every window gone with no `gang down`, no stall, and free memory still showing in
-`free -h` is the signature of `systemd-oomd`, not of Gangline. The tmux server
-and every agent in it share one cgroup — the login session scope that started the
-server — and `oomd` kills a cgroup whole, so one decision takes the team with no
-partial survival and no signal an agent could catch.
-
-Name the killer before assuming anything else:
+Every window gone with no `gang down` and no stall can be `systemd-oomd` rather
+than anything in Gangline. The tmux server and every agent in it share one
+cgroup — the login session scope that started the server — and `oomd` kills a
+cgroup whole, so one decision takes everything in that scope, with no partial
+survival and no signal an agent could catch. A kernel OOM kill, a killed tmux
+server, or a reboot erase the same windows, so identify the killer from evidence
+before treating it as this one:
 
 ```sh
-journalctl -b -1 --no-pager | grep 'systemd-oomd.*Killed'
+journalctl --no-pager | grep 'systemd-oomd.*Killed'   # add -b -1 after a reboot
 oomctl
 ```
 
 `oomctl` prints the live policy and the thresholds it is holding. Where
-`/user.slice` is a swap-monitored cgroup, `oomd` acts once system memory *and*
-system swap are both over that limit, and it then kills the descendant holding
-the most swap — which is the team. Read both halves before concluding anything:
-swap fills early and is never given back, so that half is usually already
-satisfied and the memory half is what decides when a team dies. The victim pool
-is narrower than the trigger, so a team can be selected while a larger share of
-the swap sits outside `/user.slice` where nothing can be chosen from it.
+`/user.slice` is a swap-monitored cgroup, `oomd` acts only once system memory
+*and* system swap are both over that limit, and it then kills eligible
+descendants starting from the one holding the most swap. Read both halves: a full
+swap alone is not the trigger, and swap fills early and stays full, so the memory
+half is usually what decides when a team dies. The victim pool is narrower than
+the trigger, so a team can be selected while a larger share of the swap sits
+outside `/user.slice`, where nothing is eligible to be chosen.
 
 `ManagedOOMPreference=avoid` and `=omit` do not rescue a team, and they fail
-quietly. `systemd-oomd` ignores those attributes unless the unit's cgroup is
-owned by root, which a `--user` unit's cgroup is not; the property reads back as
-set while nothing honors it. Read the attribute `oomd` actually consults rather
-than the unit's own answer:
+quietly. `systemd-oomd` honors those attributes only for a root-owned cgroup, and
+a `--user` unit's is not; a user manager may not write the attribute at all while
+still reporting the property as set. Presence of the attribute is not proof it
+will be honored either — read the cgroup's ownership alongside it:
 
 ```sh
+stat -c '%U %n' /sys/fs/cgroup/<unit-cgroup-path>
 getfattr -n user.oomd_omit /sys/fs/cgroup/<unit-cgroup-path>
 ```
 
-The levers that work are the operator's — the policy on `/user.slice`, headroom
-in the swap counter, and caps on whatever fills it. Placement is worth reading
-either way, because a path naming a session scope means the team dies with a
-login session it has usually already outlived:
+The levers that work are the operator's — the policy on `/user.slice`, and caps
+on whatever drives the machine to the memory threshold. Placement is worth
+reading either way, because a path naming a session scope means the team can die
+with a login session it has usually already outlived:
 
 ```sh
 cat /proc/$(tmux display-message -p '#{pid}')/cgroup
 ```
-
-Clearing swap with `swapoff -a && swapon -a` zeroes the counter and buys minutes.
-It is a reset, not a repair, and it forces every swapped page back into memory
-first.
 
 ### The tmux server was lost
 
