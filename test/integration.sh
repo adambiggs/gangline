@@ -287,8 +287,13 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 tree_moved=0
 "$ROOT/test/gate.sh" --assert-unmoved "$TREE_AT_START" || tree_moved=1
 
+# THE ONE LINE EVERYONE ACTUALLY READS may not contradict the run. A bare count
+# tailing a run that failed reads as green to a person and to an agent, and one
+# of each has reported gates-green off it while a FAIL sat further up.
 summary_printed=1
-printf '\n%s checks in %ss\n' "$checks" "$SECONDS"
+verdict=""
+[ "$fails" -eq 0 ] || verdict=", $fails FAIL"
+printf '\n%s checks%s in %ss\n' "$checks" "$verdict" "$SECONDS"
 if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'

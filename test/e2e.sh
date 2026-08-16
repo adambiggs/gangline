@@ -729,7 +729,13 @@ for scenario in "$@"; do
   run "$scenario"
 done
 
-printf '\n%s checks in %ss against %s\n' "$checks" "$SECONDS" "$HARNESS_BUILD"
+# THE ONE LINE EVERYONE ACTUALLY READS may not contradict the run. A bare count
+# tailing a run that failed reads as green to a person and to an agent, and one
+# of each has reported gates-green off it while a FAIL sat further up.
+verdict=""
+[ "$fails" -eq 0 ] || verdict=", $fails FAIL"
+printf '\n%s checks%s in %ss against %s\n' \
+  "$checks" "$verdict" "$SECONDS" "$HARNESS_BUILD"
 if [ -n "$margins" ]; then
   printf 'bounded waits, reads used of %s at %ss each:\n%s\n' \
     "$E2E_READS" "$E2E_NAP" "$margins"
