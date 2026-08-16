@@ -4985,13 +4985,21 @@ cmd_compact() {
   self="$(self_window)" || self=""
   [ -n "$self" ] && [ "$self" = "$AGENT_ID" ] && mine=1
   if [ "$mine" -eq 1 ] && [ "$GANG_SELF_COMPACT" = deferred ]; then
+    # CLAIM FIRST. self_compact_request is what refuses a request that already
+    # stands, so anything written before it is written on the way to a refusal:
+    # a bare compact erased the continuation an earlier --resume supplied, a
+    # second --resume replaced it, and both then exited saying nothing had
+    # happened. A refused boundary now puts its request back and retries at a
+    # later one, so a standing request is an ordinary state and a second
+    # compact an ordinary thing to try.
+    self_compact_request "$AGENT_ID" >/dev/null
     if [ -n "$resume" ]; then
       tmux set-option -w -t "$AGENT_ID" @gl_self_compact_resume "$resume" \
-        || die "could not record the continuation for this compaction"
+        || { tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_requested 2>/dev/null || true
+             die "could not record the continuation for this compaction"; }
     else
       tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_resume 2>/dev/null || true
     fi
-    self_compact_request "$AGENT_ID" >/dev/null
     printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now; a continuation turn follows the compaction)")"
     return 0
   fi

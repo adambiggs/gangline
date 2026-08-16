@@ -944,6 +944,39 @@ else
   fail "a refused boundary puts the self-compaction request back" \
     "@gl_self_compact_requested was empty before the boundary"
 fi
+
+# A COMMAND THAT REPORTS NO EFFECT MUST HAVE HAD NONE. A refused boundary puts
+# its request back, so a standing request is an ordinary state and a second
+# compact an ordinary thing to try — and the continuation used to be written
+# before anything checked whether the request could be made at all. The state
+# is set here rather than driven, because what is under test is the order of
+# two writes inside one command.
+tmux set-option -w -t "$drafted_id" @gl_self_compact_requested standing
+tmux set-option -w -t "$drafted_id" @gl_self_compact_resume MARK_STANDING_TURN
+if repeat_out="$(TMUX_PANE="$drafted_tmux_pane" "$GANG" compact 2>&1)"; then
+  fail "a second self-compaction refuses while one stands" \
+    "compact reported success"
+else
+  pass "a second self-compaction refuses while one stands"
+fi
+contains "naming the request that already stands" \
+  "$repeat_out" "already waiting for this turn to end"
+equal "and a bare repeat leaves the standing continuation where it was" \
+  "MARK_STANDING_TURN" \
+  "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_resume)"
+if TMUX_PANE="$drafted_tmux_pane" "$GANG" compact --resume MARK_REPLACEMENT \
+  >/dev/null 2>&1; then
+  fail "a repeat carrying its own continuation refuses too" \
+    "compact reported success"
+else
+  pass "a repeat carrying its own continuation refuses too"
+fi
+equal "and does not install the continuation it was refused" \
+  "MARK_STANDING_TURN" \
+  "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_resume)"
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_requested
+tmux set-option -uw -t "$drafted_id" @gl_self_compact_resume
+
 "$GANG" drop drafted >/dev/null 2>&1 || :
 
 # Without the deferred declaration, the same self-call takes the direct path
