@@ -595,6 +595,40 @@ contains "and the body is recorded as sitting unsent, never as submitted" \
 contains "with the composer agreeing: it is still sitting there" \
   "$(flush_probe)" "MARK_TS head"
 tmux send-keys -t "$parked_id" C-u
+
+# THE DIAGNOSIS THE OPEN-TURN REFUSAL WAS PROTECTING. Refusing a flush against a
+# running turn is only right because a re-park under a turn means the harness is
+# working; the verdict it withholds — this queue drains for nothing gang can
+# send, so drop the agent and hitch --resume — has to stay reachable for the
+# target the verdict is actually about, one at rest. Here nothing is holding a
+# turn open and the strand stays up across the Enter, so the recalled body is
+# parked a second time and that is what the operator is told.
+: > "$RUN_ROOT/flush-drain"
+flush_settle
+: > "$RUN_ROOT/flush-arm"
+if printf 'MARK_REPARK' |
+  "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "the re-park world starts from a message the harness parked" \
+    "send reported success"
+else
+  pass "the re-park world starts from a message the harness parked"
+fi
+equal "and no turn is open, so nothing refuses ahead of the recall" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_turn)"
+if repark_out="$("$GANG" flush parked 2>&1)"; then
+  fail "an at-rest target that parks the recalled body again is not reported flushed" \
+    "flush reported success"
+else
+  pass "an at-rest target that parks the recalled body again is not reported flushed"
+fi
+contains "and the verdict is the terminal one, reached rather than described" \
+  "$repark_out" "flush NOT verified"
+contains "naming the recovery that outlives a queue nothing drains" \
+  "$repark_out" "hitch --resume"
+contains "with the second park recorded against the window" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "parked it again"
+: > "$RUN_ROOT/flush-drain"
+flush_settle
 "$GANG" drop parked >/dev/null
 
 # ATTRIBUTION LANDS BEFORE MID-TURN STEERING. A steering-capable collar may
