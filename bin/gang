@@ -4960,14 +4960,15 @@ cmd_send() {
     return 0
   fi
   # ONE CRITICAL SECTION. The pane lock is taken HERE rather than inside
-  # send_live, because the queue choice and the claim that follows it have to be
-  # one indivisible decision: send_live reads whether anything is already
-  # spooled, and the spool_write below commits this body against that answer.
-  # Taking the lock inside send_live put those two steps in different holds —
-  # the command substitution's exit released it — leaving a window in which a
-  # second sender read an empty spool and typed ahead of the entry this one was
-  # about to commit. A command substitution's exit does not fire the EXIT trap,
-  # so the lock taken here survives the call and covers both.
+  # send_live, because everything from here to the end of this send is one
+  # transaction over one window: the retirement is prepared, delivery is
+  # attempted live, a refusal falls back to staging and committing a spool entry,
+  # the retirement is made final, and a steering collar may drain the queue — and
+  # a second sender interleaving with any of that could type ahead of an entry
+  # this one is about to commit, or read a queue mid-move. Taking the lock inside
+  # send_live covered only the delivery attempt and left the rest outside it. A
+  # command substitution's exit does not fire the EXIT trap, so the lock taken
+  # here survives the call and covers the whole sequence.
   lock_pane "$AGENT_ID"
   # THE RETIREMENT IS PREPARED BEFORE ANYTHING IS DELIVERED, and it has to be,
   # because the live path has no second chance. Retiring AFTER send_live meant a
@@ -5025,10 +5026,13 @@ cmd_send() {
   # this body where a drain WILL claim it, and only then make the retirement
   # final.
   #
-  # The order matters in both directions. Retiring before the body exists loses
+  # The order matters in both directions, and what has to come last is the
+  # DESTRUCTIVE step. Unlinking the predecessors before the body exists loses
   # mail: every way the write can die — an unusable stamp, the temporary write,
   # the commit rename — would leave the sender's older messages already gone with
-  # nothing in their place. Parking before the retirement is final delivers BOTH:
+  # nothing in their place. Moving them aside first is safe precisely because it
+  # destroys nothing and every failure path puts them back. Parking before the
+  # retirement is final delivers BOTH:
   # predecessor and replacement side by side, where the very next native boundary
   # claims the whole queue as one bundle and delivers the superseded body too —
   # the failed supersession arriving as a successful one. Staging the body, then
