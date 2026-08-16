@@ -357,11 +357,14 @@ line you cannot work without:
     printf '%s\n' "..." |
       gang send --to NAME --stdin
 
-Exit 0 is success. Exit 3 is a refusal: the
-requested action was not taken, and stderr
-says why. Exit 1 is an error, and an error is
-not proof that nothing happened — read stderr
-before retrying anything.
+Exit 0 is success. Exit 3 is a refused
+command: what you asked for was not done, and
+stderr says why. Exit 1 is an error, and an
+error is not proof that nothing happened —
+read stderr before retrying anything. A
+refused DELIVERY is a different thing: send
+parks it and exits 0, because the message was
+accepted.
 
 start and end a team
   up        start a team and join it
