@@ -5,6 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 CHECKER="${SOURCE_GUARD_CHECKER:-$PWD/test/source-guards.py}"
 FIXTURE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-source-guards.XXXXXX")"
+# macOS spells its temporary root through /var, while pathlib resolves that
+# symlink before printing a finding. Compare diagnostics against the same path.
+FIXTURE_ROOT="$(cd -P "$FIXTURE_ROOT" && pwd)"
 trap 'rm -rf -- "$FIXTURE_ROOT"' EXIT
 
 checks=0
