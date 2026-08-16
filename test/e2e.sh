@@ -34,6 +34,9 @@ unset TMUX TMUX_PANE
 ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="$ROOT/bin/gang"
 STUB="$ROOT/test/e2e/stub.py"
+# The summary line this lane ends on. Shared with the mandatory suite, which is
+# where the fixture that drives its failing branch lives.
+. "$ROOT/test/suite-tail.sh"
 E2E_ARTIFACT_DIR="${GANG_E2E_ARTIFACT_DIR:-}"
 case "$E2E_ARTIFACT_DIR" in
   '') E2E_ARTIFACT_RUN="" ;;
@@ -729,13 +732,8 @@ for scenario in "$@"; do
   run "$scenario"
 done
 
-# THE ONE LINE EVERYONE ACTUALLY READS may not contradict the run. A bare count
-# tailing a run that failed reads as green to a person and to an agent, and one
-# of each has reported gates-green off it while a FAIL sat further up.
-verdict=""
-[ "$fails" -eq 0 ] || verdict=", $fails FAIL"
-printf '\n%s checks%s in %ss against %s\n' \
-  "$checks" "$verdict" "$SECONDS" "$HARNESS_BUILD"
+printf '\n'
+suite_tail "$checks" "$fails" "$SECONDS" "against $HARNESS_BUILD"
 if [ -n "$margins" ]; then
   printf 'bounded waits, reads used of %s at %ss each:\n%s\n' \
     "$E2E_READS" "$E2E_NAP" "$margins"

@@ -253,6 +253,10 @@ window_names() { # optional $1 session -> bare names, one per line
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
 pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 
+# The summary line this run ends on, and the subject of the fixture that drives
+# its failing branch — which this run, being green, never reaches.
+. "$ROOT/test/suite-tail.sh"
+
 # THE SUITE IS ONE PROGRAM, SPLIT ONLY SO THAT IT CAN BE LINTED. Each part below
 # is sourced in order into this shell and reads the fixtures, helpers and
 # counters established above, so the split moves no assertion and changes no
@@ -287,13 +291,9 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 tree_moved=0
 "$ROOT/test/gate.sh" --assert-unmoved "$TREE_AT_START" || tree_moved=1
 
-# THE ONE LINE EVERYONE ACTUALLY READS may not contradict the run. A bare count
-# tailing a run that failed reads as green to a person and to an agent, and one
-# of each has reported gates-green off it while a FAIL sat further up.
 summary_printed=1
-verdict=""
-[ "$fails" -eq 0 ] || verdict=", $fails FAIL"
-printf '\n%s checks%s in %ss\n' "$checks" "$verdict" "$SECONDS"
+printf '\n'
+suite_tail "$checks" "$fails" "$SECONDS"
 if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'

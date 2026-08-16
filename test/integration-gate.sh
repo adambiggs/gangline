@@ -774,3 +774,45 @@ refuses "lint refuses a tree it would not own" \
   "would not own the tree it is testing" "$gate_wire/test/lint.sh"
 refuses "the mandatory suite refuses a tree it would not own" \
   "would not own the tree it is testing" "$gate_wire/test/integration.sh"
+
+# THE LINE EVERYONE ACTUALLY READS, IN THE FORM NO PASSING RUN PRINTS. A suite
+# cannot fail on purpose to demonstrate its own failing summary, so the branch
+# that has to be right is the one every green run skips — and it went in
+# untested for exactly that reason. Both suites now end on one shared function
+# so the branch is reachable from here, driven from the same file they source
+# with the counters a failed run would hand it.
+tail_fix="$RUN_ROOT/suite-tail"
+mkdir -p "$tail_fix"
+cp "$ROOT/test/suite-tail.sh" "$tail_fix/suite-tail.sh"
+cat > "$tail_fix/run.sh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+. "$(dirname "$0")/suite-tail.sh"
+checks=0 fails=0
+pass() { checks=$((checks + 1)); }
+fail() { checks=$((checks + 1)); fails=$((fails + 1)); }
+pass; pass; pass
+[ "${1:-}" != red ] || { fail; fail; }
+suite_tail "$checks" "$fails" 7 "${2:-}"
+SH
+chmod +x "$tail_fix/run.sh"
+equal "a suite whose checks all passed ends on a bare count" \
+  "3 checks in 7s" "$("$tail_fix/run.sh")"
+equal "and a suite that accumulated failures names them in that same line" \
+  "5 checks, 2 FAIL in 7s" "$("$tail_fix/run.sh" red)"
+equal "with the e2e lane's trailing clause after the verdict, not instead of it" \
+  "5 checks, 2 FAIL in 7s against harness-x" \
+  "$("$tail_fix/run.sh" red "against harness-x")"
+
+# AND BOTH SUITES REACH IT THROUGH THAT FILE. A private copy of the summary in
+# either one is a copy the three checks above do not cover, which is how this
+# branch went unexercised in the first place.
+for tail_suite in integration.sh e2e.sh; do
+  if grep -q '^\. "\$ROOT/test/suite-tail\.sh"$' "$ROOT/test/$tail_suite" \
+    && grep -q 'suite_tail "\$checks" "\$fails" "\$SECONDS"' "$ROOT/test/$tail_suite"; then
+    pass "test/$tail_suite ends through the shared summary rather than a copy"
+  else
+    fail "test/$tail_suite ends through the shared summary rather than a copy" \
+      "it does not both source test/suite-tail.sh and end on suite_tail"
+  fi
+done
