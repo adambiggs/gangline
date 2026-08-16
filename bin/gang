@@ -2794,10 +2794,16 @@ archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its direc
 }
 
 spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local e name dest moved=0
+  local e entry name dest moved=0
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
-  for e in "$SPOOL_DIR"/[0-9]* "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
+  # EVERY CHILD, not the names gang expects. A whitelist here turns "this is
+  # not something I recognise" into "there was nothing here", because what it
+  # skips spool_forget then removes. The reachable stray is a .writing-
+  # fragment left by a spool_write that died between its temporary file and
+  # the commit rename — a partially written message, which is exactly the
+  # artifact someone investigating a failed park comes looking for.
+  for e in "$SPOOL_DIR"/* "$SPOOL_DIR"/.[!.]* "$SPOOL_DIR"/..?*; do
     [ -f "$e" ] || continue
     if [ "$moved" -eq 0 ]; then
       archive_establish "$SESSION"
@@ -2813,7 +2819,12 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
       dest="$ARCHIVE_DIR/$name"
       mkdir -p "$dest" || die "cannot create $dest for the pending messages of this window"
     fi
-    mv -- "$e" "$dest/${e##*/}" \
+    # IT ARRIVES VISIBLE. The archive is a directory a person reads with ls,
+    # so a .writing- fragment carried over verbatim would be saved and hidden
+    # by the same move — the count below would say it was kept and the
+    # directory would look empty to whoever went to read it.
+    entry="${e##*/}"
+    mv -- "$e" "$dest/${entry#.}" \
       || die "cannot archive the pending message $e to $dest — nothing further has been ended, and the message is still where it was"
     moved=$((moved + 1))
   done
@@ -2822,10 +2833,15 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
 }
 
 spool_forget() { # $1 = window id; the spool dies with the window it belongs to
+  # rmdir, NOT rm -rf: the archive above has just emptied this directory of
+  # everything it could move, so anything still in it is something gang could
+  # not account for. Refusing on a non-empty directory leaves that where a
+  # person can read it and says so, where a recursive delete would destroy it
+  # and report the teardown clean.
   spool_existing "$1" || return 0
   [ ! -d "$SPOOL_DIR" ] \
-    || rm -rf -- "$SPOOL_DIR" \
-    || die "cannot delete the spool directory $SPOOL_DIR"
+    || rmdir -- "$SPOOL_DIR" \
+    || die "the spool directory $SPOOL_DIR still holds something gang could not archive, so it has not been deleted and nothing further has been ended — read what is in it, then remove it by hand"
   tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
 }
 

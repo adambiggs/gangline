@@ -583,6 +583,57 @@ while [ "$mint_seed_n" -le "$mint_seeded" ]; do
   mint_seed_n=$((mint_seed_n + 1))
 done
 
+# WHAT TEARDOWN CANNOT NAME, TEARDOWN MUST NOT DESTROY. spool_write stages
+# every entry as a dot-file and commits it by rename, so a write that dies in
+# between leaves a fragment matching none of the names the archive used to look
+# for — and the delete that followed erased it while reporting the teardown
+# clean.
+"$HITCH" strays -c spoolable -d /tmp >/dev/null
+strays_id="$(window_id strays)"
+strays_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$strays_id" @gl_spool)"
+mkdir -p "$strays_spool"
+printf 'tester\nhalf a message\n[gang:tester#deadbeef] MARK_FRAGMENT' \
+  > "$strays_spool/.writing-1234-00000000000000000009"
+"$GANG" drop strays >/dev/null
+strays_archived=""
+for strays_entry in "$GANG_ARCHIVE_DIR"/*/strays/*; do
+  [ -f "$strays_entry" ] || continue
+  strays_archived="$strays_archived ${strays_entry##*/}"
+done
+equal "a fragment teardown cannot account for is archived, not deleted" \
+  " writing-1234-00000000000000000009" "$strays_archived"
+[ ! -d "$strays_spool" ] \
+  && pass "and the spool it was in is gone once nothing is left in it" \
+  || fail "and the spool it was in is gone once nothing is left in it" \
+    "$strays_spool survived"
+
+# The fragment is the reachable case; the class is anything the archive cannot
+# move. Teardown refuses on those rather than deleting a directory whose
+# contents it never read.
+"$HITCH" unaccountable -c spoolable -d /tmp >/dev/null
+unaccountable_id="$(window_id unaccountable)"
+unaccountable_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$unaccountable_id" @gl_spool)"
+mkdir -p "$unaccountable_spool/debris"
+printf 'MARK_DEBRIS' > "$unaccountable_spool/debris/note"
+if unaccountable_out="$("$GANG" drop unaccountable 2>&1)"; then
+  fail "teardown refuses a spool holding something it could not archive" \
+    "drop reported success"
+else
+  pass "teardown refuses a spool holding something it could not archive"
+fi
+contains "naming the directory a person has to read" \
+  "$unaccountable_out" "$unaccountable_spool"
+grep -q MARK_DEBRIS "$unaccountable_spool/debris/note" \
+  && pass "and leaving what it could not account for where it is" \
+  || fail "and leaving what it could not account for where it is" \
+    "$unaccountable_spool/debris/note is gone"
+window_id unaccountable >/dev/null \
+  && pass "and ending nothing else: the agent is still there to drop" \
+  || fail "and ending nothing else: the agent is still there to drop" \
+    "the window is gone"
+rm -rf -- "$unaccountable_spool/debris"
+"$GANG" drop unaccountable >/dev/null
+
 # AN AGENT NAME BECOMES A PATH COMPONENT. spool_archive names the archive
 # subdirectory after the agent whose mail it is holding, so a "name" carrying a
 # parent reference moves pending messages out of the archive root entirely — on
