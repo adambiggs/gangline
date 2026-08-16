@@ -2611,6 +2611,12 @@ teardown_down_out="$(env -u TMUX -u TMUX_PANE \
   GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session")"
 contains "the named teardown reports where it archived pending mail" \
   "$teardown_down_out" "$GANG_ARCHIVE_DIR"
+# THE SITUATION THE PARTING LINE EXISTS FOR. down ends every window at once, so
+# it is the teardown after which an operator has nothing left to read an id off.
+contains "the named teardown names each agent it is ending" \
+  "$teardown_down_out" "spoolable"
+contains "and quotes what coming back would need for it" \
+  "$teardown_down_out" "session id:"
 if tmux has-session -t "=$teardown_session" 2>/dev/null; then
   fail "a named teardown from outside the session still ends it" \
     "session still exists"

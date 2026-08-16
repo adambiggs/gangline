@@ -6405,8 +6405,29 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
 }
 
+# WHAT A RELAUNCH WOULD NEED, PRINTED WHILE THE WINDOW STILL EXISTS. A teardown
+# is the last moment the stamp is readable, so this is where it gets quoted —
+# and a stamp the hook-time assertion contradicted is not something to quote.
+# Sends from such a pane already fail closed; a relaunch line pointing at a
+# conversation the window is not running is the same claim, printed where an
+# operator will act on it.
+parting_lines() { # $1 = window id, $2 = the name a relaunch would take
+  local mismatch stamped
+  if mismatch="$(identity_mismatch_read "$1")"; then
+    printf 'session id: MISMATCH (%s) — refusing to quote a relaunch for an identity this harness contradicted\n' \
+      "$mismatch"
+    return 0
+  fi
+  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
+  [ -n "$stamped" ] \
+    || { printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
+         return 0; }
+  printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' \
+    "$stamped" "$2" "$stamped"
+}
+
 cmd_drop() {
-  local id stamped shown rc=0
+  local id shown rc=0
   [ $# -le 1 ] || die "drop: unexpected argument '$2'"
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
@@ -6416,12 +6437,7 @@ cmd_drop() {
   # Droppable, contained, and printed safely is the combination that holds.
   shown="$(printf '%s' "$1" | config_sanitize)"
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
-  stamped="$(tmux show-options -wqv -t "$id" @gl_session_id 2>/dev/null)" || stamped=""
-  if [ -n "$stamped" ]; then
-    printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' "$stamped" "$shown" "$stamped"
-  else
-    printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
-  fi
+  parting_lines "$id" "$shown"
   # A spool would outlive its window on disk, which is not a design: this is
   # its deletion path — but a composed message is archived out of it first.
   usage_wake_cancel "$id" quiet
@@ -6436,7 +6452,7 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw names="" self="" wait_ids=""
+  local named="${1:-}" id raw shown names="" self="" wait_ids=""
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -6455,6 +6471,13 @@ cmd_down() { # inverse of up: end the whole team's session
   while read -r id; do
     [ -n "$id" ] || continue
     wait_ids="$wait_ids $id"
+    # BEFORE THE ARCHIVE, because down is exactly the situation the parting
+    # line exists for and the operator was left with no ids to relaunch from.
+    # Printing first also means a teardown that refuses further down has
+    # already said what each agent would need to come back.
+    shown="$(agent_name_of "$id")"
+    printf '%s\n' "$(colour "$C_DIM" "$shown")"
+    parting_lines "$id" "$shown"
     usage_wake_cancel "$id" quiet
     spool_archive "$id"
     spool_forget "$id"

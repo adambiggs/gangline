@@ -485,6 +485,20 @@ refuses "bare resume without a surviving stamped window refuses loudly" \
   "$GANG" hitch identity -c identity -d /tmp --resume
 equal "a refused stamp-less resume launches nothing" "" "$(window_id identity)"
 
+# A CONTRADICTED STAMP IS NOT SOMETHING TO QUOTE. Sends from such a pane
+# already fail closed; a parting line offering --resume <that id> makes the
+# same claim in the place an operator acts on it.
+"$HITCH" contradicted -c identity -d /tmp >/dev/null
+contradicted_id="$(window_id contradicted)"
+tmux set-option -w -t "$contradicted_id" @gl_session_id stamped-identity-1
+tmux set-option -w -t "$contradicted_id" @gl_session_mismatch \
+  "stamped 'stamped-identity-1' != live 'live-identity-2'"
+contradicted_out="$("$GANG" drop contradicted)"
+contains "a contradicted stamp parts as the mismatch it is" \
+  "$contradicted_out" "MISMATCH (stamped 'stamped-identity-1' != live 'live-identity-2')"
+excludes "not as a relaunch into a conversation it is not running" \
+  "$contradicted_out" "--resume stamped-identity-1"
+
 "$HITCH" survivor -c identity -d /tmp >/dev/null
 survivor_id="$(window_id survivor)"
 survivor_pane="$(tmux list-panes -t "$survivor_id" -F '#{pane_id}')"
