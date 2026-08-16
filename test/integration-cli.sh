@@ -274,10 +274,21 @@ excludes "while a flag-shaped unknown argument is left alone" \
 # EVERY REFUSAL PRINTS THROUGH ONE FUNCTION, and operator bytes reach it from
 # every argument parser there is. What is asserted here is that function's
 # property; one parser is just the way to reach it.
+# ESC IS NOT THE ONLY BYTE A TERMINAL OBEYS. 0x9b is CSI on its own, and it is
+# not a control CHARACTER under this suite's UTF-8 locale — it is an invalid
+# byte there, which a character class built out of the locale's own controls
+# does not cover. So the argument below carries both, and what is asserted is
+# that neither survives into what an operator's terminal renders.
 control_out="$("$GANG" drop probe \
-  "$(printf 'STRAY\033[31mPAINT\ngang: this line is not gang')" 2>&1)" || :
+  "$(printf 'STRAY\033[31mPAINT\233 31mCSI\ngang: this line is not gang')" 2>&1)" || :
 excludes "an operator argument emits no terminal control bytes" \
   "$control_out" "$(printf '\033')"
+if printf '%s' "$control_out" | LC_ALL=C grep -q "$(printf '\233')"; then
+  fail "and no raw C1 control byte either" "0x9b reached the terminal"
+else
+  pass "and no raw C1 control byte either"
+fi
+contains "while the text around it is still readable" "$control_out" "31mCSI"
 contains "while its readable text still names what was refused" \
   "$control_out" "STRAY"
 contains "and a pasted newline cannot forge a line of gang's own" \

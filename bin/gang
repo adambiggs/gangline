@@ -37,10 +37,28 @@ fail() { # $1 = exit status, rest = message
   # dependency, and gang's own refusal for one names the tool it could not
   # find — so a sanitizer that shelled out to tr would be silent in exactly
   # the case where the diagnostic is the whole product.
+  #
+  # KEPT BY WHAT IT IS, NOT DROPPED BY WHAT IT LOOKS LIKE. A [[:cntrl:]] denylist
+  # asks the locale to name every byte a terminal obeys, and under a UTF-8 one it
+  # names only what decodes to a control CHARACTER: an operator-supplied raw 0x9b
+  # is CSI on its own to a terminal and an undecodable byte to the class, so it
+  # passed through and painted. [![:print:]] inverts the question — anything that
+  # is not a printable character is replaced, which covers the controls the old
+  # class caught, the raw C1 bytes it did not, and any future byte nobody has
+  # thought of. A tab goes with them, and losing its column is the right trade
+  # for a class with no holes.
+  #
+  # WHAT IT COSTS: on a line that decodes cleanly, legitimate multibyte text is
+  # printable and survives verbatim — é, Ā and 中 all come through. On a line
+  # that also carries an undecodable byte, Bash matches the whole line bytewise
+  # and the multibyte characters are replaced too, even ones that appear before
+  # the bad byte. That is a readability loss on an already-corrupt line, in the
+  # safe direction: the class never passes a byte through by mistake, it only
+  # ever replaces more than it strictly had to.
   rest="$*"
   while :; do
     line="${rest%%$'\n'*}"
-    printf '%s %s\n' "$prefix" "${line//[[:cntrl:]]/?}" >&2
+    printf '%s %s\n' "$prefix" "${line//[![:print:]]/?}" >&2
     [ "$rest" != "$line" ] || break
     rest="${rest#*$'\n'}"
   done
