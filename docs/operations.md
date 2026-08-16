@@ -556,12 +556,14 @@ journalctl -b -1 --no-pager | grep 'systemd-oomd.*Killed'
 oomctl
 ```
 
-`oomctl` prints the live policy. Where `/user.slice` is a swap-monitored cgroup,
-`oomd` kills on *swap* used rather than on free memory, and it selects the
-descendant holding the most of it — which is the team. Idle daemons that swap out
-and never fault back hold that counter high on their own, so the crossing can
-arrive while the team is doing nothing unusual and correlate with whatever the
-operator happened to be doing at the time.
+`oomctl` prints the live policy and the thresholds it is holding. Where
+`/user.slice` is a swap-monitored cgroup, `oomd` acts once system memory *and*
+system swap are both over that limit, and it then kills the descendant holding
+the most swap — which is the team. Read both halves before concluding anything:
+swap fills early and is never given back, so that half is usually already
+satisfied and the memory half is what decides when a team dies. The victim pool
+is narrower than the trigger, so a team can be selected while a larger share of
+the swap sits outside `/user.slice` where nothing can be chosen from it.
 
 `ManagedOOMPreference=avoid` and `=omit` do not rescue a team, and they fail
 quietly. `systemd-oomd` ignores those attributes unless the unit's cgroup is
