@@ -1401,3 +1401,105 @@ refuses "a scope name still held by an earlier agent is refused, not respawned" 
   env PATH="$RUN_ROOT/scope-taken-bin:$PATH" GANG_SCOPE=on \
     "$GANG" hitch scopeheld -c bash -d /tmp
 equal "a refused scope name leaves no window behind" "" "$(window_id scopeheld)"
+
+# A LAUNCH THAT DIES IS NOT A SLOW BOOT, and both shapes of it are real. A
+# launch that dies before its window is registered used to surface as a raw
+# tmux `no such window` naming nothing gang had tried to run; one that dies
+# while gang waits for its input box used to spend the whole boot budget and
+# then be reported as an agent that is up but showing something else — a
+# live-agent recovery offered for a process that is not running.
+cat > "$RUN_ROOT/collars/deadlaunch.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'exit 9' deadlaunch-argv-marker"
+SH
+if diesatonce_out="$("$GANG" hitch diesatonce -c deadlaunch -d /tmp 2>&1)"; then
+  fail "a launch that dies at once is refused" \
+    "hitch unexpectedly succeeded: [$diesatonce_out]"
+else
+  contains "a launch that dies at once is reported as a death" \
+    "$diesatonce_out" "'diesatonce' died at launch"
+  contains "and the refusal names the command that died" \
+    "$diesatonce_out" "deadlaunch-argv-marker"
+  excludes "rather than a raw tmux window error naming nothing" \
+    "$diesatonce_out" "no such window"
+fi
+equal "a launch that died leaves no window behind" "" "$(window_id diesatonce)"
+
+# THE BOOT LOOP'S ONE HOOK IS THE COLLAR'S OWN READ, called once per pass in
+# gang's process, so a death staged there lands INSIDE the wait with no clock
+# involved and no pane polled. The window is told to hold its corpse, the
+# pane's shell is typed an exit, and tmux's own pane-died hook releases the
+# barrier only once the server has recorded the death — so the read that
+# follows is reading a settled fact rather than racing one.
+cat > "$RUN_ROOT/collars/deadboot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' deadboot-argv-marker"
+collar_input() {
+  printf 'read\n' >> "$RUN_ROOT/deadboot-reads"
+  if [ -e "$RUN_ROOT/deadboot-arm" ]; then
+    rm -f "$RUN_ROOT/deadboot-arm"
+    tmux set-option -w -t "\$1" remain-on-exit on
+    tmux set-hook -w -t "\$1" pane-died 'wait-for -S deadboot-died'
+    tmux send-keys -l -t "\$1" 'trap "echo DEADBOOT-DYING-WORDS" EXIT; exit 9'
+    tmux send-keys -t "\$1" Enter
+    tmux wait-for deadboot-died
+  fi
+  return 1
+}
+SH
+: > "$RUN_ROOT/deadboot-arm"
+rm -f "$RUN_ROOT/deadboot-reads"
+if deadboot_out="$("$GANG" hitch deadboot -c deadboot -d /tmp 2>&1)"; then
+  fail "a launch that dies inside the boot wait is refused" \
+    "hitch unexpectedly succeeded: [$deadboot_out]"
+else
+  contains "a launch that dies inside the boot wait is reported as a death" \
+    "$deadboot_out" "'deadboot' died at launch"
+  contains "and the status its pane died with is named" \
+    "$deadboot_out" "(status 9)"
+  contains "and the last thing it said is carried out with it" \
+    "$deadboot_out" "DEADBOOT-DYING-WORDS"
+  contains "and so is the command that died" \
+    "$deadboot_out" "deadboot-argv-marker"
+  excludes "not as an agent that is up and showing something else" \
+    "$deadboot_out" "is up but is showing"
+fi
+# THE WAIT ENDED AT THE DEATH, NOT AT THE BUDGET. One read armed the death and
+# the pass after it found the pane dead, so a second read would mean gang had
+# gone back to asking what a dead pane was showing.
+equal "the boot wait ends at the death rather than at the budget" \
+  1 "$(wc -l < "$RUN_ROOT/deadboot-reads" | tr -d ' ')"
+"$GANG" drop deadboot >/dev/null
+equal "clearing the dead window frees the name" "" "$(window_id deadboot)"
+
+# The same death where nothing holds the corpse: tmux destroys a window whose
+# pane exits, so the reading gang has to interpret is an absence.
+cat > "$RUN_ROOT/collars/deadboot-gone.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' deadgone-argv-marker"
+collar_input() {
+  if [ -e "$RUN_ROOT/deadgone-arm" ]; then
+    rm -f "$RUN_ROOT/deadgone-arm"
+    tmux kill-window -t "\$1"
+  fi
+  return 1
+}
+SH
+: > "$RUN_ROOT/deadgone-arm"
+if deadgone_out="$("$GANG" hitch deadgone -c deadboot-gone -d /tmp 2>&1)"; then
+  fail "a boot whose window goes away is refused" \
+    "hitch unexpectedly succeeded: [$deadgone_out]"
+else
+  contains "a window that goes away during the boot wait is read as a death" \
+    "$deadgone_out" "'deadgone' died at launch: its window is already gone"
+  contains "and that refusal names the command too" \
+    "$deadgone_out" "deadgone-argv-marker"
+  excludes "rather than an unreadable pane" "$deadgone_out" "cannot read pane"
+fi
+equal "and no window is left behind by it" "" "$(window_id deadgone)"

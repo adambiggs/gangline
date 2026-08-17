@@ -2455,9 +2455,59 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
   ! grep -q '[^[:space:]]' <<<"$box"
 }
 
+launch_dead() { # $1 = window id; 0 when nothing is running in that window any more
+  local reading
+  # A VANISHED WINDOW IS THE COMMON SHAPE OF THIS: tmux destroys a window whose
+  # pane exits unless remain-on-exit holds the corpse, and only the corpse can
+  # answer pane_dead. ABSENCE IS NOT A FAILING COMMAND — tmux expands a target
+  # it cannot resolve to nothing and still exits 0 — so it is read as an answer
+  # carrying no window id, which is also why the id is asked for at all.
+  reading="$(tmux display-message -p -t "$1" '#{window_id}:#{pane_dead}' 2>/dev/null)" \
+    || return 0
+  case "$reading" in
+    :) return 0 ;;
+    "$1:1") return 0 ;;
+    "$1:0") return 1 ;;
+    # A tmux that stopped answering this cannot be read as a healthy launch:
+    # that reading is the whole difference between an agent booting slowly and
+    # one that is not there.
+    *) die "cannot tell whether anything is still running in window $1 — tmux answered '$reading'" ;;
+  esac
+}
+
+launch_death_note() { # $1 = agent name, $2 = window id, $3 = the launch line
+  local reading dead status="" last=""
+  reading="$(tmux display-message -p -t "$2" '#{pane_dead}:#{pane_dead_status}' 2>/dev/null)" \
+    || reading=""
+  dead="${reading%%:*}"
+  status="${reading#*:}"
+  [ "$dead" = 1 ] || status=""
+  if [ "$dead" != 1 ]; then
+    printf "'%s' died at launch: its window is already gone, so nothing is running to take its startup contract. cmd: %s" \
+      "$1" "$3"
+    return 0
+  fi
+  # THE LAST THING THE COMMAND SAID IS USUALLY THE WHOLE DIAGNOSIS — a missing
+  # binary, a bus that could not be reached. tmux writes its own banner into a
+  # held corpse below that output, so the banner is stepped over by the one
+  # anchor it has always started with; a tmux that reworded it costs the operator
+  # the banner in this line rather than a wrong answer.
+  last="$(capture_joined "$2" 2>/dev/null | grep '[^[:space:]]' \
+    | grep -v '^Pane is dead' | tail -n 1 | sed 's/[[:space:]]*$//')" || last=""
+  printf "'%s' died at launch: its pane exited%s before its input box appeared, so nothing is running to take its startup contract. cmd: %s" \
+    "$1" "${status:+ (status $status)}" "$3"
+  [ -z "$last" ] || printf '\nlast line in its pane: %s' "$last"
+}
+
 wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet
   local t=0
   while [ "$t" -lt "$2" ]; do
+    # A LAUNCH THAT DIED IS NOT A SLOW BOOT. Every reading below asks what the
+    # pane is showing and none of them asks whether anything is still running to
+    # show it, so a launch that died spent the whole budget here and was then
+    # reported as an agent that is up. Verdict 6 is the caller's to name, since
+    # only the caller holds the command that died.
+    launch_dead "$1" && return 6
     if input_painted "$1"; then
       pane_stable "$1" && return 0
     elif [ -n "${3:-}" ] && boot_prompt_visible "$1"; then
@@ -2467,15 +2517,20 @@ wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet
     fi
     sleep 1; t=$((t + 1))
   done
+  launch_dead "$1" && return 6
   pane_stable "$1" && return 2
   return 1
 }
 
-stamp_binary_id() { # $1 = window id
+stamp_binary_id() { # $1 = window id, optional $2 = agent name being hitched
   local current
   current="$(binary_id)"
-  tmux set-option -w -t "$1" @gl_binary_id "$current" \
-    || die "could not stamp Gangline binary identity on window $1"
+  tmux set-option -w -t "$1" @gl_binary_id "$current" && return 0
+  # Named at hitch, where this write is one of a run of window registrations and
+  # a launch that died under any of them is the same reading for all of them.
+  [ -z "${2:-}" ] || ! launch_dead "$1" \
+    || die "$(launch_death_note "$2" "$1" "$GANG_LAUNCH")"
+  die "could not stamp Gangline binary identity on window $1"
 }
 
 binary_skew_note() { # $1 = window, $2 = current id; print an identity warning
@@ -4611,6 +4666,15 @@ scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
   GANG_LAUNCH="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$unit") -p MemoryAccounting=yes $GANG_LAUNCH"
 }
 
+hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
+  tmux set-option -w -t "$1" "$3" "$4" && return 0
+  # THE WINDOW GOING AWAY UNDER A REGISTRATION IS A DEAD LAUNCH, not a tmux
+  # fault, and the two are told apart by asking rather than by guessing which
+  # one this was.
+  ! launch_dead "$1" || die "$(launch_death_note "$2" "$1" "$GANG_LAUNCH")"
+  die "could not register '$2' in window $1: tmux refused the window option $3"
+}
+
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0
   local lights=""
@@ -4764,20 +4828,26 @@ cmd_hitch() {
       || die "could not open a window for '$name' in session '$SESSION'"
   fi
   [ -n "$id" ] || die "'$name' never appeared in session '$SESSION'"
-  tmux set-option -w -t "$id" automatic-rename off
-  tmux set-option -w -t "$id" allow-rename off
-  tmux set-option -w -t "$id" @gl_agent "$name"
-  tmux set-option -w -t "$id" @gl_collar "$prof"
-  stamp_binary_id "$id"
+  # A LAUNCH THAT DIES TAKES ITS WINDOW WITH IT, and every registration below
+  # then fails on a window id the operator never saw — a raw `no such window`
+  # naming nothing gang had tried to run. Read the death here, where the launch
+  # line is still in hand to name, and read it again from each registration,
+  # because a launch can die at any point in this stretch and not only before it.
+  ! launch_dead "$id" || die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")"
+  hitch_register "$id" "$name" automatic-rename off
+  hitch_register "$id" "$name" allow-rename off
+  hitch_register "$id" "$name" @gl_agent "$name"
+  hitch_register "$id" "$name" @gl_collar "$prof"
+  stamp_binary_id "$id" "$name"
   spool_mint "$id"
   if [ -n "$lights" ]; then
-    tmux set-option -w -t "$id" @gl_context_lights "$lights"
+    hitch_register "$id" "$name" @gl_context_lights "$lights"
   fi
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
-    tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
+    hitch_register "$id" "$name" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi
   if [ "$GANG_AUTO_RESUME" != off ]; then
-    tmux set-option -w -t "$id" @gl_auto_resume "$GANG_AUTO_RESUME"
+    hitch_register "$id" "$name" @gl_auto_resume "$GANG_AUTO_RESUME"
   fi
   exists "$name" || {
     lookup_rc=$?
@@ -4795,6 +4865,7 @@ cmd_hitch() {
     0) ;;
     1) die "'$name' is running but its input box did not become ready, so its startup message was not delivered — $recovery" ;;
     2) die "'$name' is up but is showing something other than its input box, so its startup message was not delivered — $recovery" ;;
+    6) die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")" ;;
     5)
          # COMMIT BEFORE REPORTING ACCEPTANCE. Hitch remains the foreground
          # owner of this startup: it keeps observing through the same universal
@@ -4820,6 +4891,10 @@ cmd_hitch() {
            while [ "$ready" -ne 0 ]; do
              ready=0
              wait_ready "$id" "$follow_boot" "$name" quiet || ready=$?
+             # This loop waits out a first-run prompt for as long as it takes,
+             # so the one verdict it must not absorb is the one that will never
+             # change on its own.
+             [ "$ready" -ne 6 ] || die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")"
              [ "$ready" -ne 5 ] || sleep 1
            done
            delivery_rc=0

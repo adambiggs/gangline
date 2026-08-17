@@ -1048,3 +1048,22 @@ enough can leave every agent under that bar, where the swap policy selects
 nobody rather than the team. Losing one named agent is still a better outcome
 than losing every agent at once, but the thresholds are the operator's and this
 changes only the victim pool.
+
+## A launch that died is read as a death, not waited out
+
+Every reading in the boot wait asks what a pane is showing, and none of them
+asks whether anything is still running to show it. So a harness that failed at
+launch spent the whole boot budget and was then refused as an agent that is up
+but showing something other than its input box — a live-agent recovery offered
+for a process that is not running — or, where the window went with it, as a raw
+tmux error naming nothing Gangline had tried to run.
+
+The wait ends on the death instead, and the refusal carries the launch command,
+plus the exit status and the pane's last line wherever a corpse was held. The
+same reading answers every window registration a hitch performs, because a
+launch can die under any of them.
+
+Absence is established from the answer rather than from a command status: tmux
+expands a target it cannot resolve to nothing and still exits 0, so the reading
+asks for the window's own id alongside the fact it wants, and a reading that is
+neither of those refuses rather than passing for a healthy launch.

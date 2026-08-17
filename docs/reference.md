@@ -118,6 +118,11 @@ was exposed.
 If hitch has no positive prompt evidence, it fails with the manual attach/send
 recovery because it cannot truthfully call an unknown stable screen a startup
 gate.
+If nothing is running in the window — the pane exited, or tmux destroyed the
+window along with it — hitch ends the wait there instead of spending the boot
+budget, and refuses with the launch command, plus the exit status and the pane's
+last line wherever the corpse was held. A launch that died is not a slow boot,
+and the attach recovery above does not apply to it.
 
 - `-c` selects the harness, by the name of the collar that drives it.
 - `-d` selects the harness working directory.
