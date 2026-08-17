@@ -148,6 +148,22 @@ Names use letters, digits, dot, dash, and underscore, may not begin with dot or
 dash, and must be unique in the team. `hitch` is reserved as the startup-envelope
 sender.
 
+With `GANG_SCOPE=on` the launch is wrapped in a transient systemd user scope,
+`gangline-<session>-<agent>.scope`, with `MemoryAccounting=yes` stated rather
+than inherited. `systemd-run --scope` execs the harness, so the pane process,
+its tty, its environment, and its exit status are the harness's own; only the
+cgroup changes. The setting is off unless declared, and a host that has no
+`systemd-run` or no reachable user manager refuses the hitch instead of
+launching an unscoped agent.
+
+The reason is blast radius. `systemd-oomd` kills the descendant *leaf* cgroup
+holding the most swap, and a tmux server inherits the cgroup of whatever started
+it, so by default every agent on a team shares one leaf and one kill takes all
+of them. One scope per agent makes each agent its own leaf and its own name in
+the kill message. The scope lives under the user manager, so scoped agents also
+come under whatever `ManagedOOMMemoryPressure` policy that manager carries — one
+agent at a time, earlier than the swap limit.
+
 When context lights are enabled, their thresholds are copied to the new window.
 Percentages are relative to each native window and serve mixed-window teams.
 Absolute tokens remain supported for an observed fixed window. Place both high
@@ -851,6 +867,7 @@ Exactly these keys are settable:
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
+| `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness in its own transient systemd user scope |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |

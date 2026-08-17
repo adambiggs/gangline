@@ -1022,3 +1022,25 @@ assertion after it stays only to report what was true when the wait gave up.
 The same rule closes the run: cleanup that fails, a signal handler that returns
 into a torn-down world, and a scenario list that selects nothing are all ways of
 finishing without reporting, and each one now ends the run with a reason.
+
+## One agent per killable cgroup, or one kill ends the team
+
+A tmux server inherits the cgroup of whatever started it, so every agent on a
+team is a process in the login session's scope. `systemd-oomd` selects the
+descendant *leaf* cgroup holding the most swap, and a long-lived session full of
+dormant agents is by construction the largest holder of swapped-out anon memory:
+idleness is the qualification for being chosen, not a defence. One kill ends
+every agent at once.
+
+`GANG_SCOPE=on` wraps each hitched launch in a transient systemd user scope, so
+each agent is its own leaf, holds its own swap, and is named in the kill message.
+This is a platform-specific launch prefix rather than a branch on any harness:
+the collar still declares the whole launch line, and the scope is composed
+around it. It is off unless the operator declares it, and where it cannot be
+honoured the hitch is refused rather than quietly run unscoped.
+
+The trade is deliberate. A scope lives under the systemd user manager, so scoped
+agents also fall under its memory-pressure policy — which fires earlier than the
+swap limit and takes one agent. Losing one named agent is a better outcome than
+losing the team, and a candidate too small to cross oomd's own swap threshold is
+covered by that earlier policy rather than by nothing.

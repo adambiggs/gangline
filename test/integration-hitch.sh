@@ -1321,3 +1321,67 @@ contains "the resume launch form is the one that ran" "$effres_line" "resume-fix
 contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null
+
+# Each hitched harness in its own killable cgroup. systemd-oomd kills the
+# descendant LEAF cgroup holding the most swap, and a tmux server inherits the
+# cgroup of whatever started it, so without this every agent shares one leaf and
+# one kill takes the team. The scope is proven by invocation and not only by
+# composition: the stub records the argv it was actually called with, and the
+# wrapped agent still boots and still takes a message.
+mkdir -p "$RUN_ROOT/scope-bin"
+cat > "$RUN_ROOT/scope-bin/systemd-run" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" > '$RUN_ROOT/scope.argv'
+while [ "\${1:-}" != env ]; do
+  [ \$# -gt 0 ] || exit 97
+  shift
+done
+exec "\$@"
+SH
+cat > "$RUN_ROOT/scope-bin/systemctl" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod +x "$RUN_ROOT/scope-bin/systemd-run" "$RUN_ROOT/scope-bin/systemctl"
+if scope_path="$(tmux show-environment -g PATH 2>/dev/null)"; then
+  scope_path="${scope_path#PATH=}"
+else
+  scope_path="$PATH"
+fi
+tmux set-environment -g PATH "$RUN_ROOT/scope-bin:$scope_path"
+PATH="$RUN_ROOT/scope-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scoped -c bash -d /tmp >/dev/null
+tmux set-environment -g PATH "$scope_path"
+scope_line="$(tmux display-message -p -t "$(window_id scoped)" '#{pane_start_command}')"
+contains "a scoped hitch launches inside its own transient user scope" \
+  "$scope_line" "systemd-run --user --scope"
+contains "and the scope is named after the session and the agent" \
+  "$scope_line" "--unit='gangline-$GANG_SESSION-scoped.scope'"
+contains "memory accounting is stated, not inherited" \
+  "$scope_line" "-p MemoryAccounting=yes"
+contains "the scope wraps the launch rather than replacing it" \
+  "$scope_line" "PS1='❯ ' bash --norc"
+contains "and systemd-run was invoked with the unit, not merely handed it" \
+  "$(<"$RUN_ROOT/scope.argv")" "--unit=gangline-$GANG_SESSION-scoped.scope"
+printf 'MARK_SCOPED' | "$GANG" send --to scoped --from tester --stdin >/dev/null
+# source-guard: producer@8daa1cf9ed62: the verified send just above is the only producer of MARK_SCOPED — no fixture, collar or other sender writes that literal, and the scoped window was hitched empty
+contains "a scoped agent is an ordinary agent" "$(pane scoped)" "MARK_SCOPED"
+"$GANG" drop scoped >/dev/null
+
+# An unusable scope is refused at hitch rather than discovered as a window that
+# died at launch, and a value that is neither on nor off never reads as off.
+mkdir -p "$RUN_ROOT/scope-nomgr-bin"
+cp "$RUN_ROOT/scope-bin/systemd-run" "$RUN_ROOT/scope-nomgr-bin/systemd-run"
+cat > "$RUN_ROOT/scope-nomgr-bin/systemctl" <<'SH'
+#!/bin/sh
+exit 1
+SH
+chmod +x "$RUN_ROOT/scope-nomgr-bin/systemctl"
+refuses "a scope with no user manager to create it is refused at hitch" \
+  "cannot give 'scopeless' its own cgroup" \
+  env PATH="$RUN_ROOT/scope-nomgr-bin:$PATH" GANG_SCOPE=on \
+    "$GANG" hitch scopeless -c bash -d /tmp
+equal "a refused scope leaves no window behind" "" "$(window_id scopeless)"
+refuses "a scope setting that is neither on nor off is refused" \
+  "GANG_SCOPE must be on or off" \
+  env GANG_SCOPE=yes "$GANG" config

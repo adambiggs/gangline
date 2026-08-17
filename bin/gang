@@ -65,7 +65,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -292,6 +292,11 @@ GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
 GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
 GANG_AUTO_RESUME="${GANG_AUTO_RESUME:-off}"
+GANG_SCOPE="${GANG_SCOPE:-off}"
+case "$GANG_SCOPE" in
+  on|off) ;;
+  *) die "GANG_SCOPE must be on or off, got '$GANG_SCOPE'$(config_origin_note GANG_SCOPE)" ;;
+esac
 GANG_STALL_REPEAT=600
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
@@ -4576,6 +4581,27 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
   fi
 }
 
+# One agent per killable cgroup. A tmux server inherits the cgroup of whatever
+# started it, so by default every hitched harness shares the login session's
+# scope and systemd-oomd — which kills the descendant LEAF cgroup holding the
+# most swap — takes the whole team in one message. A transient user scope per
+# harness makes each agent its own leaf, so the same policy costs one agent.
+# Accounting is stated rather than inherited: a scope without it reports no
+# swap, is never selected, and the mechanism would fail silently.
+scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
+  local unit
+  [ "$GANG_SCOPE" = on ] || return 0
+  case "$SESSION" in *[!A-Za-z0-9._-]*)
+    die "GANG_SCOPE=on cannot name a systemd unit after session '$SESSION' — use letters, digits, dot, dash and underscore$(config_origin_note GANG_SESSION)" ;;
+  esac
+  command -v systemd-run >/dev/null 2>&1 \
+    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: this host has no systemd-run$(config_origin_note GANG_SCOPE)"
+  systemctl --user show --property=Version --value >/dev/null 2>&1 \
+    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: 'systemctl --user' reaches no systemd user manager$(config_origin_note GANG_SCOPE)"
+  unit="gangline-$SESSION-$1.scope"
+  GANG_LAUNCH="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$unit") -p MemoryAccounting=yes $GANG_LAUNCH"
+}
+
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0
   local lights=""
@@ -4713,6 +4739,7 @@ cmd_hitch() {
   [ -z "${GANG_LOCK_DIR:-}" ] \
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
   GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
+  scope_launch_wrap "$name"
 
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
@@ -6854,6 +6881,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;
     GANG_AUTO_RESUME) printf '%s' "$GANG_AUTO_RESUME" ;;
+    GANG_SCOPE) printf '%s' "$GANG_SCOPE" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
