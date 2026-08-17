@@ -1039,8 +1039,12 @@ the collar still declares the whole launch line, and the scope is composed
 around it. It is off unless the operator declares it, and where it cannot be
 honoured the hitch is refused rather than quietly run unscoped.
 
-The trade is deliberate. A scope lives under the systemd user manager, so scoped
-agents also fall under its memory-pressure policy — which fires earlier than the
-swap limit and takes one agent. Losing one named agent is a better outcome than
-losing the team, and a candidate too small to cross oomd's own swap threshold is
-covered by that earlier policy rather than by nothing.
+The trade is deliberate and is not free. A scope lives under the systemd user
+manager, so scoped agents also fall under its memory-pressure policy — a
+separate policy with its own trigger, which can take one agent for pressure that
+no agent caused, and can act again after its own delay. And a swap kill selects
+only a candidate holding more than 5% of total swap, so a team split finely
+enough can leave every agent under that bar, where the swap policy selects
+nobody rather than the team. Losing one named agent is still a better outcome
+than losing every agent at once, but the thresholds are the operator's and this
+changes only the victim pool.

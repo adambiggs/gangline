@@ -544,10 +544,11 @@ keystroke is often what a native dialog reads as an answer.
 ### The whole team vanished at once
 
 Every window gone with no `gang down` and no stall can be `systemd-oomd` rather
-than anything in Gangline. The tmux server and every agent in it share one
-cgroup — the login session scope that started the server — and `oomd` kills a
-cgroup whole, so one decision takes everything in that scope, with no partial
-survival and no signal an agent could catch. A kernel OOM kill, a killed tmux
+than anything in Gangline. Unless the team was hitched with `GANG_SCOPE=on`, the
+tmux server and every agent in it share one cgroup — the login session scope
+that started the server — and `oomd` kills a cgroup whole, so one decision takes
+everything in that scope, with no partial survival and no signal an agent could
+catch. A kernel OOM kill, a killed tmux
 server, or a reboot erase the same windows, so identify the killer from evidence
 before treating it as this one:
 
@@ -576,14 +577,26 @@ stat -c '%U %n' /sys/fs/cgroup/<unit-cgroup-path>
 getfattr -n user.oomd_omit /sys/fs/cgroup/<unit-cgroup-path>
 ```
 
-The levers that work are the operator's — the policy on `/user.slice`, and caps
-on whatever drives the machine to the memory threshold. Placement is worth
-reading either way, because a path naming a session scope means the team can die
-with a login session it has usually already outlived:
+What is eligible is narrower still: descending a monitored tree, `oomd` can only
+select a cgroup that has no subgroups of its own, or one whose
+`memory.oom.group` is 1. A tmux server creates no subgroup, so a team is one
+leaf and one candidate. `GANG_SCOPE=on` is the lever for that half — each
+hitched harness launches in its own transient user scope, so each agent is its
+own leaf, holds its own swap, and is named in the kill message. The rest of the
+levers are the operator's: the policy on `/user.slice`, and caps on whatever
+drives the machine to the memory threshold. Read the placement either way,
+because a path naming a session scope means the team can die with a login
+session it has usually already outlived:
 
 ```sh
 cat /proc/$(tmux display-message -p '#{pid}')/cgroup
 ```
+
+With scopes in place a kill takes one agent and names it, so recovery is the
+ordinary one — read the dead window's identity with `gang whoami` and bring it
+back with the `gang hitch <name> --resume <session-id>` line. If the scope
+outlived the pane because the agent left a detached child, the next hitch of
+that name refuses and prints the unit to stop.
 
 ### The tmux server was lost
 
