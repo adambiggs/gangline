@@ -2456,23 +2456,33 @@ input_clear() { # $1 = window id; nothing a person typed is sitting in that box
 }
 
 launch_dead() { # $1 = window id; 0 when nothing is running in that window any more
-  local reading
+  local reading line live=0
   # A VANISHED WINDOW IS THE COMMON SHAPE OF THIS: tmux destroys a window whose
   # pane exits unless remain-on-exit holds the corpse, and only the corpse can
-  # answer pane_dead. ABSENCE IS NOT A FAILING COMMAND — tmux expands a target
-  # it cannot resolve to nothing and still exits 0 — so it is read as an answer
-  # carrying no window id, which is also why the id is asked for at all.
-  reading="$(tmux display-message -p -t "$1" '#{window_id}:#{pane_dead}' 2>/dev/null)" \
+  # answer pane_dead.
+  #
+  # EVERY PANE, NOT THE ACTIVE ONE. A window target answers this question for
+  # its active pane alone, so an operator who split an agent's window and left
+  # a held corpse in front would have a live shell classified as nothing —
+  # and the repair this refusal names, gang drop, kills the whole window.
+  # list-panes also fails on a window that is gone, where display-message
+  # expands an unresolvable target to nothing and still exits 0; the window id
+  # is read back alongside each pane so a reading about some other window
+  # cannot pass for an answer about this one.
+  reading="$(tmux list-panes -t "$1" -F '#{window_id}:#{pane_dead}' 2>/dev/null)" \
     || return 0
-  case "$reading" in
-    :) return 0 ;;
-    "$1:1") return 0 ;;
-    "$1:0") return 1 ;;
-    # A tmux that stopped answering this cannot be read as a healthy launch:
-    # that reading is the whole difference between an agent booting slowly and
-    # one that is not there.
-    *) die "cannot tell whether anything is still running in window $1 — tmux answered '$reading'" ;;
-  esac
+  [ -n "$reading" ] || return 0
+  while IFS= read -r line; do
+    case "$line" in
+      "$1:0") live=1 ;;
+      "$1:1") ;;
+      # A tmux that stopped answering this cannot be read as a healthy launch:
+      # that reading is the whole difference between an agent booting slowly and
+      # one that is not there.
+      *) die "cannot tell whether anything is still running in window $1 — tmux answered '$line'" ;;
+    esac
+  done <<<"$reading"
+  [ "$live" -eq 0 ]
 }
 
 launch_death_note() { # $1 = agent name, $2 = window id, $3 = the launch line

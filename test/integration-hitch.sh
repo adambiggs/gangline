@@ -1506,3 +1506,33 @@ else
   excludes "rather than an unreadable pane" "$deadgone_out" "cannot read pane"
 fi
 equal "and no window is left behind by it" "" "$(window_id deadgone)"
+
+# A WINDOW IS NOT ITS ACTIVE PANE. An operator who splits an agent's window and
+# leaves a held corpse in front still has a live shell in it, and the refusal
+# for a window where nothing runs names `gang drop`, which kills the whole
+# window — so reading only the active pane turns a wrong answer into a
+# destructive instruction. Both directions are driven here: the corpse in front
+# of a live pane, and then the same window with nothing left running in it.
+"$HITCH" splitcorpse -c bash -d /tmp >/dev/null
+splitcorpse_id="$(window_id splitcorpse)"
+tmux set-option -w -t "$splitcorpse_id" remain-on-exit on
+splitcorpse_live="$(tmux split-window -d -P -F '#{pane_id}' -t "$splitcorpse_id" \
+  "PS1='❯ ' bash --norc")"
+tmux set-hook -w -t "$splitcorpse_id" pane-died 'wait-for -S splitcorpse-front-died'
+tmux send-keys -l -t "$splitcorpse_id" 'exit 9'
+tmux send-keys -t "$splitcorpse_id" Enter
+tmux wait-for splitcorpse-front-died
+splitcorpse_out="$("$GANG" hitch splitcorpse -c bash -d /tmp 2>&1)" || :
+excludes "a corpse in front of a live pane is not read as an empty window" \
+  "$splitcorpse_out" "nothing is running in its window"
+contains "so the refusal is the ordinary one, which destroys nothing" \
+  "$splitcorpse_out" "already exists"
+tmux set-hook -w -t "$splitcorpse_id" pane-died 'wait-for -S splitcorpse-rest-died'
+tmux send-keys -l -t "$splitcorpse_live" 'exit 7'
+tmux send-keys -t "$splitcorpse_live" Enter
+tmux wait-for splitcorpse-rest-died
+refuses "and once every pane has exited the same window reads as empty" \
+  "already exists and nothing is running in its window" \
+  "$GANG" hitch splitcorpse -c bash -d /tmp
+"$GANG" drop splitcorpse >/dev/null
+equal "clearing the split window frees the name" "" "$(window_id splitcorpse)"
