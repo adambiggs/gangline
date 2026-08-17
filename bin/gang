@@ -4743,6 +4743,11 @@ cmd_hitch() {
     GANG_LAUNCH="${GANG_RESUME_LAUNCH//'{{session_id}}'/$resume_id}"
   elif [ -n "$id" ]; then
     registered_identity_guard "$id" "$name" hitch
+    # A HELD CORPSE IS WHAT A LAUNCH THAT DIED LEAVES BEHIND where the operator
+    # keeps remain-on-exit, so this refusal sits on the way out of one. "Already
+    # exists" alone reads as a working agent and names no repair.
+    ! launch_dead "$id" \
+      || die "agent '$name' already exists and nothing is running in its window: clear it with 'gang drop $name', or relaunch the harness session it is stamped for with 'gang hitch $name --resume'"
     die "agent '$name' already exists"
   fi
   if [ -n "$GANG_MODEL_OPT" ] && [ -z "$model" ]; then missing="-m"; fi

@@ -1473,6 +1473,9 @@ fi
 # gone back to asking what a dead pane was showing.
 equal "the boot wait ends at the death rather than at the budget" \
   1 "$(wc -l < "$RUN_ROOT/deadboot-reads" | tr -d ' ')"
+refuses "a name whose window holds a dead pane is refused as one, with repairs" \
+  "already exists and nothing is running in its window" \
+  "$GANG" hitch deadboot -c deadboot -d /tmp
 "$GANG" drop deadboot >/dev/null
 equal "clearing the dead window frees the name" "" "$(window_id deadboot)"
 
