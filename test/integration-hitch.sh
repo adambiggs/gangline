@@ -1340,7 +1340,11 @@ exec "\$@"
 SH
 cat > "$RUN_ROOT/scope-bin/systemctl" <<'SH'
 #!/bin/sh
-exit 0
+[ "${1:-}" != --user ] || shift
+case "${1:-}" in
+  is-active) exit 3 ;;
+  *) exit 0 ;;
+esac
 SH
 chmod +x "$RUN_ROOT/scope-bin/systemd-run" "$RUN_ROOT/scope-bin/systemctl"
 if scope_path="$(tmux show-environment -g PATH 2>/dev/null)"; then
@@ -1377,6 +1381,13 @@ cat > "$RUN_ROOT/scope-nomgr-bin/systemctl" <<'SH'
 exit 1
 SH
 chmod +x "$RUN_ROOT/scope-nomgr-bin/systemctl"
+mkdir -p "$RUN_ROOT/scope-taken-bin"
+cp "$RUN_ROOT/scope-bin/systemd-run" "$RUN_ROOT/scope-taken-bin/systemd-run"
+cat > "$RUN_ROOT/scope-taken-bin/systemctl" <<'SH'
+#!/bin/sh
+exit 0
+SH
+chmod +x "$RUN_ROOT/scope-taken-bin/systemctl"
 refuses "a scope with no user manager to create it is refused at hitch" \
   "cannot give 'scopeless' its own cgroup" \
   env PATH="$RUN_ROOT/scope-nomgr-bin:$PATH" GANG_SCOPE=on \
@@ -1385,3 +1396,8 @@ equal "a refused scope leaves no window behind" "" "$(window_id scopeless)"
 refuses "a scope setting that is neither on nor off is refused" \
   "GANG_SCOPE must be on or off" \
   env GANG_SCOPE=yes "$GANG" config
+refuses "a scope name still held by an earlier agent is refused, not respawned" \
+  "is still running, so something from an earlier 'scopeheld' outlived its window" \
+  env PATH="$RUN_ROOT/scope-taken-bin:$PATH" GANG_SCOPE=on \
+    "$GANG" hitch scopeheld -c bash -d /tmp
+equal "a refused scope name leaves no window behind" "" "$(window_id scopeheld)"

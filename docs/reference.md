@@ -156,6 +156,12 @@ cgroup changes. The setting is off unless declared, and a host that has no
 `systemd-run` or no reachable user manager refuses the hitch instead of
 launching an unscoped agent.
 
+The scope name is stable, so a name still held by something an earlier agent
+left behind refuses the hitch and names the unit to stop, rather than failing
+inside tmux as a window that died at launch. `adopt` registers a window Gangline
+did not launch and so cannot scope one; an adopted agent stays in whatever
+cgroup its window already had.
+
 The reason is blast radius. `systemd-oomd` kills the descendant *leaf* cgroup
 holding the most swap, and a tmux server inherits the cgroup of whatever started
 it, so by default every agent on a team shares one leaf and one kill takes all

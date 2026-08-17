@@ -4599,6 +4599,15 @@ scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
   systemctl --user show --property=Version --value >/dev/null 2>&1 \
     || die "GANG_SCOPE=on cannot give '$1' its own cgroup: 'systemctl --user' reaches no systemd user manager$(config_origin_note GANG_SCOPE)"
   unit="gangline-$SESSION-$1.scope"
+  [ "${#unit}" -le 255 ] \
+    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: '$unit' is longer than a systemd unit name may be"
+  # A scope outlives its pane when the harness left a detached child behind, and
+  # the name is stable, so a resume into a dead window would meet its own
+  # predecessor. systemd-run's failure would land inside tmux as a window that
+  # died at launch; the operator gets the unit and the remedy here instead.
+  if systemctl --user is-active --quiet -- "$unit" 2>/dev/null; then
+    die "GANG_SCOPE=on cannot give '$1' its own cgroup: $unit is still running, so something from an earlier '$1' outlived its window. Inspect it with 'systemctl --user status $unit' and release the name with 'systemctl --user stop $unit'"
+  fi
   GANG_LAUNCH="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$unit") -p MemoryAccounting=yes $GANG_LAUNCH"
 }
 
