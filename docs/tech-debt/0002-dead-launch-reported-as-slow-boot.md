@@ -1,6 +1,6 @@
 # TD-0002: a launch that dies after the preflight is reported as a slow boot
 
-- **Status:** Open
+- **Status:** Resolved 2026-08-17 (7f9c2ed, b883253, 053e6a1)
 - **Date:** 2026-08-17
 - **Scope:** `bin/gang` — `wait_ready` and the hitch boot loop
 
@@ -28,9 +28,8 @@ Neither path names the command that died.
 ## Evidence
 
 Reproduced against the committed binary during arc 43, using a `systemd-run`
-that fails while holding the pane. Found in independent review (Codex,
-2026-08-17). Full context, including the scoped-launch work that exposed it:
-`~/.local/state/gangline/arc-43-oomd-blast-radius-and-tracing.md`.
+that fails while holding the pane. Found in independent review
+(2026-08-17).
 
 ## Direction
 
@@ -52,3 +51,25 @@ A hitch whose launch dies after the preflight refuses promptly, names the comman
 that died, and does not describe the agent as up. The guarding fixture drives a
 real pane death inside `wait_ready`'s wait with no sleep, no polling, and no
 scaled clock, and fails against the current binary.
+
+## Resolution
+
+Met. The wait ends on the death, and the refusal names the launch command, plus
+the exit status and the pane's last line wherever a corpse was held. Every window
+registration a hitch performs reads the same fact, so the instant-death path no
+longer surfaces as a raw tmux error either.
+
+The direction stated above was wrong about the cost, and cheaply: the boot loop
+already had the event hook it was said to lack. A collar is sourced into gang's
+own process and `wait_ready` calls the collar's `collar_input` once per pass, so
+a fixture collar stages a real pane death at an exact point inside the wait with
+no clock, no polling and no sleep. tmux's own `pane-died` hook is the barrier
+that makes the death settled before the next read; a signal from the dying
+shell's EXIT trap fires too early.
+
+The guards fail against the parent binary — the reds are the two symptoms above
+verbatim, plus the burned boot budget measured as the number of pane reads. One
+defect was found in independent review and fixed before the fix landed: the
+reading asked tmux for the window's *active* pane, so a split window holding a
+corpse in front of a live shell read as empty, and the refusal that produces
+names `gang drop`, which would have killed the live pane.
