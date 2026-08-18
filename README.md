@@ -123,6 +123,19 @@ a turn. `gang flush` recovers a message a harness parked in its own input queue,
 reading the reloaded composer back against what Gangline recorded before
 submitting it.
 
+## Gangline and native subagents
+
+Where a harness spawns subagents of its own, Gangline does not replace them; it
+operates one level up. A subagent is created and owned by a single harness
+session, and that ownership is what makes it a subagent. Gangline works between
+sessions instead: every agent in a team is a separate top-level process running
+the harness's ordinary CLI in its own tmux window, and one team can put Claude
+Code, Codex, OpenCode, and Pi side by side.
+
+That is a difference in architecture, not a list of promises. What each command
+does, what it refuses, and under which conditions belong to
+[`docs/reference.md`](docs/reference.md), which is the specification.
+
 ## Ontology
 
 A **dog** — a model instance — wears a **harness**, its native CLI runtime

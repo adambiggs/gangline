@@ -121,6 +121,15 @@ gang roster</code></pre>
     them. It hands out no work, chases nobody, enforces no deadline, and never
     answers a permission prompt or loosens a harness's sandbox. Each agent keeps
     the terminal, tools, permissions, and subscription it already had.</p>
+
+    <p>It is also not a replacement for whatever subagents your harness spawns
+    on its own — Gangline operates one level up. A subagent is created and owned
+    by a single harness session, and that ownership is what makes it one.
+    Gangline works between sessions instead: every agent in a team is a separate
+    top-level process running the harness's ordinary CLI in its own tmux window,
+    and one team can put Claude Code, Codex, OpenCode, and Pi side by side. That
+    is a difference in architecture; what each command does and refuses is in
+    the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</p>
   </section>
 
   <section id="long">
