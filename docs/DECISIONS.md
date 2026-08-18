@@ -1103,3 +1103,29 @@ stopped reading would park rather than fail.
 Why tmux fails to run its SIGCHLD handler in this window is not established, and
 the rule does not depend on it: a fixture that cannot be broken by a late reap
 does not need the cause.
+
+## A read that was refused is unknown, never an absent box or a settled one
+
+A pane reading is transport, and the transport can refuse while the agent it
+describes is alive and healthy. Every predicate that consumes such a reading
+spends it as evidence — no box drawn means nothing owns the screen, a box
+identical twice means nobody is typing, a witness equal to the one before it
+means nothing moved — so a refusal folded into any of those becomes a positive
+finding about a pane nobody looked at, and a caller then acts on it.
+
+So a refused read carries its own status the whole way. Collars answer `3`,
+distinct from the `1` that means the harness drew no composer and from the `2`
+that means a composer outgrew its pane. `input_read` is the single place that
+classification is made in `bin/gang`, and it asks the pane itself where a collar
+does not speak `3`, because the guarantee is Gangline's rather than the collar
+author's. Predicates that cannot express unknown refuse loudly instead:
+occupancy, busy/idle and decay all name the reading they could not take.
+
+Two shapes hide such a refusal by construction and are banned wherever a
+reading is assembled. A capture piped straight into a parser arrives as the
+parser's verdict on empty input, which is indistinguishable from its verdict on
+a pane with nothing to find. And a reading assembled inside the arguments of a
+`printf` — or handed to another substitution as an argument — leaves the outer
+command succeeding on a substitution that failed, so `die` inside it exits a
+subshell nobody is watching. Read into a variable, check the status, then use
+it.

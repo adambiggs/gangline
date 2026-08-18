@@ -984,7 +984,7 @@ there, never in a harness-name branch in the core script.
 | `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
-| `collar_input target` | print human-authored composer contents, or fail if absent |
+| `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own |
 | `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
@@ -992,6 +992,16 @@ there, never in a harness-name branch in the core script.
 
 Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
+
+A pane reading Gangline could not take is unknown, and unknown is neither an
+absent composer nor a settled one. A collar reports it as status 3 by reading
+its capture into a variable and checking that status before any parser sees the
+bytes: piped straight into one, a refused capture arrives as that parser's
+verdict on empty input and becomes a pane with no composer. Gangline asks the
+pane itself where a collar does not answer 3, so the distinction holds whoever
+wrote the collar, and predicates with no room for a third answer —
+occupancy, busy or idle, an unmoved decay witness — refuse out loud and name the
+reading they could not take rather than guess.
 
 Gangline does not answer native dialogs. A screen matching
 `GANG_OCCUPIED_REGEX` is occupied whoever drew it: `status` and `roster` report
