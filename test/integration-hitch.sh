@@ -1338,11 +1338,15 @@ contains "a hitch warns for every supported choice the collar would default" \
   >/dev/null 2> "$RUN_ROOT/choicemodel.err"
 contains "a hitch warns when only its supported model choice is missing" \
   "$(<"$RUN_ROOT/choicemodel.err")" "hitching 'choicemodel' without -m"
-# WHERE THE HARNESS IS CHOSEN. A collar that witnesses no native session id has
-# nothing for --resume to relaunch onto, and `gang drop` naming that afterwards
-# is the report arriving after the choice it should have informed.
-contains "a collar that witnesses no session id warns at the hitch" \
-  "$(<"$RUN_ROOT/choiceboth.err")" "Gangline will never learn"
+# WHERE THE HARNESS IS CHOSEN, and the two halves fail differently. `gang drop`
+# naming either afterwards is the report arriving after the choice it should
+# have informed — and one warning covering both said something false about each.
+# This collar inherits a resume launch and declares no witness, so it is the
+# launch-only half: the relaunch works, on an id nothing here will ever learn.
+contains "a collar that relaunches onto an id it never learns warns about the id" \
+  "$(<"$RUN_ROOT/choiceboth.err")" "witnesses no harness session identity"
+excludes "and not about a resume launch it does declare" \
+  "$(<"$RUN_ROOT/choiceboth.err")" "declares no resume launch"
 "$GANG" drop choiceboth >/dev/null
 "$GANG" drop choicemodel >/dev/null
 cat > "$RUN_ROOT/collars/resumable.sh" <<SH
@@ -1353,9 +1357,37 @@ GANG_RESUME_LAUNCH="PS1='❯ ' bash --norc {{session_id}}"
 collar_session_id() { printf 'fixture-session-id'; }
 SH
 "$HITCH" resumable-agent -c resumable -d /tmp >/dev/null
-excludes "and a collar that witnesses one draws no such warning" \
-  "$(<"$RUN_ROOT/hitch-stderr")" "Gangline will never learn"
+excludes "and a collar declaring both halves draws no warning at all" \
+  "$(<"$RUN_ROOT/hitch-stderr")" "declares no resume launch"
+excludes "in either of its wordings" \
+  "$(<"$RUN_ROOT/hitch-stderr")" "witnesses no harness session identity"
 "$GANG" drop resumable-agent >/dev/null
+# THE HALF THAT WITNESSES AND CANNOT RELAUNCH. Only the hook path stamps
+# @gl_session_id, and it stamps through a collar_session_id — so a collar with
+# the witness and no launch DOES get an id, and drop used to quote it as a
+# relaunch command that hitch then refuses: the operator's one recorded way back
+# printed at the moment the agent ends, and not runnable. Stamped directly here
+# because what is under test is what drop does with a stamp, not how one arrives.
+cat > "$RUN_ROOT/collars/witness-only.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_session_id() { printf 'witness-only-id'; }
+SH
+"$GANG" hitch witness-only -c witness-only -d /tmp \
+  >/dev/null 2> "$RUN_ROOT/witness-only.err"
+contains "a collar that witnesses an id it cannot relaunch onto still warns" \
+  "$(<"$RUN_ROOT/witness-only.err")" "declares no resume launch"
+excludes "without claiming gang will never learn that id" \
+  "$(<"$RUN_ROOT/witness-only.err")" "will never learn"
+tmux set-option -w -t "$(window_id witness-only)" @gl_session_id witness-only-id
+witness_only_drop="$("$GANG" drop witness-only)"
+contains "and drop prints the id it really has" \
+  "$witness_only_drop" "session id: witness-only-id"
+excludes "without quoting a relaunch command hitch refuses" \
+  "$witness_only_drop" "--resume witness-only-id"
+contains "saying instead what that id is" \
+  "$witness_only_drop" "not a way back into it"
 if bogus_out="$("$GANG" hitch effbad -c efforted -d /tmp -e bogus 2>&1)"; then
   fail "a level outside the vocabulary is refused" "hitch accepted bogus"
 else
