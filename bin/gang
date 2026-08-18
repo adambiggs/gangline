@@ -1795,9 +1795,41 @@ re_match() { # $1 = the collar variable NAME holding an ERE, $2 = text; 0 hit, 1
   return "$rc"
 }
 
-composer_live() { # $1 = window id; the harness's own input box is on screen NOW
+# THE ONE PLACE A COMPOSER READING IS CLASSIFIED, so that no caller has to
+# remember the distinction on its own. A collar answers "there is no box here"
+# and "I could not look" from the same failing capture, and every predicate
+# downstream spends the answer as evidence: an absent box means idle, empty,
+# unoccupied, settled — all of them positive findings about a pane nobody read.
+#
+# Status 3 is the collar contract's word for a refused read. A collar that
+# does not speak it yet is asked again through the pane itself, because the
+# guarantee is gang's and cannot rest on who wrote the collar: a capture that
+# also refuses settles it, and one that answers proves the box really is
+# absent. That second look can lose a refusal that has already healed, which
+# is the ordinary miss a caller then makes on real evidence — never the
+# invented state a masked refusal produces.
+input_read() { # $1 = window id; 0 box (printed), 1 no box,
+               # 2 box clipped by the pane, 3 the pane could not be read
+  local box rc=0
+  box="$(collar_input "$1")" || rc=$?
+  case "$rc" in
+    0) printf '%s' "$box"; return 0 ;;
+    2|3) return "$rc" ;;
+  esac
+  capture "$1" >/dev/null 2>&1 || return 3
+  return 1
+}
+
+composer_live() { # $1 = window id; 0 = the harness's own input box is on screen
+                  # NOW, 1 = it is not, 3 = the pane could not be read
   declare -F collar_input >/dev/null || return 1
-  collar_input "$1" >/dev/null 2>&1
+  local rc=0
+  input_read "$1" >/dev/null || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    3) return 3 ;;
+    *) return 1 ;;
+  esac
 }
 
 busy_painted() { # $1 = window id, collar loaded; exit 0 if a turn is visibly in flight
@@ -2124,7 +2156,11 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # because delivery has to treat it as its own thing: see BUSY_MOVED.
   case "${2:-}" in
     snapshot)
-      if composer_live "$1"; then
+      local live_rc=0
+      composer_live "$1" || live_rc=$?
+      [ "$live_rc" -ne 3 ] \
+        || die "cannot read the composer in pane $1 — refusing to guess busy/idle"
+      if [ "$live_rc" -eq 0 ]; then
         if [ "$undetermined" -eq 1 ]; then
           if [ "$stale_turn" -eq 1 ] && [ "$activity_rc" -eq 1 ] && input_clear "$1"; then
             decay_allowed "$1" "$moved" && return 1
@@ -2362,7 +2398,7 @@ occupied_raise_write() { # $1 = window id; never fatal (law 7)
 occupied_raise_clear() { tmux set-option -uw -t "$1" @gl_occupied 2>/dev/null || true; }
 
 occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
-  local rc=0
+  local rc=0 live_rc=0
   occupied_raise_read "$1" || rc=$?
   case "$rc" in
     0) ;;
@@ -2370,7 +2406,14 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
     2) die "$(agent_name_of "$1") carries malformed @gl_occupied evidence — inspect it, then clear with: tmux set-option -uw -t '$1' @gl_occupied" ;;
     *) die "internal: occupied_raise_read returned unknown verdict $rc" ;;
   esac
-  if composer_live "$1"; then
+  # THE RAISE IS RETIRED BY THE BOX COMING BACK, so a pane that cannot be read
+  # retires nothing — and equally proves nothing about the UI that raised it.
+  # Reporting occupied here would spend a refused read as the evidence that a
+  # dialog is still up, which is the same invention as reporting idle.
+  composer_live "$1" || live_rc=$?
+  [ "$live_rc" -ne 3 ] \
+    || die "cannot read the composer in pane $1 — refusing to guess whether the UI that took it is still there"
+  if [ "$live_rc" -eq 0 ]; then
     occupied_raise_clear "$1"
     return 1
   fi
@@ -2379,14 +2422,25 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
 
 occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   if occupied_witness "$1"; then return 0; fi
-  local pane
+  local pane live_rc=0 painted_rc=0
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
     if re_match GANG_OCCUPIED_REGEX "$pane"; then
-      composer_live "$1" || return 0
+      composer_live "$1" || live_rc=$?
+      [ "$live_rc" -ne 3 ] \
+        || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+      [ "$live_rc" -eq 0 ] || return 0
     fi
   fi
-  if input_painted "$1"; then return 1; fi
+  # AN UNREADABLE BOX IS NOT AN ABSENT ONE, and absence is what this line
+  # spends: no box drawn falls through to the busy tier, where a collar that
+  # declares no busy marker answers "not busy" without reading anything and
+  # the negation turns that into a UI owning the screen. On a live, healthy
+  # agent that is a state gang invented out of a read it never took.
+  input_painted "$1" || painted_rc=$?
+  [ "$painted_rc" -ne 3 ] \
+    || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+  [ "$painted_rc" -ne 0 ] || return 1
   ! busy_painted "$1"
 }
 
@@ -2443,15 +2497,20 @@ boot_prompt_visible() { # $1 = window; positive evidence that a non-composer own
   re_match GANG_OCCUPIED_REGEX "$pane"
 }
 
-input_painted() { # $1 = window id; the harness has drawn an input box
+input_painted() { # $1 = window id; 0 = the harness has drawn an input box,
+                  # 3 = the pane could not be read; other non-zero = no box
   declare -F collar_input >/dev/null || return 0
-  collar_input "$1" >/dev/null
+  local rc=0
+  input_read "$1" >/dev/null || rc=$?
+  return "$rc"
 }
 
-input_clear() { # $1 = window id; nothing a person typed is sitting in that box
+input_clear() { # $1 = window id; 0 = nothing a person typed is sitting in that
+                # box, 3 = the pane could not be read, other non-zero = not clear
   declare -F collar_input >/dev/null || return 0
-  local box
-  box="$(collar_input "$1")" || return 1
+  local box rc=0
+  box="$(input_read "$1")" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
   ! grep -q '[^[:space:]]' <<<"$box"
 }
 
@@ -2592,8 +2651,9 @@ hitch_up_abort() { # detach only the external client this invocation created
 
 on_exit() { spool_retire_abort; lock_release; hitch_up_abort; wait_hook_cleanup; }
 
-landing_zone() { # $1 = window id; the input box, or the whole pane if none is declared
-  if declare -F collar_input >/dev/null; then collar_input "$1"
+landing_zone() { # $1 = window id; the input box, or the whole pane if none is
+                 # declared; 3 = the pane could not be read at all
+  if declare -F collar_input >/dev/null; then input_read "$1"
   else capture_joined "$1"; fi
 }
 
@@ -3333,10 +3393,10 @@ spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
         "$2" >&2
       return 1
     fi
-    collar_input "$1" >/dev/null || box_rc=$?
+    input_read "$1" >/dev/null || box_rc=$?
     [ "$box_rc" -ne 0 ] \
       || return 3
-    printf 'the native delivery boundary did not expose a readable composer (collar_input status %s); no delivery was attempted and the spool remains waiting\n' \
+    printf 'the native delivery boundary did not expose a readable composer (composer reading status %s); no delivery was attempted and the spool remains waiting\n' \
       "$box_rc" >&2
     return 1
   fi
@@ -3521,6 +3581,10 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
     printf 'clipped: the composer is taller than the pane, so its box runs past the bottom and cannot be read (make the window taller, then gang composer %s)' "$3"
     return
   fi
+  if [ "${4:-0}" -eq 3 ]; then
+    printf 'unread: the pane itself could not be read, so whether a box is drawn there is unknown (gang capture %s)' "$3"
+    return
+  fi
   if [ "${4:-0}" -ne 0 ]; then
     printf 'unreadable: the harness is not taking input (gang capture %s)' "$3"
     return
@@ -3634,13 +3698,17 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
   if [ -n "${2:-}" ] && grep -q '[^[:space:]]' <<<"$2" && input_clear "$1"; then
     return 1
   fi
+  # A BOX GANG COULD NOT READ IS A BOX GANG DID NOT CLEAR, and that is the only
+  # answer this function has room for: there is no third thing to do with a
+  # keystroke here. The refused read leaves as an ordinary failure, and the
+  # callers that need the distinction take it from their own reading.
   while [ "$n" -lt "$presses" ]; do
     input_clear "$1" && return 0
-    before="$(collar_input "$1")" || return 1
+    before="$(input_read "$1")" || return 1
     pane_mode_free "$1" || return 1
     tmux send-keys -t "$1" C-u
     sleep 0.4
-    after="$(collar_input "$1")" || return 1
+    after="$(input_read "$1")" || return 1
     [ "$after" != "$before" ] || return 1
     n=$((n + 1))
   done
@@ -6815,14 +6883,13 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   declare -F collar_input >/dev/null \
     || die "collar '$AGENT_COLLAR' declares no collar_input, so '$name' has no readable composer"
   local box box_rc=0
-  box="$(collar_input "$AGENT_ID")" || box_rc=$?
+  box="$(input_read "$AGENT_ID")" || box_rc=$?
   [ "$box_rc" -ne 2 ] \
     || die "the composer in '$name' is taller than its pane, so its box runs past the bottom of the window and cannot be read — make the window taller (gang capture $name)"
-  # AN UNREADABLE PANE IS NOT A PANE WITH NO COMPOSER. A collar answers both
-  # with the same status, so the pane itself is asked for before absence is
-  # reported: a reading gang could not take has to stay distinct from one it
-  # took and found empty.
-  [ "$box_rc" -eq 0 ] || capture "$AGENT_ID" >/dev/null \
+  # AN UNREADABLE PANE IS NOT A PANE WITH NO COMPOSER, and the reading above is
+  # the one place that difference is settled, so absence is only ever reported
+  # about a pane that answered.
+  [ "$box_rc" -ne 3 ] \
     || die "cannot read the pane behind '$name', so whether it is showing a composer is unknown rather than settled (gang capture $name)"
   [ "$box_rc" -eq 0 ] \
     || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
