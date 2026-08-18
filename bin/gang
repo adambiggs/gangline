@@ -7155,7 +7155,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
 # conversation the window is not running is the same claim, printed where an
 # operator will act on it.
 parting_lines() { # $1 = window id, $2 = the name a relaunch would take
-  local mismatch stamped
+  local mismatch stamped prof
   if mismatch="$(identity_mismatch_read "$1")"; then
     printf 'session id: MISMATCH (%s) — refusing to quote a relaunch for an identity this harness contradicted\n' \
       "$mismatch"
@@ -7165,8 +7165,33 @@ parting_lines() { # $1 = window id, $2 = the name a relaunch would take
   [ -n "$stamped" ] \
     || { printf 'session id: UNSTAMPED — this collar has not supplied an identity Gangline can resume\n'
          return 0; }
-  printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' \
-    "$stamped" "$2" "$stamped"
+  # A STAMP IS AN IDENTITY, NOT A WAY BACK. Only `hook_identity_assert` writes
+  # one, and only through a collar that witnesses its harness's id — which is a
+  # different declaration from the launch line --resume needs. A collar with the
+  # witness and no launch stamps, and the relaunch quoted here for it was a
+  # command hitch then refuses: the operator's one recorded way back, printed at
+  # the moment the agent ends, not runnable.
+  #
+  # Read from the collar rather than the loaded globals: `down` walks the team's
+  # windows without loading each collar, so whatever was loaded last would
+  # answer for all of them.
+  prof="$(collar_read "$1")"
+  if [ -z "$prof" ]; then
+    printf 'session id: %s\nrelaunch: UNKNOWN — this window records no collar, so whether hitch takes --resume for it cannot be determined\n' \
+      "$stamped"
+    return 0
+  fi
+  case "$(collar_resume_word "$prof")" in
+    resume|resume-id-only)
+      printf 'session id: %s\nrelaunch: gang hitch %s --resume %s\n' \
+        "$stamped" "$2" "$stamped" ;;
+    no-resume)
+      printf 'session id: %s\nrelaunch: none — collar %s declares no resume launch, so hitch takes no --resume for it. The id above is a record of the harness session, not a way back into it\n' \
+        "$stamped" "$prof" ;;
+    *)
+      printf 'session id: %s\nrelaunch: UNKNOWN — collar %s would not load, so whether hitch takes --resume for it cannot be determined\n' \
+        "$stamped" "$prof" ;;
+  esac
 }
 
 cmd_drop() {

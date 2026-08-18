@@ -230,9 +230,14 @@ Attaches to `GANG_SESSION`.
 
 ### `gang drop <name>`
 
-Prints the window's stamped native session id and the exact
-`gang hitch <name> --resume <session-id>` relaunch command, then kills the exact
-agent window. If the collar has not supplied a stamp, it says so instead. Its
+Prints the window's stamped native session id, then kills the exact agent
+window. Whether that id comes with a relaunch command depends on the collar: one
+that declares a resume launch gets the exact
+`gang hitch <name> --resume <session-id>` line, and one that witnesses its
+harness's id without declaring such a launch gets the id alone, said to be a
+record of the session rather than a way back into it — `hitch` takes no
+`--resume` for that collar, so quoting the command would print a line it
+refuses. If the collar has supplied no stamp, `drop` says that instead. Its
 tmux-owned state and spool die with it after any pending messages are archived.
 
 ### `gang down <session>`
@@ -820,7 +825,9 @@ slot, and a `collar_session_id` that witnesses the native id to put in it.
 `resume-id-only` means it declares the launch and no witness: `hitch --resume`
 relaunches onto an id the operator supplies, while the bare form has nothing to
 read and `gang drop` prints `UNSTAMPED`. `no-resume` means it declares no resume
-launch at all, so nothing relaunches that agent; `unknown` means the collar
+launch at all, so `hitch` takes no `--resume` for it — a collar in this class may
+still WITNESS its harness's id, and `gang drop` then prints that id as a record
+of the session rather than as a relaunch command; `unknown` means the collar
 would not load. The capability is marked here because the harness is chosen
 here: `gang drop` reporting `UNSTAMPED` afterwards is too late to inform the
 choice it should have. The Bash substrate fixture is hidden unless
