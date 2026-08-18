@@ -131,7 +131,10 @@ if [ -d "$HOME_DIR/.git" ]; then
 else
   echo "installing $tag into $HOME_DIR"
   mkdir -p "$(dirname "$HOME_DIR")"
-  git clone --branch "$tag" --depth 1 --quiet "$REPO" "$HOME_DIR" \
+  # A release is a tag, so the clone lands on a detached HEAD and git explains
+  # that at length. --quiet does not cover the advice; only turning it off does.
+  git -c advice.detachedHead=false clone --branch "$tag" --depth 1 --quiet \
+    "$REPO" "$HOME_DIR" \
     || die "could not clone release $tag from $REPO"
 fi
 
