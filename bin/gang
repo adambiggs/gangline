@@ -1068,12 +1068,13 @@ gang collars
   shipped ones by name.
 
   Two tab-separated columns: the name, and
-  whether an agent on it can be resumed.
-  resume means the collar witnesses its
-  harness's own session id and can relaunch
-  onto it; no-resume means it never learns
-  one, so an agent that dies or is dropped
-  loses its session for good.
+  what an agent on it can be resumed onto.
+  resume: the collar witnesses its harness's
+  own session id and can relaunch onto it.
+  resume-id-only: it can relaunch onto an id
+  you supply, but gang never learns one, so
+  drop prints none. no-resume: it declares no
+  resume launch at all.
 EOF
       ;;
     models) cat <<'EOF'
@@ -7255,7 +7256,7 @@ cmd_attach() {
 # Loaded in a subshell so a listing cannot inherit one collar's declarations
 # into the next, and so a collar that will not load leaves the listing standing
 # with its own capability unknown rather than ending it.
-collar_resume_word() { # $1 = collar name -> resume | no-resume | unknown
+collar_resume_word() { # $1 -> resume | resume-id-only | no-resume | unknown
   # The fallback is OUTSIDE the subshell because a collar that will not load
   # refuses from inside it: `die` exits the subshell then and there, so a rescue
   # written as its last statement would never run and the field would go out
@@ -7263,10 +7264,16 @@ collar_resume_word() { # $1 = collar name -> resume | no-resume | unknown
   local word=""
   word="$(
     load_collar "$1" >/dev/null 2>&1
-    if [ -n "$GANG_RESUME_LAUNCH" ] && declare -F collar_session_id >/dev/null; then
+    if [ -z "$GANG_RESUME_LAUNCH" ]; then
+      printf no-resume
+    elif declare -F collar_session_id >/dev/null; then
       printf resume
     else
-      printf no-resume
+      # THE HALF THAT STILL WORKS. hitch consults collar_session_id only for the
+      # bare form; an explicit id relaunches on GANG_RESUME_LAUNCH alone. Folding
+      # this into no-resume told an operator a session was lost for good when a
+      # session id they hold themselves would have relaunched it.
+      printf resume-id-only
     fi
   )" || word=""
   [ -n "$word" ] || word=unknown
