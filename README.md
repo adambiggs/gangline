@@ -58,22 +58,36 @@ available harness collars.
 
 ## Start a team
 
+Before starting a team, run each native harness directly to finish its ordinary
+onboarding, authentication, and repository-trust prompts. Gangline never answers
+those security choices. The first Codex hitch through Gangline can raise an
+additional hook-review prompt because Gangline supplies the hook commands only at
+launch; running Codex by itself cannot pre-approve them, and a changed hook path
+or command can raise the review again. If a hitch reports a first-run prompt, run
+`gang attach` from another operator terminal, select that agent's named window,
+and answer it there. The original hitch will then finish delivering its queued
+contract.
+
 From the repository the agents should work in:
 
 ```sh
-gang up
+gang up -c claude-code -m sonnet -e high
 ```
 
-This hitches `lead` with `GANG_COLLAR` (Claude Code by default), attaches the
-shipped `lead` role brief, and joins its window. Pass `-r` to select another
-role. Detach from tmux with `Ctrl-b d`.
+This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
+and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
+select another role. Detach from tmux with `Ctrl-b d`.
 
-Add another native harness and send it work:
+Add another native harness, deliberately selecting a model and one of the efforts
+listed beside it, then send it work from this detached operator shell:
 
 ```sh
-gang hitch worker -c codex -d "$PWD"
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 
-gang send --to worker --stdin <<'TASK'
+gang send --to worker --from operator --stdin <<'TASK'
 Inspect the failing parser tests, fix the root cause, and report the proof.
 TASK
 ```
@@ -103,7 +117,7 @@ gang attach
 gang interrupt worker
 gang flush worker
 gang drop worker
-gang down
+gang down gangline
 ```
 
 `gang interrupt` sends the keystroke the harness's collar declares for stopping
@@ -134,7 +148,11 @@ thresholds remain available for a single observed window. Keep both edges high,
 but below the harness's observed automatic-compaction boundary:
 
 ```sh
-GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
 
 The native hook advises once when usage crosses yellow and once when it crosses
@@ -157,7 +175,11 @@ Provider-usage lights use non-interactive sources declared by each collar, not
 screen scraping. They are optional too:
 
 ```sh
-GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 gang limits worker
 gang wait-limit worker
 ```
@@ -171,7 +193,7 @@ from the agent's own turn — so a team keeps working across provider windows wi
 nobody at the keyboard:
 
 ```sh
-GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code
+GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high
 ```
 
 On claude-code the same opt-in also resumes one turn whose provider stream ends

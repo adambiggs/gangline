@@ -25,6 +25,16 @@ declared notifications and permission requests, while Codex has no Notification
 hook and reports only permission requests. An unknown Codex dialog can therefore
 refuse delivery without raising a stall note.
 
+Choose every model and supported effort before hitching. Claude Code's documented
+aliases are stable enough to name directly; discover Codex's current catalog from
+the harness instead of copying a changing model id into an operating procedure:
+
+```sh
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+```
+
 When another action should start only after an agent settles, use an explicit
 barrier instead of repeatedly sampling status:
 
@@ -254,7 +264,11 @@ for one observed harness window. Set them intentionally high, but below the
 observed automatic-compaction boundary so the agent can self-compact first:
 
 ```sh
-GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to
@@ -279,7 +293,11 @@ Provider-usage lights are disabled unless the operator supplies used-percentage
 thresholds at hitch or adopt time:
 
 ```sh
-GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
 
 Yellow asks the agent to finish at its next natural checkpoint. Red asks it to
@@ -304,7 +322,7 @@ Auto-resume is disabled unless the operator declares a used percentage at hitch
 or adopt time:
 
 ```sh
-GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code
+GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high
 ```
 
 At or above that percentage the agent's own turn hook arms the same transient
@@ -402,7 +420,11 @@ Never test Gangline against the development agent or the live `gangline` team.
 Use an explicitly named, disposable session:
 
 ```sh
-GANG_SESSION=gangline-smoke-codex gang hitch probe -c codex -d "$PWD"
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_SESSION=gangline-smoke-codex gang hitch probe -c codex -d "$PWD" \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 GANG_SESSION=gangline-smoke-codex gang capture probe
 GANG_SESSION=gangline-smoke-codex gang down gangline-smoke-codex
 ```
@@ -603,8 +625,13 @@ that name refuses and prints the unit to stop.
 Gangline persists no roster. Recreate only the agents the operator chooses:
 
 ```sh
-gang hitch lead -c claude-code -d "$PWD" --resume <lead-session-id>
-gang hitch worker -c codex -d "$PWD" --resume <worker-session-id>
+gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+gang hitch lead -c claude-code -d "$PWD" -m sonnet -e high \
+  --resume <lead-session-id>
+gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT" \
+  --resume <worker-session-id>
 ```
 
 Use ids copied from each agent's earlier `gang drop` output or native transcript.

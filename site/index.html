@@ -61,17 +61,29 @@
 
   <section id="start">
     <h2>Start</h2>
-    <p>Open a team in the repo the agents should work in. <code>gang up</code>
-    starts the lead and drops you into its window.</p>
+    <p>First run each native harness directly to finish its normal onboarding,
+    sign-in, and repo-trust prompts; Gangline never answers security choices.
+    Then open a team in the repo the agents should work in. <code>gang up</code>
+    starts a Claude Code lead and drops you into its window.</p>
 
     <pre><code>cd ~/your/repo
-gang up</code></pre>
+gang up -c claude-code -m sonnet -e high</code></pre>
 
-    <p>Add another agent and give it something to do.</p>
+    <p>Codex may show a separate hook-review prompt on its first Gangline hitch:
+    running Codex alone cannot clear it because Gangline adds those hooks at
+    launch, and a changed hook path or command can raise the review again. If
+    hitch reports a first-run prompt, run <code>gang attach</code> from another
+    operator terminal, select the named <code>worker</code> window, and answer it
+    there. The original hitch will then finish. Choose a current Codex model and
+    one of the efforts listed beside it, add the agent, and give it something to
+    do.</p>
 
-    <pre><code>gang hitch worker -c codex -d "$PWD"
+    <pre><code>gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 
-gang send --to worker --stdin &lt;&lt;'TASK'
+gang send --to worker --from operator --stdin &lt;&lt;'TASK'
 Fix the failing parser test and report the proof.
 TASK
 
@@ -94,7 +106,7 @@ gang roster</code></pre>
         real tmux window. <code>gang attach</code> to watch one work,
         <code>gang roster</code> to see who is busy and who is waiting.</li>
       <li><strong>Adds and removes agents mid-run.</strong>
-        <code>gang hitch reviewer -c codex</code> opens another harness on the
+        A fully specified <code>gang hitch</code> opens another harness on the
         same repo, and <code>gang drop reviewer</code> closes it again.</li>
       <li><strong>Gets a run through the night.</strong> An agent watching its
         context fill can compact at a checkpoint it chooses and carry on, and
@@ -122,14 +134,18 @@ gang roster</code></pre>
     Set both edges high, but below the point where the harness would compact on
     its own:</p>
 
-    <pre><code>GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex</code></pre>
+    <pre><code>gang models -c codex
+read -r -p "Codex model: " CODEX_MODEL
+read -r -p "Codex effort: " CODEX_EFFORT
+GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
+  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
 
     <p>The provider limit is the other wall. When an agent's own usage crosses
     the percentage you named, Gangline can set a one-shot wake for that window's
     reset and send the agent back to work when it fires — so a team can carry on
     across a limit with nobody at the keyboard:</p>
 
-    <pre><code>GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code</code></pre>
+    <pre><code>GANG_AUTO_RESUME="97%" gang hitch worker -c claude-code -m sonnet -e high</code></pre>
 
     <p>If you want the team to know the clock, declare one curfew. Yellow lands
     halfway through the span and red after four-fifths, and agents whose harness
