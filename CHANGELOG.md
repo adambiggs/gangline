@@ -1,5 +1,50 @@
 # Changelog
 
+## [2.2.0](https://github.com/adambiggs/gangline/compare/gangline-v2.1.0...gangline-v2.2.0) (2026-08-18)
+
+
+### Features
+
+* **hitch:** give each agent its own oomd-killable cgroup ([461ba29](https://github.com/adambiggs/gangline/commit/461ba29aa46f509c38caaac5163bd70af81c97d9))
+* **usage:** arm a provider-reset wake at a declared threshold ([868c147](https://github.com/adambiggs/gangline/commit/868c14763bf248a543a9963292df66d97ba06d9d))
+* **usage:** recover one dead Claude stream ([829d48b](https://github.com/adambiggs/gangline/commit/829d48b5e2befa6d2e1afaf197f707d9c20e0e89))
+* validate launch models and expose bricked turns ([1e5f6a7](https://github.com/adambiggs/gangline/commit/1e5f6a77ae3b26e0c85feac34ca10cb238fffd26))
+
+
+### Bug Fixes
+
+* **collar:** read a pane that could not be read as unreadable, not as no box ([dd02da0](https://github.com/adambiggs/gangline/commit/dd02da0baef7543139060d00e63c90179373a3bd))
+* **compact:** claim the self-compaction request before touching its continuation ([c1933bb](https://github.com/adambiggs/gangline/commit/c1933bb31365d01e4add77b280f7fe8df7751078)), closes [#127](https://github.com/adambiggs/gangline/issues/127)
+* **diagnostics:** replace every byte a terminal obeys, not every control character ([ba7281d](https://github.com/adambiggs/gangline/commit/ba7281dc5f5132d3415acde55a5ad0945d128059))
+* **diagnostics:** sanitize what a refusal prints, once, where they all print ([fddf915](https://github.com/adambiggs/gangline/commit/fddf9150696d5390d83db567cc69a911351be805)), closes [#136](https://github.com/adambiggs/gangline/issues/136)
+* **flush:** refuse against a running turn instead of diagnosing a stuck queue ([8016bf2](https://github.com/adambiggs/gangline/commit/8016bf2f989efb270c6b7eb70e1168ffe0d08c48)), closes [#122](https://github.com/adambiggs/gangline/issues/122)
+* **hitch:** keep tmux's own refusal out of a dead launch's diagnosis ([4372988](https://github.com/adambiggs/gangline/commit/4372988cb16b988018349d3ac59296c273d456a8))
+* **hitch:** name the dead window a hitch is refusing over ([b883253](https://github.com/adambiggs/gangline/commit/b8832536f95c2625abd8f9a189189e6ac8163304))
+* **hitch:** read a pane that cannot be read as unknown, not as empty ([f76adf1](https://github.com/adambiggs/gangline/commit/f76adf19f4eed0188c61873b9cad61913fbfba27))
+* **hitch:** read every pane before calling a window empty ([053e6a1](https://github.com/adambiggs/gangline/commit/053e6a18ee35ef4dbe14055c97e78f4803822a26))
+* **hitch:** refuse a scope name an earlier agent still holds ([c349984](https://github.com/adambiggs/gangline/commit/c349984ba13b9918f3bd2ae7ad6223ef151902b8))
+* **hitch:** report a launch that died instead of waiting out its boot ([7f9c2ed](https://github.com/adambiggs/gangline/commit/7f9c2ed9770133d5e3aee30fa82d0989dbf3181b))
+* **hitch:** silence a failed read where death explains it, not everywhere ([2a46450](https://github.com/adambiggs/gangline/commit/2a46450fda82c3bfc2af9c50ede729d57ee07765))
+* **install:** stop git explaining detached HEAD after the release clone ([22a32ab](https://github.com/adambiggs/gangline/commit/22a32ab44680fe260ae21d448635a292045515f1))
+* **send:** a box that did not hold still is not a settled one ([ef86841](https://github.com/adambiggs/gangline/commit/ef86841e64b323fad366c9d3bebbb5448c853a75))
+* **send:** a composer gang could not read is not a settled one ([8d8f611](https://github.com/adambiggs/gangline/commit/8d8f611c9fb6aad1f66001036b5f1df88c8e5950))
+* **send:** commit a superseding message before retiring what it replaces ([3fde04b](https://github.com/adambiggs/gangline/commit/3fde04bb800e0f85bfa417cba5f33463e7038928)), closes [#126](https://github.com/adambiggs/gangline/issues/126)
+* **send:** make a supersession retire and land together or not at all ([a1362dc](https://github.com/adambiggs/gangline/commit/a1362dc04264ec45711b60a73e200880aa6bae3d))
+* **send:** name --stdin when a body is passed as an argument ([c764e38](https://github.com/adambiggs/gangline/commit/c764e3869a7a00994cdfa0183bbbc915a85547eb)), closes [#117](https://github.com/adambiggs/gangline/issues/117)
+* **shell:** restore portable macOS checks ([cbcbbae](https://github.com/adambiggs/gangline/commit/cbcbbae3352b7458530f35b907c838511bb2d4c1))
+* **spool:** archive every child, and refuse to delete what teardown cannot ([16a98e5](https://github.com/adambiggs/gangline/commit/16a98e57d37b0cba3fcd2fd5849c24e38f62153a)), closes [#141](https://github.com/adambiggs/gangline/issues/141)
+* **spool:** give every archived child a name of its own ([0116188](https://github.com/adambiggs/gangline/commit/0116188d54a1cd60dbcbb57939803f57dc6fd693))
+* **spool:** mint a spool identity past the ones already on disk ([d080b91](https://github.com/adambiggs/gangline/commit/d080b912d51313f296684d723d356f5cf13d802f)), closes [#140](https://github.com/adambiggs/gangline/issues/140)
+* **spool:** report an unproducible spool stamp instead of dying silently ([03ebb0a](https://github.com/adambiggs/gangline/commit/03ebb0a4edbbd26ca8e2e5604d13876b458b1215))
+* **spool:** reserve a spool identity where it is published ([3da8c10](https://github.com/adambiggs/gangline/commit/3da8c106409d262eec02df32c9d3c480321ac64d))
+* **state:** check both decay witnesses instead of assembling them in a printf ([cb0afa9](https://github.com/adambiggs/gangline/commit/cb0afa9fb8e370ae2aaecd11d33f8cc009ee11a6))
+* **state:** classify a composer reading in one place, and keep unknown unknown ([202872c](https://github.com/adambiggs/gangline/commit/202872c3fde16080df58f920efdab2f8beacd524))
+* **teardown:** part with an id a relaunch can use, from drop and from down ([7997ae9](https://github.com/adambiggs/gangline/commit/7997ae9cd845df1a43468415954b34d940954063)), closes [#113](https://github.com/adambiggs/gangline/issues/113)
+* **test:** open a death fifo from the pane's launch, not a typed line ([c0c0556](https://github.com/adambiggs/gangline/commit/c0c055687968358fa377d6ee50c6d160a3dea1aa))
+* **test:** order pane deaths behind the pane's own descriptors ([82159c1](https://github.com/adambiggs/gangline/commit/82159c16da1e4dcf4f6677db0479cffc5de11ef6))
+* **usage:** preserve operator wake decisions ([5349312](https://github.com/adambiggs/gangline/commit/534931272137aed314e65d0f03f2b2db159c0b30))
+* **usage:** recover dead provider wakes ([47b195e](https://github.com/adambiggs/gangline/commit/47b195e83f23d7920582a4b4fa3effabf9ff5920))
+
 ## [2.1.0](https://github.com/adambiggs/gangline/compare/gangline-v2.0.0...gangline-v2.1.0) (2026-08-14)
 
 
