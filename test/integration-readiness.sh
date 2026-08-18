@@ -1172,7 +1172,9 @@ collar_input() {
   n=\$((n + 1))
   printf '%s' "\$n" > "$RUN_ROOT/masking-count"
   printf '%s %s\n' "\$n" "\${FUNCNAME[i]}" >> "$RUN_ROOT/masking-reads.log"
-  [ "\$n" != "\$(cat "$RUN_ROOT/masking-refuse-at" 2>/dev/null)" ] || target=@999999
+  case " \$(cat "$RUN_ROOT/masking-refuse-at" 2>/dev/null) " in
+    *" \$n "*) target=@999999 ;;
+  esac
   line="\$(tmux capture-pane -pJ -t "\$target" 2>/dev/null |
     awk '{ i = index(\$0, "❯")
            if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \t]/)) line = \$0 }
@@ -1184,36 +1186,58 @@ SH
 "$HITCH" masking -c masking -d /tmp >/dev/null
 masking_id="$(window_id masking)"
 
-# WHICH read belongs to the settled check is discovered, never assumed: the
-# fixture records the predicate behind every reading, and the refusal is aimed
-# at the first one the settled check takes. A build that stops reading the box
-# there leaves nothing to aim at and fails below rather than passing quietly.
+# WHICH reads belong to the settled check is discovered, never assumed: the
+# fixture records the predicate behind every reading, and the refusals are aimed
+# at the looks that check takes. A build that stops reading the box there leaves
+# nothing to aim at and fails below rather than passing quietly.
+masking_send() { # $1 = the reads to refuse, $2 = the marker to deliver
+  : > "$RUN_ROOT/masking-count"
+  printf '%s' "$1" > "$RUN_ROOT/masking-refuse-at"
+  printf '%s' "$2" | "$GANG" send --to masking --from tester --stdin 2>&1
+}
+
 : > "$RUN_ROOT/masking-reads.log"
 : > "$RUN_ROOT/masking-count"
 rm -f -- "$RUN_ROOT/masking-refuse-at"
 printf 'MARK_MASKING_LOCATE' | "$GANG" send --to masking --from tester --stdin >/dev/null
 masking_at="$(awk '$2 == "composer_settled" { print $1; exit }' "$RUN_ROOT/masking-reads.log")"
-if [ -n "$masking_at" ]; then
-  pass "the settled check reads the box of a collar that cannot report a refusal"
+masking_next="$(awk '$2 == "composer_settled" { n++ } n == 2 { print $1; exit }' \
+  "$RUN_ROOT/masking-reads.log")"
+if [ -n "$masking_at" ] && [ -n "$masking_next" ]; then
+  pass "the settled check takes two looks at the box of a collar that cannot report a refusal"
 else
-  fail "the settled check reads the box of a collar that cannot report a refusal" \
-    "no reading was served to composer_settled: $(tr '\n' ' ' < "$RUN_ROOT/masking-reads.log")"
+  fail "the settled check takes two looks at the box of a collar that cannot report a refusal" \
+    "readings served: $(tr '\n' ' ' < "$RUN_ROOT/masking-reads.log")"
 fi
 
-: > "$RUN_ROOT/masking-count"
-printf '%s' "$masking_at" > "$RUN_ROOT/masking-refuse-at"
-masking_rc=0
-masking_out="$(printf 'MARK_MASKING_GUARD' | "$GANG" send --to masking --from tester --stdin 2>&1)" \
-  || masking_rc=$?
-if [ "$masking_rc" -eq 0 ]; then
-  fail "a healed refusal at the settled check does not become permission to type" \
-    "the send reported success: [$masking_out]"
+# ONE look refused: the pair disagrees, and disagreement is what the first
+# version of this guard was built to catch.
+masking_one_rc=0
+masking_one="$(masking_send "$masking_at" MARK_MASKING_ONE)" || masking_one_rc=$?
+if [ "$masking_one_rc" -eq 0 ]; then
+  fail "a healed refusal at one settled look does not become permission to type" \
+    "the send reported success: [$masking_one]"
 else
-  pass "a healed refusal at the settled check does not become permission to type"
+  pass "a healed refusal at one settled look does not become permission to type"
 fi
-contains "and the refusal names a box that did not hold still" \
-  "$masking_out" "was there for one of gang's two looks and not the other"
-excludes "so nothing was typed into it" "$(pane_all masking)" "MARK_MASKING_GUARD"
+excludes "so nothing was typed into it" "$(pane_all masking)" "MARK_MASKING_ONE"
+
+# BOTH looks refused, which is the case a status comparison cannot see: a collar
+# that masks a refusal answers it with the status it uses for a pane carrying no
+# composer, so two refusals arrive as two absences that agree with each other
+# perfectly. Settled has to mean two readings that were TAKEN, not two that
+# match.
+masking_both_rc=0
+masking_both="$(masking_send "$masking_at $masking_next" MARK_MASKING_BOTH)" || masking_both_rc=$?
+if [ "$masking_both_rc" -eq 0 ]; then
+  fail "two healed refusals do not agree their way into permission to type" \
+    "the send reported success: [$masking_both]"
+else
+  pass "two healed refusals do not agree their way into permission to type"
+fi
+contains "and the refusal names a box gang never got a settled reading of" \
+  "$masking_both" "did not both come back with a box it could parse"
+excludes "so nothing was typed into it either" "$(pane_all masking)" "MARK_MASKING_BOTH"
 equal "the pane it refused about was alive throughout" 0 \
   "$(tmux display-message -p -t "$masking_id" '#{pane_dead}')"
 rm -f -- "$RUN_ROOT/masking-refuse-at"
