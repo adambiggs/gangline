@@ -3574,18 +3574,27 @@ stall_clear() { tmux set-option -uw -t "$1" @gl_stall 2>/dev/null || true; }
 # leave as its own verdict rather than as the permission the callers want.
 # An ABSENT box still returns settled, because a pane with no composer is the
 # case the occupancy and emptiness guards own and this one abstains on.
+#
+# BOTH LOOKS ARE TAKEN, AND THEIR STATUSES ARE PART OF THE COMPARISON. Absence
+# in one look beside a drawn box in the other is not a pane with no composer: it
+# is a box that did not hold still, and the two things that produce it are a
+# harness painting or dropping its composer inside the interval, and a refused
+# read that a collar could only report as an absence. Neither is a box nobody is
+# typing into, and either read may be the one that is wrong, so no single
+# absence here is spent as permission — which is what makes this guard hold for
+# a collar that cannot report a refused read at all.
 composer_settled() { # $1 = window id; 0 = nobody is typing into the box right
-                     # now, 3 = the pane could not be read, 1 = somebody is
+                     # now, 1 = somebody is, 3 = the pane could not be read,
+                     # 4 = the box did not hold still across the two looks
   declare -F collar_input >/dev/null || return 0
-  local a b rc=0
-  a="$(input_read "$1")" || rc=$?
-  [ "$rc" -ne 3 ] || return 3
-  [ "$rc" -eq 0 ] || return 0            # no box: other guards own that case
+  local a b a_rc=0 b_rc=0
+  a="$(input_read "$1")" || a_rc=$?
+  [ "$a_rc" -ne 3 ] || return 3
   sleep 0.3
-  rc=0
-  b="$(input_read "$1")" || rc=$?
-  [ "$rc" -ne 3 ] || return 3
-  [ "$rc" -eq 0 ] || return 0
+  b="$(input_read "$1")" || b_rc=$?
+  [ "$b_rc" -ne 3 ] || return 3
+  [ "$a_rc" -eq "$b_rc" ] || return 4
+  [ "$a_rc" -eq 0 ] || return 0          # no box twice: other guards own that
   [ "$a" = "$b" ]
 }
 
@@ -3779,6 +3788,8 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   composer_settled "$1" || settled_rc=$?
   [ "$settled_rc" -ne 3 ] \
     || refuse "refusing to deliver '$frag': the input box of $tname cannot be read, so whether somebody is typing into it is unknown — the paste would land on top of whatever is there. Nothing was typed and the body is still the sender's (gang capture $tname)"
+  [ "$settled_rc" -ne 4 ] \
+    || refuse "refusing to deliver '$frag': the input box of $tname was there for one of gang's two looks and not the other, so it is not holding still and whether somebody is typing into it is unsettled — either its harness is drawing or dropping the composer, or its collar answered a refused read as an absent box. Nothing was typed and the body is still the sender's (gang capture $tname)"
   [ "$settled_rc" -eq 0 ] \
     || refuse "refusing to deliver '$frag': somebody is typing into $tname right now — the paste would interleave with their draft mid-word (try again in a moment)"
   stage_clear "$1"
@@ -5365,6 +5376,8 @@ cmd_flush() {
   composer_settled "$AGENT_ID" || settled_rc=$?
   [ "$settled_rc" -ne 3 ] \
     || die "flush: cannot read the input box of '$name', so whether somebody is typing into it is unknown — $GANG_QUEUE_RECALL_KEY was not pressed (gang capture $name)"
+  [ "$settled_rc" -ne 4 ] \
+    || die "flush: the input box of '$name' was there for one of gang's two looks and not the other, so whether somebody is typing into it is unsettled — $GANG_QUEUE_RECALL_KEY was not pressed (gang capture $name)"
   [ "$settled_rc" -eq 0 ] \
     || refuse "flush: somebody is typing into '$name' right now — recovering its queue underneath a live draft would submit their line (try again in a moment)"
   box="$(landing_zone "$AGENT_ID")" \
