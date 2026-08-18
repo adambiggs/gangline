@@ -1427,6 +1427,54 @@ else
 fi
 equal "a launch that died leaves no window behind" "" "$(window_id diesatonce)"
 
+# A DEATH UNDER THE COLLAR'S READ IS STAGED, NOT RACED. The window
+# registrations have all succeeded by the time the boot wait asks the collar
+# what the pane is showing, so that read is the one place left where a capture
+# can find the window already gone — and tmux answers a capture on a window
+# that went with `can't find window`, on its own stderr, naming an id the
+# operator never saw. The death is armed inside the collar's own read, held by
+# the pane's fifo until its process is gone, so this arrives every run rather
+# than in the few milliseconds a timed launch would have to hit. Both halves of
+# the refusal are read: gang's death note has to be there, and tmux's raw
+# answer must not have arrived ahead of it.
+cat > "$RUN_ROOT/collars/deadcapture.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'exec 9<>$RUN_ROOT/deadcapture.fifo; PS1=\"❯ \" exec bash --norc' deadcapture-argv-marker"
+eval "\$(declare -f collar_input | sed '1s/collar_input/deadcapture_shipped_input/')"
+collar_input() {
+  if [ -e "$RUN_ROOT/deadcapture-arm" ]; then
+    rm -f "$RUN_ROOT/deadcapture-arm"
+    exec 9<"$RUN_ROOT/deadcapture.fifo"
+    tmux send-keys -l -t "\$1" 'exit 9'
+    tmux send-keys -t "\$1" Enter
+    cat <&9 >/dev/null
+    exec 9<&-
+    tmux run-shell true >/dev/null
+  fi
+  deadcapture_shipped_input "\$1"
+}
+SH
+rm -f "$RUN_ROOT/deadcapture.fifo"
+mkfifo "$RUN_ROOT/deadcapture.fifo"
+: > "$RUN_ROOT/deadcapture-arm"
+if deadcapture_out="$("$GANG" hitch deadcapture -c deadcapture -d /tmp 2>&1)"; then
+  fail "a launch that dies under the collar's read is refused" \
+    "hitch unexpectedly succeeded: [$deadcapture_out]"
+else
+  contains "a death under the collar's read is reported as a death" \
+    "$deadcapture_out" "died at launch"
+  contains "and that refusal names the command that died" \
+    "$deadcapture_out" "deadcapture-argv-marker"
+  excludes "rather than tmux's own answer arriving ahead of it" \
+    "$deadcapture_out" "can't find window"
+  excludes "in either of the wordings tmux gives that absence" \
+    "$deadcapture_out" "no such window"
+fi
+equal "a death under the collar's read leaves no window behind" \
+  "" "$(window_id deadcapture)"
+
 # THE BOOT LOOP'S ONE HOOK IS THE COLLAR'S OWN READ, called once per pass in
 # gang's process, so a death staged there lands INSIDE the wait with no clock
 # involved and no pane polled. The window is told to hold its corpse and the

@@ -2445,7 +2445,13 @@ boot_prompt_visible() { # $1 = window; positive evidence that a non-composer own
 
 input_painted() { # $1 = window id; the harness has drawn an input box
   declare -F collar_input >/dev/null || return 0
-  collar_input "$1" >/dev/null
+  # A READ THAT FAILS IS NOT AN ANSWER, and in a boot wait the ordinary reason
+  # is that the window went with a launch that died. tmux names such a window on
+  # its own stderr, which would reach the operator ahead of the death note this
+  # loop's next reading produces and describe an id they never saw. It is
+  # silenced HERE rather than in the collar, because `gang composer` runs the
+  # very same read for an operator who is owed tmux's reason.
+  collar_input "$1" >/dev/null 2>&1
 }
 
 input_clear() { # $1 = window id; nothing a person typed is sitting in that box
@@ -6783,7 +6789,14 @@ cmd_capture() { # trailing blank pane rows are dead space, not content
     }
   fi
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION'"; }
-  capture "$id" | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
+  # A CAPTURE THAT FAILED IS NOT AN EMPTY PANE. Piping it straight out would
+  # print nothing and exit non-zero, which reads as a pane with nothing in it.
+  local text capture_rc=0
+  text="$(capture "$id")" || capture_rc=$?
+  [ "$capture_rc" -eq 0 ] \
+    || die "cannot read the pane behind '$name': tmux refused the capture, so what it is showing is unknown rather than empty"
+  printf '%s\n' "$text" \
+    | awk 'NF{last=NR} {line[NR]=$0} END{for(i=1;i<=last;i++) print line[i]}' | tail -n "${2:-40}"
 }
 
 cmd_composer() { # what a human actually typed — capture shows the raw pane,
@@ -6805,6 +6818,12 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   box="$(collar_input "$AGENT_ID")" || box_rc=$?
   [ "$box_rc" -ne 2 ] \
     || die "the composer in '$name' is taller than its pane, so its box runs past the bottom of the window and cannot be read — make the window taller (gang capture $name)"
+  # AN UNREADABLE PANE IS NOT A PANE WITH NO COMPOSER. A collar answers both
+  # with the same status, so the pane itself is asked for before absence is
+  # reported: a reading gang could not take has to stay distinct from one it
+  # took and found empty.
+  [ "$box_rc" -eq 0 ] || capture "$AGENT_ID" >/dev/null \
+    || die "cannot read the pane behind '$name', so whether it is showing a composer is unknown rather than settled (gang capture $name)"
   [ "$box_rc" -eq 0 ] \
     || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
   grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule
