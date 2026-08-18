@@ -1438,14 +1438,12 @@ cat > "$RUN_ROOT/collars/deadboot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' deadboot-argv-marker"
+GANG_LAUNCH="sh -c 'exec 9<>$RUN_ROOT/deadboot.fifo; PS1=\"❯ \" exec bash --norc' deadboot-argv-marker"
 collar_input() {
   printf 'read\n' >> "$RUN_ROOT/deadboot-reads"
   if [ -e "$RUN_ROOT/deadboot-arm" ]; then
     rm -f "$RUN_ROOT/deadboot-arm"
     tmux set-option -w -t "\$1" remain-on-exit on
-    tmux send-keys -l -t "\$1" 'exec 9<>$RUN_ROOT/deadboot.fifo'
-    tmux send-keys -t "\$1" Enter
     exec 9<"$RUN_ROOT/deadboot.fifo"
     tmux send-keys -l -t "\$1" 'trap "echo DEADBOOT-DYING-WORDS" EXIT; exit 9'
     tmux send-keys -t "\$1" Enter
@@ -1524,14 +1522,36 @@ equal "and no window is left behind by it" "" "$(window_id deadgone)"
 # Measured on tmux 3.2a: a pane reading dead with an empty status, its child
 # still an unreaped zombie, and its channel never signalled again.
 #
-# A pane's own file descriptors carry the fact instead. The shell is told to
-# hold a fifo open read-write, so its own open cannot block, and the fixture's
-# read-only open returns only once that shell has run the line — which makes
-# opening it the barrier proving the pane reached its prompt. Reading that fifo
-# to EOF afterwards ends exactly when the shell's last descriptor closes, so the
-# process is gone rather than merely typed at. `tmux run-shell` then costs the
-# server a round trip and a child of its own, which drains any pane it had not
-# reaped, and the settled fact is asserted immediately rather than waited on.
+# A pane's own file descriptors carry the fact instead. The pane holds a fifo
+# open read-write, so its own open cannot block, and the fixture's read-only
+# open returns once that descriptor exists. Reading the fifo to EOF afterwards
+# ends exactly when the pane's last descriptor closes, so the process is gone
+# rather than merely typed at. `tmux run-shell` then costs the server a round
+# trip and a child of its own, which drains any pane it had not reaped, and the
+# settled fact is asserted immediately rather than waited on.
+#
+# WHERE THE FIFO IS OPENED IS THE WHOLE GUARANTEE, so it is opened in the pane's
+# own launch command wherever this fixture writes one — the deadboot collar's
+# GANG_LAUNCH and the split below. A launch command runs before the shell reads
+# anything, so the descriptor exists as soon as tmux has spawned the pane and no
+# typed line has to be consumed for the fixture's open to return. A pane that is
+# alive but never reads its input cannot park the fixture there. What the form
+# still rests on is that the pane outlives the fixture's open, which is the
+# fixture's own premise everywhere below: each of these panes is a shell that
+# stays up until it is typed an exit. A launch that died before its first
+# descriptor existed would park, and the deliberate alternative — holding a
+# writer open here so the read could never block — was refused, because it
+# converts that park into a red every time a pane opens its fifo a moment later
+# than the fixture reaches the read, and a mandatory gate that reddens at random
+# is worse than one that stops on a broken environment.
+#
+# The one pane whose launch this fixture does not write is the hitched agent's,
+# and its fifo is opened by a typed line below. That line is consumed on the
+# same guarantee the exit typed after it already rests on: hitch has verified
+# the agent's input box before either is sent. This is the suite's ordinary
+# standard for a typed barrier and not a new exposure — but it is the one place
+# here where a shell that stopped reading would park rather than fail, so do not
+# copy this form to a pane whose readiness nothing has established.
 pane_holds_fifo() { # $1 = pane id, $2 = fifo the pane's shell must hold open
   tmux send-keys -l -t "$1" "exec 9<>$2"
   tmux send-keys -t "$1" Enter
@@ -1547,12 +1567,11 @@ pane_holds_fifo() { # $1 = pane id, $2 = fifo the pane's shell must hold open
 splitcorpse_id="$(window_id splitcorpse)"
 tmux set-option -w -t "$splitcorpse_id" remain-on-exit on
 splitcorpse_front="$(tmux display-message -p -t "$splitcorpse_id" '#{pane_id}')"
-splitcorpse_live="$(tmux split-window -d -P -F '#{pane_id}' -t "$splitcorpse_id" \
-  "PS1='❯ ' bash --norc")"
 mkfifo "$RUN_ROOT/splitcorpse-front.fifo" "$RUN_ROOT/splitcorpse-rest.fifo"
+splitcorpse_live="$(tmux split-window -d -P -F '#{pane_id}' -t "$splitcorpse_id" \
+  "exec 9<>$RUN_ROOT/splitcorpse-rest.fifo; PS1='❯ ' exec bash --norc")"
 pane_holds_fifo "$splitcorpse_front" "$RUN_ROOT/splitcorpse-front.fifo"
 exec 3<"$RUN_ROOT/splitcorpse-front.fifo"
-pane_holds_fifo "$splitcorpse_live" "$RUN_ROOT/splitcorpse-rest.fifo"
 exec 4<"$RUN_ROOT/splitcorpse-rest.fifo"
 tmux send-keys -l -t "$splitcorpse_front" 'exit 9'
 tmux send-keys -t "$splitcorpse_front" Enter
