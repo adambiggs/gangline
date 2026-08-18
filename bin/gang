@@ -2445,13 +2445,7 @@ boot_prompt_visible() { # $1 = window; positive evidence that a non-composer own
 
 input_painted() { # $1 = window id; the harness has drawn an input box
   declare -F collar_input >/dev/null || return 0
-  # A READ THAT FAILS IS NOT AN ANSWER, and in a boot wait the ordinary reason
-  # is that the window went with a launch that died. tmux names such a window on
-  # its own stderr, which would reach the operator ahead of the death note this
-  # loop's next reading produces and describe an id they never saw. It is
-  # silenced HERE rather than in the collar, because `gang composer` runs the
-  # very same read for an operator who is owed tmux's reason.
-  collar_input "$1" >/dev/null 2>&1
+  collar_input "$1" >/dev/null
 }
 
 input_clear() { # $1 = window id; nothing a person typed is sitting in that box
@@ -2524,7 +2518,13 @@ wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet
     # reported as an agent that is up. Verdict 6 is the caller's to name, since
     # only the caller holds the command that died.
     launch_dead "$1" && return 6
-    if input_painted "$1"; then
+    # ONLY THIS CALLER KNOWS A DEATH EXPLAINS A FAILED READ, so only this caller
+    # silences one. A window that went with its launch is named by tmux on its
+    # own stderr, and that would reach the operator ahead of the death note the
+    # next pass of this loop produces, describing an id they never saw. The
+    # predicate itself stays loud: `occupied` asks it about a live agent, where
+    # a refused read is a fault and not a death.
+    if input_painted "$1" 2>/dev/null; then
       pane_stable "$1" && return 0
     elif [ -n "${3:-}" ] && boot_prompt_visible "$1"; then
       [ "${4:-}" = quiet ] \
