@@ -928,11 +928,14 @@ gang roster
                oldest_age_s, session_id.
 
   Every agent is listed. A row whose state
-  gang could not read carries ?unknown? in
-  place of one, and the reading it could not
-  take is printed on stderr just above it;
-  roster then exits nonzero, so no caller
-  reads the listing as an all-clear.
+  gang could not READ carries ?unknown? in
+  place of one, the reading it could not take
+  is printed on stderr just above it, and
+  roster exits nonzero. A reading that was
+  taken and did not settle is an ordinary
+  ?unknown? row and exits 0, as status does.
+  Either way the row is the answer, not the
+  exit status.
 
   With no team running, the plain form says
   so and --porcelain prints no rows; both

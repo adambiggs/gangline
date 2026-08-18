@@ -1172,6 +1172,14 @@ not settle and one it could not read at all. The human row separates them and
 the machine row does not; the two are the same answer to the question porcelain
 is asked, which is whether this agent's state is known.
 
+The exit status does not carry that answer, and saying it did was an overclaim.
+It reports whether every row's reading could be TAKEN. A reading that WAS taken
+and did not settle prints `?unknown?` with its own witness and exits 0, which is
+what `gang status` has always done for the same agent, and making roster alone
+disagree would put the same fact in two channels that contradict each other. The
+rows are where an unknown is reported; the status says only whether gang could
+look.
+
 ## Whether an agent can be resumed is answered where the harness is chosen
 
 Resuming needs both halves: a launch line with a session slot, and a collar that

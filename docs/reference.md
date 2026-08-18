@@ -773,8 +773,13 @@ row carries `?unknown?` and the marker `state-unreadable`, the refusal naming
 the reading it could not take goes to stderr immediately above that row, and the
 command then exits nonzero. Roster is the check run before `gang down` or `gang
 drop`, so a listing that stopped at the first unreadable pane looked from
-outside exactly like a smaller team; and a complete listing that exited 0 would
-let a caller read an unknown as an all-clear.
+outside exactly like a smaller team.
+
+The exit status reports whether every row's reading could be TAKEN, and nothing
+more. A reading that was taken and did not settle is an ordinary `?unknown?`
+row with its own witness named in the phrase, and roster exits 0 on it, exactly
+as `gang status` does for the same agent. Both unknowns are unknowns to whoever
+is deciding: read the rows, not the status.
 
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
