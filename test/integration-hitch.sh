@@ -526,6 +526,11 @@ cat > "$RUN_ROOT/collars/broken-observer.sh" <<SH
 GANG_BUSY_REGEX='['
 SH
 "$HITCH" broken-observer -c broken-observer -d /tmp >/dev/null
+# HITCHED AFTER IT, so it sits later in the window list. Roster used to end at
+# the first agent it could not observe, and every agent after that one was
+# missing from a listing that is the documented check before a teardown — a
+# smaller team and a truncated one read the same from outside.
+"$HITCH" zz-after-broken -c bash -d /tmp >/dev/null
 if broken_roster="$("$GANG" roster 2>&1)"; then
   fail "roster fails when an agent row cannot be observed" "roster exited successfully"
 else
@@ -534,6 +539,18 @@ else
 fi
 contains "roster names the collar whose observation failed" \
   "$broken_roster" "broken-observer.sh"
+contains "the unobservable agent still gets a row" \
+  "$broken_roster" "broken-observer"
+contains "and that row says which unknown this is" \
+  "$broken_roster" "state-unreadable"
+contains "and every agent after it is still listed" \
+  "$broken_roster" "zz-after-broken"
+broken_porcelain="$("$GANG" roster --porcelain 2>/dev/null)" || :
+equal "the porcelain row for an unreadable state is unknown" "unknown" \
+  "$(printf '%s\n' "$broken_porcelain" | awk -F '\t' '$1 == "broken-observer" { print $3 }')"
+equal "and the porcelain listing reaches the agents after it too" "bash" \
+  "$(printf '%s\n' "$broken_porcelain" | awk -F '\t' '$1 == "zz-after-broken" { print $2 }')"
+"$GANG" drop zz-after-broken >/dev/null
 "$GANG" drop broken-observer >/dev/null
 contains "startup is one useful contract, not a bookkeeping turn" \
   "$(pane alpha)" "You are alpha in Gangline"
