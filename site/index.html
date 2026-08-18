@@ -100,10 +100,10 @@ gang roster</code></pre>
         anyone to learn.</li>
       <li><strong>Tells you what actually happened.</strong> A message is
         reported delivered only once Gangline has seen it land and be
-        submitted. One it cannot deliver yet is never reported as delivered:
-        Gangline says instead whether it is waiting in that agent's queue or
-        was refused outright. Where a harness lets it read the input box, it
-        will not type over a line you half finished.</li>
+        submitted, never on the strength of having typed it. Where a harness
+        lets it read the input box, it will not type over a line you half
+        finished. What it reports when a message does not land, and what makes
+        it refuse, is in the <a href="https://github.com/adambiggs/gangline/blob/main/docs/reference.md">reference</a>.</li>
       <li><strong>Lets you read over their shoulder.</strong> Every agent is a
         real tmux window. <code>gang attach</code> to watch one work,
         <code>gang roster</code> to see who is busy and who is waiting.</li>
