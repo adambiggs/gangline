@@ -1429,10 +1429,11 @@ equal "a launch that died leaves no window behind" "" "$(window_id diesatonce)"
 
 # THE BOOT LOOP'S ONE HOOK IS THE COLLAR'S OWN READ, called once per pass in
 # gang's process, so a death staged there lands INSIDE the wait with no clock
-# involved and no pane polled. The window is told to hold its corpse, the
-# pane's shell is typed an exit, and tmux's own pane-died hook releases the
-# barrier only once the server has recorded the death — so the read that
-# follows is reading a settled fact rather than racing one.
+# involved and no pane polled. The window is told to hold its corpse and the
+# pane's shell is typed an exit; the read that follows is held by the pane's own
+# fifo until its last descriptor closes, and a tmux round trip with a child of
+# its own drains the corpse the server had not reaped. See the barrier note
+# below the deadgone case for why tmux's pane-died hook cannot hold this.
 cat > "$RUN_ROOT/collars/deadboot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1443,16 +1444,21 @@ collar_input() {
   if [ -e "$RUN_ROOT/deadboot-arm" ]; then
     rm -f "$RUN_ROOT/deadboot-arm"
     tmux set-option -w -t "\$1" remain-on-exit on
-    tmux set-hook -w -t "\$1" pane-died 'wait-for -S deadboot-died'
+    tmux send-keys -l -t "\$1" 'exec 9<>$RUN_ROOT/deadboot.fifo'
+    tmux send-keys -t "\$1" Enter
+    exec 9<"$RUN_ROOT/deadboot.fifo"
     tmux send-keys -l -t "\$1" 'trap "echo DEADBOOT-DYING-WORDS" EXIT; exit 9'
     tmux send-keys -t "\$1" Enter
-    tmux wait-for deadboot-died
+    cat <&9 >/dev/null
+    exec 9<&-
+    tmux run-shell true >/dev/null
   fi
   return 1
 }
 SH
 : > "$RUN_ROOT/deadboot-arm"
-rm -f "$RUN_ROOT/deadboot-reads"
+rm -f "$RUN_ROOT/deadboot-reads" "$RUN_ROOT/deadboot.fifo"
+mkfifo "$RUN_ROOT/deadboot.fifo"
 if deadboot_out="$("$GANG" hitch deadboot -c deadboot -d /tmp 2>&1)"; then
   fail "a launch that dies inside the boot wait is refused" \
     "hitch unexpectedly succeeded: [$deadboot_out]"
@@ -1507,6 +1513,30 @@ else
 fi
 equal "and no window is left behind by it" "" "$(window_id deadgone)"
 
+# THE pane-died HOOK IS NOT A BARRIER, and every death below is ordered without
+# it. tmux settles a pane's death from two independent events: the pty reaching
+# EOF, which is what makes #{pane_dead} read 1, and the reap of the child, which
+# is what fills in #{pane_dead_status} and draws the held corpse's banner. The
+# hook fires only from the second, and only while the first has already landed —
+# so when the EOF is processed before the reap the hook is never dispatched at
+# all, neither then nor when the reap arrives afterwards. `tmux wait-for` has no
+# bound, so a fixture waiting on that hook does not go red, it stops the suite.
+# Measured on tmux 3.2a: a pane reading dead with an empty status, its child
+# still an unreaped zombie, and its channel never signalled again.
+#
+# A pane's own file descriptors carry the fact instead. The shell is told to
+# hold a fifo open read-write, so its own open cannot block, and the fixture's
+# read-only open returns only once that shell has run the line — which makes
+# opening it the barrier proving the pane reached its prompt. Reading that fifo
+# to EOF afterwards ends exactly when the shell's last descriptor closes, so the
+# process is gone rather than merely typed at. `tmux run-shell` then costs the
+# server a round trip and a child of its own, which drains any pane it had not
+# reaped, and the settled fact is asserted immediately rather than waited on.
+pane_holds_fifo() { # $1 = pane id, $2 = fifo the pane's shell must hold open
+  tmux send-keys -l -t "$1" "exec 9<>$2"
+  tmux send-keys -t "$1" Enter
+}
+
 # A WINDOW IS NOT ITS ACTIVE PANE. An operator who splits an agent's window and
 # leaves a held corpse in front still has a live shell in it, and the refusal
 # for a window where nothing runs names `gang drop`, which kills the whole
@@ -1516,21 +1546,35 @@ equal "and no window is left behind by it" "" "$(window_id deadgone)"
 "$HITCH" splitcorpse -c bash -d /tmp >/dev/null
 splitcorpse_id="$(window_id splitcorpse)"
 tmux set-option -w -t "$splitcorpse_id" remain-on-exit on
+splitcorpse_front="$(tmux display-message -p -t "$splitcorpse_id" '#{pane_id}')"
 splitcorpse_live="$(tmux split-window -d -P -F '#{pane_id}' -t "$splitcorpse_id" \
   "PS1='❯ ' bash --norc")"
-tmux set-hook -w -t "$splitcorpse_id" pane-died 'wait-for -S splitcorpse-front-died'
-tmux send-keys -l -t "$splitcorpse_id" 'exit 9'
-tmux send-keys -t "$splitcorpse_id" Enter
-tmux wait-for splitcorpse-front-died
+mkfifo "$RUN_ROOT/splitcorpse-front.fifo" "$RUN_ROOT/splitcorpse-rest.fifo"
+pane_holds_fifo "$splitcorpse_front" "$RUN_ROOT/splitcorpse-front.fifo"
+exec 3<"$RUN_ROOT/splitcorpse-front.fifo"
+pane_holds_fifo "$splitcorpse_live" "$RUN_ROOT/splitcorpse-rest.fifo"
+exec 4<"$RUN_ROOT/splitcorpse-rest.fifo"
+tmux send-keys -l -t "$splitcorpse_front" 'exit 9'
+tmux send-keys -t "$splitcorpse_front" Enter
+cat <&3 >/dev/null
+exec 3<&-
+tmux run-shell true >/dev/null
+equal "the corpse in front is a settled death before the window is read" \
+  1 "$(tmux display-message -p -t "$splitcorpse_front" '#{pane_dead}')"
+equal "and the pane behind it is still running" \
+  0 "$(tmux display-message -p -t "$splitcorpse_live" '#{pane_dead}')"
 splitcorpse_out="$("$GANG" hitch splitcorpse -c bash -d /tmp 2>&1)" || :
 excludes "a corpse in front of a live pane is not read as an empty window" \
   "$splitcorpse_out" "nothing is running in its window"
 contains "so the refusal is the ordinary one, which destroys nothing" \
   "$splitcorpse_out" "already exists"
-tmux set-hook -w -t "$splitcorpse_id" pane-died 'wait-for -S splitcorpse-rest-died'
 tmux send-keys -l -t "$splitcorpse_live" 'exit 7'
 tmux send-keys -t "$splitcorpse_live" Enter
-tmux wait-for splitcorpse-rest-died
+cat <&4 >/dev/null
+exec 4<&-
+tmux run-shell true >/dev/null
+equal "and every pane in the window is a settled death before it is read" \
+  "" "$(tmux list-panes -t "$splitcorpse_id" -F '#{pane_dead}' | grep -vx 1)"
 refuses "and once every pane has exited the same window reads as empty" \
   "already exists and nothing is running in its window" \
   "$GANG" hitch splitcorpse -c bash -d /tmp
