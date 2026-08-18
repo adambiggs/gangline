@@ -2494,6 +2494,29 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   ! busy_painted "$1"
 }
 
+# THE LINE THE COLLAR RECOGNIZES, quoted back. A paste that leaves the composer
+# byte-identical has no cause gang can name from the box alone, and "either it
+# never landed or the box cannot be read" points at neither the fault nor the
+# repair. The collar already declares what a native UI owning input looks like
+# on this harness, so where that pattern is on screen the refusal can say so and
+# show the line it matched — evidence the operator can check against the pane,
+# not a guess about who has the keyboard.
+#
+# This does not make the pane occupied. `occupied` asks a further question about
+# the composer and answers no where one is drawn under the UI, which is exactly
+# the screen this reports; naming a matched line costs that verdict nothing.
+overlay_note() { # $1 = window id; the matched line, 1 = none, 2 = the pane refused
+  local pane line
+  [ -n "${GANG_OCCUPIED_REGEX:-}" ] || return 1
+  # READ, THEN MATCHED. Piped straight into grep, a refused capture arrives as
+  # grep's verdict on empty input, so a pane nobody could read would report no
+  # native UI in the very words a clear pane uses.
+  pane="$(capture_joined "$1")" || return 2
+  re_match GANG_OCCUPIED_REGEX "$pane" || return 1
+  line="$(grep -m1 -E -- "$GANG_OCCUPIED_REGEX" <<<"$pane")" || return 1
+  printf '%s' "$line" | config_sanitize
+}
+
 BRICKED_WHAT="fatal-turn cause unavailable"
 
 bricked() { # $1 window, collar loaded; 0 fatal, 1 absent, 2 unknown
@@ -3873,8 +3896,13 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     die "cannot read the input box of $tname after pasting '$frag' — nothing was submitted, and the paste may be sitting unsent in that box (gang capture $tname)"
   fi
   if [ "$after" = "$before" ]; then
+    local overlay="" overlay_rc=0
+    local why="the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $tname)"
+    overlay="$(overlay_note "$1")" || overlay_rc=$?
+    [ "$overlay_rc" -ne 0 ] \
+      || why="$tname is showing a screen its collar recognizes as a native UI owning input [$overlay] — a composer painted underneath one keeps its shape while the keys go to that UI. Answer it with 'gang attach', then send again"
     stage_record "$1" "'$frag' was pasted into this box and it read back unchanged — either nothing landed or this box cannot be read reliably, so it may be sitting there unsent" ""
-    die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and the paste either never landed or is sitting unsent in a box that cannot be read reliably (gang capture $tname)"
+    die "delivery NOT verified: pasting '$frag' left the input box unchanged — nothing was submitted, and $why"
   fi
   if occupied "$1"; then
     stage_record "$1" "'$frag' is staged unsent in this box — a modal took the screen before the Enter could be sent" "$after"
