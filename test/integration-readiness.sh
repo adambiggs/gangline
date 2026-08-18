@@ -86,11 +86,17 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
 _gl_drain_real="\$(declare -f collar_input)"
 eval "drain_real_input \${_gl_drain_real#collar_input}"
 collar_input() { # a parked reading per ticket, then the real drained box
-  local n
+  local n i=1
   n="\$(cat "$RUN_ROOT/drain-tickets" 2>/dev/null)"
   if [ "\${n:-0}" -gt 0 ]; then
     printf '%s' "\$((n - 1))" > "$RUN_ROOT/drain-tickets"
-    printf '%s<%s\n' "\${FUNCNAME[1]}" "\${FUNCNAME[2]}" >> "$RUN_ROOT/drain-reads.log"
+    # THE PREDICATE THAT ASKED, not the classifier it asked through. Every
+    # composer reading in gang goes through one place that tells a box from an
+    # absent one from a pane it could not read, and that funnel is a frame in
+    # this stack rather than a reader. The claim below is about which guard
+    # took the eighth parked reading, so the funnel is stepped over.
+    while [ "\${FUNCNAME[i]}" = input_read ]; do i=\$((i + 1)); done
+    printf '%s<%s\n' "\${FUNCNAME[i]}" "\${FUNCNAME[i+1]}" >> "$RUN_ROOT/drain-reads.log"
     printf 'PARKED_OBSTRUCTION'
     return 0
   fi
@@ -1011,3 +1017,133 @@ equal "the undeferred path stamps no pending self-compaction request" "" \
   "$(tmux show-options -wqv -t "$nodeferred_id" @gl_self_compact_requested)"
 tmux wait-for -S "$nodeferred_release"
 "$GANG" drop nodeferred >/dev/null
+
+# A TRANSPORT REFUSAL IS NOT A READING. Every predicate below asks the pane a
+# question and spends the answer as evidence: no box drawn means nothing owns
+# the screen, a box that reads the same twice means nobody is typing, a witness
+# that matches itself means nothing moved. A capture that never happened
+# answers none of them, and nothing a healthy tmux does produces one — so the
+# fixture refuses the transport underneath a live, healthy pane, and checks
+# that it did.
+mkdir -p "$RUN_ROOT/refuse-bin"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v tmux)"
+  printf 'LOG=%q\n' "$RUN_ROOT/refuse-log"
+  printf 'COUNT=%q\n' "$RUN_ROOT/refuse-count"
+  cat <<'SH'
+if [ "${1:-}" = capture-pane ] && [ -n "${REFUSE_CAPTURE_FROM:-}" ]; then
+  n=0
+  [ ! -s "$COUNT" ] || n="$(cat "$COUNT")"
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$COUNT"
+  if [ "$n" -ge "$REFUSE_CAPTURE_FROM" ]; then
+    printf 'MARK_CAPTURE_REFUSED\n' >&2
+    printf '%s\n' "$n" >> "$LOG"
+    exit 42
+  fi
+fi
+exec "$REAL" "$@"
+SH
+} > "$RUN_ROOT/refuse-bin/tmux"
+chmod +x "$RUN_ROOT/refuse-bin/tmux"
+
+refuse_capture() { # $1 = first capture-pane call to refuse, rest = the command
+  local from="$1"
+  shift
+  rm -f -- "$RUN_ROOT/refuse-count" "$RUN_ROOT/refuse-log"
+  ( export PATH="$RUN_ROOT/refuse-bin:$PATH" REFUSE_CAPTURE_FROM="$from"; "$@" )
+}
+
+# WHICH capture a caller takes is a property of its path, not a constant a
+# fixture may assume. Each index is refused in turn until the run names the
+# unknown; an index that lands past every read ends the sweep, so a caller that
+# stopped reading the pane there cannot pass this by pointing at some other
+# guard, and a wording that arrives with nothing refused cannot pass it at all.
+refuses_a_refused_capture() { # $1 description, $2 expected wording, rest = command
+  local description="$1" expected="$2" i=1 out rc
+  shift 2
+  while [ "$i" -le 24 ]; do
+    rc=0
+    out="$(refuse_capture "$i" "$@" 2>&1)" || rc=$?
+    case "$out" in
+      *"$expected"*)
+        if [ "$rc" -eq 0 ]; then
+          fail "$description" "named the unknown and still reported success"
+        elif [ ! -s "$RUN_ROOT/refuse-log" ]; then
+          fail "$description" "the wording appeared with no capture refused"
+        else
+          pass "$description"
+        fi
+        return ;;
+    esac
+    [ "$rc" -ne 0 ] || break
+    i=$((i + 1))
+  done
+  fail "$description" "no refused capture in this path reached [$expected]"
+}
+
+"$HITCH" refused -c bash -d /tmp >/dev/null
+refused_id="$(window_id refused)"
+
+send_to_refused() {
+  printf 'MARK_REFUSED_SEND' | "$GANG" send --to refused --from tester --stdin --live-only
+}
+status_of_refused() { "$GANG" status refused; }
+
+# A refused capture on a live agent used to leave `occupied` with no box drawn
+# and no busy marker declared, and the negation of an unread busy tier turned
+# that into a UI owning the screen — a state read off a pane nobody looked at.
+refused_status_rc=0
+refused_status="$(refuse_capture 1 status_of_refused 2>&1)" || refused_status_rc=$?
+if [ "$refused_status_rc" -eq 0 ]; then
+  fail "a status whose captures are all refused reports no state" \
+    "status succeeded: [$refused_status]"
+else
+  pass "a status whose captures are all refused reports no state"
+fi
+contains "and names the reading it could not take" \
+  "$refused_status" "refusing to guess occupancy"
+excludes "rather than inventing an occupancy out of it" \
+  "$refused_status" "!occupied!"
+equal "the pane it refused about was alive throughout" 0 \
+  "$(tmux display-message -p -t "$refused_id" '#{pane_dead}')"
+
+# Settled is a positive finding a caller spends by pasting into that composer.
+refuses_a_refused_capture \
+  "a send whose composer read is refused does not read the box as settled" \
+  "whether somebody is typing into it is unknown" \
+  send_to_refused
+equal "and nothing was typed into the box it could not read" "" \
+  "$("$GANG" composer refused)"
+
+# Two witnesses assembled out of failed reads are equal to each other, and an
+# open turn bracket past its bound decays to idle against that self-agreement.
+tmux set-option -w -t "$refused_id" @gl_turn "open 1"
+refused_stale="$("$GANG" status refused)"
+contains "an abandoned turn bracket with every capture answered is undetermined" \
+  "$refused_stale" "?unknown?"
+refuses_a_refused_capture \
+  "a decay witness that could not be taken refuses instead of matching itself" \
+  "refusing to witness a decay against a reading that was never taken" \
+  status_of_refused
+tmux set-option -uw -t "$refused_id" @gl_turn
+
+# THE COLLAR'S OWN ANSWER, asked directly. bin/gang takes a second look at the
+# pane for a collar that cannot tell a refused read from an absent box, and
+# that backstop would cover for a shipped collar losing the distinction — a
+# covered-for collar still reports a pane it never read as a pane with no box.
+for refused_collar in bash claude-code codex opencode pi; do
+  refused_collar_rc=0
+  rm -f -- "$RUN_ROOT/refuse-count"
+  (
+    # shellcheck source=/dev/null
+    . "$ROOT/collars/$refused_collar.sh"
+    export PATH="$RUN_ROOT/refuse-bin:$PATH" REFUSE_CAPTURE_FROM=1
+    collar_input "$refused_id" >/dev/null 2>&1
+  ) || refused_collar_rc=$?
+  equal "collar $refused_collar reads a refused capture as unreadable, not as an absent box" \
+    3 "$refused_collar_rc"
+done
+
+"$GANG" drop refused >/dev/null
