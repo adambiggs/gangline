@@ -1116,10 +1116,25 @@ finding about a pane nobody looked at, and a caller then acts on it.
 So a refused read carries its own status the whole way. Collars answer `3`,
 distinct from the `1` that means the harness drew no composer and from the `2`
 that means a composer outgrew its pane. `input_read` is the single place that
-classification is made in `bin/gang`, and it asks the pane itself where a collar
-does not speak `3`, because the guarantee is Gangline's rather than the collar
-author's. Predicates that cannot express unknown refuse loudly instead:
-occupancy, busy/idle and decay all name the reading they could not take.
+classification is made in `bin/gang`. Predicates that cannot express unknown
+refuse loudly instead: occupancy, busy/idle and decay all name the reading they
+could not take.
+
+Producing status `3` is the collar's obligation and cannot be performed on its
+behalf. Where a collar answers `1`, Gangline asks the pane directly, and that
+probe is worth exactly one thing: a transport still refusing turns the absence
+back into an unknown. The converse is not available. A pane that answers proves
+the transport is up at that moment, and the collar never parsed that reading, so
+it is no evidence about the read that already happened — a refusal that healed
+in between remains an absent box to a predicate that looks once. Claiming
+otherwise would be the same fabrication one layer up.
+
+What closes the gap is not trusting any single absence where absence is spent as
+permission. The settled check takes two looks and compares their statuses as
+well as their contents: a box drawn for one and absent for the other is refused
+whichever way it moved, because a harness painting or dropping its composer and
+a collar reporting a refused read as an absence are the same reading from here,
+and neither is a box nobody is typing into. That holds whoever wrote the collar.
 
 Two shapes hide such a refusal by construction and are banned wherever a
 reading is assembled. A capture piped straight into a parser arrives as the

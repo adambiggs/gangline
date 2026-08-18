@@ -1801,13 +1801,21 @@ re_match() { # $1 = the collar variable NAME holding an ERE, $2 = text; 0 hit, 1
 # downstream spends the answer as evidence: an absent box means idle, empty,
 # unoccupied, settled — all of them positive findings about a pane nobody read.
 #
-# Status 3 is the collar contract's word for a refused read. A collar that
-# does not speak it yet is asked again through the pane itself, because the
-# guarantee is gang's and cannot rest on who wrote the collar: a capture that
-# also refuses settles it, and one that answers proves the box really is
-# absent. That second look can lose a refusal that has already healed, which
-# is the ordinary miss a caller then makes on real evidence — never the
-# invented state a masked refusal produces.
+# Status 3 is the collar contract's word for a refused read, and REPORTING IT IS
+# THE COLLAR'S OBLIGATION, not something this function can perform on a collar's
+# behalf. Where a collar answers 1 the pane is asked directly, and that probe
+# says exactly one thing: a transport still refusing turns the absence back into
+# an unknown. It cannot do the converse. A pane that answers here proves the
+# transport is up NOW; the collar never parsed that reading, so it is no evidence
+# about the read that already happened, and a refusal that healed in between is
+# still reported as an absent box.
+#
+# WHAT THAT LEAVES, said plainly rather than papered over: with a collar that
+# cannot report a refused read, a refusal that heals before this probe reaches
+# the pane is spent as absence by the single-read predicates — occupancy, and
+# the composer command. The predicate that spends absence as PERMISSION to type
+# does not rest on it: composer_settled takes two looks and compares their
+# statuses, so no one absence is enough there whoever wrote the collar.
 input_read() { # $1 = window id; 0 box (printed), 1 no box,
                # 2 box clipped by the pane, 3 the pane could not be read
   local box rc=0

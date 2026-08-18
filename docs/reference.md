@@ -984,14 +984,26 @@ Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
 
 A pane reading Gangline could not take is unknown, and unknown is neither an
-absent composer nor a settled one. A collar reports it as status 3 by reading
-its capture into a variable and checking that status before any parser sees the
-bytes: piped straight into one, a refused capture arrives as that parser's
-verdict on empty input and becomes a pane with no composer. Gangline asks the
-pane itself where a collar does not answer 3, so the distinction holds whoever
-wrote the collar, and predicates with no room for a third answer —
-occupancy, busy or idle, an unmoved decay witness — refuse out loud and name the
-reading they could not take rather than guess.
+absent composer nor a settled one. Reporting it is the collar's obligation:
+status 3, produced by reading the capture into a variable and checking that
+status before any parser sees the bytes. Piped straight into one, a refused
+capture arrives as that parser's verdict on empty input and is indistinguishable
+from a pane carrying no composer — and a collar that loses the difference there
+cannot have it restored downstream. Gangline asks the pane directly where a
+collar answers 1, but that probe can only turn an absence back into an unknown
+when the transport is still refusing; a pane that answers proves the transport
+is up now and says nothing about the read that already happened. With such a
+collar, a refusal that heals in between is read as an absent box by the
+predicates that look once — occupancy, and `gang composer`.
+
+Nothing spends a single absence as permission to type. The settled check takes
+two looks and compares their statuses as well as their contents, so a box drawn
+for one look and absent for the other is refused whichever way it moved: a
+harness painting or dropping its composer and a collar reporting a refused read
+as an absence both arrive here, and neither is a box nobody is typing into.
+Predicates with no room for a third answer — occupancy, busy or idle, an unmoved
+decay witness — refuse out loud and name the reading they could not take rather
+than guess.
 
 Gangline does not answer native dialogs. A screen matching
 `GANG_OCCUPIED_REGEX` is occupied whoever drew it: `status` and `roster` report
