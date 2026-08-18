@@ -4946,13 +4946,16 @@ cmd_hitch() {
   [ -z "$missing" ] \
     || printf "gang: WARNING: hitching '%s' without %s; the collar will choose any missing default. Pass every supported choice deliberately.\n" \
       "$name" "$missing" >&2
-  # SAID WHERE THE HARNESS IS CHOSEN. A collar that cannot witness its own
-  # native session id has nothing for --resume to relaunch onto, so an agent on
-  # one loses its session for good the moment it dies or is dropped. Drop is
-  # where that used to be discovered, and by then the choice it should have
-  # informed is spent.
-  if [ -z "$GANG_RESUME_LAUNCH" ] || ! declare -F collar_session_id >/dev/null; then
-    printf "gang: WARNING: collar '%s' witnesses no harness session identity, so Gangline will never learn '%s''s session id: gang drop can print none, and --resume has nothing of its own to relaunch onto. 'gang collars' marks which collars resume.\n" \
+  # SAID WHERE THE HARNESS IS CHOSEN, and the two halves fail differently. Drop
+  # is where either used to be discovered, and by then the choice it should have
+  # informed is spent. One warning covering both said something false about each:
+  # a collar with no resume launch can still WITNESS an id, and a collar with no
+  # witness can still be relaunched onto an id the operator holds.
+  if [ -z "$GANG_RESUME_LAUNCH" ]; then
+    printf "gang: WARNING: collar '%s' declares no resume launch, so nothing relaunches '%s' onto its harness session: --resume is refused for this collar, and any session id it witnesses is a record of that session rather than a way back into it. 'gang collars' marks what each collar resumes.\n" \
+      "$prof" "$name" >&2
+  elif ! declare -F collar_session_id >/dev/null; then
+    printf "gang: WARNING: collar '%s' witnesses no harness session identity, so Gangline will never learn '%s''s session id: gang drop can print none, and --resume relaunches only onto an id you hold yourself. 'gang collars' marks what each collar resumes.\n" \
       "$prof" "$name" >&2
   fi
   if [ -n "$model" ]; then
@@ -7232,10 +7235,12 @@ cmd_attach() {
 }
 
 # WHAT A COLLAR CAN BE RESUMED ONTO is a property an operator needs at the
-# moment they pick one, not at the moment they drop the agent. Resuming needs
-# both halves: a launch line with a session slot, and a collar that witnesses
-# the native id to put in it. A collar with neither has nothing to resume, and
-# that is a harness choice — so it is answered here, where the choice is made.
+# moment they pick one, not at the moment they drop the agent. The two halves —
+# a launch line with a session slot, and a collar that witnesses the native id
+# to put in it — are separate declarations, and each is missing differently. No
+# launch and nothing relaunches at all, whatever is witnessed. No witness and
+# the launch still runs, on an id the operator supplies. That is a harness
+# choice, so it is answered here, where the choice is made.
 #
 # Loaded in a subshell so a listing cannot inherit one collar's declarations
 # into the next, and so a collar that will not load leaves the listing standing
