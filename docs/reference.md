@@ -975,7 +975,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own |
-| `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly |
+| `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly, keeping a refused pane read distinct from a pane carrying no readout |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
 | `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |
@@ -989,7 +989,11 @@ status 3, produced by reading the capture into a variable and checking that
 status before any parser sees the bytes. Piped straight into one, a refused
 capture arrives as that parser's verdict on empty input and is indistinguishable
 from a pane carrying no composer — and a collar that loses the difference there
-cannot have it restored downstream. Gangline asks the pane directly where a
+cannot have it restored downstream. The same rule binds every other pane reading
+a collar takes. `collar_context` spends nothing, since the command ends either
+way, but a refused capture reaching its parser makes it name a missing context
+readout on a pane nobody read; it reads into a variable too, and refuses with a
+status of its own. Gangline asks the pane directly where a
 collar answers 1, but that probe can only turn an absence back into an unknown
 when the transport is still refusing; a pane that answers proves the transport
 is up now and says nothing about the read that already happened. With such a

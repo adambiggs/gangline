@@ -37,8 +37,17 @@ opencode_models_json() { printf '%s/opencode/models.json' "${XDG_CACHE_HOME:-$HO
 
 collar_context() { # $1 = tmux target; hint row carries used+percent, catalog carries the window
   local cap row badge names
-  cap="$(tmux capture-pane -pJ -t "$1")" || die "cannot read pane $1"
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO READOUT: the capture is
+  # taken into a variable, and its refusal carries a status of its own rather
+  # than arriving as the hint row's absence.
+  cap="$(tmux capture-pane -pJ -t "$1")" \
+    || refuse "cannot read pane $1 — whether a context readout is on that screen is unknown, not absent"
   row="$(printf '%s\n' "$cap" | grep -Eo '[0-9]+(\.[0-9]+)?[KM]? \([0-9]+%\)' | tail -1)" \
+    || row=""
+  # EMPTY IS THE MISS, and the miss is checked rather than inherited: without
+  # pipefail a grep that found nothing hands its status to tail, the assignment
+  # succeeds, and a pane with no readout prints as one with an empty reading.
+  [ -n "$row" ] \
     || die "no context readout in the hint row — opencode paints it after the agent's first turn, and a narrow pane clips it mid-token (a clipped readout loses its closing paren, so it can never half-match)"
   badge="$(printf '%s\n' "$cap" | awk '/^[[:space:]]*╹▀/ { b = p } { p = $0 } END { print b }')"
   case "$badge" in

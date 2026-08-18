@@ -1136,6 +1136,12 @@ whichever way it moved, because a harness painting or dropping its composer and
 a collar reporting a refused read as an absence are the same reading from here,
 and neither is a box nobody is typing into. That holds whoever wrote the collar.
 
+The rule binds every pane reading a collar takes, not only the composer.
+`collar_context` spends nothing — the command ends either way — but a refused
+capture reaching its parser makes it report a missing context readout on a pane
+nobody read, which points an operator at the harness when the fault is the
+transport. It reads into a variable and refuses with a status of its own.
+
 Two shapes hide such a refusal by construction and are banned wherever a
 reading is assembled. A capture piped straight into a parser arrives as the
 parser's verdict on empty input, which is indistinguishable from its verdict on

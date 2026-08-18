@@ -20,9 +20,19 @@ collar_input() { # $1 = tmux target; same shape as a real TUI's input box
 }
 
 collar_context() { # $1 = tmux target; reads a beacon the pane was told to print
-  local m
-  m="$(tmux capture-pane -pJ -t "$1" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
-    || die "no ctx beacon in pane"
+  local pane m
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO READOUT. The capture is
+  # taken into a variable before grep sees it, because grep's verdict on empty
+  # input reads exactly like its verdict on a pane carrying no readout, and the
+  # refusal that reaches the operator then names the wrong fault.
+  pane="$(tmux capture-pane -pJ -t "$1")" \
+    || refuse "cannot read pane $1 — whether a ctx beacon is on that screen is unknown, not absent"
+  m="$(printf '%s\n' "$pane" | grep -Eo 'ctx [0-9]+k/[0-9]+k [0-9]+%' | tail -1)" \
+    || m=""
+  # EMPTY IS THE MISS, and the miss is checked rather than inherited: without
+  # pipefail a grep that found nothing hands its status to tail, the assignment
+  # succeeds, and a pane with no readout prints as one with an empty reading.
+  [ -n "$m" ] || die "no ctx beacon in pane"
   m="${m#ctx }"
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
