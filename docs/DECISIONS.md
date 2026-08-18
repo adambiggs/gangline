@@ -1067,3 +1067,32 @@ Absence is established from the answer rather than from a command status: tmux
 expands a target it cannot resolve to nothing and still exits 0, so the reading
 asks for the window's own id alongside the fact it wants, and a reading that is
 neither of those refuses rather than passing for a healthy launch.
+
+## A pane's death is proven by its descriptors, not by tmux's pane-died hook
+
+No fixture may wait on `pane-died`. tmux settles a pane's death from two
+independent events — the pty reaching EOF, which is what makes `#{pane_dead}`
+read 1, and the reap of the child, which fills in `#{pane_dead_status}` and
+draws the held corpse's banner. The hook is dispatched only from the second,
+and only where the first has already landed, so a death whose EOF is processed
+before its reap dispatches no hook at all: not then, and not when the reap
+arrives afterwards. Forcing the reap fills the status in and leaves the channel
+blocked, so the signal is lost rather than late.
+
+`tmux wait-for` has no bound, so a fixture holding that channel cannot go red —
+it can only stop the suite and exhaust the CI cap. `gang` itself reads
+`#{pane_dead}`, which the EOF alone settles, so the fact under test is true well
+before the hook that was being waited on.
+
+A death is ordered behind the pane's own file descriptors instead. The shell
+holds a fifo open read-write so its own open cannot block, and the fixture's
+read-only open returns only once that shell has run the line, which makes
+opening it the barrier proving the pane reached its prompt. Reading to EOF ends
+when the shell's last descriptor closes, so the process is gone rather than
+merely typed at. A tmux round trip with a child of its own then drains any
+corpse the server had not reaped, and the settled fact is asserted immediately,
+so an unsettled death is a loud red rather than a hang.
+
+Why tmux fails to run its SIGCHLD handler in this window is not established, and
+the rule does not depend on it: a fixture that cannot be broken by a late reap
+does not need the cause.
