@@ -126,7 +126,7 @@ arity_absent_collar="gangline-arity-probe-absent-collar"
 # "absent" would also catch "never looked", and record a verified absence from a
 # fixture that produced no value. An unreadable inventory gets its own arm and
 # its own red: unknown is not this containment's precondition.
-if arity_collar_listing="$("$GANG" collars)"; then
+if arity_collar_listing="$("$GANG" collars | cut -f1)"; then
   if printf '%s\n' "$arity_collar_listing" \
     | grep -qxF -- "$arity_absent_collar"; then
     fail "and a collar name that resolves to nothing" \
@@ -244,9 +244,21 @@ done
 GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 
 # Public collar surface: the bash fixture remains test-only.
-collars="$(GANG_TEST_COLLARS='' "$GANG" collars | tr '\n' ' ')"
+collars="$(GANG_TEST_COLLARS='' "$GANG" collars | cut -f1 | tr '\n' ' ')"
 equal "the public collar list is the supported harness set" \
   "claude-code codex opencode pi " "$collars"
+# WHICH COLLARS CAN BE RESUMED, said where -c is chosen. Both halves are needed:
+# a launch line with a session slot and a collar that witnesses the id to put in
+# it. Asserted per collar rather than as one blob, so a collar losing the
+# capability names itself.
+collar_caps="$(GANG_TEST_COLLARS='' "$GANG" collars)"
+for collar_cap_row in "claude-code resume" "codex resume" \
+                      "opencode no-resume" "pi no-resume"; do
+  equal "gang collars marks ${collar_cap_row% *} ${collar_cap_row#* }" \
+    "${collar_cap_row#* }" \
+    "$(printf '%s\n' "$collar_caps" | awk -F '\t' -v n="${collar_cap_row% *}" \
+        '$1 == n { print $2 }')"
+done
 # The 1.x compatibility layer is gone in 2.0, so every pre-rename spelling is
 # refused as unknown rather than accepted with an announcement. These assertions
 # replace the ones that proved the aliases worked: the removal is the decision

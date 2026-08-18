@@ -1300,8 +1300,24 @@ contains "a hitch warns for every supported choice the collar would default" \
   >/dev/null 2> "$RUN_ROOT/choicemodel.err"
 contains "a hitch warns when only its supported model choice is missing" \
   "$(<"$RUN_ROOT/choicemodel.err")" "hitching 'choicemodel' without -m"
+# WHERE THE HARNESS IS CHOSEN. A collar that witnesses no native session id has
+# nothing for --resume to relaunch onto, and `gang drop` naming that afterwards
+# is the report arriving after the choice it should have informed.
+contains "a collar that witnesses no session id warns at the hitch" \
+  "$(<"$RUN_ROOT/choiceboth.err")" "Gangline will never learn"
 "$GANG" drop choiceboth >/dev/null
 "$GANG" drop choicemodel >/dev/null
+cat > "$RUN_ROOT/collars/resumable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_RESUME_LAUNCH="PS1='❯ ' bash --norc {{session_id}}"
+collar_session_id() { printf 'fixture-session-id'; }
+SH
+"$HITCH" resumable-agent -c resumable -d /tmp >/dev/null
+excludes "and a collar that witnesses one draws no such warning" \
+  "$(<"$RUN_ROOT/hitch-stderr")" "Gangline will never learn"
+"$GANG" drop resumable-agent >/dev/null
 if bogus_out="$("$GANG" hitch effbad -c efforted -d /tmp -e bogus 2>&1)"; then
   fail "a level outside the vocabulary is refused" "hitch accepted bogus"
 else
