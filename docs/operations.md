@@ -534,8 +534,11 @@ rather than an unreadable box.
 sends Escape at whatever is on screen, which against a different dialog cancels
 whatever that dialog was for. Answering is the smaller instrument.
 
-Pre-answering is better than either: complete the harness's own first-run setup
-in that directory before hitching agents into it.
+Pre-answering is better than either, and it is the only mechanism there is: the
+harness records this choice in its own per-user configuration rather than in the
+settings Gangline passes at launch, so no launch option could carry it and no
+collar can decline it on the operator's behalf. Run the harness once in that
+directory, answer what it asks, and hitch afterwards.
 
 ### The harness parked a message in its own input queue
 
