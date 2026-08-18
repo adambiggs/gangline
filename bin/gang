@@ -3552,12 +3552,24 @@ stall_note_claimed() { # the debounce decision and its delivery, under the claim
 
 stall_clear() { tmux set-option -uw -t "$1" @gl_stall 2>/dev/null || true; }
 
-composer_settled() { # $1 = window id; nobody is typing into the box right now
+# TWO LOOKS AT THE BOX, AND BOTH HAVE TO BE LOOKS. A box that was never read
+# is not a box nobody is typing into: settled is a positive finding, and a
+# caller spends it by pasting into that composer, so a refused read here has to
+# leave as its own verdict rather than as the permission the callers want.
+# An ABSENT box still returns settled, because a pane with no composer is the
+# case the occupancy and emptiness guards own and this one abstains on.
+composer_settled() { # $1 = window id; 0 = nobody is typing into the box right
+                     # now, 3 = the pane could not be read, 1 = somebody is
   declare -F collar_input >/dev/null || return 0
-  local a b
-  a="$(collar_input "$1")" || return 0   # no box: other guards own that case
+  local a b rc=0
+  a="$(input_read "$1")" || rc=$?
+  [ "$rc" -ne 3 ] || return 3
+  [ "$rc" -eq 0 ] || return 0            # no box: other guards own that case
   sleep 0.3
-  b="$(collar_input "$1")" || return 0
+  rc=0
+  b="$(input_read "$1")" || rc=$?
+  [ "$rc" -ne 3 ] || return 3
+  [ "$rc" -eq 0 ] || return 0
   [ "$a" = "$b" ]
 }
 
@@ -3747,7 +3759,11 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
   ! occupied "$1" \
     || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach)"
-  composer_settled "$1" \
+  local settled_rc=0
+  composer_settled "$1" || settled_rc=$?
+  [ "$settled_rc" -ne 3 ] \
+    || refuse "refusing to deliver '$frag': the input box of $tname cannot be read, so whether somebody is typing into it is unknown — the paste would land on top of whatever is there. Nothing was typed and the body is still the sender's (gang capture $tname)"
+  [ "$settled_rc" -eq 0 ] \
     || refuse "refusing to deliver '$frag': somebody is typing into $tname right now — the paste would interleave with their draft mid-word (try again in a moment)"
   stage_clear "$1"
   # A parked queue means the composer's Enter is queueing, not submitting:
@@ -5329,7 +5345,11 @@ cmd_flush() {
     || refuse "flush: the turn of '$name' is still running, so its harness is parking what it is handed — which is the harness working, not a queue that cannot drain. Pressing $GANG_QUEUE_RECALL_KEY here would park the message again and prove nothing. The queue may drain at a native boundary while the turn continues; if it has not, flush once '$name' is at rest (gang status $name)"
   ! occupied "$AGENT_ID" \
     || refuse "flush: '$name' is occupied (authority unknown) — a UI owns its input box, so $GANG_QUEUE_RECALL_KEY would answer that UI instead of loading the parked message (gang attach)"
-  composer_settled "$AGENT_ID" \
+  local settled_rc=0
+  composer_settled "$AGENT_ID" || settled_rc=$?
+  [ "$settled_rc" -ne 3 ] \
+    || die "flush: cannot read the input box of '$name', so whether somebody is typing into it is unknown — $GANG_QUEUE_RECALL_KEY was not pressed (gang capture $name)"
+  [ "$settled_rc" -eq 0 ] \
     || refuse "flush: somebody is typing into '$name' right now — recovering its queue underneath a live draft would submit their line (try again in a moment)"
   box="$(landing_zone "$AGENT_ID")" \
     || die "flush: cannot read the input box of $name — the harness is not taking input (gang capture $name)"
