@@ -259,6 +259,23 @@ for collar_cap_row in "claude-code resume" "codex resume" \
     "$(printf '%s\n' "$collar_caps" | awk -F '\t' -v n="${collar_cap_row% *}" \
         '$1 == n { print $2 }')"
 done
+# THE HALF THAT STILL RESUMES. hitch consults collar_session_id only for the
+# bare form, so a collar with a resume launch and no witness relaunches onto an
+# id the operator supplies. Reported as no-resume it told an operator the
+# session was lost for good. The public inventory asserted above is exactly the
+# shipped set, so the fixture gets a collar directory of its own rather than the
+# shared one, which does not exist yet here in any case.
+mkdir -p "$RUN_ROOT/id-only-collars"
+cat > "$RUN_ROOT/id-only-collars/id-only.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_RESUME_LAUNCH="PS1='❯ ' bash --norc {{session_id}}"
+SH
+equal "a collar that relaunches onto an id it never witnesses says so" \
+  "resume-id-only" \
+  "$(GANG_TEST_COLLARS='' GANG_COLLARS="$RUN_ROOT/id-only-collars" "$GANG" collars \
+      | awk -F '\t' '$1 == "id-only" { print $2 }')"
 # The 1.x compatibility layer is gone in 2.0, so every pre-rename spelling is
 # refused as unknown rather than accepted with an announcement. These assertions
 # replace the ones that proved the aliases worked: the removal is the decision
