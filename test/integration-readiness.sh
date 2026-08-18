@@ -1146,6 +1146,60 @@ for refused_collar in bash claude-code codex opencode pi; do
     3 "$refused_collar_rc"
 done
 
+# THE SAME PANE, THE OTHER READING. A collar's context reading spends nothing —
+# the command ends whichever way it fails — but the refusal an operator gets
+# decides where they look next, and a capture piped into a parser makes every
+# refused pane read arrive as a missing context readout. Codex is absent from
+# this loop because it reads a rollout file rather than the pane.
+#
+# BOTH OUTCOMES, OR NEITHER IS EVIDENCE. A collar that refused everything would
+# pass a refusal check on its own, so each collar is asked the same question
+# twice against the same live pane: once with the transport refusing, and once
+# with it answering a pane that carries no readout. The pair is the assertion —
+# before this contract both answers were the same one.
+#
+# `die` and `refuse` belong to bin/gang, and a collar sourced on its own has
+# neither. Stood in here at their exit statuses, so what is read below is which
+# of the two the collar reached.
+cat > "$RUN_ROOT/collar-refusal-stand-ins" <<'SH'
+die() { printf 'gang: %s\n' "$*" >&2; exit 1; }
+refuse() { printf 'gang: %s\n' "$*" >&2; exit 3; }
+SH
+for refused_collar in bash claude-code opencode pi; do
+  refused_ctx_rc=0
+  rm -f -- "$RUN_ROOT/refuse-count" "$RUN_ROOT/refuse-log"
+  refused_ctx_err="$(
+    # shellcheck source=/dev/null
+    . "$RUN_ROOT/collar-refusal-stand-ins"
+    # shellcheck source=/dev/null
+    . "$ROOT/collars/$refused_collar.sh"
+    export PATH="$RUN_ROOT/refuse-bin:$PATH" REFUSE_CAPTURE_FROM=1
+    collar_context "$refused_id" 2>&1 >/dev/null
+  )" || refused_ctx_rc=$?
+  equal "collar $refused_collar refuses a context read it could not take" \
+    3 "$refused_ctx_rc"
+  contains "and collar $refused_collar names the pane rather than a missing readout" \
+    "$refused_ctx_err" "cannot read pane"
+  if [ ! -s "$RUN_ROOT/refuse-log" ]; then
+    fail "collar $refused_collar was asked about a capture that was actually refused" \
+      "no capture was refused"
+  else
+    pass "collar $refused_collar was asked about a capture that was actually refused"
+  fi
+  readable_ctx_rc=0
+  readable_ctx_err="$(
+    # shellcheck source=/dev/null
+    . "$RUN_ROOT/collar-refusal-stand-ins"
+    # shellcheck source=/dev/null
+    . "$ROOT/collars/$refused_collar.sh"
+    collar_context "$refused_id" 2>&1 >/dev/null
+  )" || readable_ctx_rc=$?
+  equal "while a pane collar $refused_collar could read, carrying no readout, stays a missing readout" \
+    1 "$readable_ctx_rc"
+  excludes "so collar $refused_collar keeps the two apart" \
+    "$readable_ctx_err" "cannot read pane"
+done
+
 "$GANG" drop refused >/dev/null
 
 # A REFUSAL THAT HEALS, THROUGH A COLLAR THAT CANNOT REPORT ONE. Gang asks the
