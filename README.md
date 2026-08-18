@@ -66,9 +66,12 @@ This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
 and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
 select another role. Detach from tmux with `Ctrl-b d`.
 
-Every hitch names a model and one of the efforts that model supports. Claude
-Code's aliases are stable enough to name directly, as above. Ask the harness for
-Codex's rather than copying an id that changes:
+Pass a model and effort at every hitch whose collar takes them; Gangline warns
+when a supported choice is omitted and lets the collar pick. Not every collar
+takes both — one that declares no effort spelling refuses `-e` rather than
+guessing — and `gang models` lists what a collar accepts. Claude Code's aliases
+are stable enough to name directly, as above. Ask the harness for Codex's rather
+than copying an id that changes:
 
 ```sh
 gang models -c codex
