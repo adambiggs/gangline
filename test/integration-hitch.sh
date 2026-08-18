@@ -22,6 +22,12 @@ exit 0
 SH
   chmod +x "$1/sleep"
 }
+# THE BUDGET IS NOT WHAT THE TWO ANSWERED-PROMPT FIXTURES MEASURE. Observations
+# are how the gate wait is counted, and the suite's sleep returns immediately,
+# so the default budget would be spent here in the time it takes to read a pane
+# sixty times — racing the operator's answer below, with load deciding the
+# verdict instead of behaviour. Both raise it out of the way, per invocation so
+# nothing later inherits it, and the budget gets a fixture of its own.
 cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -34,7 +40,7 @@ prompt_boot_barrier "$RUN_ROOT/observe-boot-bin" \
 observe_boot_pipe="$RUN_ROOT/dialog-observe-boot.out"
 mkfifo "$observe_boot_pipe"
 exec 8<>"$observe_boot_pipe"
-PATH="$RUN_ROOT/observe-boot-bin:$PATH" \
+PATH="$RUN_ROOT/observe-boot-bin:$PATH" GANG_GATE_LOOKS=1000000 \
   "$GANG" hitch dialog-observe-boot -c dialog-observe-boot -d /tmp >&8 2>&1 &
 observe_boot_pid=$!
 observe_boot_out=""
@@ -83,7 +89,7 @@ prompt_boot_barrier "$RUN_ROOT/trust-boot-bin" \
 trust_boot_pipe="$RUN_ROOT/dialog-trust-boot.out"
 mkfifo "$trust_boot_pipe"
 exec 8<>"$trust_boot_pipe"
-PATH="$RUN_ROOT/trust-boot-bin:$PATH" \
+PATH="$RUN_ROOT/trust-boot-bin:$PATH" GANG_GATE_LOOKS=1000000 \
   "$GANG" hitch trust-boot -c dialog-trust-boot -d /tmp >&8 2>&1 &
 trust_boot_pid=$!
 trust_boot_out=""
@@ -114,6 +120,38 @@ contains "the post-prompt hitch delivers its startup contract" \
   "$(pane trust-boot)" "You are trust-boot in Gangline"
 submitted "the post-prompt startup contract was submitted" trust-boot
 "$GANG" drop trust-boot >/dev/null
+
+# A GATE NOBODY ANSWERS. Hitch parks the contract and keeps observing, and the
+# budget is what stops that observation from holding the caller's terminal for
+# the rest of the run — the caller is often another agent, which cannot answer a
+# native prompt at all. Nothing is answered here, so the fixture's key log is
+# also the proof that the exit was a give-up rather than a delivery.
+cat > "$RUN_ROOT/collars/dialog-gate-budget.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-gate-budget.keys' DIALOG_READY='dialog-gate-budget-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+SH
+: > "$RUN_ROOT/dialog-gate-budget.keys"
+prompt_boot_barrier "$RUN_ROOT/gate-budget-bin" \
+  "$RUN_ROOT/gate-budget-seen" "dialog-gate-budget-ready-$$"
+gate_budget_rc=0
+gate_budget_out="$(PATH="$RUN_ROOT/gate-budget-bin:$PATH" GANG_GATE_LOOKS=1 \
+  "$GANG" hitch gate-budget -c dialog-gate-budget -d /tmp 2>&1)" || gate_budget_rc=$?
+equal "an unanswered first-run prompt ends the hitch on its own status" \
+  4 "$gate_budget_rc"
+contains "and the refusal says the contract was not delivered" \
+  "$gate_budget_out" "startup contract was NOT delivered"
+contains "and names the recovery that works from there" \
+  "$gate_budget_out" "gang drop gate-budget"
+equal "and still nothing answered the prompt" "" \
+  "$(<"$RUN_ROOT/dialog-gate-budget.keys")"
+equal "the attributed contract is still parked where roster shows it" "1" \
+  "$("$GANG" roster --porcelain 2>/dev/null | awk -F '\t' '$1 == "gate-budget" { print $4 }')"
+# ITS OWN ARCHIVE ROOT. This is the one fixture that deliberately leaves a
+# message parked, so its drop is the one that writes a teardown archive — and
+# the spool part counts the directories under the shared root exactly.
+GANG_ARCHIVE_DIR="$RUN_ROOT/gate-budget-archive" "$GANG" drop gate-budget >/dev/null
 
 modal_observed="test-boot-modal-observed-$$"
 modal_painted="test-boot-modal-painted-$$"
