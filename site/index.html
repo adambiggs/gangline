@@ -99,11 +99,11 @@ gang roster</code></pre>
         anything else you would type there — no side channel, no protocol for
         anyone to learn.</li>
       <li><strong>Tells you what actually happened.</strong> A message is
-        reported delivered only once it is visibly in the composer and
-        submitted. One that cannot be typed in yet is never reported as
-        delivered: Gangline says instead whether it is waiting in that agent's
-        queue or was refused outright. It will not type into a box it cannot
-        read, or over a line you half finished.</li>
+        reported delivered only once Gangline has seen it land and be
+        submitted. One it cannot deliver yet is never reported as delivered:
+        Gangline says instead whether it is waiting in that agent's queue or
+        was refused outright. Where a harness lets it read the input box, it
+        will not type over a line you half finished.</li>
       <li><strong>Lets you read over their shoulder.</strong> Every agent is a
         real tmux window. <code>gang attach</code> to watch one work,
         <code>gang roster</code> to see who is busy and who is waiting.</li>
