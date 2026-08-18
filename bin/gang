@@ -65,7 +65,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_BOOT_TIMEOUT GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -510,6 +510,15 @@ gang hitch
   a default nobody chose. Hitching a collar
   that witnesses no session id warns too:
   gang learns no id to resume it with.
+
+  A native first-run prompt is answered by a
+  person, never by gang. Hitch parks the
+  contract, says so, and keeps observing;
+  after GANG_GATE_LOOKS observations of an
+  unanswered prompt it stops waiting and
+  exits 4, leaving the agent alive and the
+  contract in its spool. Answer the prompt,
+  then drop and hitch again.
 EOF
       ;;
     adopt) cat <<'EOF'
@@ -2628,7 +2637,7 @@ wait_ready() { # $1 window, $2 timeout; optional $3 hitch, $4 quiet
       pane_stable "$1" && return 0
     elif [ -n "${3:-}" ] && boot_prompt_visible "$1"; then
       [ "${4:-}" = quiet ] \
-        || printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on a first-run prompt — answer it with 'gang attach'; hitch will keep waiting for its input box")" >&2
+        || printf '%s\n' "$(colour "$C_WORK" "'$3' is waiting on a first-run prompt — answer it with 'gang attach'; hitch keeps observing until its input box appears or its gate budget runs out")" >&2
       return 5
     fi
     sleep 1; t=$((t + 1))
@@ -5038,8 +5047,12 @@ cmd_hitch() {
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" recovery
+  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}" recovery
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  # Validated on every hitch rather than inside the gated branch alone: a
+  # setting only checked on the rare path is one an operator finds is wrong at
+  # the worst moment.
+  require_whole GANG_GATE_LOOKS "$gate_looks" observations
   wait_ready "$id" "$boot" "$name" || ready=$?
   recovery="most likely a first-run prompt gang does not recognize. Answer it with 'gang attach'; once the input box appears the agent is healthy — deliver its contract with 'gang send --to $name' rather than dropping it. Drop and re-hitch only if the box never appears."
   case "$ready" in
@@ -5067,16 +5080,43 @@ cmd_hitch() {
          hitch_up_attach "$id"
          local follow_boot="$boot"
          [ "$follow_boot" -gt 0 ] || follow_boot=1
+         # A GATE IS ANSWERED BY A PERSON, and this budget is how long gang
+         # holds its caller's terminal waiting for one. Unbounded, a prompt
+         # nobody is there to answer stalls the hitch for as long as the team
+         # runs, and the caller — often another agent, which cannot answer a
+         # native prompt at all — is stalled with it: one gated boot becomes two
+         # stopped agents. Bounded, the agent is still alive and its contract
+         # still parked; what ends is gang's claim on the terminal.
+         #
+         # LOOKS, NOT SECONDS. Every wait_ready pass that sees the gate returns
+         # on its first reading, so this counts observations of an unanswered
+         # prompt rather than a duration — and a duration would be spent
+         # instantly under a stopped clock, where the give-up path could then
+         # never be driven. Sixty is comfortably more than a person already
+         # looking at the window needs to read a menu and answer it, and small
+         # enough that a caller who CANNOT answer is released instead of held
+         # for the rest of the run. Raise it where a gate is expected to sit
+         # unanswered for a while and the terminal is free to wait.
+         local gate_seen=0
          while :; do
            ready=1
            while [ "$ready" -ne 0 ]; do
              ready=0
              wait_ready "$id" "$follow_boot" "$name" quiet || ready=$?
-             # This loop waits out a first-run prompt for as long as it takes,
-             # so the one verdict it must not absorb is the one that will never
-             # change on its own.
+             # The one verdict this loop must not absorb is the one that will
+             # never change on its own.
              [ "$ready" -ne 6 ] || die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")"
-             [ "$ready" -ne 5 ] || sleep 1
+             if [ "$ready" -eq 5 ]; then
+               gate_seen=$((gate_seen + 1))
+               # NOT `up`. The budget releases a caller who cannot answer the
+               # prompt, and `up` has already put its caller in a tmux client
+               # looking straight at it — giving up there would detach the one
+               # client that can answer, taking the answer away to report that
+               # nobody had given it.
+               [ "$HITCH_UP_MODE" -eq 1 ] || [ "$gate_seen" -lt "$gate_looks" ] \
+                 || hitch_gate_unanswered "$name" "$id" "$gate_seen"
+               sleep 1
+             fi
            done
            delivery_rc=0
            delivery_err="$(spool_drain "$id" 2>&1)" || delivery_rc=$?
@@ -5110,6 +5150,22 @@ cmd_hitch() {
   fi
   glyph_write "$id" "-busy-"
   printf '%s\n' "$(colour "$C_OK" "delivered startup contract to $name")"
+}
+
+# THE END OF GANG'S WAIT, NOT THE END OF THE AGENT. Everything hitch built is
+# still standing: the window is live, the harness is running behind its own
+# prompt, and the attributed contract is committed to the ordinary spool where
+# `gang mail` reads it and `gang roster` shows it waiting. What this refusal
+# reports is that gang stopped watching, and it exits 4 so a caller can tell
+# this apart from a hitch that failed and from one that delivered.
+#
+# NOTHING DRAINS THAT ENTRY ON ITS OWN. A spool is claimed at a native turn
+# boundary, and an agent still behind its first-run prompt has taken no turn and
+# will take none until a person answers — so the recovery named here is the one
+# that works rather than the one that sounds least disruptive. Answering is a
+# native, persisted choice: the next hitch on that harness boots past it.
+hitch_gate_unanswered() { # $1 name, $2 window, $3 observations spent
+  fail 4 "'$1' is still showing a native first-run prompt after $3 observations, so its startup contract was NOT delivered and gang has stopped waiting for the prompt to be answered. The agent is alive and the contract is parked in its spool ('gang mail $1' reads it, 'gang roster' shows it waiting), but nothing claims a spool before that agent takes a turn, and it cannot take one from behind the prompt. Answer the prompt with 'gang attach', then 'gang drop $1' and hitch again. Raise GANG_GATE_LOOKS where a terminal is free to keep waiting."
 }
 
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
@@ -7257,6 +7313,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_AUTO_RESUME) printf '%s' "$GANG_AUTO_RESUME" ;;
     GANG_SCOPE) printf '%s' "$GANG_SCOPE" ;;
     GANG_BOOT_TIMEOUT) printf '%s' "${GANG_BOOT_TIMEOUT:-30}" ;;
+    GANG_GATE_LOOKS) printf '%s' "${GANG_GATE_LOOKS:-60}" ;;
     GANG_CHURN_WAIT) printf '%s' "$GANG_CHURN_WAIT" ;;
     GANG_ACTIVITY_WINDOW) printf '%s' "$GANG_ACTIVITY_WINDOW" ;;
     GANG_TURN_LIMIT) printf '%s' "$GANG_TURN_LIMIT" ;;

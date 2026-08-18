@@ -494,17 +494,48 @@ Gangline will never answer this one. It answers no dialog, and this one is an
 authority decision besides. Answer it yourself, in the native TUI, choosing to
 review the hooks.
 
-Two things a capture will not tell you. Answering once in a checkout persists
-that trust in codex's own configuration, per wired event, under a hash of the
-hook command — which embeds this checkout's path. A fresh clone, a moved
-checkout, a container image, or any change to what the collar composes raises
-it again, so pre-answer it once per environment rather than expecting it never
-to return.
+Two things a capture will not tell you. Answering once persists that trust in
+codex's own configuration, per wired event, under a hash of the hook
+DEFINITION — the event and the command string, which embeds the path of the
+`gang` that composed it. A fresh clone, a moved checkout, a container image, a
+`gang` invoked from a checkout when the trusted one was the installed copy, or
+any change to what the collar composes raises it again. What does not raise it
+is a change to `bin/gang` itself: the hash covers the command, not the bytes of
+the script the command names, so ordinary development on Gangline leaves an
+answered gate answered. Pre-answer it once per environment and per `gang` path.
 
 And continuing WITHOUT trusting is the option to avoid. It leaves codex running
 with its hooks inert, so that agent has no `Stop` hook: no spool drain and no
 deferred self-compaction. Gangline waits on turn boundaries that never arrive,
 and the roster shows a teammate that looks alive.
+
+Hitch does not hold the terminal for this indefinitely. It parks the contract,
+says the prompt is waiting, and after `GANG_GATE_LOOKS` observations of an
+unanswered prompt it exits 4 with the agent still alive and the contract still
+in its spool. Nothing claims that spool before the agent takes a turn, and it
+cannot take one from behind the prompt, so the recovery is to answer the prompt
+and then `gang drop` and hitch again.
+
+An operator who wants no gate at all sets that in their own configuration
+rather than in a collar: codex takes `--dangerously-bypass-hook-trust`, and a
+collar of your own under `GANG_COLLARS` can source the shipped one and add it.
+Gangline will not add it for you — the flag runs hooks the harness has not
+vetted, which is the operator's decision to make and to own.
+
+### Claude Code raises an onboarding dialog after hitch reports success
+
+This one arrives after the composer, so hitch delivers the startup contract
+normally and the next `gang send` is the command that meets it. Delivery fails
+closed and nothing is typed. Where the collar's occupied pattern matches what is
+on screen, the refusal quotes the matched line, so the report names a native UI
+rather than an unreadable box.
+
+`gang attach` and answer it. `gang interrupt` also clears an overlay, but it
+sends Escape at whatever is on screen, which against a different dialog cancels
+whatever that dialog was for. Answering is the smaller instrument.
+
+Pre-answering is better than either: complete the harness's own first-run setup
+in that directory before hitching agents into it.
 
 ### The harness parked a message in its own input queue
 

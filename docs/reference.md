@@ -106,12 +106,25 @@ step. Direct `hitch` stays in the foreground; `gang up` exposes that gated
 window in its tmux client while the same invocation observes beside it. The
 verified drain runs when the composer appears and retries pre-keystroke
 refusals, so delivery does not depend on a native hook the operator may decline.
-After positive gate evidence, the foreground wait is deliberately unbounded;
-`GANG_BOOT_TIMEOUT` is then one observation slice. Gangline starts no watcher,
-so interrupting that hitch leaves the attributed entry inspectable but not
-owned by a future drain before the target has a turn. Drop and re-hitch (or use
-the printed `--resume` form only if a native session was stamped) to recover
-that interrupted case. A pre-turn gate normally has no resumable identity.
+After positive gate evidence, `GANG_BOOT_TIMEOUT` is one observation slice and
+`GANG_GATE_LOOKS` bounds how many slices see the prompt still unanswered. At the
+bound `hitch` stops waiting and exits 4 — distinct from a failed hitch and from
+a delivered one — with the window alive, the harness running behind its prompt,
+and the attributed contract committed to the spool. A prompt is answered by a
+person, and holding the caller's terminal until one arrives stalls whoever
+called: often another agent, which cannot answer a native prompt at all, so one
+gated boot becomes two stopped agents. Raise `GANG_GATE_LOOKS` where the
+terminal is free to keep waiting. `gang up` is exempt: it has already put its
+caller in a tmux client looking at the prompt, so there is no stalled third
+party, and giving up would detach the one client that can answer.
+
+Gangline starts no watcher, so a hitch that stops waiting — at that bound or on
+an interrupt — leaves the attributed entry inspectable but not owned by a future
+drain before the target has a turn, and an agent still behind its first-run
+prompt has taken none. Answer the prompt, then drop and hitch again; the answer
+is a native, persisted choice, so the second hitch boots past it. The printed
+`--resume` form applies only if a native session was stamped, and a pre-turn
+gate normally has no resumable identity.
 `gang up` needs a terminal for the tmux client that exposes the prompt; without
 one it refuses and leaves the contract queued rather than pretending the prompt
 was exposed.
@@ -908,6 +921,7 @@ Exactly these keys are settable:
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness in its own transient systemd user scope |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
+| `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
 | `GANG_ACTIVITY_WINDOW` | `5` | recent terminal-activity window |
 | `GANG_TURN_LIMIT` | `300` | native turn-fact bound and default `gang wait` boundary timeout |
