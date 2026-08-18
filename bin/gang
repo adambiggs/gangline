@@ -3576,27 +3576,28 @@ stall_note_claimed() { # the debounce decision and its delivery, under the claim
 
 stall_clear() { tmux set-option -uw -t "$1" @gl_stall 2>/dev/null || true; }
 
-# TWO LOOKS AT THE BOX, AND BOTH HAVE TO BE LOOKS. A box that was never read
-# is not a box nobody is typing into: settled is a positive finding, and a
-# caller spends it by pasting into that composer, so a refused read here has to
-# leave as its own verdict rather than as the permission the callers want.
-# An ABSENT box still returns settled, because a pane with no composer is the
-# case the occupancy and emptiness guards own and this one abstains on.
+# SETTLED IS TWO SUCCESSFUL READINGS THAT AGREE, and nothing weaker. A box that
+# was never read is not a box nobody is typing into: settled is a positive
+# finding, and a caller spends it by pasting into that composer and pressing
+# Enter. So absence is not evidence here, whether it turns up in one look or in
+# both — a collar that cannot report a refused read answers a refusal with the
+# same status it uses for a pane carrying no composer, so two refusals arrive as
+# two absences that agree with each other perfectly. Comparing what the looks
+# FOUND accepts that pair. Requiring both to have PARSED A BOX does not, and no
+# wording of the first comparison reaches the second.
 #
-# SETTLED IS TWO SUCCESSFUL READINGS THAT AGREE, and nothing weaker. Absence is
-# not evidence here whether it turns up in one look or in both: a collar that
-# cannot report a refused read answers a refusal with the same status it uses
-# for a pane carrying no composer, so two refusals arrive as two absences that
-# agree with each other perfectly. Comparing statuses alone accepts that pair.
-# Requiring both looks to have PARSED A BOX does not.
-#
-# The absence has nowhere legitimate to arrive from, which is what makes the
-# strictness free. Every caller that can spend this verdict as permission asks
-# `occupied` first, and that gate only passes a pane whose box was read. A
-# composer that is gone by the time this looks is therefore a transition or a
-# masked refusal, never the ordinary stable no-box pane the old abstention was
-# written for — and a caller which does meet one is refused a beat later by the
-# emptiness guard regardless, so nothing that used to be delivered stops being.
+# WHAT THE STRICTNESS COSTS, because it is not free. Every caller that can spend
+# this verdict as permission asks `occupied` first, and that gate usually passes
+# only a pane whose box was read — but not always. With no box drawn and a
+# matching busy marker, its last tier answers not-occupied without reading one.
+# A composer absent for both looks here and drawn again by the time the emptiness
+# guard reads it is therefore a real sequence, and this refuses a delivery there
+# that comparing contents alone would have made. The refusal is fail-closed and
+# nothing is typed: where the collar declares a native turn boundary the body
+# parks and drains at the next one, and where it declares none the sender is told
+# to send again once the target is idle. The cost is a delivery deferred against
+# a screen that was moving while gang was deciding, which is the trade this
+# guard exists to make.
 composer_settled() { # $1 = window id; 0 = nobody is typing into the box right
                      # now, 1 = somebody is, 3 = the pane could not be read,
                      # 4 = no settled reading of the box
