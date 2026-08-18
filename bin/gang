@@ -2071,8 +2071,19 @@ composer_ready() { # $1 = window id; the harness's own box is on screen and empt
 # seconds, so the screen carries the sub-second half; the pty stamp a quiet
 # verdict rests on is at least `GANG_ACTIVITY_WINDOW` old, which is why a write
 # during the decision moves it at all.
-decay_witness() { # $1 = window id
-  printf '%s %s' "$(activity_stamp "$1")" "$(capture_joined "$1" | cksum)"
+#
+# BOTH READS ARE CHECKED, AND NEITHER IS ASSEMBLED INSIDE THE ARGUMENTS OF A
+# PRINTF. A substitution that fails there leaves the printf succeeding, and the
+# witness comes out as an empty stamp beside the checksum of nothing — and two
+# of those compare equal, so a pane nobody read certifies itself unmoved and a
+# still-open turn decays to idle on the strength of it. Every caller is itself
+# a command substitution, where die would exit only the subshell, so the
+# refusal is reported upward and the callers are the ones that name it.
+decay_witness() { # $1 = window id; 1 = a witness could not be taken
+  local stamp sum
+  stamp="$(activity_stamp "$1")" || return 1
+  sum="$(capture_joined "$1" | cksum)" || return 1
+  printf '%s %s' "$stamp" "$sum"
 }
 
 DECAY_MOVED=0
@@ -2080,7 +2091,10 @@ DECAY_MOVED=0
 decay_allowed() { # $1 = window id, $2 = the witness pair taken before the tier reads
   DECAY_MOVED=0
   [ -n "$ACTIVITY_AT" ] || return 1   # the quiet was abstained, not measured
-  [ "$(decay_witness "$1")" = "$2" ] && return 0
+  local now
+  now="$(decay_witness "$1")" \
+    || die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
+  [ "$now" = "$2" ] && return 0
   # WHY this one failed has to survive. Every other road to
   # could-not-determine is an absence — a witness too old, a tier that never
   # answered — and absence is what the delivery fall-through exists to see
@@ -2136,7 +2150,9 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   # capture would otherwise be present in both witnesses, agree with itself, and
   # pass as if nothing had moved — the pty observed quiet at the instant it was
   # not.
-  [ "$undetermined" -eq 0 ] || moved="$(decay_witness "$1")"
+  [ "$undetermined" -eq 0 ] \
+    || moved="$(decay_witness "$1")" \
+    || die "cannot read pane $1 — refusing to witness a decay against a reading that was never taken"
   recently_active "$1" || activity_rc=$?
   case "$activity_rc" in
     0) return 0 ;;
@@ -6609,7 +6625,12 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
     state="collar-missing"
   else
     load_collar "$prof"
-    state="$(roster_state_word "$(state_now "$1" snapshot)")"
+    # READ, THEN WORDED. Nested, a refusal from the inner reading reaches
+    # roster_state_word as an empty state and dies there instead — an internal
+    # complaint about a word that was never produced, in place of the reading
+    # that could not be taken.
+    state="$(state_now "$1" snapshot)"
+    state="$(roster_state_word "$state")"
   fi
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
