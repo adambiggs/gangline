@@ -939,16 +939,6 @@ operator doctrine governs any disagreement.
 Every process addressing one team must agree on `GANG_SESSION`, `GANG_COLLARS`,
 `GANG_LOCK_DIR`, and the resolved `GANG_CONFIG_DIR`.
 
-### Removed names
-
-The 1.0 rename kept the pre-rename spellings working through 1.x. 2.0 removes
-them: `gang profiles`, `gang cutoff`, `-p`/`--profile`, `send --spool`,
-`GANG_PROFILE`, `GANG_PROFILES`, `GANG_TEST_PROFILES`, the `profile_*` collar
-contract functions, the undocumented `spawn` alias for `hitch`, and in-place
-migration of the `@gl_profile` window option and the `@gl_cutoff` session
-option. A config file naming a removed key is refused as an unknown key; a
-removed flag or command name is refused as unknown.
-
 ## Collar contract
 
 A collar is a Bash file sourced by `bin/gang`. Harness-specific behavior belongs
