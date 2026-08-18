@@ -1,9 +1,8 @@
 # Gangline
 
-Gangline is a local substrate for long-running teams of native CLI coding
-agents. A team is a tmux session; each agent is a named window running Claude
-Code, Codex, OpenCode, or Pi with its normal terminal, tools, permissions,
-subscription, and context.
+Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux
+session, so they can hand each other work by name and you can watch the whole
+thing happen.
 
 [![Two native Codex sessions using Gangline to deliver attributed work, verify the result, and return idle](site/demo.gif)](https://gangline.ai/#demo)
 
@@ -11,20 +10,9 @@ subscription, and context.
 attributed report starts the lead's next turn; delivery, pane output, and final
 state are real.</em></p>
 
-## Ontology
-
-A **dog** — a model instance — wears a **harness**, its native CLI runtime
-(Claude Code, Codex, OpenCode, or Pi). Gangline fits the dog to the
-**gangline**, the tmux session, by its **collar**: the per-harness adapter in
-`collars/` that carries every piece of harness-specific knowledge. The
-**musher** — you — drives. `gang up` creates the **lead**, names its window
-`lead` by default, and attaches the shipped lead role unless the musher selects
-another. That role is launch prose; Gangline neither records nor manages it
-after delivery.
-
-*Harness* names only the runtime, never the instance running it.
-
-Gangline supplies only the shared primitives:
+A team is a tmux session, and each agent is one window running its harness's own
+CLI with the terminal, tools, permissions, subscription, and context an ordinary
+session of that harness has. Gangline supplies only the shared primitives:
 
 - start, attach, observe, and stop native harnesses;
 - send attributed messages through their terminal and verify delivery;
@@ -131,6 +119,19 @@ gang down gangline
 a turn. `gang flush` recovers a message a harness parked in its own input queue,
 reading the reloaded composer back against what Gangline recorded before
 submitting it.
+
+## Ontology
+
+A **dog** — a model instance — wears a **harness**, its native CLI runtime
+(Claude Code, Codex, OpenCode, or Pi). Gangline fits the dog to the
+**gangline**, the tmux session, by its **collar**: the per-harness adapter in
+`collars/` that carries every piece of harness-specific knowledge. The
+**musher** — you — drives. `gang up` creates the **lead**, names its window
+`lead` by default, and attaches the shipped lead role unless the musher selects
+another. That role is launch prose; Gangline neither records nor manages it
+after delivery.
+
+*Harness* names only the runtime, never the instance running it.
 
 ## Long sessions
 
