@@ -1147,3 +1147,74 @@ for refused_collar in bash claude-code codex opencode pi; do
 done
 
 "$GANG" drop refused >/dev/null
+
+# A REFUSAL THAT HEALS, THROUGH A COLLAR THAT CANNOT REPORT ONE. Gang asks the
+# pane directly when a collar answers "no box", and that probe can only turn an
+# absence back into an unknown while the transport is still refusing. A refusal
+# that has healed by then leaves the collar's 1 standing, and the one predicate
+# that spends absence as PERMISSION TO TYPE must not rest on it: settled is what
+# a caller cashes in by pasting into that composer.
+#
+# The fixture is a collar from before the refused-read status, which pipes its
+# capture into its parser — so a refused capture reaches gang as that parser's
+# verdict on empty input, status 1, the same answer it gives for a pane with no
+# composer. Its refusal is real rather than simulated: one nominated read is
+# aimed at a window that is not there, so tmux itself refuses it, while the raw
+# probe gang takes next reads the live pane and succeeds.
+cat > "$RUN_ROOT/collars/masking.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_input() {
+  local line n i=1 target="\$1"
+  while [ "\${FUNCNAME[i]}" = input_read ]; do i=\$((i + 1)); done
+  n="\$(cat "$RUN_ROOT/masking-count" 2>/dev/null || printf 0)"
+  n=\$((n + 1))
+  printf '%s' "\$n" > "$RUN_ROOT/masking-count"
+  printf '%s %s\n' "\$n" "\${FUNCNAME[i]}" >> "$RUN_ROOT/masking-reads.log"
+  [ "\$n" != "\$(cat "$RUN_ROOT/masking-refuse-at" 2>/dev/null)" ] || target=@999999
+  line="\$(tmux capture-pane -pJ -t "\$target" 2>/dev/null |
+    awk '{ i = index(\$0, "❯")
+           if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \t]/)) line = \$0 }
+         END { print line }')" || return 1
+  case "\$line" in *❯*) ;; *) return 1 ;; esac
+  printf '%s' "\${line#*❯}" | tr -d '\302\240'
+}
+SH
+"$HITCH" masking -c masking -d /tmp >/dev/null
+masking_id="$(window_id masking)"
+
+# WHICH read belongs to the settled check is discovered, never assumed: the
+# fixture records the predicate behind every reading, and the refusal is aimed
+# at the first one the settled check takes. A build that stops reading the box
+# there leaves nothing to aim at and fails below rather than passing quietly.
+: > "$RUN_ROOT/masking-reads.log"
+: > "$RUN_ROOT/masking-count"
+rm -f -- "$RUN_ROOT/masking-refuse-at"
+printf 'MARK_MASKING_LOCATE' | "$GANG" send --to masking --from tester --stdin >/dev/null
+masking_at="$(awk '$2 == "composer_settled" { print $1; exit }' "$RUN_ROOT/masking-reads.log")"
+if [ -n "$masking_at" ]; then
+  pass "the settled check reads the box of a collar that cannot report a refusal"
+else
+  fail "the settled check reads the box of a collar that cannot report a refusal" \
+    "no reading was served to composer_settled: $(tr '\n' ' ' < "$RUN_ROOT/masking-reads.log")"
+fi
+
+: > "$RUN_ROOT/masking-count"
+printf '%s' "$masking_at" > "$RUN_ROOT/masking-refuse-at"
+masking_rc=0
+masking_out="$(printf 'MARK_MASKING_GUARD' | "$GANG" send --to masking --from tester --stdin 2>&1)" \
+  || masking_rc=$?
+if [ "$masking_rc" -eq 0 ]; then
+  fail "a healed refusal at the settled check does not become permission to type" \
+    "the send reported success: [$masking_out]"
+else
+  pass "a healed refusal at the settled check does not become permission to type"
+fi
+contains "and the refusal names a box that did not hold still" \
+  "$masking_out" "was there for one of gang's two looks and not the other"
+excludes "so nothing was typed into it" "$(pane_all masking)" "MARK_MASKING_GUARD"
+equal "the pane it refused about was alive throughout" 0 \
+  "$(tmux display-message -p -t "$masking_id" '#{pane_dead}')"
+rm -f -- "$RUN_ROOT/masking-refuse-at"
+"$GANG" drop masking >/dev/null
