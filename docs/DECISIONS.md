@@ -1171,3 +1171,12 @@ The porcelain word is `unknown` for both a state Gangline determined it could
 not settle and one it could not read at all. The human row separates them and
 the machine row does not; the two are the same answer to the question porcelain
 is asked, which is whether this agent's state is known.
+
+## Whether an agent can be resumed is answered where the harness is chosen
+
+Resuming needs both halves: a launch line with a session slot, and a collar that
+witnesses the native id to put in it. A collar with neither has nothing to
+resume, and `gang drop` was the first place that said so — after the agent, and
+its session, were already gone. `hitch` warns instead, and `gang collars` marks
+the capability per collar, because `-c` is where the operator is choosing and
+would choose differently for work that must survive a restart.

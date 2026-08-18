@@ -42,7 +42,7 @@ the network. A branch checkout stays developer-owned: update it with Git rather
 than `gang upgrade`.
 
 Or run [`bin/gang`](bin/gang) directly from a clone. `gang collars` lists the
-available harness collars.
+available harness collars and marks which of them an agent can be resumed onto.
 
 ## Start a team
 

@@ -507,7 +507,9 @@ gang hitch
 
   Omitting -m or -e where the harness takes
   them warns: the harness then falls back to
-  a default nobody chose.
+  a default nobody chose. Hitching a collar
+  that witnesses no session id warns too:
+  gang learns no id to resume it with.
 EOF
       ;;
     adopt) cat <<'EOF'
@@ -1055,6 +1057,14 @@ gang collars
   listed name to gang hitch -c. Your own
   collars, from GANG_COLLARS, win over the
   shipped ones by name.
+
+  Two tab-separated columns: the name, and
+  whether an agent on it can be resumed.
+  resume means the collar witnesses its
+  harness's own session id and can relaunch
+  onto it; no-resume means it never learns
+  one, so an agent that dies or is dropped
+  loses its session for good.
 EOF
       ;;
     models) cat <<'EOF'
@@ -4914,6 +4924,15 @@ cmd_hitch() {
   [ -z "$missing" ] \
     || printf "gang: WARNING: hitching '%s' without %s; the collar will choose any missing default. Pass every supported choice deliberately.\n" \
       "$name" "$missing" >&2
+  # SAID WHERE THE HARNESS IS CHOSEN. A collar that cannot witness its own
+  # native session id has nothing for --resume to relaunch onto, so an agent on
+  # one loses its session for good the moment it dies or is dropped. Drop is
+  # where that used to be discovered, and by then the choice it should have
+  # informed is spent.
+  if [ -z "$GANG_RESUME_LAUNCH" ] || ! declare -F collar_session_id >/dev/null; then
+    printf "gang: WARNING: collar '%s' witnesses no harness session identity, so Gangline will never learn '%s''s session id: gang drop can print none, and --resume has nothing of its own to relaunch onto. 'gang collars' marks which collars resume.\n" \
+      "$prof" "$name" >&2
+  fi
   if [ -n "$model" ]; then
     [ -n "$GANG_MODEL_OPT" ] || die "hitch: collar '$prof' declares no GANG_MODEL_OPT, so it cannot take -m"
     case "$model" in *[!A-Za-z0-9._:/@-]*) die "hitch: model '$model' has characters gang will not paste into a launch line" ;; esac
@@ -7143,9 +7162,44 @@ cmd_attach() {
   exec tmux attach -t "=$SESSION"
 }
 
+# WHAT A COLLAR CAN BE RESUMED ONTO is a property an operator needs at the
+# moment they pick one, not at the moment they drop the agent. Resuming needs
+# both halves: a launch line with a session slot, and a collar that witnesses
+# the native id to put in it. A collar with neither has nothing to resume, and
+# that is a harness choice — so it is answered here, where the choice is made.
+#
+# Loaded in a subshell so a listing cannot inherit one collar's declarations
+# into the next, and so a collar that will not load leaves the listing standing
+# with its own capability unknown rather than ending it.
+collar_resume_word() { # $1 = collar name -> resume | no-resume | unknown
+  # The fallback is OUTSIDE the subshell because a collar that will not load
+  # refuses from inside it: `die` exits the subshell then and there, so a rescue
+  # written as its last statement would never run and the field would go out
+  # empty — a capability claim of nothing, in a column read as an answer.
+  local word=""
+  word="$(
+    load_collar "$1" >/dev/null 2>&1
+    if [ -n "$GANG_RESUME_LAUNCH" ] && declare -F collar_session_id >/dev/null; then
+      printf resume
+    else
+      printf no-resume
+    fi
+  )" || word=""
+  [ -n "$word" ] || word=unknown
+  printf '%s' "$word"
+}
+
 cmd_collars() {
   [ $# -eq 0 ] || die "collars: takes no arguments"
-  list_collars
+  local n word names
+  names="$(list_collars)"
+  while read -r n; do
+    [ -n "$n" ] || continue
+    word="$(collar_resume_word "$n")"
+    printf '%s\t%s\n' "$n" "$word"
+  done <<EOF
+$names
+EOF
 }
 
 cmd_models() {

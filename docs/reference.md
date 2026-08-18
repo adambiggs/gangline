@@ -795,8 +795,16 @@ declares no `collar_input`.
 
 ### `gang collars`
 
-Lists shipped and custom harness collars. The Bash substrate fixture is hidden
-unless `GANG_TEST_COLLARS=1`.
+Lists shipped and custom harness collars as two tab-separated columns: the
+collar name, and whether an agent hitched on it can be resumed. `resume` means
+the collar declares both halves resuming needs — a launch line with a session
+slot, and a `collar_session_id` that witnesses the native id to put in it.
+`no-resume` means it declares less than both, so nothing ever learns that
+agent's session identity and `hitch --resume` can never relaunch it; `unknown`
+means the collar would not load. The capability is marked here because the
+harness is chosen here: `gang drop` reporting `UNSTAMPED` afterwards is too late
+to inform the choice it should have. The Bash substrate fixture is hidden unless
+`GANG_TEST_COLLARS=1`.
 
 ### `gang models [-c <harness>]`
 
