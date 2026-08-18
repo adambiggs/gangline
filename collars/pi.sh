@@ -48,8 +48,14 @@ collar_context() { # $1 = tmux target; Pi's status bar renders "30.7%/272k" nati
   awk -v p="$pct" -v w="$win" 'BEGIN{printf "%.0fk/%sk (%s%%)\n", p*w/100, w, p}'
 }
 
-collar_input() { # $1 = tmux target; prints Pi's input area, fails if it has none
-  tmux capture-pane -pJ -t "$1" | awk '
+collar_input() { # $1 = tmux target; prints Pi's input area, 1 = it has none,
+                 # 3 = a pane that could not be read at all
+  local pane
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
+  # taken into a variable before awk sees it, because awk's verdict on empty
+  # input reads exactly like its verdict on a pane carrying no composer.
+  pane="$(tmux capture-pane -pJ -t "$1")" || return 3
+  printf '%s\n' "$pane" | awk '
     /^──────────/ { r1 = r2; r2 = NR }
     { line[NR] = $0 }
     END {

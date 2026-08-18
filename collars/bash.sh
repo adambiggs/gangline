@@ -5,8 +5,13 @@ GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX=""
 
 collar_input() { # $1 = tmux target; same shape as a real TUI's input box
-  local line
-  line="$(tmux capture-pane -pJ -t "$1" |
+  local pane line
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
+  # taken into a variable before awk sees it, because awk's verdict on empty
+  # input reads exactly like its verdict on a pane carrying no composer.
+  # Status 3 is the collar contract's word for a read that was refused.
+  pane="$(tmux capture-pane -pJ -t "$1")" || return 3
+  line="$(printf '%s\n' "$pane" |
     awk '{ i = index($0, "❯")
            if (i > 0 && (i == 1 || substr($0, 1, i - 1) ~ /[^ \t]/)) line = $0 }
          END { print line }')" || return 1

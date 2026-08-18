@@ -500,9 +500,14 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
 # requirement below intentionally leaves that view unreadable, so delivery can
 # never route a parent-addressed envelope into a child context.
 collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
-                 # 2 = a box whose content outgrew the pane and cannot be read
-  local box rc=0
-  box="$(tmux capture-pane -pJ -e -t "$1" | awk '
+                 # 2 = a box whose content outgrew the pane and cannot be read,
+                 # 3 = a pane that could not be read at all
+  local pane box rc=0
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
+  # taken into a variable before awk sees it, because awk's verdict on empty
+  # input reads exactly like its verdict on a pane carrying no composer.
+  pane="$(tmux capture-pane -pJ -e -t "$1")" || return 3
+  box="$(printf '%s\n' "$pane" | awk '
     { # A dim run ends at the next escape, whatever closes it — 0m here, but the
       gsub(/\033\[2m[^\033]*/, "")
       gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width

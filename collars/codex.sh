@@ -397,9 +397,14 @@ collar_context() { # $1 = tmux target; file-based — reads the rollout, never t
   codex_context_read "$file"
 }
 
-collar_input() { # $1 = tmux target; prints the composer, fails if there is none
-  local line
-  line="$(tmux capture-pane -pJ -e -t "$1" | awk '
+collar_input() { # $1 = tmux target; prints the composer, 1 = no composer,
+                 # 3 = a pane that could not be read at all
+  local pane line
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
+  # taken into a variable before awk sees it, because awk's verdict on empty
+  # input reads exactly like its verdict on a pane carrying no composer.
+  pane="$(tmux capture-pane -pJ -e -t "$1")" || return 3
+  line="$(printf '%s\n' "$pane" | awk '
     { # A dim run ends at the next escape, whatever closes it — 0m here, but the
       gsub(/\033\[2m[^\033]*/, "")
       gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width

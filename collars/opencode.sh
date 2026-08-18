@@ -87,10 +87,15 @@ print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 PY
 }
 
-collar_input() { # $1 = tmux target; prints the composer, fails if it has no keyboard
+collar_input() { # $1 = tmux target; prints the composer, 1 = it has no keyboard,
+                 # 3 = a pane that could not be read at all
   local cap cur
-  cap="$(tmux capture-pane -pJ -t "$1")" || return 1
-  cur="$(tmux display-message -p -t "$1" '#{cursor_y}')" || return 1
+  # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX, and neither is a
+  # pane whose cursor tmux would not report: both readings below are the
+  # transport answering, not the harness. Status 3 is the collar contract's
+  # word for a read that was refused.
+  cap="$(tmux capture-pane -pJ -t "$1")" || return 3
+  cur="$(tmux display-message -p -t "$1" '#{cursor_y}')" || return 3
   printf '%s\n' "$cap" | awk -v cur="$cur" '
     { line[NR] = $0 }
     /^[[:space:]]*╹▀/ { border = NR }
