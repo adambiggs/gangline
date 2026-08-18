@@ -754,14 +754,26 @@ window's binary stamp with the invoked `gang` binary and visibly marks skew; the
 comparison runs only for this snapshot. A non-empty queue reports both its depth
 and the age of its oldest waiting entry.
 
+Every agent in the team is listed, including the ones after an agent whose pane
+would not answer. A state Gangline could not read is that one agent's fact: its
+row carries `?unknown?` and the marker `state-unreadable`, the refusal naming
+the reading it could not take goes to stderr immediately above that row, and the
+command then exits nonzero. Roster is the check run before `gang down` or `gang
+drop`, so a listing that stopped at the first unreadable pane looked from
+outside exactly like a smaller team; and a complete listing that exited 0 would
+let a caller read an unknown as an all-clear.
+
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
 `state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
 word: `busy`, `idle`, `occupied`, `bricked`, or `unknown` for the five human
-glyph states;
+glyph states. `unknown` covers both a state Gangline determined it could not
+settle and one it could not read at all; the human row separates them and the
+porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
 `spooled` is an integer. `oldest_age_s` is integer seconds or `-` for an empty
-queue or an unreadable age. `session_id` is the exact stamp or `UNSTAMPED`.
+queue or an unreadable age. A row Gangline could not produce at all falls back
+to the name, the collar, `unknown`, and `-` in every remaining field. `session_id` is the exact stamp or `UNSTAMPED`.
 With no running session it prints no rows and exits successfully, like the human
 roster.
 

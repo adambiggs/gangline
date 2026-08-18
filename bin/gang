@@ -916,6 +916,13 @@ gang roster
                name, collar, state, spooled,
                oldest_age_s, session_id.
 
+  Every agent is listed. A row whose state
+  gang could not read carries ?unknown? in
+  place of one, and the reading it could not
+  take is printed on stderr just above it;
+  roster then exits nonzero, so no caller
+  reads the listing as an all-clear.
+
   With no team running, the plain form says
   so and --porcelain prints no rows; both
   exit successfully.
@@ -6606,8 +6613,21 @@ cmd_whoami() {
     "${stamped:-UNSTAMPED}" "${live:-NOT-IN-A-HOOK-YET}" "$SESSION" "${mismatch:-none}"
 }
 
+# THE LISTING IS THE PRODUCT, and a row is not the listing. Roster is the check
+# run before `gang down` or `gang drop`, so a run that stops at the first agent
+# whose pane will not answer prints the agents before it, prints nothing about
+# the agents after it, and looks from the outside exactly like a smaller team.
+# The reading that could not be taken is a fact about ONE agent, and that is
+# where it stays: its row carries the unknown, every other row is still read and
+# printed, and the command still ends nonzero so nothing reads the listing as an
+# all-clear.
+#
+# Each row's own stderr is left alone rather than captured. The refusal it
+# printed names the collar and the reading, it reaches the operator verbatim and
+# in order, immediately above the row it explains, and a listing whose rows are
+# all readable still writes nothing there.
 cmd_roster() {
-  local porcelain=0 id name wins current
+  local porcelain=0 id name bare wins current unread="" rc
   if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
     porcelain=1
   elif [ $# -ne 0 ]; then
@@ -6622,14 +6642,41 @@ cmd_roster() {
   wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
   while read -r id name; do
     [ -n "$id" ] || continue
+    bare="$(bare_name "$name")"
+    rc=0
     if [ "$porcelain" -eq 1 ]; then
-      ( roster_row_porcelain "$id" "$(bare_name "$name")" )
+      ( roster_row_porcelain "$id" "$bare" ) || rc=$?
     else
-      ( roster_row "$id" "$(bare_name "$name")" "$current" )
+      ( roster_row "$id" "$bare" "$current" ) || rc=$?
     fi
+    case "$rc" in
+      0) ;;
+      # Status 4 is the row saying it printed itself with an unknown state in
+      # place of one it could not read. Anything else is a row that did not
+      # print at all, and the agent still gets a line of its own: a name and a
+      # collar are readable without touching the pane, and the rest of that row
+      # is exactly what gang does not know.
+      4) unread="$unread $bare" ;;
+      *) roster_row_unread "$id" "$bare" "$porcelain"
+         unread="$unread $bare" ;;
+    esac
   done <<EOF
 $wins
 EOF
+  [ -z "$unread" ] \
+    || die "roster: could not read the state of:$unread — every agent in the team is listed above, and the rows gang could not read carry an unknown state rather than a state nobody looked at"
+}
+
+roster_row_unread() { # $1 window, $2 name, $3 porcelain; the row for a row that died
+  local prof
+  prof="$(collar_read "$1")"
+  [ -n "$prof" ] || prof="-"
+  if [ "$3" -eq 1 ]; then
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$2" "$prof" unknown - - -
+  else
+    printf '%-16s %-12s %s\n' "$2" "$prof" \
+      "$(paint_state "$(printf '%-18s' '?unknown?')")"
+  fi
 }
 
 roster_state_word() { # $1 decorated state -> one stable porcelain word
@@ -6643,8 +6690,9 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
   esac
 }
 
-roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
-  local prof state spooled age="-" stamped
+roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id;
+                        # exit 4 = the row printed with a state it could not read
+  local prof state spooled age="-" stamped unread=0
   prof="$(collar_read "$1")" || exit 1
   if [ -z "$prof" ]; then
     prof="-" state=unadopted
@@ -6656,8 +6704,11 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
     # roster_state_word as an empty state and dies there instead — an internal
     # complaint about a word that was never produced, in place of the reading
     # that could not be taken.
-    state="$(state_now "$1" snapshot)"
-    state="$(roster_state_word "$state")"
+    if state="$(state_now "$1" snapshot)"; then
+      state="$(roster_state_word "$state")"
+    else
+      state=unknown unread=1
+    fi
   fi
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
@@ -6667,17 +6718,19 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
     || stamped=""
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$2" "$prof" "$state" "$spooled" "$age" "${stamped:-UNSTAMPED}"
+  [ "$unread" -eq 0 ] || exit 4
 }
 
-roster_row() { # $1 window, $2 name, $3 current binary id
-  local prof state detail="" spooled age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now
+roster_row() { # $1 window, $2 name, $3 current binary id;
+               # exit 4 = the row printed with a state it could not read
+  local prof state detail="" spooled age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
   collar_file "$prof" >/dev/null \
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "collar not found")"; return; }
   load_collar "$prof"
-  state="$(state_now "$1" snapshot)"
+  state="$(state_now "$1" snapshot)" || { state="?unknown?" unread=1; }
   [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
   # A BOOLEAN, never a count. The harness's hint says something is parked and
   # never how many, so a number here would be gang's invention rather than the
@@ -6731,8 +6784,13 @@ roster_row() { # $1 window, $2 name, $3 current binary id
   [ -z "$mismatch" ] || detail="$detail identity-mismatch=[$mismatch]"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
   [ -z "$skew" ] || detail="$detail $skew"
+  # WHICH unknown this is. A state gang determined it could not settle names its
+  # own witness in the state phrase; a state gang could not READ has no phrase to
+  # carry, so the row says which of the two it met.
+  [ "$unread" -eq 0 ] || detail="$detail state-unreadable"
   printf '%-16s %-12s %s%s\n' "$2" "$prof" \
     "$(paint_state "$(printf '%-18s' "$state")")" "$detail"
+  [ "$unread" -eq 0 ] || exit 4
 }
 
 hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a harness

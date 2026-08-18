@@ -1150,3 +1150,24 @@ a pane with nothing to find. And a reading assembled inside the arguments of a
 command succeeding on a substitution that failed, so `die` inside it exits a
 subshell nobody is watching. Read into a variable, check the status, then use
 it.
+
+## A row Gangline could not read is that agent's fact, not the roster's silence
+
+`gang roster` is the check run before `gang down` or `gang drop`. It ran each
+row in a subshell under `set -e`, so the first agent whose pane refused a read
+ended the whole listing: the rows before it printed, the rows after it did not,
+and from outside that is indistinguishable from a smaller team. Loud, but the
+loudness was about the wrong scope.
+
+The refusal belongs to one agent. Its row carries `?unknown?` and the marker
+`state-unreadable`, the refusal naming the reading it could not take reaches
+stderr immediately above that row, every other agent is still read and printed,
+and the command exits nonzero so nothing spends the listing as an all-clear. The
+predicates are unchanged: occupancy and busy still refuse out loud rather than
+express an unknown they cannot express, because callers spend their answers as
+permission. What changed is where that refusal stops.
+
+The porcelain word is `unknown` for both a state Gangline determined it could
+not settle and one it could not read at all. The human row separates them and
+the machine row does not; the two are the same answer to the question porcelain
+is asked, which is whether this agent's state is known.
