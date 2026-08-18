@@ -78,13 +78,20 @@ This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
 and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
 select another role. Detach from tmux with `Ctrl-b d`.
 
-Add another native harness, deliberately selecting a model and one of the efforts
-listed beside it, then send it work from this detached operator shell:
+Every hitch names a model and one of the efforts that model supports. Claude
+Code's aliases are stable enough to name directly, as above. Ask the harness for
+Codex's rather than copying an id that changes:
 
 ```sh
 gang models -c codex
 read -r -p "Codex model: " CODEX_MODEL
 read -r -p "Codex effort: " CODEX_EFFORT
+```
+
+Every Codex example below reuses those two variables. Add the agent, then send
+it work from this detached operator shell:
+
+```sh
 gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 
 gang send --to worker --from operator --stdin <<'TASK'
@@ -148,9 +155,6 @@ thresholds remain available for a single observed window. Keep both edges high,
 but below the harness's observed automatic-compaction boundary:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
@@ -175,9 +179,6 @@ Provider-usage lights use non-interactive sources declared by each collar, not
 screen scraping. They are optional too:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 gang limits worker

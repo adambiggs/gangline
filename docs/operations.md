@@ -35,6 +35,9 @@ read -r -p "Codex model: " CODEX_MODEL
 read -r -p "Codex effort: " CODEX_EFFORT
 ```
 
+Every Codex example in this document reuses `$CODEX_MODEL` and
+`$CODEX_EFFORT` from that step.
+
 When another action should start only after an agent settles, use an explicit
 barrier instead of repeatedly sampling status:
 
@@ -264,9 +267,6 @@ for one observed harness window. Set them intentionally high, but below the
 observed automatic-compaction boundary so the agent can self-compact first:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
@@ -293,9 +293,6 @@ Provider-usage lights are disabled unless the operator supplies used-percentage
 thresholds at hitch or adopt time:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 GANG_USAGE_LIGHTS="90%,95%" gang hitch worker -c codex \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
@@ -420,9 +417,6 @@ Never test Gangline against the development agent or the live `gangline` team.
 Use an explicitly named, disposable session:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 GANG_SESSION=gangline-smoke-codex gang hitch probe -c codex -d "$PWD" \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 GANG_SESSION=gangline-smoke-codex gang capture probe
@@ -625,9 +619,6 @@ that name refuses and prints the unit to stop.
 Gangline persists no roster. Recreate only the agents the operator chooses:
 
 ```sh
-gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
 gang hitch lead -c claude-code -d "$PWD" -m sonnet -e high \
   --resume <lead-session-id>
 gang hitch worker -c codex -d "$PWD" -m "$CODEX_MODEL" -e "$CODEX_EFFORT" \

@@ -74,9 +74,10 @@ gang up -c claude-code -m sonnet -e high</code></pre>
     launch, and a changed hook path or command can raise the review again. If
     hitch reports a first-run prompt, run <code>gang attach</code> from another
     operator terminal, select the named <code>worker</code> window, and answer it
-    there. The original hitch will then finish. Choose a current Codex model and
-    one of the efforts listed beside it, add the agent, and give it something to
-    do.</p>
+    there. The original hitch will then finish. Ask the harness for a current
+    Codex model and one of the efforts listed beside it — the later example
+    reuses the two variables you set here — then add the agent and give it
+    something to do.</p>
 
     <pre><code>gang models -c codex
 read -r -p "Codex model: " CODEX_MODEL
@@ -134,10 +135,7 @@ gang roster</code></pre>
     Set both edges high, but below the point where the harness would compact on
     its own:</p>
 
-    <pre><code>gang models -c codex
-read -r -p "Codex model: " CODEX_MODEL
-read -r -p "Codex effort: " CODEX_EFFORT
-GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
+    <pre><code>GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
   -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
 
     <p>The provider limit is the other wall. When an agent's own usage crosses
