@@ -106,8 +106,14 @@ GANG_EFFORT_OPT="-c model_reasoning_effort="
 # catalog row before printing so a plausible prefix can never escape from an
 # answer the parser could not finish. The final `|| true` is part of that
 # protocol: bin/gang distinguishes failure from a bad level by EMPTY OUTPUT.
+#
+# tomllib is imported WHERE IT IS USED rather than at the top. It arrived in
+# python3 3.11, and importing it up front made an explicit model — which never
+# opens the config at all — stop answering on every older python3 that used to.
+# Its decode error is a ValueError, so the handler names no module the import
+# may have failed to bind.
 GANG_EFFORT_CMD="python3 -c '
-import json, os, subprocess, tomllib
+import json, os, subprocess
 
 try:
     result = subprocess.run(
@@ -128,9 +134,10 @@ model = os.environ.get(\"GANG_MODEL\", \"\")
 if not model:
     config_home = os.environ.get(\"CODEX_HOME\") or os.path.expanduser(\"~/.codex\")
     try:
+        import tomllib
         with open(os.path.join(config_home, \"config.toml\"), \"rb\") as stream:
             config = tomllib.load(stream)
-    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+    except (ImportError, OSError, UnicodeError, ValueError):
         raise SystemExit(1)
     model = config.get(\"model\") if isinstance(config, dict) else None
 if not isinstance(model, str) or not model or not isinstance(models, list):
