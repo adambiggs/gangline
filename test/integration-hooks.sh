@@ -2141,6 +2141,37 @@ gate_global="$gate_root/empty-global"
 mkdir -p "$gate_root"
 : > "$gate_global"
 
+# These fixtures exercise Gangline's local hook, not a PATH-level git wrapper.
+# Remove only a wrapper directory carrying its installer's ownership marker;
+# without that marker, return the caller's PATH byte-for-byte.
+path_without_marked_git_wrapper() {
+  local dir out="" saved_ifs="$IFS" found=0
+  IFS=:
+  set -f
+  for dir in $PATH; do
+    [ -n "$dir" ] || continue
+    if [ -f "$dir/git" ] \
+       && head -n 5 "$dir/git" 2>/dev/null \
+          | grep -q '^# snubline-git-wrapper$'; then
+      found=1
+      continue
+    fi
+    out="${out:+$out:}$dir"
+  done
+  set +f
+  IFS="$saved_ifs"
+  [ "$found" -eq 1 ] || {
+    printf '%s' "$PATH"
+    return
+  }
+  [ -n "$out" ] || {
+    printf 'test: PATH contains no git executable outside the marked wrapper\n' >&2
+    return 1
+  }
+  printf '%s' "$out"
+}
+gate_git_path="$(path_without_marked_git_wrapper)"
+
 gate_bare() { # $1 name
   local repo="$gate_root/$1.git"
   rm -rf "$repo"
@@ -2180,7 +2211,7 @@ gate_push() { # $1 repo, remaining git-push args
   local repo="$1"
   shift
   GATE_PUSH_RC=0
-  GATE_PUSH_OUTPUT="$(GIT_CONFIG_GLOBAL="$gate_global" \
+  GATE_PUSH_OUTPUT="$(PATH="$gate_git_path" GIT_CONFIG_GLOBAL="$gate_global" \
     git -C "$repo" push "$@" 2>&1)" || GATE_PUSH_RC=$?
 }
 
