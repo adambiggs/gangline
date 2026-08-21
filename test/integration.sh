@@ -160,6 +160,13 @@ export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
 export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
+# A COLLAR MAY READ ITS HARNESS'S OWN CONFIGURATION, and the Codex collar reads
+# $CODEX_HOME to learn which model a hitch without -m will launch. Pointed at a
+# directory this run owns and never creates, every such read is a definite
+# absence rather than whatever the operator happens to have configured, so an
+# assertion that forgets to name its own fixture home goes quiet instead of
+# passing on this machine alone.
+export CODEX_HOME="$RUN_ROOT/absent-codex-home"
 
 checks=0
 fails=0
