@@ -129,6 +129,16 @@ no session-record machinery is built unless a reworded hint supplies the
 evidence to reopen that choice. A cleared staged record is evidence the
 obstruction is gone, never retroactive proof the recorded body was delivered.
 
+## Overlay occupancy needs a structural second question
+
+The auto-mode environment rendering is pinned to the live claude-code 2.1.239
+frame in `test/fixtures/claude-auto-mode-environment.txt`. Its pure top band
+must touch the exact title and its exact guide must be the last nonblank row
+before the composer opens, so the same prose inside a message cannot hide that
+message's box. A reworded or rearranged dialog narrows classification back to
+ordinary composer evidence; either change reopens the choice between updating
+the exact pin and adding a version gate.
+
 ## A refused delivery is parked, a failed one is not
 
 A refusal happens before any keystroke, so the body is still the sender's and

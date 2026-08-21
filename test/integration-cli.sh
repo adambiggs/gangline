@@ -783,6 +783,75 @@ equal "a clipped composer offers no reading for a paste to be checked against" \
   "" "$(claude_box_text clipped)"
 tmux kill-session -t "=$claude_box_session"
 
+# THE PINNED AUTO-MODE FRAME NEEDS TWO STRUCTURAL QUESTIONS. The fixture is the
+# right-trimmed live 2.1.239 capture; each derived pane changes only its relation
+# to a real composer. No test restates the native copy the collar recognizes.
+claude_nux_dir="$RUN_ROOT/claude-auto-nux"
+mkdir -p "$claude_nux_dir"
+claude_nux_capture="$ROOT/test/fixtures/claude-auto-mode-environment.txt"
+claude_nux_title="$(sed -n '2p' "$claude_nux_capture")"
+claude_nux_guide="$(sed -n '14p' "$claude_nux_capture")"
+claude_nux_rule="$(printf '─%.0s' $(seq 100))"
+cp "$claude_nux_capture" "$claude_nux_dir/overlay"
+printf '%s\n%s\n%s\n%s\n%s\n' \
+  "$claude_nux_rule" '❯' "$claude_nux_rule" '  ctx 1k/200k 1%' \
+  '  bypass permissions on' >> "$claude_nux_dir/overlay"
+cp "$claude_nux_capture" "$claude_nux_dir/transcript-tail"
+printf '%s\n%s\n%s\n%s\n%s\n%s\n' \
+  'ordinary transcript tail' "$claude_nux_rule" '❯' "$claude_nux_rule" \
+  '  ctx 1k/200k 1%' '  bypass permissions on' \
+  >> "$claude_nux_dir/transcript-tail"
+awk 'NR == 14 { $0 = $0 " changed" } { print }' "$claude_nux_capture" \
+  > "$claude_nux_dir/reworded"
+printf '%s\n%s\n%s\n%s\n%s\n' \
+  "$claude_nux_rule" '❯' "$claude_nux_rule" '  ctx 1k/200k 1%' \
+  '  bypass permissions on' >> "$claude_nux_dir/reworded"
+printf 'ordinary transcript\n  %s\n  %s\n%s\n%s\n%s\n%s\n%s\n' \
+  "$claude_nux_title" "$claude_nux_guide" "$claude_nux_rule" '❯' \
+  "$claude_nux_rule" '  ctx 1k/200k 1%' '  bypass permissions on' \
+  > "$claude_nux_dir/prose-only"
+printf 'ordinary transcript\n%s\n%s\n  %s\n  %s\n  HUMAN_DRAFT\n%s\n%s\n%s\n' \
+  "$claude_nux_rule" '❯ [gang:tester]' "$claude_nux_title" \
+  "$claude_nux_guide" "$claude_nux_rule" '  ctx 1k/200k 1%' \
+  '  bypass permissions on' > "$claude_nux_dir/message-body"
+cp "$claude_nux_capture" "$claude_nux_dir/clipped"
+printf '%s\n%s\n' "$claude_nux_rule" '❯ clipped body' \
+  >> "$claude_nux_dir/clipped"
+claude_nux_session="claude-nux-$$"
+tmux new-session -d -s "$claude_nux_session" -n overlay -x 100 -y 24 \
+  "cat '$claude_nux_dir/overlay'; cat"
+for claude_nux_case in transcript-tail reworded prose-only message-body clipped; do
+  tmux new-window -d -t "=$claude_nux_session" -n "$claude_nux_case" \
+    "cat '$claude_nux_dir/$claude_nux_case'; cat"
+done
+claude_nux_status() { # $1 window -> shipped collar_input status
+  local rc=0
+  ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; collar_input "$2" >/dev/null' fixture "$claude_collar" \
+    "=$claude_nux_session:$1" || rc=$?
+  printf '%s' "$rc"
+}
+claude_nux_text() { # $1 window -> shipped collar_input reading
+  ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; collar_input "$2"' fixture "$claude_collar" \
+    "=$claude_nux_session:$1" || true
+}
+equal "the captured NUX immediately before a composer hides that box" "1" \
+  "$(claude_nux_status overlay)"
+equal "the captured rows followed by transcript prose leave the composer readable" \
+  "0" "$(claude_nux_status transcript-tail)"
+equal "a reworded captured dialog narrows back to composer evidence" "0" \
+  "$(claude_nux_status reworded)"
+equal "the two pinned prose rows without native chrome leave the composer readable" \
+  "0" "$(claude_nux_status prose-only)"
+equal "the pinned prose inside a message leaves its composer readable" "0" \
+  "$(claude_nux_status message-body)"
+contains "and a human draft beside that prose remains visible" \
+  "$(claude_nux_text message-body)" "HUMAN_DRAFT"
+equal "a clipped composer behind the dialog keeps its clipped verdict" "2" \
+  "$(claude_nux_status clipped)"
+tmux kill-session -t "=$claude_nux_session"
+
 claude_unhooked_root="$RUN_ROOT/claude'guard"
 mkdir -p "$claude_unhooked_root/bin"
 printf '%s\n' '#!/bin/sh' '# SPDX-License-Identifier: Apache-2.0' \

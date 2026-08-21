@@ -523,6 +523,20 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       gsub(/\033\[2m[^\033]*/, "")
       gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width
       line[NR] = $0; if (NF) last = NR
+      # THE AUTO-MODE ENVIRONMENT NUX OWNS INPUT even when its overlay leaves
+      # the live composer painted underneath. Observed on claude-code 2.1.239:
+      # it fires no PermissionRequest hook, so returning that underneath box as
+      # usable lets status call the stranded agent idle and lets delivery spend
+      # its safety checks on a composer that cannot receive keys.
+      plain = $0
+      sub(/^[[:space:]]*/, "", plain); sub(/[[:space:]]*$/, "", plain)
+      if ($0 ~ /^▔+$/) auto_nux_band = NR
+      if (plain == "Teach auto mode about your environment?" && auto_nux_band == NR - 1) {
+        auto_nux_title = NR
+      }
+      if (plain == "←/→ to change usage · Enter to continue · Esc to cancel" && auto_nux_title && auto_nux_title < NR) {
+        auto_nux_guide[NR] = auto_nux_title
+      }
       t = $0; n = gsub(/─/, "", t)
       if (n && t == "") { prev = rule; prevw = rulew; rule = NR; rulew = n }
     }
@@ -538,6 +552,15 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       }
       if (!prev || !rule || rulew != prevw) exit 1
       if (last - rule > 5) exit 1
+      # TEXT ALONE IS NOT THE VERDICT. The pure dialog band must touch its
+      # title, and the guide must be the last nonblank row before the opening
+      # composer rule. A body carrying the same prose lives after that rule,
+      # so it remains readable; ordinary transcript prose without the native
+      # band does too. These positions are the second question paired with the
+      # exact pinned copy, not a general parser for native dialogs.
+      before = prev - 1
+      while (before && line[before] ~ /^[[:space:]]*$/) before--
+      if (auto_nux_guide[before]) exit 1
       seen = 0
       for (i = prev + 1; i < rule; i++) {
         s = line[i]

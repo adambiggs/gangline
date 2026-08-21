@@ -313,6 +313,15 @@ verification without refusing sends. A reworded hint is the event that
 reopens the decision between stronger session-record verification and a
 version gate.
 
+Auto-mode environment occupancy is separately pinned to the claude-code
+2.1.239 frame captured in `test/fixtures/claude-auto-mode-environment.txt`.
+The frame's pure top band must touch its exact title, and its exact guide must
+be the last nonblank row before the composer opens. Those two positional
+questions keep matching message content readable, at the cost of narrowing
+the guarantee back to ordinary composer evidence when the native dialog is
+reworded or rearranged. Either change is the event that reopens whether to
+update the exact pin or add a version gate.
+
 A cleared staged record means the obstruction is gone — it is never
 retroactive proof that the recorded body was delivered.
 

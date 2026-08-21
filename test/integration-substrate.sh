@@ -893,3 +893,56 @@ fi
 equal "and the record Gangline no longer reads answered nothing" "" \
   "$(<"$RUN_ROOT/dialog-external.keys")"
 "$GANG" drop dialog-external >/dev/null
+
+# CLAUDE 2.1.239 CAN PAINT ITS AUTO-MODE ENVIRONMENT NUX OVER A LIVE COMPOSER.
+# The hookless dialog owns the keyboard, but the two ordinary composer rules
+# remain parseable below it. Start with the right-trimmed frame captured from
+# the live harness, then expose the underneath composer the defect requires.
+cp "$ROOT/test/fixtures/claude-auto-mode-environment.txt" \
+  "$RUN_ROOT/claude-auto-nux-overlay.txt"
+auto_nux_rule="$(printf '─%.0s' $(seq 100))"
+printf '%s\n%s\n%s\n%s\n%s\n' \
+  "$auto_nux_rule" '❯' "$auto_nux_rule" '  ctx 1k/200k 1%' \
+  '  bypass permissions on' >> "$RUN_ROOT/claude-auto-nux-overlay.txt"
+dialog_start dialog-auto-nux external-import dialog \
+  "$RUN_ROOT/claude-auto-nux-overlay.txt"
+# Hitch used the ordinary framed Bash fixture so startup readiness was already
+# proven before the screen changed. Observation now uses the shipped Claude
+# reader, without relaunching or changing a byte of the pane under test.
+tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude
+# A POSITIVE SCREEN WITNESS before the state assertion: dialog_start returns
+# only after the fixture has painted and signalled its native-ready barrier.
+# source-guard: producer@ac863bc3ccf6: dialog_start waits on the fixture signal sent only after this capture has been painted from the nominated file
+contains "the auto-mode NUX is painted over the fixture composer" \
+  "$(pane dialog-auto-nux)" "Teach auto mode about your environment?"
+equal "the hookless NUX over a composer is occupied rather than idle" \
+  "!occupied! (authority unknown)" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux)"
+equal "roster does not advertise the stranded slot as free" "occupied" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster --porcelain \
+    | awk -F '\t' '$1 == "dialog-auto-nux" { print $3 }')"
+auto_nux_send_rc=0
+auto_nux_send_out="$(printf 'AUTO_NUX_BODY' | "$GANG" send \
+  --to dialog-auto-nux --from tester --live-only --stdin 2>&1)" \
+  || auto_nux_send_rc=$?
+equal "the live dialog refuses before any paste" "refused" \
+  "$([ "$auto_nux_send_rc" -ne 0 ] && printf refused || printf sent)"
+contains "the pre-paste refusal names occupancy" \
+  "$auto_nux_send_out" "is occupied (authority unknown)"
+equal "state observation sends no key to the native NUX" "" \
+  "$(<"$RUN_ROOT/dialog-auto-nux.keys")"
+# Without the occupied screen rule, the same hookless dialog still must not
+# fall through to idle: visible busy paint is the remaining fail-closed tier.
+cat > "$RUN_ROOT/collars/dialog-claude-busy.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog-claude.sh"
+GANG_OCCUPIED_REGEX=""
+GANG_BUSY_REGEX='Claude Code reads this project'
+SH
+tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude-busy
+equal "a dialog that also paints busy remains busy rather than idle" "-busy-" \
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux)"
+equal "busy-dialog observation sends no key either" "" \
+  "$(<"$RUN_ROOT/dialog-auto-nux.keys")"
+"$GANG" drop dialog-auto-nux >/dev/null
