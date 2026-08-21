@@ -96,16 +96,18 @@ PY
 # `codex --help` is observed rather than inferred.
 GANG_EFFORT_OPT="-c model_reasoning_effort="
 # `codex debug models` is the harness's own live vocabulary. GANG_MODEL is the
-# exact model hitch is about to pass with -m; an empty model, an alias the catalog
-# cannot bind, a failed or wedged command (bounded by the timeout), malformed
-# JSON, a missing field, a duplicate, or whitespace inside a level all produce
-# NOTHING. The reader names that as a
-# broken GANG_EFFORT_CMD rather than blaming the operator's level. Validate the
-# whole catalog row before printing so a plausible prefix can never escape from
-# an answer the parser could not finish. The final `|| true` is part of that
+# exact model hitch is about to pass with -m; when hitch passes none, the model
+# Codex will use is read from $CODEX_HOME/config.toml (default
+# ~/.codex/config.toml). An absent, unreadable, malformed, or unbound configured
+# model, an alias the catalog cannot bind, a failed or wedged command (bounded
+# by the timeout), malformed JSON, a missing field, a duplicate, or whitespace
+# inside a level all produce NOTHING. The reader names that as a broken
+# GANG_EFFORT_CMD rather than blaming the operator's level. Validate the whole
+# catalog row before printing so a plausible prefix can never escape from an
+# answer the parser could not finish. The final `|| true` is part of that
 # protocol: bin/gang distinguishes failure from a bad level by EMPTY OUTPUT.
 GANG_EFFORT_CMD="python3 -c '
-import json, os, subprocess
+import json, os, subprocess, tomllib
 
 try:
     result = subprocess.run(
@@ -123,7 +125,15 @@ if result.returncode:
 catalog = json.loads(result.stdout)
 models = catalog.get(\"models\") if isinstance(catalog, dict) else None
 model = os.environ.get(\"GANG_MODEL\", \"\")
-if not model or not isinstance(models, list):
+if not model:
+    config_home = os.environ.get(\"CODEX_HOME\") or os.path.expanduser(\"~/.codex\")
+    try:
+        with open(os.path.join(config_home, \"config.toml\"), \"rb\") as stream:
+            config = tomllib.load(stream)
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError):
+        raise SystemExit(1)
+    model = config.get(\"model\") if isinstance(config, dict) else None
+if not isinstance(model, str) or not model or not isinstance(models, list):
     raise SystemExit(1)
 
 matches = [
