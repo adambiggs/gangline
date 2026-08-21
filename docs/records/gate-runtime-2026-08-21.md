@@ -89,13 +89,48 @@ No assertion, case, or fixture was removed or collapsed.
 The first candidate, which changed only the fake clock and overlapped the role
 instrument, still took 341.75s and was rejected as insufficient.
 
-## Final proof
+## Load conditions and observed spread
+
+This work did not have an isolated machine. The arc began under explicit notice
+that two other agents were working on the box, and they were neither paused nor
+coordinated around the measurements. The shared heavy-test lock proves that no
+second Gangline gate or end-to-end lane ran at the same time; it does not
+serialize builds, analysis, filesystem traffic, or any other work those agents
+performed.
+
+The sandbox's process namespace could not enumerate host-wide work, so the
+other agents' exact CPU, memory, and I/O load during the 293.69s interval is
+unknown. The run was therefore neither controlled-quiet nor controlled-loaded.
+No synthetic-load repeat was attempted: without host-wide observation it would
+not reproduce the earlier load, and adding blind pressure to a box with active
+work and a history of memory-pressure failure would not be a responsible
+measurement.
+
+The complete observations available are:
+
+| Tree | Known load condition | Elapsed | Ceiling delta |
+|---|---|---:|---:|
+| before this change | two or three other agents working; otherwise uncontrolled | 335s | 35s over |
+| before this change | two or three other agents working; otherwise uncontrolled | 351s | 51s over |
+| before this change | two or three other agents working; otherwise uncontrolled | 353s | 53s over |
+| before this change | two or three other agents working; otherwise uncontrolled | 355s | 55s over |
+| after this change | two other agents assigned; their instantaneous load unknown | 293.69s | 6.31s under |
+
+These are not paired quiet/loaded measurements of the same tree. The last row
+shows that the changed suite crossed the ceiling once under uncontrolled
+concurrent-agent conditions. Its 2% sample margin does not establish that every
+loaded run will remain below the ceiling; the four earlier rows preserve the
+observed host variability that makes another measurement necessary if the gate
+approaches the limit again.
+
+## Final observation
 
 The ordinary uninstrumented `test/gate.sh` passed all lint, smoke, 1,611
 integration checks, and 129 focused role checks in **293.69s** with peak RSS
 1,099,776 KiB. The five-minute ceiling therefore has **6.31s measured margin**
-on this run. The command above is the current measurement; the numbers in this
-record are dated evidence for the scheduling decision, not standing estimates.
+on this run, not a load-independent guarantee. `test/gate.sh` is the current
+measurement command; the numbers in this record are dated evidence for the
+scheduling decision, not standing estimates.
 This sandbox did not expose the user service manager, so the aggregate 2 GiB
 `systemd-run` proof could not be repeated here; the isolated maxima above are
 the memory evidence available for this change.
