@@ -1028,7 +1028,7 @@ equal "the Codex collar spells effort as one joinable config option" \
 codex_effort_cmd="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "${GANG_EFFORT_CMD:-}"' fixture "$codex_collar")"
 CODEX_CATALOG_STUB="$RUN_ROOT/codex-catalog-stub"
-mkdir -p "$CODEX_CATALOG_STUB/bin"
+mkdir -p "$CODEX_CATALOG_STUB/bin" "$CODEX_CATALOG_STUB/home"
 cat > "$CODEX_CATALOG_STUB/bin/codex" <<'SH'
 #!/bin/sh
 cat <<'JSON'
@@ -1040,6 +1040,9 @@ cat <<'JSON'
 ]}
 JSON
 SH
+cat > "$CODEX_CATALOG_STUB/home/config.toml" <<'TOML' # snubline-ignore: home-path -- fixture subpath under CODEX_CATALOG_STUB, not a user or machine home directory
+model = "gpt-5.6-sol"
+TOML
 chmod +x "$CODEX_CATALOG_STUB/bin/codex"
 codex_models="$(PATH="$CODEX_CATALOG_STUB/bin:$PATH" ROOT="$ROOT" \
   bash -c '. "$1"; collar_models' fixture "$codex_collar")"
@@ -1049,10 +1052,15 @@ codex_levels="$(GANG_MODEL=gpt-5.6-sol PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
   sh -c "$codex_effort_cmd" | tr '\n' ' ')"
 equal "the Codex effort vocabulary binds the exact model hitch will launch" \
   "low medium xhigh " "$codex_levels"
-codex_unbound="$(GANG_MODEL='' PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
+# THIS EXPECTATION CHANGED because an empty GANG_MODEL means hitch passes no
+# -m, not that Codex launches no model. Codex then uses its configured model,
+# and this paired config/catalog fixture proves the binding comes from that
+# selection rather than a guessed catalog default.
+codex_configured="$(GANG_MODEL='' CODEX_HOME="$CODEX_CATALOG_STUB/home" \
+  PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
   sh -c "$codex_effort_cmd")"
-equal "a model the catalog cannot bind yields nothing rather than a guess" \
-  "" "$codex_unbound"
+equal "the Codex effort vocabulary binds the configured model hitch will launch" \
+  $'low\nmedium\nxhigh' "$codex_configured"
 # opencode and pi refuse -e by declaring nothing: their native effort forms
 # are unverified, and an unverified spelling must not reach a launch line.
 for unverified_collar in opencode pi; do
