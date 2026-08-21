@@ -1061,6 +1061,58 @@ codex_configured="$(GANG_MODEL='' CODEX_HOME="$CODEX_CATALOG_STUB/home" \
   sh -c "$codex_effort_cmd")"
 equal "the Codex effort vocabulary binds the configured model hitch will launch" \
   $'low\nmedium\nxhigh' "$codex_configured"
+codex_explicit_over_config="$(GANG_MODEL=gpt-5.6-mini \
+  CODEX_HOME="$CODEX_CATALOG_STUB/home" PATH="$CODEX_CATALOG_STUB/bin:$PATH" \
+  sh -c "$codex_effort_cmd")"
+equal "an explicit launch model outranks the configured one" \
+  "low" "$codex_explicit_over_config"
+# EVERY WAY OF NOT KNOWING STAYS THE SAME ANSWER: empty output at status 0, the
+# could-not-determine channel bin/gang reads as a broken declaration rather than
+# as a bad level. Reading configuration widened how a model can be chosen, not
+# how one can be guessed, so a catalog default must never leak out of any of
+# these. The unbound case is the older of the two and predates the config read.
+mkdir -p "$CODEX_CATALOG_STUB/home-absent"
+for codex_quiet_case in unbound config-unbound config-absent config-malformed config-nonstring; do
+  codex_quiet_home="$CODEX_CATALOG_STUB/home-absent"
+  codex_quiet_model=""
+  case "$codex_quiet_case" in
+    unbound) codex_quiet_model="gpt-5.6-nope" ;;
+    config-unbound)
+      codex_quiet_home="$CODEX_CATALOG_STUB/home-unbound"
+      mkdir -p "$codex_quiet_home"
+      printf 'model = "gpt-5.6-nope"\n' > "$codex_quiet_home/config.toml" ;;
+    config-malformed)
+      codex_quiet_home="$CODEX_CATALOG_STUB/home-malformed"
+      mkdir -p "$codex_quiet_home"
+      printf 'model = "gpt-5.6-sol\n' > "$codex_quiet_home/config.toml" ;;
+    config-nonstring)
+      codex_quiet_home="$CODEX_CATALOG_STUB/home-nonstring"
+      mkdir -p "$codex_quiet_home"
+      printf '[model]\nslug = "gpt-5.6-sol"\n' > "$codex_quiet_home/config.toml" ;;
+  esac
+  codex_quiet="$(GANG_MODEL="$codex_quiet_model" CODEX_HOME="$codex_quiet_home" \
+    PATH="$CODEX_CATALOG_STUB/bin:$PATH" sh -c "$codex_effort_cmd")"
+  equal "the Codex effort vocabulary answers nothing rather than a guess ($codex_quiet_case)" \
+    "" "$codex_quiet"
+done
+# THE CONFIG READER IS OPTIONAL, THE ANSWER IS NOT. tomllib arrived in python3
+# 3.11; importing it beside json made an explicit model stop answering on every
+# older interpreter, which is a wider outage than the one the config read
+# closed. Shadowing the module proves both halves at once — the explicit model
+# still answers, and the configured one goes quiet, which it can only do if the
+# shadow actually took.
+mkdir -p "$CODEX_CATALOG_STUB/no-tomllib"
+printf 'raise ImportError("tomllib")\n' > "$CODEX_CATALOG_STUB/no-tomllib/tomllib.py"
+codex_old_python="$(GANG_MODEL=gpt-5.6-sol \
+  PYTHONPATH="$CODEX_CATALOG_STUB/no-tomllib" \
+  PATH="$CODEX_CATALOG_STUB/bin:$PATH" sh -c "$codex_effort_cmd" | tr '\n' ' ')"
+equal "an explicit launch model answers on a python3 without tomllib" \
+  "low medium xhigh " "$codex_old_python"
+codex_old_python_config="$(GANG_MODEL='' CODEX_HOME="$CODEX_CATALOG_STUB/home" \
+  PYTHONPATH="$CODEX_CATALOG_STUB/no-tomllib" \
+  PATH="$CODEX_CATALOG_STUB/bin:$PATH" sh -c "$codex_effort_cmd")"
+equal "a configured model needs the config reader and says so by silence" \
+  "" "$codex_old_python_config"
 # opencode and pi refuse -e by declaring nothing: their native effort forms
 # are unverified, and an unverified spelling must not reach a launch line.
 for unverified_collar in opencode pi; do
