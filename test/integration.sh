@@ -26,10 +26,12 @@ export GIT_CONFIG_SYSTEM=/dev/null
 
 # The Bash fixture establishes every transition synchronously except one: a pane
 # answers its terminal asynchronously. Production waits are inputs here, not
-# evidence, so their clock returns immediately — but gang counts its patience in
-# reads rather than seconds, and a stopped clock spends five of them in a few
-# milliseconds, so a composer that has not echoed yet reads as one that never
-# will.
+# evidence, so the settled-composer clock returns immediately. The fixture
+# supplies every between-read change explicitly; spending 0.3s between those
+# reads adds no evidence. Post-keystroke verification is different: gang counts
+# its patience in reads rather than seconds, and a stopped clock spends five of
+# them before the pane has necessarily echoed the key, so a composer that has
+# not answered yet reads as one that never will.
 #
 # Gang's pane round-trip therefore keeps a floor, far below the duration it
 # asked for. Without it, submission verifies only when the pasted payload is
@@ -45,7 +47,7 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # napping 0.4s between reads.
 #
 #   hermetic fixture pane, Enter to box change  ~5ms (re-measured 2026-08-12)
-#   test budget (this floor)     5 x 0.05s = 0.25s
+#   test budget (this floor)     5 x 0.01s = 0.05s
 #   production budget            5 x 0.4s  = 2.0s
 #
 # THE FIRST NUMBER IS A PROPERTY OF THE PANE, NOT OF THE BOX, and leaving that
@@ -59,8 +61,9 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # test/lint.sh keeps fixture shells hermetic; the ~5ms above holds only while
 # it does.
 #
-# So the quiet margin is about 50x and looks unbreakable right up until an
-# I/O-starved box stretches one round trip past 250ms. Under sustained load —
+# So the quiet budget is about 10x the measured reaction, with each individual
+# floor still 2x it, and looks unbreakable right up until an I/O-starved box
+# stretches one round trip past 50ms. Under sustained load —
 # CPU spinners plus dd+sync loops, not CPU bursts, which do not reproduce it —
 # the same hitch failed 39 times in 40. UNDER THE SAME LOAD, PRODUCTION TIMING
 # FAILED 0 IN 20: gang's real delivery survives a box this busy, and only the
@@ -71,7 +74,7 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # spend a day rediscovering it. The suite owns this shim, so the shim looks
 # like the place to block on pane output instead of napping — with a latched
 # tmux wait-for signalled from the fixture's PROMPT_COMMAND. Two things kill
-# it. The shim is global to every 0.3/0.4 nap in gang and most of them are not
+# it. The shim is global to every 0.4 nap in gang and most of them are not
 # waiting on a pane echo, so a blanket barrier deadlocks the rest. And tmux
 # wait-for has no timeout, so an unsignalled channel converts a failing test
 # into a HANGING suite, which is strictly worse than the flake it replaces.
@@ -81,7 +84,8 @@ mkdir -p "$RUN_ROOT/bin"
 cat > "$RUN_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
 case "$1" in
-  0.3|0.4) exec /bin/sleep 0.05 ;;
+  0.3) exit 0 ;;
+  0.4) exec /bin/sleep 0.01 ;;
 esac
 exit 0
 SH
@@ -135,7 +139,17 @@ HITCH="$RUN_ROOT/bin/hitch-guard"
 # reached and the reason, because a verdict nobody can read is what made the
 # original failure expensive.
 summary_printed=0
+role_pid=""
+gate_pid=""
 cleanup() {
+  if [ -n "$role_pid" ]; then
+    kill "$role_pid" 2>/dev/null || true
+    wait "$role_pid" 2>/dev/null || true
+  fi
+  if [ -n "$gate_pid" ]; then
+    kill "$gate_pid" 2>/dev/null || true
+    wait "$gate_pid" 2>/dev/null || true
+  fi
   if [ "$summary_printed" -eq 0 ]; then
     printf '\nRUN ENDED EARLY after %s checks in %ss — no verdict on the rest.\n' \
       "$checks" "$SECONDS"
@@ -264,6 +278,33 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 # its failing branch — which this run, being green, never reaches.
 . "$ROOT/test/suite-tail.sh"
 
+# THE ROLE INSTRUMENT OWNS A DIFFERENT TMUX SERVER AND DIFFERENT FIXTURE ROOT.
+# It shares no mutable state with this suite, and it is already independently
+# selectable for mutation calibration. Run it beside the substrate checks and
+# join its complete verdict below: every check still runs, while two independent
+# private fixtures no longer spend the mandatory gate's wall clock in series.
+role_output="$RUN_ROOT/role-briefs.out"
+"$ROOT/test/role-briefs.sh" > "$role_output" 2>&1 &
+role_pid=$!
+
+# THE GATE SELF-TEST BUILDS ONLY ITS OWN GIT FIXTURES. It reads the helpers and
+# counters above but no tmux window or mutable fixture used by the substrate
+# parts, so it can prove the snapshot machinery beside them. The subshell writes
+# its counter delta for the parent to fold into the same final verdict; running
+# it elsewhere must not make its assertions disappear from the suite count.
+gate_output="$RUN_ROOT/integration-gate.out"
+gate_counts="$RUN_ROOT/integration-gate.counts"
+(
+  trap - EXIT HUP INT TERM
+  gate_checks_at_start="$checks"
+  gate_fails_at_start="$fails"
+  . "$ROOT/test/integration-gate.sh"
+  printf '%s %s\n' \
+    "$((checks - gate_checks_at_start))" "$((fails - gate_fails_at_start))" \
+    > "$gate_counts"
+) > "$gate_output" 2>&1 &
+gate_pid=$!
+
 # THE SUITE IS ONE PROGRAM, SPLIT ONLY SO THAT IT CAN BE LINTED. Each part below
 # is sourced in order into this shell and reads the fixtures, helpers and
 # counters established above, so the split moves no assertion and changes no
@@ -284,11 +325,32 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 . "$ROOT/test/integration-spool.sh"
 . "$ROOT/test/integration-readiness.sh"
 . "$ROOT/test/integration-hooks.sh"
-. "$ROOT/test/integration-gate.sh"
+
+# Join the isolated self-test at the same point where it used to run. Its output
+# stays contiguous, and its checks and failures remain part of this suite's one
+# summary rather than becoming a second verdict.
+gate_rc=0
+wait "$gate_pid" || gate_rc=$?
+gate_pid=""
+cat "$gate_output"
+if [ "$gate_rc" -ne 0 ] || [ ! -s "$gate_counts" ]; then
+  printf 'integration gate self-test ended without a readable count (status %s)\n' \
+    "$gate_rc" >&2
+  [ "$gate_rc" -ne 0 ] || gate_rc=1
+  exit "$gate_rc"
+fi
+read -r gate_checks gate_fails < "$gate_counts"
+checks=$((checks + gate_checks))
+fails=$((fails + gate_fails))
 
 # The focused role instrument is mandatory here and independently selectable so
-# mutation calibration can run the exact AC that must turn red.
-"$ROOT/test/role-briefs.sh"
+# mutation calibration can run the exact AC that must turn red. Its output is
+# held until the join so concurrent suites never interleave their evidence.
+role_rc=0
+wait "$role_pid" || role_rc=$?
+role_pid=""
+cat "$role_output"
+[ "$role_rc" -eq 0 ] || exit "$role_rc"
 
 # THE SAME TREE THIS RUN STARTED AGAINST, OR NO VERDICT. A source edit landing
 # mid-run is not caught by either read — bash has already executed whatever it

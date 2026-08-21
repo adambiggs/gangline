@@ -469,11 +469,16 @@ main() {
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
   SNAP="$WORK/tree"
   keep=0
+  lint_pid=""
   # A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
   # collects these later — no gate run touches another run's snapshot — so the
   # deletion is the reader's, stated as the exact command rather than left to be
   # discovered as accumulated copies of the source under TMPDIR.
   cleanup() {
+    if [ -n "$lint_pid" ]; then
+      kill "$lint_pid" 2>/dev/null || true
+      wait "$lint_pid" 2>/dev/null || true
+    fi
     if [ "$keep" -eq 1 ]; then
       printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
       printf '  %s\n' "$SNAP" >&2
@@ -494,8 +499,27 @@ main() {
   printf 'gate: testing a snapshot of %s\n' "$ROOT"
   printf 'gate: source tree %s\n' "$source_state"
 
-  rc=0
-  ( cd "$SNAP" && ./test/lint.sh && ./test/smoke.sh && ./test/integration.sh ) || rc=$?
+  # LINT AND THE BEHAVIOURAL SUITE READ THE SAME IMMUTABLE SNAPSHOT and write
+  # only to separate private roots. Serialising them added lint's entire cost
+  # to the mandatory wall clock without ordering any evidence. Keep lint's
+  # output together, run smoke and integration on the foreground path, then
+  # join lint before deciding the one gate verdict. Per-file ShellCheck peaks
+  # below the documented 2 GB gate ceiling while integration itself is small;
+  # the documented systemd-run command remains the aggregate memory proof.
+  lint_out="$WORK/lint.out"
+  ( cd "$SNAP" && ./test/lint.sh ) > "$lint_out" 2>&1 &
+  lint_pid=$!
+  smoke_rc=0
+  integration_rc=0
+  ( cd "$SNAP" && ./test/smoke.sh ) || smoke_rc=$?
+  ( cd "$SNAP" && ./test/integration.sh ) || integration_rc=$?
+  lint_rc=0
+  wait "$lint_pid" || lint_rc=$?
+  lint_pid=""
+  cat "$lint_out"
+  rc="$lint_rc"
+  [ "$rc" -ne 0 ] || rc="$smoke_rc"
+  [ "$rc" -ne 0 ] || rc="$integration_rc"
   if [ "$rc" -ne 0 ]; then
     keep=1
     printf '\ngate: REFUSED (status %s)\n' "$rc" >&2

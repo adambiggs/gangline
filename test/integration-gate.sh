@@ -595,7 +595,10 @@ refuses "a commit that does touch one is movement in the subtree" \
 # THE GATE'S OWN ORCHESTRATION, which every check above leaves untouched: they
 # drive --assert-owned, --assert-unmoved and --snapshot, so dropping the suite
 # from the no-argument run would leave all of them green. Stand-in gates record
-# that they ran, in order, from inside the copy.
+# that they all ran from inside the copy. Their order is deliberately not a
+# claim: lint and integration read the same immutable snapshot and their private
+# outputs cannot change each other's evidence, so serial order was only wall
+# time and was wrong to preserve once it broke the mandatory ceiling.
 gate_run="$RUN_ROOT/gate-default"
 mkdir -p "$gate_run/test"
 cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
@@ -647,8 +650,8 @@ gate_default_out="$(env -u _GANGLINE_GATE_LOCKED \
 equal "the ordinary gate owns a close-on-exec heavy-test lock" \
   "$(printf '%s\n' -o /tmp/gangline-heavy.lock "$gate_run/test/gate.sh")" \
   "$(<"$gate_flock_args")"
-equal "the no-argument gate runs lint, smoke, and then the suite, in that order" \
-  "$(printf 'lint\nsmoke\nintegration')" "$(<"$gate_order")"
+equal "the no-argument gate runs lint, smoke, and the suite exactly once" \
+  "$(printf 'integration\nlint\nsmoke')" "$(sort "$gate_order")"
 # WHERE they ran is the claim, and the gate's own report cannot witness it: that
 # line prints the SOURCE path whatever directory the gates were run from.
 gate_lint_where="$(awk '$1 == "lint" { print $2; exit }' "$gate_where")"

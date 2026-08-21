@@ -135,7 +135,7 @@ tmux set-option -uw -t "$legacy_option_id" @gl_profile
 sleep_stub_sha="$(shasum -a 256 "$RUN_ROOT/bin/sleep" | awk '{print $1}')"
 printf 'instrument sleep=%s sha256=%s spec-sha256=%s\n' \
   "$RUN_ROOT/bin/sleep" "$sleep_stub_sha" \
-  '52a740a3954c18b82f2b4461d92a38dfb17d8e1655d4e5796c4d0e07f97ac995'
+  '7028382d6cfc664b4522ab6e09b3f081b2ebae557d362e736a4ff4171e72a60a'
 
 GANG_CONTEXT_LIGHTS=off "$HITCH" ctx-agent -c ctx-known -d /tmp >/dev/null
 ctx_agent_id="$(window_id ctx-agent)"
