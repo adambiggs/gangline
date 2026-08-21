@@ -1,5 +1,5 @@
 {
-  "//": "Claude Code is the only harness with a config file here, by law 5: nothing lands without a live consumer, and this repo is contributed to from Claude Code today. AGENTS.md is the canonical brief and serves every harness; see its 'Agent configuration in this repo'.",
+  "//": "Claude Code is the only harness with a config file here, by law 5: nothing lands without a live consumer, and this repo is contributed to from Claude Code today. AGENTS.md is the canonical brief and serves every harness, and it governs this file.",
   "permissions": {
     "allow": [
       "Bash(git status:*)",
