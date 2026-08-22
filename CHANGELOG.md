@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.3.0](https://github.com/adambiggs/gangline/compare/gangline-v2.2.0...gangline-v2.3.0) (2026-08-22)
+
+
+### Features
+
+* **collars:** mark which collars an agent can be resumed onto ([3b25493](https://github.com/adambiggs/gangline/commit/3b25493445e01a623b4177d573319bc94fc19fd3))
+
+
+### Bug Fixes
+
+* **collar:** a context pane that could not be read is not one with no readout ([05fb62c](https://github.com/adambiggs/gangline/commit/05fb62ca6230af26c49cc0b0ca8fabeb6f2556e4))
+* **collar:** classify auto-mode setup as occupied ([d0741c8](https://github.com/adambiggs/gangline/commit/d0741c8e21a2872154fb0ed1075f180a861e486a))
+* **collar:** import the Codex config reader where it is used ([9d508e3](https://github.com/adambiggs/gangline/commit/9d508e3177e77c2e827b2c0e6eddbf3847404ce2))
+* **collar:** resolve configured model for effort validation ([3b68fa8](https://github.com/adambiggs/gangline/commit/3b68fa8ef93133fc8a5eaa63288239a2dd4e60a1))
+* **collars:** tell an explicit-id resume from no resume at all ([fb07b6b](https://github.com/adambiggs/gangline/commit/fb07b6bfe47c030bf25ba2c91e76a74367c2b555))
+* **drop:** a stamped session id is not always a way back ([9249c21](https://github.com/adambiggs/gangline/commit/9249c213cfe58aeb38a03e5a7be4199f590ae4ed))
+* **hitch:** bound the wait on a first-run prompt nobody answers ([b44386e](https://github.com/adambiggs/gangline/commit/b44386e4192e790373a81f78f252465a139edf0c))
+* **hitch:** the two halves of resuming fail differently, and are warned so ([4a255b0](https://github.com/adambiggs/gangline/commit/4a255b00ee6790676e2a8ed80ae8856d8df7855d))
+* **roster:** an agent gang could not read does not end the listing ([c4d3722](https://github.com/adambiggs/gangline/commit/c4d37223fb7a609c443a37ff8b7c5d4578e99550))
+* **send:** name the native screen a paste did not reach ([16a445c](https://github.com/adambiggs/gangline/commit/16a445c00b3c41b4e77e4a0dc1d0e0a1a46f94d9))
+* **send:** settled is two readings that were taken, not two that match ([4fdc81a](https://github.com/adambiggs/gangline/commit/4fdc81aed355c0a6086f3268ebe214f4fb1a4807))
+* **send:** state the evidence a failed paste already holds ([90dbb3e](https://github.com/adambiggs/gangline/commit/90dbb3e7228b4f1799d0698f073c121187892163))
+
+
+### Performance Improvements
+
+* **test:** restore the mandatory gate runtime ceiling ([74c2129](https://github.com/adambiggs/gangline/commit/74c2129a3304cbf399b7c8d1e1905bf9a389ea0d))
+
 ## [2.2.0](https://github.com/adambiggs/gangline/compare/gangline-v2.1.0...gangline-v2.2.0) (2026-08-18)
 
 
