@@ -69,8 +69,6 @@ refuse one they would not own.
 
 The following rules are mandatory:
 
-- The complete mandatory suite must finish in under five minutes; seconds are
-  the normal case.
 - Executable tests must not sleep, poll for eventual state, test timeout
   behaviour, or use wall-clock delay as evidence.
 - Use an immediate fake clock when time is an input.

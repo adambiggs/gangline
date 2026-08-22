@@ -567,10 +567,9 @@ indistinguishable from a hang. Fresher observation outranks closing position.
 
 ## Mandatory tests are immediate
 
-The mandatory suite normally completes in seconds and must remain under five
-minutes. Tests do not sleep, poll, or test timeout behaviour; use immediate state,
-event barriers, or fake clocks, and test real harnesses only in separate disposable
-tmux sessions.
+Mandatory tests do not sleep, poll, or test timeout behaviour; use immediate
+state, event barriers, or fake clocks, and test real harnesses only in separate
+disposable tmux sessions.
 
 ## The irreversible verb is the one that demands an argument
 

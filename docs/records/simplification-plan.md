@@ -1,7 +1,7 @@
 # Gangline simplification plan
 
-> Status: Landed at `1aa8140` on 2026-08-04; retained as a dated
-> implementation record.
+> Status: Landed at `1aa8140` on 2026-08-04; its five-minute acceptance rule was
+> subsequently withdrawn; retained as a dated implementation record.
 
 ## Target
 

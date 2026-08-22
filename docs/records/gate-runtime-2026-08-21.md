@@ -1,6 +1,7 @@
 # Mandatory gate runtime measurement — 2026-08-21
 
-> Status: Completed on 2026-08-21; retained as a dated performance record.
+> Status: Completed on 2026-08-21; the five-minute rule measured here was
+> subsequently withdrawn; retained as a dated performance record.
 
 ## Finding
 
