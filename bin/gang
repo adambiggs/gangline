@@ -4092,12 +4092,18 @@ context_lights_for() { # $1 = window; load its hitch-time setting
 CONTEXT_LIGHT=""
 CONTEXT_LIGHT_ERROR=""
 context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
-  local ctx pair used window yellow red
+  local ctx pair used window yellow red rc=0
   CONTEXT_LIGHT=""
   CONTEXT_LIGHT_ERROR=""
   context_lights_for "$1" || return 1
-  ctx="$(context_now "$1" 2>/dev/null)" || return 2
-  pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 2
+  ctx="$(context_now "$1" 2>/dev/null)" || {
+    rc=$?
+    # Status 2 is the collar contract's readable-frame miss. Every other
+    # failure says the source could not be read or interpreted at all.
+    [ "$rc" -eq 2 ] && return 2
+    return 4
+  }
+  pair="$(ctx_tokens "${ctx%%$'\n'*}")" || return 4
   read -r used window <<<"$pair"
   if [ "$window" -eq 0 ]; then
     CONTEXT_LIGHT_ERROR="Context lights invalid: this harness's native context source reported a zero-token window."
@@ -4122,34 +4128,86 @@ context_light_read() { # $1 = window, collar loaded; yellow|red, or 1 below
 
 ADVISORY_NOTE=""
 context_light_note() { # $1 collar; append an edge to ADVISORY_NOTE
-  local previous="" agent note="" ready="" rc=0
+  local previous="" agent note="" ready="" miss="" notified="" rc=0
   load_collar "$1"
   context_light_read "$TMUX_PANE" || rc=$?
   previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_light 2>/dev/null)" \
     || previous=""
   if [ "$rc" -eq 1 ]; then
-    tmux set-option -uw -t "$TMUX_PANE" @gl_context_light 2>/dev/null || true
+    if [ "$previous" = unavailable ]; then
+      tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss \; \
+        set-option -uw -t "$TMUX_PANE" @gl_context_miss_notified \; \
+        set-option -uw -t "$TMUX_PANE" @gl_context_light 2>/dev/null || true
+    else
+      tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss \; \
+        set-option -uw -t "$TMUX_PANE" @gl_context_light 2>/dev/null || true
+    fi
     return 0
   fi
-  if [ "$rc" -eq 2 ]; then
+  if [ "$rc" -eq 2 ] || [ "$rc" -eq 4 ]; then
     ready="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_ready 2>/dev/null)" \
       || ready=""
     [ "$ready" = 1 ] || return 0
+  fi
+  if [ "$rc" -eq 2 ]; then
     [ "$previous" != unavailable ] || return 0
+    miss="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_context_miss 2>/dev/null)" \
+      || miss=""
+    case "$miss" in
+      1) ;;
+      2) return 0 ;;
+      *)
+        tmux set-option -w -t "$TMUX_PANE" @gl_context_miss 1 2>/dev/null \
+          || return 0
+        notified="$(tmux show-options -wqv -t "$TMUX_PANE" \
+          @gl_context_miss_notified 2>/dev/null)" || notified=""
+        [ "$notified" != 1 ] || return 0
+        tmux set-option -w -t "$TMUX_PANE" @gl_context_miss_notified 1 \
+          2>/dev/null || return 0
+        note="Context beacon missed once: Gangline could read the pane, but this frame did not show the native context beacon. The last context light is unchanged; Gangline will check again."
+        ADVISORY_NOTE="${ADVISORY_NOTE:+$ADVISORY_NOTE
+}$note"
+        return 0 ;;
+    esac
     CONTEXT_LIGHT=unavailable
-    note="Context lights unavailable: Gangline cannot read this harness's native context source. Inspect the harness directly."
+    note="Context beacon absent on consecutive checks: context lights are unavailable. Inspect the harness directly."
   elif [ "$rc" -eq 3 ]; then
     CONTEXT_LIGHT=invalid
     note="$CONTEXT_LIGHT_ERROR"
+  elif [ "$rc" -eq 4 ]; then
+    if [ "$previous" = unavailable ]; then
+      tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss 2>/dev/null || true
+      return 0
+    fi
+    CONTEXT_LIGHT=unavailable
+    note="Context lights unavailable: Gangline cannot read or interpret this harness's native context source. Inspect the harness directly."
   else
     [ "$rc" -eq 0 ] || return 0
+  fi
+  [ "$rc" -eq 2 ] \
+    || tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss 2>/dev/null \
+    || true
+  if [ "$previous" = unavailable ] || [ "$rc" -eq 3 ]; then
+    tmux set-option -uw -t "$TMUX_PANE" @gl_context_miss_notified \
+      2>/dev/null || true
   fi
   [ "$CONTEXT_LIGHT" != "$previous" ] || return 0
   if [ "$previous" = red ]; then
     case "$CONTEXT_LIGHT" in unavailable|invalid) ;; *) return 0 ;; esac
   fi
-  tmux set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" 2>/dev/null \
-    || return 0
+  if [ "$rc" -eq 2 ]; then
+    tmux set-option -w -t "$TMUX_PANE" @gl_context_miss 2 \; \
+      set-option -w -t "$TMUX_PANE" @gl_context_miss_notified 1 \; \
+      set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
+      2>/dev/null || return 0
+  elif [ "$rc" -eq 4 ]; then
+    tmux set-option -w -t "$TMUX_PANE" @gl_context_miss_notified 1 \; \
+      set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
+      2>/dev/null || return 0
+  else
+    tmux set-option -w -t "$TMUX_PANE" @gl_context_light "$CONTEXT_LIGHT" \
+      2>/dev/null || return 0
+  fi
   if [ -z "$note" ]; then
     agent="$(agent_name_of "$TMUX_PANE")"
     case "$CONTEXT_LIGHT" in

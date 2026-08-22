@@ -272,14 +272,18 @@ GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
 ```
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to
-finish the current arc and compact now. A light is emitted once per context
-epoch; usage falling below yellow resets the epoch. These are advisory native
-hook messages, not patrols or automatic actions.
+finish the current arc and compact now. Each is emitted once per context epoch;
+usage falling below yellow resets that epoch. These are advisory native hook
+messages, not patrols or automatic actions.
 
-If an enabled source fails, the affected agent receives one unavailable notice.
-Disabled lights perform no context read and add no prompt or roster noise.
-An absolute red threshold above the window reports one invalid notice as soon as
-the native source makes that window readable; it never remains silently armed.
+A readable Claude frame with no context beacon emits one transient-miss notice
+without changing the last real light. Good frames break consecutiveness but do
+not repeat that notice; a second consecutive miss emits one unavailable notice.
+An unreadable or malformed source emits the unavailable notice immediately.
+Recovery from unavailable begins a new source-failure epoch. Disabled lights
+perform no context read and add no prompt or roster noise. An absolute red
+threshold above the window reports one invalid notice as soon as the native
+source makes that window readable; it never remains silently armed.
 
 Claude Code reads its hook configuration once, at process startup, and
 re-executes the statusline script from disk on every repaint. A change on the

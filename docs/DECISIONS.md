@@ -1244,3 +1244,15 @@ hitch again. Answering is a native persisted choice, and codex's hook trust in
 particular is keyed on the hook definition rather than on the bytes of the
 script the hook command names — so ordinary development on `bin/gang` leaves an
 answered gate answered, while a `gang` at a different path raises a new one.
+
+## A readable frame without a native beacon is a miss before it is an outage
+
+Claude can briefly redraw, cover or scroll its context beacon off-screen while
+its pane and the beacon source remain healthy. The collar returns status 2 for
+that readable-frame miss. Context lights report the first miss in a source
+failure epoch without changing the last real light; alternating good and missed
+frames do not repeat it. A consecutive miss latches unavailable, while an
+unreadable or malformed source still fails on its first observation.
+
+The threshold is carried by a window option and advances only on native context
+checks. It adds no pane capture, retry loop, clock, parser or roster read.

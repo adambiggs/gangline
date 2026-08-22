@@ -706,7 +706,10 @@ cat > "$RUN_ROOT/collars/lights.sh" <<SH
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
 collar_context() {
-  tmux show-options -wqv -t "\$1" @test_context
+  local reading
+  reading="\$(tmux show-options -wqv -t "\$1" @test_context)" || return 1
+  [ "\$reading" != screen-miss ] || return 2
+  printf '%s\n' "\$reading"
 }
 SH
 GANG_CONTEXT_LIGHTS=100000,200000 "$HITCH" lit -c lights -d /tmp >/dev/null
@@ -736,11 +739,67 @@ yellow_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
 contains "dropping below yellow starts a new context epoch" \
   "$yellow_again" "Yellow context light"
+
+# A READABLE FRAME WITHOUT THE BEACON IS A MISS, NOT A BROKEN SOURCE. Claude's
+# native UI can redraw, cover or scroll its statusline for one hook observation.
+# The miss has an operator-facing edge of its own but must not overwrite the
+# last real light: otherwise a transient frame mutates the state used to decide
+# whether the next real reading is new. A second consecutive miss escalates, so
+# a source that actually stopped painting the beacon cannot stay quiet.
+tmux set-option -w -t "$lit_id" @test_context screen-miss
+miss_once="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "one missed context frame is reported as transient" \
+  "$miss_once" "Context beacon missed once"
+equal "one missed frame preserves the last real context light" yellow \
+  "$(tmux show-options -wqv -t "$lit_id" @gl_context_light)"
+tmux set-option -w -t "$lit_id" @test_context '250k/300k (83%)'
+red_after_miss="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "a transient miss does not mask the next real context edge" \
+  "$red_after_miss" "Red context light"
+
+tmux set-option -w -t "$lit_id" @test_context screen-miss
+miss_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "alternating present and missed frames do not repeat the transient note" \
+  "" "$miss_again"
+tmux set-option -w -t "$lit_id" @test_context '250k/300k (83%)'
+present_again="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "a same-band reading between misses emits no duplicate light" \
+  "" "$present_again"
+tmux set-option -w -t "$lit_id" @test_context screen-miss
+miss_before_outage="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "the first frame of a later persistent miss stays in the reported epoch" \
+  "" "$miss_before_outage"
+miss_twice="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "consecutive missed context frames escalate visibly" \
+  "$miss_twice" "Context beacon absent on consecutive checks"
+equal "a persistent beacon miss latches unavailable" unavailable \
+  "$(tmux show-options -wqv -t "$lit_id" @gl_context_light)"
+
+tmux set-option -w -t "$lit_id" @test_context '250k/300k (83%)'
+red_after_outage="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+contains "the first real reading after a missed-beacon outage is not masked" \
+  "$red_after_outage" "Red context light"
+tmux set-option -w -t "$lit_id" @test_context '50k/300k (17%)'
+printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook >/dev/null
 tmux set-option -w -t "$lit_id" @test_context 'unreadable'
 unavailable="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
 contains "an enabled light source fails visibly to its own agent" \
   "$unavailable" "Context lights unavailable"
+tmux set-option -w -t "$lit_id" @test_context screen-miss
+miss_while_unavailable="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
+equal "a missed frame cannot reopen an unavailable source epoch" \
+  "" "$miss_while_unavailable"
+tmux set-option -w -t "$lit_id" @test_context 'unreadable'
 unavailable_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$lit_tmux_pane" "$GANG" hook)"
 equal "an unavailable context source reports once per failure epoch" \

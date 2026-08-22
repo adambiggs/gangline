@@ -1194,8 +1194,16 @@ for refused_collar in bash claude-code opencode pi; do
     . "$ROOT/collars/$refused_collar.sh"
     collar_context "$refused_id" 2>&1 >/dev/null
   )" || readable_ctx_rc=$?
-  equal "while a pane collar $refused_collar could read, carrying no readout, stays a missing readout" \
-    1 "$readable_ctx_rc"
+  # Claude's hitch-wired beacon can be absent from a readable frame while the
+  # source itself remains healthy: redraws, overlays and transcript output all
+  # move it off-screen. Its old status 1 made that transient screen miss
+  # indistinguishable from every ordinary source failure one layer up, which is
+  # exactly the false unavailable edge this pair is meant to prevent. The
+  # other pane collars have not declared that a missing readout is transient.
+  readable_ctx_expected=1
+  [ "$refused_collar" != claude-code ] || readable_ctx_expected=2
+  equal "while a pane collar $refused_collar could read, carrying no readout, classifies that absence" \
+    "$readable_ctx_expected" "$readable_ctx_rc"
   excludes "so collar $refused_collar keeps the two apart" \
     "$readable_ctx_err" "cannot read pane"
 done

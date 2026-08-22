@@ -1032,7 +1032,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own |
-| `collar_context target` | print `usedk/windowk (percent%)`, or fail loudly, keeping a refused pane read distinct from a pane carrying no readout |
+| `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
 | `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |

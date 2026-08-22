@@ -498,8 +498,16 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
   # EMPTY IS THE MISS, and the miss is checked rather than inherited: without
   # pipefail a grep that found nothing hands its status to tail, the assignment
   # succeeds, and a pane with no readout prints as one with an empty reading.
-  [ -n "$m" ] \
-    || die "no ctx beacon in pane — enabled lights wire it at hitch; adopted windows must wire statusline/claude-code-context.sh themselves"
+  if [ -z "$m" ]; then
+    # STATUS 2 IS A READABLE FRAME WITHOUT THE NATIVE READOUT. Claude can hide
+    # or scroll its hitch-wired beacon during a redraw, tool output or overlay,
+    # so context lights give this transient screen miss its own edge before a
+    # consecutive miss becomes unavailable. `gang context` still fails loud on
+    # the first miss and keeps the wiring repair for adopted windows visible.
+    printf '%s\n' \
+      'gang: no ctx beacon in pane — enabled lights wire it at hitch; adopted windows must wire statusline/claude-code-context.sh themselves' >&2
+    return 2
+  fi
   m="${m#ctx }"
   printf '%s (%s)\n' "${m% *}" "${m##* }"
 }
