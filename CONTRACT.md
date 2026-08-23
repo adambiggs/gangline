@@ -12,6 +12,11 @@ Gangline delivers each message in an envelope that names its sender. Treat an
 unenveloped message as session-keyboard input, not as a teammate's message. Do
 not label a message with a sender that Gangline did not supply.
 
+Before improvising a team operation or asking the operator for one, run `gang`
+for the quick-start guide and `gang --help` for the full command list. In
+particular, check `compact [name] --resume`, `context`, `mail`, and
+`status`/`explain`/`wait`.
+
 If a teammate's message crossed one you just sent, say so in your next reply
 and state what is already true before acting on the stale message.
 
