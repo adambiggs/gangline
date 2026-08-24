@@ -7206,14 +7206,14 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   load_collar "$collar"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
   registered_identity_guard "$id" "$name" adopt "$collar"
+  usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
+  auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   tmux set-option -w -t "$id" automatic-rename off
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_collar "$collar"
   stamp_binary_id "$id"
   spool_mint "$id"
-  usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
-  auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi

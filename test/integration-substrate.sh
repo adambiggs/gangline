@@ -318,6 +318,30 @@ equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
 
+# A REFUSAL MUST PRECEDE ADOPTION'S FIRST MUTATION. These settings are stamped
+# only after the window becomes an agent, but their parsers can reject the
+# operator's configuration. Rejecting one after registration says adoption
+# failed while leaving a named agent and a fresh spool identity behind.
+adopt_invalid_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-invalid "PS1='❯ ' bash --norc")"
+equal "the refused-adopt fixture is a live unregistered window" \
+  "$adopt_invalid_id|0" \
+  "$(tmux display-message -p -t "$adopt_invalid_id" '#{window_id}|#{pane_dead}')"
+adopt_invalid_before="$(tmux show-options -wv -t "$adopt_invalid_id")"
+refuses "adopt validates provider-usage lights before changing the window" \
+  "GANG_USAGE_LIGHTS must increase from yellow to red" \
+  env GANG_USAGE_LIGHTS=95%,90% "$GANG" adopt adopt-invalid -c bash
+equal "a refused provider-usage setting leaves every window option unchanged" \
+  "$adopt_invalid_before" \
+  "$(tmux show-options -wv -t "$adopt_invalid_id")"
+refuses "adopt validates automatic resume before changing the window" \
+  "GANG_AUTO_RESUME must be off or one percentage" \
+  env GANG_AUTO_RESUME=90 "$GANG" adopt adopt-invalid -c bash
+equal "a refused automatic-resume setting leaves every window option unchanged" \
+  "$adopt_invalid_before" \
+  "$(tmux show-options -wv -t "$adopt_invalid_id")"
+tmux kill-window -t "$adopt_invalid_id"
+
 # THE OPERATOR-FACING HALF of the clipped-composer reading. A box that outgrew
 # its pane is drawn and is taking input; what it lacks is room to render. Naming
 # that a harness which never drew a box sends the reader after the wrong thing,
