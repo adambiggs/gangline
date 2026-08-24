@@ -2570,6 +2570,7 @@ commit_msg_verdict() { # $1 = whole message
   out="$("$ROOT/.githooks/commit-msg" "$msg_file" 2>&1)" || rc=$?
   [ "$rc" -eq 0 ] && { printf 'accepted'; return 0; }
   case "$out" in
+    *'does not create a blank line'*) printf 'refused-escape' ;;
     *'not a footer'*) printf 'refused-placement' ;;
     *'no BREAKING CHANGE: footer'*) printf 'refused-footer' ;;
     *) printf 'refused-other' ;;
@@ -2599,6 +2600,25 @@ BREAKING-CHANGE: callers must pass --to.
 ')"
 equal "and a nonbreaking subject still needs no footer" \
   "accepted" "$(commit_msg_verdict 'fix(spool): ordinary change
+')"
+# `git commit -m` DOES NOT INTERPRET ESCAPES. The doubled form has repeatedly
+# landed where a real blank line was intended. Refuse exactly that form while
+# retaining a single backslash-n used as quoted technical prose.
+equal "and refuses a doubled newline escape stored as prose" \
+  "refused-escape" \
+  "$(commit_msg_verdict 'fix(test): malformed body\n\nProof: test/gate.sh
+')"
+equal "and accepts a single newline escape in technical prose" \
+  "accepted" \
+  "$(commit_msg_verdict 'fix(test): document the shell newline
+
+The fixture runs printf "high\n".
+')"
+equal "and ignores a doubled newline escape in a git comment" \
+  "accepted" \
+  "$(commit_msg_verdict 'fix(test): ordinary change
+
+# Template example: body\n\nfooter
 ')"
 # A FOOTER IS A PLACE. Glued to the end of a paragraph it is a sentence that
 # begins with those words: `git interpret-trailers` does not see it, and the

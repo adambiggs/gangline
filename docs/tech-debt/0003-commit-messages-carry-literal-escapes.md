@@ -1,6 +1,6 @@
 # TD-0003: commit messages carry literal escape sequences the gate does not read
 
-- **Status:** Open
+- **Status:** Resolved 2026-08-24
 - **Date:** 2026-08-21
 - **Scope:** `.githooks/commit-msg`, and the history it has already accepted
 
@@ -41,3 +41,10 @@ If the gate takes this, it refuses the doubled form only, and its refusal names
 the cause rather than the shape: `-m` does not interpret escapes, so the message
 wants `-F` or a heredoc. Widening it to a single `\n` needs a way to tell quoted
 text from prose, which the four commits above show the gate does not have.
+
+## Resolution
+
+The commit-message gate now refuses the doubled form on stored message lines
+and explains that `-m` does not interpret escapes. Git comments remain
+transparent, and a regression guard preserves legitimate single `\n` in
+technical prose. Existing history was not rewritten.

@@ -34,6 +34,32 @@ case "$subject" in
   "Merge "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
 esac
 
+# `git commit -m` stores its argument verbatim. A doubled backslash-n therefore
+# does not make the blank line its author intended; it publishes both escape
+# sequences instead. A single one can be legitimate quoted shell prose, so the
+# refusal is deliberately no wider. Git comments are excluded because cleanup
+# removes them before storing the message.
+erc=0
+escape_line="$(awk '
+  /^[[:space:]]*#/ { next }
+  index($0, "\\n\\n") { print NR; exit }
+' "$1")" || erc=$?
+if [ "$erc" -ne 0 ]; then
+  echo "commit-msg: cannot read the message file ($1): awk exited $erc" >&2
+  exit 1
+fi
+if [ -n "$escape_line" ]; then
+  cat >&2 <<EOF
+commit-msg: literal \\n\\n does not create a blank line (line $escape_line)
+
+  ${subject}
+
+Git stores a -m argument verbatim; it does not interpret backslash escapes.
+Use -F or a heredoc so the message contains real line breaks.
+EOF
+  exit 1
+fi
+
 types='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
 if printf '%s' "$subject" | grep -qE "^(${types})(\([a-z0-9._-]+\))?!?: .+"; then
   # `!` is a promise to callers, and the footer is the only part of it they can
