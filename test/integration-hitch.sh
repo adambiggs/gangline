@@ -727,6 +727,7 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 
 mkdir -p "$CONFIG_CASES/bad-file-value" "$CONFIG_CASES/bad-env-value"
 printf '%s\n' 'GANG_BOOT_TIMEOUT=abc' > "$CONFIG_CASES/bad-file-value/config"
+bad_file_windows_before="$(window_names)"
 if bad_file_out="$(env -u GANG_BOOT_TIMEOUT GANG_CONFIG_DIR="$CONFIG_CASES/bad-file-value" \
   "$GANG" hitch config-bad-file -c bash -d /tmp 2>&1)"; then
   fail "a bad configured value is blamed on its file line" \
@@ -735,7 +736,9 @@ else
   contains "a bad configured value is blamed on its file line" \
     "$bad_file_out" "from $CONFIG_CASES/bad-file-value/config line 1"
 fi
-tmux kill-window -t "=$GANG_SESSION:config-bad-file" 2>/dev/null || true
+equal "a bad configured startup budget opens no window" \
+  "$bad_file_windows_before" "$(window_names)"
+bad_env_windows_before="$(window_names)"
 if bad_env_out="$(GANG_BOOT_TIMEOUT=abc GANG_CONFIG_DIR="$CONFIG_CASES/bad-env-value" \
   "$GANG" hitch config-bad-env -c bash -d /tmp 2>&1)"; then
   fail "a bad environment value is blamed on the environment" \
@@ -744,7 +747,15 @@ else
   contains "a bad environment value is blamed on the environment" \
     "$bad_env_out" "from the environment"
 fi
-tmux kill-window -t "=$GANG_SESSION:config-bad-env" 2>/dev/null || true
+equal "a bad environment startup budget opens no window" \
+  "$bad_env_windows_before" "$(window_names)"
+
+bad_gate_windows_before="$(window_names)"
+refuses "a bad gate-observation budget is refused" \
+  "GANG_GATE_LOOKS must be a whole number of observations" \
+  env GANG_GATE_LOOKS=many "$GANG" hitch config-bad-gate -c bash -d /tmp
+equal "a bad gate-observation budget opens no window" \
+  "$bad_gate_windows_before" "$(window_names)"
 
 mkdir -p "$CONFIG_CASES/missing-collar"
 printf '%s\n' 'GANG_COLLAR=no-such-collar' > "$CONFIG_CASES/missing-collar/config"

@@ -4942,7 +4942,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0
-  local lights=""
+  local lights="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
@@ -4960,6 +4960,11 @@ cmd_hitch() {
   if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
+  # These settings can refuse a hitch, so validate them before its first tmux
+  # mutation. Checking them only at the read site leaves a registered agent
+  # behind after reporting that the hitch failed.
+  require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  require_whole GANG_GATE_LOOKS "$gate_looks" observations
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
   ! test_only_collar "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
@@ -5139,12 +5144,7 @@ cmd_hitch() {
   msg="$(startup_brief "$name" "$DOCTRINE")"
   echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
-  local ready=0 boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}" recovery
-  require_whole GANG_BOOT_TIMEOUT "$boot" seconds
-  # Validated on every hitch rather than inside the gated branch alone: a
-  # setting only checked on the rare path is one an operator finds is wrong at
-  # the worst moment.
-  require_whole GANG_GATE_LOOKS "$gate_looks" observations
+  local ready=0 recovery
   wait_ready "$id" "$boot" "$name" || ready=$?
   recovery="most likely a first-run prompt gang does not recognize. Answer it with 'gang attach'; once the input box appears the agent is healthy — deliver its contract with 'gang send --to $name' rather than dropping it. Drop and re-hitch only if the box never appears."
   case "$ready" in
