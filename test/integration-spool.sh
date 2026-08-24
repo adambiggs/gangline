@@ -718,6 +718,7 @@ fi
 impostor_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n impostor "PS1='❯ ' bash --norc")"
 tmux set-option -w -t "$impostor_id" @gl_spool "$reserving_token"
+impostor_before="$(tmux show-options -wv -t "$impostor_id")"
 if impostor_out="$("$GANG" adopt impostor -c spoolable 2>&1)"; then
   fail "adopting a window carrying another agent's spool identity is refused" \
     "adopt reported success"
@@ -726,6 +727,8 @@ else
 fi
 contains "naming the identity that is already held" "$impostor_out" \
   "$reserving_token"
+equal "a colliding spool refusal leaves the window unadopted" \
+  "$impostor_before" "$(tmux show-options -wv -t "$impostor_id")"
 equal "and the agent that holds it keeps it" "$reserving_token" \
   "$(tmux show-options -wqv -t "$(window_id reserving)" @gl_spool)"
 [ -d "$GANG_LOCK_DIR/spool/$reserving_token" ] \
@@ -733,12 +736,15 @@ equal "and the agent that holds it keeps it" "$reserving_token" \
   || fail "with its reservation untouched by the refusal" \
     "$GANG_LOCK_DIR/spool/$reserving_token is gone"
 tmux set-option -w -t "$impostor_id" @gl_spool '../escaped'
+impostor_before="$(tmux show-options -wv -t "$impostor_id")"
 if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
   fail "a spool identity that is not one gang minted is refused before it is a path" \
     "adopt reported success"
 else
   pass "a spool identity that is not one gang minted is refused before it is a path"
 fi
+equal "an invalid spool refusal leaves the window unadopted" \
+  "$impostor_before" "$(tmux show-options -wv -t "$impostor_id")"
 [ ! -e "$GANG_LOCK_DIR/spool/../escaped" ] \
   && pass "and nothing was created outside the spool root" \
   || fail "and nothing was created outside the spool root" \
@@ -751,12 +757,15 @@ fi
 # identity is taken rather than where the mail arrives.
 ln -s "$RUN_ROOT" "$GANG_LOCK_DIR/spool/deadbeef"
 tmux set-option -w -t "$impostor_id" @gl_spool deadbeef
+impostor_before="$(tmux show-options -wv -t "$impostor_id")"
 if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
   fail "a spool identity whose path is a link is not a reservation" \
     "adopt reported success"
 else
   pass "a spool identity whose path is a link is not a reservation"
 fi
+equal "a linked spool refusal leaves the window unadopted" \
+  "$impostor_before" "$(tmux show-options -wv -t "$impostor_id")"
 [ -L "$GANG_LOCK_DIR/spool/deadbeef" ] \
   && pass "and the refusal did not replace the link it refused on" \
   || fail "and the refusal did not replace the link it refused on" \
