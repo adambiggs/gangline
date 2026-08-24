@@ -1122,3 +1122,14 @@ Gangline does not answer native dialogs. A screen matching
 `GANG_OCCUPIED_REGEX` is occupied whoever drew it: `status` and `roster` report
 `!occupied! (authority unknown)`, delivery refuses and parks, and `hitch` keeps
 waiting and names the prompt for the operator. Answering one is `gang attach`.
+
+A collar may refuse its own launch. Where the harness can be asked, before it
+starts, whether it is about to gate its own boot on such a dialog, the collar
+composes that check into its launch command and exits non-zero rather than
+opening a window that will wait on a person. `hitch` reports it as a launch that
+died and quotes the last line of its pane, so the check states its remediation
+there; a check whose refusal must outlive the pane holds the corpse with
+`remain-on-exit`, and `gang drop` clears it. Codex's collar does this for the
+native hooks-review gate its own hooks raise. Such a check reads state and
+refuses; it never grants a native trust or answers a dialog on the operator's
+behalf.

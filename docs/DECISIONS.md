@@ -1299,3 +1299,54 @@ message no surface named. The filename already carries the writing pid, so the
 question "is this a casualty or a send from a moment ago" is answered by asking
 whether that process still answers — the same evidence the delivery lock already
 trusts about its own holder.
+
+## A harness with no hook command still has a session identity
+
+Gangline learns a native session id only from a hook payload, so a collar whose
+harness ships no hook command can never stamp one. `drop` then reports UNSTAMPED
+after the conversation is already gone, and every agent on that harness is
+unresumable — a fact the operator needed at hitch time, when the harness was
+chosen.
+
+Where the harness says its id somewhere else, the collar carries it out from
+there. OpenCode's plugin bus is such a place: the collar composes a plugin into
+its launch the way its siblings compose native hooks, and the plugin turns
+session events into the one payload that stamps identity.
+
+What a collar carries out this way claims nothing further. The payload is shaped
+as an event the collar gives no other meaning, so identity is recorded and no
+turn bracket opens that no event would close; a collar that cannot witness turn
+boundaries still declares no Stop hook. A stamp is an identity, not a way back,
+and the two halves stay separately earned.
+
+## A prompt the harness draws into an empty box is not a human's line
+
+A composer carrying the harness's own suggestion is empty. Returning that
+suggestion as composer contents makes Gangline see a half-written line, refuse
+to paste into it, and leave a freshly hitched agent registered, running, and
+unreachable.
+
+Recognising one is pinned copy paired with the position it must hold, not a
+colour: a theme chooses colours, the harness chooses words. Pinned copy fails
+safe — a reworded prompt stops matching and the collar reports a draft again,
+which refuses delivery. Nothing here may turn a line somebody is typing into an
+empty box.
+
+## A collar refuses a launch it can see will stop on a native gate
+
+Gangline does not answer native dialogs, and `hitch` behaves correctly when one
+appears: the screen is occupied, delivery parks, and the prompt is named for a
+person. What that costs is a boot spent to learn something knowable beforehand.
+
+Where a harness will answer, before it starts, whether it is about to gate its
+own boot, the collar asks and refuses the launch instead — naming what is
+ungated and the exact native command that clears it. Codex answers this about
+its hook trust through its app-server, under the same overrides the launch will
+use, so nothing reproduces its hash algorithm or reads its trust records behind
+its back.
+
+The refusal grants nothing. Trust decides what may run outside the sandbox and
+stays the operator's; the remediation is the operator answering the native menu
+once. A state the collar cannot read is refused as well: launching blind would
+restore the stall the check exists to remove, and a gate that quietly degrades
+while it is believed to hold is the worse failure.
