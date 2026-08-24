@@ -2622,6 +2622,90 @@ bricked() { # $1 window, collar loaded; 0 fatal, 1 absent, 2 unknown
   esac
 }
 
+# WHAT AN AGENT HAS ACTUALLY DONE, AS TWO AGES AND NO VERDICT. A delivery can be
+# verified into a pane and a turn can open and close without the recipient ever
+# running a command; roster read healthy through three hours of exactly that.
+# The two facts that separate a working agent from a talking one are when it
+# last ran a tool and when its terminal last moved, and neither is a health
+# state: a long build and a wedge both go quiet, so gang prints the ages and
+# leaves the judgement to the reader. What gang will not do is let a source it
+# could not read pass as an agent that has done nothing.
+ACTION_KIND=""   # at | before | none | unknown
+ACTION_AGE=""    # seconds, when ACTION_KIND is at or before
+ACTION_WHAT=""   # the collar's reason, when ACTION_KIND is unknown
+
+last_action_read() { # $1 window, collar loaded; ACTION_* set, never fatal
+  local output="" rc=0 kind stamp now
+  ACTION_KIND=unknown ACTION_AGE="" ACTION_WHAT="this collar declares no tool-call source"
+  declare -F collar_last_action >/dev/null || return 0
+  output="$(collar_last_action "$1")" || rc=$?
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0) ;;
+    1) ACTION_KIND=none ACTION_WHAT=""
+       [ -z "$output" ] \
+         || die "collar_last_action in $GANG_COLLAR_FILE printed '$output' while reporting no tool call"
+       return 0 ;;
+    2) ACTION_KIND=unknown
+       [ -n "$output" ] \
+         || die "collar_last_action in $GANG_COLLAR_FILE reported unknown without a reason"
+       ACTION_WHAT="$output"
+       return 0 ;;
+    *) die "collar_last_action in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+  read -r kind stamp <<<"$output"
+  case "$kind" in
+    at|before) ;;
+    *) die "collar_last_action in $GANG_COLLAR_FILE answered '$output', which names neither 'at' nor 'before'" ;;
+  esac
+  case "$stamp" in
+    ''|*[!0-9]*) die "collar_last_action in $GANG_COLLAR_FILE answered '$output', whose time is not a whole number of seconds" ;;
+  esac
+  now="$(date +%s)"
+  # A SOURCE STAMPED IN THE FUTURE IS NOT AN AGENT THAT ACTED A MOMENT AGO. The
+  # clock disagreement is the finding; consuming it as a fresh tool call would
+  # report the healthiest possible reading from the least trustworthy evidence.
+  [ "$stamp" -le "$now" ] || {
+    ACTION_KIND=unknown
+    ACTION_WHAT="the collar timed the last tool call $(( stamp - now ))s in the future"
+    return 0
+  }
+  ACTION_KIND="$kind"
+  ACTION_AGE=$(( now - stamp ))
+}
+
+pane_write_age() { # $1 = window id; seconds since the pty last moved; 1 = unreadable
+  local stamped now
+  stamped="$(tmux display-message -p -t "$1" '#{window_activity}' 2>/dev/null)" || return 1
+  case "$stamped" in ''|*[!0-9]*) return 1 ;; esac
+  now="$(date +%s)"
+  [ "$stamped" -le "$now" ] || return 1
+  printf '%s' $(( now - stamped ))
+}
+
+compact_seconds() { # $1 = seconds -> the same reading with no spaces in it
+  local out
+  out="$(human_seconds "$1")"
+  printf '%s' "${out// /}"
+}
+
+action_detail() { # $1 = window, collar loaded -> roster tokens for its evidence
+  local age
+  last_action_read "$1"
+  case "$ACTION_KIND" in
+    at) printf 'last-tool=%s' "$(compact_seconds "$ACTION_AGE")" ;;
+    before) printf 'last-tool>%s' "$(compact_seconds "$ACTION_AGE")" ;;
+    none) printf 'last-tool=none' ;;
+    # THE PANE CLOCK ONLY WHERE IT IS THE LAST EVIDENCE LEFT. tmux's activity
+    # stamp moves for a spinner as readily as for work, so it is not shown
+    # beside a tool-call age it would only dilute. Where the collar could not
+    # answer, it is the whole of what gang has.
+    *) age="$(pane_write_age "$1")" \
+         && printf 'last-tool=? last-write=%s' "$(compact_seconds "$age")" \
+         || printf 'last-tool=? last-write=?' ;;
+  esac
+}
+
 pane_stable() { # $1 = window id; screen byte-identical across two captures ≈ quietly idle
   local a b
   require_interval GANG_CHURN_WAIT "$GANG_CHURN_WAIT"
@@ -7039,6 +7123,26 @@ cmd_wait() {
   done
 }
 
+action_status_report() { # $1 window, collar loaded; both ages, in full, with reasons
+  local write
+  last_action_read "$1"
+  case "$ACTION_KIND" in
+    at) printf '%s\n' "$(colour "$C_DIM" "last tool call: $(human_seconds "$ACTION_AGE") ago")" ;;
+    before) printf '%s\n' "$(colour "$C_DIM" "last tool call: more than $(human_seconds "$ACTION_AGE") ago (older than the records gang read back)")" ;;
+    none) printf '%s\n' "$(colour "$C_WORK" "last tool call: none — this agent has not run a tool in the source gang can read")" ;;
+    *) printf '%s\n' "$(colour "$C_BAD" "last tool call: UNKNOWN — $ACTION_WHAT")" ;;
+  esac
+  if write="$(pane_write_age "$1")"; then
+    printf '%s\n' "$(colour "$C_DIM" "last pane write: $(human_seconds "$write") ago")"
+  else
+    printf '%s\n' "$(colour "$C_BAD" "last pane write: UNKNOWN — tmux gave no usable activity stamp for this pane")"
+  fi
+  # NEITHER AGE IS A HEALTH VERDICT, and saying so here is cheaper than an
+  # operator inferring one. A tool a long time ago is a wedge or a long build;
+  # only the reader knows which.
+  printf '%s\n' "$(colour "$C_DIM" "  (evidence of action, not of health: a long-running tool and a stalled agent both go quiet)")"
+}
+
 paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
     '!occupied!'*) colour "$C_BAD" "$1" ;;
@@ -7140,6 +7244,7 @@ cmd_status() {
   resolve "$name"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
+  action_status_report "$AGENT_ID"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
   [ -z "$self_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")"
@@ -7477,6 +7582,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   [ -z "$(parked_current "$1")" ] || detail="$detail parked"
   [ -z "$(self_compact_failed_read "$1")" ] \
     || detail="$detail self-compact-failed"
+  detail="$detail $(action_detail "$1")"
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
     detail="$detail spooled=$spooled"

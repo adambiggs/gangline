@@ -1246,7 +1246,110 @@ equal "a real turn after a broken stream clears the fatal verdict" \
       printf "%s\t%s" "$rc" "$output"
     ' fixture "$claude_collar")"
 
+# EVIDENCE OF ACTION. A wedged agent keeps talking, so text and thinking blocks
+# are not action and a tool_use block is; the four verdicts below are the four
+# things gang is allowed to say about it, and none of them is a health state.
+claude_action_read() { # $1 = transcript path
+  CLAUDE_TRANSCRIPT="$1" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_last_action fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar"
+}
+claude_acted="$RUN_ROOT/claude-acted.jsonl"
+cat > "$claude_acted" <<'JSONL'
+{"type":"assistant","isSidechain":false,"timestamp":"2026-08-24T10:00:00.000Z","message":{"content":[{"type":"tool_use","name":"Bash","input":{}}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-08-24T10:05:00.000Z","message":{"content":[{"type":"text","text":"done"}]}}
+JSONL
+equal "a witnessed tool call is reported at its own time" \
+  $'0\tat 1787565600' "$(claude_action_read "$claude_acted")"
+
+# THE WEDGE ITSELF: an agent that answered twice, in words, and ran nothing.
+claude_wedged="$RUN_ROOT/claude-wedged.jsonl"
+cat > "$claude_wedged" <<'JSONL'
+{"type":"user","isSidechain":false,"timestamp":"2026-08-24T10:00:00.000Z","message":{"role":"user","content":"reproduce the issue"}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-08-24T10:00:05.000Z","message":{"content":[{"type":"text","text":"I will reproduce the issue."}]}}
+{"type":"assistant","isSidechain":false,"timestamp":"2026-08-24T13:56:29.000Z","message":{"content":[{"type":"thinking","thinking":"considering"},{"type":"text","text":"Building the reproduction."}]}}
+JSONL
+equal "an agent that only talked reports no tool call at all" \
+  $'1\t' "$(claude_action_read "$claude_wedged")"
+
+# UNKNOWN IS NOT NONE. A window with no bound transcript has taken no reading;
+# reporting that as an agent which has never acted would invent the finding.
+equal "an unbound window is unknown rather than inactive" \
+  $'2\tno Claude transcript is bound to this window yet' \
+  "$(claude_action_read "$RUN_ROOT/claude-never-written.jsonl")"
+claude_action_garbage="$RUN_ROOT/claude-action-garbage.jsonl"
+printf 'this is not a record\n' > "$claude_action_garbage"
+equal "an unreadable transcript is unknown rather than inactive" \
+  $'2\tbound Claude transcript is unreadable' \
+  "$(claude_action_read "$claude_action_garbage")"
+
+# THE SCAN BOUND IS ANSWERED AS A BOUND. Past it the reader may say the newest
+# tool call is older than the oldest record it read, and may not say there is
+# none: the difference is a claim about the whole session it did not make.
+claude_action_bounded="$RUN_ROOT/claude-action-bounded.jsonl"
+python3 - "$claude_action_bounded" <<'PY'
+import json, sys
+rows = [json.dumps({
+    "type": "assistant", "isSidechain": False,
+    "timestamp": "2026-08-24T09:00:00.000Z",
+    "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]},
+})]
+rows += [json.dumps({
+    "type": "assistant", "isSidechain": False,
+    "timestamp": "2026-08-24T10:00:00.000Z",
+    "message": {"content": [{"type": "text", "text": "talking"}]},
+}) for _ in range(2500)]
+with open(sys.argv[1], "w") as out:
+    out.write("\n".join(rows) + "\n")
+PY
+equal "a tool call past the scan bound is reported as a bound" \
+  $'0\tbefore 1787565600' "$(claude_action_read "$claude_action_bounded")"
+
 codex_collar="$ROOT/collars/codex.sh"
+
+# CODEX NAMES ITS TOOL CALLS IN MORE THAN ONE WAY. The rollout that started
+# issue #150 was read as having no tool calls because only `function_call` was
+# counted; the calls in it are `custom_tool_call`. Both families are asserted
+# here so that reading can never regress to one of them, and a third, unknown
+# family is asserted to be reported by name rather than silently counted as
+# inaction — the direction that would make a working agent look wedged.
+codex_action_read() { # $1 = rollout path
+  CODEX_ROLLOUT="$1" ROOT="$ROOT" GANG_TEST_COLLARS='' bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CODEX_ROLLOUT"; }
+    output="$(collar_last_action fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$codex_collar"
+}
+for codex_action_family in function_call custom_tool_call local_shell_call; do
+  codex_action_rollout="$RUN_ROOT/codex-action-$codex_action_family.jsonl"
+  # source-guard: the fixture is the native rollout record shape — a
+  # response_item envelope with its own timestamp and a payload naming the call
+  printf '{"type":"response_item","timestamp":"2026-08-24T10:00:00.000Z","payload":{"type":"%s"}}\n' \
+    "$codex_action_family" > "$codex_action_rollout"
+  equal "codex reports a $codex_action_family as a tool call" \
+    $'0\tat 1787565600' "$(codex_action_read "$codex_action_rollout")"
+done
+codex_action_talking="$RUN_ROOT/codex-action-talking.jsonl"
+cat > "$codex_action_talking" <<'JSONL'
+{"type":"response_item","timestamp":"2026-08-24T10:00:00.000Z","payload":{"type":"reasoning"}}
+{"type":"response_item","timestamp":"2026-08-24T10:00:05.000Z","payload":{"type":"message"}}
+JSONL
+equal "a codex agent that only reasoned and spoke reports no tool call" \
+  $'1\t' "$(codex_action_read "$codex_action_talking")"
+codex_action_new="$RUN_ROOT/codex-action-new-family.jsonl"
+printf '{"type":"response_item","timestamp":"2026-08-24T10:00:00.000Z","payload":{"type":"brand_new_call"}}\n' \
+  > "$codex_action_new"
+equal "an unrecognized codex call family is named, not counted as inaction" \
+  $'2\tthis codex rollout records a call family gang does not read: brand_new_call' \
+  "$(codex_action_read "$codex_action_new")"
+equal "a codex window with no bound rollout is unknown rather than inactive" \
+  $'2\tno codex rollout is bound to this window yet' \
+  "$(codex_action_read "$RUN_ROOT/codex-never-written.jsonl")"
+
 codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"
 equal "the Codex collar keeps native compaction" "/compact" "$codex_compact"

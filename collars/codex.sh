@@ -426,6 +426,91 @@ print(f"{round(used / 1000)}k/{round(win / 1000)}k ({pct}%)")
 ' "$1" || die "unreadable codex context in $1"
 }
 
+# EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. Codex records each tool
+# call as a response_item whose payload type names the call family. Two families
+# are in the rollouts this was built against — function_call and
+# custom_tool_call — and a build that adds a third would otherwise make an agent
+# that is working look like one that has never acted. So a call-shaped payload
+# this does not recognize is reported as unknown by name, never counted and
+# never ignored.
+codex_action_read() { # $1 = rollout path
+  python3 -c '
+import datetime, json, sys
+
+BOUND = 2000
+KNOWN = {"function_call", "custom_tool_call", "local_shell_call"}
+
+def newest_lines(path):
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        carry = b""
+        while pos:
+            size = min(65536, pos)
+            pos -= size
+            f.seek(pos)
+            parts = (f.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            yield from reversed(parts[1:])
+        if carry:
+            yield carry
+
+def epoch(rec):
+    stamp = rec.get("timestamp")
+    if not isinstance(stamp, str) or not stamp:
+        raise ValueError("record carries no readable timestamp")
+    text = stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp
+    return int(datetime.datetime.fromisoformat(text).timestamp())
+
+scanned = 0
+oldest = None
+try:
+    for raw in newest_lines(sys.argv[1]):
+        if not raw.strip():
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue
+        if not isinstance(rec, dict) or rec.get("type") != "response_item":
+            continue
+        payload = rec.get("payload") or {}
+        kind = payload.get("type") if isinstance(payload, dict) else None
+        scanned += 1
+        if isinstance(kind, str) and kind in KNOWN:
+            print(f"at {epoch(rec)}")
+            sys.exit(0)
+        if isinstance(kind, str) and kind.endswith("_call") and kind not in KNOWN:
+            print(f"this codex rollout records a call family gang does not read: {kind}")
+            sys.exit(2)
+        oldest = rec
+        if scanned >= BOUND:
+            break
+except (OSError, UnicodeError, ValueError, OverflowError):
+    print("bound codex rollout is unreadable")
+    sys.exit(2)
+
+if scanned >= BOUND and oldest is not None:
+    try:
+        print(f"before {epoch(oldest)}")
+    except ValueError:
+        print("bound codex rollout is unreadable")
+        sys.exit(2)
+    sys.exit(0)
+sys.exit(1)
+' "$1"
+}
+
+collar_last_action() { # $1 target -> "at <epoch>" | "before <epoch>";
+                       # 0 printed, 1 = no tool call in the source, 2 = unknown
+  local file
+  file="$(codex_session_file "$1")" || {
+    printf 'no codex rollout is bound to this window yet'
+    return 2
+  }
+  codex_action_read "$file"
+}
+
 collar_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
   local file
   file="$(codex_session_file "$1")" \

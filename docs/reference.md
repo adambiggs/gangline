@@ -669,6 +669,24 @@ refuses delivery rather than falling through to the empty-box check. A harness
 can paint the opening of a turn with its composer still empty, so an empty box
 read out of a moving screen does not witness an idle target.
 
+Under the state, `status` prints two ages and no verdict on them: when the
+harness last recorded a tool call, and when the pane was last written to. A
+delivery can be verified into a pane and a turn can open and close without the
+recipient running a single command, and neither the state nor delivery
+verification can see that. The tool-call reading has four outcomes and they are
+kept apart: an age, `more than <age>` when a scan bound was reached first, `none`
+when the source was read whole and holds no tool call, and `UNKNOWN` with the
+reason when no reading could be taken. A collar that declares no source is
+`UNKNOWN`, never `none`. A source stamped in the future is `UNKNOWN` naming the
+clock disagreement rather than a tool call a moment ago.
+
+Neither age is a health state and `status` says so. A long-running tool and a
+stalled agent both go quiet; which one this is belongs to the reader.
+
+`roster` carries the same tool-call reading as `last-tool=<age>`,
+`last-tool><age>`, `last-tool=none`, or `last-tool=?`. The pane-write age
+appears on a row only in the last of those, where it is the only evidence left.
+
 An undelivered-input report is followed by a `box:` line classifying what is in
 that box now, in the same vocabulary a refusal uses. The record says what
 Gangline did; the `box:` line says what is there at reading time.
@@ -1075,6 +1093,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |
+| `collar_last_action target` | optional; print `at <epoch>` for the newest tool call the harness recorded, or `before <epoch>` when a scan bound was reached first and the newest call is older than that time. Return 0 having printed one of those, 1 with no output when the source holds no tool call at all, or print a reason and return 2 when no reading could be taken. A collar that does not declare it leaves the reading unknown, which is a distinct answer from an agent that has run nothing |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |

@@ -947,7 +947,8 @@ for dialog_case in known trust; do
   dialog_start "dialog-$dialog_case" "$dialog_case" dialog
   dialog_before="$(pane "dialog-$dialog_case")"
   equal "a $dialog_case menu is occupancy of unknown authority" \
-    "!occupied! (authority unknown)" "$("$GANG" status "dialog-$dialog_case")"
+    "!occupied! (authority unknown)" \
+    "$("$GANG" status "dialog-$dialog_case" | sed -n '1p')"
   dialog_live_rc=0
   dialog_live_out="$(printf 'DIALOG_BODY_REACHED' | "$GANG" send \
     --to "dialog-$dialog_case" --from tester --live-only --stdin 2>&1)" \
@@ -998,7 +999,8 @@ fi
 contains "the captured harness frame is what is on screen" \
   "$(pane dialog-external)" "Yes, allow external imports"
 equal "and the shipped Claude occupancy regex reads it as occupancy" \
-  "!occupied! (authority unknown)" "$("$GANG" status dialog-external)"
+  "!occupied! (authority unknown)" \
+  "$("$GANG" status dialog-external | sed -n '1p')"
 dialog_external_rc=0
 dialog_external_out="$(printf 'DIALOG_BODY_EXTERNAL' | "$GANG" send \
   --to dialog-external --from tester --live-only --stdin 2>&1)" \
@@ -1037,7 +1039,7 @@ contains "the auto-mode NUX is painted over the fixture composer" \
   "$(pane dialog-auto-nux)" "Teach auto mode about your environment?"
 equal "the hookless NUX over a composer is occupied rather than idle" \
   "!occupied! (authority unknown)" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux | sed -n '1p')"
 equal "roster does not advertise the stranded slot as free" "occupied" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster --porcelain \
     | awk -F '\t' '$1 == "dialog-auto-nux" { print $3 }')"
@@ -1062,7 +1064,7 @@ GANG_BUSY_REGEX='Claude Code reads this project'
 SH
 tmux set-option -w -t "$(window_id dialog-auto-nux)" @gl_collar dialog-claude-busy
 equal "a dialog that also paints busy remains busy rather than idle" "-busy-" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status dialog-auto-nux | sed -n '1p')"
 equal "busy-dialog observation sends no key either" "" \
   "$(<"$RUN_ROOT/dialog-auto-nux.keys")"
 "$GANG" drop dialog-auto-nux >/dev/null

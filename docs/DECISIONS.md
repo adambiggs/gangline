@@ -1350,6 +1350,30 @@ stays the operator's; the remediation is the operator answering the native menu
 once. A state the collar cannot read is refused as well: launching blind would
 restore the stall the check exists to remove, and a gate that quietly degrades
 while it is believed to hold is the worse failure.
+## Evidence of action is two ages and no verdict
+
+A verified delivery proves text reached a pane; a turn bracket proves a turn
+opened and closed. Neither proves the recipient did anything, and an agent that
+answers in words and runs nothing satisfies both. So `roster` and `status` carry
+the age of the last tool call the harness recorded, and the age of the last write
+to the pane where that is the only evidence left.
+
+They are not collapsed into a health state. A long build and a wedge both go
+quiet, so any threshold gang picked would be gang's judgement wearing the
+harness's authority. The four tool-call answers are kept apart instead — an age,
+a bound when a scan limit was reached first, `none` for a source read whole with
+no tool call in it, and unknown with a reason — because `none` is a claim about
+the session and unknown is a claim about the instrument.
+
+## A tool call is a family of record types, not one name
+
+The rollout that started this was read as having no tool calls because only
+`function_call` was counted; every call in it was a `custom_tool_call`. A closed
+list that silently misses a family reports a working agent as one that has never
+acted. Each collar therefore recognizes the families it has seen, and reports a
+call-shaped record outside them by name as unknown — loud, in the direction that
+cannot fabricate either verdict.
+
 ## A dead response stream is told apart by its missing status, not its sentence
 
 Claude Code ends a turn killed mid-stream with a synthetic assistant record

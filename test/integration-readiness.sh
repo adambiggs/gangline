@@ -347,7 +347,7 @@ fossil_bracket="open $(( $(date +%s) - 400 ))"
 tmux set-option -w -t "$(window_id fossil)" @gl_turn "$fossil_bracket"
 # Positive control: recent pty activity preserves painted busy — the
 # demotion must not fire while the pty leg credits the fresh paint.
-fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil | head -1)"
+fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil | sed -n '1p')"
 equal "recent pty activity keeps the busy verdict itself, not its explanation" \
   "-busy-" "$fossil_active"
 if printf 'MARK_ACTIVE' | GANG_ACTIVITY_WINDOW=100000 \
@@ -403,10 +403,10 @@ tmux set-option -w -t "$(window_id abandoned)" @gl_turn "$abandoned_bracket"
 # still-bounded turn changes, however ready the pane looks.
 equal "an unexpired bracket over the same quiet box is still a live turn" \
   "-busy-" \
-  "$(GANG_TURN_LIMIT=100000 GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+  "$(GANG_TURN_LIMIT=100000 GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | sed -n '1p')"
 equal "an abandoned turn decays to idle once its bracket expires" \
   "~idle~" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | sed -n '1p')"
 contains "roster's snapshot decays with it — reading the box costs no churn wait" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "~idle~"
 # Not a free pass over anything the box refutes: a draft sitting in the composer
@@ -415,13 +415,13 @@ contains "roster's snapshot decays with it — reading the box costs no churn wa
 tmux send-keys -l -t "$(window_id abandoned)" 'half a thought'
 equal "a drafted box refuses the decay" \
   "?unknown? (turn-bracket bound reached)" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | sed -n '1p')"
 contains "roster's snapshot refuses it on the same evidence" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^abandoned ')" "?unknown?"
 tmux send-keys -t "$(window_id abandoned)" C-u
 equal "clearing the draft restores the decayed verdict" \
   "~idle~" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status abandoned | sed -n '1p')"
 # Quiet must be MEASURED, never assumed. Hold the activity-only bound open past
 # its limit with the pty credited as recent: the activity tier then reports
 # could-not-determine, and an unknown tier cannot witness readiness.
@@ -429,7 +429,7 @@ tmux set-option -w -t "$(window_id abandoned)" @gl_activity_only_since \
   "$(( $(date +%s) - 400 ))"
 equal "an unmeasurable pty keeps the answer could-not-determine" \
   "?unknown? (turn-bracket bound reached)" \
-  "$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status abandoned | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status abandoned | sed -n '1p')"
 tmux set-option -uw -t "$(window_id abandoned)" @gl_activity_only_since
 # The decay widens nothing: this send already landed through the
 # could-not-determine fall-through, and the bracket is still not a reader's to
@@ -457,7 +457,7 @@ equal "the decayed verdict leaves the bracket to its native owner, byte-identica
 tmux set-option -w -t "$(window_id assumed)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a collar that never measures the pty cannot witness the quiet a decay needs" \
   "?unknown? (turn-bracket bound reached)" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status assumed | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status assumed | sed -n '1p')"
 "$GANG" drop assumed >/dev/null
 
 # Each tier read is a separate moment, and a decay assembled across them can be
@@ -485,7 +485,7 @@ tmux set-option -w -t "$(window_id moving)" @gl_turn "open $(( $(date +%s) - 400
 : > "$RUN_ROOT/moving.on"   # the harness starts moving only now that it is up
 equal "a pane that moves while gang is deciding refuses the decay" \
   "?unknown? (the pane was written to while gang was deciding)" \
-  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status moving | head -1)"
+  "$(GANG_ACTIVITY_WINDOW=0 "$GANG" status moving | sed -n '1p')"
 contains "and roster's snapshot refuses it on the same witness" \
   "$(GANG_ACTIVITY_WINDOW=0 "$GANG" roster | grep '^moving ')" "?unknown?"
 "$GANG" drop moving >/dev/null
@@ -519,7 +519,7 @@ chmod +x "$RUN_ROOT/bin-seam/tmux"
 tmux set-option -w -t "$(window_id seam)" @gl_turn "open $(( $(date +%s) - 400 ))"
 equal "a write between the quiet reading and the witness refuses the decay" \
   "?unknown? (the pane was written to while gang was deciding)" \
-  "$(PATH="$RUN_ROOT/bin-seam:$PATH" GANG_ACTIVITY_WINDOW=0 "$GANG" status seam | head -1)"
+  "$(PATH="$RUN_ROOT/bin-seam:$PATH" GANG_ACTIVITY_WINDOW=0 "$GANG" status seam | sed -n '1p')"
 "$GANG" drop seam >/dev/null
 
 # The delivery half of the same seam. Refusing the decay leaves
@@ -629,7 +629,7 @@ CHURN_PANE="$(tmux list-panes -t "$(window_id ticker)" -F '#{pane_id}')"
 equal "a churning pane keeps the busy verdict itself, not its explanation" \
   "-busy-" \
   "$(CHURN_PANE="$CHURN_PANE" PATH="$RUN_ROOT/churn-bin:$PATH" \
-     GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker | head -1)"
+     GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker | sed -n '1p')"
 if ticker_out="$(printf 'MARK_TICKER' | CHURN_PANE="$CHURN_PANE" \
   PATH="$RUN_ROOT/churn-bin:$PATH" GANG_ACTIVITY_WINDOW=0 \
   "$GANG" send --to ticker --from tester --stdin 2>&1)"; then
@@ -1740,3 +1740,182 @@ equal "the pane it refused about was alive throughout" 0 \
   "$(tmux display-message -p -t "$masking_id" '#{pane_dead}')"
 rm -f -- "$RUN_ROOT/masking-refuse-at"
 "$GANG" drop masking >/dev/null
+
+# ---------------------------------------------------------------------------
+# EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. A delivery can be
+# verified into a pane and a turn can open and close without the recipient
+# running a single command; roster read healthy through three hours of exactly
+# that. What gang gained is the age of the last tool call and, where it cannot
+# read one, the age of the last write to the pane — two facts and no verdict on
+# them, because a long build and a wedge both go quiet.
+#
+# ANCHORED FAR ENOUGH BACK TO BE STABLE. Every assertion below reads an age gang
+# recomputes against its own clock, so each one names a leading unit that a
+# second passing between the collar's answer and gang's reading cannot change.
+action_now="$(date +%s)"
+action_collar() { # $1 = collar name, rest = the body of collar_last_action
+  local name="$1"; shift
+  cat > "$RUN_ROOT/collars/$name.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_last_action() { $*; }
+SH
+}
+action_collar acted "printf 'at %s' $(( action_now - 7200 )); return 0"
+action_collar never "return 1"
+action_collar bounded "printf 'before %s' $(( action_now - 7200 )); return 0"
+action_collar unreadable "printf 'the rollout this window is bound to was deleted'; return 2"
+action_collar ahead "printf 'at %s' $(( action_now + 7200 )); return 0"
+action_collar garbled "printf 'sideways 12'; return 0"
+
+"$HITCH" acted -c acted -d /tmp >/dev/null
+contains "roster carries the age of the last tool call" \
+  "$("$GANG" roster)" "last-tool=2h"
+contains "status carries the same age in full" \
+  "$("$GANG" status acted)" "last tool call: 2h"
+# THE READING IS NOT A HEALTH STATE, and status says so where an operator would
+# otherwise infer one from a large number.
+contains "status refuses to let the age read as a health verdict" \
+  "$("$GANG" status acted)" "not of health"
+contains "status reports the pane clock beside it" \
+  "$("$GANG" status acted)" "last pane write:"
+"$GANG" drop acted >/dev/null
+
+# THE WEDGE ITSELF: a source gang read completely, holding no tool call at all.
+"$HITCH" never -c never -d /tmp >/dev/null
+contains "an agent that has run nothing is reported as having run nothing" \
+  "$("$GANG" roster)" "last-tool=none"
+contains "and status says so in words rather than as an age" \
+  "$("$GANG" status never)" "has not run a tool"
+"$GANG" drop never >/dev/null
+
+# A BOUND IS NOT A COUNT. Past the records the reader walked, the newest tool
+# call is older than what it read and gang may not say there was none.
+"$HITCH" bounded -c bounded -d /tmp >/dev/null
+contains "a bounded answer is reported as a bound" \
+  "$("$GANG" roster)" "last-tool>2h"
+contains "and status says the reading is a floor" \
+  "$("$GANG" status bounded)" "more than 2h"
+"$GANG" drop bounded >/dev/null
+
+# UNKNOWN IS NOT NONE. A source gang could not read is the one case where the
+# pane clock is the whole of the evidence, so that is where it appears on a row.
+"$HITCH" unreadable -c unreadable -d /tmp >/dev/null
+action_row="$("$GANG" roster)"
+contains "a source gang could not read is an unknown age" "$action_row" "last-tool=?"
+contains "and the pane clock stands in as the last evidence left" \
+  "$action_row" "last-write="
+contains "status names why the reading could not be taken" \
+  "$("$GANG" status unreadable)" "the rollout this window is bound to was deleted"
+excludes "and an unreadable source is never reported as an idle agent" \
+  "$("$GANG" status unreadable)" "has not run a tool"
+"$GANG" drop unreadable >/dev/null
+
+# A COLLAR THAT DECLARES NOTHING IS UNKNOWN, not an agent that never acted.
+"$HITCH" silent -c bash -d /tmp >/dev/null
+contains "a collar with no tool-call source reads unknown" \
+  "$("$GANG" roster)" "last-tool=?"
+contains "and status names the missing declaration" \
+  "$("$GANG" status silent)" "declares no tool-call source"
+"$GANG" drop silent >/dev/null
+
+# A CLOCK DISAGREEMENT IS THE FINDING. Spending a future stamp as a tool call a
+# moment ago would report the healthiest possible reading from the least
+# trustworthy evidence.
+"$HITCH" ahead -c ahead -d /tmp >/dev/null
+contains "a tool call stamped in the future is unknown, not fresh" \
+  "$("$GANG" status ahead)" "in the future"
+excludes "and is not reported as an age at all" \
+  "$("$GANG" roster)" "last-tool=0s"
+"$GANG" drop ahead >/dev/null
+
+# AN ANSWER GANG CANNOT INTERPRET IS LOUD. A collar whose reply names neither
+# form is a broken declaration, and consuming it as any verdict would hide it.
+"$HITCH" garbled -c garbled -d /tmp >/dev/null
+action_garbled_rc=0
+action_garbled="$("$GANG" status garbled 2>&1)" || action_garbled_rc=$?
+if [ "$action_garbled_rc" -eq 0 ]; then
+  fail "an uninterpretable tool-call answer refuses" "status returned 0"
+else
+  contains "an uninterpretable tool-call answer refuses by name" \
+    "$action_garbled" "names neither 'at' nor 'before'"
+fi
+"$GANG" drop garbled >/dev/null
+
+# ---------------------------------------------------------------------------
+# THE WHOLE JOIN, ON A REAL DELIVERY. Every assertion above drives the reading
+# through a collar that answers from a literal. This one hitches two agents,
+# delivers a verified message to each, and reads the surface afterwards — so a
+# reader wired to the wrong window, or a row that never consults the collar at
+# all, cannot pass. The two agents differ in exactly one thing: whether their
+# own source ever records an action.
+#
+# NEITHER AGENT IS QUIET BECAUSE IT IS BROKEN. Both accept the delivery and both
+# fall silent afterwards, which is the point: the working one must not acquire
+# the wedged one's reading merely by going quiet.
+mkdir -p "$RUN_ROOT/collars"
+cat > "$RUN_ROOT/collars/acting.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "\$ROOT/collars/bash.sh"
+# Reads the agent's OWN record of what it ran, keyed on the window gang asks
+# about, so a reader pointed at the wrong window answers about the wrong agent.
+collar_last_action() { # \$1 = tmux target
+  local file bare stamp
+  bare="\$(tmux show-options -wqv -t "\$1" @gl_agent 2>/dev/null)" || bare=""
+  [ -n "\$bare" ] || { printf 'this window registered no agent'; return 2; }
+  file="$RUN_ROOT/acts-\$bare"
+  [ -f "\$file" ] || { printf 'no action log is bound to this window yet'; return 2; }
+  stamp="\$(tail -n 1 "\$file")" || stamp=""
+  [ -n "\$stamp" ] || return 1
+  printf 'at %s' "\$stamp"
+}
+SH
+action_wedged_log="$RUN_ROOT/acts-wedged"
+action_working_log="$RUN_ROOT/acts-working"
+: > "$action_wedged_log"
+date +%s > "$action_working_log"
+"$HITCH" wedged -c acting -d /tmp >/dev/null
+"$HITCH" working -c acting -d /tmp >/dev/null
+
+# DELIVERY IS VERIFIED SEPARATELY FROM THE READING, so an agent reported as
+# having run nothing is one that was demonstrably spoken to.
+action_send_rc=0
+printf 'MARK_ACTION_WEDGED reproduce the issue' \
+  | "$GANG" send --to wedged --from tester --stdin >"$RUN_ROOT/action-send.out" 2>&1 \
+  || action_send_rc=$?
+equal "the wedged agent accepted a verified delivery" 0 "$action_send_rc"
+contains "and gang reported that delivery verified, not merely typed" \
+  "$(<"$RUN_ROOT/action-send.out")" "delivered to wedged"
+action_send_rc=0
+printf 'MARK_ACTION_WORKING reproduce the issue' \
+  | "$GANG" send --to working --from tester --stdin >>"$RUN_ROOT/action-send.out" 2>&1 \
+  || action_send_rc=$?
+equal "the working agent accepted a verified delivery too" 0 "$action_send_rc"
+
+# THE ROW SAYS WHICH ONE ACTED. Both panes are quiet now; only their own records
+# differ.
+action_roster="$("$GANG" roster)"
+contains "the agent that ran nothing is reported as having run nothing" \
+  "$(printf '%s\n' "$action_roster" | grep -- '^wedged ')" "last-tool=none"
+excludes "and the one that acted does not inherit that reading" \
+  "$(printf '%s\n' "$action_roster" | grep -- '^working ')" "last-tool=none"
+contains "the agent that acted carries an age instead" \
+  "$(printf '%s\n' "$action_roster" | grep -- '^working ')" "last-tool="
+contains "status names the absence of action in words" \
+  "$("$GANG" status wedged)" "has not run a tool"
+excludes "and says nothing of the kind about the one that acted" \
+  "$("$GANG" status working)" "has not run a tool"
+
+# AN EMPTY SOURCE IS NOT A MISSING ONE. Deleting the wedged agent's record makes
+# the same quiet pane unknown rather than idle, which is the difference the whole
+# reading exists to keep.
+rm -f -- "$action_wedged_log"
+contains "a source that is gone reads unknown, not inactive" \
+  "$("$GANG" status wedged)" "no action log is bound to this window yet"
+excludes "and unknown is never spent as an agent that ran nothing" \
+  "$("$GANG" status wedged)" "has not run a tool"
+"$GANG" drop wedged >/dev/null
+"$GANG" drop working >/dev/null
+

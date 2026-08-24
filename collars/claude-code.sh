@@ -136,8 +136,9 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
 # user records are not turns. A later ordinary assistant record clears it. Other
 # retryable API errors abstain. Missing pre-session evidence abstains; a bound
 # transcript Gangline cannot interpret returns unknown instead of absence.
-claude_record_read() { # $1 transcript, $2 fatal|auto
+claude_record_read() { # $1 transcript, $2 fatal|auto|action
   python3 - "$1" "$2" <<'PY'
+import datetime
 import json
 import re
 import sys
@@ -206,13 +207,57 @@ def semantic(record):
     raise ValueError("user record has an unrecognized content shape")
 
 
+# HOW FAR BACK AN ANSWER IS WORTH WALKING. A transcript whose newest tool call
+# is older than this is one that has taken no action for the whole of it, and
+# that is the reading being asked for; naming the oldest record actually read
+# answers it as a bound rather than as a scan of every byte ever written.
+ACTION_BOUND = 2000
+
+
+def epoch(record):
+    stamp = record.get("timestamp")
+    if not isinstance(stamp, str) or not stamp:
+        raise ValueError("record carries no readable timestamp")
+    text = stamp[:-1] + "+00:00" if stamp.endswith("Z") else stamp
+    return int(datetime.datetime.fromisoformat(text).timestamp())
+
+
+def tool_call(record):
+    # A tool call is an assistant content block whose type is one of the API's
+    # tool_use family (tool_use, server_tool_use, mcp_tool_use). Reasoning and
+    # text blocks are the agent talking, which is exactly what a wedged agent
+    # keeps doing.
+    if record.get("type") != "assistant" or record.get("isSidechain") is True:
+        return False
+    message = record.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return False
+    for item in content:
+        kind = item.get("type") if isinstance(item, dict) else None
+        if isinstance(kind, str) and kind.endswith("tool_use"):
+            return True
+    return False
+
+
 mode = sys.argv[2]
 latest = None
+scanned = 0
+oldest = None
 try:
     for raw in newest_complete_records(sys.argv[1]):
         record = json.loads(raw)
         if not isinstance(record, dict):
             raise ValueError("record is not an object")
+        if mode == "action":
+            scanned += 1
+            if tool_call(record):
+                print(f"at {epoch(record)}")
+                raise SystemExit(0)
+            oldest = record
+            if scanned >= ACTION_BOUND:
+                break
+            continue
         if mode == "fatal":
             relevant = semantic(record)
         else:
@@ -223,10 +268,24 @@ try:
         if relevant:
             latest = record
             break
-except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
+except (OSError, UnicodeError, ValueError, json.JSONDecodeError, OverflowError):
     if mode == "fatal":
         print("bound Claude transcript is unreadable")
+    if mode == "action":
+        print("bound Claude transcript is unreadable")
     raise SystemExit(2)
+
+if mode == "action":
+    # THE BOUND WAS REACHED is a different answer from THERE IS NO TOOL CALL,
+    # and only the second one is a claim about the whole session.
+    if scanned >= ACTION_BOUND and oldest is not None:
+        try:
+            print(f"before {epoch(oldest)}")
+        except ValueError:
+            print("bound Claude transcript is unreadable")
+            raise SystemExit(2)
+        raise SystemExit(0)
+    raise SystemExit(1)
 
 if latest is None:
     raise SystemExit(1)
@@ -297,6 +356,20 @@ collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
   local file
   file="$(claude_session_file "$1")" || return 1
   claude_record_read "$file" fatal
+}
+
+# EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. This reports when the
+# harness last recorded a tool call and nothing more; whether that age means an
+# agent is stuck is the reader's to judge, and gang prints the age rather than a
+# verdict on it.
+collar_last_action() { # $1 target -> "at <epoch>" | "before <epoch>";
+                       # 0 printed, 1 = no tool call in the source, 2 = unknown
+  local file
+  file="$(claude_session_file "$1")" || {
+    printf 'no Claude transcript is bound to this window yet'
+    return 2
+  }
+  claude_record_read "$file" action
 }
 
 collar_auto_resume_record() { # $1 target, $2 Notification kind -> failed-turn UUID

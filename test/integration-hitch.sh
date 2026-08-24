@@ -1250,7 +1250,7 @@ printf '%s\n' '{"hook_event_name":"PermissionRequest"}' \
   | TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null 2>&1
 equal "permission occupancy emits the exact snagged state token" \
   "!occupied! (authority unknown)" \
-  "$("$GANG" status alpha | head -1)"
+  "$("$GANG" status alpha | sed -n '1p')"
 tmux set-option -w -t "$alpha_id" @gl_occupied 'open not-a-timestamp'
 malformed_occupied_rc=0
 malformed_occupied_out="$("$GANG" status alpha 2>&1)" || malformed_occupied_rc=$?
