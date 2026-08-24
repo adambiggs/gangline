@@ -1566,6 +1566,75 @@ refuses "a scope name still held by an earlier agent is refused, not respawned" 
     "$GANG" hitch scopeheld -c bash -d /tmp
 equal "a refused scope name leaves no window behind" "" "$(window_id scopeheld)"
 
+# THE SERVER THAT HOLDS THE TEAM IS THE ONE PROCESS WHOSE DEATH ENDS ALL OF IT.
+# Every agent gets a unit; the server used to inherit whatever cgroup ran
+# `gang up`, so a whole team could vanish and leave nothing but a login scope
+# deactivating. Only the `tmux new-session` that FORKS a server may be wrapped —
+# against a server that is already up it forks nothing, and the scope would hold
+# only the client that exits a moment later.
+#
+# ITS OWN LOCK AND ARCHIVE ROOTS. A second tmux server is a second register of
+# published spool identities, and the spool root is keyed by GANG_LOCK_DIR
+# rather than by socket — so a session opened on one server while the other
+# holds the live windows would read every one of those spools as an orphan.
+# One server per lock root is the assumption spool_mint already makes; this
+# world keeps it rather than testing what happens when it is broken.
+mkdir -p "$RUN_ROOT/scope-server-bin"
+cat > "$RUN_ROOT/scope-server-bin/systemd-run" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> '$RUN_ROOT/scope-server.argv'
+while [ "\${1:-}" != MemoryAccounting=yes ]; do
+  [ \$# -gt 0 ] || exit 97
+  shift
+done
+shift
+exec "\$@"
+SH
+cp "$RUN_ROOT/scope-bin/systemctl" "$RUN_ROOT/scope-server-bin/systemctl"
+chmod +x "$RUN_ROOT/scope-server-bin/systemd-run" "$RUN_ROOT/scope-server-bin/systemctl"
+scope_server_session="srvteam-$$"
+scope_server_root="$RUN_ROOT/scope-server-run"
+mkdir -p "$scope_server_root"
+scope_server_socket="$scope_server_root/tmux-$(id -u)/default"
+rm -f "$RUN_ROOT/scope-server.argv"
+scope_server_rc=0
+env PATH="$RUN_ROOT/scope-server-bin:$PATH" GANG_SCOPE=on \
+    TMUX_TMPDIR="$scope_server_root" GANG_SESSION="$scope_server_session" \
+    GANG_LOCK_DIR="$scope_server_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_server_root/archive" \
+    "$GANG" hitch srvlead -c bash -d /tmp >/dev/null 2>&1 || scope_server_rc=$?
+equal "a hitch that forks its own tmux server completes" "0" "$scope_server_rc"
+scope_server_argv="$(<"$RUN_ROOT/scope-server.argv")"
+contains "the tmux server is started inside a unit named after its session" \
+  "$scope_server_argv" "--unit=gangline-$scope_server_session.scope"
+contains "and that unit wraps the new-session that forks it" \
+  "$scope_server_argv" "tmux new-session"
+contains "memory accounting is stated for the server too" \
+  "$scope_server_argv" "--unit=gangline-$scope_server_session.scope -p MemoryAccounting=yes"
+contains "the agent inside it still gets a unit of its own" \
+  "$scope_server_argv" "--unit=gangline-$scope_server_session-srvlead.scope"
+env TMUX_TMPDIR="$scope_server_root" GANG_SESSION="$scope_server_session" \
+    GANG_LOCK_DIR="$scope_server_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_server_root/archive" \
+    "$GANG" down "$scope_server_session" >/dev/null 2>&1 || true
+tmux -S "$scope_server_socket" kill-server 2>/dev/null || true
+
+# AND A SERVER GANG DID NOT START IS SAID OUT LOUD. Silently claiming a unit
+# that would hold nothing is the accounting lie this whole change exists to end,
+# so the hitch says the server stays outside it and runs anyway.
+rm -f "$RUN_ROOT/scope-server.argv"
+scope_joined_session="jointeam-$$"
+scope_joined_out="$(env PATH="$RUN_ROOT/scope-server-bin:$PATH" GANG_SCOPE=on \
+    GANG_SESSION="$scope_joined_session" \
+    "$GANG" hitch joinlead -c bash -d /tmp 2>&1)" || true
+contains "a server gang did not start is reported as outside the accounting" \
+  "$scope_joined_out" "already running, so gangline does not own a unit for it"
+excludes "and no unit is claimed for a server that forks nothing" \
+  "$(cat "$RUN_ROOT/scope-server.argv" 2>/dev/null || printf '')" \
+  "--unit=gangline-$scope_joined_session.scope"
+env GANG_SESSION="$scope_joined_session" "$GANG" down "$scope_joined_session" \
+  >/dev/null 2>&1 || true
+
 # A LAUNCH THAT DIES IS NOT A SLOW BOOT, and both shapes of it are real. A
 # launch that dies before its window is registered used to surface as a raw
 # tmux `no such window` naming nothing gang had tried to run; one that dies
