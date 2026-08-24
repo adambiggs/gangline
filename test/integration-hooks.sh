@@ -2235,14 +2235,40 @@ printf '%s\n' 1.2.0 > "$installer_src/version.txt"
 git -C "$installer_src" commit -qam 'test: unreleased installer head'
 git -C "$installer_src" tag gangline-v9.0.0-rc.1
 
+installer_tmux_bin="$installer_root/tmux-bin"
+mkdir -p "$installer_tmux_bin"
+cat > "$installer_tmux_bin/tmux" <<'SH'
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+case "${1:-}" in
+  -V) printf 'tmux %s\n' "$GANG_TEST_TMUX_VERSION" ;;
+  *) exit 64 ;;
+esac
+SH
+chmod +x "$installer_tmux_bin/tmux"
+
+installer_tmux31_home="$installer_root/tmux31-home"
+installer_tmux31_rc=0
+installer_tmux31_out="$(PATH="$installer_tmux_bin:$PATH" \
+  GANG_TEST_TMUX_VERSION=3.1 GANGLINE_REPO="$installer_src" \
+  GANGLINE_HOME="$installer_tmux31_home" \
+  GANGLINE_BIN="$installer_root/tmux31-bin" \
+  sh "$ROOT/install.sh" 2>&1)" || installer_tmux31_rc=$?
+equal "the installer refuses tmux 3.1 at the complete-call-set floor" \
+  "refused named absent" \
+  "$([ "$installer_tmux31_rc" -ne 0 ] && printf refused || printf accepted) $([[ "$installer_tmux31_out" = *'tmux >= 3.2 required'*'found tmux 3.1'* ]] && printf named || printf unnamed) $([ ! -e "$installer_tmux31_home" ] && printf absent || printf created)"
+
 installer_bin="$installer_root/bin"
 installer_decoy="$installer_root/decoy"
 mkdir -p "$installer_bin" "$installer_decoy"
 ln -s "$installer_decoy" "$installer_bin/gang"
 installer_rc=0
-GANGLINE_REPO="$installer_src" \
+PATH="$installer_tmux_bin:$PATH" GANG_TEST_TMUX_VERSION=3.2 \
+  GANGLINE_REPO="$installer_src" \
   GANGLINE_HOME="$installer_root/home" GANGLINE_BIN="$installer_bin" \
   sh "$ROOT/install.sh" >/dev/null 2>&1 || installer_rc=$?
+equal "the installer accepts tmux 3.2 at the complete-call-set floor" \
+  "0" "$installer_rc"
 equal "the installer replaces a symlinked destination instead of writing through it" \
   "0 absent $installer_root/ho""me/bin/gang" \
   "$installer_rc $([ -e "$installer_decoy/gang" ] && printf written || printf absent) $(readlink "$installer_bin/gang" || true)"

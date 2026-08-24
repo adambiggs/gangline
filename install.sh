@@ -96,13 +96,13 @@ tag="$(latest_release_tag)"
 
 need tmux
 
-# This is the oldest tmux release on which Gangline's complete call set has been
-# executed. Lower it only after running that call set on the lower release.
+# `gang wait` uses indexed hook arrays and list-command filters, so Gangline's
+# complete call set requires tmux 3.2 even though its other calls are older.
 ver="$(tmux -V | tr -cd '0-9.')"
 major="${ver%%.*}"
 minor="${ver#*.}"; minor="${minor%%.*}"
-[ "$major" -gt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -ge 6 ]; } \
-  || die "tmux >= 2.6 required: the oldest version gang's whole call set has been run on, found $(tmux -V)"
+[ "$major" -gt 3 ] || { [ "$major" -eq 3 ] && [ "$minor" -ge 2 ]; } \
+  || die "tmux >= 3.2 required: gang wait needs indexed hooks and list-command filters, found $(tmux -V)"
 
 python3 -c 'import json; assert json.loads("{\"ok\": true}")["ok"]' >/dev/null 2>&1 \
   || die "working python3 with JSON support required — native hook payloads and optional context lights use it"
