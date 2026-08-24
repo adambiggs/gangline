@@ -3302,46 +3302,82 @@ archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its direc
   mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
 }
 
-spool_archive_preflight() { # $1 = window id; refuse before any teardown mutates mail
+SPOOL_PREFLIGHT_ERROR=""
+spool_dir_preflight() { # $1 = a spool directory; 0 archivable, 1 with the reason
+  # NON-DYING, because the same eligibility question is asked from two places
+  # that owe different answers. A teardown must stop: its agent is still alive
+  # and its mail must not be half-moved. A sweep of directories nobody owns
+  # must NOT stop — one unaccountable stray would otherwise take every other
+  # orphan's mail down with it, and refuse the `up` that went looking.
   local e
-  spool_existing "$1" || return 0
-  [ -d "$SPOOL_DIR" ] || return 0
+  SPOOL_PREFLIGHT_ERROR=""
   # ELIGIBILITY BEFORE THE FIRST MOVE. The archive can carry regular files
   # (including links to them), but spool_forget refuses to remove a directory
   # that holds anything else. Discovering such a child only after the files
   # moved left a refused drop with its agent alive and its previously waiting
   # mail outside the queue a later boundary would drain.
-  for e in "$SPOOL_DIR"/* "$SPOOL_DIR"/.[!.]* "$SPOOL_DIR"/..?*; do
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -e "$e" ] || [ -L "$e" ] || continue
-    [ -f "$e" ] \
-      || die "the spool directory $SPOOL_DIR holds something gang cannot archive; none of this spool's pending messages has been moved, and its agent has not been ended — read what is in it, then remove it by hand"
+    [ -f "$e" ] && continue
+    SPOOL_PREFLIGHT_ERROR="the spool directory $1 holds something gang cannot archive"
+    return 1
   done
+  return 0
+}
+
+spool_archive_preflight() { # $1 = window id; refuse before any teardown mutates mail
+  spool_existing "$1" || return 0
+  [ -d "$SPOOL_DIR" ] || return 0
+  spool_dir_preflight "$SPOOL_DIR" \
+    || die "$SPOOL_PREFLIGHT_ERROR; none of this spool's pending messages has been moved, and its agent has not been ended — read what is in it, then remove it by hand"
 }
 
 spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local e entry name dest dest_base dest_name dest_n moved=0
+  local name waiting held spool_archive_held
   spool_archive_preflight "$1"
   [ -n "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] || return 0
+  # SAID BEFORE THE MOVE, AND SAID SEPARATELY. The count printed after the
+  # archive is one number over two populations that mean opposite things to
+  # whoever reads it: a WAITING entry was never typed at anyone and its sender
+  # can send it again, while a HELD one may already have arrived and must not
+  # be sent twice. An operator ending an agent is deciding exactly that, so the
+  # two are named here rather than summed into "undelivered".
+  waiting="$(spool_count "$1")"
+  [ "$waiting" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_WORK" "$waiting message(s) were still waiting for a delivery opportunity and will not get one; they are archived below, and their senders may send them again")"
+  held="$(spool_held "$1")"
+  if [ "$held" -ne 0 ]; then
+    printf '%s\n' "$(colour "$C_BAD" "$held message(s) are held here — gang could not verify delivery and will not send them again:")"
+    spool_held_report "$1" | while IFS= read -r spool_archive_held; do
+      printf '%s\n' "$(colour "$C_BAD" "  $spool_archive_held")"
+    done
+  fi
+  # A NAME BECOMES A PATH COMPONENT HERE, so this is where it has to be a
+  # name. hitch and adopt both validate what they register, but the option
+  # is a tmux value and gang is not the only writer a tmux server has; a
+  # value carrying a separator or a parent reference would move pending
+  # mail out of the archive root on an ordinary drop. Validating at the
+  # join is the check no reader of the identity can route around, and the
+  # window id is a destination gang always owns.
+  name="$(agent_name_of "$1" 2>/dev/null)" || name=""
+  valid_name "$name" || name="${1#@}"
+  spool_dir_archive "$SPOOL_DIR" "$name"
+}
+
+spool_dir_archive() { # $1 = a spool directory, $2 = the name it archives under
+  local e entry dest dest_base dest_name dest_n moved=0
+  [ -d "$1" ] || return 0
   # EVERY CHILD, not the names gang expects. A whitelist here turns "this is
   # not something I recognise" into "there was nothing here", because what it
   # skips spool_forget then removes. The reachable stray is a .writing-
   # fragment left by a spool_write that died between its temporary file and
   # the commit rename — a partially written message, which is exactly the
   # artifact someone investigating a failed park comes looking for.
-  for e in "$SPOOL_DIR"/* "$SPOOL_DIR"/.[!.]* "$SPOOL_DIR"/..?*; do
+  for e in "$1"/* "$1"/.[!.]* "$1"/..?*; do
     [ -f "$e" ] || continue
     if [ "$moved" -eq 0 ]; then
       archive_establish "$SESSION"
-      name="$(agent_name_of "$1" 2>/dev/null)" || name=""
-      # A NAME BECOMES A PATH COMPONENT HERE, so this is where it has to be a
-      # name. hitch and adopt both validate what they register, but the option
-      # is a tmux value and gang is not the only writer a tmux server has; a
-      # value carrying a separator or a parent reference would move pending
-      # mail out of the archive root on an ordinary drop. Validating at the
-      # join is the check no reader of the identity can route around, and the
-      # window id is a destination gang always owns.
-      valid_name "$name" || name="${1#@}"
-      dest="$ARCHIVE_DIR/$name"
+      dest="$ARCHIVE_DIR/$2"
       mkdir -p "$dest" || die "cannot create $dest for the pending messages of this window"
     fi
     # IT ARRIVES VISIBLE. The archive is a directory a person reads with ls,
@@ -3399,6 +3435,115 @@ spool_forget() { # $1 = window id; the spool dies with the window it belongs to
     || rmdir -- "$SPOOL_DIR" \
     || die "the spool directory $SPOOL_DIR still holds something gang could not archive, so it has not been deleted and nothing further has been ended — read what is in it, then remove it by hand"
   tmux set-option -uw -t "$1" @gl_spool 2>/dev/null || true
+}
+
+# ORPHANS. A spool directory outlives the window that named it whenever the
+# window did not die through `drop` or `down` — an external kill-window, or a
+# tmux server that goes away and takes every window's options with it. The
+# directory is then unreachable by every command gang has, because all of them
+# resolve a spool through @gl_spool on a live window. Only the filesystem still
+# knows it is there, and any mail in it is invisible rather than lost.
+SPOOL_ORPHANS="" SPOOL_FOREIGN=""
+spool_orphans() { # every spool directory no live window claims; 1 = cannot tell
+  # WINDOWS ARE THE ONLY REGISTER OF A LIVE SPOOL IDENTITY, which is the same
+  # thing spool_mint says: nothing on disk records which window a reservation
+  # was taken for. So "nobody holds this" is a claim about ONE reading of the
+  # tmux server, and a reading that failed is not an empty one. Answering a
+  # failed read as "no window holds anything" would call every live agent's
+  # spool an orphan, so the failure comes back to the caller to act on.
+  local root e token live nl=$'\n'
+  SPOOL_ORPHANS=""; SPOOL_FOREIGN=""
+  root="$(spool_root_of)"
+  [ -d "$root" ] || return 0
+  live="$(tmux list-windows -a -F '#{@gl_spool}' 2>/dev/null)" || return 1
+  for e in "$root"/* "$root"/.[!.]* "$root"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    token="${e##*/}"
+    # NOT A DIRECTORY GANG MINTED IS NOT A DIRECTORY GANG SWEEPS. A token is
+    # twenty-odd hex characters under a directory this user owns; anything else
+    # under the spool root was put there by something that is not gang, and the
+    # same rule spool_existing keeps — refusing to act on a path it cannot
+    # account for — applies with more force to a path no window even points at.
+    # Reported rather than skipped: a stray nobody names is a stray nobody
+    # removes, and the root then grows residue that looks like gang's.
+    if [ -L "$e" ] || [ ! -d "$e" ] || [ ! -O "$e" ]; then
+      SPOOL_FOREIGN="$SPOOL_FOREIGN$token$nl"; continue
+    fi
+    case "$token" in *[!a-f0-9]*|'') SPOOL_FOREIGN="$SPOOL_FOREIGN$token$nl"; continue ;; esac
+    case "$nl$live$nl" in *"$nl$token$nl"*) continue ;; esac
+    SPOOL_ORPHANS="$SPOOL_ORPHANS$token$nl"
+  done
+  return 0
+}
+
+spool_orphan_report() { # one line naming what is under the spool root and unowned
+  # NAMED, NOT COUNTED. The whole defect this answers is that a person had to
+  # list the spool root by hand to find held mail, so a number would reproduce
+  # it: what is needed is the path to read.
+  local root token entries n line
+  root="$(spool_root_of)"
+  spool_orphans || {
+    printf '%s\n' "$(colour "$C_BAD" "orphaned spools: UNKNOWN — gang could not read the tmux server's window list, so it cannot tell a dead session's spool from a live agent's (read $root by hand)")"
+    return 0
+  }
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    n=0
+    for entries in "$root/$token"/* "$root/$token"/.[!.]* "$root/$token"/..?*; do
+      { [ -e "$entries" ] || [ -L "$entries" ]; } && n=$((n + 1))
+    done
+    line="orphaned spool $root/$token — no live window claims it"
+    [ "$n" -eq 0 ] || line="$line; $n child(ren) in it"
+    printf '%s\n' "$(colour "$C_BAD" "$line")"
+  done <<EOF
+$SPOOL_ORPHANS
+EOF
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    printf '%s\n' "$(colour "$C_BAD" "under the spool root and not gang's: $root/$token — gang did not mint it and will not read, archive or remove it")"
+  done <<EOF
+$SPOOL_FOREIGN
+EOF
+}
+
+spool_sweep_orphans() { # archive and retire every spool no live window claims
+  # RUN WHERE THE ANSWER IS CHEAPEST AND SAFEST: immediately after a session is
+  # created, when the server this reads is one gang has just proved it can talk
+  # to and the only spool gang owns is the one it has just minted. Every other
+  # directory under the root belonged to a window that is gone.
+  local root token dir swept=0
+  root="$(spool_root_of)"
+  spool_orphans || {
+    printf '%s\n' "$(colour "$C_BAD" "orphaned spools were NOT swept: gang could not read the tmux server's window list, so it cannot tell a dead session's spool from a live agent's — read $root by hand")" >&2
+    return 0
+  }
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    dir="$root/$token"
+    # THE SWEEP NEVER STOPS THE SESSION IT RUNS IN. A stray this cannot archive
+    # is reported and left exactly where it is; dying here would make one
+    # unaccountable directory refuse every `up` until a person removed it, and
+    # the mail in every OTHER orphan would stay invisible in the meantime.
+    if ! spool_dir_preflight "$dir"; then
+      printf '%s\n' "$(colour "$C_BAD" "$SPOOL_PREFLIGHT_ERROR, so it was left alone — nothing in it has been moved. Read it, then remove it by hand")" >&2
+      continue
+    fi
+    spool_dir_archive "$dir" "orphan-$token"
+    rmdir -- "$dir" 2>/dev/null \
+      || { printf '%s\n' "$(colour "$C_BAD" "the orphaned spool $dir was emptied into the archive but could not be removed — remove it by hand")" >&2
+           continue; }
+    swept=$((swept + 1))
+  done <<EOF
+$SPOOL_ORPHANS
+EOF
+  [ "$swept" -eq 0 ] \
+    || printf '%s\n' "$(colour "$C_WORK" "swept $swept orphaned spool director(ies) from $root — they belonged to windows that are gone")"
+  while IFS= read -r token; do
+    [ -n "$token" ] || continue
+    printf '%s\n' "$(colour "$C_BAD" "under the spool root and not gang's: $root/$token — gang did not mint it and will not read, archive or remove it")" >&2
+  done <<EOF
+$SPOOL_FOREIGN
+EOF
 }
 
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
@@ -5108,7 +5253,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
   local lights="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -5276,6 +5421,7 @@ cmd_hitch() {
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not start session '$SESSION' for '$name'"
+    opened_session=1
   elif [ -n "$id" ]; then
     pane_dead="$(tmux display-message -p -t "$id" '#{pane_dead}' 2>/dev/null)" || pane_dead=""
     [ "$resume" -eq 1 ] && [ "$pane_dead" = 1 ] \
@@ -5299,6 +5445,13 @@ cmd_hitch() {
   hitch_register "$id" "$name" @gl_collar "$prof"
   stamp_binary_id "$id" "$name"
   spool_mint "$id"
+  # AFTER THIS SESSION HAS A SPOOL OF ITS OWN, and only for the hitch that
+  # opened the session. A spool under the root that no live window claims
+  # belonged to a window that is gone, and the only route out of gangline for
+  # its mail is the archive — `drop` and `down` never ran for it. Sweeping on
+  # every hitch would ask the same question again for every later agent; asking
+  # it once, where a team starts, is where the answer can have changed.
+  [ "$opened_session" -eq 0 ] || spool_sweep_orphans
   if [ -n "$lights" ]; then
     hitch_register "$id" "$name" @gl_context_lights "$lights"
   fi
@@ -7062,6 +7215,12 @@ cmd_roster() {
   done <<EOF
 $wins
 EOF
+  # A ROW IS A LIVE WINDOW, so a spool whose window is gone can never have one.
+  # Naming it under the rows is the surface that difference needs: every other
+  # command resolves a spool through @gl_spool and therefore cannot see it at
+  # all. Not in --porcelain, whose columns are per-agent and whose consumers
+  # parse a fixed shape.
+  [ "$porcelain" -eq 1 ] || spool_orphan_report
   [ -z "$unread" ] \
     || die "roster: could not read the state of:$unread — every agent in the team is listed above, and the rows gang could not read carry an unknown state rather than a state nobody looked at"
 }

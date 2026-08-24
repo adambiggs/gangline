@@ -1822,6 +1822,116 @@ equal "a later native boundary never re-sends an unverified held entry" \
   "$wedged_before_count" "$wedged_after_count"
 "$GANG" drop wedged >/dev/null
 
+# A SPOOL OUTLIVES THE WINDOW THAT NAMED IT whenever the window did not die
+# through drop or down. Every command gang has resolves a spool through
+# @gl_spool on a live window, so those directories — and any mail in them — are
+# reachable only by listing the root by hand. Two surfaces answer that: the
+# hitch that opens a session sweeps them into the archive, and roster names
+# whatever is left.
+mkdir -m 700 "$GANG_LOCK_DIR/spool/aaaa1111"
+printf 'ghost\nstranded fragment\n[gang:ghost#deadbeef] MARK_STRANDED_MAIL\n' \
+  > "$GANG_LOCK_DIR/spool/aaaa1111/00000000000000000001-dead1234"
+mkdir -m 700 "$GANG_LOCK_DIR/spool/bbbb2222"
+mkdir -m 700 "$GANG_LOCK_DIR/spool/cccc3333"
+mkdir -m 700 "$GANG_LOCK_DIR/spool/cccc3333/debris"
+mkdir -m 700 "$GANG_LOCK_DIR/spool/notatoken"
+# THE LIVE TEAM'S OWN SPOOLS ARE THE CONTROL. A sweep that cannot tell a dead
+# session's directory from a running agent's would archive the mail of every
+# agent in this suite, so what must survive is recorded before it runs.
+sweep_live_tokens=""
+while read -r sweep_win; do
+  [ -n "$sweep_win" ] || continue
+  sweep_tok="$(tmux show-options -wqv -t "$sweep_win" @gl_spool)"
+  [ -n "$sweep_tok" ] || continue
+  sweep_live_tokens="$sweep_live_tokens $sweep_tok"
+done <<EOF
+$(tmux list-windows -t "=$GANG_SESSION" -F '#{window_id}')
+EOF
+sweep_session="$GANG_SESSION-sweep"
+sweep_rc=0
+sweep_out="$(GANG_SESSION="$sweep_session" "$GANG" hitch sweeper -c spoolable -d /tmp 2>&1)" \
+  || sweep_rc=$?
+equal "a hitch that opens a session completes with orphans under the root" "0" "$sweep_rc"
+contains "the stranded mail of a dead window is archived" \
+  "$sweep_out" "archived 1 undelivered message(s)"
+# NOT AN EXACT COUNT. Every earlier world in this suite that let a spool
+# outlive its window leaves one under the same root, and they are orphans by
+# the same definition — so what is asserted is that the sweep reports the work
+# and names the root, while the fates below are checked directory by directory.
+contains "and the sweep says it retired directories, and from where" \
+  "$sweep_out" "orphaned spool director(ies) from $GANG_LOCK_DIR/spool"
+contains "an orphan holding something unarchivable is named and left alone" \
+  "$sweep_out" "$GANG_LOCK_DIR/spool/cccc3333"
+contains "a directory gang did not mint is named as not gang's" \
+  "$sweep_out" "$GANG_LOCK_DIR/spool/notatoken"
+[ ! -e "$GANG_LOCK_DIR/spool/aaaa1111" ] \
+  && pass "the emptied orphan is gone" \
+  || fail "the emptied orphan is gone" "$GANG_LOCK_DIR/spool/aaaa1111 survived"
+[ ! -e "$GANG_LOCK_DIR/spool/bbbb2222" ] \
+  && pass "and an orphan with nothing in it is simply removed" \
+  || fail "and an orphan with nothing in it is simply removed" \
+    "$GANG_LOCK_DIR/spool/bbbb2222 survived"
+[ -d "$GANG_LOCK_DIR/spool/cccc3333/debris" ] \
+  && pass "nothing inside the unarchivable orphan was moved" \
+  || fail "nothing inside the unarchivable orphan was moved" "debris is gone"
+[ -d "$GANG_LOCK_DIR/spool/notatoken" ] \
+  && pass "and a directory gang did not mint is not removed either" \
+  || fail "and a directory gang did not mint is not removed either" \
+    "$GANG_LOCK_DIR/spool/notatoken is gone"
+# READ IT. A file moved under the right name is not a message kept; the archive
+# is a promise that the body is still there for a person to read.
+sweep_archived=""
+for sweep_entry in "$GANG_ARCHIVE_DIR"/*/orphan-aaaa1111/*; do
+  [ -f "$sweep_entry" ] || continue
+  sweep_archived="$sweep_archived$(cat "$sweep_entry")"
+done
+contains "the archived orphan carries the body, not just the name" \
+  "$sweep_archived" "MARK_STRANDED_MAIL"
+sweep_lost=""
+for sweep_tok in $sweep_live_tokens; do
+  [ -d "$GANG_LOCK_DIR/spool/$sweep_tok" ] || sweep_lost="$sweep_lost $sweep_tok"
+done
+equal "no live agent's spool is swept as an orphan" "" "$sweep_lost"
+contains "roster names the orphan the sweep could not take" \
+  "$("$GANG" roster)" "orphaned spool $GANG_LOCK_DIR/spool/cccc3333"
+contains "and names what is under the root and not gang's" \
+  "$("$GANG" roster)" "$GANG_LOCK_DIR/spool/notatoken"
+excludes "porcelain rows stay a fixed per-agent shape" \
+  "$("$GANG" roster --porcelain)" "orphaned spool"
+GANG_SESSION="$sweep_session" "$GANG" down "$sweep_session" >/dev/null
+rm -rf -- "$GANG_LOCK_DIR/spool/cccc3333" "$GANG_LOCK_DIR/spool/notatoken"
+
+# RE-ADOPTION MUST NOT RE-MINT. An adopt that handed the window a fresh identity
+# would strand everything already parked under the old one in a directory no
+# command can resolve — including held entries, whose whole promise is that a
+# person can still read them.
+tmux new-window -d -t "=$GANG_SESSION" -n carried -c /tmp \
+  "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+"$GANG" adopt carried -c spoolable >/dev/null
+carried_id="$(window_id carried)"
+carried_token="$(tmux show-options -wqv -t "$carried_id" @gl_spool)"
+tmux send-keys -l -t "$carried_id" 'HUMAN_DRAFT'
+printf 'MARK_CARRIED' |
+  "$GANG" send --to carried --from tester --stdin >/dev/null 2>&1 || true
+"$GANG" adopt carried -c spoolable >/dev/null
+equal "re-adopting a window keeps the spool identity it already had" \
+  "$carried_token" "$(tmux show-options -wqv -t "$carried_id" @gl_spool)"
+contains "so what was parked before it is still waiting afterwards" \
+  "$("$GANG" status carried)" "spooled: 1"
+
+# AND A TEARDOWN SAYS WHAT IT IS TAKING OUT OF THE QUEUE, in the two populations
+# an operator has to tell apart: a waiting body was never typed at anyone and
+# can be sent again, a held one may already have arrived and must not be.
+printf 'ghost\nheld fragment\n[gang:ghost#deadbeef] MARK_CARRIED_HELD\n' \
+  > "$GANG_LOCK_DIR/spool/$carried_token/failed-00000000000000000003-abcdabcd"
+carried_drop="$("$GANG" drop carried)"
+contains "drop names the messages that were still waiting" \
+  "$carried_drop" "still waiting for a delivery opportunity"
+contains "and names the held ones apart from them" \
+  "$carried_drop" "gang could not verify delivery"
+contains "naming each held body rather than counting it" \
+  "$carried_drop" "held fragment"
+
 # One spool is deliberately left alive for the teardown below to account for.
 "$HITCH" lingering -c spoolable -d /tmp >/dev/null
 lingering_id="$(window_id lingering)"
