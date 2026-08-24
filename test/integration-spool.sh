@@ -916,6 +916,21 @@ rm -rf -- "$GANG_LOCK_DIR/linktarget"
 "$HITCH" unaccountable -c spoolable -d /tmp >/dev/null
 unaccountable_id="$(window_id unaccountable)"
 unaccountable_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$unaccountable_id" @gl_spool)"
+tmux send-keys -l -t "$unaccountable_id" 'HUMAN_DRAFT'
+printf 'MARK_UNACCOUNTABLE_WAITING' |
+  "$GANG" send --to unaccountable --from tester --stdin >/dev/null
+unaccountable_waiting=""
+for unaccountable_entry in "$unaccountable_spool"/[0-9]*; do
+  [ -f "$unaccountable_entry" ] || continue
+  unaccountable_waiting="$unaccountable_entry"
+  break
+done
+if [ -n "$unaccountable_waiting" ]; then
+  pass "the mixed teardown fixture has a deliverable message before refusal"
+else
+  fail "the mixed teardown fixture has a deliverable message before refusal" \
+    "the send produced no waiting spool entry"
+fi
 mkdir -p "$unaccountable_spool/debris"
 printf 'MARK_DEBRIS' > "$unaccountable_spool/debris/note"
 if unaccountable_out="$("$GANG" drop unaccountable 2>&1)"; then
@@ -934,6 +949,12 @@ window_id unaccountable >/dev/null \
   && pass "and ending nothing else: the agent is still there to drop" \
   || fail "and ending nothing else: the agent is still there to drop" \
     "the window is gone"
+if [ -f "$unaccountable_waiting" ]; then
+  pass "and its waiting message remains in the live queue"
+else
+  fail "and its waiting message remains in the live queue" \
+    "$unaccountable_waiting was moved before teardown refused"
+fi
 rm -rf -- "$unaccountable_spool/debris"
 "$GANG" drop unaccountable >/dev/null
 

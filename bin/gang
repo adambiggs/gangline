@@ -3306,6 +3306,16 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
   local e entry name dest dest_base dest_name dest_n moved=0
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
+  # ELIGIBILITY BEFORE THE FIRST MOVE. The archive can carry regular files
+  # (including links to them), but spool_forget refuses to remove a directory
+  # that holds anything else. Discovering such a child only after the files
+  # moved left a refused drop with its agent alive and its previously waiting
+  # mail outside the queue a later boundary would drain.
+  for e in "$SPOOL_DIR"/* "$SPOOL_DIR"/.[!.]* "$SPOOL_DIR"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    [ -f "$e" ] \
+      || die "the spool directory $SPOOL_DIR holds something gang cannot archive; none of this spool's pending messages has been moved, and its agent has not been ended — read what is in it, then remove it by hand"
+  done
   # EVERY CHILD, not the names gang expects. A whitelist here turns "this is
   # not something I recognise" into "there was nothing here", because what it
   # skips spool_forget then removes. The reachable stray is a .writing-
