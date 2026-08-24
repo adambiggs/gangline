@@ -318,6 +318,33 @@ equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
 
+# ADOPTION NAMES A HARNESS ALREADY RUNNING IN THE WINDOW. A held corpse still
+# has a window name, and before this precondition adopt registered that empty
+# window, minted its spool, and reported it as an agent. The pane's own fifo is
+# the death barrier: EOF settles process exit before the immediate tmux read.
+mkfifo "$RUN_ROOT/adopt-dead.fifo"
+adopt_dead_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-dead \
+  "exec 9<>$RUN_ROOT/adopt-dead.fifo; PS1='❯ ' exec bash --norc")"
+adopt_dead_pane="$(tmux list-panes -t "$adopt_dead_id" -F '#{pane_id}')"
+exec 3<"$RUN_ROOT/adopt-dead.fifo"
+tmux set-option -w -t "$adopt_dead_id" remain-on-exit on
+tmux send-keys -l -t "$adopt_dead_pane" 'exit 23'
+tmux send-keys -t "$adopt_dead_pane" Enter
+cat <&3 >/dev/null
+exec 3<&-
+tmux run-shell true >/dev/null
+equal "the refused-adopt fixture has no running pane" 1 \
+  "$(tmux display-message -p -t "$adopt_dead_id" '#{pane_dead}')"
+adopt_dead_before="$(tmux show-options -wv -t "$adopt_dead_id")"
+refuses "adopt refuses a window where no harness is running" \
+  "nothing is running in window 'adopt-dead'" \
+  "$GANG" adopt adopt-dead -c bash
+equal "refusing a dead window leaves every window option unchanged" \
+  "$adopt_dead_before" \
+  "$(tmux show-options -wv -t "$adopt_dead_id")"
+tmux kill-window -t "$adopt_dead_id"
+
 # A REFUSAL MUST PRECEDE ADOPTION'S FIRST MUTATION. These settings are stamped
 # only after the window becomes an agent, but their parsers can reject the
 # operator's configuration. Rejecting one after registration says adoption

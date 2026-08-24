@@ -7369,6 +7369,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
     || die "adopt: '$collar' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
   load_collar "$collar"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
+  launch_dead "$id" \
+    && die "adopt: nothing is running in window '$name', so there is no harness to adopt. Restart the harness there and retry, or if tmux is holding the dead window remove it with: tmux kill-window -t '$id'"
   registered_identity_guard "$id" "$name" adopt "$collar"
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
