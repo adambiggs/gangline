@@ -217,11 +217,13 @@ contains "and the refusal names the missing declaration" \
 cat > "$RUN_ROOT/flush-rc" <<'RC'
 PS1='❯ '
 HISTCONTROL=ignorespace
-PROMPT_COMMAND='if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
+PROMPT_COMMAND='_flush_prompt_count=$((_flush_prompt_count + 1))
+printf "%s" "$_flush_prompt_count" > "$FLUSH_PROMPT_COUNT"
+if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
 if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
-_flush_probe() {   # what the composer holds, read where input ordering places it
+_flush_probe() {   # ordered behind every key flush sent
   tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
 }
 bind -x '"\C-t": _flush_probe'
@@ -230,7 +232,7 @@ cat > "$RUN_ROOT/collars/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROMPT_COUNT=$RUN_ROOT/flush-prompt-count FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 collar_input() { # a composer that spans lines, and reads as the hint when empty
@@ -268,6 +270,19 @@ SH
 : > "$RUN_ROOT/flush-signal"
 "$HITCH" parked -c flushable -d /tmp >/dev/null
 parked_id="$(window_id parked)"
+flush_prompt_count() {
+  local count
+  [ -r "$RUN_ROOT/flush-prompt-count" ] || return 1
+  count="$(<"$RUN_ROOT/flush-prompt-count")"
+  case "$count" in ''|*[!0-9]*) return 1 ;; esac
+  printf '%s' "$count"
+}
+if flush_prompt_count >/dev/null; then
+  pass "the flush fixture exposes its executed-command witness"
+else
+  fail "the flush fixture exposes its executed-command witness" \
+    "the prompt counter is absent or malformed"
+fi
 
 # POST-PASTE READ-BACK SURVIVES TRANSIENT REDRAW FRAMES. The body is long and
 # multi-line so this takes the same collar path as the three live strands that
@@ -299,16 +314,14 @@ rm -f "$RUN_ROOT/redraw-arm"
 # file empty and cannot fire it early, so the wait returns after the settling
 # command's own hook and nothing is left in flight to type into the composer
 # later. Its leading space keeps it out of the history the recall key reads.
-# What the composer holds, observed in ORDER rather than at a moment. Capturing
-# the pane straight after flush returns is timing luck: tmux send-keys returns
-# once the key is enqueued, so a mutant Enter may not have been consumed, nor
-# the new prompt painted, when the capture happens — and the world would report
-# the still-edited line and pass. The probe key travels the same input path
-# behind anything flush sent, so by the time it runs, that Enter has either been
-# processed or never existed. It reads the line without submitting it, so the
-# correct case is not disturbed by being watched.
+# Whether the target executed another command, observed in ORDER rather than at
+# a moment. Reading the prompt count straight after flush returns is timing
+# luck: tmux send-keys returns once the key is enqueued, so a mutant Enter may
+# not have been consumed yet. The probe key travels the same input path behind
+# anything flush sent. By the time it runs, that Enter has either produced
+# another prompt or never existed; no collar composer reader participates.
 flush_probed=0
-flush_probe() {
+flush_prompt_probe() {
   flush_probed=$((flush_probed + 1))
   local chan="test-flush-probe-$flush_probed-$$"
   printf '%s' "$chan" > "$RUN_ROOT/flush-probe-chan"
@@ -316,7 +329,7 @@ flush_probe() {
   local waiter=$!
   tmux send-keys -t "$parked_id" C-t
   wait "$waiter"
-  "$GANG" composer parked
+  flush_prompt_count
 }
 
 flush_settled=0
@@ -453,6 +466,7 @@ parked_raw="${parked_raw%"${parked_raw##*[![:space:]]}"}"
 tmux send-keys -l -t "$parked_id" "$parked_raw EXTRA_WORDS_NOBODY_SENT"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
+mismatch_prompt_count="$(flush_prompt_count)"
 if mismatch_out="$("$GANG" flush parked 2>&1)"; then
   fail "a readback that does not match the record is not flushed" \
     "flush reported success"
@@ -546,11 +560,11 @@ equal "a turn on a window with no bracket writes none" "" \
 "$GANG" drop bracket >/dev/null 2>&1 || :
 excludes "and the message gang recorded was never submitted twice" \
   "$mismatch_out" "flushed the parked message"
-# THE COMPOSER, not gang's account of it. Everything above is gang reporting on
-# itself; only the line still sitting there says the Enter was withheld, because
-# a submitted line leaves it.
-contains "the recalled body is still sitting in the composer, unsent" \
-  "$(flush_probe)" "EXTRA_WORDS_NOBODY_SENT"
+# THE TARGET SHELL, not gang's account of itself. Its prompt count changes only
+# after it executes another command, and the ordered probe is independent of
+# the collar reader whose mismatch caused the refusal.
+equal "the refused recall submits no command to the target shell" \
+  "$mismatch_prompt_count" "$(flush_prompt_probe)"
 tmux send-keys -t "$parked_id" C-u
 
 # AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
@@ -582,6 +596,7 @@ ts_tampered="${ts_tampered% }"
 tmux send-keys -l -t "$parked_id" "$ts_tampered"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
+ts_prompt_count="$(flush_prompt_count)"
 if ts_out="$("$GANG" flush parked 2>&1)"; then
   fail "a recalled body differing only in a line's trailing space is not flushed" \
     "flush reported success"
@@ -592,8 +607,8 @@ contains "refused by the readback, not by anything downstream of it" \
   "$ts_out" "flush NOT performed"
 contains "and the body is recorded as sitting unsent, never as submitted" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
-contains "with the composer agreeing: it is still sitting there" \
-  "$(flush_probe)" "MARK_TS head"
+equal "with the target shell agreeing that no command was submitted" \
+  "$ts_prompt_count" "$(flush_prompt_probe)"
 tmux send-keys -t "$parked_id" C-u
 
 # THE DIAGNOSIS THE OPEN-TURN REFUSAL WAS PROTECTING. Refusing a flush against a
