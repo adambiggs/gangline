@@ -4884,15 +4884,27 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
 # Accounting is stated rather than inherited: a scope without it reports no
 # swap, is never selected, and the mechanism would fail silently.
 scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
-  local unit
+  local unit manager_user systemctl_recover='systemctl --user'
+  local -a scope_systemctl=(systemctl --user)
   [ "$GANG_SCOPE" = on ] || return 0
   case "$SESSION" in *[!A-Za-z0-9._-]*)
     die "GANG_SCOPE=on cannot name a systemd unit after session '$SESSION' — use letters, digits, dot, dash and underscore$(config_origin_note GANG_SESSION)" ;;
   esac
   command -v systemd-run >/dev/null 2>&1 \
     || die "GANG_SCOPE=on cannot give '$1' its own cgroup: this host has no systemd-run$(config_origin_note GANG_SCOPE)"
-  systemctl --user show --property=Version --value >/dev/null 2>&1 \
-    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: 'systemctl --user' reaches no systemd user manager$(config_origin_note GANG_SCOPE)"
+  # A sandbox may expose the host's system bus while its PID namespace makes
+  # the direct user bus unusable. systemd's local-host machine transport reaches
+  # the same user manager without weakening that sandbox. Prefer the ordinary
+  # path; the fallback is only the preflight/control client, while systemd-run
+  # below still executes with the harness in tmux's host context.
+  if ! "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1; then
+    manager_user="$(id -un 2>/dev/null)" || manager_user=""
+    [ -n "$manager_user" ] || die "GANG_SCOPE=on cannot give '$1' its own cgroup: could not name the current user for the systemd user manager$(config_origin_note GANG_SCOPE)"
+    scope_systemctl+=(--machine="$manager_user@.host")
+    systemctl_recover="systemctl --user --machine=$(shell_quote "$manager_user@.host")"
+    "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1 \
+      || die "GANG_SCOPE=on cannot give '$1' its own cgroup: 'systemctl --user' reaches no systemd user manager directly or through the local host$(config_origin_note GANG_SCOPE)"
+  fi
   unit="gangline-$SESSION-$1.scope"
   [ "${#unit}" -le 255 ] \
     || die "GANG_SCOPE=on cannot give '$1' its own cgroup: '$unit' is longer than a systemd unit name may be"
@@ -4900,8 +4912,8 @@ scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
   # the name is stable, so a resume into a dead window would meet its own
   # predecessor. systemd-run's failure would land inside tmux as a window that
   # died at launch; the operator gets the unit and the remedy here instead.
-  if systemctl --user is-active --quiet -- "$unit" 2>/dev/null; then
-    die "GANG_SCOPE=on cannot give '$1' its own cgroup: $unit is still running, so something from an earlier '$1' outlived its window. Inspect it with 'systemctl --user status $unit' and release the name with 'systemctl --user stop $unit'"
+  if "${scope_systemctl[@]}" is-active --quiet -- "$unit" 2>/dev/null; then
+    die "GANG_SCOPE=on cannot give '$1' its own cgroup: $unit is still running, so something from an earlier '$1' outlived its window. Inspect it with '$systemctl_recover status $unit' and release the name with '$systemctl_recover stop $unit'"
   fi
   GANG_LAUNCH="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$unit") -p MemoryAccounting=yes $GANG_LAUNCH"
 }

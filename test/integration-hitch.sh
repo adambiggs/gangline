@@ -1475,6 +1475,39 @@ printf 'MARK_SCOPED' | "$GANG" send --to scoped --from tester --stdin >/dev/null
 contains "a scoped agent is an ordinary agent" "$(pane scoped)" "MARK_SCOPED"
 "$GANG" drop scoped >/dev/null
 
+# A PID-isolated sandbox can reach the host system bus while its direct user
+# bus is unusable. The local-host machine transport must carry both the manager
+# preflight and the stale-unit check, while the launch itself remains the same
+# host-side systemd-run command in tmux.
+mkdir -p "$RUN_ROOT/scope-host-bin"
+cp "$RUN_ROOT/scope-bin/systemd-run" "$RUN_ROOT/scope-host-bin/systemd-run"
+cat > "$RUN_ROOT/scope-host-bin/systemctl" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" >> '$RUN_ROOT/scope-host.argv'
+[ "\${1:-}" != --user ] || shift
+case "\${1:-}" in
+  --machine="$(id -un)@.host") shift ;;
+  *) exit 1 ;;
+esac
+case "\${1:-}" in
+  is-active) exit 3 ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$RUN_ROOT/scope-host-bin/systemd-run" "$RUN_ROOT/scope-host-bin/systemctl"
+tmux set-environment -g PATH "$RUN_ROOT/scope-host-bin:$scope_path"
+PATH="$RUN_ROOT/scope-host-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopedhost -c bash -d /tmp >/dev/null
+tmux set-environment -g PATH "$scope_path"
+contains "an unreachable direct user bus retries through the local host" \
+  "$(<"$RUN_ROOT/scope-host.argv")" "--machine=$(id -un)@.host show"
+contains "the host transport also checks whether the stable unit name is free" \
+  "$(<"$RUN_ROOT/scope-host.argv")" "--machine=$(id -un)@.host is-active"
+contains "the host-transport preflight still launches the scoped harness" \
+  "$(tmux display-message -p -t "$(window_id scopedhost)" '#{pane_start_command}')" \
+  "systemd-run --user --scope"
+"$GANG" drop scopedhost >/dev/null
+
 # An unusable scope is refused at hitch rather than discovered as a window that
 # died at launch, and a value that is neither on nor off never reads as off.
 mkdir -p "$RUN_ROOT/scope-nomgr-bin"

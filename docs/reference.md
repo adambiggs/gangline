@@ -174,6 +174,13 @@ cgroup changes. The setting is off unless declared, and a host that has no
 `systemd-run` or no reachable user manager refuses the hitch instead of
 launching an unscoped agent.
 
+Gangline tries the process's direct user bus first. If that bus is unusable but
+systemd exposes the local host machine transport, the scope preflight and stale
+unit check retry as the current user through `<user>@.host`. This lets a caller
+inside a PID-isolated sandbox hitch a scoped agent without granting the caller a
+different filesystem policy; the harness still launches from tmux's host
+context.
+
 The scope name is stable, so a name still held by something an earlier agent
 left behind refuses the hitch and names the unit to stop, rather than failing
 inside tmux as a window that died at launch. `adopt` registers a window Gangline
