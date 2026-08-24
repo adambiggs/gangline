@@ -5279,15 +5279,20 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
 # harness makes each agent its own leaf, so the same policy costs one agent.
 # Accounting is stated rather than inherited: a scope without it reports no
 # swap, is never selected, and the mechanism would fail silently.
-scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
-  local unit manager_user systemctl_recover='systemctl --user'
+SCOPE_PREFIX=""
+SCOPE_ARGV=()
+scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
+                     # $3 = what a name still held says outlived what;
+                     # SCOPE_PREFIX / SCOPE_ARGV = the wrapper, empty when off
+  local manager_user systemctl_recover='systemctl --user'
   local -a scope_systemctl=(systemctl --user)
+  SCOPE_PREFIX=""; SCOPE_ARGV=()
   [ "$GANG_SCOPE" = on ] || return 0
   case "$SESSION" in *[!A-Za-z0-9._-]*)
     die "GANG_SCOPE=on cannot name a systemd unit after session '$SESSION' — use letters, digits, dot, dash and underscore$(config_origin_note GANG_SESSION)" ;;
   esac
   command -v systemd-run >/dev/null 2>&1 \
-    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: this host has no systemd-run$(config_origin_note GANG_SCOPE)"
+    || die "GANG_SCOPE=on cannot give $2 its own cgroup: this host has no systemd-run$(config_origin_note GANG_SCOPE)"
   # A sandbox may expose the host's system bus while its PID namespace makes
   # the direct user bus unusable. systemd's local-host machine transport reaches
   # the same user manager without weakening that sandbox. Prefer the ordinary
@@ -5295,23 +5300,63 @@ scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
   # below still executes with the harness in tmux's host context.
   if ! "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1; then
     manager_user="$(id -un 2>/dev/null)" || manager_user=""
-    [ -n "$manager_user" ] || die "GANG_SCOPE=on cannot give '$1' its own cgroup: could not name the current user for the systemd user manager$(config_origin_note GANG_SCOPE)"
+    [ -n "$manager_user" ] || die "GANG_SCOPE=on cannot give $2 its own cgroup: could not name the current user for the systemd user manager$(config_origin_note GANG_SCOPE)"
     scope_systemctl+=(--machine="$manager_user@.host")
     systemctl_recover="systemctl --user --machine=$(shell_quote "$manager_user@.host")"
     "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1 \
-      || die "GANG_SCOPE=on cannot give '$1' its own cgroup: 'systemctl --user' reaches no systemd user manager directly or through the local host$(config_origin_note GANG_SCOPE)"
+      || die "GANG_SCOPE=on cannot give $2 its own cgroup: 'systemctl --user' reaches no systemd user manager directly or through the local host$(config_origin_note GANG_SCOPE)"
   fi
-  unit="gangline-$SESSION-$1.scope"
-  [ "${#unit}" -le 255 ] \
-    || die "GANG_SCOPE=on cannot give '$1' its own cgroup: '$unit' is longer than a systemd unit name may be"
-  # A scope outlives its pane when the harness left a detached child behind, and
-  # the name is stable, so a resume into a dead window would meet its own
-  # predecessor. systemd-run's failure would land inside tmux as a window that
-  # died at launch; the operator gets the unit and the remedy here instead.
-  if "${scope_systemctl[@]}" is-active --quiet -- "$unit" 2>/dev/null; then
-    die "GANG_SCOPE=on cannot give '$1' its own cgroup: $unit is still running, so something from an earlier '$1' outlived its window. Inspect it with '$systemctl_recover status $unit' and release the name with '$systemctl_recover stop $unit'"
+  [ "${#1}" -le 255 ] \
+    || die "GANG_SCOPE=on cannot give $2 its own cgroup: '$1' is longer than a systemd unit name may be"
+  # A scope outlives what it held when a detached child was left behind, and the
+  # name is stable, so a relaunch would meet its own predecessor. systemd-run's
+  # failure would land inside tmux as a window that died at launch; the operator
+  # gets the unit and the remedy here instead.
+  if "${scope_systemctl[@]}" is-active --quiet -- "$1" 2>/dev/null; then
+    die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$systemctl_recover status $1' and release the name with '$systemctl_recover stop $1'"
   fi
-  GANG_LAUNCH="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$unit") -p MemoryAccounting=yes $GANG_LAUNCH"
+  SCOPE_ARGV=(systemd-run --user --scope --quiet --collect --unit="$1" -p MemoryAccounting=yes)
+  SCOPE_PREFIX="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$1") -p MemoryAccounting=yes"
+}
+
+scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
+  scope_prefix_for "gangline-$SESSION-$1.scope" "'$1'" \
+    "something from an earlier '$1' outlived its window"
+  [ -z "$SCOPE_PREFIX" ] || GANG_LAUNCH="$SCOPE_PREFIX $GANG_LAUNCH"
+}
+
+server_running() { # 0 = a tmux server is already answering on this socket
+  # A tmux server with no sessions exits by itself, so "list-sessions answers"
+  # is the same question as "is there a server" — asked without reading its
+  # refusal text, which is prose that changes between tmux versions.
+  tmux list-sessions >/dev/null 2>&1
+}
+
+# THE SERVER THAT HOLDS THE TEAM IS THE ONE PROCESS WHOSE DEATH ENDS ALL OF IT,
+# and until this it was the only one gangline owned no account of. Each agent is
+# launched into `gangline-<session>-<agent>.scope`; the server was started by
+# whatever ran `gang up` and inherited that shell's cgroup — an ssh login scope
+# whose number means nothing here. So a whole team could vanish and leave
+# journald nothing but "session-NNNN.scope: Deactivated successfully", which
+# reads identically whether the server was killed, crashed, or simply lost the
+# login session underneath it.
+#
+# ONLY WHERE GANG IS THE ONE STARTING IT. `tmux new-session` against a server
+# that is already up does not fork a new one, so the scope would hold nothing
+# but the client that exits a moment later — a unit that stops immediately and
+# an accounting claim that is false. The pre-existing case is said out loud
+# instead, because a silently unowned server is exactly the state this exists
+# to end.
+scope_server_wrap() { # SCOPE_ARGV = the wrapper for the tmux that forks a server
+  SCOPE_PREFIX=""; SCOPE_ARGV=()
+  [ "$GANG_SCOPE" = on ] || return 0
+  if server_running; then
+    printf "gang: WARNING: the tmux server that will hold '%s' is already running, so gangline does not own a unit for it: its death will be an anonymous process exit rather than a named unit stopping, and it stays outside the accounting its agents get. To put it inside, end the other sessions on this socket and start the team on a server gang opens.\n" \
+      "$SESSION" >&2
+    return 0
+  fi
+  scope_prefix_for "gangline-$SESSION.scope" "the tmux server holding '$SESSION'" \
+    "something from an earlier tmux server for '$SESSION' outlived it"
 }
 
 hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
@@ -5497,7 +5542,13 @@ cmd_hitch() {
   spool_root_prepare
 
   if ! session_live; then
-    id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
+    # WRAPPED HERE, NOT AROUND THE CLIENT THAT ATTACHES LATER. This is the one
+    # call in gang that can fork a tmux server, so it is the one place the
+    # server can be born inside a unit gangline names. The forked server
+    # inherits this scope's cgroup and keeps it after the client returns.
+    scope_server_wrap
+    id="$(${SCOPE_ARGV[@]+"${SCOPE_ARGV[@]}"} \
+          tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \
       || die "could not start session '$SESSION' for '$name'"
     opened_session=1
   elif [ -n "$id" ]; then
