@@ -253,7 +253,7 @@ equal "the public collar list is the supported harness set" \
 # capability names itself.
 collar_caps="$(GANG_TEST_COLLARS='' "$GANG" collars)"
 for collar_cap_row in "claude-code resume" "codex resume" \
-                      "opencode no-resume" "pi no-resume"; do
+                      "opencode resume" "pi no-resume"; do
   equal "gang collars marks ${collar_cap_row% *} ${collar_cap_row#* }" \
     "${collar_cap_row#* }" \
     "$(printf '%s\n' "$collar_caps" | awk -F '\t' -v n="${collar_cap_row% *}" \

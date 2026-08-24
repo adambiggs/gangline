@@ -2,6 +2,43 @@
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
+# `-s <id>` is OpenCode's own continue-this-session flag (1.14.41), and it is a
+# session slot rather than a recency shortcut: `-c/--continue` would relaunch
+# onto whatever ran last, which is not the identity Gangline stamped.
+GANG_RESUME_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode -s {{session_id}}"
+# A HARNESS WITH NO HOOK COMMAND STILL HAS AN IDENTITY, and without one carried
+# out of the process nothing stamps it: `collar_session_id` is only ever called
+# on a native hook payload, so a collar that installs no hook can never supply
+# one and `gang drop` reports UNSTAMPED after the conversation is already gone.
+# OpenCode's plugin bus is where this harness says its session id out loud, so
+# the plugin below is composed into the launch the way the sibling collars
+# compose native hooks into theirs.
+#
+# A HOSTILE ROOT IS DECLINED, NOT ESCAPED, for the reason claude-code.sh and
+# codex.sh both record: the plugin URL rides inside a single-quoted word of a
+# launch line a new window runs under the operator's account, and one quote in
+# the path closes that word. Such a root gets no plugin and therefore no resume
+# launch either, so nothing here claims an identity it cannot witness.
+_gl_oc_plugin="${ROOT:-}/collars/plugins/opencode-gangline.js"
+if [ -n "${ROOT:-}" ] && [ -x "${ROOT:-}/bin/gang" ] && [ -f "$_gl_oc_plugin" ]; then
+  case "$ROOT" in
+    *[\'\"\\]*|*[[:cntrl:]]*) GANG_RESUME_LAUNCH="" ;;
+    *)
+      # OPENCODE_CONFIG_CONTENT MERGES, it does not replace: driven on 1.14.41,
+      # `plugin` arrays from the operator's own config and from this variable
+      # concatenate, and `opencode debug config` reports both origins. That is
+      # what lets Gangline add a plugin without standing on operator config.
+      _gl_oc_env="GANGLINE_HOOK='$ROOT/bin/gang'"
+      _gl_oc_env="$_gl_oc_env OPENCODE_CONFIG_CONTENT='{\"plugin\":[\"file://$_gl_oc_plugin\"]}'"
+      GANG_LAUNCH="$_gl_oc_env $GANG_LAUNCH"
+      GANG_RESUME_LAUNCH="$_gl_oc_env $GANG_RESUME_LAUNCH"
+      unset _gl_oc_env
+      ;;
+  esac
+else
+  GANG_RESUME_LAUNCH=""
+fi
+unset _gl_oc_plugin
 GANG_MODEL_OPT="-m"
 # Observed on OpenCode 1.14.41: `opencode models` prints one bare
 # provider/model id per line with no header.
@@ -32,6 +69,19 @@ GANG_QUIET_AT_REST=1
 GANG_COMPACT_CMD="/compact"
 GANG_MIDTURN_INPUT=1
 GANG_OCCUPIED_REGEX='△ Permission required| {2,}esc *$'
+
+collar_session_id() { # $1 = tmux target, $2 = native payload from the plugin above
+  # THE PAYLOAD IS THE ONLY WITNESS. Nothing here reads OpenCode's storage for a
+  # newest-session guess: recency is not identity, and a fabricated id would be
+  # quoted by `gang drop` as a way back into a conversation nobody was having.
+  printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("session_id", "")
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+print(value)
+' || return 1
+}
 
 opencode_models_json() { printf '%s/opencode/models.json' "${XDG_CACHE_HOME:-$HOME/.cache}"; }
 
