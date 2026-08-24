@@ -1604,6 +1604,31 @@ equal "the preserved manual wake closes automatic re-arming for that window" \
   "$(tmux show-options -wqv -t "$auto_id" @gl_auto_resume_armed)"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
 
+# AN UNREADABLE FUTURE TIMER IS STILL AUTHORITATIVE. A failed unit query is not
+# evidence that the timer is dead, so automatic arming must preserve the
+# operator's continuation instead of spending unknown as permission to replace.
+auto_reset_blind=$(( auto_now + 66000 ))
+auto_blind_body="Finish the wake whose unit state cannot be read."
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_blind" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
+  --resume "$auto_blind_body" >/dev/null
+auto_blind_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_blind_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_SYSTEMCTL=blind PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "automatic arming preserves a future wake whose unit state is unreadable" \
+  "$auto_blind_note" "left the existing future provider-reset wake"
+equal "the unreadable wake keeps its operator-authored continuation" \
+  "$auto_blind_body" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_body)"
+equal "and automatic sampling arms no replacement for unknown state" \
+  "$auto_blind_arms_before" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+
 # AN OVERDUE DECLARATION IS RESIDUE, NOT AN AUTHORITATIVE WAKE. A callback can
 # leave it behind after the timer was collected, and a host can sleep through
 # its reset. Neither may disable automatic arming for every later window.
@@ -1665,6 +1690,37 @@ equal "the failed declaration is replaced by the fresh reset" \
   "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
 equal "and exactly one recovery timer is armed" \
   "$(( auto_failed_arms_before + 1 ))" \
+  "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
+
+# AN INACTIVE FUTURE TIMER IS GONE EVEN THOUGH ITS DECLARATION IS NOT. Exercise
+# the other provably-dead state directly so it cannot silently become the
+# unreadable/preserve arm while failed timers still recover.
+auto_reset_inactive_source=$(( auto_now + 71000 ))
+auto_inactive_body="This inactive timer cannot deliver me."
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_inactive_source" "$auto_now" \
+  > "$usage_limits_source"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res \
+  --resume "$auto_inactive_body" >/dev/null
+auto_reset_after_inactive=$(( auto_now + 72000 ))
+printf '%s\t%s\t%s\t%s\n' \
+  "Current session" 99 "$auto_reset_after_inactive" "$auto_now" \
+  > "$usage_limits_source"
+auto_inactive_arms_before="$(wc -l < "$usage_timer_arms" | tr -d ' ')"
+tmux set-option -w -t "$auto_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_inactive_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_SYSTEMCTL=gone PATH="$usage_timer_bin:$PATH" \
+  TMUX_PANE="$auto_pane" "$GANG" hook)"
+contains "an inactive future timer does not suppress automatic recovery" \
+  "$auto_inactive_note" "Auto-resume armed"
+equal "the inactive declaration is replaced by the fresh reset" \
+  "$auto_reset_after_inactive" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"
+equal "its inactive timer's custom continuation is discarded" "" \
+  "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake_body)"
+equal "and exactly one inactive-timer recovery is armed" \
+  "$(( auto_inactive_arms_before + 1 ))" \
   "$(wc -l < "$usage_timer_arms" | tr -d ' ')"
 PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-res --clear >/dev/null
 

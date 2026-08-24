@@ -329,16 +329,6 @@ that could still outrank the answer must parse; a final line without its newline
 is an append in flight and does not yet count as a record. This bounds ordinary
 reads to the relevant tail without incremental state, rotation, or cleanup.
 
-## Auto-resume accepted follow-up
-
-- **Two unit-state arms lack direct evidence.** The automatic-wake branch is
-  driven for an active timer preserving its continuation and a failed timer
-  being replaced, but not separately for `inactive` replacement or unreadable
-  state preservation. This is non-blocking because the two decisions are
-  already exercised through their sibling states and use the same fake
-  `systemctl` vocabulary as status and cancellation. Closing the mutation gap
-  costs two immediate fixtures; it needs no production surface.
-
 The continuation marker is visible to the agent in its own transcript. An agent
 that reads it can in principle reproduce it, so it is an ownership witness under
 Gangline's single-tenant trust model, not an authentication boundary. Hiding or
