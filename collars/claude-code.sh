@@ -117,11 +117,12 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
 # FATAL TURN EVIDENCE IS THE NEWEST TOP-LEVEL SEMANTIC RECORD, not pane paint.
 # Observed on claude-code 2.1.233: an unrecognized launch model writes a
 # synthetic assistant record with isApiErrorMessage=true, error=model_not_found
-# and the message checked below. A following real user turn outranks that
-# failure while recovery is running; isMeta local-command notices and
-# tool_result-only user records are not turns. A later ordinary assistant record
-# clears it. Rate limits and retryable API errors have other error names and
-# never enter this branch. Missing pre-session evidence abstains; a bound
+# and the message checked below. On 2.1.241, an exhausted 529 retry sequence
+# instead leaves a synthetic assistant record with error=server_error and
+# apiErrorStatus=529. A following real user turn outranks either terminal record
+# while recovery is running; isMeta local-command notices and tool_result-only
+# user records are not turns. A later ordinary assistant record clears it. Other
+# retryable API errors abstain. Missing pre-session evidence abstains; a bound
 # transcript Gangline cannot interpret returns unknown instead of absence.
 collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
   local file
@@ -212,6 +213,14 @@ if latest is None or latest.get("type") != "assistant":
     raise SystemExit(1)
 if latest.get("isApiErrorMessage") is not True:
     raise SystemExit(1)
+
+if latest.get("error") == "server_error":
+    status = latest.get("apiErrorStatus")
+    if status == 529 and not isinstance(status, bool):
+        print("Claude Code ended the latest turn on HTTP 529 (server_error)")
+        raise SystemExit(0)
+    raise SystemExit(1)
+
 if latest.get("error") != "model_not_found":
     raise SystemExit(1)
 
@@ -372,7 +381,10 @@ if len(levels) != len(set(levels)):
     raise SystemExit(1)
 print(*levels, sep=\"\\n\")
 ' || true"
-GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|▰|▱'
+# A live 529 retry paints its native error before the transcript gains the
+# terminal synthetic record. Once that record exists collar_bricked outranks
+# this paint, so the same retained line cannot leave an exhausted retry busy.
+GANG_BUSY_REGEX='^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|API Error: 529 Overloaded\.|▰|▱'
 GANG_QUIET_AT_REST=1
 # The instruction slot is declared here because THIS harness's /compact takes
 # instructions for its summariser — driven on 2.1.226, where a summary told to

@@ -1077,6 +1077,45 @@ claude_retry_read="$(CLAUDE_TRANSCRIPT="$claude_retry_transcript" ROOT="$ROOT" \
 equal "Claude's transient rate-limit record is not fatal model evidence" \
   $'1\t' "$claude_retry_read"
 
+claude_busy_regex="$(GANG_CONTEXT_LIGHTS=off ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_BUSY_REGEX"' fixture "$claude_collar")"
+if printf '%s\n' 'API Error: 529 Overloaded. This is a server-side issue.' |
+  grep -qE -- "$claude_busy_regex"; then
+  pass "Claude's live HTTP 529 retry paint is busy"
+else
+  fail "Claude's live HTTP 529 retry paint is busy" "$claude_busy_regex"
+fi
+
+claude_529_transcript="$RUN_ROOT/claude-529-error.jsonl"
+cat > "$claude_529_transcript" <<'JSONL'
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"work"}}
+{"type":"assistant","uuid":"overloaded-529-record","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","apiErrorStatus":529,"message":{"content":[{"type":"text","text":"API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."}]}}
+JSONL
+claude_529_read="$(CLAUDE_TRANSCRIPT="$claude_529_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    collar_bricked fixture
+  ' fixture "$claude_collar")"
+# source-guard: producer@c83f29d35b38: the fixture supplies the native terminal assistant record whose exact error/status pair the collar reads
+equal "Claude surfaces a terminal HTTP 529 turn" \
+  "Claude Code ended the latest turn on HTTP 529 (server_error)" "$claude_529_read"
+
+claude_other_server_error_transcript="$RUN_ROOT/claude-other-server-error.jsonl"
+cat > "$claude_other_server_error_transcript" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","apiErrorStatus":500,"message":{"content":[{"type":"text","text":"temporary provider failure"}]}}
+JSONL
+claude_other_server_error_read="$(CLAUDE_TRANSCRIPT="$claude_other_server_error_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@0bafed54f094: the fixture differs from the native 529 record only in apiErrorStatus, so absence is evidence that the collar did not generalize server_error
+equal "other Claude server errors remain nonfatal" \
+  $'1\t' "$claude_other_server_error_read"
+
 codex_collar="$ROOT/collars/codex.sh"
 codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"
