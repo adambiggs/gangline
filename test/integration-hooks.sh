@@ -690,6 +690,30 @@ equal "concurrent native witnesses of one kind deliver exactly one note" \
 "$GANG" drop stall-gated >/dev/null
 "$GANG" notify stall-target >/dev/null
 
+# CLAIM INFRASTRUCTURE FAILURE IS NOT CONTENTION. A path that cannot be a lock
+# directory makes event_claim return 2 before a note can be accepted. The
+# raising window must retain that terminal outcome without stamping the
+# debounce, so repairing the root is enough for the same native kind to retry.
+event_claim_bad_root="$RUN_ROOT/event-claim-not-directory"
+touch "$event_claim_bad_root"
+tmux set-option -uw -t "$stall_raise_id" @gl_stall
+tmux set-option -uw -t "$stall_raise_id" @gl_stall_failed
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  GANG_LOCK_DIR="$event_claim_bad_root" \
+    TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+equal "a broken stall claim writes no debounce stamp" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
+contains "a broken stall claim remains operator-visible" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)" \
+  "could not establish the stall-note claim"
+printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
+  TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
+contains "a repaired stall claim accepts the same native kind immediately" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)" \
+  "agent_needs_input"
+equal "the accepted stall retry retires the claim failure" "" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall_failed)"
+
 if "$GANG" notify 'bad name' >/dev/null 2>&1; then
   fail "notify rejects a name outside the agent-name contract" \
     "invalid name was accepted"
@@ -1338,6 +1362,36 @@ contains "through gang's own arming path rather than a second copy of it" \
 equal "arming spends no second native read" "1" \
   "$(( $(tmux show-options -wqv -t "$auto_id" @test_usage_calls) - auto_calls_before ))"
 
+# THE AUTO-ARM CALLER MUST KEEP CLAIM STATUS 2 DISTINCT FROM A BUSY PEER. A
+# broken root proves the claim primitive could not decide; it may neither mark
+# this provider window handled nor arm a timer. Once the same root is usable,
+# the unchanged sampled reset remains eligible on the next native boundary.
+GANG_AUTO_RESUME=95% "$HITCH" auto-claim -c usage-lights -d /tmp >/dev/null
+auto_claim_id="$(window_id auto-claim)"
+auto_claim_pane="$(tmux list-panes -t "$auto_claim_id" -F '#{pane_id}')"
+: > "$usage_timer_args"
+auto_claim_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_LOCK_DIR="$event_claim_bad_root" PATH="$usage_timer_bin:$PATH" \
+    TMUX_PANE="$auto_claim_pane" "$GANG" hook)"
+contains "auto-resume reports an undecidable arming claim in the firing turn" \
+  "$auto_claim_note" "could NOT establish its event claim"
+contains "auto-resume records the arming-claim failure for status" \
+  "$(tmux show-options -wqv -t "$auto_claim_id" @gl_usage_wake_failed)" \
+  "could not establish its event claim"
+equal "an undecidable arming claim creates no wake and closes no reset" \
+  $'\t' "$(tmux show-options -wqv -t "$auto_claim_id" @gl_usage_wake)"$'\t'"$(tmux show-options -wqv -t "$auto_claim_id" @gl_auto_resume_armed)"
+equal "an undecidable arming claim invokes no timer" "" \
+  "$(<"$usage_timer_args")"
+tmux set-option -w -t "$auto_claim_id" @gl_usage_checked "$(( auto_now - 60 ))"
+auto_claim_retry="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$usage_timer_bin:$PATH" TMUX_PANE="$auto_claim_pane" "$GANG" hook)"
+contains "a repaired arming claim retries the unchanged provider window" \
+  "$auto_claim_retry" "Auto-resume armed at 95% used"
+equal "the repaired arming claim records the sampled reset" "$auto_reset" \
+  "$(tmux show-options -wqv -t "$auto_claim_id" @gl_auto_resume_armed)"
+PATH="$usage_timer_bin:$PATH" "$GANG" wait-limit auto-claim --clear >/dev/null
+"$GANG" drop auto-claim >/dev/null
+
 # A PROVIDER ROLLOVER DURING ARMING CANNOT REWRITE THE DECISION. The fake moves
 # the native source from A to B inside systemd-run, after the hook sampled A but
 # before the timer is accepted. The declaration and marker must both remain A;
@@ -1898,6 +1952,46 @@ equal "unknown prompt ownership never opens another automatic hop" \
   "$auto_stream_unknown_before" "$(pane_all auto-stream)"
 contains "the refused unknown ownership remains operator-visible" \
   "$("$GANG" status auto-stream)" "could not positively determine"
+
+# FAILED-TURN CLAIM STATUS 2 IS ALSO A FAILURE VERDICT, NOT A DUPLICATE. Keep a
+# fresh record unhandled while its claim root is broken, then retry that exact
+# native identity after repair. No clock or eventual read participates: both
+# hook calls consume the same complete transcript tail.
+auto_stream_claim_transcript="$RUN_ROOT/auto-stream-claim.jsonl"
+cat > "$auto_stream_claim_transcript" <<'JSONL'
+{"type":"assistant","uuid":"claim-error","isSidechain":false,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
+{"type":"system","uuid":"claim-duration","parentUuid":"claim-error","subtype":"turn_duration"}
+JSONL
+GANG_AUTO_RESUME=95% "$HITCH" auto-stream-claim -c auto-stream -d /tmp >/dev/null
+auto_stream_claim_id="$(window_id auto-stream-claim)"
+auto_stream_claim_pane="$(tmux list-panes -t "$auto_stream_claim_id" -F '#{pane_id}')"
+auto_stream_claim_notification="$(python3 - "$auto_stream_claim_transcript" <<'PY'
+import json, sys
+print(json.dumps({
+    "hook_event_name": "Notification",
+    "notification_type": "idle_prompt",
+    "session_id": "auto-stream-claim-session",
+    "transcript_path": sys.argv[1],
+}))
+PY
+)"
+printf '%s' "$auto_stream_claim_notification" |
+  GANG_LOCK_DIR="$event_claim_bad_root" \
+    TMUX_PANE="$auto_stream_claim_pane" "$GANG" hook >/dev/null
+equal "an undecidable failed-turn claim leaves its native identity unhandled" "" \
+  "$(tmux show-options -wqv -t "$auto_stream_claim_id" @gl_auto_resume_error)"
+contains "an undecidable failed-turn claim remains operator-visible" \
+  "$(tmux show-options -wqv -t "$auto_stream_claim_id" @gl_auto_resume_failed)" \
+  "could not establish the failed-turn claim"
+printf '%s' "$auto_stream_claim_notification" |
+  TMUX_PANE="$auto_stream_claim_pane" "$GANG" hook >/dev/null
+equal "a repaired failed-turn claim handles that exact native identity" \
+  "claim-error" \
+  "$(tmux show-options -wqv -t "$auto_stream_claim_id" @gl_auto_resume_error)"
+contains "the repaired failed-turn claim records its marked continuation" \
+  "$(tmux show-options -wqv -t "$auto_stream_claim_id" @gl_auto_resume_prompt)" \
+  "[gang:auto-resume#"
+"$GANG" drop auto-stream-claim >/dev/null
 
 "$HITCH" auto-stream-off -c auto-stream -d /tmp >/dev/null
 auto_stream_off_id="$(window_id auto-stream-off)"

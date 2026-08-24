@@ -3675,7 +3675,7 @@ event_claim_release() { [ -z "$EVENT_CLAIM" ] || rm -f -- "$EVENT_CLAIM"; EVENT_
 
 stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
   local raising="$1" raising_win="" kind="$2" notify target
-  local rc=0
+  local rc=0 claim_rc=0
   notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
   [ -n "$notify" ] || return 0
   raising_win="$(tmux display-message -p -t "$raising" '#{window_id}' 2>/dev/null)" || raising_win=""
@@ -3691,7 +3691,14 @@ stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
     return 0
   }
   [ "$target" != "$raising_win" ] || return 0
-  event_claim stall "$raising_win" "$kind" || return 0
+  event_claim stall "$raising_win" "$kind" || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) return 0 ;;
+    *) stall_failed_write "$raising_win" \
+         "could not establish the stall-note claim: ${EVENT_CLAIM_ERROR:-the claim mechanism returned no diagnostic}"
+       return 0 ;;
+  esac
   stall_note_claimed "$raising" "$raising_win" "$kind" "$notify" "$target" || true
   event_claim_release
   return 0
@@ -4441,7 +4448,7 @@ auto_resume_prompt_witness() { # $1 pane, $2 collar, $3 UserPromptSubmit payload
 
 auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resumed
   local pane="$1" collar="$2" kind="$3" record="" record_rc=0 window="" handled=""
-  local own="" pending="" name body err="" rc=0
+  local own="" pending="" name body err="" rc=0 claim_rc=0
   auto_resume_for "$pane" || return 1
   load_collar "$collar"
   declare -F collar_auto_resume_record >/dev/null || return 1
@@ -4463,7 +4470,14 @@ auto_resume_stream_note() { # $1 pane, $2 collar, $3 Notification kind; 0 = resu
   esac
   window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>/dev/null)" || window=""
   [ -n "$window" ] || return 1
-  event_claim auto-resume "$window" "stream-$record" || return 1
+  event_claim auto-resume "$window" "stream-$record" || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) return 1 ;;
+    *) auto_resume_failed_write "$window" \
+         "could not establish the failed-turn claim for record $record: ${EVENT_CLAIM_ERROR:-the claim mechanism returned no diagnostic}; Gangline left that native identity unhandled so a later idle notification may retry it"
+       return 1 ;;
+  esac
   handled="$(tmux show-options -wqv -t "$window" @gl_auto_resume_error 2>/dev/null)" \
     || handled=""
   if [ "$handled" = "$record" ]; then event_claim_release; return 1; fi
@@ -4650,8 +4664,18 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   # options have no compare-and-set; without this claim both processes can read
   # the old marker and arm the same reset. A killed holder is reclaimed by the
   # next hook, so no in-progress bit can wedge the window.
-  local armed name out rc=0
-  event_claim auto-resume "$1" usage-wake || return 1
+  local armed name out rc=0 claim_rc=0
+  event_claim auto-resume "$1" usage-wake || claim_rc=$?
+  case "$claim_rc" in
+    0) ;;
+    1) return 1 ;;
+    *) out="auto-resume could not establish its event claim: ${EVENT_CLAIM_ERROR:-the claim mechanism returned no diagnostic}"
+       tmux set-option -uw -t "$1" @gl_usage_wake_failed_unit 2>/dev/null || true
+       tmux set-option -w -t "$1" @gl_usage_wake_failed "$out" 2>/dev/null || true
+       printf 'Auto-resume could NOT establish its event claim: %s. Nothing is scheduled; a later provider sample may retry this reset.' \
+         "${EVENT_CLAIM_ERROR:-the claim mechanism returned no diagnostic}"
+       return 2 ;;
+  esac
   armed="$(tmux show-options -wqv -t "$1" @gl_auto_resume_armed 2>/dev/null)" || armed=""
   if [ "$armed" = "$2" ]; then event_claim_release; return 1; fi
   name="$(agent_name_of "$1")"
