@@ -1932,6 +1932,91 @@ contains "and names the held ones apart from them" \
 contains "naming each held body rather than counting it" \
   "$carried_drop" "held fragment"
 
+# KEYSTROKES LANDED AND THE SCREEN THEN WENT AWAY. That is neither a refusal —
+# nothing can be parked, the body may already be in front of its recipient — nor
+# a plain failure, which invites the sender to send a second copy by hand. It is
+# its own verdict, and the record it leaves is named apart from a held one.
+cat > "$RUN_ROOT/collars/lostscreen.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_STOP_HOOK=1
+GANG_QUEUED_REGEX='^[[:space:]]*QUEUE_HINT_NEVER_SHOWN\$'
+_gl_lost_real="\$(declare -f collar_input)"
+eval "lost_real_input \${_gl_lost_real#collar_input}"
+collar_input() { # readable until the Enter has gone in, then nothing
+  local box rc=0
+  [ ! -f "$RUN_ROOT/lost-armed" ] || return 3
+  box="\$(lost_real_input "\$1")" || rc=\$?
+  [ "\$rc" -eq 0 ] || return "\$rc"
+  if [ -f "$RUN_ROOT/lost-seen" ]; then
+    case "\$box" in
+      *[![:space:]]*) ;;
+      *) : > "$RUN_ROOT/lost-armed" ;;
+    esac
+  else
+    case "\$box" in *MARK_LOST*) : > "$RUN_ROOT/lost-seen" ;; esac
+  fi
+  printf '%s' "\$box"
+}
+SH
+"$HITCH" lostscreen -c lostscreen -d /tmp >/dev/null
+lost_id="$(window_id lostscreen)"
+lost_pane_id="$(tmux list-panes -t "$lost_id" -F '#{pane_id}')"
+lost_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$lost_id" @gl_spool)"
+rm -f "$RUN_ROOT/lost-seen" "$RUN_ROOT/lost-armed"
+lost_rc=0
+lost_out="$(printf 'MARK_LOSTSCREEN' |
+  "$GANG" send --to lostscreen --from tester --stdin 2>&1)" || lost_rc=$?
+rm -f "$RUN_ROOT/lost-seen" "$RUN_ROOT/lost-armed"
+equal "a send whose Enter outcome cannot be read gets its own status" "5" "$lost_rc"
+contains "and reports a possible delivery rather than a held message" \
+  "$lost_out" "delivered but UNVERIFIED"
+contains "naming the uncertainty it is reporting" "$lost_out" "is unknown"
+excludes "it does not tell the sender a spool entry is waiting" \
+  "$lost_out" "queued for lostscreen"
+lost_parked=0
+for lost_entry in "$lost_spool"/*; do
+  [ -f "$lost_entry" ] && lost_parked=$((lost_parked + 1))
+done
+equal "nothing is parked for a body that may already have landed" "0" "$lost_parked"
+
+# THE SAME WALL, REACHED FROM THE SPOOL. Here the entry exists before the
+# keystrokes do, so there IS a record — and it must not be the one that says
+# the message never arrived.
+tmux send-keys -l -t "$lost_id" 'HUMAN_DRAFT'
+printf 'MARK_LOSTDRAIN' |
+  "$GANG" send --to lostscreen --from tester --stdin >/dev/null
+tmux send-keys -t "$lost_id" C-u
+tmux wait-for "gang-spool-drain-$lost_id" &
+lost_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$lost_pane_id" "$GANG" hook >/dev/null
+wait "$lost_drain_waiter"
+rm -f "$RUN_ROOT/lost-seen" "$RUN_ROOT/lost-armed"
+lost_unverified=0
+for lost_entry in "$lost_spool"/unverified-*; do
+  [ -f "$lost_entry" ] && lost_unverified=$((lost_unverified + 1))
+done
+equal "a drained bundle gang could not confirm is recorded under its own name" \
+  "1" "$lost_unverified"
+lost_failed=0
+for lost_entry in "$lost_spool"/failed-*; do
+  [ -f "$lost_entry" ] && lost_failed=$((lost_failed + 1))
+done
+equal "and not under the name that means it never arrived" "0" "$lost_failed"
+lost_status="$("$GANG" status lostscreen)"
+contains "status says it may already have been delivered" \
+  "$lost_status" "submission NOT verified"
+excludes "and never leaves it where a later boundary would send it again" \
+  "$lost_status" "spooled:"
+contains "mail warns its reader they may have seen this already" \
+  "$("$GANG" mail lostscreen)" "you may have seen this already"
+contains "and still hands over the body" \
+  "$("$GANG" mail lostscreen)" "MARK_LOSTDRAIN"
+"$GANG" drop lostscreen >/dev/null
+
 # One spool is deliberately left alive for the teardown below to account for.
 "$HITCH" lingering -c spoolable -d /tmp >/dev/null
 lingering_id="$(window_id lingering)"

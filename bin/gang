@@ -22,6 +22,17 @@ die() { fail 1 "$@"; }
 
 refuse() { fail 3 "$@"; }
 
+# THE THIRD ANSWER A DELIVERY CAN GIVE. `refuse` means nothing was typed and the
+# body is still the sender's, so it can be parked; `die` means gang could not do
+# what it was asked. Between them sits the case that has no honest home in
+# either: Enter WAS pressed against a composer holding this body, and the screen
+# then stopped answering, so whether it entered the session is unknown. Parked,
+# it becomes a second copy of a message that may already have arrived. Called a
+# failure, it invites the sender to send it again, which is the same harm. It is
+# its own status so that every surface downstream can say the one true thing —
+# it may have been delivered, and gang will not send it twice.
+unverified() { fail 5 "$@"; }
+
 # OPERATOR BYTES REACH HERE, from twenty-odd argument parsers that interpolate
 # what they were handed into the refusal that names it. Sanitizing at the one
 # place they all print through is the check none of them can forget, and it is
@@ -3107,7 +3118,7 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
   # not name is a message lost quietly.
   local e n=0
   if spool_existing "$1"; then
-    for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
+    for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-*; do
       [ -f "$e" ] && n=$((n + 1))
     done
   fi
@@ -3115,8 +3126,19 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
 }
 
 spool_held_report() { # $1 = window id; one truthful line per held entry
+  # ONE LINE PER ENTRY, AND THE LINE SAYS WHICH KIND. An `unverified-` entry
+  # was typed into the recipient's composer and Enter was pressed against it;
+  # a `failed-` or `sending-` one was not, or gang could not see that it was.
+  # Summing them under one word is what made a sender chase a phantom held
+  # message for a body its recipient had already acted on.
   local e
   spool_existing "$1" || return 0
+  for e in "$SPOOL_DIR"/unverified-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    printf 'typed into the composer, submission NOT verified — it may already have been delivered, and gang will not send it again: %s\n' \
+      "$SPOOL_FRAG"
+  done
   for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-*; do
     [ -f "$e" ] || continue
     spool_read "$e"
@@ -3547,7 +3569,7 @@ EOF
 }
 
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
-  local e claim rc err failed busy_rc=0 compaction_rc=0 witness="" keep_lock=0
+  local e claim rc err failed unver busy_rc=0 compaction_rc=0 witness="" keep_lock=0
   local bundle="" frags="" claims="" n=0 nl=$'\n'
   spool_existing "$1" || return 4
   [ -d "$SPOOL_DIR" ] || return 4
@@ -3644,6 +3666,24 @@ EOF
          "$n" "${err##*$'\n'}" >&2
        [ "$keep_lock" -eq 1 ] || lock_release
        return 3 ;;
+    5) # TYPED, AND THE OUTCOME UNREADABLE — which is not the arm below. There
+       # gang watched and saw nothing enter the session; here it watched the
+       # keys go in and then lost the screen, so the bundle may already be in
+       # front of its recipient. Both are "gang will not send this again", and
+       # only one of them is "your message did not arrive". They are named
+       # apart on disk so every later reader of this directory — status,
+       # roster, mail, the teardown archive — can tell them apart too.
+       while IFS= read -r claim; do
+         [ -n "$claim" ] || continue
+         unver="$SPOOL_DIR/unverified-${claim##*/sending-}"
+         mv -- "$claim" "$unver" || unver="$claim"
+       done <<EOF
+$claims
+EOF
+       printf "a bundle of %s spooled message(s) was typed into the composer and its submission could not be verified — it may already have been delivered, so gang will not send it again; it is recorded in %s (%s): %s\n" \
+         "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
+       [ "$keep_lock" -eq 1 ] || lock_release
+       return 5 ;;
     *) # Unverified: the bundle may or may not have landed, so every entry in it
        # is held where a person can read it rather than sent again.
        while IFS= read -r claim; do
@@ -4257,7 +4297,7 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
       looks=$((looks + 1))
       if [ "$looks" -ge 15 ]; then
         stage_record "$1" "'$3' was $verb here and Enter sent, but the box never read back — it may be sitting there unsent" ""
-        die "cannot read the input box of $tname after Enter — submission unverifiable; if the Enter never took, the $noun is sitting unsent in that box (gang capture $tname)"
+        unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname, Enter was pressed against it, and the box never read back afterwards — so whether it entered the session or is sitting there unsent is unknown. Gang will not send it again on a guess; read the screen with 'gang capture $tname' and re-send only if it is not there"
       fi
     fi
   done
@@ -4292,7 +4332,7 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
       # closed with the uncertainty named, never fall through to success.
       posted="$(landing_zone "$1")" || {
         stage_record "$1" "'$3' was $verb and Enter sent, but the box stopped reading back while gang was checking for parked input — whether it entered the session or sits in the harness's queue is unknown" ""
-        die "submit NOT verified: the input box of $tname stopped reading back while gang was checking for parked input — whether '$3' entered the session or sits in the harness's queue is unknown (gang capture $tname; if parked: gang flush $tname)"
+        unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname and Enter was pressed, the box changed, and it then stopped reading back before gang could tell an entered message from a parked one — so whether it entered the session or sits in the harness's queue is unknown. Gang will not send it again on a guess; read the screen with 'gang capture $tname', and if it is parked recover it with 'gang flush $tname'"
       }
     done
   fi
@@ -5545,10 +5585,13 @@ cmd_hitch() {
                   fail 1 "startup contract to '$name' cannot be accounted for after its composer appeared: its original spool is no longer attached to the window"
                 fi
                 if [ -e "$startup_entry" ] || [ -e "$startup_dir/sending-$startup_base" ] \
-                  || [ -e "$startup_dir/failed-$startup_base" ]; then
+                  || [ -e "$startup_dir/failed-$startup_base" ] \
+                  || [ -e "$startup_dir/unverified-$startup_base" ]; then
                   fail 1 "startup contract to '$name' is still held in its spool after another delivery worker crossed this hitch"
                 fi
                 break ;;
+             5) delivery_err="${delivery_err#gang: }"
+                fail 5 "startup contract to '$name' was typed into its composer and its submission could not be verified — it may already have been delivered, so gang will not send it again: ${delivery_err:-delivery could not be confirmed}" ;;
              *) delivery_err="${delivery_err#gang: }"
                 fail "$delivery_rc" "startup contract to '$name' remains in spool state after its composer appeared: ${delivery_err:-delivery failed without an error}" ;;
            esac
@@ -5763,6 +5806,20 @@ cmd_send() {
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
+    5) # KEYSTROKES LANDED AND THEIR OUTCOME IS UNKNOWN, so this send is neither
+       # delivered nor parkable. Parking it would put a second copy in front of
+       # a recipient who may already have the first; calling it a failure would
+       # invite the sender to do the same thing by hand. The predecessors a
+       # --supersede set aside go back, because the replacement that was to
+       # stand in for them cannot be said to have arrived.
+       [ "$supersede" -eq 0 ] || spool_retire_rollback \
+         || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
+       lock_release
+       [ -z "$err" ] || printf '%s\n' "$err" >&2
+       printf '%s\n%s\n' \
+         "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_FROM]")" \
+         "$(colour "$C_DIM" "nothing is waiting in the spool for this message and nothing will send it again — it was typed into $name's composer and gang lost the screen before it could confirm. Read '$name' (gang capture $name) and send again only if it is not there.")"
+       exit 5 ;;
     *) # A ROLLBACK THAT FAILS IS NEWS. spool_retire_rollback clears the record of
        # what it moved whether or not it got everything back, so the exit trap
        # cannot report what this arm swallows: discarding its diagnostic would
@@ -5825,6 +5882,12 @@ cmd_send() {
          printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
          return 0 ;;
       3|4) err="$drain_err" ;;
+      5) lock_release
+         [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
+         printf '%s\n%s\n' \
+           "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_FROM]")" \
+           "$(colour "$C_DIM" "it was typed into $name's composer from its attributed spool and gang lost the screen before it could confirm. Nothing will send it again; its record is in the spool and 'gang status $name' names it. Read '$name' (gang capture $name) and send again only if it is not there.")"
+         exit 5 ;;
       *) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
          exit "$drain_rc" ;;
@@ -7025,7 +7088,7 @@ cmd_status() {
     spool_held_report "$AGENT_ID" | while IFS= read -r held_line; do
       printf '%s\n' "$(colour "$C_BAD" "$held_line")"
     done
-    printf '%s\n' "$(colour "$C_BAD" "spool: $held held; gang will not send them again; read them under $held_dir")"
+    printf '%s\n' "$(colour "$C_BAD" "spool: $held message(s) gang has stopped acting on; it will not send them again; read them under $held_dir")"
   fi
   spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
   [ -z "$spool_failed" ] \
@@ -7121,6 +7184,18 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     fi
     n=$((n + 1))
     printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
+    printf '%s\n\n' "$SPOOL_BODY"
+  done
+  # KEPT, NEVER CONSUMED, AND NAMED FOR WHICH KIND IT IS. A held entry is not
+  # this read's to retire — nothing will deliver it, so a read that removed it
+  # would be the last chance anyone had to see it. An `unverified-` one carries
+  # the extra warning the reader actually needs: it may be the second time they
+  # are seeing this body, because it was typed into their composer already.
+  for e in "$dir"/unverified-*; do
+    [ -f "$e" ] || continue
+    spool_read "$e"
+    held=$((held + 1))
+    printf '%s\n' "$(colour "$C_BAD" "typed into this composer, submission NOT verified — you may have seen this already, from $SPOOL_SENDER — ${e##*/}")"
     printf '%s\n\n' "$SPOOL_BODY"
   done
   for e in "$dir"/sending-* "$dir"/failed-*; do
