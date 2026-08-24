@@ -1801,6 +1801,60 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# HOOK TRUST KEYS ON THE COMMAND STRING, and that string embeds the path of the
+# gang that composed it. Two copies that behave identically therefore install
+# hooks the harness treats as new: a hitch that changed path was gated behind a
+# trust prompt nothing in gang may answer. Hitch records the path it composed
+# from and reads back what the live agents carry before adding another.
+#
+# DRIVEN ON A SESSION THIS BLOCK OWNS ENTIRELY, because the control below is an
+# assertion about silence: a window left behind by an earlier part, hitched by
+# nothing or adopted, would answer the unknown-path check on its own and make
+# the control pass for a reason unrelated to the path being compared.
+skew_session="gangtest-$$-path"
+skew_gang() { GANG_SESSION="$skew_session" GANG_BOOT_TIMEOUT=0 "$@"; }
+skew_gang "$GANG" hitch first -c bash >/dev/null 2>&1 || true
+skew_id="$(GANG_SESSION="$skew_session" tmux list-windows -t "=$skew_session" -F '#{window_id}' | head -1)"
+equal "hitch records the gang path its hooks were composed from" "$ROOT" \
+  "$(tmux show-options -wqv -t "$skew_id" @gl_root)"
+
+# THE CONTROL COMES FIRST. With every live agent carrying this same path a
+# hitch says neither thing, so the two warnings below cannot be ones gang
+# prints unconditionally.
+skew_out="$RUN_ROOT/skew-quiet.err"
+skew_gang "$GANG" hitch same -c bash >/dev/null 2>"$skew_out" || true
+excludes "a hitch from the team's own gang path warns about no other one" \
+  "$(<"$skew_out")" "hitched from another one"
+excludes "and reports no unknown path either" \
+  "$(<"$skew_out")" "no gang path is recorded for"
+
+skew_root="$RUN_ROOT/other-gang"
+mkdir -p "$skew_root"
+cp -R "$ROOT/bin" "$ROOT/collars" "$ROOT/roles" "$skew_root/"
+cp "$ROOT/CONTRACT.md" "$skew_root/"
+skew_out="$RUN_ROOT/skew.err"
+skew_gang "$skew_root/bin/gang" hitch other -c bash >/dev/null 2>"$skew_out" || true
+contains "a hitch from another gang path warns before it launches" \
+  "$(<"$skew_out")" "were hitched from another one"
+contains "and the warning names the path the live agents carry" \
+  "$(<"$skew_out")" "$ROOT/bin/gang"
+
+# NO RECORD IS NOT AGREEMENT. A window gang composed no launch for — adopt, or
+# an older gang — is reported as the unknown it is rather than counted as a
+# path that matches.
+GANG_SESSION="$skew_session" tmux list-windows -t "=$skew_session" -F '#{window_id}' |
+  while read -r skew_win; do
+    tmux set-option -uw -t "$skew_win" @gl_root
+  done
+skew_out="$RUN_ROOT/skew-unknown.err"
+skew_gang "$GANG" hitch unknown -c bash >/dev/null 2>"$skew_out" || true
+contains "a window with no recorded gang path is named as unknown" \
+  "$(<"$skew_out")" "no gang path is recorded for"
+excludes "and an unknown path is not reported as a different one" \
+  "$(<"$skew_out")" "were hitched from another one"
+GANG_SESSION="$skew_session" "$GANG" down "$skew_session" >/dev/null 2>&1 || true
+
+# ---------------------------------------------------------------------------
 # EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. A delivery can be
 # verified into a pane and a turn can open and close without the recipient
 # running a single command; roster read healthy through three hours of exactly

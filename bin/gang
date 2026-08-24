@@ -2878,6 +2878,35 @@ binary_skew_note() { # $1 = window, $2 = current id; print an identity warning
   fi
 }
 
+# HOOK TRUST KEYS ON THE COMMAND STRING, and the command a collar composes
+# embeds the path of the gang that composed it. Two copies of gangline that
+# behave identically therefore install hooks the harness treats as new: codex
+# meets its trust menu again, and the hitch stalls behind an approval nothing
+# here may answer. The path each live agent's hooks were composed from is the
+# fact that predicts it, so hitch records it and reads it back. A window with
+# no record is one gang did not compose a launch for — `adopt`, or an older
+# gang — and that is said as its own thing rather than counted as agreement.
+gang_path_skew_warn() { # print at hitch, before a launch commits to this path
+  local id root name differ="" unknown=""
+  session_live || return 0
+  while read -r id; do
+    [ -n "$id" ] || continue
+    root="$(tmux show-options -wqv -t "$id" @gl_root 2>/dev/null)" || root=""
+    name="$(agent_name_of "$id")"
+    if [ -z "$root" ]; then
+      unknown="$unknown $name"
+    elif [ "$root" != "$ROOT" ]; then
+      differ="$differ $name($root/bin/gang)"
+    fi
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
+  [ -z "$differ" ] \
+    || printf 'gang: WARNING: this gang is %s/bin/gang and live agents in '"'"'%s'"'"' were hitched from another one:%s. Native hook trust keys on the command string, and that string embeds the gang path, so hooks composed here are new to the harness even where both copies behave the same — expect a trust prompt this hitch cannot answer. Run the gang the team already uses, or approve the hooks in the pane.\n' \
+      "$ROOT" "$SESSION" "$differ" >&2
+  [ -z "$unknown" ] \
+    || printf 'gang: note: no gang path is recorded for:%s, so gang cannot compare theirs with this one. A window carries no record when gang composed no launch for it (adopt) or when the gang that hitched it did not record one.\n' \
+      "$unknown" >&2
+}
+
 HITCH_UP_MODE=0
 HITCH_ATTACH_PID=""
 HITCH_ATTACH_STATE=""
@@ -5775,6 +5804,8 @@ cmd_hitch() {
   # failure after leaving a registered, running agent behind.
   spool_root_prepare
 
+  gang_path_skew_warn
+
   if ! session_live; then
     # WRAPPED HERE, NOT AROUND THE CLIENT THAT ATTACHES LATER. This is the one
     # call in gang that can fork a tmux server, so it is the one place the
@@ -5806,6 +5837,7 @@ cmd_hitch() {
   hitch_register "$id" "$name" allow-rename off
   hitch_register "$id" "$name" @gl_agent "$name"
   hitch_register "$id" "$name" @gl_collar "$prof"
+  hitch_register "$id" "$name" @gl_root "$ROOT"
   stamp_binary_id "$id" "$name"
   spool_mint "$id"
   # AFTER THIS SESSION HAS A SPOOL OF ITS OWN, and only for the hitch that

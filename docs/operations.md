@@ -508,6 +508,15 @@ is a change to `bin/gang` itself: the hash covers the command, not the bytes of
 the script the command names, so ordinary development on Gangline leaves an
 answered gate answered. Pre-answer it once per environment and per `gang` path.
 
+`hitch` no longer leaves that to memory. It records the install tree it composed
+a launch from on every agent it hitches, and before launching another it reads
+back what the live agents carry. A path that differs is a warning on stderr
+naming both, because the hooks about to be installed are new to the harness even
+where both copies behave identically. Windows carrying no record — `adopt`, or a
+gang from before this — are named separately as the unknown they are, never
+counted as agreement. Both are warnings: the hitch continues, because a
+deliberate change of path is legitimate and only the surprise is not.
+
 And continuing WITHOUT trusting is the option to avoid. It leaves codex running
 with its hooks inert, so that agent has no `Stop` hook: no spool drain and no
 deferred self-compaction. Gangline waits on turn boundaries that never arrive,
