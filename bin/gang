@@ -76,7 +76,7 @@ fail() { # $1 = exit status, rest = message
   exit "$code"
 }
 
-GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
+GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
 GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
@@ -307,6 +307,11 @@ GANG_SCOPE="${GANG_SCOPE:-off}"
 case "$GANG_SCOPE" in
   on|off) ;;
   *) die "GANG_SCOPE must be on or off, got '$GANG_SCOPE'$(config_origin_note GANG_SCOPE)" ;;
+esac
+GANG_TMUX_GUARD="${GANG_TMUX_GUARD:-on}"
+case "$GANG_TMUX_GUARD" in
+  on|off) ;;
+  *) die "GANG_TMUX_GUARD must be on or off, got '$GANG_TMUX_GUARD'$(config_origin_note GANG_TMUX_GUARD)" ;;
 esac
 GANG_STALL_REPEAT=600
 
@@ -5523,6 +5528,30 @@ scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
   SCOPE_PREFIX="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$1") -p MemoryAccounting=yes"
 }
 
+tmux_guard_dir() { printf '%s/libexec/gang-tmux-guard' "$ROOT"; }
+
+# AT THE FRONT OF THE AGENT'S PATH, so every shell that agent opens is covered
+# and nothing pays for it until a tmux is actually run. It is left for the shell
+# tmux runs the launch line with to expand, because the PATH being extended is
+# the pane's and gang cannot see that from here.
+#
+# EXPORTED AS ITS OWN COMMAND, not written as an assignment prefix. A prefix
+# applies to exactly one simple command, so a collar whose launch line is a list
+# would have covered its first command and left the harness itself — and every
+# shell under it — on the original PATH. That reads as a guard that is installed
+# and is not.
+tmux_guard_wrap() {
+  local dir
+  [ "$GANG_TMUX_GUARD" = on ] || return 0
+  dir="$(tmux_guard_dir)"
+  [ -x "$dir/tmux" ] || {
+    printf 'gang: WARNING: GANG_TMUX_GUARD=on but %s/tmux is missing or not executable, so this agent launches without the guard against ending its own team'"'"'s tmux server. Reinstall gangline, or set GANG_TMUX_GUARD=off to stop asking for it.\n' \
+      "$dir" >&2
+    return 0
+  }
+  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; $GANG_LAUNCH"
+}
+
 scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
   scope_prefix_for "gangline-$SESSION-$1.scope" "'$1'" \
     "something from an earlier '$1' outlived its window"
@@ -5739,6 +5768,7 @@ cmd_hitch() {
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
   GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
   scope_launch_wrap "$name"
+  tmux_guard_wrap
 
   # Every hitch publishes a spool identity after launch. A bad operator root
   # is already fully knowable here; discovering it only in spool_mint reports
@@ -8263,6 +8293,7 @@ config_effective() { # $1 settable key -> the value its consumers read
     GANG_SESSION) printf '%s' "$SESSION" ;;
     GANG_COLLARS) printf '%s' "${GANG_COLLARS:-}" ;;
     GANG_LOCK_DIR) printf '%s' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}" ;;
+    GANG_TMUX_GUARD) printf '%s' "$GANG_TMUX_GUARD" ;;
     GANG_ARCHIVE_DIR) printf '%s' "$(archive_root)" ;;
     GANG_CONTEXT_LIGHTS) printf '%s' "$GANG_CONTEXT_LIGHTS" ;;
     GANG_USAGE_LIGHTS) printf '%s' "$GANG_USAGE_LIGHTS" ;;

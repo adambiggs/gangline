@@ -1383,6 +1383,20 @@ connection was lost; the structure is the same in all three. Matching the absent
 key rather than the prose keeps the reader on the harness's data and off its
 wording, and leaves every status-bearing `server_error` nonfatal.
 
+## The teardown guard compares sockets, never command shapes
+
+Inside a pane `$TMUX` outranks `TMUX_TMPDIR`, so the command that ended a live
+team read as aimed at a sandbox. A guard that matched shapes would have passed
+it. The shim gang puts on an agent's PATH resolves the socket the invocation
+would actually reach — `-S`, then `-L` under `TMUX_TMPDIR`, then `$TMUX`, then
+the default — and compares it with the socket gang recorded for that agent's own
+team. Every reading it cannot take ends with the real tmux running unchanged.
+
+It is a guardrail rather than a boundary, and says so: one variable runs the
+command anyway. Refusals and overrides are both written under the lock root,
+because the 2026-08-24 reconstruction had to be assembled from journald for want
+of any record gangline owned.
+
 ## A team's socket is written down where a later shell can read it
 
 tmux clients discover the default socket, so a team on a private `TMUX_TMPDIR`

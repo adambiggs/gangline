@@ -1,0 +1,167 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# THE GUARD ON THE ONE PROCESS WHOSE DEATH ENDS THE WHOLE TEAM. Inside a tmux
+# pane $TMUX names the current server and silently outranks TMUX_TMPDIR, so
+# `env TMUX_TMPDIR=<sandbox> tmux kill-server` — a command that reads as aimed
+# at a sandbox — addresses the live server instead. On 2026-08-17 that took a
+# whole team while the disposable server it meant to end survived.
+#
+# Gang cannot intercept every tmux invocation an agent might make, and this does
+# not pretend to: it is a shim gang puts at the front of an agent's PATH, so it
+# sees what that agent's shells run and nothing else. What it decides is one
+# question — would this teardown land on the socket this agent's own team is
+# recorded on — asked against the recorded socket rather than against the shape
+# of the command line, because the shape is exactly what misled the operator.
+#
+# IT NEVER BREAKS AN AGENT. Every reading it cannot take ends in the real tmux
+# running unchanged; only the positive conjunction refuses. A refusal is also
+# written down under the lock root, because a guard whose refusals live only in
+# a pane leaves nothing behind when the pane does.
+set -u
+
+guard_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || guard_dir=""
+
+real_tmux=""
+saved_ifs=$IFS
+IFS=:
+for entry in $PATH; do
+  [ -n "$entry" ] || entry=.
+  case "$entry" in
+    "$guard_dir") continue ;;
+  esac
+  if [ -x "$entry/tmux" ] && [ ! -d "$entry/tmux" ]; then
+    real_tmux="$entry/tmux"
+    break
+  fi
+done
+IFS=$saved_ifs
+
+[ -n "$real_tmux" ] || {
+  printf 'gang tmux guard: no tmux on PATH beyond this shim (%s)\n' "$guard_dir" >&2
+  exit 127
+}
+
+run_real() { exec "$real_tmux" "$@"; }
+
+# AN EXPLICIT OVERRIDE, NOT A SILENT ONE. Nothing here is a security boundary —
+# an agent that means to end its own server can say so — but it has to say so,
+# and saying so is recorded like a refusal.
+guard_state="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u 2>/dev/null || echo 0)}"
+guard_log="$guard_state/tmux-guard.log"
+
+note() { # $1 verdict, rest = argv, appended where it outlives the pane
+  verdict=$1
+  shift
+  [ -d "$guard_state" ] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time)" \
+    "$verdict" "${GANG_SESSION:-unknown-session}" "${TMUX_PANE:-no-pane}" "tmux $*" \
+    >> "$guard_log" 2>/dev/null || true
+}
+
+[ "${GANG_TMUX_GUARD:-on}" = off ] && { note override "$@"; run_real "$@"; }
+
+# WHICH SOCKET THIS INVOCATION WOULD TALK TO, resolved the way tmux resolves it:
+# an explicit -S wins, then -L under TMUX_TMPDIR, then $TMUX if this is a pane,
+# then the default socket.
+socket=""
+label=""
+argv_rest=""
+seen_command=""
+prev=""
+for word in "$@"; do
+  if [ -n "$prev" ]; then
+    case "$prev" in
+      -S) socket=$word ;;
+      -L) label=$word ;;
+      -f|-c) : ;;
+    esac
+    prev=""
+    continue
+  fi
+  case "$word" in
+    -S) prev=-S ;;
+    -L) prev=-L ;;
+    -f|-c) prev=$word ;;
+    -S*) socket=${word#-S} ;;
+    -L*) label=${word#-L} ;;
+    -*) : ;;
+    *) [ -n "$seen_command" ] || seen_command=$word ;;
+  esac
+done
+
+case "$seen_command" in
+  kill-server|kill-session) ;;
+  *) run_real "$@" ;;
+esac
+
+if [ -z "$socket" ]; then
+  if [ -n "$label" ]; then
+    socket="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u 2>/dev/null || echo 0)/$label"
+  elif [ -n "${TMUX:-}" ]; then
+    socket=${TMUX%%,*}
+  else
+    socket="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u 2>/dev/null || echo 0)/default"
+  fi
+fi
+
+# THE TEAM'S OWN SOCKET, as gang wrote it down when it opened the team. Without
+# that record there is no team to compare against and the guard has no opinion.
+session="${GANG_SESSION:-}"
+[ -n "$session" ] || run_real "$@"
+case "$session" in */*|.|..) run_real "$@" ;; esac
+team_record="$guard_state/teams/$session"
+[ -f "$team_record" ] || run_real "$@"
+IFS= read -r team_socket < "$team_record" || team_socket=""
+[ -n "$team_socket" ] || run_real "$@"
+[ "$socket" = "$team_socket" ] || run_real "$@"
+
+if [ "$seen_command" = kill-server ]; then
+  note refused "$@"
+  printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.\n' \
+    "$socket" "$session" >&2
+  printf 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.\n' >&2
+  printf 'Aim it: tmux -S <socket> kill-server for a private server, or gang down %s to end this team on purpose.\n' \
+    "$session" >&2
+  printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
+  exit 3
+fi
+
+# kill-session: which session it lands on decides it. No -t is the session this
+# pane is in, which is the team. A -t naming another session on the same server
+# is aimed somewhere real and is allowed, loudly, because the server it shares
+# is still the team's.
+target=""
+prev=""
+for word in "$@"; do
+  if [ -n "$prev" ]; then
+    [ "$prev" != -t ] || target=$word
+    prev=""
+    continue
+  fi
+  case "$word" in
+    -t) prev=-t ;;
+    -t*) target=${word#-t} ;;
+  esac
+done
+
+if [ -z "$target" ] || [ "$target" = "$session" ] || [ "$target" = "=$session" ]; then
+  note refused "$@"
+  if [ -z "$target" ]; then
+    printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.\n' \
+      "$session" "$socket" >&2
+  else
+    printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.\n' \
+      "$session" "$socket" >&2
+  fi
+  printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or gang down %s to end this team on purpose.\n' \
+    "$session" >&2
+  printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
+  exit 3
+fi
+
+note allowed-on-team-server "$@"
+printf 'gang tmux guard: this kill-session is on %s, the same tmux server that holds team '\''%s'\''. Running it: it names another session.\n' \
+  "$socket" "$session" >&2
+run_real "$@"

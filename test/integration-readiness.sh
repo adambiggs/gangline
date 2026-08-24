@@ -1978,3 +1978,48 @@ excludes "and unknown is never spent as an agent that ran nothing" \
 "$GANG" drop wedged >/dev/null
 "$GANG" drop working >/dev/null
 
+# THE GUARD REACHES THE PANE OR IT GUARDS NOTHING. What is asserted here is the
+# PATH the agent's own shell ended up with, read out of that shell rather than
+# off the command line gang composed: only the pane can expand the `$PATH` gang
+# extends, so a launch line that merely looks right is not evidence.
+#
+# READ FROM THE SECOND COMMAND IN THE LIST, deliberately. A shell assignment
+# prefix covers exactly one simple command, so a guard installed that way reaches
+# the first thing a collar runs and never the harness under it. Taking the
+# reading after a `;` is what tells those two apart. The barrier is the pane's
+# own signal, taken before the reading.
+mkdir -p "$RUN_ROOT/collars"
+guardpath_file="$RUN_ROOT/guard-path"
+guardpath_chan="guardpath-$$"
+cat > "$RUN_ROOT/collars/guardpath.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH=": ; printf '%s' \"\\\$PATH\" > $guardpath_file; tmux wait-for -S $guardpath_chan; PS1='❯ ' bash --norc"
+SH
+"$HITCH" guarded -c guardpath -d /tmp >/dev/null
+tmux wait-for "$guardpath_chan"
+case "$(cat "$guardpath_file")" in
+  "$ROOT/libexec/gang-tmux-guard:"*)
+    pass "a hitched agent's own shell finds the tmux guard first" ;;
+  *) fail "a hitched agent's own shell finds the tmux guard first" \
+       "PATH began [$(cut -c1-80 < "$guardpath_file")]" ;;
+esac
+"$GANG" drop guarded >/dev/null
+
+# THE OPERATOR'S SWITCH IS REAL. With the guard off nothing is prepended, so an
+# agent's PATH is exactly what it would have been — which is also what makes
+# the assertion above a statement about this feature and not about tmux.
+rm -f -- "$guardpath_file"
+guardpath_chan="guardpath-off-$$"
+cat > "$RUN_ROOT/collars/guardpath.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH=": ; printf '%s' \"\\\$PATH\" > $guardpath_file; tmux wait-for -S $guardpath_chan; PS1='❯ ' bash --norc"
+SH
+GANG_TMUX_GUARD=off "$HITCH" unguarded -c guardpath -d /tmp >/dev/null
+tmux wait-for "$guardpath_chan"
+excludes "GANG_TMUX_GUARD=off leaves the agent's PATH alone" \
+  "$(cat "$guardpath_file")" "$ROOT/libexec/gang-tmux-guard"
+"$GANG" drop unguarded >/dev/null

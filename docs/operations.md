@@ -731,3 +731,27 @@ using the same session.
 For experimental tmux work, use an explicit private socket (`tmux -L NAME ...` or
 `tmux -S PATH ...`). Never run an unaimed `tmux kill-server` or `kill-session` on
 a shared server.
+
+Inside a pane `$TMUX` names the current server and silently outranks
+`TMUX_TMPDIR`, so `env TMUX_TMPDIR=<sandbox> tmux kill-server` still addresses
+the live server. Every sandbox-aimed tmux command must therefore carry
+`tmux -S <socket>` / `tmux -L <name>`, or unset `$TMUX` first
+(`env -u TMUX tmux ...`, or `unset TMUX TMUX_PANE` at the top of a script).
+
+With `GANG_TMUX_GUARD=on`, the default, `hitch` puts a `tmux` shim at the front
+of every agent's `PATH`. It refuses a `kill-server`, or a `kill-session` naming
+the team or naming nothing, when the socket that command would reach is the one
+this agent's own team is recorded on. It compares recorded sockets rather than
+command shapes, because the shape is exactly what misleads. Everything else runs
+untouched, including an aimed teardown of a private server, and every reading it
+cannot take ends with the real tmux running.
+
+It is a guardrail, not a boundary: `GANG_TMUX_GUARD=off` in front of one command
+runs it anyway. Refusals and overrides are both appended to
+`GANG_LOCK_DIR/tmux-guard.log`, so what the guard decided outlives the pane that
+asked. A team that has died leaving no gangline-side record at all is the state
+that made the 2026-08-17 reconstruction depend entirely on journald.
+
+The guard addresses that 2026-08-17 class. It does not explain the 2026-08-24
+session death, where every tmux call in both live agents' transcripts was
+already aimed correctly.

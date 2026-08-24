@@ -1655,3 +1655,145 @@ cat > "$RUN_ROOT/collars/ctx-none.sh" <<SH
 . "$ROOT/collars/bash.sh"
 unset -f collar_context
 SH
+
+# ---------------------------------------------------------------------------
+# THE GUARD ON THE ONE PROCESS WHOSE DEATH ENDS THE WHOLE TEAM. Inside a pane
+# $TMUX names the current server and outranks TMUX_TMPDIR, so a teardown that
+# reads as aimed at a sandbox lands on the live server; on 2026-08-17 that took
+# a team while the sandbox server survived. The shim gang puts at the front of
+# an agent's PATH decides one question — would this land on the socket this
+# agent's own team is recorded on — and every reading it cannot take ends with
+# the real tmux running unchanged.
+guard_shim="$ROOT/libexec/gang-tmux-guard/tmux"
+guard_home="$RUN_ROOT/tmux-guard"
+guard_bin="$guard_home/bin"
+guard_state="$guard_home/state"
+guard_ran="$guard_home/real-tmux-argv"
+mkdir -p "$guard_bin" "$guard_state/teams"
+cat > "$guard_bin/tmux" <<SH
+#!/bin/sh
+printf '%s\n' "\$*" > "$guard_ran"
+exit 0
+SH
+chmod +x "$guard_bin/tmux"
+guard_team_socket="$guard_home/team-socket"
+printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
+
+guard_session=guardteam
+# THE ENVIRONMENT IS THE INPUT UNDER TEST, so each call states it and the next
+# starts from nothing: an inherited $TMUX would decide a later case silently.
+# EVERY CALL STATES ITS WHOLE ENVIRONMENT, because the environment is the input
+# under test: an inherited $TMUX from the previous case would decide the next one
+# silently, and a run reading it as unset is a different test from one reading it
+# as the team's socket. `-` is the spelling for "this variable is not set".
+guard_run() { # $1 TMUX, $2 TMUX_TMPDIR, $3 GANG_TMUX_GUARD, rest = argv;
+              # prints "<rc>\n<stderr>" and records whether the real tmux ran
+  local want_tmux="$1" want_tmpdir="$2" want_guard="$3" rc=0 err
+  shift 3
+  [ "$want_tmux" != - ] || want_tmux=""
+  [ "$want_tmpdir" != - ] || want_tmpdir=""
+  [ "$want_guard" != - ] || want_guard=""
+  rm -f -- "$guard_ran"
+  err="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
+    GANG_SESSION="$guard_session" GANG_LOCK_DIR="$guard_state" \
+    TMUX="$want_tmux" TMUX_TMPDIR="$want_tmpdir" GANG_TMUX_GUARD="$want_guard" \
+    "$guard_shim" "$@" 2>&1 >/dev/null)" || rc=$?
+  printf '%s\n%s' "$rc" "$err"
+}
+guard_reached_tmux() { [ -f "$guard_ran" ]; }
+
+# THE 2026-08-17 COMMAND, verbatim in shape: a sandbox TMUX_TMPDIR set, and
+# $TMUX quietly deciding otherwise. This is the assertion the guard exists for.
+guard_out="$(guard_run "$guard_team_socket,1,0" "$guard_home/sandbox" - kill-server)"
+equal "a sandbox-looking kill-server inside a pane is refused" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "and the refusal names the team it would have ended" \
+  "$guard_out" "team 'guardteam'"
+if guard_reached_tmux; then
+  fail "a refused kill-server never reaches tmux" "the real tmux ran"
+else
+  pass "a refused kill-server never reaches tmux"
+fi
+contains "a refusal outlives the pane it was made in" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "refused"
+
+# AIMED COMMANDS ARE THE POINT OF THE RULE, so they have to keep working — a
+# guard that refused these would only teach agents to bypass it.
+guard_out="$(guard_run "$guard_team_socket,1,0" - - -S "$guard_home/private-socket" kill-server)"
+equal "an explicitly aimed kill-server runs" 0 "$(printf '%s' "$guard_out" | head -1)"
+if guard_reached_tmux; then
+  pass "and reaches the real tmux with its own socket"
+else
+  fail "and reaches the real tmux with its own socket" "the real tmux never ran"
+fi
+guard_out="$(guard_run - "$guard_home/sandbox" - kill-server)"
+equal "a kill-server with TMUX unset and a private TMUX_TMPDIR runs" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+guard_out="$(guard_run "$guard_team_socket,1,0" - - list-sessions)"
+equal "a command that is not a teardown runs untouched" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+equal "and the guard says nothing about it" "" \
+  "$(printf '%s' "$guard_out" | tail -n +2)"
+
+# -L RESOLVES THROUGH TMUX_TMPDIR the same way tmux resolves it, so a label
+# that names the team's own socket is the same command by another spelling.
+guard_label_home="$guard_home/labelled"
+mkdir -p "$guard_label_home/tmux-$(id -u)"
+guard_label_socket="$guard_label_home/tmux-$(id -u)/team"
+printf '%s\n' "$guard_label_socket" > "$guard_state/teams/guardteam"
+guard_out="$(guard_run - "$guard_label_home" - -L team kill-server)"
+equal "a -L label resolving to the team's socket is refused" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
+
+# KILL-SESSION IS DECIDED BY WHICH SESSION IT LANDS ON. No target is the pane's
+# own session, which is the team; another name on the same server is aimed
+# somewhere real and runs, loudly, because the server is still the team's.
+guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-session)"
+equal "a kill-session with no target is refused" 3 "$(printf '%s' "$guard_out" | head -1)"
+contains "and says it would end the session the pane is in" "$guard_out" "names no target"
+guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-session -t =guardteam)"
+equal "a kill-session naming the team itself is refused" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-session -t =gangtest-other)"
+equal "a kill-session naming another session on that server runs" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+contains "and is loud about sharing the team's server" \
+  "$guard_out" "same tmux server that holds team"
+
+# NO RECORD IS NO OPINION. Without a socket written down for this agent's team
+# there is nothing to compare against, and a guard that guessed instead would
+# refuse teardowns it knows nothing about.
+guard_session=unrecorded
+guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-server)"
+guard_session=guardteam
+equal "a team with no recorded socket is left alone" 0 "$(printf '%s' "$guard_out" | head -1)"
+if guard_reached_tmux; then
+  pass "and its teardown reaches the real tmux"
+else
+  fail "and its teardown reaches the real tmux" "the real tmux never ran"
+fi
+
+# AN OVERRIDE IS EXPLICIT AND RECORDED. Nothing here is a security boundary; an
+# agent that means to end its own server may say so, and saying so is written
+# down beside the refusals.
+: > "$guard_state/tmux-guard.log"
+guard_out="$(guard_run "$guard_team_socket,1,0" - off kill-server)"
+equal "an explicit override runs the teardown" 0 "$(printf '%s' "$guard_out" | head -1)"
+contains "and the override is recorded like a refusal" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "override"
+
+# NO TMUX BEYOND THE SHIM IS A BROKEN INSTALL, said out loud rather than
+# answered with a success nothing ran.
+guard_bare="$guard_home/bare-bin"
+mkdir -p "$guard_bare"
+for guard_tool in date id dirname; do
+  guard_where="$(command -v "$guard_tool")" \
+    && ln -sf "$guard_where" "$guard_bare/$guard_tool"
+done
+guard_rc=0
+guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bare" GANG_SESSION=guardteam \
+  GANG_LOCK_DIR="$guard_state" "$guard_shim" kill-server 2>&1)" || guard_rc=$?
+equal "a PATH with no real tmux refuses rather than reporting success" 127 "$guard_rc"
+contains "and says which shim was the only tmux it found" \
+  "$guard_out" "no tmux on PATH beyond this shim"
