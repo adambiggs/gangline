@@ -87,6 +87,78 @@ jobs:
         timeout-minutes: 15
         run: test/integration.sh
 
+  # THE WORLD THE RESOLVER GUARDS WERE WRITTEN FOR. Every hosted runner ships a
+  # tmux that serializes a user option's control bytes into visible text, so the
+  # two win_id diagnostics that sanitize a raw registration cannot be handed one
+  # there: the regressions above still run and still pass, over an identity that
+  # never carried the byte. A 3.2-era tmux hands it back raw. This cell builds
+  # one and runs the same mandatory suite under it, which is the only routine
+  # place those two branches are exercised against the thing they disarm.
+  #
+  # test/tmux-option-bytes.sh is the single definition of the question. The
+  # suite reads it to decide whether to make the claim at all; this cell reads
+  # it to refuse before spending fifteen minutes proving nothing.
+  raw-option-bytes:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      # PINNED, NOT TRACKED. The value of this cell is a version proven to
+      # round-trip the byte; a later release that stopped would retire the
+      # coverage while the job kept going green. The probe refuses to guess, so
+      # a bump that changes the answer fails here instead of going unnoticed.
+      TMUX_RAW_VERSION: 3.2a
+      TMUX_RAW_PREFIX: /home/runner/.local/tmux-raw
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Cache tmux ${{ env.TMUX_RAW_VERSION }}
+        id: tmux-raw
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TMUX_RAW_PREFIX }}
+          key: tmux-${{ env.TMUX_RAW_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Dependencies
+        # Installed on a cache hit too: the cached tree is the tmux binary, not
+        # the shared libraries it loads.
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y libevent-dev libncurses-dev bison pkg-config
+
+      - name: Build tmux ${{ env.TMUX_RAW_VERSION }}
+        if: steps.tmux-raw.outputs.cache-hit != 'true'
+        run: |
+          set -eu
+          curl -fsSL -o /tmp/tmux-raw.tar.gz \
+            "https://github.com/tmux/tmux/releases/download/$TMUX_RAW_VERSION/tmux-$TMUX_RAW_VERSION.tar.gz"
+          tar -xzf /tmp/tmux-raw.tar.gz -C /tmp
+          cd "/tmp/tmux-$TMUX_RAW_VERSION"
+          ./configure --prefix="$TMUX_RAW_PREFIX"
+          make -j"$(nproc)"
+          make install
+
+      - name: Raw user-option bytes
+        run: |
+          set -eu
+          export PATH="$TMUX_RAW_PREFIX/bin:$PATH"
+          tmux -V
+          bytes="$(test/tmux-option-bytes.sh)"
+          echo "user-option-control-bytes: $bytes"
+          [ "$bytes" = raw ] || {
+            echo "this cell exists to run the suite where a user option hands a control byte back raw, and this tmux answers '$bytes'; the resolver regressions it carries would pass here without ever holding the byte" >&2
+            exit 1
+          }
+
+      - name: Integration test
+        # The same ceiling as the hosted-tmux cell, for the same suite and the
+        # same reason; the build above is cached and outside it.
+        timeout-minutes: 15
+        run: |
+          set -eu
+          export PATH="$TMUX_RAW_PREFIX/bin:$PATH"
+          test/integration.sh
+
   release-please:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: [check, integration]
