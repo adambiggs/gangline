@@ -148,14 +148,17 @@ PY
 
 collar_input() { # $1 = tmux target; prints the composer, 1 = it has no keyboard,
                  # 3 = a pane that could not be read at all
-  local cap cur
+  local cap cur box rc=0
   # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX, and neither is a
   # pane whose cursor tmux would not report: both readings below are the
   # transport answering, not the harness. Status 3 is the collar contract's
   # word for a read that was refused.
   cap="$(tmux capture-pane -pJ -t "$1")" || return 3
   cur="$(tmux display-message -p -t "$1" '#{cursor_y}')" || return 3
-  printf '%s\n' "$cap" | awk -v cur="$cur" '
+  # THE STATUS IS READ, NOT INHERITED. Under `set -e` an assignment ends the
+  # process on the command's status, so awk's "no box here" would leave by the
+  # wrong door and never reach the caller as the 1 the contract defines.
+  box="$(printf '%s\n' "$cap" | awk -v cur="$cur" '
     { line[NR] = $0 }
     /^[[:space:]]*╹▀/ { border = NR }
     END {
@@ -170,5 +173,27 @@ collar_input() { # $1 = tmux target; prints the composer, 1 = it has no keyboard
         sub(/^[[:space:]]*┃ ?/, "", s)
         print s
       }
-    }'
+    }')" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  # A PROMPT DRAWN INTO AN EMPTY BOX IS NOT A HUMAN'S LINE. OpenCode paints its
+  # own suggestion inside the composer whenever nothing has been typed —
+  # `Ask anything... "Fix a TODO in the codebase"`, the quoted half rotating —
+  # and returning it verbatim made every fresh hitch report an undelivered
+  # startup contract: gang read a draft it must not paste into and correctly
+  # refused, so a newly hitched opencode agent could never be reached at all.
+  # Driven on 1.14.41: the placeholder run is painted in the theme's dim
+  # foreground and a typed line in its bright one, but colour is a theme's
+  # choice rather than the harness's word, so the copy is pinned instead and
+  # paired with the position it must hold — the whole of a one-row box.
+  #
+  # PINNED COPY FAILS SAFE. A reworded placeholder stops matching and this
+  # collar is back to reporting a draft, which refuses delivery; it never turns
+  # a line somebody is typing into an empty box.
+  local trimmed="$box"
+  trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
+  trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+  case "$trimmed" in
+    'Ask anything... "'*'"') return 0 ;;
+  esac
+  printf '%s\n' "$box"
 }
