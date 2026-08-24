@@ -1932,6 +1932,31 @@ contains "and names the held ones apart from them" \
 contains "naming each held body rather than counting it" \
   "$carried_drop" "held fragment"
 
+# A STAGED BODY IS A MESSAGE THAT WAS NEVER PARKED. spool_stage writes it under
+# a name no drain reads and spool_commit renames it into the deliverable
+# namespace; a sender killed between the two left a body that spool_count never
+# saw, mail never printed, and only the teardown archive ever met again.
+"$HITCH" stranded -c spoolable -d /tmp >/dev/null
+stranded_id="$(window_id stranded)"
+stranded_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$stranded_id" @gl_spool)"
+( : ) &
+stranded_dead=$!
+wait "$stranded_dead"
+printf 'tester\nstranded half\n[gang:tester#deadbeef] MARK_STRANDED_FRAGMENT\n' \
+  > "$stranded_spool/.writing-$stranded_dead-00000000000000000007"
+contains "a staged body whose sender is gone is named rather than invisible" \
+  "$("$GANG" status stranded)" "written but never parked"
+contains "and mail hands over the body it is holding" \
+  "$("$GANG" mail stranded)" "MARK_STRANDED_FRAGMENT"
+# THE NEGATIVE CASE, so this cannot pass by reporting every fragment. A send
+# still in flight has written its body microseconds ago and is about to rename
+# it; calling that a casualty would put a false alarm on every busy queue.
+printf 'tester\ninflight half\n[gang:tester#deadbeef] MARK_INFLIGHT_FRAGMENT\n' \
+  > "$stranded_spool/.writing-$$-00000000000000000008"
+excludes "a fragment whose sender is still running is not reported" \
+  "$("$GANG" mail stranded)" "MARK_INFLIGHT_FRAGMENT"
+"$GANG" drop stranded >/dev/null
+
 # KEYSTROKES LANDED AND THE SCREEN THEN WENT AWAY. That is neither a refusal —
 # nothing can be parked, the body may already be in front of its recipient — nor
 # a plain failure, which invites the sender to send a second copy by hand. It is

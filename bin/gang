@@ -3121,8 +3121,34 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
     for e in "$SPOOL_DIR"/sending-* "$SPOOL_DIR"/failed-* "$SPOOL_DIR"/unverified-*; do
       [ -f "$e" ] && n=$((n + 1))
     done
+    for e in "$SPOOL_DIR"/.writing-*; do
+      spool_abandoned "$e" && n=$((n + 1))
+    done
   fi
   printf '%s' "$n"
+}
+
+spool_abandoned() { # $1 = a .writing- fragment; 0 = the sender that wrote it is gone
+  # A STAGED BODY IS A MESSAGE THAT WAS NEVER PARKED. spool_stage writes it
+  # under a name no drain reads and spool_commit renames it into the deliverable
+  # namespace; a sender that dies between the two leaves the body on disk where
+  # spool_count does not see it, spool_held did not see it, and mail does not
+  # print it. Only the teardown archive ever met it again — so a send whose
+  # sender was killed mid-park was a message with no surface at all, which is
+  # the one thing the spool exists not to do.
+  #
+  # ASKED OF THE PID IN THE NAME, not of a clock. spool_stage stamps the writing
+  # process into the filename, and a fragment whose writer is still running is
+  # an ordinary send a few microseconds old rather than a casualty. This is the
+  # same evidence the delivery lock already trusts about its own holder: a
+  # recorded pid that no longer answers is a dead owner.
+  local base rest pid
+  [ -f "$1" ] || return 1
+  base="${1##*/}"
+  rest="${base#.writing-}"
+  pid="${rest%%-*}"
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  ! kill -0 "$pid" 2>/dev/null
 }
 
 spool_held_report() { # $1 = window id; one truthful line per held entry
@@ -3133,6 +3159,18 @@ spool_held_report() { # $1 = window id; one truthful line per held entry
   # message for a body its recipient had already acted on.
   local e
   spool_existing "$1" || return 0
+  for e in "$SPOOL_DIR"/.writing-*; do
+    spool_abandoned "$e" || continue
+    # READ LENIENTLY. A fragment is by definition a body that may be
+    # half-written, so the strict reader would die on exactly the artifact this
+    # line exists to name. Where it cannot be parsed the path is still the
+    # truth worth printing.
+    if spool_read_try "$e"; then
+      printf 'written but never parked — its sender died before committing it, so nothing ever delivered it and nothing ever will: %s\n' "$SPOOL_FRAG"
+    else
+      printf 'written but never parked, and it cannot be read back — its sender died mid-write; the bytes are at %s\n' "$e"
+    fi
+  done
   for e in "$SPOOL_DIR"/unverified-*; do
     [ -f "$e" ] || continue
     spool_read "$e"
@@ -7191,6 +7229,16 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
   # would be the last chance anyone had to see it. An `unverified-` one carries
   # the extra warning the reader actually needs: it may be the second time they
   # are seeing this body, because it was typed into their composer already.
+  for e in "$dir"/.writing-*; do
+    spool_abandoned "$e" || continue
+    held=$((held + 1))
+    if spool_read_try "$e"; then
+      printf '%s\n' "$(colour "$C_BAD" "written but never parked — its sender died before committing it, from $SPOOL_SENDER — ${e##*/}")"
+      printf '%s\n\n' "$SPOOL_BODY"
+    else
+      printf '%s\n' "$(colour "$C_BAD" "written but never parked and unreadable — its sender died mid-write — $e")"
+    fi
+  done
   for e in "$dir"/unverified-*; do
     [ -f "$e" ] || continue
     spool_read "$e"
