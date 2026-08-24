@@ -1628,7 +1628,11 @@ collar_read() { # $1 window id
 # somebody, which is the reading a person acts on next.
 win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous, 3 title of another identity
   local id name bare registered count=0 match="" raw_a="" raw_b="" claimed="" shown
-  shown="$(printf '%s' "$1" | config_sanitize)"
+  # SANITIZED WHERE IT IS PRINTED, NOT WHERE IT ARRIVES. Every resolution goes
+  # through here, and the sanitizing pipeline is a subprocess: paying for it up
+  # front charged the common path — a name that resolved — for a rendering only
+  # the two refusals below ever use. Matching still happens against the raw
+  # name, so what an agent registered is what it is addressed by.
   while read -r id name; do   # `read id name` keeps spaces in the name
     bare="$(bare_name "$name")"
     registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || registered=""
@@ -1646,12 +1650,14 @@ win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous, 3 title of another i
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #W' 2>/dev/null)
   case "$count" in
     0) [ -n "$claimed" ] || return 1
+       shown="$(printf '%s' "$1" | config_sanitize)"
        claimed="$(printf '%s' "$claimed" | config_sanitize)"
        printf "window '%s' is registered to Gangline agent '%s' in session '%s'; gang addresses an agent by the identity it registered, never by a window title, and will not act on '%s' through a window that is somebody else (gang roster).\n" \
          "$shown" "$claimed" "$SESSION" "$shown" >&2
        return 3 ;;
     1) printf '%s' "$match" ;;
-    *) raw_a="$(printf '%s' "$raw_a" | config_sanitize)"
+    *) shown="$(printf '%s' "$1" | config_sanitize)"
+       raw_a="$(printf '%s' "$raw_a" | config_sanitize)"
        raw_b="$(printf '%s' "$raw_b" | config_sanitize)"
        printf "'%s' is ambiguous in session '%s': windows %s and %s both address it. Rename one (tmux rename-window).\n" \
          "$shown" "$SESSION" "$raw_a" "$raw_b" >&2
