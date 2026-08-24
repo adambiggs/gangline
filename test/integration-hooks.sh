@@ -3022,6 +3022,45 @@ for spool_entry in "$teardown_spool"/[0-9]*; do
   break
 done
 [ -n "$teardown_entry" ] && cp "$teardown_entry" "$RUN_ROOT/pre-down-body"
+
+# PREFLIGHT THE WHOLE TEAM, NOT ONE WINDOW AT A TIME. The valid entry sorts
+# before the later blocker. Before the team-wide preflight, down archived that
+# entry and cleared its live spool identity, then refused the blocker and left
+# the session running — a failed teardown that had already made deliverable
+# mail undeliverable.
+env GANG_SESSION="$teardown_session" "$GANG" hitch teardown-blocker \
+  -c spoolable -d /tmp >/dev/null
+teardown_blocker_id="$(window_id_in "$teardown_session" teardown-blocker)"
+teardown_blocker_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$teardown_blocker_id" @gl_spool)"
+mkdir -p "$teardown_blocker_spool/debris"
+printf 'MARK_TEAM_PREFLIGHT_BLOCKER\n' > "$teardown_blocker_spool/debris/note"
+if teardown_preflight_out="$(env -u TMUX -u TMUX_PANE \
+  GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session" 2>&1)"; then
+  fail "whole-team teardown refuses before an unarchiveable later spool" \
+    "down reported success"
+else
+  pass "whole-team teardown refuses before an unarchiveable later spool"
+fi
+contains "the refusal names the later spool that blocked teardown" \
+  "$teardown_preflight_out" "$teardown_blocker_spool"
+if [ -f "$teardown_entry" ]; then
+  pass "and preserves an earlier window's deliverable message in its live queue"
+else
+  fail "and preserves an earlier window's deliverable message in its live queue" \
+    "$teardown_entry was moved before whole-team teardown refused"
+fi
+if tmux has-session -t "=$teardown_session" 2>/dev/null; then
+  pass "and leaves the refused team running"
+else
+  fail "and leaves the refused team running" "session is gone"
+fi
+grep -q MARK_TEAM_PREFLIGHT_BLOCKER "$teardown_blocker_spool/debris/note" \
+  && pass "and leaves the blocking evidence untouched" \
+  || fail "and leaves the blocking evidence untouched" \
+    "$teardown_blocker_spool/debris/note is gone"
+rm -rf -- "$teardown_blocker_spool/debris"
+
 teardown_down_out="$(env -u TMUX -u TMUX_PANE \
   GANG_SESSION="$teardown_session" "$GANG" down "$teardown_session")"
 contains "the named teardown reports where it archived pending mail" \

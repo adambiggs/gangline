@@ -3302,8 +3302,8 @@ archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its direc
   mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
 }
 
-spool_archive() { # $1 = window id; move every entry somewhere a person can read it
-  local e entry name dest dest_base dest_name dest_n moved=0
+spool_archive_preflight() { # $1 = window id; refuse before any teardown mutates mail
+  local e
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   # ELIGIBILITY BEFORE THE FIRST MOVE. The archive can carry regular files
@@ -3316,6 +3316,12 @@ spool_archive() { # $1 = window id; move every entry somewhere a person can read
     [ -f "$e" ] \
       || die "the spool directory $SPOOL_DIR holds something gang cannot archive; none of this spool's pending messages has been moved, and its agent has not been ended — read what is in it, then remove it by hand"
   done
+}
+
+spool_archive() { # $1 = window id; move every entry somewhere a person can read it
+  local e entry name dest dest_base dest_name dest_n moved=0
+  spool_archive_preflight "$1"
+  [ -n "$SPOOL_DIR" ] && [ -d "$SPOOL_DIR" ] || return 0
   # EVERY CHILD, not the names gang expects. A whitelist here turns "this is
   # not something I recognise" into "there was nothing here", because what it
   # skips spool_forget then removes. The reachable stray is a .writing-
@@ -7536,7 +7542,7 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw shown names="" self="" wait_ids=""
+  local named="${1:-}" id raw shown names="" self="" wait_ids="" ids
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -7551,6 +7557,16 @@ cmd_down() { # inverse of up: end the whole team's session
   while IFS= read -r raw; do
     names="$names$(bare_name "$raw") "
   done < <(tmux list-windows -t "=$SESSION" -F '#W')
+  ids="$(tmux list-windows -t "=$SESSION" -F '#{window_id}')"
+  # WHOLE-TEAM PREFLIGHT. Each window's archive is internally all-or-nothing,
+  # but down used to archive and detach the spools of earlier windows before a
+  # later unarchiveable child refused the teardown. The session stayed live
+  # with those earlier messages no longer deliverable. Settle every spool
+  # before cancelling a wake or moving the first entry anywhere.
+  while read -r id; do
+    [ -n "$id" ] || continue
+    spool_archive_preflight "$id"
+  done <<<"$ids"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
@@ -7565,7 +7581,7 @@ cmd_down() { # inverse of up: end the whole team's session
     usage_wake_cancel "$id" quiet
     spool_archive "$id"
     spool_forget "$id"
-  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id}')
+  done <<<"$ids"
   tmux kill-session -t "=$SESSION"
   for id in $wait_ids; do wait_signal_registered "$id"; done
 }
