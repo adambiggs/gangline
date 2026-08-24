@@ -10,10 +10,16 @@
 # is on screen rather than about a pane that was still starting; and the output
 # pipe holds the test until the accepted line is written, so only the manual
 # keys that follow it can reach the UI.
+#
+# A SHIM THAT SHADOWS THE SUITE'S CLOCK OWES THE SAME LEDGER. This one is on
+# PATH ahead of it, so without the recording line every budget spent under a
+# boot barrier would be unmeasurable — the exact silence test/integration.sh
+# describes where it writes that ledger.
 prompt_boot_barrier() { # $1 = bin dir, $2 = seen marker, $3 = fixture channel
   mkdir -p "$1"
   cat > "$1/sleep" <<SH
 #!/bin/sh
+[ -z "\${GANG_TEST_CLOCK_LEDGER:-}" ] || printf '%s\n' "\$1" >> "\$GANG_TEST_CLOCK_LEDGER"
 if [ ! -e '$2' ]; then
   : > '$2'
   tmux wait-for '$3'
@@ -135,11 +141,22 @@ SH
 : > "$RUN_ROOT/dialog-gate-budget.keys"
 prompt_boot_barrier "$RUN_ROOT/gate-budget-bin" \
   "$RUN_ROOT/gate-budget-seen" "dialog-gate-budget-ready-$$"
+# THREE LOOKS RATHER THAN ONE, SO THE PACE BETWEEN THEM IS MEASURABLE. The
+# give-up is asserted exactly as before and at the same budget boundary; what
+# a budget of one could not show is the second between observations, because
+# one look gives up before ever reaching it. Under the counted clock the two
+# waits an exhausted three-look budget owes are a readable artifact, and the
+# spin this loop would become without them — sixty pane reads as fast as the
+# box allows — turns this check red instead of finishing green and instantly.
+gate_budget_ledger="$(clock_ledger gate-budget)"
 gate_budget_rc=0
-gate_budget_out="$(PATH="$RUN_ROOT/gate-budget-bin:$PATH" GANG_GATE_LOOKS=1 \
+gate_budget_out="$(PATH="$RUN_ROOT/gate-budget-bin:$PATH" GANG_GATE_LOOKS=3 \
+  GANG_TEST_CLOCK_LEDGER="$gate_budget_ledger" \
   "$GANG" hitch gate-budget -c dialog-gate-budget -d /tmp 2>&1)" || gate_budget_rc=$?
 equal "an unanswered first-run prompt ends the hitch on its own status" \
   4 "$gate_budget_rc"
+equal "the gate budget is spent one second per unanswered observation" \
+  2 "$(clock_naps "$gate_budget_ledger" 1)"
 contains "and the refusal says the contract was not delivered" \
   "$gate_budget_out" "startup contract was NOT delivered"
 contains "and names the recovery that works from there" \
@@ -499,13 +516,24 @@ cat > "$RUN_ROOT/collars/startup-unknown.sh" <<SH
 . "$ROOT/collars/bash.sh"
 GANG_LAUNCH="sh -c 'printf \"PROVIDER_ERROR\\n\"; tmux wait-for \"$startup_unknown_hold\"' fixture"
 SH
-if startup_unknown_out="$(GANG_BOOT_TIMEOUT=1 "$GANG" hitch startup-unknown \
+# THE READINESS BUDGET IS SECONDS, AND THIS IS WHERE THEY ARE COUNTED. The
+# screen never resolves, so the wait runs to exhaustion and owes one wait per
+# second of budget — three here rather than one, so the count is a pace and not
+# a single tick. The refusal below is unchanged and fires at the same
+# exhaustion; what the ledger adds is that the budget was consumed to get there
+# rather than spun through, which under a clock that only returns instantly no
+# assertion in this suite could previously tell apart.
+startup_unknown_ledger="$(clock_ledger startup-unknown)"
+if startup_unknown_out="$(GANG_BOOT_TIMEOUT=3 \
+    GANG_TEST_CLOCK_LEDGER="$startup_unknown_ledger" "$GANG" hitch startup-unknown \
     -c startup-unknown -d /tmp 2>&1)"; then
   fail "an unknown stable boot screen is not accepted as a startup gate" \
     "$startup_unknown_out"
 else
   pass "an unknown stable boot screen is not accepted as a startup gate"
 fi
+equal "the readiness budget is spent one second per unresolved observation" \
+  3 "$(clock_naps "$startup_unknown_ledger" 1)"
 contains "the unknown screen retains the fail-loud recovery" \
   "$startup_unknown_out" "showing something other than its input box"
 excludes "the unknown screen is never reported as accepted" \

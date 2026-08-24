@@ -80,9 +80,30 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # into a HANGING suite, which is strictly worse than the flake it replaces.
 # Raising the floor is not an option either: a test that passes by waiting
 # longer on a slow box reports the box, not the tree.
+#
+# AND THE CLOCK IS COUNTED, BECAUSE A COMPRESSED CLOCK ON ITS OWN IS SHAPED
+# EXACTLY LIKE EVIDENCE AND CARRIES NONE. Every wait above collapses to nothing,
+# so a loop that spends its budget and a loop that busy-spins through it finish
+# the same way and pass the same checks: an unbounded loop, an ignored timeout
+# budget, a nap deleted outright — none of them can turn this suite red, and a
+# defect of exactly that shape once sat under a fully green run.
+#
+# The instrument is the ledger below. Where an assertion sets
+# GANG_TEST_CLOCK_LEDGER, this shim records every duration the code under test
+# ASKED FOR, in order, before returning; the durations it asks for are the
+# budget it means to spend, and now they are a readable artifact rather than a
+# silence. A liveness claim brings its own scoped ledger and asserts a count off
+# it, so the claim fails when the budget stops being consumed. Unscoped — which
+# is nearly every invocation — nothing is written and nothing is slower.
+#
+# THIS IS THE ONE CLOCK THAT MAY BE STOPPED RATHER THAN SCALED, and only because
+# the count, not the wall clock, is what the assertion reads. A scaled clock
+# would prove the same thing more slowly and no more truly; a stopped clock with
+# no ledger is what this repository already had, and it proved nothing at all.
 mkdir -p "$RUN_ROOT/bin"
 cat > "$RUN_ROOT/bin/sleep" <<'SH'
 #!/bin/sh
+[ -z "${GANG_TEST_CLOCK_LEDGER:-}" ] || printf '%s\n' "$1" >> "$GANG_TEST_CLOCK_LEDGER"
 case "$1" in
   0.3) exit 0 ;;
   0.4) exec /bin/sleep 0.01 ;;
@@ -231,6 +252,36 @@ refuses() { # $1 description, $2 expected message, rest = command
     contains "$description" "$output" "$expected"
   fi
 }
+
+clock_ledger() { # $1 = a name for this measurement -> an empty ledger path
+  local path="$RUN_ROOT/clock-$1"
+  : > "$path"
+  printf '%s' "$path"
+}
+
+# A LEDGER THAT WAS NEVER WRITTEN IS NOT A BUDGET THAT WAS NEVER SPENT. The
+# instrument can be absent — a shim shadowed on PATH, a name that never reached
+# the command — and a count of zero read off nothing would let a liveness
+# assertion pass on the strength of its own broken instrument. Missing
+# instrument answers 'unknown', which matches no expected count.
+clock_naps() { # $1 = ledger path, $2 = requested duration -> times it was asked for
+  if [ ! -f "$1" ]; then printf 'unknown'; return; fi
+  awk -v want="$2" '$0 == want { n = n + 1 } END { print n + 0 }' "$1"
+}
+
+# AND THE INSTRUMENT IS CALIBRATED BEFORE ANY BUDGET IS READ OFF IT, in both
+# directions. A reader that answered 'unknown' to everything would satisfy the
+# absent case while quietly making every count below unfailable, and a reader
+# that counted every line would satisfy the counting case while reporting a
+# budget nobody asked for. The absent case is the one no ordinary run reaches,
+# which is exactly why it is driven here rather than trusted.
+clock_cal="$(clock_ledger calibration)"
+printf '%s\n' 1 1 2 >> "$clock_cal"
+equal "the clock reader counts only the duration it was asked about" \
+  "2 1 0" \
+  "$(clock_naps "$clock_cal" 1) $(clock_naps "$clock_cal" 2) $(clock_naps "$clock_cal" 3)"
+equal "and a ledger that was never written answers unknown rather than zero" \
+  "unknown" "$(clock_naps "$RUN_ROOT/clock-never-written" 1)"
 
 mkdir -p "$RUN_ROOT/no-utf8-bin"
 cat > "$RUN_ROOT/no-utf8-bin/locale" <<'SH'
