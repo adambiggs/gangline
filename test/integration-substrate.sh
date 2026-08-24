@@ -746,6 +746,44 @@ equal "the resolver never paints a forged registration through that refusal" \
   "clean" "$(ctl_escapes "$ctl_claimed_out")"
 tmux kill-window -t "$ctl_claimed_id" 2>/dev/null || true
 
+# WHICH WORLD THIS RUN IS STANDING IN, ASKED RATHER THAN ASSUMED. The two
+# refusals win_id owns can only be made to carry a hostile byte where a user
+# option round-trips one, and supported tmux versions disagree about that. The
+# probe is the single definition of the question; both this suite and the tmux
+# cell in .github/workflows/shell.yml read it rather than restating it, and it
+# ends loudly on a substrate that answers neither way.
+ctl_option_bytes="$("$ROOT/test/tmux-option-bytes.sh")"
+printf 'instrument tmux=%s user-option-control-bytes=%s\n' \
+  "$(tmux -V)" "$ctl_option_bytes"
+
+if [ "$ctl_option_bytes" = raw ]; then
+  # THE OTHER RESOLVER DIAGNOSTIC. Status 3 above says a window belongs to
+  # somebody else; status 2 says two of them answer to the same name, and it
+  # formats the requested identity for exactly the same terminal. Both windows
+  # register the control-bearing name, so the resolver matches raw bytes twice
+  # and the ambiguity is real rather than a title coincidence.
+  ctl_twin_a="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n ctl-twin-a "PS1='❯ ' bash --norc")"
+  ctl_twin_b="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+    -n ctl-twin-b "PS1='❯ ' bash --norc")"
+  for ctl_twin in "$ctl_twin_a" "$ctl_twin_b"; do
+    tmux set-option -w -t "$ctl_twin" @gl_agent "$ctl_name"
+    tmux set-option -w -t "$ctl_twin" @gl_collar bash
+  done
+  ctl_ambiguous_out="$("$GANG" drop "$ctl_name" 2>&1)" || true
+  contains "two windows registered to one control-bearing name are ambiguous" \
+    "$ctl_ambiguous_out" "is ambiguous in session"
+  equal "the resolver never paints an ambiguous identity through that refusal" \
+    "clean" "$(ctl_escapes "$ctl_ambiguous_out")"
+  contains "the ambiguous refusal still names the rename that resolves it" \
+    "$ctl_ambiguous_out" "Rename one (tmux rename-window)"
+  tmux kill-window -t "$ctl_twin_a" 2>/dev/null || true
+  tmux kill-window -t "$ctl_twin_b" 2>/dev/null || true
+else
+  unknown "win_id's resolver diagnostics sanitize a raw control-bearing identity" \
+    "this tmux serializes a user option's control bytes into visible text, so no registration on this host can hold the byte those diagnostics exist to disarm — the contradicted-title checks above passed over an identity that never carried one, and the ambiguous branch cannot be reached with one at all. The tmux cell in .github/workflows/shell.yml is where both are exercised."
+fi
+
 # A synchronous tty fixture paints the two menus Gangline used to answer and
 # records every key it receives. 2.0 answers neither: both are ordinary
 # occupancy, and the key log is the witness that no keystroke was sent.
