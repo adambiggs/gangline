@@ -114,6 +114,13 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
   printf '%s' "$file"
 }
 
+# ERROR EVIDENCE IS READ FROM THE TAIL ONCE. Both consumers ask about the newest
+# relevant complete record, so bytes before that record cannot change either
+# answer. Sharing the backward walk keeps ordinary idle notifications from
+# reparsing a long-lived transcript from byte zero. A completed record that can
+# still outrank the answer remains loud; a final line without its newline is an
+# append in flight, not a record yet.
+#
 # FATAL TURN EVIDENCE IS THE NEWEST TOP-LEVEL SEMANTIC RECORD, not pane paint.
 # Observed on claude-code 2.1.233: an unrecognized launch model writes a
 # synthetic assistant record with isApiErrorMessage=true, error=model_not_found
@@ -124,10 +131,8 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
 # user records are not turns. A later ordinary assistant record clears it. Other
 # retryable API errors abstain. Missing pre-session evidence abstains; a bound
 # transcript Gangline cannot interpret returns unknown instead of absence.
-collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
-  local file
-  file="$(claude_session_file "$1")" || return 1
-  python3 - "$file" <<'PY'
+claude_record_read() { # $1 transcript, $2 fatal|auto
+  python3 - "$1" "$2" <<'PY'
 import json
 import re
 import sys
@@ -196,20 +201,47 @@ def semantic(record):
     raise ValueError("user record has an unrecognized content shape")
 
 
+mode = sys.argv[2]
 latest = None
 try:
     for raw in newest_complete_records(sys.argv[1]):
         record = json.loads(raw)
         if not isinstance(record, dict):
             raise ValueError("record is not an object")
-        if semantic(record):
+        if mode == "fatal":
+            relevant = semantic(record)
+        else:
+            relevant = (
+                record.get("type") == "assistant"
+                and record.get("isSidechain") is not True
+            )
+        if relevant:
             latest = record
             break
 except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-    print("bound Claude transcript is unreadable")
+    if mode == "fatal":
+        print("bound Claude transcript is unreadable")
     raise SystemExit(2)
 
-if latest is None or latest.get("type") != "assistant":
+if latest is None:
+    raise SystemExit(1)
+
+if mode == "auto":
+    error = latest.get("error")
+    record_id = latest.get("uuid")
+    if latest.get("isApiErrorMessage") is not True or not isinstance(error, str) or not error:
+        raise SystemExit(1)
+    # A selected-model failure cannot be repaired by replaying the same turn.
+    # The live fatal reader reports it; auto-resume must not spend its one
+    # continuation or repaint the window idle first.
+    if error == "model_not_found":
+        raise SystemExit(1)
+    if not isinstance(record_id, str) or not record_id:
+        raise SystemExit(2)
+    print(record_id)
+    raise SystemExit(0)
+
+if latest.get("type") != "assistant":
     raise SystemExit(1)
 if latest.get("isApiErrorMessage") is not True:
     raise SystemExit(1)
@@ -248,43 +280,17 @@ print(f"selected model '{matches[0].group(1)}' was rejected (model_not_found)")
 PY
 }
 
+collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
+  local file
+  file="$(claude_session_file "$1")" || return 1
+  claude_record_read "$file" fatal
+}
+
 collar_auto_resume_record() { # $1 target, $2 Notification kind -> failed-turn UUID
   local file
   [ "$2" = idle_prompt ] || return 1
   file="$(claude_session_file "$1")" || return 2
-  python3 - "$file" <<'PY'
-import json
-import sys
-
-latest = None
-try:
-    with open(sys.argv[1], encoding="utf-8") as transcript:
-        for raw in transcript:
-            if not raw.strip():
-                continue
-            record = json.loads(raw)
-            if not isinstance(record, dict):
-                raise ValueError("record is not an object")
-            if record.get("type") == "assistant" and record.get("isSidechain") is not True:
-                latest = record
-except (OSError, UnicodeError, ValueError, json.JSONDecodeError):
-    raise SystemExit(2)
-
-if latest is None:
-    raise SystemExit(1)
-error = latest.get("error")
-record_id = latest.get("uuid")
-if latest.get("isApiErrorMessage") is not True or not isinstance(error, str) or not error:
-    raise SystemExit(1)
-# A selected-model failure cannot be repaired by replaying the same turn. The
-# live fatal reader reports it; auto-resume must not spend its one continuation
-# or repaint the window idle first.
-if error == "model_not_found":
-    raise SystemExit(1)
-if not isinstance(record_id, str) or not record_id:
-    raise SystemExit(2)
-print(record_id)
-PY
+  claude_record_read "$file" auto
 }
 
 collar_auto_resume_prompt() { # $1 target unused, $2 UserPromptSubmit payload

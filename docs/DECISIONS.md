@@ -320,7 +320,16 @@ refusal; positive ownership of a later automatic turn does. This is immediate
 collar-native discrimination, not a watcher or a general retry policy; collars
 with no structural record declare no equivalent.
 
-## Auto-resume accepted follow-ups
+## Claude transcript predicates stop at the newest relevant record
+
+Fatal-state and auto-resume readers walk the append-only JSONL backward and
+stop once the record that decides their predicate is found. Earlier bytes cannot
+change that answer and are not reread at every idle event. Every complete record
+that could still outrank the answer must parse; a final line without its newline
+is an append in flight and does not yet count as a record. This bounds ordinary
+reads to the relevant tail without incremental state, rotation, or cleanup.
+
+## Auto-resume accepted follow-up
 
 - **Two unit-state arms lack direct evidence.** The automatic-wake branch is
   driven for an active timer preserving its continuation and a failed timer
@@ -329,15 +338,6 @@ with no structural record declare no equivalent.
   already exercised through their sibling states and use the same fake
   `systemctl` vocabulary as status and cancellation. Closing the mutation gap
   costs two immediate fixtures; it needs no production surface.
-- **Claude re-scans the bound transcript on every ordinary idle event.** The
-  structural reader parses the whole JSONL transcript even when no error record
-  exists. It is non-blocking for correctness because it makes one finite-file
-  pass, fails closed, and starts no watcher or retry chain, but it is hot-path
-  work whose CPU and I/O cost grows with the session, while concurrent idle
-  events add Python processes to an already memory-constrained host.
-  This is the highest-priority follow-up on constrained hosts. Removing the
-  growth costs either a proven bounded-tail rule or incremental state with
-  explicit rotation, truncation, and deletion semantics.
 
 The continuation marker is visible to the agent in its own transcript. An agent
 that reads it can in principle reproduce it, so it is an ownership witness under

@@ -1061,6 +1061,44 @@ claude_auto_fatal="$(CLAUDE_TRANSCRIPT="$claude_auto_fatal_transcript" ROOT="$RO
 equal "Claude auto-resume refuses selected-model failures" $'1\t' \
   "$claude_auto_fatal"
 
+claude_auto_tail_transcript="$RUN_ROOT/claude-auto-resume-tail.jsonl"
+cat > "$claude_auto_tail_transcript" <<'JSONL'
+[]
+{"type":"assistant","uuid":"latest-auto-error","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","message":{"role":"assistant"}}
+JSONL
+# Claude appends its JSONL in place. Leave a newer record incomplete to prove
+# it is not evidence yet, while the non-object before the selected assistant
+# proves this read did not parse history that can no longer affect its answer.
+printf '%s' '{"type":"assistant"' >> "$claude_auto_tail_transcript"
+claude_auto_tail_read="$(CLAUDE_TRANSCRIPT="$claude_auto_tail_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    collar_auto_resume_record fixture idle_prompt
+  ' fixture "$claude_collar")"
+# source-guard: producer@973709e65fa5: the fixture uniquely supplies latest-auto-error on its newest complete assistant, while the older non-object and unfinished suffix independently make a byte-zero or in-flight parse fail
+equal "Claude auto-resume reads only the newest relevant complete tail" \
+  "latest-auto-error" "$claude_auto_tail_read"
+
+# A complete malformed append can outrank the selected assistant, so it remains
+# loud unknown evidence. Keep this fixture free of older malformed data: status
+# 2 must come from the tail the assertion names.
+claude_auto_bad_tail_transcript="$RUN_ROOT/claude-auto-resume-bad-tail.jsonl"
+cat > "$claude_auto_bad_tail_transcript" <<'JSONL'
+{"type":"assistant","uuid":"superseded-auto-error","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","message":{"role":"assistant"}}
+{"type":"assistant"
+JSONL
+claude_auto_bad_tail="$(CLAUDE_TRANSCRIPT="$claude_auto_bad_tail_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_auto_resume_record fixture idle_prompt)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@8ae53ae485d5: the fixture's sole unreadable complete record is the malformed append after an otherwise resumable assistant, so status 2 witnesses that newer tail
+equal "Claude auto-resume keeps a malformed complete tail loud" \
+  $'2\t' "$claude_auto_bad_tail"
+
 claude_retry_transcript="$RUN_ROOT/claude-retry-error.jsonl"
 cat > "$claude_retry_transcript" <<'JSONL'
 {"type":"user","isSidechain":false,"message":{"role":"user","content":"work"}}
