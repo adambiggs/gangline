@@ -556,10 +556,14 @@ The implementation uses only `wait-for -S`; tmux channel locks are not used
 because a dead lock holder can leave them locked indefinitely. A successful
 wait consumes its native signal exactly once; cleanup never signals and waits
 on the channel again, because that can race the returning waiter and block
-forever. Tmux has no channel-delete operation, so a caller killed or bounded at
-the same instant as a native signal can leave an unreachable nonce-named latch
-in tmux memory until that server exits. No wait option, file, or daemon is
-created; the deadline process lives only as long as the foreground command.
+forever. The deadline is a Python one-shot alarm supervising one fresh
+Bash/tmux process group; Python 3 is already required by Gangline, and no GNU
+`timeout` command is assumed. Deadline and foreground signals kill and reap
+that exact group before caller-owned hook cleanup. Tmux has no channel-delete
+operation, so a caller killed or bounded at the same instant as a native signal
+can leave an unreachable nonce-named latch in tmux memory until that server
+exits. No wait option, file, or daemon is created; the supervisor lives only as
+long as the foreground command.
 
 ### `gang explain <name>`
 

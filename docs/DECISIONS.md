@@ -880,16 +880,19 @@ reuses the lowest free ordinary hook-array slot. Native Stop closes the turn
 before signalling it, while natural pane exit and Gangline teardown release it
 as a loud vanished-target failure. Direct tmux kill commands bypass that release
 and are documented as unsupported teardown for a waited target. A foreground
-deadline, defaulting to the existing native turn-fact bound, refuses rather than
-waiting forever when no event arrives. No daemon, option, or file records the
-wait. A successful waiter consumes its signal once; cleanup does not signal and
-wait again, because that second wait can race the returning client and deadlock.
-Tmux offers no deletion for a latch stranded by `SIGKILL` or a boundary race, so
-that nonce-named memory can last until server exit. `?unknown?` and a Stop
-declaration with no native turn evidence are refused rather than waited through,
-and `done` deliberately promises only the next Stop — it does not claim to
-identify or own a logical turn. Tmux channel locks are excluded because a dead
-holder can leak one indefinitely.
+deadline, defaulting to the existing native turn-fact bound, is a Python
+one-shot alarm around one fresh Bash/tmux process group. Python is already a
+required dependency; this avoids GNU `timeout`, while deadline and foreground
+signals kill and reap that exact group before the caller cleans its hook. No
+daemon, option, or file records the wait. A successful waiter consumes its
+signal once; cleanup does not signal and wait again, because that second wait
+can race the returning client and deadlock. Tmux offers no deletion for a latch
+stranded by `SIGKILL` or a boundary race, so that nonce-named memory can last
+until server exit. `?unknown?` and a Stop declaration with no native turn
+evidence are refused rather than waited through, and `done` deliberately
+promises only the next Stop — it does not claim to identify or own a logical
+turn. Tmux channel locks are excluded because a dead holder can leak one
+indefinitely.
 
 ## The mandatory gate fits under a memory ceiling
 

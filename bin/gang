@@ -236,7 +236,7 @@ require_interval() { # $1 = name to blame, $2 = value; reaches sleep, so fractio
 
 require_python3() {
   command -v python3 >/dev/null 2>&1 \
-    || die "python3 is required for native hook payloads, context lights, operator doctrine validation, and curfew clock times"
+    || die "python3 is required for native hook payloads, wait deadlines, context lights, operator doctrine validation, and curfew clock times"
 }
 
 shell_quote() { # one POSIX-shell word
@@ -6573,11 +6573,72 @@ wait_target_validate() { # $1 name, $2 pinned window, $3 pinned pane
 
 wait_boundary() { # $1 channel, $2 timeout seconds, $3 target name
   local rc=0
-  # A fresh Bash keeps the deadline process able to terminate the blocking tmux
-  # client while preserving the same BASH_ENV seam the integration fixture uses
-  # to drive native boundaries. Gang itself already consumed that environment
-  # at startup; the child grants it no new authority.
-  timeout --foreground "$2" bash -c 'tmux wait-for "$1"' _ "$1" || rc=$?
+  # Python is already a Gangline dependency. Its one-shot alarm gives this
+  # exact tmux client a portable deadline without GNU timeout or a resident
+  # watcher. The client gets a new process group so every deadline or forwarded
+  # foreground signal can kill and reap both the fresh Bash and tmux, while the
+  # Bash preserves the BASH_ENV seam used to drive native boundaries in tests.
+  python3 - "$2" "$1" <<'PY' || rc=$?
+import os
+import signal
+import subprocess
+import sys
+
+seconds = int(sys.argv[1], 10)
+channel = sys.argv[2]
+child = None
+received = [None]
+
+
+def kill_child():
+    if child is None:
+        return
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+def stop(signum, _frame):
+    if received[0] is None:
+        received[0] = signum
+    kill_child()
+
+
+for caught in (signal.SIGALRM, signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
+    signal.signal(caught, stop)
+
+# Start the bound before process creation. If it fires in that small window,
+# stop records it and the post-spawn check kills the new group immediately.
+signal.alarm(seconds)
+status = 1
+try:
+    child = subprocess.Popen(
+        ["bash", "-c", 'tmux wait-for "$1"', "_", channel],
+        start_new_session=True,
+    )
+    if received[0] is not None:
+        kill_child()
+    status = child.wait()
+finally:
+    signal.alarm(0)
+    if child is not None and child.poll() is None:
+        kill_child()
+        child.wait()
+
+# Once wait() has captured a successful native release, a signal handled just
+# after that release cannot truthfully turn it into a missing boundary.
+if status == 0:
+    sys.exit(0)
+if received[0] == signal.SIGALRM:
+    sys.exit(124)
+if received[0] is not None:
+    signal.signal(received[0], signal.SIG_DFL)
+    os.kill(os.getpid(), received[0])
+if status < 0:
+    sys.exit(128 - status)
+sys.exit(status)
+PY
   case "$rc" in
     0) return 0 ;;
     124) die "wait: no native boundary from '$3' within $2 seconds — its turn may still be running, the target may have vanished outside gang drop/down, or its Stop hook may not be firing" ;;
@@ -6615,8 +6676,7 @@ cmd_wait() {
     *[1-9]*) ;;
     *) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
   esac
-  command -v timeout >/dev/null 2>&1 \
-    || die "wait: timeout is required to put a fail-loud bound on the native barrier"
+  require_python3
   resolve "$name"
   pane="$(wait_active_pane "$AGENT_ID")" \
     || die "wait: cannot identify the active pane in '$name'"

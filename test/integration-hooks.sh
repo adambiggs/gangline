@@ -60,6 +60,9 @@ tmux() {
   if [ "${1:-}" = wait-for ] && [ "$#" -eq 2 ]; then
     case "$2" in
       gang-wait-*)
+        if [ -n "${GANG_TEST_WAIT_PIDS:-}" ]; then
+          printf '%s %s %s\n' "$PPID" "$$" "$2" > "$GANG_TEST_WAIT_PIDS"
+        fi
         if [ -n "${GANG_TEST_WAIT_TRACE:-}" ]; then
           printf '%s\n' "$2" >> "$GANG_TEST_WAIT_TRACE"
           waits="$(awk -v channel="$2" \
@@ -118,6 +121,9 @@ else
 fi
 equal "a released barrier never waits again while cleaning its channel" \
   "1" "$(wc -l < "$wait_trace" | tr -d ' ')"
+wait_done_channel="$(sed -n '1p' "$wait_trace")"
+excludes "a native Stop removes its caller-owned hook" \
+  "$(tmux show-hooks -g pane-exited)" "$wait_done_channel"
 if "$GANG" wait waitable --until idle >/dev/null; then
   pass "an already-idle target satisfies an idle barrier immediately"
 else
@@ -357,22 +363,143 @@ contains "a natural exit leaves an unrelated hook registration intact" \
   "$(tmux show-hooks -g "$wait_natural_decoy")" "run-shell true"
 tmux set-hook -ug "$wait_natural_decoy"
 
-# THE PRODUCTION BOUND FAILS LOUD WITHOUT WAITING HERE. A fake timeout drives
-# its one defined verdict immediately; the command must remove its hook and name
-# both the target and bound rather than becoming another quiet forever-wait.
+# THE PRODUCTION BOUND FAILS LOUD WITHOUT WAITING HERE. The blocking Bash
+# identifies its wait-specific Python parent after reaching the native edge;
+# SIGALRM is then an immediate fake clock that drives the production deadline
+# handler without spending wall time. A decoy GNU-timeout implementation would
+# still execute the old argv, arm the same edge, and record that unsupported
+# dependency was consulted, so the portability assertion fails instead of
+# hanging on a mutant that never reached the event barrier.
 wait_timeout_bin="$RUN_ROOT/wait-timeout-bin"
 mkdir -p "$wait_timeout_bin"
-cat > "$wait_timeout_bin/timeout" <<'SH'
+cat > "$wait_timeout_bin/timeout" <<SH
 #!/bin/sh
-exit 124
+: > "$RUN_ROOT/wait-timeout-invoked"
+[ "\${1:-}" != --foreground ] || shift
+shift
+exec "\$@"
 SH
 chmod +x "$wait_timeout_bin/timeout"
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
-refuses "a missing native boundary reaches its fail-loud caller bound" \
-  "no native boundary from 'waitable' within 9 seconds" \
-  env PATH="$wait_timeout_bin:$PATH" "$GANG" wait waitable --until "done" --timeout 9
+wait_deadline_arm="gang-test-wait-arm-$$-deadline"
+wait_deadline_pids="$RUN_ROOT/wait-deadline-pids"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_deadline_arm" \
+  GANG_TEST_WAIT_PIDS="$wait_deadline_pids" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  PATH="$wait_timeout_bin:$PATH" \
+  "$GANG" wait waitable --until "done" --timeout 9 \
+  >"$RUN_ROOT/wait-deadline.out" 2>"$RUN_ROOT/wait-deadline.err" &
+wait_deadline_pid=$!
+tmux wait-for "$wait_deadline_arm"
+read -r wait_deadline_supervisor wait_deadline_helper wait_deadline_channel \
+  < "$wait_deadline_pids"
+kill -ALRM "$wait_deadline_supervisor"
+wait_deadline_rc=0
+wait "$wait_deadline_pid" || wait_deadline_rc=$?
+equal "a missing native boundary keeps the fail-loud wait status" \
+  "1" "$wait_deadline_rc"
+contains "a fake clock reaches the caller's named deadline verdict" \
+  "$(<"$RUN_ROOT/wait-deadline.err")" \
+  "no native boundary from 'waitable' within 9 seconds"
+if [ -e "$RUN_ROOT/wait-timeout-invoked" ]; then
+  fail "gang wait does not invoke the GNU-only deadline utility" \
+    "the decoy deadline utility was invoked"
+else
+  pass "gang wait does not invoke the GNU-only deadline utility"
+fi
+if kill -0 "$wait_deadline_supervisor" 2>/dev/null \
+   || kill -0 "$wait_deadline_helper" 2>/dev/null; then
+  fail "a deadline reaps its wait-specific supervisor and helper" \
+    "a deadline process remains alive"
+else
+  pass "a deadline reaps its wait-specific supervisor and helper"
+fi
 excludes "a bounded refusal removes its temporary native hook" \
-  "$(tmux show-hooks -g pane-exited)" "gang-wait-${waitable_id#@}-${waitable_pane#%}-"
+  "$(tmux show-hooks -g pane-exited)" "$wait_deadline_channel"
+
+# FOREGROUND CANCELLATION TAKES THE SAME OWNED PROCESS TREE. Inject TERM into
+# the wait-specific supervisor only; it must kill and reap the blocking group,
+# preserve the child's signal status for gang's loud generic failure, and let
+# the caller's EXIT trap remove the exact hook. The armed event is the sole
+# readiness witness, so cancellation itself spends no clock.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_cancel_arm="gang-test-wait-arm-$$-cancel"
+wait_cancel_pids="$RUN_ROOT/wait-cancel-pids"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_cancel_arm" \
+  GANG_TEST_WAIT_PIDS="$wait_cancel_pids" \
+  GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  >"$RUN_ROOT/wait-cancel.out" 2>"$RUN_ROOT/wait-cancel.err" &
+wait_cancel_pid=$!
+tmux wait-for "$wait_cancel_arm"
+read -r wait_cancel_supervisor wait_cancel_helper wait_cancel_channel \
+  < "$wait_cancel_pids"
+kill -TERM "$wait_cancel_supervisor"
+wait_cancel_rc=0
+wait "$wait_cancel_pid" || wait_cancel_rc=$?
+equal "a cancelled boundary keeps gang wait's fail-loud status" \
+  "1" "$wait_cancel_rc"
+contains "a cancelled boundary preserves the helper's signal status" \
+  "$(<"$RUN_ROOT/wait-cancel.err")" "before its boundary fired (status 143)"
+if kill -0 "$wait_cancel_supervisor" 2>/dev/null \
+   || kill -0 "$wait_cancel_helper" 2>/dev/null; then
+  fail "cancellation reaps the wait-specific supervisor and helper" \
+    "a cancelled process remains alive"
+else
+  pass "cancellation reaps the wait-specific supervisor and helper"
+fi
+excludes "a cancelled boundary removes its temporary native hook" \
+  "$(tmux show-hooks -g pane-exited)" "$wait_cancel_channel"
+
+# A NATIVE SUCCESS CAPTURED BEFORE THE ALARM MUST STAY SUCCESS. This Python
+# module stands in only for the wait-specific child: wait() records the exact
+# production argv and returns 0, then poll() injects SIGALRM in the production
+# finally block after that status has been captured. It deterministically
+# forces the boundary/deadline race ordering without waiting for a clock race.
+wait_race_python="$RUN_ROOT/wait-race-python"
+wait_race_witness="$RUN_ROOT/wait-race-success"
+mkdir -p "$wait_race_python"
+cat > "$wait_race_python/subprocess.py" <<'PY'
+import os
+import signal
+
+
+class Popen:
+    def __init__(self, argv, start_new_session=False):
+        if argv[:2] != ["bash", "-c"] or not start_new_session:
+            raise RuntimeError("unexpected wait child")
+        self.argv = argv
+        self.pid = 2147483647
+        self.signalled = False
+
+    def wait(self):
+        with open(os.environ["GANG_TEST_WAIT_SUCCESS"], "w") as witness:
+            witness.write(self.argv[-1])
+        return 0
+
+    def poll(self):
+        if not self.signalled:
+            self.signalled = True
+            os.kill(os.getpid(), signal.SIGALRM)
+        return 0
+PY
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+if PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  >"$RUN_ROOT/wait-race-success.out" 2>"$RUN_ROOT/wait-race-success.err"; then
+  pass "a captured native success outranks a subsequently handled alarm"
+else
+  fail "a captured native success outranks a subsequently handled alarm" \
+    "$(<"$RUN_ROOT/wait-race-success.err")"
+fi
+wait_race_channel="$(<"$wait_race_witness")"
+case "$wait_race_channel" in
+  gang-wait-*) pass "the success-race fixture produced a native channel result" ;;
+  *) fail "the success-race fixture produced a native channel result" \
+       "unexpected child witness [$wait_race_channel]" ;;
+esac
+excludes "post-success alarm cleanup removes the caller-owned hook" \
+  "$(tmux show-hooks -g pane-exited)" "$wait_race_channel"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
 refuses "unknown state is refused before a barrier can hang" \
