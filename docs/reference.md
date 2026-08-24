@@ -187,6 +187,14 @@ inside tmux as a window that died at launch. `adopt` registers a window Gangline
 did not launch and so cannot scope one; an adopted agent stays in whatever
 cgroup its window already had.
 
+The tmux server that holds the team is scoped the same way, as
+`gangline-<session>.scope`, so its death is a named unit stopping rather than an
+anonymous process exit inside whatever login session started it. Only the
+`tmux new-session` that actually forks a server is wrapped: against a server
+that is already running, `new-session` forks nothing and the scope would hold
+only the client that exits a moment later, so that case prints a warning saying
+the server stays outside the accounting and hitches anyway.
+
 The reason is blast radius. `systemd-oomd` kills the descendant *leaf* cgroup
 holding the most swap, and a tmux server inherits the cgroup of whatever started
 it, so by default every agent on a team shares one leaf and one kill takes all
@@ -364,6 +372,19 @@ stay readable under `GANG_LOCK_DIR`, and Gangline never sends them again. A
 harness may accept a submission into its own queue and drain it later; read the
 target before re-sending by hand.
 
+A delivery whose Enter was pressed and whose screen then stopped answering is
+neither of those. It cannot be parked — the body may already be in front of its
+recipient — and it is not a plain failure, which would invite a second copy sent
+by hand. `send` exits **5** and reports `delivered but UNVERIFIED`; a drained
+bundle in that state is recorded under `unverified-` rather than `failed-`, and
+`status`, `roster`, `mail` and the teardown archive name it apart from an entry
+Gangline watched fail to enter. Neither is ever sent again. Read the recipient
+before sending it a second time.
+
+A body written but never committed — `spool_stage` wrote it and the sender died
+before `spool_commit` renamed it into the deliverable namespace — is counted and
+named the same way, once the process that wrote it is gone.
+
 `--supersede` retires the same sender's earlier waiting messages once the newer
 message is accepted, whether the newer one parks or is delivered live. The
 retirement and the acceptance happen together or not at all. The sender's older
@@ -397,9 +418,26 @@ Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
 arriving together cannot mint competing ones. After a live refusal, a window
 without that identity says the message was not parked and names re-hitch or
-re-adopt as the repair. When a window dies, `gang drop` and `gang down` move
-waiting and held entries under `GANG_ARCHIVE_DIR`, grouped by teardown and
-agent, before deleting the spool. Empty queues create no archive directory.
+re-adopt as the repair. Re-adopting a window keeps the identity it already
+carries, so nothing already parked under it is stranded. When a window dies,
+`gang drop` and `gang down` name what is still waiting and what is held, then
+move both under `GANG_ARCHIVE_DIR`, grouped by teardown and agent, before
+deleting the spool. Empty queues create no archive directory.
+
+A window that dies any other way — an external `kill-window`, or a tmux server
+that goes away with every window option in it — leaves its spool directory
+behind with nothing pointing at it. The hitch that opens a session sweeps those:
+a directory no live window claims is archived down the same path, removed, and
+reported on stdout. What it cannot archive, and what Gangline did not mint, are
+named and left untouched, and `roster` names whatever remains under the spool
+root so a person can read and retire it. A window list that cannot be read is
+reported rather than treated as "nobody holds anything".
+
+One tmux server per `GANG_LOCK_DIR`. The spool root is keyed by that directory
+and the register of live spool identities is the tmux server's window list, so a
+second server sharing one lock root would read the first server's spools as
+unclaimed. This is the same assumption `spool_mint` already makes when it draws
+an identity no live window holds.
 
 ### `gang flush [name]`
 
@@ -509,7 +547,8 @@ operator's tmux status formats.
 
 Prints every message waiting in that agent's spool, oldest first, then every
 held entry, each with its sender and its entry filename, each body exactly as it
-would go onto the wire. Another agent's or the operator's read is inspection and
+would go onto the wire. A held entry says which kind it is: one Gangline typed
+and could not confirm warns its reader they may have seen the body already. Another agent's or the operator's read is inspection and
 touches nothing. The addressee's own read is delivery: it consumes each waiting
 entry so a later native delivery opportunity cannot deliver the same message again. Before
 printing an entry, it moves it into a human-readable directory under
@@ -955,7 +994,7 @@ Exactly these keys are settable:
 | `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
-| `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness in its own transient systemd user scope |
+| `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |

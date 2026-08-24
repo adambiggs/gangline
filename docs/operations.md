@@ -668,6 +668,34 @@ Use ids copied from each agent's earlier `gang drop` output or native transcript
 refuses collars that cannot do so. There is no latest-session fallback. This is
 relaunch, not a claim that Gangline reconstructed the old team.
 
+### Mail was left behind by a window that died without a teardown
+
+`drop` and `down` archive a window's spool and delete it. Nothing else does, so
+a window killed any other way — an external `tmux kill-window`, or a tmux server
+that goes away with every window option in it — leaves its spool directory under
+`GANG_LOCK_DIR` with nothing pointing at it. Every Gangline command resolves a
+spool through its window, so such a directory is invisible to all of them.
+
+The next `gang up` sweeps them: each directory no live window claims is archived
+under `GANG_ARCHIVE_DIR` as `orphan-<token>` and removed, and the sweep says so
+on stdout. Read those archives the way you read any teardown archive; they are
+durable and nothing removes them but you.
+
+Two kinds are named and left alone rather than swept, and `gang roster` keeps
+naming them until someone acts:
+
+- a directory holding something Gangline cannot archive — read what is in it,
+  then remove it by hand;
+- a directory Gangline did not mint — it will not read, archive or remove one.
+
+If the sweep reports that it could not read the tmux server's window list, it
+archived nothing: it cannot tell a dead session's spool from a live agent's, and
+guessing would move every live agent's mail. Read the spool root by hand.
+
+Run one tmux server per `GANG_LOCK_DIR`. A second server sharing one lock root
+holds a different register of live spool identities, and a session opened on it
+would read the first server's spools as unclaimed.
+
 ### A collar no longer recognizes its TUI
 
 Capture the real pane, update only that harness's collar, and require loud

@@ -1259,3 +1259,43 @@ unreadable or malformed source still fails on its first observation.
 
 The threshold is carried by a window option and advances only on native context
 checks. It adds no pane capture, retry loop, clock, parser or roster read.
+
+## A spool nobody claims is swept where a team starts, not watched
+
+A spool directory is resolved through `@gl_spool` on a live window, so one left
+by a window that did not die through `drop` or `down` is unreachable by every
+command Gangline has. The answer is not a component that watches for them —
+that is the loop law 7 forbids — but the one moment the question is both cheap
+and safe to ask: the hitch that opens a session, where the server has just
+proved it answers and the only spool Gangline owns is the one it just minted.
+
+The sweep archives; it never deletes a body. A directory it cannot archive, and
+one Gangline did not mint, are named and left exactly where they are. A window
+list that cannot be read is reported rather than answered as "nobody holds
+anything", which would archive every live agent's mail.
+
+This makes one server per `GANG_LOCK_DIR` explicit. It was already implicit:
+`spool_mint` draws an identity no live window holds, and reads that list from
+one server.
+
+## Typed-but-unconfirmed is a third verdict, not a held message
+
+`refuse` means nothing was typed, so the body is still the sender's and can be
+parked. `die` means Gangline could not do what it was asked. A send whose Enter
+was pressed and whose screen then stopped answering is neither: parked it
+becomes a second copy of a message that may already have arrived, and reported
+as a failure it invites the sender to make that copy by hand.
+
+It exits 5, says `delivered but UNVERIFIED`, and its spool record is named
+`unverified-` rather than `failed-` so every later reader can tell "Gangline
+watched and saw nothing enter" from "Gangline watched the keys go in and lost
+the screen". Neither is ever sent again.
+
+## An abandoned staging fragment is asked about its writer, not a clock
+
+`spool_stage` writes a body under a name no drain reads; `spool_commit` renames
+it into the deliverable namespace. A sender that died between the two left a
+message no surface named. The filename already carries the writing pid, so the
+question "is this a casualty or a send from a moment ago" is answered by asking
+whether that process still answers — the same evidence the delivery lock already
+trusts about its own holder.
