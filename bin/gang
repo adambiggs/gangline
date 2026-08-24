@@ -2896,6 +2896,12 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # `down` delete them.
 spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
 
+spool_root_prepare() { # establish the shared roots before a window depends on them
+  local base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  lock_base "$base"
+  lock_base "$base/spool"
+}
+
 archive_root() { # where a message goes when its window dies
   printf '%s' "${GANG_ARCHIVE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive}"
 }
@@ -2975,8 +2981,7 @@ spool_mint() { # $1 = window id; the spool identity, minted where nothing races 
   local token root live spool_refusal nl=$'\n'
   token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || token=""
   root="$(spool_root_of)"
-  lock_base "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
-  lock_base "$root"
+  spool_root_prepare
   if [ -n "$token" ]; then
     # A TOKEN PUBLISHED BEFORE THIS RULE EXISTED HAS NO RESERVATION. gang is a
     # script read from disk, so an upgrade reaches a running team between one
@@ -5246,6 +5251,11 @@ cmd_hitch() {
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
   GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
   scope_launch_wrap "$name"
+
+  # Every hitch publishes a spool identity after launch. A bad operator root
+  # is already fully knowable here; discovering it only in spool_mint reports
+  # failure after leaving a registered, running agent behind.
+  spool_root_prepare
 
   if ! session_live; then
     id="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION" -n "$name" -c "$dir" "$GANG_LAUNCH")" \

@@ -757,6 +757,23 @@ refuses "a bad gate-observation budget is refused" \
 equal "a bad gate-observation budget opens no window" \
   "$bad_gate_windows_before" "$(window_names)"
 
+# THE SPOOL ROOT IS A HITCH PRECONDITION, not a post-launch discovery. Every
+# window receives a spool identity before hitch can succeed, and the configured
+# root can be rejected without opening that window. Before this preflight the
+# same refusal left a live, registered agent behind with no spool identity.
+bad_lock_root="$RUN_ROOT/hitch-lock-not-a-directory"
+: > "$bad_lock_root"
+bad_lock_windows_before="$(window_names)"
+refuses "a lock root that cannot hold a spool is refused" \
+  "exists and is not a directory" \
+  env GANG_LOCK_DIR="$bad_lock_root" \
+    "$GANG" hitch config-bad-lock-root -c bash -d /tmp
+equal "an unusable spool root opens no window" \
+  "$bad_lock_windows_before" "$(window_names)"
+# Keep the mutant that opens the window from contaminating later checks.
+bad_lock_leak="$(window_id config-bad-lock-root)" || bad_lock_leak=""
+[ -z "$bad_lock_leak" ] || tmux kill-window -t "$bad_lock_leak"
+
 mkdir -p "$CONFIG_CASES/missing-collar"
 printf '%s\n' 'GANG_COLLAR=no-such-collar' > "$CONFIG_CASES/missing-collar/config"
 if missing_collar_out="$(env -u GANG_COLLAR GANG_CONFIG_DIR="$CONFIG_CASES/missing-collar" \
