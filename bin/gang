@@ -7222,7 +7222,9 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   if [ "$GANG_AUTO_RESUME" != off ]; then
     tmux set-option -w -t "$id" @gl_auto_resume "$GANG_AUTO_RESUME"
   fi
-  state_now "$id" >/dev/null
+  # Adoption establishes identity; state is observed only by commands and
+  # hooks whose result consumes it. Mark the unwitnessed initial state honestly.
+  glyph_write "$id" "?unknown?"
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
 }
 

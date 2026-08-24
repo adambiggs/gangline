@@ -380,6 +380,37 @@ equal "composer prints nothing for an empty box" \
 mkdir -p "$RUN_ROOT/collars"
 export GANG_COLLARS="$RUN_ROOT/collars"
 
+# Adoption establishes identity; it is not a state query. A collar whose pane
+# reader refuses must still be adoptable, with unknown as the honest initial
+# glyph, while the explicit status command keeps failing loudly on that reader.
+cat > "$RUN_ROOT/collars/adopt-unreadable.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_input() {
+  : > "$RUN_ROOT/adopt-state-reader-called"
+  return 3
+}
+SH
+adopt_unreadable_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n adopt-unreadable "PS1='❯ ' bash --norc")"
+adopt_unreadable_rc=0
+"$GANG" adopt adopt-unreadable -c adopt-unreadable >/dev/null 2>&1 \
+  || adopt_unreadable_rc=$?
+equal "adoption does not fail on an unrelated state observation" \
+  0 "$adopt_unreadable_rc"
+equal "the adopted identity is complete despite its unreadable state" \
+  "adopt-unreadable|adopt-unreadable" \
+  "$(tmux show-options -wqv -t "$adopt_unreadable_id" @gl_agent)|$(tmux show-options -wqv -t "$adopt_unreadable_id" @gl_collar)"
+equal "adoption does not call the collar's state reader" absent \
+  "$([ ! -e "$RUN_ROOT/adopt-state-reader-called" ] && printf absent || printf called)"
+equal "an adopted window with no state observation starts unknown" \
+  "?adopt-unreadable?" \
+  "$(tmux display-message -p -t "$adopt_unreadable_id" '#{window_name}')"
+refuses "an explicit state observation still fails loudly" \
+  "cannot read the composer" "$GANG" status adopt-unreadable
+"$GANG" drop adopt-unreadable >/dev/null
+
 # Native session identity is a window fact, and every renewal consumes that
 # exact fact rather than directory recency. This fixture exposes the common
 # hook payload shape without launching a real harness.
