@@ -126,7 +126,12 @@ claude_session_file() { # $1 = tmux target -> hook-bound transcript path
 # synthetic assistant record with isApiErrorMessage=true, error=model_not_found
 # and the message checked below. On 2.1.241, an exhausted 529 retry sequence
 # instead leaves a synthetic assistant record with error=server_error and
-# apiErrorStatus=529. A following real user turn outranks either terminal record
+# apiErrorStatus=529, and a response stream that dies mid-turn leaves one with
+# error=server_error and NO apiErrorStatus key at all — the harness prints it,
+# returns to an idle composer, and nothing restarts the lane. Three specimens of
+# that last class differ in their sentence and agree in their structure, and each
+# is followed only by a system/turn_duration record: the turn is over.
+# A following real user turn outranks any terminal record
 # while recovery is running; isMeta local-command notices and tool_result-only
 # user records are not turns. A later ordinary assistant record clears it. Other
 # retryable API errors abstain. Missing pre-session evidence abstains; a bound
@@ -247,6 +252,14 @@ if latest.get("isApiErrorMessage") is not True:
     raise SystemExit(1)
 
 if latest.get("error") == "server_error":
+    # A STREAM THAT DIED CARRIES NO HTTP STATUS. The key is absent rather than
+    # null, which is what separates this class from every status-bearing one,
+    # and it is the structure rather than the sentence: the same record has been
+    # seen saying the response stopped arriving, that the server errored
+    # mid-response, and that the connection was lost.
+    if "apiErrorStatus" not in latest:
+        print("Claude Code ended the latest turn on a broken response stream (server_error)")
+        raise SystemExit(0)
     status = latest.get("apiErrorStatus")
     if status == 529 and not isinstance(status, bool):
         print("Claude Code ended the latest turn on HTTP 529 (server_error)")

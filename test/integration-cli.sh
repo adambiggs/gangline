@@ -1173,6 +1173,79 @@ claude_other_server_error_read="$(CLAUDE_TRANSCRIPT="$claude_other_server_error_
 equal "other Claude server errors remain nonfatal" \
   $'1\t' "$claude_other_server_error_read"
 
+# A RESPONSE STREAM THAT DIED CARRIES NO HTTP STATUS. Claude Code writes the
+# same terminal assistant record for it as for an exhausted 529 retry except
+# that apiErrorStatus is absent entirely, and the sentence it carries varies
+# between builds and failures while that structure does not. The three bodies
+# below are the ones observed; each is asserted through the same reader, so a
+# collar that started matching prose instead of shape would keep only one.
+claude_stream_read() { # $1 = the record's visible text
+  local transcript="$RUN_ROOT/claude-stream-$RANDOM.jsonl"
+  python3 - "$transcript" "$1" <<'PY'
+import json, sys
+record = {
+    "type": "assistant",
+    "isSidechain": False,
+    "isApiErrorMessage": True,
+    "error": "server_error",
+    "message": {"content": [{"type": "text", "text": sys.argv[2]}]},
+}
+with open(sys.argv[1], "w") as out:
+    out.write(json.dumps(record) + "\n")
+PY
+  CLAUDE_TRANSCRIPT="$transcript" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar"
+}
+# source-guard: the fixture is the native terminal assistant record, built from
+# the observed field set rather than from any pane rendering of it
+for claude_stream_text in \
+  "API Error: The response stopped arriving. The response above may be incomplete." \
+  "API Error: Server error mid-response. The response above may be incomplete." \
+  "API Error: Connection lost mid-response. The response above may be incomplete."
+do
+  equal "a broken Claude response stream is a fatal turn (${claude_stream_text:11:24}...)" \
+    $'0\tClaude Code ended the latest turn on a broken response stream (server_error)' \
+    "$(claude_stream_read "$claude_stream_text")"
+done
+
+# THE DISCRIMINATOR IS THE ABSENT KEY, so a record that carries a status must
+# not reach the stream verdict — apiErrorStatus=500 above already proves the
+# nonfatal side, and this proves the fatal side is not reached by prose alone.
+claude_stream_with_status="$RUN_ROOT/claude-stream-with-status.jsonl"
+cat > "$claude_stream_with_status" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","apiErrorStatus":503,"message":{"content":[{"type":"text","text":"API Error: The response stopped arriving. The response above may be incomplete."}]}}
+JSONL
+# source-guard: producer@3de10462a30f: the fixture is the native record built here, and the reader is driven with the transcript path as its only input
+equal "the same sentence with an HTTP status is not the stream verdict" \
+  $'1\t' \
+  "$(CLAUDE_TRANSCRIPT="$claude_stream_with_status" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
+      . "$1"
+      tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+      output="$(collar_bricked fixture)"; rc=$?
+      printf "%s\t%s" "$rc" "$output"
+    ' fixture "$claude_collar")"
+
+# A LATER REAL TURN OUTRANKS THE TERMINAL RECORD, which is what makes the
+# verdict recover rather than stick to a window for the rest of its life.
+claude_stream_recovered="$RUN_ROOT/claude-stream-recovered.jsonl"
+cat > "$claude_stream_recovered" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"server_error","message":{"content":[{"type":"text","text":"API Error: The response stopped arriving. The response above may be incomplete."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"continue"}}
+JSONL
+# source-guard: producer@4952826df386: the fixture is the native record pair built here, and the reader is driven with the transcript path as its only input
+equal "a real turn after a broken stream clears the fatal verdict" \
+  $'1\t' \
+  "$(CLAUDE_TRANSCRIPT="$claude_stream_recovered" ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c '
+      . "$1"
+      tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+      output="$(collar_bricked fixture)"; rc=$?
+      printf "%s\t%s" "$rc" "$output"
+    ' fixture "$claude_collar")"
+
 codex_collar="$ROOT/collars/codex.sh"
 codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"

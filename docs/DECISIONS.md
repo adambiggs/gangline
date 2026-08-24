@@ -1350,3 +1350,12 @@ stays the operator's; the remediation is the operator answering the native menu
 once. A state the collar cannot read is refused as well: launching blind would
 restore the stall the check exists to remove, and a gate that quietly degrades
 while it is believed to hold is the worse failure.
+## A dead response stream is told apart by its missing status, not its sentence
+
+Claude Code ends a turn killed mid-stream with a synthetic assistant record
+carrying `error=server_error` and no `apiErrorStatus` key. Specimens of it say
+the response stopped arriving, that the server errored mid-response, and that the
+connection was lost; the structure is the same in all three. Matching the absent
+key rather than the prose keeps the reader on the harness's data and off its
+wording, and leaves every status-bearing `server_error` nonfatal.
+

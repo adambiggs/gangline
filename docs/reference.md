@@ -646,6 +646,13 @@ tool-result-only user records are not turns. A selected-model API error is
 fatal, a newer real user turn proves recovery has begun, and other API errors
 such as rate limits are not this fatal shape. Selected-model failures are also
 ineligible for automatic continuation because replay cannot repair the choice.
+Two provider-side classes are fatal: an exhausted retry sequence, which leaves
+`error=server_error` with `apiErrorStatus=529`; and a response stream that died
+mid-turn, which leaves `error=server_error` with no `apiErrorStatus` key at all.
+The absent key is the discriminator, not the sentence — the same record has been
+observed saying the response stopped arriving, that the server errored
+mid-response, and that the connection was lost. Any other `server_error` status
+remains nonfatal.
 
 A turn bracket left open by an interruption the harness never reported decays
 once it passes `GANG_TURN_LIMIT`: an expired bracket over a quiet, stable pane
