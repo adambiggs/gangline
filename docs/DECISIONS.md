@@ -1383,3 +1383,11 @@ connection was lost; the structure is the same in all three. Matching the absent
 key rather than the prose keeps the reader on the harness's data and off its
 wording, and leaves every status-bearing `server_error` nonfatal.
 
+## A team's socket is written down where a later shell can read it
+
+tmux clients discover the default socket, so a team on a private `TMUX_TMPDIR`
+is unreachable from a shell that lost that environment and looks exactly like a
+team that ended. `hitch` records the socket under the lock root; `teams` reads
+the records back and asks each server rather than believing the file; `attach`
+crosses to a recorded socket only when this shell's own does not have the team.
+The record is a fact about reachability and never authority.

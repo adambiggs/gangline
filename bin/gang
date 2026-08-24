@@ -426,6 +426,7 @@ watch agents
   wait-limit resume at a provider reset
   whoami    read this pane's identity
   attach    join the team in tmux
+  teams     list teams and their sockets
 
 settings and discovery
   notify    set or show the stall-note target
@@ -1019,6 +1020,27 @@ gang attach
   so you can watch one work or type into it
   yourself. Leave with tmux's own detach
   (prefix then d); the team keeps running.
+EOF
+      ;;
+    teams) cat <<'EOF'
+gang teams
+  List the teams gang has written down and
+  the tmux socket each is reachable on.
+
+  gang teams
+
+  Takes no arguments. tmux clients find the
+  default socket; a private TMUX_TMPDIR moves
+  it, so a live team can be unreachable from
+  a shell that lost that environment. Hitch
+  records the socket of every team it opens,
+  and this reads those records back, asking
+  each server whether the session is still
+  there rather than trusting the file.
+
+  gang attach uses the same records: when the
+  team is not on this shell's socket it
+  attaches on the recorded one.
 EOF
       ;;
     drop) cat <<'EOF'
@@ -2995,6 +3017,98 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # own window options, so a directory nothing points at can never be adopted by a
 # later window that reuses a tmux id, and they die with the window: `drop` and
 # `down` delete them.
+# A TEAM IS ONLY AS FINDABLE AS ITS SOCKET. tmux clients discover the default
+# socket; a private TMUX_TMPDIR moves it, and nothing outside that environment
+# can then name the server. A live team looked exactly like a vanished one, and
+# a second was started over the top of it. So the socket a team is reachable on
+# is written down where a later shell can read it back without inheriting the
+# environment that created it.
+#
+# UNDER THE LOCK ROOT, beside the spools, because that is already the directory
+# every gang process talking to this team agrees on. A record is a fact about
+# reachability, never authority: `teams` re-asks the server itself rather than
+# believing the file.
+team_root_of() { printf '%s/teams' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
+
+team_record_name() { # $1 = session; 0 with the record's basename, 1 = unusable
+  case "$1" in
+    ''|.|..) return 1 ;;
+    */*) return 1 ;;
+  esac
+  printf '%s' "$1"
+}
+
+team_socket_record() { # $1 = session; note the socket it is reachable on
+  local root file socket name
+  name="$(team_record_name "$1")" || {
+    printf "gang: WARNING: session '%s' cannot be written down as a team record because its name is not usable as a filename, so 'gang teams' will not find it after a disconnect. The team itself is unaffected.\n" \
+      "$1" >&2
+    return 0
+  }
+  socket="$(tmux display-message -p -t "=$1" '#{socket_path}' 2>/dev/null)" || socket=""
+  # NOTHING RECORDED RATHER THAN SOMETHING GUESSED. A socket path gang could
+  # not read from the server is not one an attach may be pointed at later.
+  [ -n "$socket" ] || return 0
+  root="$(team_root_of)"
+  lock_base "$root"
+  file="$root/$name"
+  printf '%s\n' "$socket" > "$file.new" 2>/dev/null || return 0
+  mv -f -- "$file.new" "$file" 2>/dev/null || rm -f -- "$file.new"
+}
+
+team_socket_forget() { # $1 = session; the record dies with the team it names
+  local name
+  name="$(team_record_name "$1")" || return 0
+  rm -f -- "$(team_root_of)/$name" 2>/dev/null || true
+}
+
+team_socket_read() { # $1 = session -> the socket recorded for it; 1 = no record
+  local name file socket
+  name="$(team_record_name "$1")" || return 1
+  file="$(team_root_of)/$name"
+  [ -f "$file" ] || return 1
+  IFS= read -r socket < "$file" || return 1
+  [ -n "$socket" ] || return 1
+  printf '%s' "$socket"
+}
+
+team_live_on() { # $1 socket, $2 session; 0 live, 1 not there, 2 no server answers
+  tmux -S "$1" list-sessions -F '#{session_name}' >/dev/null 2>&1 || return 2
+  tmux -S "$1" has-session -t "=$2" 2>/dev/null || return 1
+}
+
+cmd_teams() { # every team gang wrote down, and whether its server still answers
+  local root file name socket rc rows=0
+  [ $# -eq 0 ] || die "teams: takes no arguments"
+  root="$(team_root_of)"
+  if [ ! -d "$root" ]; then
+    printf '%s\n' "$(colour "$C_DIM" "no teams recorded under $root")"
+    return 0
+  fi
+  for file in "$root"/*; do
+    [ -f "$file" ] || continue
+    name="${file##*/}"
+    IFS= read -r socket < "$file" || socket=""
+    rows=$((rows + 1))
+    if [ -z "$socket" ]; then
+      printf '%-16s %-9s %s\n' "$name" "unknown" \
+        "$(colour "$C_DIM" "the record at $file names no socket")"
+      continue
+    fi
+    rc=0
+    team_live_on "$socket" "$name" || rc=$?
+    case "$rc" in
+      0) printf '%-16s %-9s %s\n' "$name" "$(colour "$C_OK" live)" "$socket" ;;
+      1) printf '%-16s %-9s %s\n' "$name" "$(colour "$C_DIM" gone)" \
+           "$socket $(colour "$C_DIM" "(a server answers, this session is not on it)")" ;;
+      2) printf '%-16s %-9s %s\n' "$name" "$(colour "$C_DIM" gone)" \
+           "$socket $(colour "$C_DIM" "(no server answers)")" ;;
+    esac
+  done
+  [ "$rows" -ne 0 ] \
+    || printf '%s\n' "$(colour "$C_DIM" "no teams recorded under $root")"
+}
+
 spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
 
 spool_root_prepare() { # establish the shared roots before a window depends on them
@@ -5671,6 +5785,7 @@ cmd_hitch() {
   # every hitch would ask the same question again for every later agent; asking
   # it once, where a team starts, is where the answer can have changed.
   [ "$opened_session" -eq 0 ] || spool_sweep_orphans
+  team_socket_record "$SESSION"
   if [ -n "$lights" ]; then
     hitch_register "$id" "$name" @gl_context_lights "$lights"
   fi
@@ -8028,12 +8143,27 @@ cmd_down() { # inverse of up: end the whole team's session
     spool_forget "$id"
   done <<<"$ids"
   tmux kill-session -t "=$SESSION"
+  team_socket_forget "$SESSION"
   for id in $wait_ids; do wait_signal_registered "$id"; done
 }
 
 cmd_attach() {
+  local socket rc=0
   [ $# -eq 0 ] || die "attach: takes no arguments"
-  exec tmux attach -t "=$SESSION"
+  # THE SOCKET THIS SHELL CAN SEE IS ASKED FIRST, so an ordinary attach is
+  # exactly what it always was. Only when the team is not on it does the
+  # written-down socket matter, and that is the disconnect this exists for: the
+  # server is alive on a private TMUX_TMPDIR that this shell no longer carries.
+  ! session_live || exec tmux attach -t "=$SESSION"
+  socket="$(team_socket_read "$SESSION")" \
+    || die "no session '$SESSION' running, and no socket is recorded for it (gang teams lists what gang wrote down)"
+  team_live_on "$socket" "$SESSION" || rc=$?
+  case "$rc" in
+    0) printf '%s\n' "$(colour "$C_DIM" "'$SESSION' is not on this shell's tmux socket; attaching on the one gang recorded for it: $socket")" >&2
+       exec tmux -S "$socket" attach -t "=$SESSION" ;;
+    1) die "no session '$SESSION' running: a tmux server answers on the socket gang recorded for it ($socket) and that session is not on it" ;;
+    *) die "no session '$SESSION' running: nothing answers on the socket gang recorded for it ($socket), so the team it named is gone" ;;
+  esac
 }
 
 # WHAT A COLLAR CAN BE RESUMED ONTO is a property an operator needs at the
@@ -8271,6 +8401,7 @@ case "$cmd" in
   whoami)   cmd_whoami "$@" ;;
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
+  teams)    cmd_teams "$@" ;;
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;

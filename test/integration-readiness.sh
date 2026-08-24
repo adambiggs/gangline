@@ -1742,6 +1742,65 @@ rm -f -- "$RUN_ROOT/masking-refuse-at"
 "$GANG" drop masking >/dev/null
 
 # ---------------------------------------------------------------------------
+# A TEAM IS ONLY AS FINDABLE AS ITS SOCKET. A live team on a private
+# TMUX_TMPDIR read as a vanished one, and a second was started over it. Hitch
+# writes the socket down; teams reads it back and re-asks each server rather
+# than believing the file; attach crosses to it only when this shell's own
+# socket does not have the team.
+teams_record="$GANG_LOCK_DIR/teams/$GANG_SESSION"
+equal "hitch wrote this team's socket down" "$TMUX_SOCKET" "$(cat "$teams_record" 2>/dev/null)"
+teams_listing="$("$GANG" teams)"
+contains "gang teams names the running team" "$teams_listing" "$GANG_SESSION"
+contains "gang teams reports it live" "$teams_listing" "live"
+contains "gang teams names the socket it is reachable on" "$teams_listing" "$TMUX_SOCKET"
+
+# A RECORD IS NOT AUTHORITY. Both ways of being wrong are separate readings:
+# a socket nothing answers on, and a server that answers without the session.
+printf '%s\n' "$RUN_ROOT/no-such-socket" > "$GANG_LOCK_DIR/teams/gangtest-$$-ghost"
+printf '%s\n' "$TMUX_SOCKET" > "$GANG_LOCK_DIR/teams/gangtest-$$-absent"
+teams_listing="$("$GANG" teams)"
+contains "a recorded socket nothing answers on is reported gone" \
+  "$(printf '%s\n' "$teams_listing" | grep -- "gangtest-$$-ghost")" "no server answers"
+contains "a live server without that session is reported as its own case" \
+  "$(printf '%s\n' "$teams_listing" | grep -- "gangtest-$$-absent")" \
+  "this session is not on it"
+rm -f -- "$GANG_LOCK_DIR/teams/gangtest-$$-ghost" "$GANG_LOCK_DIR/teams/gangtest-$$-absent"
+
+# THE DISCONNECT ITSELF. A shell whose tmux socket no longer holds the team is
+# exactly the operator who reconnected and found nothing: attach has to reach
+# the recorded socket rather than report the team gone. The attach that follows
+# the note cannot succeed without a terminal, which is why the note is the
+# assertion and the exit status is not.
+teams_cross="$(TMUX_TMPDIR="$RUN_ROOT/teams-elsewhere" "$GANG" attach 2>&1 </dev/null)" \
+  || true
+contains "attach crosses to the socket gang recorded for the team" \
+  "$teams_cross" "attaching on the one gang recorded for it: $TMUX_SOCKET"
+teams_norecord="$(GANG_SESSION="gangtest-$$-norecord" TMUX_TMPDIR="$RUN_ROOT/teams-elsewhere" \
+  "$GANG" attach 2>&1 </dev/null)" || true
+contains "a team with no record is refused with the command that lists them" \
+  "$teams_norecord" "gang teams"
+printf '%s\n' "$RUN_ROOT/no-such-socket" > "$GANG_LOCK_DIR/teams/gangtest-$$-dead"
+teams_dead="$(GANG_SESSION="gangtest-$$-dead" TMUX_TMPDIR="$RUN_ROOT/teams-elsewhere" \
+  "$GANG" attach 2>&1 </dev/null)" || true
+contains "a recorded socket with no server is refused as a team that is gone" \
+  "$teams_dead" "nothing answers on the socket gang recorded"
+rm -f -- "$GANG_LOCK_DIR/teams/gangtest-$$-dead"
+
+# THE RECORD DIES WITH THE TEAM IT NAMES, so a later listing does not offer a
+# socket whose team gang itself ended. Driven on a second session of this run's
+# own server: a name this run minted, ended by name, and nothing else touched.
+teams_second="gangtest-$$-second"
+GANG_SESSION="$teams_second" GANG_BOOT_TIMEOUT=0 "$GANG" hitch probe -c bash >/dev/null 2>&1 || true
+equal "a second team is written down too" "$TMUX_SOCKET" \
+  "$(cat "$GANG_LOCK_DIR/teams/$teams_second" 2>/dev/null)"
+GANG_SESSION="$teams_second" "$GANG" down "$teams_second" >/dev/null 2>&1 || true
+if [ -e "$GANG_LOCK_DIR/teams/$teams_second" ]; then
+  fail "ending a team forgets its socket record" "the record is still there"
+else
+  pass "ending a team forgets its socket record"
+fi
+
+# ---------------------------------------------------------------------------
 # EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. A delivery can be
 # verified into a pane and a turn can open and close without the recipient
 # running a single command; roster read healthy through three hours of exactly

@@ -241,7 +241,28 @@ to HEAD removes the warning; the live symlink/install path is unchanged.
 
 ### `gang attach`
 
-Attaches to `GANG_SESSION`.
+Attaches to `GANG_SESSION` on this shell's own tmux socket.
+
+When the team is not on that socket, `attach` reads the socket `hitch` recorded
+for it, says on stderr which socket it is crossing to, and attaches there. A
+team with no record, or one whose recorded socket no longer answers, is refused
+with which of those two it was.
+
+### `gang teams`
+
+Lists every team Gangline has written down and the tmux socket each is reachable
+on, newest state first asked of the server rather than read off the file: `live`,
+or `gone` distinguishing a socket nothing answers on from a server that answers
+without that session.
+
+`hitch` records `GANG_SESSION` and its socket under `GANG_LOCK_DIR/teams/` on
+every hitch; `down` removes the record for the team it ends. A session name that
+is not usable as a filename is not recorded, and `hitch` says so — the team runs
+either way, only discovery is unavailable for it.
+
+This exists because tmux clients discover the default socket while a private
+`TMUX_TMPDIR` moves it, so a live team can be unreachable from a shell that lost
+that environment and look exactly like a team that has gone.
 
 ### `gang drop <name>`
 

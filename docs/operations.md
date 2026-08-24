@@ -652,6 +652,27 @@ back with the `gang hitch <name> --resume <session-id>` line. If the scope
 outlived the pane because the agent left a detached child, the next hitch of
 that name refuses and prints the unit to stop.
 
+### A live team cannot be found after a disconnect
+
+Ask before rebuilding. tmux clients discover the default socket, so a team
+started under a private `TMUX_TMPDIR` is invisible to a shell that no longer
+carries it — `tmux ls` finds nothing and the team is still running. Starting a
+second team over the top of the first is the failure this prevents.
+
+```sh
+gang teams
+```
+
+Every team `hitch` opened is listed with the socket it is reachable on and
+whether a server still answers there. `gang attach` uses the same records: when
+`GANG_SESSION` is not on this shell's socket it crosses to the recorded one and
+says on stderr which socket it took.
+
+Only teams this `GANG_LOCK_DIR` recorded are listed. A team started with a
+different lock root is recorded under that root instead, and a record older than
+the last reboot names a socket that no longer exists — which `gang teams`
+reports as `gone` rather than hiding.
+
 ### The tmux server was lost
 
 Gangline persists no roster. Recreate only the agents the operator chooses:
