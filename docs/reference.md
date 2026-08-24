@@ -744,7 +744,9 @@ is not armed again over the operator. An existing manual wake is also
 authoritative: automatic sampling records its provider window as handled but
 does not stop its timer or replace its optional `--resume` body. A refused arm
 is reported in the turn, recorded where status reads it, and not retried for
-that window.
+that window. An overdue declaration, or a future declaration whose timer is
+provably inactive or failed, is dead residue and is replaced; the successful
+advisory says when that replacement discarded a custom `--resume` turn.
 
 A reading too old to act on arms nothing. A collar may cap the age of
 actionable evidence, and Codex's percentage comes from a session event that goes

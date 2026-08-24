@@ -1658,6 +1658,8 @@ auto_failed_note="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
   TMUX_PANE="$auto_pane" "$GANG" hook)"
 contains "a failed future timer does not suppress automatic recovery" \
   "$auto_failed_note" "Auto-resume armed"
+contains "automatic recovery discloses the custom turn it discarded" \
+  "$auto_failed_note" "discarded its custom --resume turn"
 equal "the failed declaration is replaced by the fresh reset" \
   "$auto_reset_after_failed" \
   "$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake | cut -f1)"

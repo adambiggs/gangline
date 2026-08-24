@@ -4492,12 +4492,13 @@ usage_limit_fail_record() { # $1 window, $2 operator-facing failure
   tmux set-option -w -t "$1" @gl_usage_failed "$note" 2>/dev/null || true
 }
 
+USAGE_WAKE_REPLACED_CUSTOM=0
 usage_wake_existing_authoritative() { # $1 window; 0 preserve, 1 replace
-  local record reset unit now state
+  local record reset unit now state body
+  USAGE_WAKE_REPLACED_CUSTOM=0
   record="$(usage_wake_read "$1")" || return 1
   IFS=$'\t' read -r reset unit _ <<<"$record"
   now="$(date +%s)"
-  [ "$reset" -gt "$now" ] || return 1
 
   # A FUTURE DECLARATION IS PRESERVED UNLESS ITS TIMER IS PROVABLY DEAD.
   # The user manager can disappear under the tmux server, leaving a shaped
@@ -4505,12 +4506,15 @@ usage_wake_existing_authoritative() { # $1 window; 0 preserve, 1 replace
   # not a wake and must not disable automatic arming for every later provider
   # window. Conversely, an unreadable manager is not permission to cancel a
   # possibly-live operator wake and discard its --resume body.
-  command -v systemctl >/dev/null 2>&1 || return 0
-  state="$(systemctl --user is-active "$unit.timer" 2>/dev/null)" || true
-  case "$state" in
-    inactive|failed) return 1 ;;
-    *) return 0 ;;
-  esac
+  if [ "$reset" -gt "$now" ]; then
+    command -v systemctl >/dev/null 2>&1 || return 0
+    state="$(systemctl --user is-active "$unit.timer" 2>/dev/null)" || true
+    case "$state" in inactive|failed) ;; *) return 0 ;; esac
+  fi
+  body="$(tmux show-options -wqv -t "$1" @gl_usage_wake_body 2>/dev/null)" \
+    || body=""
+  [ -z "$body" ] || USAGE_WAKE_REPLACED_CUSTOM=1
+  return 1
 }
 
 auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
@@ -4552,6 +4556,8 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
   if [ "$rc" -eq 0 ]; then
     event_claim_release
     printf 'Auto-resume armed at %s%% used: %s' "$AUTO_RESUME_AT" "$out"
+    [ "$USAGE_WAKE_REPLACED_CUSTOM" -ne 1 ] \
+      || printf " Auto-resume replaced a dead provider-reset wake and discarded its custom --resume turn."
     return 0
   fi
   tmux set-option -uw -t "$1" @gl_usage_wake_failed_unit 2>/dev/null || true

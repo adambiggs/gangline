@@ -292,7 +292,9 @@ that could cross a provider reset, and overlapping hooks serialize the marker
 check with the arm.
 An existing manual wake is the operator's decision and wins over that automatic
 transaction: mark the sampled window handled without cancelling its timer or
-replacing its optional continuation.
+replacing its optional continuation. An overdue declaration, or a future one
+whose timer is provably dead, is residue instead: replace it, and disclose when
+that replacement discards a custom continuation.
 
 ## A promised wake is read from the unit, not only the declaration
 
@@ -318,7 +320,7 @@ refusal; positive ownership of a later automatic turn does. This is immediate
 collar-native discrimination, not a watcher or a general retry policy; collars
 with no structural record declare no equivalent.
 
-## Auto-resume has three accepted follow-ups
+## Auto-resume accepted follow-ups
 
 - **Two unit-state arms lack direct evidence.** The automatic-wake branch is
   driven for an active timer preserving its continuation and a failed timer
@@ -327,12 +329,6 @@ with no structural record declare no equivalent.
   already exercised through their sibling states and use the same fake
   `systemctl` vocabulary as status and cancellation. Closing the mutation gap
   costs two immediate fixtures; it needs no production surface.
-- **Replacing a dead operator wake does not disclose the discarded body.** A
-  provably dead timer cannot deliver its custom `--resume` body, so replacing it
-  is the correct recovery and no live operator decision is overridden. The
-  successful hook advisory nevertheless names only the new automatic wake.
-  Disclosure costs carrying the replacement fact out of the shared arming
-  transaction and one assertion on the resulting note.
 - **Claude re-scans the bound transcript on every ordinary idle event.** The
   structural reader parses the whole JSONL transcript even when no error record
   exists. It is non-blocking for correctness because it makes one finite-file
