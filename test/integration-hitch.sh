@@ -368,8 +368,32 @@ submitted "the post-second-prompt startup contract was submitted" startup-second
 # prompt (the one after the startup envelope was submitted); no Stop hook helps.
 startup_up_clear="test-startup-up-clear-$$"
 startup_up_attach_outcome="test-startup-up-attach-outcome-$$"
-startup_up_process_done="test-startup-up-process-done-$$"
 startup_up_delivered="test-startup-up-delivered-$$"
+# THE DRIVER'S EXIT IS READ OFF A CHANNEL, NOT WAITED FOR ON ITS PID. Both the
+# old tmux channel and the PID were released by the same subshell after `script`
+# returned, so a client that attached and never gave the pty back stranded the
+# mandatory suite with no verdict at all. The driver reports its own status into
+# this pipe instead, and the read below carries an outer ceiling: completion
+# arrives as bytes, expiration arrives as the absence of them, and the two are
+# different named outcomes rather than the same silence.
+#
+# NO DELAY IS EVIDENCE HERE. The pass is the status that has already arrived, so
+# a healthy run spends nothing; the ceiling is spent only by a defect, and what
+# it buys is a failure that names its cause instead of a suite that never ends.
+#
+#   detach to driver exit, this run   the instrument line printed below
+#   test ceiling (this read)          30s
+#   push CI ceiling for the whole     15 minutes (.github/workflows/shell.yml)
+#   suite, which this must not reach
+#
+# The first row is measured on every run rather than written down once here. A
+# margin recorded in a comment stops being true without saying so, and the
+# number that decides whether this ceiling is roomy is the one this host just
+# produced — so the run prints it and a reader compares the two columns.
+startup_up_ceiling=30
+startup_up_exit_pipe="$RUN_ROOT/startup-up.exit"
+mkfifo "$startup_up_exit_pipe"
+exec 9<>"$startup_up_exit_pipe"
 cat > "$RUN_ROOT/startup-up.sh" <<SH
 #!/bin/sh
 printf 'FIRST_RUN_GATE\n'
@@ -390,8 +414,6 @@ tmux set-hook -g client-attached \
   "set-option -g @test_startup_up_attached yes; wait-for -S $startup_up_attach_outcome"
 tmux wait-for "$startup_up_attach_outcome" &
 startup_up_attached_waiter=$!
-tmux wait-for "$startup_up_process_done" &
-startup_up_process_waiter=$!
 # An attached client adds a real terminal-render path that the suite's global
 # compressed sleep is not calibrated for. Use the production verification
 # clock and a roomy but ordinary client viewport; the suite header records why
@@ -403,23 +425,25 @@ startup_up_process_waiter=$!
 # The driver exit and the attach hook signal the same outcome barrier. The hook
 # records positive attachment first; an attach refusal records its status and
 # output before releasing the barrier. Either outcome is immediate evidence, so
-# a missing client cannot strand the suite in an unbounded wait.
+# a missing client cannot strand the suite in an unbounded wait. The status
+# reaches the pipe before the barrier is released, so a barrier released by the
+# driver's own exit is always released over a status already readable.
 (
   startup_up_rc=0
   TERM=xterm PATH="${PATH#"$RUN_ROOT/bin:"}" script -qec \
     "stty rows 60 cols 200; $GANG up startup-up -c startup-up -d /tmp -r startup-up" /dev/null \
     > "$RUN_ROOT/startup-up.out" 2>&1 || startup_up_rc=$?
   printf '%s\n' "$startup_up_rc" > "$RUN_ROOT/startup-up.status"
+  printf 'exit %s\n' "$startup_up_rc" >&9
   tmux wait-for -S "$startup_up_attach_outcome"
-  tmux wait-for -S "$startup_up_process_done"
   exit "$startup_up_rc"
 ) &
 startup_up_process=$!
 wait "$startup_up_attached_waiter"
 tmux set-hook -gu client-attached
 if [ "$(tmux show-options -gqv @test_startup_up_attached)" != yes ]; then
-  wait "$startup_up_process_waiter"
-  wait "$startup_up_process" 2>/dev/null || true
+  exec 9>&-
+  kill "$startup_up_process" 2>/dev/null || true
   fail "gang up exposes a positively observed first-run gate in its tmux client" \
     "synthetic client exited with status $(<"$RUN_ROOT/startup-up.status") before tmux observed client-attached: $(<"$RUN_ROOT/startup-up.out")"
   exit 1
@@ -443,16 +467,32 @@ contains "gang up delivers the parked contract after its attached prompt clears"
 excludes "gang up retires the verified startup spool entry" \
   "$("$GANG" status startup-up)" "spooled:"
 # `script` may close its synthetic client on stdin EOF after the delivery; an
-# already-detached client and one detached here are the same settled state. Its
-# driver records status and signals completion only after `script` returns, so
-# this barrier establishes process exit before the PID wait merely reaps it.
+# already-detached client and one detached here are the same settled state.
+#
+# A CLEAN EXIT IS NOW AN ASSERTION RATHER THAN A PRECONDITION. The old shape had
+# no pass arm, so the one healthy outcome was neither counted nor visible, and
+# the unhealthy one was a suite that never returned. The bounded read gives both
+# a name: 'exit 0' is what a driver that gave the pty back reports, and anything
+# else — a nonzero status, or the ceiling above elapsing with the driver still
+# holding the terminal — is the actual value of the same counted check.
+#
+# The PID is deliberately not waited on afterwards. The status has already been
+# read, so a wait could only add back the unbounded stall this replaced; the
+# remaining work in that subshell is one tmux signal and an exit.
 tmux detach-client -s "=$GANG_SESSION" 2>/dev/null || true
-wait "$startup_up_process_waiter"
-startup_up_rc=0
-wait "$startup_up_process" || startup_up_rc=$?
-if [ "$startup_up_rc" -ne 0 ]; then
-  fail "gang up's synthetic attached client exits cleanly after detachment" \
-    "driver exited with status $(<"$RUN_ROOT/startup-up.status"): $(<"$RUN_ROOT/startup-up.out")"
+startup_up_outcome=""
+startup_up_spent="$SECONDS"
+read -r -t "$startup_up_ceiling" startup_up_outcome <&9 \
+  || startup_up_outcome="reported no exit within ${startup_up_ceiling}s and still holds the terminal"
+startup_up_spent=$((SECONDS - startup_up_spent))
+exec 9>&-
+printf 'instrument startup-up-driver-exit=%ss ceiling=%ss\n' \
+  "$startup_up_spent" "$startup_up_ceiling"
+equal "gang up's synthetic attached client exits cleanly after detachment" \
+  "exit 0" "$startup_up_outcome"
+if [ "$startup_up_outcome" != "exit 0" ]; then
+  printf '       driver output: %s\n' "$(<"$RUN_ROOT/startup-up.out")"
+  kill "$startup_up_process" 2>/dev/null || true
   exit 1
 fi
 "$GANG" drop startup-up >/dev/null
