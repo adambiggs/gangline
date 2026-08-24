@@ -791,12 +791,18 @@ cat > "$tail_fix/run.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 . "$(dirname "$0")/suite-tail.sh"
-checks=0 fails=0
+checks=0 fails=0 unknowns=0
 pass() { checks=$((checks + 1)); }
 fail() { checks=$((checks + 1)); fails=$((fails + 1)); }
+unknown() { unknowns=$((unknowns + 1)); suite_unknown "$1" "$2"; }
 pass; pass; pass
-[ "${1:-}" != red ] || { fail; fail; }
-suite_tail "$checks" "$fails" 7 "${2:-}"
+case "${1:-}" in
+  red) fail; fail ;;
+  unknown) unknown 'a claim this host cannot settle' 'the substrate answers neither way' ;;
+esac
+clause="${2:-}"
+[ -n "$clause" ] || clause="$(suite_unknown_clause "$unknowns")"
+suite_tail "$checks" "$fails" 7 "$clause"
 SH
 chmod +x "$tail_fix/run.sh"
 equal "a suite whose checks all passed ends on a bare count" \
@@ -806,6 +812,19 @@ equal "and a suite that accumulated failures names them in that same line" \
 equal "with the e2e lane's trailing clause after the verdict, not instead of it" \
   "5 checks, 2 FAIL in 7s against harness-x" \
   "$("$tail_fix/run.sh" red "against harness-x")"
+
+# AND THE THIRD COLUMN, WHICH IS NOT A COLUMN. A claim the host could not settle
+# is neither proved nor refuted, so it must not move the check count in either
+# direction — a run that quietly counted it as a pass would report coverage it
+# never had. On this host the suite's own unknown branch is unreachable (the
+# tmux here returns raw user-option bytes, so the claim IS settled), which is
+# exactly why the branch is driven from a fixture rather than left to a run that
+# happens to be standing somewhere else.
+equal "a claim the run could not settle is named without being counted either way" \
+  "?    a claim this host cannot settle
+       the substrate answers neither way
+3 checks in 7s (1 unknown — see the ? lines above)" \
+  "$("$tail_fix/run.sh" unknown)"
 
 # AND BOTH SUITES REACH IT THROUGH THAT FILE. A private copy of the summary in
 # either one is a copy the three checks above do not cover, which is how this

@@ -205,6 +205,16 @@ export CODEX_HOME="$RUN_ROOT/absent-codex-home"
 
 checks=0
 fails=0
+unknowns=0
+
+# NEITHER COLUMN, ON PURPOSE — a tmux that hands back a control byte raw is the
+# case that put this here. The line itself and the clause it earns in the
+# summary live in test/suite-tail.sh, where a fixture can drive the branch no
+# ordinary green run takes; only the counter is this suite's.
+unknown() { # $1 description, $2 why this run settles nothing either way
+  unknowns=$((unknowns + 1))
+  suite_unknown "$1" "$2"
+}
 
 pass() {
   checks=$((checks + 1))
@@ -413,7 +423,7 @@ tree_moved=0
 
 summary_printed=1
 printf '\n'
-suite_tail "$checks" "$fails" "$SECONDS"
+suite_tail "$checks" "$fails" "$SECONDS" "$(suite_unknown_clause "$unknowns")"
 if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'

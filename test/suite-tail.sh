@@ -14,3 +14,21 @@ suite_tail() { # $1 checks, $2 fails, $3 seconds, optional $4 = trailing clause
   [ "$2" -eq 0 ] || verdict=", $2 FAIL"
   printf '%s checks%s in %ss%s\n' "$1" "$verdict" "$3" "${4:+ $4}"
 }
+
+# NEITHER COLUMN, ON PURPOSE. Some claims can only be settled on a substrate a
+# given run may not be standing on, and the two honest answers there are
+# "proved" and "could not be proved" — never a pass bought with absent
+# evidence. A check that cannot fail on this host is not a check, so it is not
+# counted as one; it is named, with the reason and with where the coverage does
+# exist. Here for the same reason the summary itself is: the branch that has to
+# be right is the one an ordinary green run never takes, so it has to be
+# reachable from a fixture that can take it.
+suite_unknown() { # $1 description, $2 why this run settles nothing either way
+  printf '?    %s\n       %s\n' "$1" "$2"
+}
+
+# And the count rides the one line everyone reads, because a green run with
+# unknowns above zero is a different reading from a green run without them.
+suite_unknown_clause() { # $1 = how many claims this run could not settle
+  [ "$1" -eq 0 ] || printf '(%s unknown — see the ? lines above)' "$1"
+}
