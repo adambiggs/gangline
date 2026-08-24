@@ -525,8 +525,27 @@ done
 # delivery reports submitted for input the harness parked.
 CODEX_STUB="$RUN_ROOT/codex-stub"
 mkdir -p "$CODEX_STUB/bin"
+# THE HARNESS IS WHAT THIS RECORDS, NOT EVERY CALLER OF THAT NAME. The collar's
+# hooks preflight asks the same binary about its hook trust before launching it,
+# as `codex app-server`, and passes the launch's own -c overrides through. A
+# stub that recorded those too would let this assertion pass on the preflight's
+# probe alone, with the harness invocation it is about never reached — the check
+# would still be green while witnessing nothing.
+#
+# So the stub answers the probe as the harness would, with a hook list of its
+# own, and records nothing for it. Answering after reading the request rather
+# than before removes the race the other order carries: a stub that exits first
+# closes the pipe under the caller's write, and the preflight would report a
+# hook state it could not read instead of launching.
 cat > "$CODEX_STUB/bin/codex" <<'SH'
 #!/bin/sh
+if [ "${1:-}" = "app-server" ]; then
+  while IFS= read -r line; do
+    case "$line" in *'"hooks/list"'*) break ;; esac
+  done
+  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"data":[]}}'
+  exit 0
+fi
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -c) printf '%s\n' "$2" >> "$CODEX_OPTIONS"; shift 2 ;;
