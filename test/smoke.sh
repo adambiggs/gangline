@@ -8,6 +8,17 @@ ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 CONFIG_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-smoke.XXXXXX")"
 trap 'rm -rf -- "$CONFIG_ROOT"' EXIT HUP INT TERM
 
+# EVERY ROOT THIS FILE COULD WRITE THROUGH IS PRIVATE, not only the one the
+# checks below happen to name. The commands here read and write nothing outside
+# the config directory today, but `gang up` archives against whatever
+# GANG_LOCK_DIR resolves to, and its default is the operator's own
+# /tmp/gangline-$(id -u) — so a session-shaped check added later would act on
+# the live team's locks and spools. Exported once here rather than left to a
+# line each new check remembers to copy, because the check that forgets is the
+# one that does the damage.
+export GANG_LOCK_DIR="$CONFIG_ROOT/lock"
+export GANG_ARCHIVE_DIR="$CONFIG_ROOT/archive"
+
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" help >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" collars >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" models -c claude-code \
