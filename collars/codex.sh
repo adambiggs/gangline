@@ -11,8 +11,14 @@ GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=f
 # claude-code.sh does: for a root bearing a quote, a backslash or a control
 # character it installs no hooks at all. A hookless launch loses turn-boundary
 # events; it does not execute a directory name.
+# THE PREFLIGHT IS PART OF THIS COLLAR, so it is found beside this file rather
+# than under the install root: a collar copied into GANG_COLLARS carries its own
+# helpers, and the copy answers for itself instead of reaching back into the
+# shipped one. The hook command still names $ROOT/bin/gang, because a hook has
+# to reach the Gangline that installed it.
+_gl_codex_dir="${BASH_SOURCE[0]%/*}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
-  case "$ROOT" in
+  case "$ROOT$_gl_codex_dir" in
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
@@ -29,6 +35,18 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       done
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
       GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
+      # THE HOOKS INSTALLED ABOVE ARE WHAT CODEX ASKS ABOUT. Their command
+      # carries this install root, so a new install, an upgrade or a worktree
+      # presents hashes codex has never seen and it opens its hooks-review menu
+      # before drawing a composer. Nothing in Gangline can answer that menu, so
+      # an unattended hitch waits on a person indefinitely. The preflight runs
+      # in the pane ahead of the harness and turns that wait into an immediate,
+      # explained refusal; it grants no trust. It wraps only this branch,
+      # because a launch that installs no hooks raises no review.
+      _gl_codex_preflight="python3 '$_gl_codex_dir/plugins/codex-hooks-preflight.py'"
+      GANG_LAUNCH="$_gl_codex_preflight $GANG_LAUNCH"
+      GANG_RESUME_LAUNCH="$_gl_codex_preflight $GANG_RESUME_LAUNCH"
+      unset _gl_codex_preflight
       # The launch above passes a native Stop hook with -c, so this harness
       # announces its own turn boundaries to gang — which is what a spool needs
       # to drain, and what deferred self-compaction already relies on. Both are
@@ -40,6 +58,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       ;;
   esac
 fi
+unset _gl_codex_dir
 GANG_MODEL_OPT="-m"
 # The native JSON catalog is complete for this installed harness. Each row
 # carries its slug and the reasoning efforts that exact model advertises, so
