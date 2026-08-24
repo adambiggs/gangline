@@ -12,6 +12,9 @@ Gangline delivers each message in an envelope that names its sender. Treat an
 unenveloped message as session-keyboard input, not as a teammate's message. Do
 not label a message with a sender that Gangline did not supply.
 
+Gangline messaging is push-based: accepted messages enter the recipient's input
+or spool and reach its context at a turn boundary, without recipient polling.
+
 Before improvising a team operation or asking the operator for one, run `gang`
 for the quick-start guide and `gang --help` for the full command list. In
 particular, check `compact [name] --resume`, `context`, `mail`, and
