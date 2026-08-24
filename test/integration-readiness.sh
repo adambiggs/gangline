@@ -844,6 +844,421 @@ else
 fi
 "$GANG" drop selfable >/dev/null 2>&1 || :
 
+# TWO STOP EVENTS CAN READ ONE REQUEST BEFORE EITHER CONSUMES IT. tmux has no
+# compare-and-set for user options, so the fixture makes that crossing exact:
+# both hooks read the standing token through the real tmux, and then both
+# detached workers revalidate that same token before either can claim it. The
+# dispatching write is the claim the old path performed twice. Its log is
+# independent of the option's final value, which two writers can overwrite with
+# the same bytes.
+compact_race_executed="$RUN_ROOT/compact-race-executed"
+compact_race_draft="$RUN_ROOT/compact-race-draft"
+cat > "$RUN_ROOT/collars/compact-race.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf RACE_COMPACT; printf 'run\\n' >> $compact_race_executed"
+GANG_SELF_COMPACT=deferred
+GANG_STOP_HOOK=1
+_gl_compact_race_input="\$(declare -f collar_input)"
+eval "compact_race_real_input \${_gl_compact_race_input#collar_input}"
+collar_input() {
+  [ ! -e "$compact_race_draft" ] || { printf 'half written operator line'; return; }
+  compact_race_real_input "\$1"
+}
+SH
+"$HITCH" compact-race -c compact-race -d /tmp >/dev/null
+compact_race_id="$(window_id compact-race)"
+compact_race_pane="$(tmux list-panes -t "$compact_race_id" -F '#{pane_id}')"
+compact_race_holder="$(tmux display-message -p '#{pid}')"
+compact_race_token="test-compact-race-$$"
+compact_race_channel="test-compact-race-crossed-$$"
+compact_race_bin="$RUN_ROOT/compact-race-bin"
+compact_race_arm="$RUN_ROOT/compact-race-arm"
+compact_race_pair="$RUN_ROOT/compact-race-pair"
+compact_race_reads="$RUN_ROOT/compact-race-reads"
+compact_race_claims="$RUN_ROOT/compact-race-claims"
+compact_race_dispatches="$RUN_ROOT/compact-race-dispatches"
+compact_race_done="$RUN_ROOT/compact-race-done"
+compact_race_release="$RUN_ROOT/compact-race-release"
+compact_race_confirm="$RUN_ROOT/compact-race-confirm"
+mkdir -p "$compact_race_bin" "$compact_race_pair" "$compact_race_done"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v tmux)"
+  printf 'ARM=%q\n' "$compact_race_arm"
+  printf 'PAIR=%q\n' "$compact_race_pair"
+  printf 'READS=%q\n' "$compact_race_reads"
+  printf 'DISPATCHES=%q\n' "$compact_race_dispatches"
+  printf 'DONE=%q\n' "$compact_race_done"
+  printf 'CHANNEL=%q\n' "$compact_race_channel"
+  cat <<'SH'
+request=0 dispatch=0 release=0
+for arg in "$@"; do
+  case "$arg" in
+    @gl_self_compact_requested) request=1 ;;
+    @gl_self_compact_dispatching)
+      case "${1:-}" in
+        set-option) case " $* " in *' -uw '*) release=1 ;; *) dispatch=1 ;; esac ;;
+      esac ;;
+  esac
+done
+if [ "$request" -eq 1 ] && [ "${1:-}" = show-options ] && [ -e "$ARM" ]; then
+  out="$("$REAL" "$@")"; rc=$?
+  printf '%s\n' "$PPID" >> "$READS"
+  slot=
+  for candidate in 1 2 3 4; do
+    if mkdir "$PAIR/$candidate" 2>/dev/null; then
+      slot="$candidate"
+      break
+    fi
+  done
+  case "$slot" in
+    1) "$REAL" wait-for "$CHANNEL-read-outer" ;;
+    2) "$REAL" wait-for -S "$CHANNEL-read-outer" ;;
+    3) "$REAL" wait-for "$CHANNEL-read-worker" ;;
+    4) rm -f -- "$ARM"
+       "$REAL" wait-for -S "$CHANNEL-read-worker" ;;
+    *) printf 'compact-race fixture observed an unexpected request read\n' >&2
+       exit 97 ;;
+  esac
+  printf '%s\n' "$out"
+  exit "$rc"
+fi
+if [ "$dispatch" -eq 1 ]; then
+  "$REAL" "$@"; rc=$?
+  [ "$rc" -ne 0 ] || printf '%s\n' "$PPID" >> "$DISPATCHES"
+  exit "$rc"
+fi
+if [ "$release" -eq 1 ]; then
+  "$REAL" "$@"; rc=$?
+  if mkdir "$DONE/1" 2>/dev/null; then n=1
+  elif mkdir "$DONE/2" 2>/dev/null; then n=2
+  elif mkdir "$DONE/3" 2>/dev/null; then n=3
+  else n=overflow
+  fi
+  "$REAL" wait-for -S "$CHANNEL-done-$n"
+  exit "$rc"
+fi
+exec "$REAL" "$@"
+SH
+} > "$compact_race_bin/tmux"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v ln)"
+  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'CLAIMS=%q\n' "$compact_race_claims"
+  printf 'CHANNEL=%q\n' "$compact_race_channel"
+  printf 'RELEASE=%q\n' "$compact_race_release"
+  printf 'CONFIRM=%q\n' "$compact_race_confirm"
+  printf 'DRAFT=%q\n' "$compact_race_draft"
+  cat <<'SH'
+last="${!#}"
+case "$last" in
+  *self-compact-*.claim)
+    "$REAL" "$@"; rc=$?
+    printf '%s\n' "$rc" >> "$CLAIMS"
+    if [ -e "$RELEASE" ]; then
+      if [ "$rc" -eq 0 ]; then
+        [ -e "$CONFIRM" ] || "$TMUX" wait-for "$CHANNEL-claim"
+      else
+        "$TMUX" wait-for -S "$CHANNEL-claim"
+        "$TMUX" wait-for "$CHANNEL-winner-released"
+        rm -f -- "$DRAFT"
+        touch "$CONFIRM"
+      fi
+    else
+      if [ "$rc" -eq 0 ]; then
+        "$TMUX" wait-for "$CHANNEL-claim"
+      fi
+    fi
+    exit "$rc" ;;
+esac
+exec "$REAL" "$@"
+SH
+} > "$compact_race_bin/ln"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v rm)"
+  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'RELEASE=%q\n' "$compact_race_release"
+  printf 'CONFIRM=%q\n' "$compact_race_confirm"
+  printf 'CHANNEL=%q\n' "$compact_race_channel"
+  cat <<'SH'
+last="${!#}"
+case "$last" in
+  *self-compact-*.claim)
+    "$REAL" "$@"; rc=$?
+    if [ -e "$RELEASE" ]; then
+      if [ -e "$CONFIRM" ]; then
+        "$TMUX" wait-for -S "$CHANNEL-loser-done"
+      else
+        "$TMUX" wait-for -S "$CHANNEL-winner-released"
+      fi
+    fi
+    exit "$rc" ;;
+esac
+exec "$REAL" "$@"
+SH
+} > "$compact_race_bin/rm"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v readlink)"
+  printf 'TMUX=%q\n' "$(command -v tmux)"
+  printf 'RELEASE=%q\n' "$compact_race_release"
+  printf 'CHANNEL=%q\n' "$compact_race_channel"
+  printf 'HOLDER=%q\n' "$compact_race_holder"
+  cat <<'SH'
+last="${!#}"
+case "$last" in
+  *self-compact-*.claim)
+    out="$("$REAL" "$@")"; rc=$?
+    if [ "$rc" -eq 0 ] && [ ! -e "$RELEASE" ]; then
+      # Keep the liveness observation true after releasing the winner. The
+      # disposable fixture's tmux server outlives every worker in this test.
+      printf '%s\n' "$HOLDER"
+      "$TMUX" wait-for -S "$CHANNEL-loser-observed"
+      "$TMUX" wait-for -S "$CHANNEL-claim"
+      exit 0
+    fi
+    printf '%s\n' "$out"
+    exit "$rc" ;;
+esac
+exec "$REAL" "$@"
+SH
+} > "$compact_race_bin/readlink"
+chmod +x "$compact_race_bin/tmux" "$compact_race_bin/ln" \
+  "$compact_race_bin/rm" "$compact_race_bin/readlink"
+tmux set-option -w -t "$compact_race_id" @gl_self_compact_requested "$compact_race_token"
+: > "$compact_race_arm"
+: > "$compact_race_claims"
+tmux wait-for "gang-self-compact-$compact_race_token" &
+compact_race_waiter=$!
+tmux wait-for "$compact_race_channel-loser-observed" &
+compact_race_loser_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_race_bin:$PATH" TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null &
+compact_race_first=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_race_bin:$PATH" TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null &
+compact_race_second=$!
+wait "$compact_race_first"
+wait "$compact_race_second"
+wait "$compact_race_waiter"
+wait "$compact_race_loser_waiter"
+compact_race_read_count="$(wc -l < "$compact_race_reads" | tr -d ' ')"
+compact_race_dispatch_count="$(wc -l < "$compact_race_dispatches" | tr -d ' ')"
+equal "both Stops and both workers read the same request before it is claimed" \
+  "4" "$compact_race_read_count"
+equal "the workers make one winning and one losing atomic claim" \
+  $'0\n1' "$(sort "$compact_race_claims")"
+equal "one self-compaction token is claimed exactly once across crossed Stops" \
+  "1" "$compact_race_dispatch_count"
+# A losing claim has no state-changing path after its recorded failed ln. Wait
+# for every winning worker before ending its window; this is a counted event
+# barrier, not a guess that the compaction process has gone.
+compact_race_n=1
+while [ "$compact_race_n" -le "$compact_race_dispatch_count" ]; do
+  tmux wait-for "$compact_race_channel-done-$compact_race_n"
+  compact_race_n=$((compact_race_n + 1))
+done
+equal "the one claimed request submits one compaction command" \
+  "1" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+equal "and no successful peer can restore the consumed request" "" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+
+# A CLAIM FAILURE IS NOT A PEER LOSS. A path that cannot be a lock directory
+# makes event_claim fail before any compaction or delivery lock exists. That
+# terminal outcome must remain visible rather than look like healthy contention.
+# Without a claim it cannot safely clear request state, so the same token stays
+# scheduled and becomes runnable when the lock fault is repaired.
+compact_claim_bad_root="$RUN_ROOT/compact-claim-not-directory"
+compact_claim_bad_token="test-compact-claim-failed-$$"
+touch "$compact_claim_bad_root"
+tmux set-option -w -t "$compact_race_id" @gl_self_compact_requested \
+  "$compact_claim_bad_token"
+tmux wait-for "gang-self-compact-$compact_claim_bad_token" &
+compact_claim_bad_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_LOCK_DIR="$compact_claim_bad_root" TMUX_PANE="$compact_race_pane" \
+    "$GANG" hook >/dev/null
+wait "$compact_claim_bad_waiter"
+equal "a broken claim root leaves the exact request retryable" \
+  "$compact_claim_bad_token" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+contains "claim infrastructure failure records the terminal outcome" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_failed)" \
+  "could not establish the self-compaction claim"
+contains "status exposes the claim failure" "$("$GANG" status compact-race)" \
+  "self-compaction NOT submitted after Stop"
+contains "status also says the failed request remains pending" \
+  "$("$GANG" status compact-race)" \
+  "self-compaction requested; waiting for the turn boundary"
+equal "claim infrastructure failure submits no second compaction command" \
+  "1" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+excludes "an unclaimed failure does not risk a duplicate spool note" \
+  "$("$GANG" status compact-race)" "spooled:"
+
+# Repairing the claim root is sufficient: the next boundary takes the same
+# token through the ordinary claimed path and retires the failure record.
+tmux wait-for "gang-self-compact-$compact_claim_bad_token" &
+compact_claim_repair_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
+wait "$compact_claim_repair_waiter"
+equal "a later boundary runs the request after claim-root repair" \
+  "2" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+equal "the repaired attempt consumes the standing request" "" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+equal "the repaired attempt retires the claim failure" "" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_failed)"
+
+# A FAILURE WRITE CAN ARRIVE AFTER A REPAIRED SUCCESS. Hold the old worker at
+# its tmux write, let a healthy boundary consume the same token and clear its
+# state, then release the stale write. The raw history remains inspectable, but
+# token-aware status and roster must not paint it as the current request.
+compact_delay_token="test-compact-delayed-failure-$$"
+compact_delay_bin="$RUN_ROOT/compact-delay-bin"
+compact_delay_channel="test-compact-delay-$$"
+mkdir "$compact_delay_bin"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v tmux)"
+  printf 'CHANNEL=%q\n' "$compact_delay_channel"
+  cat <<'SH'
+case " $* " in
+  *' set-option '*' @gl_self_compact_failed '*)
+    "$REAL" wait-for -S "$CHANNEL-ready"
+    "$REAL" wait-for "$CHANNEL-release"
+    "$REAL" "$@"; rc=$?
+    "$REAL" wait-for -S "$CHANNEL-written"
+    exit "$rc" ;;
+esac
+exec "$REAL" "$@"
+SH
+} > "$compact_delay_bin/tmux"
+chmod +x "$compact_delay_bin/tmux"
+tmux set-option -w -t "$compact_race_id" @gl_self_compact_requested \
+  "$compact_delay_token"
+tmux wait-for "$compact_delay_channel-ready" &
+compact_delay_ready_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_delay_bin:$PATH" GANG_LOCK_DIR="$compact_claim_bad_root" \
+    TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
+wait "$compact_delay_ready_waiter"
+tmux wait-for "gang-self-compact-$compact_delay_token" &
+compact_delay_success_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
+wait "$compact_delay_success_waiter"
+tmux wait-for "$compact_delay_channel-written" &
+compact_delay_written_waiter=$!
+tmux wait-for -S "$compact_delay_channel-release"
+wait "$compact_delay_written_waiter"
+equal "a repaired boundary consumes the token before its delayed failure writes" "" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+equal "that repaired boundary submits one compact command" \
+  "3" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+contains "the delayed failure retains its exact historical token" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_failed)" \
+  "[request:$compact_delay_token]"
+excludes "status suppresses a delayed failure whose token is no longer current" \
+  "$("$GANG" status compact-race)" "self-compaction NOT submitted after Stop"
+excludes "roster suppresses the same obsolete failure" \
+  "$("$GANG" roster)" "self-compact-failed"
+tmux set-option -uw -t "$compact_race_id" @gl_self_compact_failed
+
+# PID zero addresses a process group to kill(2), not a claim holder. Accepting
+# it as a live peer would suppress every attempt forever.
+compact_zero_token="test-compact-zero-holder-$$"
+compact_zero_claim="$GANG_LOCK_DIR/self-compact-$(printf '%s' \
+  "$compact_race_id-$compact_zero_token" | tr -c 'A-Za-z0-9' '_').claim"
+ln -s 0 "$compact_zero_claim"
+tmux set-option -w -t "$compact_race_id" @gl_self_compact_requested \
+  "$compact_zero_token"
+tmux wait-for "gang-self-compact-$compact_zero_token" &
+compact_zero_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
+wait "$compact_zero_waiter"
+equal "a zero-holder claim leaves the exact request retryable" \
+  "$compact_zero_token" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+contains "a zero-holder claim is a visible malformed artifact" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_failed)" \
+  "invalid process id '0'"
+rm -f -- "$compact_zero_claim"
+tmux set-option -uw -t "$compact_race_id" @gl_self_compact_requested
+tmux set-option -uw -t "$compact_race_id" @gl_self_compact_failed
+
+# A LOSER CAN INSPECT ONLY AFTER A REFUSING WINNER RELEASES. The winner restores
+# token R before dropping its claim. The ln wrapper holds the loser after its
+# failed creation until that release, then makes the confirmation claim and rm
+# observable. The loser must classify the vanished peer as contention and must
+# not clear R; the waiting note then owns the next Stop as usual.
+compact_release_token="test-compact-release-race-$$"
+rmdir "$compact_race_pair/1" "$compact_race_pair/2" \
+  "$compact_race_pair/3" "$compact_race_pair/4"
+: > "$compact_race_arm"
+touch "$compact_race_release"
+tmux set-option -w -t "$compact_race_id" @gl_self_compact_requested \
+  "$compact_release_token"
+touch "$compact_race_draft"
+tmux wait-for "$compact_race_channel-loser-done" &
+compact_release_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_race_bin:$PATH" TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null &
+compact_release_first=$!
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | PATH="$compact_race_bin:$PATH" TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null &
+compact_release_second=$!
+wait "$compact_release_first"
+wait "$compact_release_second"
+wait "$compact_release_waiter"
+rm -f -- "$compact_race_release" "$compact_race_confirm"
+equal "a loser inspecting after peer release preserves the restored request" \
+  "$compact_release_token" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+equal "the refusing winner and crossed loser submit no compact command" \
+  "3" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+contains "the refusing winner records that the request still stands" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_failed)" \
+  "still scheduled"
+contains "the refusing winner leaves one note for a later boundary" \
+  "$("$GANG" status compact-race)" "spooled:"
+
+tmux wait-for "gang-spool-drain-$compact_race_id" &
+compact_release_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$compact_race_pane" "$GANG" hook >/dev/null
+wait "$compact_release_drain_waiter"
+equal "the failure note's boundary leaves the restored request standing" \
+  "$compact_release_token" \
+  "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)"
+compact_release_status="$("$GANG" status compact-race)"
+case "$compact_release_status" in
+  *spooled:*) fail "the refusal note drains before a compaction retry is armed" \
+                "status still reports waiting mail" ;;
+  *) pass "the refusal note drains before a compaction retry is armed"
+     # The first refusing worker already signalled the token-keyed barrier.
+     # Observe this worker through dispatch cleanup, so that earlier signal
+     # cannot satisfy the witness for a later boundary using the same token.
+     compact_release_finish_bin="$RUN_ROOT/compact-release-finish-bin"
+     mkdir "$compact_release_finish_bin"
+     ln -s "$compact_race_bin/tmux" "$compact_release_finish_bin/tmux"
+     tmux wait-for "$compact_race_channel-done-3" &
+     compact_release_retry_waiter=$!
+     printf '%s' '{"hook_event_name":"Stop"}' \
+       | PATH="$compact_release_finish_bin:$PATH" TMUX_PANE="$compact_race_pane" \
+         "$GANG" hook >/dev/null
+     wait "$compact_release_retry_waiter"
+     equal "a later mail-free boundary submits the restored request once" \
+       "4" "$(wc -l < "$compact_race_executed" | tr -d ' ')"
+     equal "that successful retry consumes the request" "" \
+       "$(tmux show-options -wqv -t "$compact_race_id" @gl_self_compact_requested)" ;;
+esac
+"$GANG" drop compact-race >/dev/null 2>&1 || :
+
 # A BOUNDARY WHOSE COMPOSER BELONGS TO SOMEBODY ELSE DEFERS, IT DOES NOT DROP.
 # The delivery guards inside inject refuse with status 3, and the dispatcher
 # used to spend its one request on that boundary: the agent went idle believing
@@ -901,6 +1316,9 @@ if [ -n "$drafted_request" ]; then
   contains "the recorded failure says the request still stands" \
     "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)" \
     "still scheduled"
+  equal "the deferral note is keyed to this request token" \
+    "$drafted_request" \
+    "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_noted)"
   # WHAT THIS PROVES IS THAT THE NOTE IS WAITING, not that it arrived. Only a
   # Stop or a PostCompact drains a spool, and the refused boundary raised
   # neither, so an agent that goes idle here is still not told. That gap is
@@ -910,18 +1328,34 @@ if [ -n "$drafted_request" ]; then
   contains "status reports the deferred self-compaction as still pending" \
     "$("$GANG" status drafted)" "self-compaction requested"
 
-  # The next boundary, with the box its own again, is the one that runs it.
+  # Mail already waiting owns the next boundary. The old path launched its
+  # drain beside the compaction worker and let the pane-lock race decide which
+  # happened; this boundary drains the note and leaves the request untouched.
   rm -f -- "$drafted_draft"
   drafted_retry="$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
   # A request that was NOT put back leaves nothing to wait on, and a barrier
   # keyed to it would hang instead of failing. The claim above already reports
   # that; this one refuses to arm a wait it cannot satisfy.
   if [ -n "$drafted_retry" ]; then
-    # A retry can legitimately lose the window delivery lock to the failure
-    # note's spool drain. The worker's own EXIT barrier is unconditional; the
-    # compact command's execution artifact is not. Waiting on the latter would
-    # hang forever after a correctly reported second refusal, so read which of
-    # the two honest outcomes the completed worker established instead.
+    tmux wait-for "gang-spool-drain-$drafted_id" &
+    drafted_drain_waiter=$!
+    printf '%s' '{"hook_event_name":"Stop"}' |
+      TMUX_PANE="$drafted_tmux_pane" "$GANG" hook >/dev/null
+    wait "$drafted_drain_waiter"
+    equal "waiting mail leaves the compaction request for another boundary" \
+      "$drafted_retry" \
+      "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
+    excludes "and that boundary drains the one deferral note" \
+      "$("$GANG" status drafted)" "spooled:"
+    if [ -e "$drafted_executed" ]; then
+      fail "mail-first dispatch does not execute the compaction beside its drain" \
+        "the compact command's execution artifact already exists"
+    else
+      pass "mail-first dispatch does not execute the compaction beside its drain"
+    fi
+
+    # With no mail left, the following boundary has one action and consumes the
+    # same request. Its successful episode retires both the failure and note id.
     tmux wait-for "gang-self-compact-$drafted_retry" &
     drafted_retry_waiter=$!
     printf '%s' '{"hook_event_name":"Stop"}' |
@@ -932,13 +1366,15 @@ if [ -n "$drafted_request" ]; then
         "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
       equal "a submitted retry clears the recorded failure" "" \
         "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)"
+      equal "and retires the completed episode's note identity" "" \
+        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_noted)"
     else
-      equal "a retry refused by lock contention keeps the request" \
-        "$drafted_retry" \
-        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_requested)"
-      contains "a retry refused by lock contention records its outcome" \
-        "$(tmux show-options -wqv -t "$drafted_id" @gl_self_compact_failed)" \
-        "still scheduled"
+      fail "a submitted retry consumes the request" \
+        "the mail-free boundary completed without running the compact command"
+      fail "a submitted retry clears the recorded failure" \
+        "the mail-free boundary completed without running the compact command"
+      fail "and retires the completed episode's note identity" \
+        "the mail-free boundary completed without running the compact command"
     fi
   else
     fail "a submitted retry consumes the request" \

@@ -2322,14 +2322,37 @@ compact_resume() { # $1 = the agent's own continuation, if it supplied one
 # same next boundary.
 #
 # SELF_COMPACT_STANDING is the suffix marking a recorded failure as one the
-# dispatcher still owns. It is read back before the next note is spooled, so it
-# doubles as the episode's identity rather than only as wording.
+# dispatcher still owns. The request token recorded in @gl_self_compact_noted
+# is the episode identity; wording is not state.
 SELF_COMPACT_STANDING='(still scheduled; gang retries at the next turn boundary)'
+
+self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
+  tmux set-option -w -t "$1" @gl_self_compact_failed \
+    "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
+}
+
+self_compact_failed_read() { # $1 window -> only a failure current for its state
+  local failed token pending
+  failed="$(tmux show-options -wqv -t "$1" @gl_self_compact_failed 2>/dev/null)" \
+    || failed=""
+  case "$failed" in
+    '[request:'*'] '*"$SELF_COMPACT_STANDING")
+      token="${failed#\[request:}"
+      token="${token%%]*}"
+      case "$token" in ''|*[!A-Za-z0-9._:-]*) printf '%s' "$failed"; return ;; esac
+      pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
+        || pending=""
+      [ -n "$pending" ] \
+        || pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_dispatching 2>/dev/null)"
+      [ "$pending" = "$token" ] || return 0 ;;
+  esac
+  printf '%s' "$failed"
+}
 
 self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled|dropped
   local name body
   name="$(agent_name_of "$1")"
-  spool_available "$1" "$name" || return 0
+  spool_available "$1" "$name" || return 1
   # WORDED FOR AN ARRIVAL LATER THAN ITS CAUSE. A spooled note waits for a turn
   # boundary, and a boundary is also where a retry succeeds — so a note that
   # said "your context was NOT compacted" could be read by an agent whose
@@ -2342,6 +2365,19 @@ self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled
   esac
   envelope gangline "$body"
   spool_write "$1" gangline "$ENVELOPE" "self-compaction did not run"
+}
+
+self_compact_claim_failed() { # $1 window, $2 request token, $3 claim diagnostic
+  local why="$3"
+  [ -n "$why" ] || why="the claim mechanism returned no diagnostic"
+  # WITHOUT A CLAIM, MUTATE NO REQUEST STATE. Compare-then-unset is not a
+  # transaction: a delayed failure worker could read its old token, a new
+  # request could replace it, and that worker would then delete the successor.
+  # The exact failed token in this record makes the history truthful while the
+  # standing request remains retryable after the lock fault is repaired.
+  why="could not establish the self-compaction claim: $why No compaction command was submitted at this boundary."
+  self_compact_failed_pending_write "$1" "$2" "$why"
+  tmux wait-for -S "gang-self-compact-$2" 2>/dev/null || true
 }
 
 # POSSIBLY REDUNDANT WITH THE COMPACTION BRACKET, AND DELIBERATELY STILL HERE.
@@ -2365,26 +2401,59 @@ self_compact_dispatch() { # $1 = the window a native Stop fired in, $2 = collar
   request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
     || request=""
   [ -n "$request" ] || return 0
-  tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
-    || return 0
-  tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
   (
     trap '' HUP INT TERM
+    # A REQUEST TOKEN IS THE EPISODE IDENTITY. Two Stop hooks can cross before
+    # either clears the option, and tmux offers no compare-and-set. Claiming the
+    # token in the worker makes one process own the read-decide-write sequence;
+    # a later boundary can retry the same token after this claim is released,
+    # while a concurrent worker can neither compact twice nor restore a request
+    # after its peer already completed it.
+    # This worker belongs to the token its Stop observed above. It must never
+    # substitute a successor request that appeared while the detached worker
+    # was waiting to run.
+    [ "$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" = "$request" ] \
+      || exit 0
+    local claim_state=establishing claim_rc=0
+    # lock_self_pid can itself terminate while establishing a claim. Until the
+    # claim primitive has classified its result, make even that path record the
+    # failed boundary while leaving the request scheduled rather than silent.
+    trap 'if [ "$claim_state" = establishing ]; then
+            trap - EXIT
+            self_compact_claim_failed "$win" "$request" "${EVENT_CLAIM_ERROR:-the worker exited while establishing its process identity}"
+          fi' EXIT
+    event_claim self-compact "$win" "$request" || claim_rc=$?
+    case "$claim_rc" in
+      0) claim_state=claimed ;;
+      1) claim_state=contended; trap - EXIT; exit 0 ;;
+      *) claim_state=reported; trap - EXIT
+         self_compact_claim_failed "$win" "$request" "$EVENT_CLAIM_ERROR"
+         exit 0 ;;
+    esac
+    # The request may have been consumed between the optimistic read above and
+    # this claim. Only the exact token still standing belongs to this worker.
+    [ "$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" = "$request" ] \
+      || { event_claim_release; exit 0; }
     # THE CLEANUP RUNS EVEN WHEN THIS WORKER DOES NOT REACH ITS END. The script
-    # runs under set -e and the request has already been consumed above, so any
+    # runs under set -e and the request is consumed below, so any
     # command here that exits non-zero — loading the collar, naming the agent,
     # establishing a spool — would otherwise leave @gl_self_compact_dispatching
     # standing with nothing left to clear it. Every later self-compaction would
     # then refuse as already waiting, for a turn boundary that can no longer act
     # on it, and the barrier's waiter would never be released.
     trap 'tmux set-option -uw -t "$win" @gl_self_compact_dispatching 2>/dev/null || true
+          event_claim_release
           tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true' EXIT
-    local err="" rc=0 was=""
+    tmux set-option -w -t "$win" @gl_self_compact_dispatching "$request" 2>/dev/null \
+      || exit 0
+    tmux set-option -uw -t "$win" @gl_self_compact_requested 2>/dev/null || true
+    local err="" rc=0 noted=""
     load_collar "$2" || true
     err="$(self_compact_after_stop "$win" "$2" 2>&1)" || rc=$?
     err="${err##*$'\n'}"
     case "$rc" in
-      0) tmux set-option -uw -t "$win" @gl_self_compact_failed 2>/dev/null || true ;;
+      0) tmux set-option -uw -t "$win" @gl_self_compact_failed 2>/dev/null || true
+         tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true ;;
       # A REFUSAL IS "NOT AT THIS BOUNDARY", NEVER "NOT AT ALL" — the same
       # reading spool_drain_dispatch already gives status 3. The composer
       # belonged to somebody else for the moment gang looked at it, and an
@@ -2401,15 +2470,16 @@ self_compact_dispatch() { # $1 = the window a native Stop fired in, $2 = collar
          # every deferral would spool a fresh note for the boundary the last
          # note created, without bound. The transition into the deferred state
          # is what the agent needs; the retries after it are gang's business.
-         was="$(tmux show-options -wqv -t "$win" @gl_self_compact_failed 2>/dev/null)" \
-           || was=""
-         tmux set-option -w -t "$win" @gl_self_compact_failed "$err $SELF_COMPACT_STANDING" 2>/dev/null || true
-         case "$was" in
-           *"$SELF_COMPACT_STANDING") ;;
-           *) self_compact_note "$win" "$err" rescheduled || true ;;
-         esac ;;
+         noted="$(tmux show-options -wqv -t "$win" @gl_self_compact_noted 2>/dev/null)" \
+           || noted=""
+         self_compact_failed_pending_write "$win" "$request" "$err"
+         if [ "$noted" != "$request" ] \
+            && self_compact_note "$win" "$err" rescheduled; then
+           tmux set-option -w -t "$win" @gl_self_compact_noted "$request" 2>/dev/null || true
+         fi ;;
       *) [ -n "$err" ] || err="self-compaction dispatcher failed"
          tmux set-option -w -t "$win" @gl_self_compact_failed "$err" 2>/dev/null || true
+         tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" dropped || true ;;
     esac
   ) </dev/null >/dev/null 2>&1 &
@@ -2426,6 +2496,7 @@ self_compact_request() { # $1 window id -> request token
     || die "self-compaction is already waiting for this turn to end"
   token="$(mint_nonce)"
   tmux set-option -uw -t "$1" @gl_self_compact_failed 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_self_compact_noted 2>/dev/null || true
   tmux set-option -w -t "$1" @gl_self_compact_requested "$token" \
     || die "could not record the self-compaction request"
   printf '%s' "$token"
@@ -3516,37 +3587,88 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
   esac
 }
 
-# READ, DECIDE, DELIVER, STAMP IS ONE CRITICAL SECTION. Two native witnesses of
-# one kind for one window arrive concurrently — a PermissionRequest and its
-# Notification, or two hooks from one harness — and without a claim over the
-# whole sequence both read the same stale stamp, both pass the debounce, and the
-# declared target gets the same envelope twice inside the interval the debounce
-# exists to enforce. tmux options offer no compare-and-set, so the claim is the
-# same shape the drain uses for exactly this problem: an atomic filesystem
-# operation that confers ownership, with the holder's pid recorded so a claim
-# left by a killed process is recognised as stale rather than wedging every
-# later note for that window in silence.
+# READ, DECIDE, ACT, STAMP IS ONE CRITICAL SECTION. Concurrent native witnesses
+# can read the same standing option before either changes it: two stall events
+# then deliver the same note, while two Stops can dispatch one compaction twice.
+# tmux options offer no compare-and-set, so the claim is the same shape the
+# drain uses for exactly this problem: an atomic filesystem operation that
+# confers ownership, with the holder's pid recorded so a claim left by a killed
+# process is recognised as stale rather than wedging every later event.
 #
-# The loser returns without delivering and says nothing, because a second
-# witness of the same kind for the same window IS the duplicate the debounce
-# suppresses. The key is window AND kind, so a different kind is never held up
-# behind one that is already in flight.
+# The loser returns without acting. The key is window AND the event's identity:
+# a stall kind, an auto-resume reset, or a self-compaction request token.
 EVENT_CLAIM=""
+EVENT_CLAIM_ERROR=""
 event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decision
-  local family="$1" base path holder
-  case "$family" in stall|auto-resume) ;; *) return 1 ;; esac
+  local family="$1" base path holder err=""
+  EVENT_CLAIM=""
+  EVENT_CLAIM_ERROR=""
+  case "$family" in
+    stall|auto-resume|self-compact) ;;
+    *) EVENT_CLAIM_ERROR="unknown event-claim family '$family'"
+       printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+       return 2 ;;
+  esac
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
-  lock_base "$base" || return 1
+  if ! err="$(lock_base "$base" 2>&1)"; then
+    EVENT_CLAIM_ERROR="${err##*$'\n'}"
+    [ -n "$EVENT_CLAIM_ERROR" ] || EVENT_CLAIM_ERROR="cannot establish the event-claim directory $base"
+    printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+    return 2
+  fi
   lock_self_pid
   path="$base/$family-$(printf '%s' "$2-$3" | tr -c 'A-Za-z0-9' '_').claim"
-  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null && { EVENT_CLAIM="$path"; return 0; }
-  [ -L "$path" ] || return 1
-  holder="$(readlink "$path" 2>/dev/null)" || holder=""
-  case "$holder" in ''|*[!0-9]*) return 1 ;; esac
+  err="$(ln -s "$LOCK_SELF_PID" "$path" 2>&1)" \
+    && { EVENT_CLAIM="$path"; return 0; }
+  # A peer can release after our failed ln but before we inspect its symlink.
+  # One immediate atomic retry distinguishes that crossed release from a
+  # persistent inability to create claims. Owning this confirmation is still
+  # evidence that another worker won this boundary, so release it without
+  # acting and leave the request for a later Stop.
+  if [ ! -e "$path" ] && [ ! -L "$path" ]; then
+    if err="$(ln -s "$LOCK_SELF_PID" "$path" 2>&1)"; then
+      if rm -f -- "$path"; then return 1; fi
+      EVENT_CLAIM_ERROR="cannot release confirmation event claim $path"
+      printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+      return 2
+    fi
+  fi
+  if [ ! -L "$path" ]; then
+    EVENT_CLAIM_ERROR="cannot create event claim $path — ${err:-unknown error}"
+    printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+    return 2
+  fi
+  holder="$(readlink "$path" 2>/dev/null)" || return 1
+  case "$holder" in
+    ''|*[!0-9]*) EVENT_CLAIM_ERROR="event claim $path records an unreadable holder '$holder'"
+                   printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+                   return 2 ;;
+    *[1-9]*) ;;
+    *) EVENT_CLAIM_ERROR="event claim $path records invalid process id '$holder'"
+       printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+       return 2 ;;
+  esac
   ! kill -0 "$holder" 2>/dev/null || return 1   # a live note of this kind is in flight
-  rm -f -- "$path"
-  ln -s "$LOCK_SELF_PID" "$path" 2>/dev/null || return 1
-  EVENT_CLAIM="$path"
+  if ! err="$(rm -f -- "$path" 2>&1)"; then
+    EVENT_CLAIM_ERROR="cannot remove stale event claim $path — ${err:-unknown error}"
+    printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+    return 2
+  fi
+  err="$(ln -s "$LOCK_SELF_PID" "$path" 2>&1)" \
+    && { EVENT_CLAIM="$path"; return 0; }
+  # Another process can win after the stale holder is removed. That is ordinary
+  # contention only when the replacement is itself a readable live claim.
+  holder="$(readlink "$path" 2>/dev/null)" || {
+    [ -e "$path" ] || [ -L "$path" ] || return 1
+    holder=""
+  }
+  case "$holder" in
+    ''|*[!0-9]*) ;;
+    *[1-9]*) kill -0 "$holder" 2>/dev/null && return 1 ;;
+  esac
+  EVENT_CLAIM_ERROR="cannot replace stale event claim $path — ${err:-unknown error}"
+  printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
+  return 2
 }
 
 event_claim_release() { [ -z "$EVENT_CLAIM" ] || rm -f -- "$EVENT_CLAIM"; EVENT_CLAIM=""; }
@@ -6597,7 +6719,7 @@ cmd_status() {
   resolve "$name"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
-  self_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_failed)"
+  self_failed="$(self_compact_failed_read "$AGENT_ID")"
   [ -z "$self_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")"
   self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_requested)"
@@ -6904,7 +7026,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   # harness's answer. staged_current above has already re-read the box, so a
   # queue that drained since is no longer reported as waiting.
   [ -z "$(parked_current "$1")" ] || detail="$detail parked"
-  [ -z "$(tmux show-options -wqv -t "$1" @gl_self_compact_failed)" ] \
+  [ -z "$(self_compact_failed_read "$1")" ] \
     || detail="$detail self-compact-failed"
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
@@ -7098,8 +7220,16 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           glyph_write "$TMUX_PANE" "~idle~"
           wait_signal_registered "$window" "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
-          self_compact_dispatch "$window" "$collar"
-          spool_event "$window" "$collar" ;;
+          # One native boundary starts one delivery action. Mail already
+          # waiting gets this opportunity and leaves a self-compaction request
+          # standing for a later Stop; otherwise the compaction owns it. This
+          # keeps the two workers from racing for the same pane lock and makes
+          # the choice from the queue state that existed at the boundary.
+          if [ "$(spool_count "$window")" -gt 0 ]; then
+            spool_event "$window" "$collar"
+          else
+            self_compact_dispatch "$window" "$collar"
+          fi ;;
     PreCompact) compaction_state_write "$TMUX_PANE" open
                 # The harness names its own cause in the payload, so gang never
                 # has to infer the origin from how the compaction was started.
