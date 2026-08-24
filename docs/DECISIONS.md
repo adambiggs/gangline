@@ -509,6 +509,20 @@ a refusal rather than a guess, because a silently wrong target is worse than no
 target. tmux appends its own flags after the name; that rendering is documented,
 not fought.
 
+## Native hooks share an opportunistic refresh pass
+
+Native hook traffic is Gangline's cooperative event loop: no patrol, watcher,
+timer, daemon, background processor, job queue, or scheduler duplicates it.
+Every selected native hook invokes the one Gangline hook handler; collars own
+event selection and mapping. A recognized event first applies its specific fact,
+then one cheap, bounded, idempotent common pass may refresh derived state and do
+work proved safe and useful on every invocation. A verified frequent hook may
+carry that pass only when the refresh is its concrete live consumer. Unknown
+event semantics stay loud, though safe event-independent maintenance may still
+run. Hook silence leaves last-witnessed state honestly stale: refresh is
+opportunistic, not continuous. Expensive or unsafe work stays throttled or
+event-specific.
+
 ## Instale data is refused from documentation
 
 A data point that is stale the instant it is recorded does not belong in standing
