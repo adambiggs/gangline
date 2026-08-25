@@ -182,25 +182,41 @@ equal "the attributed contract is still parked where roster shows it" "1" \
 # the spool part counts the directories under the shared root exactly.
 GANG_ARCHIVE_DIR="$RUN_ROOT/gate-budget-archive" "$GANG" drop gate-budget >/dev/null
 
-modal_observed="test-boot-modal-observed-$$"
-modal_painted="test-boot-modal-painted-$$"
-modal_clear="test-boot-modal-clear-$$"
-modal_probe_release="test-boot-modal-probe-release-$$"
+# FOUR BARRIERS THAT ALL LEANED ON THE TMUX SERVER. This case holds the pane's
+# shell and gang's own observer against each other while a first-run modal is on
+# screen, and it learned all four of those events through `tmux wait-for`:
+# client calls into the very server whose responsiveness decides whether the
+# modal can be read at all. Observed 2026-08-24 on this fixture, the observed
+# and painted ends sat alive and blocked together while the run held the gate
+# lock behind them; `tmux wait-for` has no timeout, so that could only ever be
+# quiet, never red. Each event now travels down a pipe this run owns, so no side
+# of any of them is a tmux client.
+#
+# The two ends this shell writes are held open read-write below, so a peer that
+# died still leaves the write returning rather than making this shell the next
+# thing that hangs. The end this shell reads is deliberately not held open: a
+# writer that opened and closed must arrive here as end-of-file, which is what
+# the asserted byte is for.
+modal_observed="$RUN_ROOT/boot-modal-observed"
+modal_painted="$RUN_ROOT/boot-modal-painted"
+modal_clear="$RUN_ROOT/boot-modal-clear"
+modal_probe_release="$RUN_ROOT/boot-modal-probe-release"
+mkfifo "$modal_observed" "$modal_painted" "$modal_clear" "$modal_probe_release"
 cat > "$RUN_ROOT/collars/boot-modal.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'printf \"FIRST_RUN_MODAL\\n\"; tmux wait-for -S \"$modal_painted\"; tmux wait-for \"$modal_clear\"; PS1=\"❯ \" exec bash --norc' fixture"
+GANG_LAUNCH="sh -c 'printf \"FIRST_RUN_MODAL\\n\"; printf x > \"$modal_painted\"; head -c 1 < \"$modal_clear\" > /dev/null; PS1=\"❯ \" exec bash --norc' fixture"
 GANG_OCCUPIED_REGEX='FIRST_RUN_MODAL'
 _gl_modal_real="\$(declare -f collar_input)"
 eval "modal_real_input \${_gl_modal_real#collar_input}"
 collar_input() {
   if [ -e "$RUN_ROOT/boot-modal-blocked" ]; then
     if [ -e "$RUN_ROOT/boot-modal-seen" ]; then
-      tmux wait-for -S "$modal_observed"
-      tmux wait-for "$modal_probe_release"
+      printf x > "$modal_observed"
+      head -c 1 < "$modal_probe_release" > /dev/null
     else
-      tmux wait-for "$modal_painted"
+      head -c 1 < "$modal_painted" > /dev/null
       : > "$RUN_ROOT/boot-modal-seen"
     fi
     return 1
@@ -213,12 +229,23 @@ modal_output="$RUN_ROOT/boot-modal.out"
 GANG_BOOT_TIMEOUT=5 "$GANG" hitch boot-modal -c boot-modal -d /tmp \
   >"$modal_output" 2>&1 &
 modal_hitch_pid=$!
-tmux wait-for "$modal_observed"
+# OPENED AFTER THE LAUNCH so the observer under test does not inherit either
+# end and the only holders are this shell and the peer each one is for.
+exec 6<>"$modal_clear"
+exec 7<>"$modal_probe_release"
+# A WRITER THAT OPENED AND CLOSED WITHOUT WRITING is not an observer that
+# reached a blocked modal, and under set -e an empty read would end the run
+# instead of naming what happened.
+modal_signal=""
+modal_read_rc=0
+IFS= read -r -n 1 modal_signal < "$modal_observed" || modal_read_rc=$?
+equal "the boot observer announces the modal it is blocked on" \
+  "0 x" "$modal_read_rc $modal_signal"
 contains "hitch reports a first-run modal before it is cleared" \
   "$(<"$modal_output")" "answer it with 'gang attach'"
 rm -f -- "$RUN_ROOT/boot-modal-blocked"
-tmux wait-for -S "$modal_clear"
-tmux wait-for -S "$modal_probe_release"
+printf x >&6
+printf x >&7
 if wait "$modal_hitch_pid"; then
   pass "the same hitch completes after the operator clears the modal"
 else
@@ -235,6 +262,7 @@ contains "the resumed hitch reports verified startup delivery" \
 contains "the resumed hitch reports accepted-before-delivered state" \
   "$(<"$modal_output")" "queued startup contract for boot-modal — accepted, not yet in the session"
 submitted "the resumed startup contract was submitted" boot-modal
+exec 6>&- 7>&-
 "$GANG" drop boot-modal >/dev/null
 
 # A FIRST-RUN GATE THAT OUTLIVES HITCH'S BOOT BUDGET has no turn and therefore
