@@ -590,11 +590,32 @@ refuses "explicit resume refuses a different session over a stamped window" \
   "stamped for harness session 'surviving-native-id', not requested session 'other-native-id'" \
   "$GANG" hitch survivor -c identity -d /tmp --resume other-native-id
 tmux set-option -w -t "$survivor_id" remain-on-exit on
-survivor_dead="test-survivor-dead-$$"
-printf -v survivor_exit 'trap %q EXIT; exit' "tmux wait-for -S $survivor_dead"
+# A BARRIER THAT NEEDS THE TMUX SERVER CANNOT REPORT ON THE TMUX SERVER. What
+# this waits for is a pane's shell reaching its exit, and it used to learn that
+# through `tmux wait-for -S` in that shell's EXIT trap: a client call into the
+# very server whose responsiveness is not the thing under test. Observed
+# 2026-08-24, that call sat for twenty-five minutes against a server busy
+# elsewhere, and because the gate serialises on one lock it held every other run
+# behind it. `tmux wait-for` has no timeout, so the run could not go red on it —
+# only quiet, which is the worse of the two.
+#
+# The signal now goes down a pipe this run owns. The trap writes one byte from
+# the pane's own shell, and the read below returns on that byte, so neither side
+# of the barrier is a tmux client and a busy server cannot swallow it. It is
+# still an event and not a clock: the read blocks on the byte exactly as the
+# channel blocked on the signal, and no wall time is spent either way.
+survivor_dead="$RUN_ROOT/survivor-dead"
+mkfifo "$survivor_dead"
+printf -v survivor_exit 'trap %q EXIT; exit' "printf x > $survivor_dead"
 tmux send-keys -l -t "$survivor_id" "$survivor_exit"
 tmux send-keys -t "$survivor_id" Enter
-tmux wait-for "$survivor_dead"
+# A WRITER THAT OPENED AND CLOSED WITHOUT WRITING IS NOT A SHELL THAT REACHED
+# ITS TRAP, and under set -e an empty read would end the run rather than say so.
+survivor_signal=""
+survivor_read_rc=0
+IFS= read -r -n 1 survivor_signal < "$survivor_dead" || survivor_read_rc=$?
+equal "the surviving window announced its own exit before it was read back" \
+  "0 x" "$survivor_read_rc $survivor_signal"
 "$HITCH" survivor -c identity -d /tmp --resume >/dev/null
 contains "bare resume reads the stamp from a surviving dead window" \
   "$(tmux display-message -p -t "$survivor_id" '#{pane_start_command}')" \
