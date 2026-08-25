@@ -271,11 +271,18 @@ exec 6>&- 7>&-
 # startup envelope. Hitch now parks it, remains the foreground owner, and keeps
 # observing the tty. This collar deliberately has no hook, proving that a Codex
 # operator choosing "continue without hooks" cannot invalidate the promise.
-startup_gate_clear="test-startup-gate-clear-$$"
+# THE WAITER RUNS INSIDE A PANE OF THE SERVER IT IS CALLING, which is the one
+# thing every barrier that has actually wedged here has in common: a fixture
+# shell in a pane, blocking on a `tmux wait-for` against the very server that
+# runs that pane. Driven 2026-08-24, this channel was signalled by a test shell
+# that had already moved on while this waiter sat blocked for minutes, twice, on
+# two different trees. A pipe this run owns takes the server out of it.
+startup_gate_clear="$RUN_ROOT/startup-gate-clear"
+mkfifo "$startup_gate_clear"
 cat > "$RUN_ROOT/startup-gate.sh" <<SH
 #!/bin/sh
 printf 'FIRST_RUN_GATE\n'
-tmux wait-for "$startup_gate_clear"
+head -c 1 < '$startup_gate_clear' > /dev/null
 PS1='❯ ' exec bash --norc
 SH
 chmod +x "$RUN_ROOT/startup-gate.sh"
@@ -320,7 +327,11 @@ contains "the undelivered startup contract is visible in the ordinary spool" \
   "$("$GANG" status startup-gated)" "spooled: 1"
 excludes "nothing was typed through the startup gate" \
   "$(pane startup-gated)" "You are startup-gated in Gangline"
-tmux wait-for -S "$startup_gate_clear"
+# HELD OPEN FIRST, so a fixture that died leaves this write returning rather
+# than making the suite the next thing that hangs.
+exec 6<>"$startup_gate_clear"
+printf x >&6
+exec 6>&-
 while IFS= read -r startup_gate_line <&9; do
   startup_gate_out="${startup_gate_out}${startup_gate_out:+$'\n'}$startup_gate_line"
   case "$startup_gate_line" in
@@ -347,13 +358,16 @@ submitted "the foreground-delivered startup contract was submitted" startup-gate
 # committed before the first gate still lands after the operator answers the
 # second. This models the Codex ordering where hook review precedes directory
 # trust; gang answers neither.
-startup_second_clear="test-startup-second-clear-$$"
+# The same pane-side waiter, and the same pipe. This fixture blocks in a pane
+# of the server it calls exactly as the one above does.
+startup_second_clear="$RUN_ROOT/startup-second-clear"
+mkfifo "$startup_second_clear"
 rm -f "$RUN_ROOT/startup-second-ready"
 mkfifo "$RUN_ROOT/startup-second-ready"
 cat > "$RUN_ROOT/startup-second.sh" <<SH
 #!/bin/sh
 printf 'FIRST_RUN_GATE\n'
-tmux wait-for "$startup_second_clear"
+head -c 1 < '$startup_second_clear' > /dev/null
 exec env DIALOG_VARIANT=trust \
   DIALOG_KEY_LOG='$RUN_ROOT/startup-second.keys' \
   DIALOG_READY='$RUN_ROOT/startup-second-ready' \
@@ -382,7 +396,9 @@ while IFS= read -r startup_second_line <&8; do
 done
 contains "the first gate commits the startup contract before its successor" \
   "$startup_second_out" "queued startup contract for startup-second"
-tmux wait-for -S "$startup_second_clear"
+exec 6<>"$startup_second_clear"
+printf x >&6
+exec 6>&-
 # The same run-owned pipe, and the byte is asserted rather than assumed: a
 # writer that opened and closed without writing is not a fixture that reached
 # its signal, and under set -e an empty read would end the run instead of
@@ -417,7 +433,14 @@ submitted "the post-second-prompt startup contract was submitted" startup-second
 # expose the prompt while the original hitch invocation keeps the contract
 # observer alive. Event barriers witness the client attach and the second shell
 # prompt (the one after the startup envelope was submitted); no Stop hook helps.
-startup_up_clear="test-startup-up-clear-$$"
+# THE THIRD PANE-SIDE WAITER, AND THE ONE THAT PROVED THE CEILING WORKS. On
+# 2026-08-24 this channel was signalled by the shell below and its waiter — a
+# fixture inside a pane — never woke, so the composer never appeared, the window
+# was never renamed, and the delivery barrier downstream of it expired. The
+# ceiling turned four silent hours into a named refusal in 215 seconds; this
+# turns the cause into a pipe.
+startup_up_clear="$RUN_ROOT/startup-up-clear"
+mkfifo "$startup_up_clear"
 startup_up_attach_outcome="test-startup-up-attach-outcome-$$"
 startup_up_delivered="test-startup-up-delivered-$$"
 # THE DRIVER'S EXIT IS READ OFF A CHANNEL, NOT WAITED FOR ON ITS PID. Both the
@@ -448,7 +471,7 @@ exec 9<>"$startup_up_exit_pipe"
 cat > "$RUN_ROOT/startup-up.sh" <<SH
 #!/bin/sh
 printf 'FIRST_RUN_GATE\n'
-tmux wait-for "$startup_up_clear"
+head -c 1 < '$startup_up_clear' > /dev/null
 PS1='❯ ' exec bash --norc
 SH
 chmod +x "$RUN_ROOT/startup-up.sh"
@@ -509,7 +532,9 @@ tmux set-hook -g after-rename-window \
   "if-shell -F '#{==:#{window_name},-startup-up-}' 'wait-for -S $startup_up_delivered' ''"
 tmux wait-for "$startup_up_delivered" &
 startup_up_delivered_waiter=$!
-tmux wait-for -S "$startup_up_clear"
+exec 6<>"$startup_up_clear"
+printf x >&6
+exec 6>&-
 wait "$startup_up_delivered_waiter"
 tmux set-hook -gu after-rename-window
 # source-guard: producer@8e4fa6251628: the busy-glyph hook fires only after the hookless up path verifies and retires its nonce-addressed startup entry
