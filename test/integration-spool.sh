@@ -70,6 +70,7 @@ _gl_spool_real="\$(declare -f collar_input)"
 eval "spool_real_input \${_gl_spool_real#collar_input}"
 collar_input() { # once per armed drain, report what the spool and the lock look like
   local lock dir live=no holder="" waiting=0 f
+  local cross_lock_rc=0 cross_unlock_rc=0 cross_holder_rc=0
   [ ! -f "$RUN_ROOT/unreadable-drain" ] || return 1
   lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
   # WHAT THIS WORKER REACHED, for the case below to report when the rendezvous
@@ -89,9 +90,17 @@ collar_input() { # once per armed drain, report what the spool and the lock look
       tmux wait-for -S "$cross_ready_two"
     fi
     cross_step signalled
-    tmux wait-for -L "$cross_release"
-    cross_step released
-    tmux wait-for -U "$cross_release"
+    # THE STATUS, NOT JUST THE ARRIVAL. This reader runs under the drain's own
+    # errexit, so a barrier that FAILS and one that never returns leave the same
+    # evidence: the next step is simply never recorded, and the drain dies
+    # without a word. Recording what the call returned separates a stalled
+    # hand-over from a refused one, and the two have nothing in common.
+    cross_lock_rc=0
+    tmux wait-for -L "$cross_release" || cross_lock_rc=\$?
+    cross_step "released-rc-\$cross_lock_rc"
+    cross_unlock_rc=0
+    tmux wait-for -U "$cross_release" || cross_unlock_rc=\$?
+    cross_step "unlocked-rc-\$cross_unlock_rc"
   fi
   cross_step "read-lock-\$([ -L "\$lock" ] && printf held || printf free)"
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
@@ -111,8 +120,10 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     printf 'claimed=%s\n' "\$waiting" > "$RUN_ROOT/cross-holder-observed"
     cross_step holder-claimed
     tmux wait-for -S "$cross_holder_claimed"
-    tmux wait-for -L "$cross_holder_release"
-    tmux wait-for -U "$cross_holder_release"
+    cross_holder_rc=0
+    tmux wait-for -L "$cross_holder_release" || cross_holder_rc=\$?
+    cross_step "holder-released-rc-\$cross_holder_rc"
+    tmux wait-for -U "$cross_holder_release" || true
   fi
   spool_real_input "\$1"
 }
