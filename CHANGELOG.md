@@ -1,5 +1,80 @@
 # Changelog
 
+## [2.3.0](https://github.com/adambiggs/gangline/compare/gangline-v2.2.0...gangline-v2.3.0) (2026-08-25)
+
+
+### Features
+
+* **at:** deliver a message when the clock passes ([dce8ea1](https://github.com/adambiggs/gangline/commit/dce8ea197908413c6293267381c829a5e0719d30)), closes [#112](https://github.com/adambiggs/gangline/issues/112)
+* **cli:** add agent rename command ([7d0edf1](https://github.com/adambiggs/gangline/commit/7d0edf1a16018e30e3ae0d96457a0425cdb7cb8b))
+* **codex:** refuse a launch that would stop on the hooks-review menu ([804ce8b](https://github.com/adambiggs/gangline/commit/804ce8b36a180ff1fd77903064415d66861320a5)), closes [#142](https://github.com/adambiggs/gangline/issues/142)
+* **collars:** attribute telemetry per agent ([4123e24](https://github.com/adambiggs/gangline/commit/4123e2457ce57acc32fa2a75533a1492cac638e7))
+* **collars:** mark which collars an agent can be resumed onto ([3b25493](https://github.com/adambiggs/gangline/commit/3b25493445e01a623b4177d573319bc94fc19fd3))
+* **hitch:** guard an agent from ending its own team's tmux server ([bc94ce3](https://github.com/adambiggs/gangline/commit/bc94ce3fb5185b770b1242fbc3668585c307089a))
+* **hitch:** warn when live agents were hitched from another gang path ([5d7152a](https://github.com/adambiggs/gangline/commit/5d7152afe3e4c18d927c4d7491afde0e71d97d50))
+* **lights:** default Codex thresholds by window ([f5ab80d](https://github.com/adambiggs/gangline/commit/f5ab80d3f25bede8228f9d0ce460f9891ad510d0))
+* **lights:** default context lights to the collar's per-model thresholds ([b6b58a8](https://github.com/adambiggs/gangline/commit/b6b58a8b6d48fe0247429554de7f62fb69a96605))
+* **opencode:** stamp a resumable session identity ([b64af2d](https://github.com/adambiggs/gangline/commit/b64af2d9a857536abdab37af360597b06bd25a14)), closes [#144](https://github.com/adambiggs/gangline/issues/144)
+* **send:** mark a sender Gangline did not observe as self-declared ([9e8f6a5](https://github.com/adambiggs/gangline/commit/9e8f6a58f133822680289baa18c97d1b23d67e4d)), closes [#131](https://github.com/adambiggs/gangline/issues/131)
+* **status:** report when an agent last ran a tool ([cadc46f](https://github.com/adambiggs/gangline/commit/cadc46ffa9e81760e73930147bf4c1a66d5bf607))
+* **teams:** record and enumerate the socket each team runs on ([df7b9eb](https://github.com/adambiggs/gangline/commit/df7b9ebd000ce35487c5390c66e34349ea2a88b6))
+* **up:** start the tmux server inside a gangline-owned unit ([6483004](https://github.com/adambiggs/gangline/commit/6483004e0ea2f8bb850ad8eea1d6a1a628e6fbd3))
+
+
+### Bug Fixes
+
+* **adopt:** refuse windows with no running pane ([a7e6977](https://github.com/adambiggs/gangline/commit/a7e6977f81fa78b2fee13e2180794bfedc354cfd))
+* **adopt:** separate registration from observation ([2c757fe](https://github.com/adambiggs/gangline/commit/2c757fe6569b4367b1a03bcc635208d6b22c0aab))
+* **adopt:** validate before registering the window ([8b4c62d](https://github.com/adambiggs/gangline/commit/8b4c62d4af75aa1a4e9bbc9c47d3dfa5e5ccc690))
+* **adopt:** validate spool identity before registration ([521b659](https://github.com/adambiggs/gangline/commit/521b65936502c37c3e680736e79a1ee38441fdd4))
+* **at:** answer a bare invocation with the synopsis ([062d0a8](https://github.com/adambiggs/gangline/commit/062d0a84e4407485b2905f50931c2069141a9618)), closes [#112](https://github.com/adambiggs/gangline/issues/112)
+* **auto-resume:** disclose discarded wake turn ([876b721](https://github.com/adambiggs/gangline/commit/876b721fc3aad81047fb82a6c73e5cd3670cf17c))
+* **claim:** surface event claim failures ([984e60c](https://github.com/adambiggs/gangline/commit/984e60c2d1c61d151bdaade959e311460fccf191))
+* **claude-code:** give a selected subagent composer its own verdict ([ef3dc3d](https://github.com/adambiggs/gangline/commit/ef3dc3d9a9d4f8a0ca58ada774e26b65148e69f0)), closes [#129](https://github.com/adambiggs/gangline/issues/129)
+* **claude-code:** read a titled session composer as the agent's own ([b057646](https://github.com/adambiggs/gangline/commit/b0576468d87e2c6dcb3dc042bba277793c95a09b)), closes [#152](https://github.com/adambiggs/gangline/issues/152)
+* **claude-code:** recognise a dialog by its chrome and name it where delivery fails ([ff5fd71](https://github.com/adambiggs/gangline/commit/ff5fd719d3efbe7e43dfb7e239023cda1f8fcca2)), closes [#143](https://github.com/adambiggs/gangline/issues/143)
+* **claude-code:** stop measuring the band an overlay is recognised by ([ec70e92](https://github.com/adambiggs/gangline/commit/ec70e9294a5597dfc0ba4d16a2baba26215841f5)), closes [#143](https://github.com/adambiggs/gangline/issues/143)
+* **codex:** raise context-light defaults to 75%,90% ([d87b444](https://github.com/adambiggs/gangline/commit/d87b4441cab0262b13b314090688b80a143e5278))
+* **collar:** a context pane that could not be read is not one with no readout ([05fb62c](https://github.com/adambiggs/gangline/commit/05fb62ca6230af26c49cc0b0ca8fabeb6f2556e4))
+* **collar:** classify auto-mode setup as occupied ([d0741c8](https://github.com/adambiggs/gangline/commit/d0741c8e21a2872154fb0ed1075f180a861e486a))
+* **collar:** clear every optional collar function when a collar loads ([1912fcc](https://github.com/adambiggs/gangline/commit/1912fccaf7656190f46e70d8db68d123b25eb157))
+* **collar:** clear the overlay reader with the other optional collar functions ([3d2e8bc](https://github.com/adambiggs/gangline/commit/3d2e8bcb4d60bb437ac6de0fb95ab15177941e82))
+* **collar:** import the Codex config reader where it is used ([9d508e3](https://github.com/adambiggs/gangline/commit/9d508e3177e77c2e827b2c0e6eddbf3847404ce2))
+* **collar:** resolve configured model for effort validation ([3b68fa8](https://github.com/adambiggs/gangline/commit/3b68fa8ef93133fc8a5eaa63288239a2dd4e60a1))
+* **collars:** tell an explicit-id resume from no resume at all ([fb07b6b](https://github.com/adambiggs/gangline/commit/fb07b6bfe47c030bf25ba2c91e76a74367c2b555))
+* **collar:** surface a Claude turn killed mid-stream ([24a815c](https://github.com/adambiggs/gangline/commit/24a815c473dc04aa204b56c7e413b67a19ebff1b))
+* **collar:** surface terminal Claude 529 failures ([3eacb49](https://github.com/adambiggs/gangline/commit/3eacb494a2165a416f2f6069daad3522060aa7ea))
+* **compact:** serialize deferred dispatch ([299cf58](https://github.com/adambiggs/gangline/commit/299cf588f81f865b0af6067b2afbe2d27ad68275))
+* **context:** distinguish transient beacon misses ([4c10b52](https://github.com/adambiggs/gangline/commit/4c10b52e42ce2ee86d2c0251350d48f1c35d66ba))
+* **down:** preflight every spool before teardown ([9195d88](https://github.com/adambiggs/gangline/commit/9195d88b395e726e6fa68b33476a232205c6089f))
+* **drop:** a stamped session id is not always a way back ([9249c21](https://github.com/adambiggs/gangline/commit/9249c213cfe58aeb38a03e5a7be4199f590ae4ed))
+* **flush:** recover a parked message against the body, not a second rendering ([8b82041](https://github.com/adambiggs/gangline/commit/8b82041da32a16cae1801b3b428cc7233fb40439)), closes [#124](https://github.com/adambiggs/gangline/issues/124)
+* **hitch:** bound the wait on a first-run prompt nobody answers ([b44386e](https://github.com/adambiggs/gangline/commit/b44386e4192e790373a81f78f252465a139edf0c))
+* **hitch:** the two halves of resuming fail differently, and are warned so ([4a255b0](https://github.com/adambiggs/gangline/commit/4a255b00ee6790676e2a8ed80ae8856d8df7855d))
+* **hitch:** validate spool root before launch ([3015c80](https://github.com/adambiggs/gangline/commit/3015c802d630b0176d6b9eab43f6dd85952d5914))
+* **hitch:** validate startup budgets before launch ([43c796c](https://github.com/adambiggs/gangline/commit/43c796c21142527bd1be24c819e625e8b3273119))
+* **hooks:** refuse literal blank-line escapes ([1b3ebb2](https://github.com/adambiggs/gangline/commit/1b3ebb2677ca66ffec329455d4911ef18d5511b5))
+* **install:** require tmux 3.2 ([91bd626](https://github.com/adambiggs/gangline/commit/91bd62605d36b0c4d60c5c3b0db63211baa08cab))
+* **opencode:** read the composer's own prompt as an empty box ([e5d7799](https://github.com/adambiggs/gangline/commit/e5d7799175814bf714155817b764746aa412d82b))
+* **roster:** an agent gang could not read does not end the listing ([c4d3722](https://github.com/adambiggs/gangline/commit/c4d37223fb7a609c443a37ff8b7c5d4578e99550))
+* **scope:** bridge sandboxed hitches to user manager ([66b8c0a](https://github.com/adambiggs/gangline/commit/66b8c0a86c866012d01727db5d3e1569798493d0))
+* **send:** name the native screen a paste did not reach ([16a445c](https://github.com/adambiggs/gangline/commit/16a445c00b3c41b4e77e4a0dc1d0e0a1a46f94d9))
+* **send:** report a typed-but-unconfirmed delivery as its own verdict ([1885a07](https://github.com/adambiggs/gangline/commit/1885a075df701265faa21554bfbfc299cdd65679))
+* **send:** settled is two readings that were taken, not two that match ([4fdc81a](https://github.com/adambiggs/gangline/commit/4fdc81aed355c0a6086f3268ebe214f4fb1a4807))
+* **send:** state the evidence a failed paste already holds ([90dbb3e](https://github.com/adambiggs/gangline/commit/90dbb3e7228b4f1799d0698f073c121187892163))
+* **spool:** account for spools whose window is gone ([3f8e942](https://github.com/adambiggs/gangline/commit/3f8e9420a39bfd129a26c9deb439b3b5d310ae78))
+* **spool:** name a staged body whose sender never committed it ([5d3db70](https://github.com/adambiggs/gangline/commit/5d3db70d9fcca963b126761f4ff7aaf22b52edce))
+* **spool:** preflight teardown archive eligibility ([c7b02a4](https://github.com/adambiggs/gangline/commit/c7b02a42326db7a9d3cb88af6a8fc61ea994f7d9))
+* **turn:** offer a drain at an expired turn bracket ([ec61e71](https://github.com/adambiggs/gangline/commit/ec61e71bcc4c175122c47d19021e071ae55e07ac)), closes [#123](https://github.com/adambiggs/gangline/issues/123)
+* **wait:** replace GNU timeout with portable deadline ([3d92ecd](https://github.com/adambiggs/gangline/commit/3d92ecd037c3e5a373495f053e3fa9bbee5f1340))
+
+
+### Performance Improvements
+
+* **collar:** bound Claude auto-resume transcript reads ([d4ed320](https://github.com/adambiggs/gangline/commit/d4ed3209d726664e2cad6068b00b646da380a032))
+* **resolve:** sanitize an agent name only where it is printed ([30adfe1](https://github.com/adambiggs/gangline/commit/30adfe14e126bc0de91fc170b098524783b6c734))
+* **test:** restore the mandatory gate runtime ceiling ([74c2129](https://github.com/adambiggs/gangline/commit/74c2129a3304cbf399b7c8d1e1905bf9a389ea0d))
+
 ## [2.2.0](https://github.com/adambiggs/gangline/compare/gangline-v2.1.0...gangline-v2.2.0) (2026-08-18)
 
 
