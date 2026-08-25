@@ -697,9 +697,17 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       # `Esc to ` is the footer idiom of this harness and is already the anchor
       # GANG_OCCUPIED_REGEX spends; the capital is what keeps the lowercase
       # "esc to interrupt" of a live turn out of it.
+      #
+      # AND THE BAND IS NOT MEASURED. A width floor was tried here and was
+      # wrong: how much band is on screen is a property of the pane, not of the
+      # dialog. A 100-glyph band wraps in an 80-column pane, the first 80 glyphs
+      # scroll off the top, and what is left to read is a 20-glyph remainder of
+      # the same dialog. A floor of twenty passed every fixture rendered at its
+      # own capture width and rejected the identical dialog one geometry over.
+      # Position is what discriminates, and position is measured below.
       plain = $0
       sub(/^[[:space:]]*/, "", plain); sub(/[[:space:]]*$/, "", plain)
-      if ($0 ~ /^▔+$/ && length($0) > 20) dialog_band = NR
+      if ($0 ~ /^▔+$/) dialog_band = NR
       if (plain != "" && dialog_band && dialog_band == NR - 1) dialog_title = NR
       if (plain ~ /Esc to / && dialog_title && dialog_title < NR) {
         dialog_guide[NR] = dialog_title
@@ -830,8 +838,8 @@ collar_overlay() { # $1 = tmux target; prints the visible title of an overlay
     function bare(s,   t) { t = s; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t); return t }
     function band(s,   t, n) {
       if (s ~ /^[[:space:]]/) return 0
-      t = s; gsub(/[[:space:]]/, "", t)
-      if (length(t) < 20) return 0
+      t = s; sub(/[[:space:]]+$/, "", t)
+      if (t == "") return 0
       n = t; gsub(/▔/, "", n); if (n == "") return 1
       n = t; gsub(/─/, "", n); if (n == "") return 1
       return 0

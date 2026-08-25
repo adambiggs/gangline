@@ -842,8 +842,9 @@ printf '%s\n%s\n' "$claude_nux_rule" '❯ clipped body' \
 # anything if it was never fitted to the one dialog that motivated it, so the
 # world carries a model picker captured from a different claude build. It shares
 # no word of its title or its guide with the NUX above; what it shares is the
-# chrome. Its capture is 120 columns wide, so its window is too — a band is a
-# band because it spans the pane, and a narrower pane pads it back into prose.
+# chrome. Its capture is 120 columns wide and its window is too, so this case is
+# the dialog at its own geometry; the case below is the same dialog at a
+# geometry that is not its own.
 claude_picker_capture="$ROOT/test/fixtures/claude-model-picker.txt"
 # Read out of the captures, never restated here: a test that spelled these out
 # would agree with itself while the collar read something else entirely. The
@@ -851,6 +852,15 @@ claude_picker_capture="$ROOT/test/fixtures/claude-model-picker.txt"
 claude_picker_title="$(sed -n '2p' "$claude_picker_capture" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 claude_nux_title_bare="$(printf '%s' "$claude_nux_title" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 cp "$claude_picker_capture" "$claude_nux_dir/picker"
+# EVERY OTHER PANE HERE IS THE CAPTURE AT ITS OWN WIDTH, and that is what let a
+# reader that measured the band pass this whole world while failing on the same
+# dialog elsewhere. A band is only ever as wide as the pane it was drawn in: put
+# a 100-glyph band in an 80-column pane and it wraps, the first eighty glyphs
+# leave with the row that scrolls off the top, and what a capture can still be
+# joined out of is a twenty-glyph remainder of the identical dialog. This pane
+# is the overlay case at a width that is not its capture's, and it is the one
+# case in this file whose verdict depends on the band not being measured.
+cp "$claude_nux_dir/overlay" "$claude_nux_dir/narrow"
 claude_nux_session="claude-nux-$$"
 tmux new-session -d -s "$claude_nux_session" -n overlay -x 100 -y 24 \
   "cat '$claude_nux_dir/overlay'; cat"
@@ -861,11 +871,19 @@ done
 tmux new-window -d -t "=$claude_nux_session" -n picker \
   "cat '$claude_nux_dir/picker'; cat"
 tmux resize-window -t "=$claude_nux_session:picker" -x 120 -y 30
-claude_nux_status() { # $1 window -> shipped collar_input status
+# ITS OWN SESSION, BECAUSE A RESIZE IS NOT A RENDERING. Widening a window pads
+# what is already drawn, which is why the picker above can be created here and
+# grown; narrowing one REFLOWS it, and the reflow rebuilds rows this case exists
+# to observe unrebuilt. The pane has to be PAINTED at eighty columns, so it gets
+# a session created at eighty rather than a resize down to it.
+claude_narrow_session="claude-narrow-$$"
+tmux new-session -d -s "$claude_narrow_session" -n narrow -x 80 -y 24 \
+  "cat '$claude_nux_dir/narrow'; cat"
+claude_nux_status() { # $1 window, $2 session -> shipped collar_input status
   local rc=0
   ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
     '. "$1"; collar_input "$2" >/dev/null' fixture "$claude_collar" \
-    "=$claude_nux_session:$1" || rc=$?
+    "=${2:-$claude_nux_session}:$1" || rc=$?
   printf '%s' "$rc"
 }
 claude_nux_text() { # $1 window -> shipped collar_input reading
@@ -897,15 +915,27 @@ equal "a clipped composer behind the dialog keeps its clipped verdict" "2" \
   "$(claude_nux_status clipped)"
 equal "an unrelated captured dialog sharing no copy is recognised too" "1" \
   "$(claude_nux_status picker)"
+# THE GUARD ON MEASURING THE BAND. Read the width off the pane rather than
+# restating it: what makes this case the one it is, is that the band on screen
+# is a fraction of the band in the capture.
+claude_narrow_band="$(tmux capture-pane -pJ -t "=$claude_narrow_session:narrow" \
+  | sed -n '1p' | tr -cd '▔' | wc -m)"
+claude_captured_band="$(sed -n '1p' "$claude_nux_capture" | tr -cd '▔' | wc -m)"
+# source-guard: whole-surface@190aa57aa71c: this window is a session created two lines above whose single command paints one file this case wrote, so every row on the pane has the same producer and there is no second writer a reading could be confused between; the claim is about how much of that one painting the pane width left on screen, not about who drew any row of it
+equal "the narrow pane leaves only a remainder of the band on screen" "1" \
+  "$([ "$claude_narrow_band" -gt 0 ] \
+    && [ "$claude_narrow_band" -lt "$claude_captured_band" ] && printf 1 || printf 0)"
+equal "and that remainder is still the dialog that owns the box" "1" \
+  "$(claude_nux_status narrow "$claude_narrow_session")"
 
 # NAMING IS A SEPARATE QUESTION FROM OWNERSHIP, and it is the half issue #143
 # asks a failed send to answer. The reader above decides whether a box may be
 # typed into; this one only supplies the title a refusal quotes, so it must
 # stay silent everywhere the screen is ordinary.
-claude_overlay_title() { # $1 window -> the shipped collar's overlay title, or empty
+claude_overlay_title() { # $1 window, $2 session -> the collar's title, or empty
   ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
     '. "$1"; collar_overlay "$2"' fixture "$claude_collar" \
-    "=$claude_nux_session:$1" || true
+    "=${2:-$claude_nux_session}:$1" || true
 }
 equal "the overlay reader names the dialog over a live composer" \
   "$claude_nux_title_bare" "$(claude_overlay_title overlay)"
@@ -919,6 +949,10 @@ equal "and neither does the same prose carried inside a message" "" \
   "$(claude_overlay_title message-body)"
 equal "nor the pinned prose without any native chrome" "" \
   "$(claude_overlay_title prose-only)"
+equal "a dialog whose band is clipped by the pane is still named" \
+  "$claude_nux_title_bare" \
+  "$(claude_overlay_title narrow "$claude_narrow_session")"
+tmux kill-session -t "=$claude_narrow_session"
 tmux kill-session -t "=$claude_nux_session"
 
 claude_unhooked_root="$RUN_ROOT/claude'guard"
