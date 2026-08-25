@@ -820,9 +820,59 @@ equal "the agent's own name is its registration, whatever the title says" \
   "registered-name" \
   "$(TMUX_PANE="$(tmux list-panes -t "$registered_name_id" -F '#{pane_id}')" \
     "$GANG" whoami | sed -n 's/^agent: //p')"
+refuses "rename applies the hitch name rules to the new identity" \
+  "is not a usable agent name" \
+  "$GANG" rename registered-name .hidden
+refuses "rename keeps Gangline's reserved identity unavailable" \
+  "is not a usable agent name" \
+  "$GANG" rename registered-name gangline
+refuses "rename refuses an identity another agent already registered" \
+  "'alpha' is already in use" \
+  "$GANG" rename registered-name alpha
+equal "refused renames leave the registration unchanged" \
+  "registered-name" \
+  "$(tmux show-options -wqv -t "$registered_name_id" @gl_agent)"
+equal "and leave its decorative title unchanged too" \
+  "borrowed-title" \
+  "$(tmux display-message -p -t "$registered_name_id" '#W')"
+tmux set-option -w -t "$registered_name_id" @gl_collar unavailable-for-rename
+contains "rename needs only registration, not a loadable collar" \
+  "$("$GANG" rename registered-name renamed-name)" \
+  "renamed registered-name to renamed-name"
+tmux set-option -w -t "$registered_name_id" @gl_collar bash
+equal "rename changes the registered identity" \
+  "renamed-name" \
+  "$(tmux show-options -wqv -t "$registered_name_id" @gl_agent)"
+equal "and immediately rewrites the decorative title from it" \
+  "renamed-name" \
+  "$(tmux display-message -p -t "$registered_name_id" '#W')"
+refuses "the old identity stops resolving immediately" \
+  "no agent 'registered-name'" \
+  bash -c 'printf OLD_RENAME_TARGET | "$1" send --to registered-name --from tester --stdin' \
+  fixture "$GANG"
+excludes "a send to the old identity reaches no harness" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "OLD_RENAME_TARGET"
+contains "status resolves the new identity immediately" \
+  "$("$GANG" status renamed-name)" "~idle~"
+contains "roster lists the new identity immediately" \
+  "$("$GANG" roster)" "renamed-name"
+equal "the agent reads its renamed registration as self" \
+  "renamed-name" \
+  "$(TMUX_PANE="$(tmux list-panes -t "$registered_name_id" -F '#{pane_id}')" \
+    "$GANG" whoami | sed -n 's/^agent: //p')"
+if printf 'RENAMED_REACHES' |
+    "$GANG" send --to renamed-name --from tester --stdin >/dev/null 2>&1; then
+  pass "delivery resolves the new identity immediately"
+else
+  fail "delivery resolves the new identity immediately" \
+    "send refused the agent under its renamed registration"
+fi
+# source-guard: producer@abe569643758: the successful send immediately above is the only producer of RENAMED_REACHES in this run
+contains "and the renamed target receives that message" \
+  "$(tmux capture-pane -pJ -t "$registered_name_id")" "RENAMED_REACHES"
 # Teardown, not an assertion: a resolver that cannot find this window by its
 # registration is exactly the defect above, and the fixture still has to go.
-"$GANG" drop registered-name >/dev/null 2>&1 \
+"$GANG" drop renamed-name >/dev/null 2>&1 \
   || tmux kill-window -t "$registered_name_id"
 
 # A REGISTRATION IS RAW BYTES, AND IT IS NOW THE TRUSTED IDENTITY. tmux escapes
@@ -901,8 +951,11 @@ if [ "$ctl_option_bytes" = raw ]; then
     "$ctl_ambiguous_out" "is ambiguous in session"
   equal "the resolver never paints an ambiguous identity through that refusal" \
     "clean" "$(ctl_escapes "$ctl_ambiguous_out")"
-  contains "the ambiguous refusal still names the rename that resolves it" \
-    "$ctl_ambiguous_out" "Rename one (tmux rename-window)"
+  # The old expectation named `tmux rename-window` as the repair, but that
+  # changes only #W. Both @gl_agent registrations — and therefore the
+  # ambiguity — remain. The operator remedy has to mutate the identity itself.
+  contains "the ambiguous refusal names the identity rename that resolves it" \
+    "$ctl_ambiguous_out" "Rename one with gang rename"
   tmux kill-window -t "$ctl_twin_a" 2>/dev/null || true
   tmux kill-window -t "$ctl_twin_b" 2>/dev/null || true
 else

@@ -409,6 +409,7 @@ start and end a team
   up        start a team and join it
   hitch     add an agent
   adopt     register an existing window
+  rename    change an agent's registered name
   drop      remove one agent
   down      end the team
 
@@ -572,6 +573,20 @@ gang adopt
   that needs hooks — context readings, spool
   drains at a turn boundary — may be
   unavailable.
+EOF
+      ;;
+    rename) cat <<'EOF'
+gang rename
+  Change the name the team uses to address one
+  registered agent.
+
+  gang rename <old> <new>
+
+  <new> follows the same rules as a hitch name
+  and must not already be in use. The old name
+  stops resolving immediately. The window's
+  spool identity does not change, so messages
+  already waiting for it remain reachable.
 EOF
       ;;
     send) cat <<'EOF'
@@ -1762,7 +1777,7 @@ win_id() { # $1 = agent name -> @id; 1 absent, 2 ambiguous, 3 title of another i
     *) shown="$(printf '%s' "$1" | config_sanitize)"
        raw_a="$(printf '%s' "$raw_a" | config_sanitize)"
        raw_b="$(printf '%s' "$raw_b" | config_sanitize)"
-       printf "'%s' is ambiguous in session '%s': windows %s and %s both address it. Rename one (tmux rename-window).\n" \
+       printf "'%s' is ambiguous in session '%s': windows %s and %s both address it. Rename one with gang rename.\n" \
          "$shown" "$SESSION" "$raw_a" "$raw_b" >&2
        return 2 ;;
   esac
@@ -8638,6 +8653,49 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   printf '%s\n' "$(colour "$C_OK" "adopted $name as a $collar agent")"
 }
 
+cmd_rename() { # change one registered identity without changing its spool
+  local old new shown_old id rc=0 collision_rc=0 registered
+  [ $# -ge 2 ] || { cmd_help rename; exit 1; }
+  [ $# -le 2 ] || die "rename: unexpected argument '$3'"
+  old="$1" new="$2"
+  shown_old="$(printf '%s' "$old" | config_sanitize)"
+
+  # Resolve the OLD name first. A title is decoration and must neither redirect
+  # this mutation nor make an unregistered window renameable as an agent. A
+  # collar is launch/observation strategy, not identity, so renaming does not
+  # load it or depend on its file still being present.
+  id="$(win_id "$old")" \
+    || { rc=$?; win_id_missing "$rc" "no agent '$shown_old' (see: gang roster)"; }
+  registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" \
+    || registered=""
+  [ "$registered" = "$old" ] \
+    || die "window '$shown_old' is not a registered Gangline agent"
+  valid_name "$new" \
+    || die "rename: '$new' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only"
+
+  # Status 0 is either a registered identity or an unregistered window whose
+  # title would make resolution ambiguous after the rename. Status 2 is already
+  # ambiguous. A contradicted title (3) is safe: its registration belongs to a
+  # different name, and titles never claim identity.
+  win_id "$new" >/dev/null 2>&1 || collision_rc=$?
+  case "$collision_rc" in
+    0|2) die "rename: '$new' is already in use by another window in session '$SESSION'" ;;
+    1|3) ;;
+    *) die "rename: could not determine whether '$new' is already in use" ;;
+  esac
+
+  tmux set-option -w -t "$id" @gl_agent "$new" \
+    || die "rename: could not change the registered identity '$shown_old'"
+  if ! tmux rename-window -t "$id" -- "$new"; then
+    registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" \
+      || registered=""
+    [ "$registered" != "$new" ] \
+      || die "rename: the registered identity is now '$new', but its window title could not be rewritten"
+    die "rename: could not rewrite the window title, and whether the registered identity changed is unknown"
+  fi
+  printf '%s\n' "$(colour "$C_OK" "renamed $shown_old to $new")"
+}
+
 # WHAT A RELAUNCH WOULD NEED, PRINTED WHILE THE WINDOW STILL EXISTS. A teardown
 # is the last moment the stamp is readable, so this is where it gets quoted —
 # and a stamp the hook-time assertion contradicted is not something to quote.
@@ -8977,10 +9035,10 @@ fi
 # itself, which falls back to the calling window. These are the ones with no
 # such fallback by decision: an implicit self target on drop or down is a
 # footgun, a message needs a stated recipient whether it leaves now or when the
-# clock passes, and hitch and adopt are naming a window that is not this one.
+# clock passes, and hitch, adopt and rename name a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|send|at|wait|explain|drop|down)
+    hitch|adopt|rename|send|at|wait|explain|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -8990,6 +9048,7 @@ case "$cmd" in
   up)       cmd_up "$@" ;;
   hitch)    cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
+  rename)   cmd_rename "$@" ;;
   send)     cmd_send "$@" ;;
   at)       cmd_at "$@" ;;
   flush)    cmd_flush "$@" ;;

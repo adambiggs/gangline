@@ -25,7 +25,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 |---|---|
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
-| `hitch`, `adopt`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
+| `hitch`, `adopt`, `rename`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
@@ -261,6 +261,18 @@ When the invoked `bin/gang` is tracked in a git checkout but differs from HEAD,
 every operator command prints one stderr warning naming the path and HEAD. The
 native hook endpoint stays silent except for a crossed light. Restoring the file
 to HEAD removes the warning; the live symlink/install path is unchanged.
+
+### `gang rename <old> <new>`
+
+Changes the registered identity of one agent and rewrites its window title.
+The old name is resolved from `@gl_agent`, never from the decorative title;
+the new name follows the same validation and uniqueness rules as a hitch name.
+After the command succeeds, roster, status and delivery resolve the new name,
+and attempts to send to the old name fail rather than reaching it by title.
+
+Renaming does not replace the window or restart its harness. Its `@gl_spool`
+token is unchanged, so messages already parked for the agent remain reachable
+and drain normally under the new name.
 
 ### `gang attach`
 

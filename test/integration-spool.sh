@@ -164,6 +164,18 @@ excludes "nothing was typed into the refusing target" "$(pane parker)" "MARK_SPO
 contains "status reports what is waiting for that target" \
   "$("$GANG" status parker)" "spooled: 1"
 contains "roster carries the same count" "$("$GANG" roster)" "spooled=1"
+contains "a target can be renamed while its message is parked" \
+  "$("$GANG" rename parker courier)" "renamed parker to courier"
+equal "rename preserves the spool identity that owns the parked message" \
+  "$parker_token" "$(tmux show-options -wqv -t "$parker_id" @gl_spool)"
+contains "the parked message remains reachable under the new identity" \
+  "$("$GANG" status courier)" "spooled: 1"
+refuses "the parked target's old identity no longer resolves" \
+  "no agent 'parker'" "$GANG" status parker
+"$GANG" rename courier parker >/dev/null
+equal "renaming back leaves the same parked message reachable" \
+  "spooled: 1" \
+  "$("$GANG" status parker | sed -n 's/.*\(spooled: [0-9][0-9]*\).*/\1/p')"
 
 if live_only_out="$(printf 'MARK_LIVE_ONLY' |
   "$GANG" send --to parker --from tester --live-only --stdin 2>&1)"; then
