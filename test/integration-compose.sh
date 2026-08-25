@@ -286,8 +286,7 @@ collar_input() { # a composer that spans lines, and reads as the hint when empty
       if (!start) exit 1
       s = line[start]; sub(/^.*❯/, "", s); print s
       for (i = start + 1; i <= last; i++) print line[i]
-    }' | sed 's/[[:space:]]*\$//' \\
-       | sed '/\[TS\]/{ s/\[TS\]//; s/\$/ /; }')" || return 1
+    }' | sed 's/[[:space:]]*\$//')" || return 1
   if [ -f "$RUN_ROOT/flush-strand" ] && ! printf '%s' "\$box" | grep -q '[^[:space:]]'; then
     printf 'Press up to edit queued messages'
     return 0
@@ -409,6 +408,15 @@ flush_settled=0
 flush_settle() {
   flush_settled=$((flush_settled + 1))
   local chan="test-flush-$flush_settled-$$"
+  # ABANDON WHATEVER IS IN THE BOX FIRST. This types a command and waits for the
+  # channel that command writes, so anything left unsent above it becomes that
+  # command's leading words: the channel is never written and a failed case
+  # upstream turns into a barrier nobody answers, ending the run with no verdict
+  # on everything after it. That happened twice here, once per refusal that
+  # stranded a recalled draft. A settle that cannot be poisoned by the state it
+  # is settling is the difference between a red and a wedge, so the reset is
+  # here rather than in each case that might strand something.
+  tmux send-keys -t "$parked_id" C-c
   tmux send-keys -l -t "$parked_id" " printf %s $chan > $RUN_ROOT/flush-signal"
   tmux send-keys -t "$parked_id" Enter
   tmux wait-for "$chan"
@@ -798,31 +806,45 @@ tmux send-keys -t "$parked_id" C-u
 # means refusing every multiline recovery, which is the defect. docs/DECISIONS
 # states the cost: whitespace-only substitutions are indistinguishable, and no
 # comparison against a capture could have distinguished them.
+#
+# THE DIFFERENCE IS BUILT FROM THE RECORD, because the record is what a recall
+# is read back against. This case used to build it from the composer READING
+# and mark the blank with a fixture token the reader turned into a trailing
+# space — which worked while both sides of the comparison were readings, and
+# cannot work now that one side is the body gang composed: the token reaches
+# only the side that goes through the reader, so the two could never agree and
+# the case could not pass whatever gang did.
 : > "$RUN_ROOT/flush-drain"
 flush_settle
 : > "$RUN_ROOT/flush-arm"
-if printf 'MARK_TS head[TS]' |
+if printf 'MARK_TS head\n' |
   "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
   fail "a body whose line ends in blank space parks like any other" \
     "send reported success"
 else
   pass "a body whose line ends in blank space parks like any other"
 fi
-ts_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
-case "$ts_record" in
-  *"] ") pass "and the blank space is part of what the composer showed" ;;
-  *) fail "and the blank space is part of what the composer showed" "got [$ts_record]" ;;
-esac
-ts_tampered="${ts_record# }"
-ts_tampered="${ts_tampered% }"
-tmux send-keys -l -t "$parked_id" "$ts_tampered"
+ts_body="$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)"
+contains "gang recorded the body it composed to read the recall against" \
+  "$ts_body" "MARK_TS head"
+# One interior gap doubled and one line given a trailing space: both are blank
+# space a capture erases, and nothing else about the body changes.
+ts_blanked="${ts_body/MARK_TS head/MARK_TS  head }"
+if [ "$ts_blanked" != "$ts_body" ]; then
+  pass "the blank-space substitution changes the body it is built from"
+else
+  fail "the blank-space substitution changes the body it is built from" \
+    "got [$ts_body]"
+fi
+: > "$RUN_ROOT/flush-arm"
+tmux send-keys -l -t "$parked_id" "$ts_blanked"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
 : > "$RUN_ROOT/flush-drain"
 if ts_out="$("$GANG" flush parked 2>&1)"; then
-  pass "a recalled body differing only in a line's trailing space is flushed"
+  pass "a recalled body differing only in blank space is flushed"
 else
-  fail "a recalled body differing only in a line's trailing space is flushed" \
+  fail "a recalled body differing only in blank space is flushed" \
     "$ts_out"
 fi
 flush_settle
