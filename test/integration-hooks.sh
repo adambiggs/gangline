@@ -3101,9 +3101,31 @@ tmux set-option -w -t "$parentframe_id" @gl_collar subframe-claude
 # source-guard: producer@902434da358b: paint_frame returns only after the fixture signalled the barrier it raises once these exact rows are on screen, so the capture is the only producer of this line
 contains "the titled parent frame is on screen from its captured rows" \
   "$(pane parentframe)" "Gangline probe contract"
-parentframe_composer="$("$GANG" composer parentframe 2>&1)" || true
+parentframe_composer_rc=0
+parentframe_composer="$("$GANG" composer parentframe 2>&1)" \
+  || parentframe_composer_rc=$?
 excludes "a titled parent composer is not reported as a subagent's" \
   "$parentframe_composer" "selected in-process subagent"
+state_word() { # $1 agent -> the first line of its status, and nothing else
+  # NOT `gang status | head -1`. head closes the pipe on its first line, the
+  # suite runs under pipefail, and the SIGPIPE that reaches gang would end the
+  # whole run at an assertion that was only reading a word. Status also carries
+  # the evidence lines under that word, which are not what these assert.
+  local reading
+  reading="$("$GANG" status "$1")"
+  printf '%s' "${reading%%$'\n'*}"
+}
+
+# AND IT IS THE AGENT'S OWN BOX. Typing into this frame reached the PARENT on
+# 2.1.241, so reporting it as no composer at all put every named session out of
+# reach of delivery and made status call a healthy agent occupied by something
+# it could not name. The activity window is neutralised because the fixture has
+# just written to the pane, which is the one thing that would answer busy here.
+equal "the titled parent composer reads back as this agent's own" "0" \
+  "$parentframe_composer_rc"
+equal "and reads back empty rather than unreadable" "" "$parentframe_composer"
+equal "so the agent behind a named session is reachable rather than occupied" \
+  "~idle~" "$(GANG_ACTIVITY_WINDOW=0 state_word parentframe)"
 "$GANG" drop parentframe >/dev/null
 
 # THE CARET IN THE SWITCHER IS NOT THE CONVERSATION IN USE. The list marks the

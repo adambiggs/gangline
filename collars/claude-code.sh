@@ -737,7 +737,12 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
           }
         }
         if (!mode || elsewhere) exit 4
-        exit 1
+        # AND WHERE IT IS THE PARENT, IT IS THE PARENT COMPOSER. A session that
+        # has been named draws this frame around the box an agent has always
+        # typed into: driven on 2.1.241, typing there reached the PARENT, which
+        # answered in the parent transcript. Reporting it as no composer took
+        # every titled session out of reach of delivery and left status calling
+        # a healthy agent occupied by something it could not name.
       }
       for (i = 1; i <= rows; i++) print box[i]
     }')" || rc=$?
