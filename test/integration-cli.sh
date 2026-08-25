@@ -1571,6 +1571,19 @@ pi_models="$(PATH="$MODEL_LIST_STUB:$PATH" \
   bash -c '. "$1"; collar_models' fixture "$ROOT/collars/pi.sh")"
 equal "the Pi collar joins its native provider and model columns" \
   $'anthropic/claude-sonnet\nopenai/gpt-5' "$pi_models"
+
+for otel_collar in bash claude-code codex opencode pi; do
+  otel_attributes="$(name=limitsmith \
+    OTEL_RESOURCE_ATTRIBUTES='service.name=operator,team=observability' \
+    GANG_TEST_COLLARS='' bash -c '
+      ROOT="$1"
+      . "$2"
+      sh -c '\''printf "%s" "$OTEL_RESOURCE_ATTRIBUTES"'\''
+    ' fixture "$ROOT" "$ROOT/collars/$otel_collar.sh")"
+  equal "the $otel_collar collar exports its agent identity and preserves operator resource attributes" \
+    "gang.agent=limitsmith,service.name=operator,team=observability" \
+    "$otel_attributes"
+done
 codex_context_fixture="$RUN_ROOT/codex-context.jsonl"
 cat > "$codex_context_fixture" <<'JSONL'
 {"payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":50000},"model_context_window":300000}}}

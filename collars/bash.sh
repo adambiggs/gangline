@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
+[ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 GANG_LAUNCH="PS1='❯ ' bash --norc"
 GANG_BUSY_REGEX=""
 

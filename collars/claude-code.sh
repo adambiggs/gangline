@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
+[ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 # CONTEXT-LIGHT DEFAULTS ARE A PER-MODEL ANSWER, because this harness runs
 # models whose native windows differ by five times. The same fraction does not
 # mean the same thing in each: 80% of a 1000k window leaves 200k of runway for

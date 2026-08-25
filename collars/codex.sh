@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
+[ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
 GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false"
 # A HOSTILE ROOT IS DECLINED, NOT ESCAPED. The hook TOML rides inside a

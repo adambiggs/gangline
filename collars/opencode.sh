@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
+[ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 GANG_LAUNCH="OPENCODE_DISABLE_AUTOUPDATE=1 opencode"
 # `-s <id>` is OpenCode's own continue-this-session flag (1.14.41), and it is a
 # session slot rather than a recency shortcut: `-c/--continue` would relaunch
