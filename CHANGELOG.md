@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.4.0](https://github.com/adambiggs/gangline/compare/gangline-v2.3.0...gangline-v2.4.0) (2026-08-25)
+
+
+### Features
+
+* **state:** report held background work as waiting ([ebcf479](https://github.com/adambiggs/gangline/commit/ebcf47980cf9199b637b65de1613bf628506f353)), closes [#161](https://github.com/adambiggs/gangline/issues/161)
+
+
+### Bug Fixes
+
+* **test:** pin dialog fixtures before paint ([746b044](https://github.com/adambiggs/gangline/commit/746b04419b02afd51d61a16fc2d65ff9aca5c0f4)), closes [#160](https://github.com/adambiggs/gangline/issues/160)
+
 ## [2.3.0](https://github.com/adambiggs/gangline/compare/gangline-v2.2.0...gangline-v2.3.0) (2026-08-25)
 
 
