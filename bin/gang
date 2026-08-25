@@ -1365,10 +1365,10 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # a collar which declares none of them is read as declaring none of them.
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
-  unset -f collar_context collar_context_lights collar_input collar_session_id \
-    collar_models collar_model_check collar_bricked collar_last_action \
-    collar_usage_limits collar_usage_limits_error collar_auto_resume_record \
-    collar_auto_resume_prompt 2>/dev/null || true
+  unset -f collar_context collar_context_lights collar_input collar_overlay \
+    collar_session_id collar_models collar_model_check collar_bricked \
+    collar_last_action collar_usage_limits collar_usage_limits_error \
+    collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
