@@ -1593,8 +1593,9 @@ contains "a reasoned interrupt still reports the collar key" \
 preempt_pane="$(pane preempt)"
 contains "the reason reaches the boundary created by the interrupt" \
   "$preempt_pane" "MARK_PREEMPT"
+# source-guard: whole-surface@1d850b75b50d: the claim is the SHAPE of the attribution rather than which body carries it — every producer of this string on this pane is a send or reason gang could not observe a window for, which is what is asserted
 contains "the interrupt reason carries sender attribution" \
-  "$preempt_pane" "[gang:tester#"
+  "$preempt_pane" "[gang:self-declared:tester#"
 contains "the reason never joins or consumes the existing queue" \
   "$("$GANG" status preempt)" "spooled: 3"
 excludes "the reason lands before any parked backlog" \

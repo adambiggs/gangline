@@ -316,6 +316,17 @@ the sender from the calling window and refuses `--from`, but only when the pane
 carries matching `@gl_agent` and collar registration and no recorded native
 session mismatch. An unadopted window name is not an identity. Self-send to the
 same pane also refuses. Calls from outside the team must supply `--from`.
+
+A sender Gangline observed and a sender a caller claimed are different facts,
+so the envelope says which it carries. Where Gangline read the name off the
+calling window the envelope names it plainly; where it could not see a window
+and `--from` supplied the name, both tags carry it as `self-declared:<name>` —
+including from the operator's own shell, which is the case that cannot be told
+apart from a sandboxed process reaching the socket with the tmux environment
+stripped. This is a label, not a check: nothing proves who called, the claimed
+name still stands as claimed, and `:` is not a usable agent name, so an
+observed envelope can never be mistaken for a declared one or the reverse.
+
 Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.

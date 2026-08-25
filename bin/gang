@@ -1437,10 +1437,27 @@ stdin_body() { # $1 = command/option label; read all text from stdin into STDIN_
   [ -n "$STDIN_BODY" ] || die "$1: empty body on stdin"
 }
 
-SEND_FROM="" SEND_WINDOW=""
+# OBSERVED IDENTITY AND A CLAIM ABOUT ONE ARE DIFFERENT FACTS, and the envelope
+# is where the difference has to land, because the envelope is all the receiver
+# gets. Gangline reads a sender off the calling window where it can see one and
+# refuses a claimed name there; where it cannot see one the name stands as
+# claimed, which is law 2 and is not changing. What was missing is that the two
+# arrived looking identical. Any process that can reach the socket and the
+# executable can name itself anything — a harness's sandboxed command surface
+# strips the tmux environment, so `--from` becomes mandatory there and the
+# result was indistinguishable from a pane Gangline had actually watched.
+#
+# This is a LABEL, not a check. Nothing here proves who is calling and nothing
+# here should: authentication is banned in this repo, and the honest repair is
+# to stop presenting a claim as an observation. The prefix is carried in the
+# sender field of both tags, is legible without knowing this rule, and cannot
+# collide with an observed sender because `:` is not a usable agent name.
+GANG_DECLARED_PREFIX="self-declared:"
+
+SEND_FROM="" SEND_WINDOW="" SEND_WIRE=""
 send_sender() { # $1 = optional outside identity; derive identity inside the team
   local claimed="$1" label="${2:-send}" self
-  SEND_FROM="" SEND_WINDOW=""
+  SEND_FROM="" SEND_WINDOW="" SEND_WIRE=""
   if self="$(self_window)"; then
     [ -z "$claimed" ] \
       || die "$label: --from is only for calls outside session '$SESSION'; this window already has a Gangline identity (inspect it with gang whoami)"
@@ -1454,6 +1471,11 @@ send_sender() { # $1 = optional outside identity; derive identity inside the tea
   fi
   valid_name "$SEND_FROM" \
     || die "sender '$SEND_FROM' is not a usable identity — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
+  # The identity as it goes on the wire. Derived here and only here, so every
+  # command that attributes a message gets the same answer and none of them
+  # decides for itself which kind of attribution it is holding.
+  if [ -n "$SEND_WINDOW" ]; then SEND_WIRE="$SEND_FROM"
+  else SEND_WIRE="$GANG_DECLARED_PREFIX$SEND_FROM"; fi
 }
 
 registered_identity_guard() { # $1 window, $2 requested name, $3 action, optional $4 requested collar
@@ -4380,6 +4402,7 @@ parked_current() { # $1 = window id -> the parked body, freshness-checked at rea
   [ -n "$rec" ] || return 0
   if box="$(landing_zone "$1")" && ! box_queued "$box"; then
     tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
     tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
     return 0
   fi
@@ -4402,7 +4425,6 @@ stage_forget() { # $1 = window id
   #
   # Retiring it leaves a mark, because the ABSENCE of a record has two causes
   # an operator must not confuse: gang never watched a park here, or it did and
-    tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
   # the queue has since drained on its own — which is what a harness does when
   # a compaction ends. Both reach flush as an empty @gl_parked, and reaching
   # for flush a moment too late is how an operator gets told "no record" about
@@ -4411,6 +4433,7 @@ stage_forget() { # $1 = window id
     tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
   fi
   tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
 }
 
 clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
@@ -4433,7 +4456,6 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
     after="$(input_read "$1")" || return 1
     [ "$after" != "$before" ] || return 1
     n=$((n + 1))
-  tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
   done
   input_clear "$1"
 }
@@ -4657,6 +4679,12 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
 parked_record() { # $1 window id, $2 whole composer reading before the parked Enter,
                   # $3 the body gang composed and pasted
   [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked "$2" 2>/dev/null || true
+  # THE BODY, BESIDE THE RENDERING OF IT. The reading above says what the
+  # composer looked like with this message in it, which is what later reads
+  # test for freshness; it is not what the message IS. A harness may render a
+  # pasted body as a placeholder that carries none of its text, so the reading
+  # cannot be what a recovery reads a recalled composer back against.
+  [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked_body "${3:-}" 2>/dev/null || true
   # A fresh park replaces the history: whatever drained before this one is no
   # longer the answer to "where did my message go".
   [ -z "$2" ] || tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
@@ -4680,12 +4708,6 @@ submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the E
     parked_record "$1" "$4" "${5:-}"
     stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
     die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
-  # THE BODY, BESIDE THE RENDERING OF IT. The reading above says what the
-  # composer looked like with this message in it, which is what later reads
-  # test for freshness; it is not what the message IS. A harness may render a
-  # pasted body as a placeholder that carries none of its text, so the reading
-  # cannot be what a recovery reads a recalled composer back against.
-  [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked_body "${3:-}" 2>/dev/null || true
   fi
   stage_record "$1" "'$2' was recalled out of the harness's queue and Enter sent, and the harness parked it again — it never entered the session" ""
   die "flush NOT verified: '$2' was loaded back into the composer of $tname and the Enter parked it in the harness's queue again. The queue is not draining, so no keystroke gang can send will submit it: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
@@ -6231,10 +6253,10 @@ cmd_send() {
   resolve "$name"
   [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
     || refuse "send: '$name' resolves to this sending pane; a message that returns to its author is never intended"
-  envelope "$SEND_FROM" "$body"
+  envelope "$SEND_WIRE" "$body"
   if [ "$live_only" -eq 1 ]; then
     send_live "$name" "" live-only
-    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
   fi
   # ONE CRITICAL SECTION. The pane lock is taken HERE rather than inside
@@ -6273,7 +6295,7 @@ cmd_send() {
          || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
-       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
     3) ;;
     5) # KEYSTROKES LANDED AND THEIR OUTCOME IS UNKNOWN, so this send is neither
@@ -6287,7 +6309,7 @@ cmd_send() {
        lock_release
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n%s\n' \
-         "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_FROM]")" \
+         "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_WIRE]")" \
          "$(colour "$C_DIM" "nothing is waiting in the spool for this message and nothing will send it again — it was typed into $name's composer and gang lost the screen before it could confirm. Read '$name' (gang capture $name) and send again only if it is not there.")"
        exit 5 ;;
     *) # A ROLLBACK THAT FAILS IS NEWS. spool_retire_rollback clears the record of
@@ -6349,13 +6371,13 @@ cmd_send() {
     case "$drain_rc" in
       0) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
-         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_FROM]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
          return 0 ;;
       3|4) err="$drain_err" ;;
       5) lock_release
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
          printf '%s\n%s\n' \
-           "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_FROM]")" \
+           "$(colour "$C_BAD" "delivered but UNVERIFIED to $name as [gang:$SEND_WIRE]")" \
            "$(colour "$C_DIM" "it was typed into $name's composer from its attributed spool and gang lost the screen before it could confirm. Nothing will send it again; its record is in the spool and 'gang status $name' names it. Read '$name' (gang capture $name) and send again only if it is not there.")"
          exit 5 ;;
       *) lock_release
@@ -6370,32 +6392,10 @@ cmd_send() {
   # promise stays conditional on a later turn: an agent that never takes
   # another one never drains.
   printf '%s\n%s\n' \
-    "$(colour "$C_OK" "queued for $name as [gang:$SEND_FROM] — accepted, not yet in the session")" \
+    "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
-# The recovery gang already diagnoses, performed as a verified operation rather
-# than described in a refusal. Everything it needs is evidence it already owns:
-# the collar's queue hint says the composer is parked, the collar's own recall
-# key loads the parked body, and the record written when gang watched the
-# harness park it says WHICH body must come back. No record, no hint, or a
-# readback that does not match, and no Enter is pressed.
-cmd_flush() {
-  local name="${1:-}" parked body frag box loaded
-  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
-  if [ -z "$name" ]; then
-    name="$(self_name)" || {
-      cmd_help flush
-      printf '(no target given, and this shell is not a Gangline agent window)\n'
-      exit 1
-    }
-  fi
-  resolve "$name"
-  [ -n "$GANG_QUEUED_REGEX" ] \
-    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
-  [ -n "$GANG_QUEUE_RECALL_KEY" ] \
-    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
-  parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
 # WHAT A PANE CAPTURE CAN CARRY, and nothing finer. One side of flush's
 # comparison is now the body Gangline itself composed, and the other is a
 # terminal capture of a composer holding it — so the two cannot be compared
@@ -6435,6 +6435,28 @@ flush_stranded() { # $1 = target name
     "$1" "$1"
 }
 
+# The recovery gang already diagnoses, performed as a verified operation rather
+# than described in a refusal. Everything it needs is evidence it already owns:
+# the collar's queue hint says the composer is parked, the collar's own recall
+# key loads the parked body, and the record written when gang watched the
+# harness park it says WHICH body must come back. No record, no hint, or a
+# readback that does not match, and no Enter is pressed.
+cmd_flush() {
+  local name="${1:-}" parked body frag box loaded
+  [ $# -le 1 ] || die "flush: unexpected argument '$2'"
+  if [ -z "$name" ]; then
+    name="$(self_name)" || {
+      cmd_help flush
+      printf '(no target given, and this shell is not a Gangline agent window)\n'
+      exit 1
+    }
+  fi
+  resolve "$name"
+  [ -n "$GANG_QUEUED_REGEX" ] \
+    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
+  [ -n "$GANG_QUEUE_RECALL_KEY" ] \
+    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
+  parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
   if [ -z "$parked" ]; then
     [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_drained)" ] \
       || refuse "flush: the message gang watched the harness park in '$name' is NOT parked any more — its composer came back empty, so the queue drained itself (a harness does this when a compaction ends) or somebody submitted it by hand. There is nothing left here to recover, and this is not the same as never having been parked: look for it in the transcript before sending it again (gang capture $name)"
@@ -6563,7 +6585,7 @@ cmd_interrupt() {
     # the caller runs inside the turn it is stopping, so a harness that ends
     # that turn by killing the tool call takes this process with it before the
     # reason is typed. That is the same verdict the stop itself is.
-    envelope "$SEND_FROM" "$reason"
+    envelope "$SEND_WIRE" "$reason"
   fi
   lock_pane "$AGENT_ID"
   # Occupancy is not authority here either: the stop key is very often the key

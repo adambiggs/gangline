@@ -62,6 +62,28 @@ Require a sender, wrap each message in a nonce-bound envelope, and confirm that
 the target composer accepted and submitted it. Gangline is single-tenant and
 does not claim authentication, but it never reports unverified delivery.
 
+## An observed sender and a claimed one are marked apart
+
+Gangline reads the sender off the calling window where it can see one and
+refuses a claimed name there; where it cannot see one the name stands as
+claimed. Both remain true, and the envelope now says which of the two it is
+carrying: a name supplied by `--from` because no window was visible goes on the
+wire as `self-declared:<name>`, in both tags.
+
+The two used to arrive identical, so any process that could reach the socket
+and the executable could sign as a peer and be read as one — a harness's
+sandboxed command surface strips the tmux environment, which makes `--from`
+mandatory there and made that case indistinguishable from a pane Gangline had
+watched. The operator's own shell is marked by the same rule, because it is the
+case a sandboxed process cannot be told apart from.
+
+This is a label, not a check. Nothing here proves who is calling and nothing
+here may: authentication, generation fencing and anti-tamper are banned, and
+the repair for presenting a claim as an observation is to stop doing that. The
+marking cannot collide with an observed sender because `:` is not a usable
+agent name, and the contract tells receivers to treat a marked sender as
+unverified.
+
 ## MCP may be a face, not the transport
 
 Add an MCP wrapper only for a real consumer that cannot use the CLI. MCP does not

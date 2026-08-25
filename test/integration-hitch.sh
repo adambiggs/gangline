@@ -1175,7 +1175,8 @@ tmux set-option -u -t "=$GANG_SESSION:" @gl_cutoff
 printf 'MARK_ALPHA' | "$GANG" send --to alpha --from tester --stdin >/dev/null
 alpha_pane="$(pane alpha)"
 contains "verified send reaches the intended pane" "$alpha_pane" "MARK_ALPHA"
-contains "the delivered message is attributed" "$alpha_pane" "[gang:tester#"
+# source-guard: whole-surface@b66eb60af741: the claim is the SHAPE of the attribution rather than which body carries it — every producer of this string is a send gang could not observe a window for, which is exactly what is asserted
+contains "the delivered message is attributed" "$alpha_pane" "[gang:self-declared:tester#"
 
 "$HITCH" inside-target -c bash -d /tmp >/dev/null
 # shellcheck disable=SC2154  # set in test/integration-substrate.sh
@@ -1184,6 +1185,37 @@ printf 'MARK_INSIDE_SENDER' | TMUX_PANE="$alpha_tmux_pane" \
 contains "a sender in a glyphed window is attributed by its bare name" \
   "$(pane inside-target)" "[gang:alpha#"
 "$GANG" drop inside-target >/dev/null
+
+# A CALLER WITH NO PANE IDENTITY CAN NAME ITSELF ANYTHING. A harness's sandboxed
+# command surface reaches the socket and the executable with the tmux
+# environment stripped, so `self_window` finds nothing, `--from` becomes
+# mandatory, and the name it supplies used to reach the receiver in the same
+# shape as one Gangline had watched a pane produce. Nothing here proves who is
+# calling — authentication is banned in this repo and the claim still stands as
+# claimed — but the envelope now says which of the two it is carrying.
+#
+# The claimed name is `alpha`, a live agent whose OBSERVED envelope the
+# assertion directly above this one pins, so the two forms are compared against
+# each other rather than against a description of one. The target is fresh, so
+# nothing else on its screen could satisfy either assertion.
+"$HITCH" declared-target -c bash -d /tmp >/dev/null
+declared_out="$(printf 'MARK_DECLARED_SENDER' | env -u TMUX -u TMUX_PANE \
+  "$GANG" send --to declared-target --from alpha --stdin)"
+declared_pane="$(pane declared-target)"
+# source-guard: producer@0173a5fd7f83: the send three lines above is the sole producer of this literal; no other sender, spool entry or fixture writes it
+contains "a sandboxed caller's message still arrives" \
+  "$declared_pane" "MARK_DECLARED_SENDER"
+# source-guard: producer@0f340f61a849: declared-target was hitched four lines above and this send is the only delivery ever made into it, so its pane carries one envelope
+contains "and its opening tag marks the sender as self-declared" \
+  "$declared_pane" "[gang:self-declared:alpha#"
+# source-guard: producer@c0c4b6d50709: the same single delivery into a freshly hitched window; the closing tag is the other end of that one envelope
+contains "as does its closing tag, so either end settles it" \
+  "$declared_pane" "[/gang:self-declared:alpha#"
+excludes "and it cannot be read as the identity gang observes in alpha's window" \
+  "$declared_pane" "[gang:alpha#"
+contains "the sender is told which identity went on the wire" \
+  "$declared_out" "[gang:self-declared:alpha]"
+"$GANG" drop declared-target >/dev/null
 
 # Addressing strips one paired glyph and no more. Exercise every wrapper, the
 # minimum three-byte wrapped name, a valid bare name ending in dash, and an
