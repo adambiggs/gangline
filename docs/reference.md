@@ -491,16 +491,30 @@ composer back against the body it recorded when it watched the harness park the
 message, submits it, and verifies the submission the way any delivery is
 verified.
 
-The readback is byte-for-byte against the whole recorded reading, with nothing
-normalized away: every normalization discards content that some body means, and
-trailing-space trimming is line-oriented in every tool that offers it, so it
-cannot tell a line ending in two spaces from one that does not.
+The readback is against the body Gangline composed, never against a second
+reading of the composer: two readings taken at different moments are two
+renderings of one body, and a harness that shows a pasted multi-line body as a
+placeholder and expands it on recall makes them differ in kind. It is whole —
+containment would accept a truncated, altered or appended remainder — and it is
+over what a pane capture can carry, which is the body's text with every run of
+blank space collapsed. A capture pads every row to the pane width, gives
+continuation rows the composer's gutter, and re-flows a body line too long for
+the box across rows, so two bodies differing only in blank space cannot be told
+apart by any comparison against one. Every difference in the body's text
+refuses.
 
 It refuses before pressing anything when the collar declares no queue evidence
-or no recall key, when the composer shows no parked-queue evidence, and when
-Gangline holds no record of the parked body. It refuses after the recall key
-when that key loaded nothing, or when the readback is not exactly the recorded
-message; the Enter is not pressed in either case.
+or no recall key, when the composer shows no parked-queue evidence, when
+Gangline holds no record of the parked message, and when it recorded the park
+without the body it parked. It refuses after the recall key when that key
+loaded nothing, when the composer stopped reading back, or when the readback is
+not the recorded body; the Enter is not pressed in any of these.
+
+A refusal after the recall key reports what the recall left behind, because by
+then it has changed the world: the loaded body is visible and unsent in the
+composer, the Enter was not pressed, and whether a copy is still waiting in the
+harness's own queue was never read — so submitting the visible draft by hand
+may deliver it twice, and Gangline does not promise it drains on its own.
 
 ### `gang interrupt [name] [-m "reason"] [--from <sender>]`
 

@@ -4402,6 +4402,7 @@ stage_forget() { # $1 = window id
   #
   # Retiring it leaves a mark, because the ABSENCE of a record has two causes
   # an operator must not confuse: gang never watched a park here, or it did and
+    tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
   # the queue has since drained on its own — which is what a harness does when
   # a compaction ends. Both reach flush as an empty @gl_parked, and reaching
   # for flush a moment too late is how an operator gets told "no record" about
@@ -4432,6 +4433,7 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
     after="$(input_read "$1")" || return 1
     [ "$after" != "$before" ] || return 1
     n=$((n + 1))
+  tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
   done
   input_clear "$1"
 }
@@ -4541,15 +4543,15 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     # A continuation is typed at a harness that is compacting, so the harness's
     # own queue is where it is meant to wait. Parking is the landing here, not a
     # failed delivery.
-    queued) submit_verify "$1" "$after" "$frag" paste park_ok ;;
+    queued) submit_verify "$1" "$after" "$frag" paste park_ok "$2" ;;
     # A peer envelope entered only after its attributed spool was claimed.
     # The collar declares that Enter during a turn is accepted as native
     # steering, whether the next box frame is empty or shows its queue hint.
-    steer) submit_verify "$1" "$after" "$frag" paste park_record ;;
+    steer) submit_verify "$1" "$after" "$frag" paste park_record "$2" ;;
     # Ordinary delivery accepts only a verified submission. A harness queue is
     # recovery state, not a landing: busy `park` collars spool before reaching
     # this function, so a queued reading here is unexpected and fails closed.
-    '') submit_verify "$1" "$after" "$frag" paste ;;
+    '') submit_verify "$1" "$after" "$frag" paste '' "$2" ;;
     *) die "internal: inject received unknown witness mode '$5'" ;;
   esac
   [ "$keep_lock" -eq 1 ] || lock_release
@@ -4566,7 +4568,8 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
 # harness's queue is the harness's, and clearing it would delete the very
 # message being recovered.
 submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment,
-                  # $4 paste|recall, $5 park_ok|park_record accepted landing
+                  # $4 paste|recall, $5 park_ok|park_record accepted landing,
+                  # $6 the body gang composed, recorded if the harness parks it
   local tname verb noun stuck mayclear unchanged=0 looks=0 posted
   tname="$(agent_name_of "$1")"
   case "$4" in
@@ -4622,9 +4625,9 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
             # the exact native-queue landing for status and flush even after
             # the claim retires.
             stage_forget "$1"
-            parked_record "$1" "$2"
+            parked_record "$1" "$2" "${6:-}"
             return 0 ;;
-          '') submit_parked "$1" "$3" "$4" "$2" ;;
+          '') submit_parked "$1" "$3" "$4" "$2" "${6:-}" ;;
           *) die "internal: submit_verify received unknown park mode '$5'" ;;
         esac
       fi
@@ -4651,30 +4654,38 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   stage_forget "$1"
 }
 
-parked_record() { # $1 window id, $2 whole composer reading before the parked Enter
+parked_record() { # $1 window id, $2 whole composer reading before the parked Enter,
+                  # $3 the body gang composed and pasted
   [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked "$2" 2>/dev/null || true
   # A fresh park replaces the history: whatever drained before this one is no
   # longer the answer to "where did my message go".
   [ -z "$2" ] || tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
 }
 
-submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the Enter went against
+submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the Enter went against,
+                  # $5 the body gang composed
   local tname
   tname="$(agent_name_of "$1")"
   if [ "$3" = paste ]; then
     # What `flush` will read the composer back against, and it is the WHOLE
-    # composer reading rather than the body's first line: a record that stops
-    # at the first line can be satisfied by a recalled message whose remainder
-    # was truncated, altered or extended, and flush would submit that while
-    # reporting the readback verified. The reading is what the collar's own
-    # parser saw with the body in the box, which is the same thing the recalled
-    # composer produces, so the two are directly comparable.
+    # body rather than its first line: a record that stops at the first line
+    # can be satisfied by a recalled message whose remainder was truncated,
+    # altered or extended, and flush would submit that while reporting the
+    # readback verified. The composer reading is recorded beside it, for the
+    # freshness reads that ask whether this park is still the state of the
+    # window — never as the artifact a recovery compares against.
     #
     # Recorded HERE and only here: this is the one moment gang knows both that
     # the harness parked something and exactly which body it parked.
-    parked_record "$1" "$4"
+    parked_record "$1" "$4" "${5:-}"
     stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
     die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
+  # THE BODY, BESIDE THE RENDERING OF IT. The reading above says what the
+  # composer looked like with this message in it, which is what later reads
+  # test for freshness; it is not what the message IS. A harness may render a
+  # pasted body as a placeholder that carries none of its text, so the reading
+  # cannot be what a recovery reads a recalled composer back against.
+  [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked_body "${3:-}" 2>/dev/null || true
   fi
   stage_record "$1" "'$2' was recalled out of the harness's queue and Enter sent, and the harness parked it again — it never entered the session" ""
   die "flush NOT verified: '$2' was loaded back into the composer of $tname and the Enter parked it in the harness's queue again. The queue is not draining, so no keystroke gang can send will submit it: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
@@ -6370,7 +6381,7 @@ cmd_send() {
 # harness park it says WHICH body must come back. No record, no hint, or a
 # readback that does not match, and no Enter is pressed.
 cmd_flush() {
-  local name="${1:-}" parked frag box loaded
+  local name="${1:-}" parked body frag box loaded
   [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -6385,12 +6396,59 @@ cmd_flush() {
   [ -n "$GANG_QUEUE_RECALL_KEY" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
   parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
+# WHAT A PANE CAPTURE CAN CARRY, and nothing finer. One side of flush's
+# comparison is now the body Gangline itself composed, and the other is a
+# terminal capture of a composer holding it — so the two cannot be compared
+# byte for byte, and the reason is the instrument rather than the rule. A
+# capture pads every row to the pane width, gives continuation rows the
+# composer's own gutter, and re-flows a body line too long for the box across
+# several rows, where the break is indistinguishable from one the body wrote.
+# Collapsing every run of blank space to one space is what survives all three.
+#
+# What that costs is stated rather than hidden: two bodies differing only in
+# blank space — a trailing space, a line break where the other has a space,
+# doubled spaces inside a line — canonicalise alike, and flush cannot tell them
+# apart. No comparison against a capture ever could; the padding erases the
+# first, the re-flow the second. Every difference in the body's actual text
+# still refuses, which is what the readback exists to catch. A body whose long
+# line re-flows mid-token gains a space the body never had and refuses: a false
+# refusal, which is the safe direction and leaves the manual recovery where it
+# always was.
+flush_canon() { # $1 = text -> its content with every blank-space run collapsed
+  local canon
+  canon="$(printf '%s' "$1" | tr -s '[:space:]' ' ')"
+  canon="${canon# }"
+  printf '%s' "${canon% }"
+}
+
+# THE ACCOUNT A REFUSAL AFTER A RECALL OWES. Loading the parked body into the
+# composer changes the world, so a refusal that lands after it cannot simply
+# name what failed and stop: the body is somewhere, and only the caller can act
+# on it. Gang says which part it can see and which part it never read, because
+# the missing half is what makes handing the draft back dangerous — if the
+# recall dequeued the message, submitting it by hand is the recovery, and if it
+# did not, that is a second copy. Gang did not read the harness's queue and
+# will not claim the draft drains on its own either; four tool-batch boundaries
+# and about seventy seconds without entry were measured, which settles neither.
+flush_stranded() { # $1 = target name
+  printf 'What the recall loaded is visible and unsent in the composer of %s, and the Enter was NOT pressed. Whether a copy of it is also still waiting in that harness'"'"'s own queue was never read, so submitting the visible draft by hand may deliver it twice — and gang does not promise it will drain on its own. Read the screen with '"'"'gang capture %s'"'"' before deciding' \
+    "$1" "$1"
+}
+
   if [ -z "$parked" ]; then
     [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_drained)" ] \
       || refuse "flush: the message gang watched the harness park in '$name' is NOT parked any more — its composer came back empty, so the queue drained itself (a harness does this when a compaction ends) or somebody submitted it by hand. There is nothing left here to recover, and this is not the same as never having been parked: look for it in the transcript before sending it again (gang capture $name)"
     refuse "flush: gang has no record of a message parked in the queue of '$name'. It recovers only a body it watched the harness park, because that record is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
   fi
-  frag="${parked%%$'\n'*}"
+  # THE BODY IS THE RECORD THAT MATTERS, and a park recorded without one is a
+  # park gang cannot verify a recovery against — a message parked by an older
+  # gang that recorded only the rendering. Saying so is the whole answer here:
+  # falling back to the rendering is what this fix removed, and guessing which
+  # of the two a composer should match is how a recovery submits a substitution.
+  body="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_body)"
+  [ -n "$body" ] \
+    || die "flush: gang recorded a parked message in '$name' but not the body it parked, so there is nothing authoritative to read the recalled composer back against and $GANG_QUEUE_RECALL_KEY was NOT pressed. A record from before gang kept the body cannot be verified; recover it by hand (gang attach, press Up to load the parked message, then Enter)"
+  frag="${body%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   lock_pane "$AGENT_ID"
   # A PARK UNDER A RUNNING TURN IS THE HARNESS WORKING. Every precondition
@@ -6429,30 +6487,25 @@ cmd_flush() {
   while :; do
     sleep 0.4
     loaded="$(landing_zone "$AGENT_ID")" \
-      || die "flush: the input box of $name stopped reading back after $GANG_QUEUE_RECALL_KEY — whatever that key loaded is sitting in it unsent, and no Enter was pressed (gang capture $name)"
+      || die "flush: the input box of $name stopped reading back after $GANG_QUEUE_RECALL_KEY, so gang cannot tell what that key loaded. $(flush_stranded "$name")"
     [ "$loaded" = "$box" ] || break
     looks=$((looks + 1))
     [ "$looks" -lt 5 ] \
       || die "flush NOT performed: $GANG_QUEUE_RECALL_KEY left the composer of $name unchanged, so nothing was loaded for gang to read back and the Enter was NOT pressed (gang capture $name)"
   done
-  # WHOLE, AND BYTE-EQUAL. Containment would accept a recalled body that merely
-  # starts with the recorded one, so a truncated, altered or appended remainder
-  # would be submitted as verified — and NO normalization is applied either,
-  # because every normalization discards content that some body means. Trimming
-  # trailing blank space is line-oriented in every tool that offers it, so it
-  # erases the difference between "first  \nsecond" and "first\nsecond": two
-  # spaces that are a hard line break in Markdown, and a different message.
-  #
-  # Both sides are readings the same collar parser took from the same composer,
-  # which is exactly the comparison the delivery path already trusts byte-for-
-  # byte — the paste's before/after, and stage_clear's recorded rendering. A
-  # reading that differs for reasons of its own is therefore evidence gang
-  # cannot tell a recovery from a substitution, and refusing is the safe half of
-  # that: nothing is pressed, and the manual recovery is where it always was.
-  [ "$loaded" = "$parked" ] \
+  # WHOLE, AND AGAINST THE BODY. Containment would accept a recalled body that
+  # merely starts with the recorded one, so a truncated, altered or appended
+  # remainder would be submitted as verified. What the whole is compared to is
+  # the body gang composed and pasted — never a second reading of the composer.
+  # Two readings taken at different moments are two renderings of one body, and
+  # a harness that renders a pasted body as `[Pasted text #N +M lines]` and
+  # expands it on recall makes them differ in kind, so that comparison could
+  # never succeed for a body of more than one line. flush_canon above says
+  # exactly what a capture of the second rendering can still carry.
+  [ "$(flush_canon "$loaded")" = "$(flush_canon "$body")" ] \
     || { stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
-         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang recorded as parked into the composer of $name, so the Enter was NOT pressed — gang submits a recalled body only when the whole of it reads back, byte for byte, as the one it watched the harness park (gang attach)"; }
-  submit_verify "$AGENT_ID" "$loaded" "$frag" recall
+         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang parked into the composer of $name — gang submits a recalled body only when the whole of it reads back as the body it watched the harness park. $(flush_stranded "$name")"; }
+  submit_verify "$AGENT_ID" "$loaded" "$frag" recall '' "$body"
   lock_release
   printf '%s %s\n' \
     "$(colour "$C_OK" "flushed the parked message of $name")" \

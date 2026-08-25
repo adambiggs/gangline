@@ -217,6 +217,11 @@ contains "and the refusal names the missing declaration" \
 cat > "$RUN_ROOT/flush-rc" <<'RC'
 PS1='❯ '
 HISTCONTROL=ignorespace
+# A multi-line body has to come back off the recall key as the body, the way
+# claude's queue hands one back. Without lithist the shell rewrites its
+# embedded newlines as semicolons in history and the recall returns a
+# different text than the one that was parked.
+shopt -s cmdhist lithist
 PROMPT_COMMAND='_flush_prompt_count=$((_flush_prompt_count + 1))
 printf "%s" "$_flush_prompt_count" > "$FLUSH_PROMPT_COUNT"
 if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
@@ -249,6 +254,38 @@ collar_input() { # a composer that spans lines, and reads as the hint when empty
        | sed '/\[TS\]/{ s/\[TS\]//; s/\$/ /; }')" || return 1
   if [ -f "$RUN_ROOT/flush-strand" ] && ! printf '%s' "\$box" | grep -q '[^[:space:]]'; then
     printf 'Press up to edit queued messages'
+    return 0
+  fi
+  # CLAUDE'S OWN TWO RENDERINGS OF ONE BODY, measured on 2.1.243 and recorded
+  # in the artifact this fixture is built from. A pasted multi-line body reads
+  # as a placeholder carrying none of its text; the recall key expands it, with
+  # a two-column gutter on every row after the first, every row padded to the
+  # pane width, and a body line too long for the box re-flowed across rows
+  # where the break is indistinguishable from one the body wrote. Two readings
+  # of one body therefore differ in KIND, which is the defect under test.
+  if [ -f "$RUN_ROOT/claude-placeholder" ] \
+    && printf '%s' "\$box" | grep -q '[^[:space:]]'; then
+    printf '[Pasted text #1 +%s lines]' \
+      "\$(( \$(printf '%s\n' "\$box" | wc -l) - 1 ))"
+    return 0
+  fi
+  if [ -f "$RUN_ROOT/claude-render" ] \
+    && printf '%s' "\$box" | grep -q '[^[:space:]]'; then
+    printf '%s\n' "\$box" | awk -v w=118 '
+      function pad(s,   t) { t = s; while (length(t) < w) t = t " "; return t }
+      function emit(s, g,   room, cut) {
+        room = w - length(g)
+        while (length(s) > room) {
+          cut = room
+          while (cut > 1 && substr(s, cut, 1) != " ") cut--
+          if (cut <= 1) cut = room + 1
+          print pad(g substr(s, 1, cut - 1))
+          s = substr(s, cut + 1); g = "  "; room = w - 2
+        }
+        print pad(g s)
+      }
+      NR == 1 { emit(\$0, ""); next }
+      { emit(\$0, "  ") }'
     return 0
   fi
   # A Claude redraw can expose an absent frame and then its old empty box before
@@ -567,13 +604,139 @@ equal "the refused recall submits no command to the target shell" \
   "$mismatch_prompt_count" "$(flush_prompt_probe)"
 tmux send-keys -t "$parked_id" C-u
 
-# AND IT IS BYTE-EQUAL, WITH NOTHING NORMALIZED AWAY. Trimming trailing blank
-# space is line-oriented in every tool that offers it, so it erases the
-# difference between a line that ends in two spaces and one that does not —
-# a hard line break in Markdown, and a different message. A pane capture pads
-# every line to the pane width, so trailing whitespace cannot survive one at
-# all; this fixture's composer carries it through a token instead, which is
-# what lets the world state the difference the comparison must not discard.
+# A MULTILINE BODY RECOVERS, WHICH IS WHAT COMPARING TWO RENDERINGS COULD NOT
+# DO. The fixture renders this park the way 2.1.243 does — the paste reads as
+# `[Pasted text #1 +N lines]`, carrying none of the body's text — and expands
+# it on recall with a gutter, padding and a re-flowed long line. Against the
+# paste-time READING no recall could ever match; against the body gang
+# composed, this one does. The long line is here on purpose: its re-flow is
+# the difference no per-line comparison survives.
+: > "$RUN_ROOT/flush-drain"
+flush_settle
+: > "$RUN_ROOT/claude-placeholder"
+: > "$RUN_ROOT/flush-arm"
+multi_long="MARK_MULTIFLUSH tail $(printf 'word%02d ' $(seq 1 20))end"
+if printf 'MARK_MULTIFLUSH head\nsecond line of the body\n%s\n' "$multi_long" |
+  "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "a multiline body the harness parks is a failed delivery" \
+    "send reported success"
+else
+  pass "a multiline body the harness parks is a failed delivery"
+fi
+multi_reading="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
+contains "the composer reading gang recorded is the harness placeholder" \
+  "$multi_reading" "[Pasted text #1 +"
+excludes "which carries none of the body it stands for" \
+  "$multi_reading" "MARK_MULTIFLUSH"
+contains "so the body itself is what gang recorded to recover against" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)" "$multi_long"
+rm -f "$RUN_ROOT/claude-placeholder"
+: > "$RUN_ROOT/claude-render"
+: > "$RUN_ROOT/flush-drain"
+if multi_flush_out="$("$GANG" flush parked 2>&1)"; then
+  pass "the multiline body flushes once the readback stops comparing renderings"
+else
+  fail "the multiline body flushes once the readback stops comparing renderings" \
+    "$multi_flush_out"
+fi
+equal "and a verified multiline flush retires the parked body record" "" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)"
+rm -f "$RUN_ROOT/claude-render"
+flush_settle
+
+# A REFUSAL AFTER A RECALL OWES THE CALLER AN ACCOUNT OF THE BODY. The recall
+# has already changed the world: it loaded something into a composer and gang
+# will not press Enter on it. Naming only the readback failure leaves a body
+# sitting in a box with no statement of where it now is, and gang never read
+# the harness's queue, so it cannot say whether a copy is still waiting there
+# either. The assertions read the REFUSAL TEXT, not the staged record — gang
+# already writes that record and status already prints it, so a test satisfied
+# by "it is reported somewhere" passes against the behaviour under repair.
+: > "$RUN_ROOT/flush-drain"
+flush_settle
+: > "$RUN_ROOT/claude-placeholder"
+: > "$RUN_ROOT/flush-arm"
+if printf 'MARK_STRANDED head\nsecond line\nthird line\n' |
+  "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "the stranding case starts from a parked multiline body" \
+    "send reported success"
+else
+  pass "the stranding case starts from a parked multiline body"
+fi
+rm -f "$RUN_ROOT/claude-placeholder"
+tmux send-keys -l -t "$parked_id" "MARK_STRANDED_SOMETHING_ELSE"
+tmux send-keys -t "$parked_id" Enter
+flush_settle
+: > "$RUN_ROOT/claude-render"
+stranded_prompt_count="$(flush_prompt_count)"
+if stranded_out="$("$GANG" flush parked 2>&1)"; then
+  fail "a recall that loads another body is refused" "flush reported success"
+else
+  pass "a recall that loads another body is refused"
+fi
+contains "the refusal says the loaded body is visible and unsent" \
+  "$stranded_out" "visible and unsent in the composer"
+contains "and that the Enter was not pressed" "$stranded_out" "Enter was NOT pressed"
+contains "and that queue membership was never read" \
+  "$stranded_out" "was never read"
+contains "and names the duplication risk of submitting it by hand" \
+  "$stranded_out" "may deliver it twice"
+contains "while promising nothing about the draft draining on its own" \
+  "$stranded_out" "does not promise it will drain"
+equal "and the target shell submitted nothing" \
+  "$stranded_prompt_count" "$(flush_prompt_probe)"
+rm -f "$RUN_ROOT/claude-render"
+tmux send-keys -t "$parked_id" C-u
+
+# A ONE-CHARACTER DIFFERENCE IN THE TEXT IS STILL A DIFFERENT MESSAGE, and the
+# comparison that tolerates a capture's blank space must not tolerate this. The
+# tamper is one letter inside a word, which every rendering of the body carries
+# and no padding, gutter or re-flow can produce.
+: > "$RUN_ROOT/flush-drain"
+flush_settle
+: > "$RUN_ROOT/flush-arm"
+if printf 'MARK_LETTER head' |
+  "$GANG" send --to parked --from tester --stdin >/dev/null 2>&1; then
+  fail "a body the harness parks starts the one-letter case" "send reported success"
+else
+  pass "a body the harness parks starts the one-letter case"
+fi
+letter_body="$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)"
+letter_tampered="${letter_body/MARK_LETTER/MARK_LETTEQ}"
+if [ "$letter_tampered" != "$letter_body" ]; then
+  pass "the one-letter tamper changes the body it is built from"
+else
+  fail "the one-letter tamper changes the body it is built from" \
+    "got [$letter_body]"
+fi
+tmux send-keys -l -t "$parked_id" "$letter_tampered"
+tmux send-keys -t "$parked_id" Enter
+flush_settle
+letter_prompt_count="$(flush_prompt_count)"
+if letter_out="$("$GANG" flush parked 2>&1)"; then
+  fail "a recalled body differing by one letter is not flushed" \
+    "flush reported success"
+else
+  pass "a recalled body differing by one letter is not flushed"
+fi
+contains "refused by the readback, not by anything downstream of it" \
+  "$letter_out" "flush NOT performed"
+contains "and the body is recorded as sitting unsent, never as submitted" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
+equal "with the target shell agreeing that no command was submitted" \
+  "$letter_prompt_count" "$(flush_prompt_probe)"
+tmux send-keys -t "$parked_id" C-u
+
+# AND BLANK SPACE A CAPTURE CANNOT CARRY IS NOT A DIFFERENCE. This assertion
+# replaces one that required the opposite, and the measurement that overturned
+# it is in the 2.1.243 artifact this fixture models: the composer pads every
+# row to the pane width, so a trailing space on a body line cannot reach either
+# side of the comparison. The old guard proved a refusal against a difference
+# the real instrument never delivers, while the readings it DID deliver — a
+# placeholder against an expanded body — could never match. Refusing here now
+# means refusing every multiline recovery, which is the defect. docs/DECISIONS
+# states the cost: whitespace-only substitutions are indistinguishable, and no
+# comparison against a capture could have distinguished them.
 : > "$RUN_ROOT/flush-drain"
 flush_settle
 : > "$RUN_ROOT/flush-arm"
@@ -586,30 +749,22 @@ else
 fi
 ts_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
 case "$ts_record" in
-  *"] ") pass "and the blank space is part of what gang recorded" ;;
-  *) fail "and the blank space is part of what gang recorded" "got [$ts_record]" ;;
+  *"] ") pass "and the blank space is part of what the composer showed" ;;
+  *) fail "and the blank space is part of what the composer showed" "got [$ts_record]" ;;
 esac
-# The same body with that line ending stripped: byte-different, and identical
-# under any per-line trailing-space normalization.
 ts_tampered="${ts_record# }"
 ts_tampered="${ts_tampered% }"
 tmux send-keys -l -t "$parked_id" "$ts_tampered"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
-ts_prompt_count="$(flush_prompt_count)"
+: > "$RUN_ROOT/flush-drain"
 if ts_out="$("$GANG" flush parked 2>&1)"; then
-  fail "a recalled body differing only in a line's trailing space is not flushed" \
-    "flush reported success"
+  pass "a recalled body differing only in a line's trailing space is flushed"
 else
-  pass "a recalled body differing only in a line's trailing space is not flushed"
+  fail "a recalled body differing only in a line's trailing space is flushed" \
+    "$ts_out"
 fi
-contains "refused by the readback, not by anything downstream of it" \
-  "$ts_out" "flush NOT performed"
-contains "and the body is recorded as sitting unsent, never as submitted" \
-  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "read back as something other than"
-equal "with the target shell agreeing that no command was submitted" \
-  "$ts_prompt_count" "$(flush_prompt_probe)"
-tmux send-keys -t "$parked_id" C-u
+flush_settle
 
 # THE DIAGNOSIS THE OPEN-TURN REFUSAL WAS PROTECTING. Refusing a flush against a
 # running turn is only right because a re-park under a turn means the harness is
