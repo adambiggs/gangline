@@ -676,6 +676,32 @@ equal "a barrier that is answered still returns clean through the ceiling" \
 equal "stripping the compressed-clock shim leaves the wait ceiling on PATH" \
   "$RUN_ROOT/waitbin/tmux" \
   "$(PATH="${PATH#"$RUN_ROOT/bin:"}"; command -v tmux)"
+# AND THE GUARD OUTLIVES NOTHING. A caller reading a barrier inside a command
+# substitution is reading a pipe, and any background process that inherited the
+# write end holds it open whether or not it has anything to say. A guard still
+# counting after its barrier was answered therefore kept that substitution open
+# for the whole ceiling — which never showed up as a failure, because the
+# barrier passed and only the read after it was slow.
+#
+# The behaviour is exercised below; the guard against it coming back is the
+# redirect itself, asserted on the generated shim, because the regression's only
+# symptom is duration and a check that can only be slow is not a check.
+contains "the ceiling's guard is given stdio it cannot lend to a caller" \
+  "$(<"$RUN_ROOT/waitbin/tmux")" ') >/dev/null 2>&1 &'
+# AND IT KILLS A PID RATHER THAN A PROCESS GROUP. The guard's trap tears down
+# the sleeper it forked, and `kill 0` would instead tear down the process group
+# that called the shim — this run. That is also read off the generated shim
+# rather than exercised, and for a harder reason than the redirect above: the
+# window is entered about once in a few hundred teardowns, so exercising it once
+# would report green from a race it simply won, and exercising it enough times
+# to lose would be a check whose failure mode is killing the run reading it.
+contains "the ceiling's guard names the sleeper instead of its own group" \
+  "$(<"$RUN_ROOT/waitbin/tmux")" '[ -n "$napper" ] && kill -TERM "$napper"'
+tmux wait-for -S "$barrier_probe_channel-answered-in-substitution"
+equal "an answered barrier inside a command substitution closes it" \
+  "answered" \
+  "$(tmux wait-for "$barrier_probe_channel-answered-in-substitution" \
+    && printf answered)"
 
 unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n unadopted "PS1='❯ ' bash --norc")"

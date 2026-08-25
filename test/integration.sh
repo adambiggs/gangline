@@ -224,7 +224,32 @@ waiter=$!
 # /bin/sleep BY PATH, because the shim beside this one shadows `sleep` and
 # returns immediately for every duration — an unqualified sleep here would
 # expire every barrier in the suite the instant it was asked to wait.
-( /bin/sleep "$ceiling"; : > "$expiry"; kill -TERM "$waiter" 2>/dev/null ) &
+#
+# ITS OWN STDIO, AND IT TAKES ITS SLEEPER WITH IT. This guard outlives nothing,
+# and both halves of that are load-bearing. A caller reading a barrier inside a
+# command substitution is reading a pipe, and a background process that
+# inherited the write end holds it open whether or not it has anything to say —
+# so a guard still napping after its barrier was answered kept the caller's
+# substitution open for the whole ceiling. It is not a hang and it was not
+# visible as one: the barrier passed, the assertion after it simply took two
+# minutes. And killing the subshell does not kill the sleeper it forked, so the
+# sleeper is killed by name from a trap rather than left orphaned.
+#
+# AND THE NAME IS ONE IT ALREADY HAS. `kill 0` is every process in the sender's
+# process group, which here is the run that called this shim, so a trap that
+# fired before it had learned the sleeper's pid would take the suite down with
+# it. That gap is entered: hammering this teardown 300 times, the trap won a
+# race with its own installation 3 times and twice of those it ran with no pid
+# yet. The shim bounds every blocking barrier in the suite, so once in a few
+# hundred teardowns is once or more per run, and its symptom would be the whole
+# run vanishing at an unrelated line.
+napper=
+( trap '[ -n "$napper" ] && kill -TERM "$napper" 2>/dev/null; exit 0' TERM
+  /bin/sleep "$ceiling" &
+  napper=$!
+  wait "$napper"
+  : > "$expiry"
+  kill -TERM "$waiter" 2>/dev/null ) >/dev/null 2>&1 &
 guard=$!
 rc=0
 wait "$waiter" || rc=$?
