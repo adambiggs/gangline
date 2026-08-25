@@ -408,7 +408,7 @@ flush_settled=0
 flush_settle() {
   flush_settled=$((flush_settled + 1))
   local chan="test-flush-$flush_settled-$$"
-  # ABANDON WHATEVER IS IN THE BOX FIRST. This types a command and waits for the
+  # SUBMIT WHATEVER IS IN THE BOX FIRST. This types a command and waits for the
   # channel that command writes, so anything left unsent above it becomes that
   # command's leading words: the channel is never written and a failed case
   # upstream turns into a barrier nobody answers, ending the run with no verdict
@@ -416,7 +416,14 @@ flush_settle() {
   # stranded a recalled draft. A settle that cannot be poisoned by the state it
   # is settling is the difference between a red and a wedge, so the reset is
   # here rather than in each case that might strand something.
-  tmux send-keys -t "$parked_id" C-c
+  #
+  # AN ORDERED KEY, NOT A SIGNAL. C-c is an ISIG character: the line discipline
+  # raises SIGINT the moment the byte arrives, ahead of everything the shell has
+  # not read yet, so a reset sent straight after a submission cut that
+  # submission's own PROMPT_COMMAND short and left the fixture queue empty. A
+  # bare Enter is read in turn, so it submits a stranded draft harmlessly and
+  # costs an empty line where there is none.
+  tmux send-keys -t "$parked_id" Enter
   tmux send-keys -l -t "$parked_id" " printf %s $chan > $RUN_ROOT/flush-signal"
   tmux send-keys -t "$parked_id" Enter
   tmux wait-for "$chan"
@@ -695,8 +702,8 @@ else
   # every check after it. The draft is abandoned so the failure stays a
   # failure, and what the recall actually loaded is reported beside the
   # refusal, because a refusal that names only itself leaves the next reader
-  # to re-derive the difference from nothing.
-  tmux send-keys -t "$parked_id" C-c
+  # to re-derive the difference from nothing. The draft this strands is the
+  # settle's problem above, not this one's.
   fail "the multiline body flushes once the readback stops comparing renderings" \
     "$multi_flush_out
   what the recall loaded: [$(tmux show-options -wqv -t "$parked_id" @gl_staged_box)]
@@ -836,8 +843,14 @@ else
   fail "the blank-space substitution changes the body it is built from" \
     "got [$ts_body]"
 fi
+# PASTED, NOT TYPED. Typed keys carry their own newlines, so a body of more
+# than one line is more than one submission with a prompt between them — and
+# the arm that marks a submission as swallowed is consumed by the first, so the
+# queue would hold the body's first line alone. A bracketed paste is the one
+# buffer gang itself sends, and one Enter follows it.
 : > "$RUN_ROOT/flush-arm"
-tmux send-keys -l -t "$parked_id" "$ts_blanked"
+printf '%s' "$ts_blanked" | tmux load-buffer -b ts-blanked -
+tmux paste-buffer -p -d -b ts-blanked -t "$parked_id"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
 : > "$RUN_ROOT/flush-drain"

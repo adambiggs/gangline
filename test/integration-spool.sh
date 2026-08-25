@@ -72,15 +72,27 @@ collar_input() { # once per armed drain, report what the spool and the lock look
   local lock dir live=no holder="" waiting=0 f
   [ ! -f "$RUN_ROOT/unreadable-drain" ] || return 1
   lock="$GANG_LOCK_DIR/\$(printf '%s' "\$1" | tr -c 'A-Za-z0-9' '_').lock"
+  # WHAT THIS WORKER REACHED, for the case below to report when the rendezvous
+  # stalls. A barrier that expires names only its channel, which says a worker
+  # never arrived without saying how far it got; the difference between "never
+  # entered the reader" and "entered and was never released" is the whole
+  # diagnosis. Armed by the case, so it costs nothing to every other drain here.
+  cross_step() { [ -e "$RUN_ROOT/cross-trace" ] || return 0
+    printf '%s=%s\n' "\$1" "\$\$" >> "$RUN_ROOT/cross-trace"; }
   if [ -f "$RUN_ROOT/cross-block" ]; then
+    cross_step block-enter
     if mkdir "$RUN_ROOT/cross-slot-one" 2>/dev/null; then
+      cross_step ready-one
       tmux wait-for -S "$cross_ready_one"
     else
+      cross_step ready-two
       tmux wait-for -S "$cross_ready_two"
     fi
     tmux wait-for -L "$cross_release"
+    cross_step released
     tmux wait-for -U "$cross_release"
   fi
+  cross_step "read-lock-\$([ -L "\$lock" ] && printf held || printf free)"
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
     rm -f "$RUN_ROOT/claim-watch"
     dir="$GANG_LOCK_DIR/spool/\$(tmux show-options -wqv -t "\$1" @gl_spool)"
@@ -96,6 +108,7 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     waiting=0
     for f in "\$dir"/sending-*; do [ -f "\$f" ] && waiting=\$((waiting + 1)); done
     printf 'claimed=%s\n' "\$waiting" > "$RUN_ROOT/cross-holder-observed"
+    cross_step holder-claimed
     tmux wait-for -S "$cross_holder_claimed"
     tmux wait-for -L "$cross_holder_release"
     tmux wait-for -U "$cross_holder_release"
@@ -197,8 +210,11 @@ contains "the target's own Stop drains what was parked for it" \
   "$parker_drained" "MARK_LATEST"
 contains "including the message from the other sender" \
   "$parker_drained" "MARK_OTHER_SENDER"
+# Both senders reach this spool from outside any Gangline window, so both are
+# self-declared: what this reads is that the spool keeps them APART, not that
+# either was observed.
 contains "each drained message keeps its own sender's attribution" \
-  "$parker_drained" "[gang:other#"
+  "$parker_drained" "[gang:self-declared:other#"
 excludes "a superseded message is never delivered" "$parker_drained" "MARK_STALE"
 excludes "nor the one it superseded" "$parker_drained" "MARK_SPOOLED"
 excludes "nor the deprecated-form predecessor" "$parker_drained" "MARK_ANNOUNCED"
@@ -295,6 +311,21 @@ esac
 exec "$real_mv" "\$@"
 SH
 chmod +x "$RUN_ROOT/bin/mv"
+# A STALL HERE USED TO NAME ONLY A CHANNEL. Two of this rendezvous's barriers
+# expire together whenever it stops, and the channel names say a worker never
+# arrived without saying how far it got. The fixture records each step it
+# reaches into this file while it exists, and every wait below reports it.
+cross_barrier() { # $1 = waiter pid, $2 = what it was waiting for
+  local rc=0
+  wait "$1" || rc=$?
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  printf 'integration: the crossed-dispatch rendezvous stalled waiting for %s\n' \
+    "$2" >&2
+  printf 'integration: the fixture reached: [%s]\n' \
+    "$(tr '\n' ' ' < "$RUN_ROOT/cross-trace" 2>/dev/null)" >&2
+  exit "$rc"
+}
+: > "$RUN_ROOT/cross-trace"
 : > "$RUN_ROOT/cross-block"
 : > "$RUN_ROOT/cross-holder"
 rm -rf -- "$RUN_ROOT/cross-slot-one"
@@ -318,12 +349,12 @@ printf '%s' '{"hook_event_name":"Stop"}' |
   env "${cross_hook_env[@]}" "$GANG" hook >/dev/null
 printf '%s' '{"hook_event_name":"Stop"}' |
   env "${cross_hook_env[@]}" "$GANG" hook >/dev/null
-wait "$cross_ready_one_waiter"
-wait "$cross_ready_two_waiter"
+cross_barrier "$cross_ready_one_waiter" "the first worker to reach the reader"
+cross_barrier "$cross_ready_two_waiter" "the second worker to reach the reader"
 rm -f -- "$RUN_ROOT/cross-block"
 tmux wait-for -U "$cross_release"
-wait "$cross_holder_waiter"
-wait "$cross_loser_waiter"
+cross_barrier "$cross_holder_waiter" "the worker holding the pane lock to claim"
+cross_barrier "$cross_loser_waiter" "the crossed worker that lost to finish"
 contains "one crossed worker owns the whole queue before the loser finishes" \
   "$(cat "$RUN_ROOT/cross-holder-observed")" "claimed=3"
 # source-guard: producer@9213715b1b14: the fixture mv shim records the pane-lock symlink at each claim rename, and no other path writes this log
@@ -334,7 +365,7 @@ excludes "no crossed worker claims before owning the pane lock" \
 tmux wait-for "gang-spool-drain-$parker_id" &
 cross_winner_waiter=$!
 tmux wait-for -U "$cross_holder_release"
-wait "$cross_winner_waiter"
+cross_barrier "$cross_winner_waiter" "the holding worker to finish its drain"
 rm -f -- "$RUN_ROOT/bin/mv"
 cross_pane="$(pane parker)"
 # source-guard: producer@e10d2a56bcab: the three unique markers above exist only in the queue released through the crossed workers, whose pane lock and claims were observed directly
