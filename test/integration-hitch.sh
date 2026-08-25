@@ -1740,8 +1740,8 @@ equal "and gives its 200k class an earlier pair for the same absolute headroom" 
   "45%,65%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-haiku-4-5-20251001)"
 equal "no model means no window class, so claude-code offers no default" \
   "none" "$(lights_shipped "$ROOT/collars/claude-code.sh" "")"
-equal "codex sizes its narrower window earlier than claude-code's widest" \
-  "50%,70%" "$(lights_shipped "$ROOT/collars/codex.sh" gpt-5-codex)"
+equal "codex holds its lights until the window is nearly spent" \
+  "75%,90%" "$(lights_shipped "$ROOT/collars/codex.sh" gpt-5-codex)"
 equal "and codex offers none either" \
   "none" "$(lights_shipped "$ROOT/collars/codex.sh" "")"
 

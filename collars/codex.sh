@@ -64,9 +64,10 @@ GANG_MODEL_OPT="-m"
 # CONTEXT-LIGHT DEFAULTS FOR A NARROW WINDOW. Observed 2026-08-24 on this
 # installation: a codex agent reports a 258k window, and every model this
 # catalog enumerates is that class, so one pair covers them all rather than a
-# per-model split this harness gives no evidence for. It is earlier than the
-# claude-code default on purpose: 70% of 258k leaves ~77k of runway, which is
-# the same order of headroom 80% of a 1000k window leaves.
+# per-model split this harness gives no evidence for. It is later than the
+# claude-code default on purpose: these models hold quality right up to their
+# auto-compaction limit, so a warning sized to a wide window's runway fires
+# while plenty of useful completion remains — noise, not signal.
 #
 # Fractions rather than token counts, so the pair survives a provider changing
 # the window; `collar_context` reads the live one. Omitting -m leaves the model
@@ -74,7 +75,7 @@ GANG_MODEL_OPT="-m"
 collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
   case "$1" in
     '') return 1 ;;
-    *) printf '50%%,70%%\n' ;;
+    *) printf '75%%,90%%\n' ;;
   esac
 }
 # The native JSON catalog is complete for this installed harness. Each row
