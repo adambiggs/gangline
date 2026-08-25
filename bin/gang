@@ -8976,11 +8976,11 @@ fi
 # A bare call to a command that names one agent is answered by the command
 # itself, which falls back to the calling window. These are the ones with no
 # such fallback by decision: an implicit self target on drop or down is a
-# footgun, a message needs a stated recipient, and hitch and adopt are naming
-# a window that is not this one.
+# footgun, a message needs a stated recipient whether it leaves now or when the
+# clock passes, and hitch and adopt are naming a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|send|wait|explain|drop|down)
+    hitch|adopt|send|at|wait|explain|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
