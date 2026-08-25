@@ -107,7 +107,7 @@ jobs:
       # coverage while the job kept going green. The probe refuses to guess, so
       # a bump that changes the answer fails here instead of going unnoticed.
       TMUX_RAW_VERSION: 3.2a
-      TMUX_RAW_PREFIX: /home/runner/.local/tmux-raw
+      TMUX_RAW_PREFIX: /home/runner/.local/tmux-raw # snubline-ignore: home-path -- GitHub's published runner home, not a path from any private machine
     steps:
       - uses: actions/checkout@v5
 
