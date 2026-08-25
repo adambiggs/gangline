@@ -344,6 +344,21 @@ cross_barrier() { # $1 = waiter pid, $2 = what it was waiting for
     "$2" >&2
   printf 'integration: the fixture reached: [%s]\n' \
     "$(tr '\n' ' ' < "$RUN_ROOT/cross-trace" 2>/dev/null)" >&2
+  # AND WHETHER THOSE WORKERS ARE STILL THERE. A step that is never recorded
+  # says the worker stopped, not why: a live process is waiting on something,
+  # and a dead one took its barrier down with it. Those want opposite repairs,
+  # and the barrier name alone cannot tell them apart.
+  local traced pid
+  traced="$(sed 's/.*=//' "$RUN_ROOT/cross-trace" 2>/dev/null | sort -u)"
+  for pid in $traced; do
+    if kill -0 "$pid" 2>/dev/null; then
+      printf 'integration: worker %s is still alive, so it is waiting on something\n' \
+        "$pid" >&2
+    else
+      printf 'integration: worker %s is GONE, so its barrier died with it\n' \
+        "$pid" >&2
+    fi
+  done
   exit "$rc"
 }
 : > "$RUN_ROOT/cross-trace"
