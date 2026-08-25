@@ -60,6 +60,22 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
 fi
 unset _gl_codex_dir
 GANG_MODEL_OPT="-m"
+# CONTEXT-LIGHT DEFAULTS FOR A NARROW WINDOW. Observed 2026-08-24 on this
+# installation: a codex agent reports a 258k window, and every model this
+# catalog enumerates is that class, so one pair covers them all rather than a
+# per-model split this harness gives no evidence for. It is earlier than the
+# claude-code default on purpose: 70% of 258k leaves ~77k of runway, which is
+# the same order of headroom 80% of a 1000k window leaves.
+#
+# Fractions rather than token counts, so the pair survives a provider changing
+# the window; `collar_context` reads the live one. Omitting -m leaves the model
+# unknown, and hitch already warns about that.
+collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
+  case "$1" in
+    '') return 1 ;;
+    *) printf '50%%,70%%\n' ;;
+  esac
+}
 # The native JSON catalog is complete for this installed harness. Each row
 # carries its slug and the reasoning efforts that exact model advertises, so
 # `gang models` can show both and hitch can refuse an id absent from the same

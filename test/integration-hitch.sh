@@ -1726,7 +1726,7 @@ equal "but an explicit spec still arms them there" \
 "$GANG" drop lightsblind >/dev/null
 "$GANG" drop lightsblindset >/dev/null
 
-# THE SHIPPED COLLAR ANSWERS, AND ITS ANSWER DEPENDS ON THE MODEL. This is the
+# THE SHIPPED COLLARS ANSWER, AND THEIR ANSWERS DEPEND ON THE MODEL. This is the
 # mixed-window team the absolute-threshold setting could not serve: one unset
 # team config, working lights on every agent, sized for the window each one has.
 lights_shipped() { # $1 collar file, $2 model -> its default, or "none"
@@ -1740,6 +1740,10 @@ equal "and gives its 200k class an earlier pair for the same absolute headroom" 
   "45%,65%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-haiku-4-5-20251001)"
 equal "no model means no window class, so claude-code offers no default" \
   "none" "$(lights_shipped "$ROOT/collars/claude-code.sh" "")"
+equal "codex sizes its narrower window earlier than claude-code's widest" \
+  "50%,70%" "$(lights_shipped "$ROOT/collars/codex.sh" gpt-5-codex)"
+equal "and codex offers none either" \
+  "none" "$(lights_shipped "$ROOT/collars/codex.sh" "")"
 
 # Each hitched harness in its own killable cgroup. systemd-oomd kills the
 # descendant LEAF cgroup holding the most swap, and a tmux server inherits the
