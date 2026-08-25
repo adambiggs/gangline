@@ -202,11 +202,11 @@ contains "and the refusal names the missing declaration" \
 
 # THE PARKED QUEUE, RECOVERED RATHER THAN DESCRIBED. The fixture's composer
 # reads as the queue hint while its strand file exists, and the body the
-# harness "parked" is the last command in the pane's own history — so the
+# harness "parked" is held in a queue file the submission itself fills — so the
 # collar's declared recall key genuinely loads that body back into the box,
 # the way Up does in claude's composer. The drain flag is what a queue entering
 # the session looks like from outside: the next prompt after it appears clears
-# the strand.
+# the strand and empties the queue.
 # The queue appears the way a real one does — as a consequence of a submission
 # the harness swallowed, not as scenery arranged beforehand. Arming the fixture
 # makes the next prompt raise the strand; the composer then reads as the hint
@@ -216,28 +216,64 @@ contains "and the refusal names the missing declaration" \
 # recalled body and make every readback look altered.
 cat > "$RUN_ROOT/flush-rc" <<'RC'
 PS1='❯ '
-HISTCONTROL=ignorespace
-# A multi-line body has to come back off the recall key as the body, the way
-# claude's queue hands one back. Without lithist the shell rewrites its
-# embedded newlines as semicolons in history and the recall returns a
-# different text than the one that was parked.
+# THE QUEUE IS WHAT THE SHELL SWALLOWED, NOT ITS LAST HISTORY ENTRY. A harness
+# queue hands the WHOLE parked body back on the recall key, and bash's history
+# cannot stand in for that: a pasted body of four lines is four complete
+# commands, so bash records four entries and Up returns only the last one.
+# cmdhist and lithist do not change this — they combine the lines of ONE
+# command that spans lines, which a pasted message is not. Measured on
+# bash 5.1.16: a four-line body left entries for lines one to three and, under
+# ignorespace, dropped the fourth for its leading blank, so the recall returned
+# a single line of a four-line body and every multiline readback was refused
+# for a difference the harness never made.
+#
+# So the queue is modelled directly. An armed submission is one the harness
+# swallowed, and at that prompt the entries the submission just added are
+# written to the queue file whole; the recall key reads that file into the
+# input buffer. Nothing else writes it, so the ordinary commands this fixture
+# runs between a park and its recovery cannot displace the parked body, and a
+# drain empties the queue the way entering the session does.
+#
+# HISTFILE IS DISCARDED because this shell's history must not be shared. It is
+# read from and written to the operator's own ~/.bash_history otherwise, which
+# both leaks the suite's envelopes into it and lets whatever is already there
+# reach a fixture that used to recall from it.
+export HISTFILE=/dev/null
 shopt -s cmdhist lithist
+_flush_hist_mark=$HISTCMD
 PROMPT_COMMAND='_flush_prompt_count=$((_flush_prompt_count + 1))
 printf "%s" "$_flush_prompt_count" > "$FLUSH_PROMPT_COUNT"
-if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN"; fi
-if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"; fi
+if [ -f "$FLUSH_DRAIN" ]; then rm -f "$FLUSH_STRAND" "$FLUSH_DRAIN" "$FLUSH_QUEUE"; fi
+if [ -f "$FLUSH_ARM" ]; then rm -f "$FLUSH_ARM"; : > "$FLUSH_STRAND"
+  _flush_lines=$(( HISTCMD - _flush_hist_mark ))
+  if [ "$_flush_lines" -gt 0 ]; then
+    history "$_flush_lines" \
+      | sed "s/^[[:space:]]*[0-9][0-9]*[[:space:]][[:space:]]//" > "$FLUSH_QUEUE"
+  fi
+fi
+_flush_hist_mark=$HISTCMD
 if [ -s "$FLUSH_SIGNAL" ]; then _flush_chan="$(cat "$FLUSH_SIGNAL")"; : > "$FLUSH_SIGNAL"
   tmux wait-for -S "$_flush_chan"; fi'
 _flush_probe() {   # ordered behind every key flush sent
   tmux wait-for -S "$(cat "$FLUSH_PROBE_CHAN")"
 }
 bind -x '"\C-t": _flush_probe'
+_flush_recall() { # the harness handing its queued body back, whole
+  [ -s "$FLUSH_QUEUE" ] || return 0
+  READLINE_LINE="$(cat "$FLUSH_QUEUE")"
+  READLINE_POINT=${#READLINE_LINE}
+}
+# BOTH SPELLINGS OF Up. tmux sends the application-cursor form to a pane whose
+# terminal asked for it, and binding only one leaves the recall key working
+# until a fixture pane happens to be in the other mode.
+bind -x '"\e[A": _flush_recall'
+bind -x '"\eOA": _flush_recall'
 RC
 cat > "$RUN_ROOT/collars/flushable.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROMPT_COUNT=$RUN_ROOT/flush-prompt-count FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
+GANG_LAUNCH="sh -c 'FLUSH_STRAND=$RUN_ROOT/flush-strand FLUSH_DRAIN=$RUN_ROOT/flush-drain FLUSH_ARM=$RUN_ROOT/flush-arm FLUSH_QUEUE=$RUN_ROOT/flush-queue FLUSH_SIGNAL=$RUN_ROOT/flush-signal FLUSH_PROMPT_COUNT=$RUN_ROOT/flush-prompt-count FLUSH_PROBE_CHAN=$RUN_ROOT/flush-probe-chan ENV=$RUN_ROOT/flush-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 GANG_QUEUE_RECALL_KEY='Up'
 collar_input() { # a composer that spans lines, and reads as the hint when empty
@@ -403,6 +439,11 @@ fi
 parked_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked)"
 contains "gang records exactly which body the harness parked" \
   "$parked_record" "MARK_PARKED"
+# THE RECORD IS A PAIR NOW, and a case that puts one half back has put nothing
+# back: without the body there is nothing authoritative to read a recall
+# against, so flush refuses on the missing body rather than on whatever that
+# case is about. Both halves are captured here and restored together below.
+parked_body_record="$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)"
 
 # Nothing to read a composer back against is a refusal, not a blind keypress:
 # without the record, the recall key would load and submit whatever happened to
@@ -457,6 +498,7 @@ tmux set-option -uw -t "$parked_id" @gl_turn
 # The composer must still read as parked. With the queue drained, there is
 # nothing to recover, and a recorded body is not evidence that outlives it.
 tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
+tmux set-option -w -t "$parked_id" @gl_parked_body "$parked_body_record"
 if drained_out="$("$GANG" flush parked 2>&1)"; then
   drained_rc=0
 else
@@ -492,6 +534,7 @@ excludes "so it cannot be read as a message that never arrived" \
 # Hand the world back the way the next case expects to find it: this one
 # retired the record on purpose, and the readback cases below need it.
 tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
+tmux set-option -w -t "$parked_id" @gl_parked_body "$parked_body_record"
 
 # THE READBACK IS LOAD-BEARING, AND IT IS THE WHOLE BODY. Here the recall key
 # loads a message that begins with exactly the recorded one and carries extra
@@ -636,8 +679,20 @@ rm -f "$RUN_ROOT/claude-placeholder"
 if multi_flush_out="$("$GANG" flush parked 2>&1)"; then
   pass "the multiline body flushes once the readback stops comparing renderings"
 else
+  # A REFUSAL HERE STRANDS A DRAFT, AND THE NEXT BARRIER WOULD SWALLOW IT.
+  # flush_settle types its command into this same composer and waits for the
+  # channel that command writes; a body left unsent above it becomes that
+  # command's first words, nothing writes the channel, and a named red turns
+  # into a barrier nobody answers — which is how this case last cost the run
+  # every check after it. The draft is abandoned so the failure stays a
+  # failure, and what the recall actually loaded is reported beside the
+  # refusal, because a refusal that names only itself leaves the next reader
+  # to re-derive the difference from nothing.
+  tmux send-keys -t "$parked_id" C-c
   fail "the multiline body flushes once the readback stops comparing renderings" \
-    "$multi_flush_out"
+    "$multi_flush_out
+  what the recall loaded: [$(tmux show-options -wqv -t "$parked_id" @gl_staged_box)]
+  what gang recorded:     [$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)]"
 fi
 equal "and a verified multiline flush retires the parked body record" "" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_parked_body)"
@@ -664,6 +719,10 @@ else
   pass "the stranding case starts from a parked multiline body"
 fi
 rm -f "$RUN_ROOT/claude-placeholder"
+# THE QUEUE HOLDS THIS INSTEAD, so it is armed like any other park: what the
+# recall hands back is what the harness swallowed, and a submission the harness
+# ran is not in its queue at all.
+: > "$RUN_ROOT/flush-arm"
 tmux send-keys -l -t "$parked_id" "MARK_STRANDED_SOMETHING_ELSE"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
@@ -709,6 +768,8 @@ else
   fail "the one-letter tamper changes the body it is built from" \
     "got [$letter_body]"
 fi
+# Armed, so the tampered text is what the harness's queue now holds.
+: > "$RUN_ROOT/flush-arm"
 tmux send-keys -l -t "$parked_id" "$letter_tampered"
 tmux send-keys -t "$parked_id" Enter
 flush_settle
