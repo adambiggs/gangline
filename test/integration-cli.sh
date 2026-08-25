@@ -838,6 +838,19 @@ printf 'ordinary transcript\n%s\n%s\n  %s\n  %s\n  HUMAN_DRAFT\n%s\n%s\n%s\n' \
 cp "$claude_nux_capture" "$claude_nux_dir/clipped"
 printf '%s\n%s\n' "$claude_nux_rule" '❯ clipped body' \
   >> "$claude_nux_dir/clipped"
+# A SECOND, UNRELATED DIALOG. The rule that recognises the frame is only worth
+# anything if it was never fitted to the one dialog that motivated it, so the
+# world carries a model picker captured from a different claude build. It shares
+# no word of its title or its guide with the NUX above; what it shares is the
+# chrome. Its capture is 120 columns wide, so its window is too — a band is a
+# band because it spans the pane, and a narrower pane pads it back into prose.
+claude_picker_capture="$ROOT/test/fixtures/claude-model-picker.txt"
+# Read out of the captures, never restated here: a test that spelled these out
+# would agree with itself while the collar read something else entirely. The
+# collar trims what it prints, so the expectations are trimmed the same way.
+claude_picker_title="$(sed -n '2p' "$claude_picker_capture" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+claude_nux_title_bare="$(printf '%s' "$claude_nux_title" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+cp "$claude_picker_capture" "$claude_nux_dir/picker"
 claude_nux_session="claude-nux-$$"
 tmux new-session -d -s "$claude_nux_session" -n overlay -x 100 -y 24 \
   "cat '$claude_nux_dir/overlay'; cat"
@@ -845,6 +858,9 @@ for claude_nux_case in transcript-tail reworded prose-only message-body clipped;
   tmux new-window -d -t "=$claude_nux_session" -n "$claude_nux_case" \
     "cat '$claude_nux_dir/$claude_nux_case'; cat"
 done
+tmux new-window -d -t "=$claude_nux_session" -n picker \
+  "cat '$claude_nux_dir/picker'; cat"
+tmux resize-window -t "=$claude_nux_session:picker" -x 120 -y 30
 claude_nux_status() { # $1 window -> shipped collar_input status
   local rc=0
   ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
@@ -861,7 +877,15 @@ equal "the captured NUX immediately before a composer hides that box" "1" \
   "$(claude_nux_status overlay)"
 equal "the captured rows followed by transcript prose leave the composer readable" \
   "0" "$(claude_nux_status transcript-tail)"
-equal "a reworded captured dialog narrows back to composer evidence" "0" \
+# THIS EXPECTATION CHANGED, and the old one was wrong about the harness rather
+# than merely strict. It required a reworded dialog to fall back to ordinary
+# composer evidence, on the reasoning that recognition was pinned to exact copy
+# and copy that moved could no longer be trusted. The reword then happened:
+# 2.1.241 dropped the guide row this pinned, the pin stopped matching, and the
+# dialog owned input above a live composer again with nothing saying so — which
+# is the whole of issue #143. Recognition is keyed to the frame now, so a
+# dialog whose words move is still a dialog, and that is the repair.
+equal "a reworded captured dialog is still a dialog" "1" \
   "$(claude_nux_status reworded)"
 equal "the two pinned prose rows without native chrome leave the composer readable" \
   "0" "$(claude_nux_status prose-only)"
@@ -871,6 +895,30 @@ contains "and a human draft beside that prose remains visible" \
   "$(claude_nux_text message-body)" "HUMAN_DRAFT"
 equal "a clipped composer behind the dialog keeps its clipped verdict" "2" \
   "$(claude_nux_status clipped)"
+equal "an unrelated captured dialog sharing no copy is recognised too" "1" \
+  "$(claude_nux_status picker)"
+
+# NAMING IS A SEPARATE QUESTION FROM OWNERSHIP, and it is the half issue #143
+# asks a failed send to answer. The reader above decides whether a box may be
+# typed into; this one only supplies the title a refusal quotes, so it must
+# stay silent everywhere the screen is ordinary.
+claude_overlay_title() { # $1 window -> the shipped collar's overlay title, or empty
+  ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+    '. "$1"; collar_overlay "$2"' fixture "$claude_collar" \
+    "=$claude_nux_session:$1" || true
+}
+equal "the overlay reader names the dialog over a live composer" \
+  "$claude_nux_title_bare" "$(claude_overlay_title overlay)"
+equal "and names an unrelated dialog it was never fitted to" \
+  "$claude_picker_title" "$(claude_overlay_title picker)"
+equal "a reworded dialog is still named rather than going quiet" \
+  "$claude_nux_title_bare" "$(claude_overlay_title reworded)"
+equal "an ordinary composer has no dialog to name" "" \
+  "$(claude_overlay_title transcript-tail)"
+equal "and neither does the same prose carried inside a message" "" \
+  "$(claude_overlay_title message-body)"
+equal "nor the pinned prose without any native chrome" "" \
+  "$(claude_overlay_title prose-only)"
 tmux kill-session -t "=$claude_nux_session"
 
 claude_unhooked_root="$RUN_ROOT/claude'guard"

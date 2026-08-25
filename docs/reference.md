@@ -353,6 +353,15 @@ them: the collar's styled reading strips it, so it never reaches a refusal —
 `gang capture` is where it looks like a draft, and `gang composer` is the reading
 that settles it.
 
+Where a collar can recognise its harness's own dialog chrome, a refusal that
+meets one names it. An overlay dialog can own the keyboard while the composer
+under it still reads as usable, so a delivery into that pane goes nowhere; the
+refusal quotes the dialog's visible title and says to answer it. Recognition is
+structural — the frame rather than the wording — so it survives a harness
+rewording its dialogs, and it decides nothing: a collar that declares no reader,
+a pane that cannot be read, and a frame nothing recognises each cost the
+sentence, not the delivery.
+
 An expired busy witness alone does not veto delivery: could-not-determine
 falls through to direct box evidence, a provably empty composer proceeds
 under the full submission verification, and anything less refuses naming both
@@ -1208,6 +1217,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own. `claude-code` declares 4: a composer is drawn, but it belongs to a selected in-process subagent, so keys typed there reach the child. Gangline carries 4 through as its own refusal rather than flattening it into absence |
+| `collar_overlay target` | optional; print the visible title of a native overlay dialog owning the screen, return 1 when none is recognised, and 3 when the pane could not be read. Naming only: Gangline quotes it in a refusal a delivery already reached, so an absent reader, an unreadable pane and an unrecognised frame each cost the sentence and never the decision |
 | `collar_context_lights model` | optional; print this collar's default `yellow,red` or `yellow%,red%` thresholds for that model, or return 1 with no output where it has no default for it. Consulted only where the collar also declares `collar_context`. A malformed spec, or any other status, is refused under the collar's name rather than the operator's setting |
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |

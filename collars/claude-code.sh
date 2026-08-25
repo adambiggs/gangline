@@ -679,19 +679,30 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       gsub(/\033\[2m[^\033]*/, "")
       gsub(/\033\[[0-9;]*[A-Za-z]/, "")   # the rest of -e: attributes, zero width
       line[NR] = $0; if (NF) last = NR
-      # THE AUTO-MODE ENVIRONMENT NUX OWNS INPUT even when its overlay leaves
-      # the live composer painted underneath. Observed on claude-code 2.1.239:
-      # it fires no PermissionRequest hook, so returning that underneath box as
-      # usable lets status call the stranded agent idle and lets delivery spend
-      # its safety checks on a composer that cannot receive keys.
+      # AN OVERLAY DIALOG OWNS INPUT even when it leaves the live composer
+      # painted underneath. Observed on claude-code 2.1.239 as the auto-mode
+      # environment NUX: it fires no PermissionRequest hook, so returning that
+      # underneath box as usable lets status call the stranded agent idle and
+      # lets delivery spend its safety checks on a composer that cannot receive
+      # keys.
+      #
+      # RECOGNISED BY ITS CHROME, NOT BY ITS WORDS. This was pinned to the exact
+      # title and exact guide row of one dialog, and both rotted: 2.1.241
+      # dropped the guide this pinned, so the pin stopped matching and the
+      # dialog owned input above a live composer again with nothing saying so.
+      # What does not rot is the frame — a band of ▔ drawn from the left edge,
+      # the title touching it, and a guide row of key hints closing it. Driven
+      # against three unrelated native dialogs on 2.1.239 and 2.1.243.
+      #
+      # `Esc to ` is the footer idiom of this harness and is already the anchor
+      # GANG_OCCUPIED_REGEX spends; the capital is what keeps the lowercase
+      # "esc to interrupt" of a live turn out of it.
       plain = $0
       sub(/^[[:space:]]*/, "", plain); sub(/[[:space:]]*$/, "", plain)
-      if ($0 ~ /^▔+$/) auto_nux_band = NR
-      if (plain == "Teach auto mode about your environment?" && auto_nux_band == NR - 1) {
-        auto_nux_title = NR
-      }
-      if (plain == "←/→ to change usage · Enter to continue · Esc to cancel" && auto_nux_title && auto_nux_title < NR) {
-        auto_nux_guide[NR] = auto_nux_title
+      if ($0 ~ /^▔+$/ && length($0) > 20) dialog_band = NR
+      if (plain != "" && dialog_band && dialog_band == NR - 1) dialog_title = NR
+      if (plain ~ /Esc to / && dialog_title && dialog_title < NR) {
+        dialog_guide[NR] = dialog_title
       }
       t = $0; n = gsub(/─/, "", t)
       if (n && t == "") { prev = rule; prevw = rulew; rule = NR; rulew = n }
@@ -730,15 +741,15 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       # adjacency instead, and the agent switcher drawn under a named frame is
       # as long as the agent count, so the bound would only misread it.
       if (!named && last - rule > 5) exit 1
-      # TEXT ALONE IS NOT THE VERDICT. The pure dialog band must touch its
-      # title, and the guide must be the last nonblank row before the opening
-      # composer rule. A body carrying the same prose lives after that rule,
-      # so it remains readable; ordinary transcript prose without the native
-      # band does too. These positions are the second question paired with the
-      # exact pinned copy, not a general parser for native dialogs.
+      # CHROME ALONE IS NOT THE VERDICT EITHER. The band must touch its title,
+      # and the guide must be the last nonblank row before the opening composer
+      # rule. A body carrying the same rows lives AFTER that rule, so a message
+      # cannot hide the box it is sitting in; ordinary transcript prose without
+      # the native band does not reach this at all. Those positions are the
+      # second question the chrome is paired with.
       before = opened - 1
       while (before && line[before] ~ /^[[:space:]]*$/) before--
-      if (auto_nux_guide[before]) exit 1
+      if (dialog_guide[before]) exit 1
       seen = 0; rows = 0
       for (i = opened + 1; i < rule; i++) {
         s = line[i]
@@ -790,4 +801,65 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
     }')" || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
   printf '%s' "$box" | tr -d '\302\240'
+}
+
+# WHAT IS ON THE SCREEN WHEN THE PASTE WENT NOWHERE. A native dialog painted
+# over a live composer swallows delivery, and the failure gang could report was
+# only that the box read back unchanged — true, and no help. This names the
+# thing that owns the screen, so the report says what to answer instead of
+# leaving it to be discovered by experiment.
+#
+# It decides nothing. collar_input already answers whether the box is usable;
+# this only supplies the title for a message, so an unreadable pane or an
+# unrecognised frame costs a sentence rather than a delivery.
+#
+# STRUCTURE, NOT COPY. Driven against three unrelated dialogs — the auto-mode
+# environment NUX pinned in test/fixtures on 2.1.239, and a model picker and a
+# permission prompt captured on 2.1.243. A frame is a band drawn from the left
+# edge (▔ over a live composer, ─ where the dialog replaces it), the first
+# nonblank row under it as the title, and a row of key hints closing the region
+# it opened. The caret is skipped as a title because that is the first line of
+# the composer, never the title of a dialog; the band must start at column zero
+# because a body rendered in the composer always carries the gutter, so the
+# same glyphs indented are text somebody sent.
+collar_overlay() { # $1 = tmux target; prints the visible title of an overlay
+                   # dialog on screen, 1 = none recognised, 3 = pane unreadable
+  local pane title
+  pane="$(tmux capture-pane -pJ -e -t "$1")" || return 3
+  title="$(printf '%s\n' "$pane" | awk '
+    function bare(s,   t) { t = s; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t); return t }
+    function band(s,   t, n) {
+      if (s ~ /^[[:space:]]/) return 0
+      t = s; gsub(/[[:space:]]/, "", t)
+      if (length(t) < 20) return 0
+      n = t; gsub(/▔/, "", n); if (n == "") return 1
+      n = t; gsub(/─/, "", n); if (n == "") return 1
+      return 0
+    }
+    { gsub(/\033\[2m[^\033]*/, ""); gsub(/\033\[[0-9;]*[A-Za-z]/, "")
+      line[NR] = $0; if (NF) last = NR }
+    END {
+      for (i = 1; i <= last; i++) {
+        if (!band(line[i])) continue
+        t = 0
+        for (j = i + 1; j <= last; j++) {
+          if (line[j] ~ /^[[:space:]]*$/) continue
+          if (band(line[j])) break
+          t = j; break
+        }
+        if (!t) continue
+        if (line[t] ~ /^[[:space:]]*❯/) continue
+        e = last
+        for (j = t + 1; j <= last; j++) if (band(line[j])) { e = j - 1; break }
+        g = 0
+        for (j = e; j > t; j--) if (line[j] !~ /^[[:space:]]*$/) { g = j; break }
+        if (!g) continue
+        if (bare(line[g]) !~ /Esc to /) continue
+        if (bare(line[t]) == "") continue
+        print bare(line[t]); exit 0
+      }
+      exit 1
+    }')" || return 1
+  [ -n "$title" ] || return 1
+  printf '%s' "$title" | tr -d '\302\240'
 }

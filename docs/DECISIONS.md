@@ -151,15 +151,36 @@ no session-record machinery is built unless a reworded hint supplies the
 evidence to reopen that choice. A cleared staged record is evidence the
 obstruction is gone, never retroactive proof the recorded body was delivered.
 
-## Overlay occupancy needs a structural second question
+## An overlay is recognised by its chrome, and named where delivery fails
 
-The auto-mode environment rendering is pinned to the live claude-code 2.1.239
-frame in `test/fixtures/claude-auto-mode-environment.txt`. Its pure top band
-must touch the exact title and its exact guide must be the last nonblank row
-before the composer opens, so the same prose inside a message cannot hide that
-message's box. A reworded or rearranged dialog narrows classification back to
-ordinary composer evidence; either change reopens the choice between updating
-the exact pin and adding a version gate.
+A dialog painted over a live composer owns the keyboard while the box under it
+still reads as usable, so occupancy has to be settled by the collar's own reader
+rather than by an occupancy regex a drawn composer dismisses.
+
+Recognition is keyed to the frame, not to the words in it. This was pinned to
+one dialog's exact title and exact guide row and rotted exactly as a copy pin
+does: claude-code 2.1.241 dropped the guide the collar pinned, the pin stopped
+matching, and the dialog owned input above a live composer again with nothing
+saying so. What does not move between dialogs or between builds is the chrome —
+a band drawn from the left edge, a title touching it, and a row of key hints
+closing the region it opened — and the positional questions the pin was already
+paired with still answer the forgery case: a body carrying the same rows lives
+after the composer's opening rule, so a message cannot hide the box it sits in.
+The claim is held to captures of unrelated dialogs from more than one build,
+because a rule fitted to a single frame is a pin with extra steps.
+
+Suppressing the dialog at launch is not available and is not to be reattempted.
+On claude-code 2.1.241 no flag, environment variable or settings key turns the
+onboarding prompts off, and the gating state lives in the operator's global
+`~/.claude.json` beside their permission mode. A collar does not write operator
+configuration, so the remedy is detection rather than prevention.
+
+Detection is also a report. A send whose verification fails asks the collar what
+is on the screen and quotes the dialog's visible title in the refusal, because
+"the box read back unchanged" is accurate and useless: that a dialog was there,
+and that answering it is the repair, was otherwise discoverable only by
+experiment. Naming decides nothing — a collar with no reader, an unreadable
+pane and an unrecognised frame each cost a sentence, never a delivery.
 
 ## A refused delivery is parked, a failed one is not
 
