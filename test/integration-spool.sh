@@ -78,10 +78,10 @@ collar_input() { # once per armed drain, report what the spool and the lock look
   # never arrived without saying how far it got; the difference between "never
   # entered the reader" and "entered and was never released" is the whole
   # diagnosis. Armed by the case, so it costs nothing to every other drain here.
-  # THE WORKER, NOT THE HOOK THAT FORKED IT. `$$` is the shell that started,
-  # which for a drain is the hook process — and that exits the instant it
-  # disowns the drain, so every worker read back as gone whatever it was doing.
-  # $BASHPID is the subshell actually running this read.
+  # THE WORKER, NOT THE HOOK THAT FORKED IT. The starting shell's own pid is,
+  # for a drain, the hook process — and that exits the instant it disowns the
+  # drain, so every worker read back as gone whatever it was doing. BASHPID is
+  # the subshell actually running this read.
   cross_step() { [ -e "$RUN_ROOT/cross-trace" ] || return 0
     printf '%s=%s\n' "\$1" "\${BASHPID:-\$\$}" >> "$RUN_ROOT/cross-trace"; }
   if [ -f "$RUN_ROOT/cross-block" ]; then
