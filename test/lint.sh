@@ -187,6 +187,94 @@ if [ -n "$shell_leaks" ]; then
   exit 1
 fi
 
+# A COMMENT INSIDE AN EXPANDED HEREDOC IS NOT A COMMENT YET. These fixtures
+# write collars and hook scripts through `cat <<TAG`, and with the delimiter
+# unquoted the shell expands the body before anything is a comment at all: a
+# backtick pair in explanatory prose becomes command substitution, runs its
+# contents, and drops the result into the file being written. That is how a
+# `$$` in a comment about pids came to run a pid as a command every time the
+# spool fixture generated its collar, and the words around it never reached
+# the collar. The prose reads fine in the source, which is what makes it worth
+# a check rather than a habit — quote the delimiter, or write the prose without
+# backticks.
+#
+# Only backticks are refused, and only where the body is expanded. `$(...)` in
+# an expanded body is how these fixtures deliberately interpolate the run's own
+# paths, so refusing it would refuse the mechanism; a backtick has no such use
+# here, since every real substitution in this tree is already written `$(...)`.
+heredoc_awk='
+  FILENAME ~ /lint\.sh$/ { next }       # the checker has to name what it refuses
+  { line = $0
+    probe = line
+    gsub(/<<</, "   ", probe)           # a here-string opens no body
+    if (inbody) {
+      t = line
+      if (dash) sub(/^\t+/, "", t)
+      if (t == delim) { inbody = 0; next }
+      if (expand) {
+        scrub = line
+        gsub(/\\./, "", scrub)
+        if (index(scrub, "`") > 0) print FILENAME ":" FNR ":" $0
+      }
+      next
+    }
+    if (match(probe, /<<-?[[:space:]]*[A-Za-z_'"'"'"\\][A-Za-z0-9_'"'"'"\\]*/)) {
+      tok = substr(probe, RSTART, RLENGTH)
+      sub(/^<</, "", tok)
+      dash = 0
+      if (substr(tok, 1, 1) == "-") { dash = 1; sub(/^-/, "", tok) }
+      sub(/^[[:space:]]*/, "", tok)
+      expand = (tok ~ /^['"'"'"\\]/) ? 0 : 1
+      gsub(/['"'"'"\\]/, "", tok)
+      delim = tok
+      inbody = 1
+    }
+  }
+'
+
+# A CHECKER PROVES ITSELF BEFORE IT JUDGES. Both directions again: the safe
+# calibration carries the quoted delimiter, the escaped backtick, and the
+# here-string, because each of those is a way this predicate could have been
+# written to refuse the tree it is supposed to pass.
+heredoc_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+cat > "$heredoc_cal/bad" <<'CAL'
+cat > out <<SH
+# a `$$` in prose is a substitution here
+echo "`hostname`"
+SH
+cat > out2 <<-SH
+	# indented body, `date` still runs
+SH
+CAL
+cat > "$heredoc_cal/safe" <<'CAL'
+cat > out <<'SH'
+# a `$$` in prose is prose, because the delimiter is quoted
+SH
+cat > out2 <<SH
+# an escaped \`$$\` reaches the file as written
+echo "\$(date)"
+SH
+grep -q x <<<"a `backtick outside any body` b"
+# a `backtick` in an ordinary comment
+CAL
+cal_bad="$(awk "$heredoc_awk" "$heredoc_cal/bad" | wc -l | tr -d ' ')"
+cal_safe="$(awk "$heredoc_awk" "$heredoc_cal/safe")"
+rm -rf -- "$heredoc_cal"
+if [ "$cal_bad" != 3 ] || [ -n "$cal_safe" ]; then
+  printf '%s\n' \
+    "lint: the expanded-heredoc check does not hold its own calibration, so its verdict about the tree means nothing." \
+    "rejected $cal_bad of 3 known-bad body lines; wrongly rejected: ${cal_safe:-none}" >&2
+  exit 1
+fi
+
+heredoc_ticks="$(awk "$heredoc_awk" test/*.sh collars/*.sh bin/gang)"
+if [ -n "$heredoc_ticks" ]; then
+  printf '%s\n' \
+    "lint: a backtick in an expanded heredoc body runs as a command when the file is written — quote the delimiter, or drop the backticks:" \
+    "$heredoc_ticks" >&2
+  exit 1
+fi
+
 # .githooks is globbed rather than listed: hooksPath points the whole directory
 # at git, so a hook added later is a shell file this repo runs, and it should
 # not also need an edit here to be read.
