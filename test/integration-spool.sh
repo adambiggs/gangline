@@ -57,18 +57,7 @@ contains "because live-only never parks" "$super_out" "--live-only never parks"
 
 cross_ready_one="test-cross-ready-one-$$"
 cross_ready_two="test-cross-ready-two-$$"
-# RELEASED BY A SIGNAL, NOT BY HANDING A LOCK ROUND. These held each worker
-# inside the reader on `wait-for -L`, released by one `wait-for -U` from here
-# that each worker passed on to the next. That hand-over does not arrive: with
-# the statuses recorded, both workers reach their -L and neither ever returns
-# from it, while the -U here reports success — so the lock is taken and nobody
-# is given it. A signal is latched instead of handed over, so it cannot be lost
-# to arrival order and needs no chain; it is also the form every other barrier
-# in this suite already uses, and the wait ceiling bounds it, so a stall stays
-# a verdict rather than a park. One channel per worker, because a latched
-# signal wakes one waiter.
-cross_release_one="test-cross-release-one-$$"
-cross_release_two="test-cross-release-two-$$"
+cross_release="test-cross-release-$$"
 cross_holder_claimed="test-cross-holder-claimed-$$"
 cross_holder_release="test-cross-holder-release-$$"
 cat > "$RUN_ROOT/collars/spoolable.sh" <<SH
@@ -105,15 +94,14 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     if mkdir "$RUN_ROOT/cross-slot-one" 2>/dev/null; then
       cross_step ready-one
       tmux wait-for -S "$cross_ready_one"
-      cross_step signalled
-      tmux wait-for "$cross_release_one" || cross_release_rc=\$?
     else
       cross_step ready-two
       tmux wait-for -S "$cross_ready_two"
-      cross_step signalled
-      tmux wait-for "$cross_release_two" || cross_release_rc=\$?
     fi
+    cross_step signalled
+    tmux wait-for -L "$cross_release" || cross_release_rc=\$?
     cross_step "released-rc-\$cross_release_rc"
+    tmux wait-for -U "$cross_release"
   fi
   cross_step "read-lock-\$([ -L "\$lock" ] && printf held || printf free)"
   if [ -f "$RUN_ROOT/claim-watch" ] && [ -L "\$lock" ]; then
@@ -134,8 +122,9 @@ collar_input() { # once per armed drain, report what the spool and the lock look
     cross_step holder-claimed
     tmux wait-for -S "$cross_holder_claimed"
     cross_holder_rc=0
-    tmux wait-for "$cross_holder_release" || cross_holder_rc=\$?
+    tmux wait-for -L "$cross_holder_release" || cross_holder_rc=\$?
     cross_step "holder-released-rc-\$cross_holder_rc"
+    tmux wait-for -U "$cross_holder_release"
   fi
   spool_real_input "\$1"
 }
@@ -369,6 +358,8 @@ cross_barrier() { # $1 = waiter pid, $2 = what it was waiting for
 : > "$RUN_ROOT/cross-block"
 : > "$RUN_ROOT/cross-holder"
 rm -rf -- "$RUN_ROOT/cross-slot-one"
+tmux wait-for -L "$cross_release"
+tmux wait-for -L "$cross_holder_release"
 tmux wait-for "$cross_ready_one" &
 cross_ready_one_waiter=$!
 tmux wait-for "$cross_ready_two" &
@@ -390,8 +381,7 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 cross_barrier "$cross_ready_one_waiter" "the first worker to reach the reader"
 cross_barrier "$cross_ready_two_waiter" "the second worker to reach the reader"
 rm -f -- "$RUN_ROOT/cross-block"
-tmux wait-for -S "$cross_release_one"
-tmux wait-for -S "$cross_release_two"
+tmux wait-for -U "$cross_release"
 cross_barrier "$cross_holder_waiter" "the worker holding the pane lock to claim"
 cross_barrier "$cross_loser_waiter" "the crossed worker that lost to finish"
 contains "one crossed worker owns the whole queue before the loser finishes" \
@@ -403,7 +393,7 @@ excludes "no crossed worker claims before owning the pane lock" \
   "$(cat "$cross_log")" "unlocked"
 tmux wait-for "gang-spool-drain-$parker_id" &
 cross_winner_waiter=$!
-tmux wait-for -S "$cross_holder_release"
+tmux wait-for -U "$cross_holder_release"
 cross_barrier "$cross_winner_waiter" "the holding worker to finish its drain"
 rm -f -- "$RUN_ROOT/bin/mv"
 cross_pane="$(pane parker)"
