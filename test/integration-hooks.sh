@@ -3143,6 +3143,111 @@ refuses "a cursor resting on main does not make the child composer the agent's" 
   "$GANG" composer cursorframe
 "$GANG" drop cursorframe >/dev/null
 
+# A TURN BOUNDARY NOBODY RAISES. Every drain in gang hangs off an event the
+# harness announces. Measured on claude-code 2.1.241 against a disposable team,
+# three denials by two routes: a turn a person ends by declining a permission
+# dialog announces NOTHING — no Stop, no StopFailure, no PermissionDenied, no
+# PostToolUseFailure, and no late Notification inside 160s — while the pane sits
+# visibly at rest. An entry spooled before that denial was still queued 98s
+# later with the bracket reading open. The bracket's own bound is the only fact
+# gang has about that window, and until now it bought an idle roster verdict and
+# nothing else.
+#
+# The bracket is deliberately NOT rewritten: stamping it closed would turn a
+# could-not-determine verdict into a confident idle one, and a tool call longer
+# than GANG_TURN_LIMIT is exactly the turn that would then be typed into. The
+# two legs below are the two halves of that trade — the attempt is made, and the
+# ordinary guards still decide it.
+cat > "$RUN_ROOT/collars/abandoned.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' abandoned"
+GANG_STOP_HOOK=1
+GANG_MIDTURN_INPUT=steer
+eval "\$(declare -f collar_input | sed '1s/collar_input/abandoned_base_input/')"
+collar_input() { # a per-window draft, so two agents can differ in one run
+  local drafted
+  drafted="\$(tmux display-message -p -t "\$1" '#{window_id}')"
+  [ ! -e "$RUN_ROOT/abandoned-draft-\${drafted#@}" ] \
+    || { printf 'half written operator line'; return 0; }
+  abandoned_base_input "\$@"
+}
+SH
+abandoned_settle() { # $1 window id, $2 tag; return once the fixture prompt is alone
+  local channel="abandoned-settled-$2-$$"
+  tmux send-keys -l -t "$1" "clear; tmux wait-for -S $channel"
+  tmux send-keys -t "$1" Enter
+  tmux wait-for "$channel"
+}
+
+# THE BRACKET IS STAMPED, NOT WAITED OUT. A bound reached is a comparison
+# against a recorded second, so an ancient stamp reaches the same state the
+# production 300s reaches, with no clock in the test at all.
+"$HITCH" freeagent -c abandoned -d /tmp >/dev/null
+freeagent_id="$(window_id freeagent)"
+freeagent_pane="$(tmux list-panes -t "$freeagent_id" -F '#{pane_id}')"
+: > "$RUN_ROOT/abandoned-draft-${freeagent_id#@}"
+printf 'MARK_EXPIRY_FREE' |
+  "$GANG" send --to freeagent --from tester --stdin >/dev/null
+contains "a message parks against an occupied composer" \
+  "$("$GANG" status freeagent)" "spooled: 1"
+rm -f "$RUN_ROOT/abandoned-draft-${freeagent_id#@}"
+abandoned_settle "$freeagent_id" free
+tmux set-option -w -t "$freeagent_id" @gl_turn "open 1"
+tmux wait-for "gang-spool-drain-$freeagent_id" &
+freeagent_waiter=$!
+freeagent_state="$(state_word freeagent)"
+wait "$freeagent_waiter"
+contains "an expired bracket is still could-not-determine, not idle" \
+  "$freeagent_state" "turn-bracket bound reached"
+excludes "and the entry the boundary never came for is gone from the queue" \
+  "$("$GANG" status freeagent)" "spooled:"
+# source-guard: producer@63a2c55f7210: the sender parked this body and typed nothing, so the only writer of the marker into that pane is the drain the expiry dispatched
+contains "because the expiry offered the delivery opportunity nobody raised" \
+  "$(pane freeagent)" "MARK_EXPIRY_FREE"
+
+# A LATER REAL EVENT RE-WITNESSES CLEANLY. The bracket was left exactly as the
+# harness wrote it, so the next native pair opens and closes it as usual and no
+# closed-while-busy state is left behind for the next reader to puzzle over.
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  TMUX_PANE="$freeagent_pane" "$GANG" hook >/dev/null
+contains "a native prompt after the expiry reopens the bracket" \
+  "$(tmux show-options -wqv -t "$freeagent_id" @gl_turn)" "open"
+equal "and the agent reads busy again on it" "-busy-" \
+  "$(state_word freeagent)"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$freeagent_pane" "$GANG" hook >/dev/null
+contains "a native stop after the expiry closes it" \
+  "$(tmux show-options -wqv -t "$freeagent_id" @gl_turn)" "closed"
+equal "and the agent reads idle on it" "~idle~" \
+  "$(state_word freeagent)"
+"$GANG" drop freeagent >/dev/null
+
+# THE OTHER HALF: THE EXPIRY BUYS AN ATTEMPT, NOT AN INJECTION. A tool call
+# longer than GANG_TURN_LIMIT reaches this same expired bracket, and the guards
+# that already refuse an ordinary send are what refuse this drain too. Nothing
+# is typed and no entry leaves the queue.
+"$HITCH" heldagent -c abandoned -d /tmp >/dev/null
+heldagent_id="$(window_id heldagent)"
+: > "$RUN_ROOT/abandoned-draft-${heldagent_id#@}"
+printf 'MARK_EXPIRY_HELD' |
+  "$GANG" send --to heldagent --from tester --stdin >/dev/null
+tmux set-option -w -t "$heldagent_id" @gl_turn "open 1"
+heldagent_before="$(pane heldagent)"
+tmux wait-for "gang-spool-drain-$heldagent_id" &
+heldagent_waiter=$!
+"$GANG" status heldagent >/dev/null
+wait "$heldagent_waiter"
+contains "an expired bracket over an occupied composer keeps its entry" \
+  "$("$GANG" status heldagent)" "spooled: 1"
+# source-guard: whole-surface@4cbcee390303: the claim is that NOTHING wrote to this pane, so every visible byte is the evidence and any producer at all would falsify it
+equal "and the pane is byte-for-byte where it was" \
+  "$heldagent_before" "$(pane heldagent)"
+excludes "so nothing of the parked body reached the screen" \
+  "$(pane heldagent)" "MARK_EXPIRY_HELD"
+"$GANG" drop heldagent >/dev/null
+
 # GATED TEARDOWN. `down` is the one irreversible verb, so it is exercised
 # against a session of its own: a guard that is missing must not end this run.
 teardown_session="teardown-probe-$$"

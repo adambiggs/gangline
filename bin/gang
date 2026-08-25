@@ -6948,8 +6948,32 @@ glyph_write() { # $1 = window id, $2 = state phrase
 
 STATE_NOW_RESULT=""
 
+# A BRACKET THAT REACHED ITS BOUND IS A BOUNDARY NOBODY RAISED. Every other
+# drain hangs off an event the harness announces. Measured on claude-code
+# 2.1.241: a turn a person ends by declining a permission dialog announces
+# NOTHING — not Stop, not StopFailure, not PermissionDenied, and no late
+# Notification — so an agent left in that state holds its mail until something
+# else happens to it, which for an agent nobody writes to again is never. The
+# expiry is gang's OWN fact and it is already what licenses an idle verdict, so
+# the first time gang forms it the window is offered the delivery opportunity
+# its owner never raised.
+#
+# THE BRACKET IS NOT REWRITTEN HERE. Stamping it closed would turn a
+# could-not-determine verdict into a confident idle one, and a tool call longer
+# than GANG_TURN_LIMIT is exactly the turn that would then be typed into. What
+# expiry buys is the attempt; spool_drain's own busy witness, the collar's
+# mid-turn declaration and the composer guards decide what happens next,
+# exactly as they decide it for an ordinary send against the same window.
+turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
+  local collar
+  [ "${2:-0}" -eq 1 ] || return 0
+  collar="$(collar_read "$1" 2>/dev/null)" || return 0
+  [ -n "$collar" ] || return 0
+  spool_drain_dispatch "$1" "$collar"
+}
+
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0
+  local state busy_rc=0 bricked_rc=0 abandoned=0
   STATE_NOW_RESULT=""
   if occupied "$1"; then
     activity_hold_clear "$1"
@@ -6978,6 +7002,11 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     *) die "internal: bricked returned unknown verdict $bricked_rc" ;;
   esac
   busy "$1" "${2:-}" || busy_rc=$?
+  # READ BEFORE ANYTHING ELSE CAN OVERWRITE IT. turn_witness clears the fact on
+  # every call, and the verdict this expiry needs is not one verdict: a stale
+  # bracket over a free composer decays to idle, and that is precisely the
+  # window a waiting message can be delivered to.
+  abandoned="$TURN_ABANDONED"
   case "$busy_rc" in
     0) state="-busy-" ;;
     1) state="~idle~" ;;
@@ -6985,6 +7014,7 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
   glyph_write "$1" "$state"
+  turn_abandoned_event "$1" "$abandoned"
   STATE_NOW_RESULT="$state"
   printf '%s\n' "$state"
 }
