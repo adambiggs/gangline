@@ -243,17 +243,30 @@ waiter=$!
 # yet. The shim bounds every blocking barrier in the suite, so once in a few
 # hundred teardowns is once or more per run, and its symptom would be the whole
 # run vanishing at an unrelated line.
+#
+# AND THE SIGNALS ARE ONES THE CALLER CANNOT HAVE TURNED OFF. gang's spool
+# drain runs under `trap "" HUP INT TERM`, an ignored disposition survives
+# exec, and POSIX does not let a non-interactive shell un-ignore what was
+# ignored when it started. Every process the drain forks — this shim, its
+# guard, and the tmux client the guard has to cut off — therefore inherits
+# SIGTERM as ignored, the guard's kill was a no-op, and the shim sat in `wait`
+# forever without ever reporting the barrier it was bounding. The ceiling
+# silently did not exist in the one place the suite's own barriers run.
+# Measured: with the ceiling at 2s the shim was still blocked after 8s, and the
+# same shim outside a drain reported at 2s. SIGKILL cannot be ignored, and
+# SIGUSR1 is not in that ignore set, so the guard still ends its own sleeper
+# rather than orphaning it.
 napper=
-( trap '[ -n "$napper" ] && kill -TERM "$napper" 2>/dev/null; exit 0' TERM
+( trap '[ -n "$napper" ] && kill -KILL "$napper" 2>/dev/null; exit 0' USR1
   /bin/sleep "$ceiling" &
   napper=$!
   wait "$napper"
   : > "$expiry"
-  kill -TERM "$waiter" 2>/dev/null ) >/dev/null 2>&1 &
+  kill -KILL "$waiter" 2>/dev/null ) >/dev/null 2>&1 &
 guard=$!
 rc=0
 wait "$waiter" || rc=$?
-kill -TERM "$guard" 2>/dev/null
+kill -USR1 "$guard" 2>/dev/null
 wait "$guard" 2>/dev/null || true
 if [ -e "$expiry" ]; then
   rm -f "$expiry"

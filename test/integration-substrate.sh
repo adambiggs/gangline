@@ -696,7 +696,31 @@ contains "the ceiling's guard is given stdio it cannot lend to a caller" \
 # would report green from a race it simply won, and exercising it enough times
 # to lose would be a check whose failure mode is killing the run reading it.
 contains "the ceiling's guard names the sleeper instead of its own group" \
-  "$(<"$RUN_ROOT/waitbin/tmux")" '[ -n "$napper" ] && kill -TERM "$napper"'
+  "$(<"$RUN_ROOT/waitbin/tmux")" '[ -n "$napper" ] && kill -KILL "$napper"'
+# AND THE CEILING SURVIVES A CALLER THAT HAS TURNED TERM OFF. gang's spool
+# drain runs under `trap "" HUP INT TERM`; an ignored disposition survives
+# exec, and POSIX does not let a non-interactive shell un-ignore what was
+# ignored at entry. Every process such a caller forks — the shim, its guard,
+# and the tmux client the guard must cut off — inherits SIGTERM as ignored, so
+# a TERM-based teardown made this ceiling silently absent in the one place the
+# suite's own barriers run. Measured: at a 2s ceiling the shim was still
+# blocked after 8s inside such a caller and reported at 2s outside one.
+#
+# THE CLOCK IS SCALED, NOT STOPPED, for the same reason as the probe above: the
+# subject IS an expiry. THE MARGIN, MEASURED 2026-08-25:
+#
+#   signalled barrier, waiter already blocked   ~10ms
+#   this fixture's ceiling                      1s
+#   the suite's ceiling                         120s
+barrier_ignored_rc=0
+barrier_ignored_out="$( ( trap '' HUP INT TERM
+  GANG_TEST_WAIT_CEILING=1 GANG_TEST_WAIT_LEDGER="$barrier_probe_ledger" \
+    tmux wait-for "$barrier_probe_channel-term-ignored" 2>&1 ) )" \
+  || barrier_ignored_rc=$?
+equal "the ceiling cuts a barrier off even where its caller ignores TERM" \
+  "111" "$barrier_ignored_rc"
+contains "and still says which barrier it cut off" \
+  "$barrier_ignored_out" "$barrier_probe_channel-term-ignored"
 tmux wait-for -S "$barrier_probe_channel-answered-in-substitution"
 equal "an answered barrier inside a command substitution closes it" \
   "answered" \
