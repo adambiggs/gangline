@@ -2113,8 +2113,13 @@ excludes "the body has not entered the session" "$(pane timed)" "MARK_TIMED_BODY
 
 at_unit="$(awk -F= '/^--unit=/ { print $2 }' "$at_args")"
 at_fire_name="$(tail -n 5 "$at_args" | head -n 1)"
+# ADJACENCY, NOT PRESENCE: the recorded argv already carries --unit=<unit> as
+# systemd-run's own option, so searching the whole argv would answer yes
+# whether or not the callback tail names the verb at all. The tail is read as a
+# sequence instead. It is eight entries: gang, at, --fire, <entry>, --to,
+# <name>, --unit, <unit>.
 equal "the timer's callback is gang's own at --fire" "at --fire" \
-  "$(tail -n 6 "$at_args" | head -n 2 | tr '\n' ' ' | sed 's/.*\(at --fire\).*/\1/')"
+  "$(tail -n 7 "$at_args" | head -n 2 | tr '\n' ' ' | sed 's/ $//')"
 equal "and it names the entry the timer was armed for" "${at_entry##*/}" \
   "$at_fire_name"
 contains "the timer is transient and collected" "$(<"$at_args")" "--collect"
