@@ -261,15 +261,35 @@ the timer is loud and is never reported as a scheduled wake.
 
 ## Optional context lights
 
-Context lights are disabled unless the operator supplies thresholds at hitch
-time. Percentages serve mixed-window teams; absolute tokens remain available
-for one observed harness window. Set them intentionally high, but below the
-observed automatic-compaction boundary so the agent can self-compact first:
+Context lights default to each collar's own thresholds for the model being
+hitched, so a team mixing harnesses gets working lights on every agent without
+one setting that has to fit every native window. Nothing is configured for the
+ordinary case:
 
 ```sh
-GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
-  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
+gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 ```
+
+Each hitch prints the thresholds it settled on. A collar that ships no default
+for that model, or that reads no native context source, leaves the lights off.
+
+Override for one agent with `-l`/`--lights`, or for the whole team with
+`GANG_CONTEXT_LIGHTS`. Both take `collar`, `off`, `yellow,red` tokens, or
+`yellow%,red%`. Percentages serve mixed-window teams; absolute tokens are for
+one observed harness window and cannot fit a team whose windows differ. Set them
+intentionally high, but below the observed automatic-compaction boundary so the
+agent can self-compact first:
+
+```sh
+gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%
+GANG_CONTEXT_LIGHTS="50%,80%" gang up
+gang hitch quiet -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights off
+```
+
+A collar may wire its native context source at launch — `claude-code` paints the
+beacon its own reader consumes, replacing whatever status line the operator
+configured for themselves — so it is wired only where a light will read it, and
+a hitch that asks for no lights leaves that status line alone.
 
 Yellow asks the agent to compact at its next natural checkpoint. Red asks it to
 finish the current arc and compact now. Each is emitted once per context epoch;
@@ -283,7 +303,10 @@ An unreadable or malformed source emits the unavailable notice immediately.
 Recovery from unavailable begins a new source-failure epoch. Disabled lights
 perform no context read and add no prompt or roster noise. An absolute red
 threshold above the window reports one invalid notice as soon as the native
-source makes that window readable; it never remains silently armed.
+source makes that window readable; it never remains silently armed. That notice
+is what a team-wide absolute pair produces on the harness with the smaller
+window, which is why the collar's own per-model default is the built-in value
+and absolute thresholds are an override.
 
 Claude Code reads its hook configuration once, at process startup, and
 re-executes the statusline script from disk on every repaint. A change on the

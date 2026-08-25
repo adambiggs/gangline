@@ -68,7 +68,7 @@ selects the harness. If a native first-run gate appears, `up` exposes it before
 waiting for startup-contract delivery, so answering that prompt remains the
 only operator step.
 
-### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-r|--role role] [--resume [session-id]]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-r|--role role] [-l|--lights lights] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -155,6 +155,13 @@ and the attach recovery above does not apply to it.
 - `-r`, `--role` attaches the named role brief to this hitch only. `gang hitch`
   has no role default and never infers one from the agent name. Role names use
   letters, digits, dot, dash, and underscore and may not begin with dot or dash.
+- `-l`, `--lights` sets context lights for this agent alone: `collar` to take
+  the collar's own default for the chosen model, `off` for none, or explicit
+  `yellow,red` tokens or `yellow%,red%`. It overrides `GANG_CONTEXT_LIGHTS`,
+  whose own built-in value is `collar`. The collar is sourced already knowing
+  this agent's request, because a collar may wire its native context source at
+  launch and lights armed over a source nobody painted report a miss on every
+  turn.
 - `--resume <session-id>` substitutes that exact native session identity into
   the collar's resume template. Bare `--resume` is only valid when a dead,
   still-existing window registered to the same agent carries `@gl_session_id`.
@@ -211,7 +218,23 @@ that bar and the swap policy selecting nobody where it previously selected the
 team. `oomctl` prints the live policy; `GANG_SCOPE` changes what the victim pool
 looks like, not what the thresholds are.
 
-When context lights are enabled, their thresholds are copied to the new window.
+The thresholds settled at hitch are written to the window on every hitch,
+including a hitch that settles on none, and nothing re-resolves them later. A
+`--resume` respawns the window it is registered to and window options outlive a
+respawn, so the empty write is what stops an earlier launch's thresholds from
+staying armed over a launch that wired no native source to read them. A resume
+that omits `-m` therefore resolves no collar default, exactly as a first hitch
+would; `gang drop` prints no model in its relaunch line, so pass `-m` or `-l`
+again to keep the lights the agent had. Which thresholds those are is
+decided in one pass: `-l`/`--lights` if given, otherwise `GANG_CONTEXT_LIGHTS`,
+whose built-in value `collar` asks the collar for its own default for the
+hitched model. A collar answers per model because one harness runs models whose
+native windows differ several-fold, and the same fraction leaves very different
+absolute runway in each. A collar that declares no default, or none for that
+model, leaves the lights off, and so does a collar with no native context source
+to read — a default never arms a light its own collar cannot take a reading for.
+An explicitly configured threshold still arms there, because that was an ask.
+
 Percentages are relative to each native window and serve mixed-window teams.
 Absolute tokens remain supported for an observed fixed window. Place both high
 enough not to impose an artificial context disadvantage, but below the harness's
@@ -1037,7 +1060,7 @@ Exactly these keys are settable:
 | `GANG_COLLARS` | unset | custom collar directory searched before shipped collars |
 | `GANG_LOCK_DIR` | `/tmp/gangline-$(id -u)` | shared delivery locks and per-target spools |
 | `GANG_ARCHIVE_DIR` | `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive` | pending-message archive written before windows die |
-| `GANG_CONTEXT_LIGHTS` | `off` | `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds |
+| `GANG_CONTEXT_LIGHTS` | `collar` | `collar` to take each collar's own default for the hitched model, `off`, `yellow,red` token thresholds, or `yellow%,red%` relative thresholds; `gang hitch -l` overrides it for one agent |
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
@@ -1132,6 +1155,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
 | `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own. `claude-code` declares 4: a composer is drawn, but it belongs to a selected in-process subagent, so keys typed there reach the child. Gangline carries 4 through as its own refusal rather than flattening it into absence |
+| `collar_context_lights model` | optional; print this collar's default `yellow,red` or `yellow%,red%` thresholds for that model, or return 1 with no output where it has no default for it. Consulted only where the collar also declares `collar_context`. A malformed spec, or any other status, is refused under the collar's name rather than the operator's setting |
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |

@@ -300,7 +300,7 @@ GANG_CHURN_WAIT="${GANG_CHURN_WAIT:-0.5}"
 GANG_ACTIVITY_WINDOW="${GANG_ACTIVITY_WINDOW:-5}"
 GANG_ACTIVITY_LIMIT="${GANG_ACTIVITY_LIMIT:-300}"
 GANG_TURN_LIMIT="${GANG_TURN_LIMIT:-300}"
-GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-off}"
+GANG_CONTEXT_LIGHTS="${GANG_CONTEXT_LIGHTS:-collar}"
 GANG_USAGE_LIGHTS="${GANG_USAGE_LIGHTS:-off}"
 GANG_AUTO_RESUME="${GANG_AUTO_RESUME:-off}"
 GANG_SCOPE="${GANG_SCOPE:-off}"
@@ -488,6 +488,7 @@ gang hitch
     [-m <model>]
     [-e <effort>]
     [-r <role>]
+    [-l <lights>]
     [--resume [session-id]]
 
   <name>  how teammates address it. Letters,
@@ -515,6 +516,13 @@ gang hitch
       role brief for this agent, on top of
       the contract every agent gets. gang
       roles lists them; there is no default.
+  -l, --lights <lights>
+      context lights for this agent alone:
+      collar to take the collar's own default
+      for the chosen model, off for none, or
+      yellow,red tokens or yellow%,red%.
+      Overrides GANG_CONTEXT_LIGHTS, whose
+      own default is collar.
   --resume [session-id]
       relaunch onto a harness session that
       already exists. Pass the id gang drop
@@ -1312,8 +1320,8 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
-  unset -f collar_context collar_input collar_session_id collar_models \
-    collar_model_check collar_bricked collar_usage_limits \
+  unset -f collar_context collar_context_lights collar_input collar_session_id \
+    collar_models collar_model_check collar_bricked collar_usage_limits \
     collar_usage_limits_error 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
@@ -4680,8 +4688,18 @@ ctx_tokens() { # $1 = <used>k/<window>k (...) -> used and window in tokens
 LIGHT_YELLOW=0
 LIGHT_RED=0
 LIGHT_RELATIVE=0
-context_lights_parse() { # $1 = off or yellow,red token thresholds or percentages
-  local yellow red
+# A REFUSAL NAMES WHERE THE SPEC CAME FROM. The same grammar now arrives from
+# three places — the operator's config, one agent's `--lights`, and a collar's
+# own per-model default — and a malformed collar default reported as the
+# operator's GANG_CONTEXT_LIGHTS sends them to edit a setting they never wrote.
+# The origin note is looked up only for the unnamed caller, so the per-hook read
+# below never pays for a config lookup it would not print.
+context_lights_parse() { # $1 = off or yellow,red thresholds; $2 = subject for refusals
+  local yellow red subject="${2:-}" note=""
+  if [ -z "$subject" ]; then
+    subject=GANG_CONTEXT_LIGHTS
+    note="$(config_origin_note GANG_CONTEXT_LIGHTS)"
+  fi
   LIGHT_YELLOW=0
   LIGHT_RED=0
   LIGHT_RELATIVE=0
@@ -4693,27 +4711,64 @@ context_lights_parse() { # $1 = off or yellow,red token thresholds or percentage
       case "$yellow:$red" in
         *%:*%) LIGHT_RELATIVE=1; yellow="${yellow%\%}"; red="${red%\%}" ;;
         *%*)
-          die "GANG_CONTEXT_LIGHTS must use the same unit for both thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+          die "$subject must use the same unit for both thresholds: yellow,red tokens or yellow%,red%$note" ;;
       esac
       LIGHT_YELLOW="$yellow"
       LIGHT_RED="$red"
       case "$LIGHT_YELLOW:$LIGHT_RED" in
         *[!0-9:]*|:*|*:)
-          die "GANG_CONTEXT_LIGHTS must be off or two thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+          die "$subject must be off or two thresholds: yellow,red tokens or yellow%,red%$note" ;;
       esac
       [ "$LIGHT_YELLOW" -gt 0 ] && [ "$LIGHT_RED" -gt "$LIGHT_YELLOW" ] \
-        || die "GANG_CONTEXT_LIGHTS must increase from yellow to red, got '$1'$(config_origin_note GANG_CONTEXT_LIGHTS)"
+        || die "$subject must increase from yellow to red, got '$1'$note"
       [ "$LIGHT_RELATIVE" -eq 0 ] || [ "$LIGHT_RED" -lt 100 ] \
-        || die "GANG_CONTEXT_LIGHTS percentage thresholds must both be below 100%, got '$1'$(config_origin_note GANG_CONTEXT_LIGHTS)"
+        || die "$subject percentage thresholds must both be below 100%, got '$1'$note"
       return 0 ;;
-    *) die "GANG_CONTEXT_LIGHTS must be off or two thresholds: yellow,red tokens or yellow%,red%$(config_origin_note GANG_CONTEXT_LIGHTS)" ;;
+    *) die "$subject must be off or two thresholds: yellow,red tokens or yellow%,red%$note" ;;
   esac
+}
+
+# WHICH THRESHOLDS SUIT AN AGENT IS A PER-MODEL QUESTION, and only the collar
+# can answer it: one harness runs models whose native windows differ by more
+# than fourfold, so a fraction leaving useful headroom in the larger one fires
+# far too late in the smaller, and an absolute pair sized for the larger cannot
+# fire in the smaller at all. `collar` asks the collar for the hitched model;
+# an explicit spec from the operator overrides that answer for the whole team
+# or for one agent.
+#
+# THE ANSWER IS A GLOBAL RATHER THAN STDOUT because a bad collar default is
+# refused here: `die` inside $(...) ends only that subshell and the caller reads
+# the empty string as a pass.
+CONTEXT_LIGHTS_SPEC=""
+CONTEXT_LIGHTS_SUBJECT=""
+context_lights_resolve() { # $1 collar name, collar loaded; $2 model, $3 spec, $4 subject
+  local answer="" rc=0
+  CONTEXT_LIGHTS_SPEC="$3"
+  CONTEXT_LIGHTS_SUBJECT="$4"
+  [ "$3" = collar ] || return 0
+  # A COLLAR THAT DECLARES NO DEFAULT LEAVES THE LIGHTS OFF, which is the same
+  # answer it gave before defaults existed. Silence is not an error here.
+  CONTEXT_LIGHTS_SPEC=off
+  CONTEXT_LIGHTS_SUBJECT="collar '$1' context-light default for model '${2:-(none)}'"
+  # A DEFAULT NEVER ARMS A LIGHT ITS OWN COLLAR CANNOT READ. Without a native
+  # context source every hook would report the reading it could not take, on
+  # every agent, for a light nobody asked for. An operator who names thresholds
+  # explicitly still gets that report, because they asked for the light.
+  declare -F collar_context >/dev/null || return 0
+  declare -F collar_context_lights >/dev/null || return 0
+  answer="$(collar_context_lights "$2")" || rc=$?
+  case "$rc" in
+    0) CONTEXT_LIGHTS_SPEC="$(printf '%s' "$answer" | config_sanitize)" ;;
+    1) ;;
+    *) die "hitch: collar '$1' returned unknown context-light-default status $rc for model '${2:-(none)}'" ;;
+  esac
+  [ -n "$CONTEXT_LIGHTS_SPEC" ] || CONTEXT_LIGHTS_SPEC=off
 }
 
 context_lights_for() { # $1 = window; load its hitch-time setting
   local spec
   spec="$(tmux show-options -wqv -t "$1" @gl_context_lights 2>/dev/null)" || spec=""
-  context_lights_parse "${spec:-off}"
+  context_lights_parse "${spec:-off}" "the context lights registered on this window"
 }
 
 CONTEXT_LIGHT=""
@@ -5655,7 +5710,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
-  local lights="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local lights="" lights_arg="" lights_given=0 lights_subject="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
@@ -5666,11 +5721,12 @@ cmd_hitch() {
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
+    -l|--lights)  [ $# -ge 2 ] || die "hitch: $1 needs a value"
+                  lights_arg="$2"; lights_given=1; shift 2 ;;
     --resume)     resume=1; shift
                   if [ $# -gt 0 ] && [[ "$1" != -* ]]; then resume_id="$1"; shift; fi ;;
     *) die "hitch: unknown argument '$1'" ;;
   esac; done
-  if context_lights_parse "$GANG_CONTEXT_LIGHTS"; then lights="$GANG_CONTEXT_LIGHTS"; fi
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
   # These settings can refuse a hitch, so validate them before its first tmux
@@ -5685,6 +5741,19 @@ cmd_hitch() {
     collar_file "$prof" >/dev/null \
       || die "unknown collar '$prof' (have: $(list_collars | tr '\n' ' '))$(config_origin_note GANG_COLLAR)"
   fi
+  # THE COLLAR IS SOURCED SEEING THIS AGENT'S REQUEST, not the team's. A collar
+  # may wire its native context source at source time — claude-code paints the
+  # beacon its own `collar_context` reads — so a per-agent `--lights` the collar
+  # could not see would arm lights over a source nobody painted, and every hook
+  # would report a miss on a window the operator had just asked to watch. The
+  # model travels with it for the same reason: a collar's default is a per-model
+  # answer, and it must reach the same one gang resolves below.
+  if [ "$lights_given" -eq 1 ]; then
+    GANG_CONTEXT_LIGHTS="$lights_arg"
+    lights_subject="hitch --lights"
+  fi
+  # shellcheck disable=SC2034  # read by the collar sourced on the next line
+  GANG_MODEL="$model"
   load_collar "$prof"
   ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
@@ -5796,6 +5865,15 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
   fi
 
+  # AFTER THE MODEL IS SETTLED, because the collar's default is a per-model
+  # answer and an unvalidated model is not one to ask about. Still before the
+  # first tmux mutation, so a spec this refuses leaves no registered agent
+  # behind.
+  context_lights_resolve "$prof" "$model" "$GANG_CONTEXT_LIGHTS" "$lights_subject"
+  if context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
+    lights="$CONTEXT_LIGHTS_SPEC"
+  fi
+
   require_python3
   contract_read
   doctrine_read
@@ -5864,9 +5942,13 @@ cmd_hitch() {
   # it once, where a team starts, is where the answer can have changed.
   [ "$opened_session" -eq 0 ] || spool_sweep_orphans
   team_socket_record "$SESSION"
-  if [ -n "$lights" ]; then
-    hitch_register "$id" "$name" @gl_context_lights "$lights"
-  fi
+  # WRITTEN ON EVERY HITCH, INCLUDING THE EMPTY ONE. A `--resume` respawns the
+  # window it is registered to, and window options outlive a respawn — so a
+  # stamp left from an earlier launch would keep lights armed over a launch that
+  # wired no native source for them to read, and every hook would report the
+  # reading it could not take. The lights an agent has are the ones its own
+  # launch resolved; an empty value is off, exactly as an absent one is.
+  hitch_register "$id" "$name" @gl_context_lights "$lights"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     hitch_register "$id" "$name" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi
@@ -5879,7 +5961,7 @@ cmd_hitch() {
   }
   local msg delivery_err="" delivery_rc=0
   msg="$(startup_brief "$name" "$DOCTRINE")"
-  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir $(colour "$C_DIM" "— watch: gang attach")"
+  echo "$(colour "$C_OK" "hitched $name") ($prof) in $dir$(colour "$C_DIM" "${lights:+ — context lights $lights} — watch: gang attach")"
   printf '%s\n' "$(colour "$C_WORK" "waiting for $name to finish booting...")"
   local ready=0 recovery
   wait_ready "$id" "$boot" "$name" || ready=$?

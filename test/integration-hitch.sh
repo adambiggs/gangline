@@ -1521,6 +1521,118 @@ contains "and it carries the effort too" "$effres_line" "--effort=low"
 "$GANG" drop effok >/dev/null
 "$GANG" drop effres >/dev/null
 
+# WHICH CONTEXT LIGHTS AN AGENT GETS IS A PER-MODEL QUESTION THE COLLAR ANSWERS.
+# One team setting sized in tokens cannot fit a team whose harnesses report
+# windows differing several-fold: a red threshold that leaves useful headroom in
+# the larger window cannot fire in the smaller one at all. So the built-in
+# setting is `collar`, the collar answers for the hitched model, and an explicit
+# spec — team-wide or on one agent — overrides that answer.
+lights_stamp() { # $1 agent -> the thresholds hitch registered on its window
+  tmux show-options -wqv -t "$(window_id "$1")" @gl_context_lights 2>/dev/null || :
+}
+cat > "$RUN_ROOT/collars/model-lights.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/catalog-model.sh"
+collar_context_lights() {
+  case "\$1" in
+    exact) printf '40%%,70%%\n' ;;
+    neighbor) printf '250000,400000\n' ;;
+    *) return 1 ;;
+  esac
+}
+SH
+"$HITCH" lightsdefault -c model-lights -d /tmp -m exact >/dev/null
+equal "with nothing configured a collar's own default arms the lights" \
+  "40%,70%" "$(lights_stamp lightsdefault)"
+"$HITCH" lightsother -c model-lights -d /tmp -m neighbor >/dev/null
+equal "and a second model on the same collar gets its own thresholds" \
+  "250000,400000" "$(lights_stamp lightsother)"
+"$HITCH" lightsnone -c catalog-model -d /tmp -m exact >/dev/null
+equal "a collar shipping no default leaves the lights off, as before defaults" \
+  "" "$(lights_stamp lightsnone)"
+# AND IT IS OFF BECAUSE THIS LAUNCH SAID SO, not because nothing was written.
+# `--resume` respawns a registered window and window options outlive a respawn,
+# so a stamp carried over from an earlier launch would keep lights armed over a
+# launch that wired no native source for them to read.
+equal "an off hitch still writes the stamp, so no earlier one can survive it" \
+  1 "$(tmux show-options -w -t "$(window_id lightsnone)" \
+    | grep -c '^@gl_context_lights')"
+GANG_CONTEXT_LIGHTS=90000,120000 "$HITCH" lightsteam -c model-lights \
+  -d /tmp -m exact >/dev/null
+equal "a team-wide spec overrides the collar's default" \
+  "90000,120000" "$(lights_stamp lightsteam)"
+GANG_CONTEXT_LIGHTS=90000,120000 "$HITCH" lightsagent -c model-lights \
+  -d /tmp -m exact --lights 30%,60% >/dev/null
+equal "and one agent's --lights overrides the team's spec" \
+  "30%,60%" "$(lights_stamp lightsagent)"
+GANG_CONTEXT_LIGHTS=90000,120000 "$HITCH" lightsoff -c model-lights \
+  -d /tmp -m exact -l off >/dev/null
+equal "--lights off takes one agent out of a team that lights the rest" \
+  "" "$(lights_stamp lightsoff)"
+"$HITCH" lightsask -c model-lights -d /tmp -m exact -l collar >/dev/null
+equal "--lights collar asks the collar explicitly" \
+  "40%,70%" "$(lights_stamp lightsask)"
+for lights_agent in lightsdefault lightsother lightsnone lightsteam \
+  lightsagent lightsoff lightsask; do
+  "$GANG" drop "$lights_agent" >/dev/null
+done
+
+# A SPEC IS REFUSED UNDER THE NAME OF WHOEVER WROTE IT. The same grammar now
+# arrives from three places, and a collar's broken default reported as the
+# operator's GANG_CONTEXT_LIGHTS sends them to edit a setting they never wrote.
+cat > "$RUN_ROOT/collars/bad-lights.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/catalog-model.sh"
+collar_context_lights() { printf 'oops\n'; }
+SH
+refuses "a collar's malformed default is refused under the collar's name" \
+  "collar 'bad-lights' context-light default for model 'exact'" \
+  "$GANG" hitch lightsbad -c bad-lights -d /tmp -m exact
+equal "and a refused collar default leaves no window behind" "" \
+  "$(window_id lightsbad)"
+refuses "a malformed --lights is refused under the flag's name" \
+  "hitch --lights must increase from yellow to red" \
+  "$GANG" hitch lightsflagbad -c model-lights -d /tmp -m exact -l 90,10
+equal "and a refused --lights leaves no window behind" "" \
+  "$(window_id lightsflagbad)"
+
+# A DEFAULT NEVER ARMS A LIGHT ITS OWN COLLAR CANNOT READ. Nothing asked for
+# this light, so a hook reporting the reading it could not take on every turn
+# of every agent would be noise the operator never chose. An explicitly
+# configured threshold still arms and still reports, because that was an ask.
+cat > "$RUN_ROOT/collars/blind-lights.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/model-lights.sh"
+unset -f collar_context
+SH
+"$HITCH" lightsblind -c blind-lights -d /tmp -m exact >/dev/null
+equal "a collar with no native context source gets no defaulted lights" \
+  "" "$(lights_stamp lightsblind)"
+GANG_CONTEXT_LIGHTS=40%,70% "$HITCH" lightsblindset -c blind-lights \
+  -d /tmp -m exact >/dev/null
+equal "but an explicit spec still arms them there" \
+  "40%,70%" "$(lights_stamp lightsblindset)"
+"$GANG" drop lightsblind >/dev/null
+"$GANG" drop lightsblindset >/dev/null
+
+# THE SHIPPED COLLAR ANSWERS, AND ITS ANSWER DEPENDS ON THE MODEL. This is the
+# mixed-window team the absolute-threshold setting could not serve: one unset
+# team config, working lights on every agent, sized for the window each one has.
+lights_shipped() { # $1 collar file, $2 model -> its default, or "none"
+  ROOT="$ROOT" bash -c \
+    '. "$1"; if out="$(collar_context_lights "$2")"; then printf "%s" "$out"; else printf none; fi' \
+    fixture "$1" "$2"
+}
+equal "claude-code sizes its 1M-window models for the runway they leave" \
+  "55%,80%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-opus-5)"
+equal "and gives its 200k class an earlier pair for the same absolute headroom" \
+  "45%,65%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-haiku-4-5-20251001)"
+equal "no model means no window class, so claude-code offers no default" \
+  "none" "$(lights_shipped "$ROOT/collars/claude-code.sh" "")"
+
 # Each hitched harness in its own killable cgroup. systemd-oomd kills the
 # descendant LEAF cgroup holding the most swap, and a tmux server inherits the
 # cgroup of whatever started it, so without this every agent shares one leaf and

@@ -138,15 +138,20 @@ gang roster</code></pre>
     provider limit. Gangline helps with both without taking the decision away
     from the agent.</p>
 
-    <p>Turn on context lights and an agent is told once when it crosses yellow
-    and once when it crosses red. What it does about that is its own call: when
-    it wants the room back it runs <code>gang compact</code>, which fires the
-    harness's real compaction command — the same one you would type yourself.
-    Set both edges high, but below the point where the harness would compact on
-    its own:</p>
+    <p>Context lights tell an agent once when it crosses yellow and once when
+    it crosses red. What it does about that is its own call: when it wants the
+    room back it runs <code>gang compact</code>, which fires the harness's real
+    compaction command — the same one you would type yourself. Each collar sizes
+    those edges for the model you hitched, so a team mixing harnesses gets
+    working lights with nothing configured:</p>
 
-    <pre><code>GANG_CONTEXT_LIGHTS="50%,80%" gang hitch worker -c codex \
-  -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
+    <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"</code></pre>
+
+    <p>Set them yourself for one agent, or for the team, when you want edges of
+    your own — high, but below the point where the harness would compact on its
+    own:</p>
+
+    <pre><code>gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%</code></pre>
 
     <p>The provider limit is the other wall. When an agent's own usage crosses
     the percentage you named, Gangline can set a one-shot wake for that window's

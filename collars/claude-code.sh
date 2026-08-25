@@ -1,6 +1,30 @@
 # shellcheck shell=bash
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
+# CONTEXT-LIGHT DEFAULTS ARE A PER-MODEL ANSWER, because this harness runs
+# models whose native windows differ by five times. The same fraction does not
+# mean the same thing in each: 80% of a 1000k window leaves 200k of runway for
+# an agent to finish an arc and compact, while 80% of a 200k window leaves 40k
+# and the red light arrives too late to act on. Smaller windows therefore get
+# an earlier pair, so the absolute headroom behind red stays comparable.
+#
+# Fractions rather than token counts, because the window a model reports is the
+# provider's to change and `collar_context` already reads the live one; a
+# fraction stays correct across that change where a token pair silently stops
+# fitting. Observed 2026-08-24 on this installation: claude-opus-5 reports a
+# 1000k window. Haiku is the 200k class. A model matching neither is given the
+# earlier pair, since firing early costs a checkpoint and firing late costs the
+# arc.
+#
+# Omitting -m leaves the model, and so the window class, unknown; hitch already
+# warns about that, and guessing a light here would be the second guess.
+collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
+  case "$1" in
+    '') return 1 ;;
+    *haiku*) printf '45%%,65%%\n' ;;
+    *) printf '55%%,80%%\n' ;;
+  esac
+}
 GANG_LAUNCH="claude"
 GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
@@ -16,15 +40,33 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostCompact\":[{\"hooks\":[$_gl_cc_cmd]}]}"
+      # THE BEACON IS WIRED ONLY WHERE A LIGHT WILL READ IT. `statusLine`
+      # replaces whatever status line the operator configured for themselves,
+      # so it is not painted over a hitch that asked for no lights. `collar`
+      # asks this file's own default the same question bin/gang asks it, so
+      # the wiring and the armed thresholds cannot disagree about this model.
       case "${GANG_CONTEXT_LIGHTS:-off}" in
-        off|'') _gl_cc_json="$_gl_cc_json}" ;;
+        off|'') _gl_cc_light=0 ;;
+        collar)
+          # AN `&&` TAIL HERE WOULD END GANG. bin/gang runs under set -e, and a
+          # collar with no default for this model returns 1, so the whole list
+          # would fail the hitch instead of leaving the beacon unwired.
+          if collar_context_lights "${GANG_MODEL:-}" >/dev/null; then
+            _gl_cc_light=1
+          else
+            _gl_cc_light=0
+          fi ;;
+        *) _gl_cc_light=1 ;;
+      esac
+      case "$_gl_cc_light" in
+        0) _gl_cc_json="$_gl_cc_json}" ;;
         *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
       esac
       GANG_LAUNCH="claude --settings '$_gl_cc_json'"
       GANG_RESUME_LAUNCH="claude --resume {{session_id}} --settings '$_gl_cc_json'"
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
-      unset _gl_cc_cmd _gl_cc_esc _gl_cc_json
+      unset _gl_cc_cmd _gl_cc_esc _gl_cc_json _gl_cc_light
       ;;
   esac
 fi
