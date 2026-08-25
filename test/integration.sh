@@ -122,6 +122,15 @@ chmod +x "$RUN_ROOT/bin/sleep"
 # ahead of everything the run launches, so the ceiling goes here rather than at
 # a hundred and fifty call sites.
 #
+# ITS OWN DIRECTORY, NOT THE ONE BESIDE IT. The compressed-clock shim above is
+# something a case may legitimately need to be rid of — the `gang up` driver
+# strips that directory off PATH so its attached client runs on the production
+# clock. Sharing a directory meant the ceiling was stripped with it, and the run
+# that proved the ceiling works is the same run that found the hole: the wedge
+# was in a fixture launched by exactly that driver, so the wait that hung was
+# the one call in the suite the ceiling could not see. A ceiling with a hole in
+# it where the wedges happen is not a ceiling.
+
 # WHAT IT BOUNDS AND WHAT IT LEAVES ALONE. Only a BLOCKING wait — `wait-for`
 # with a channel. A `-S` signal already returns whether or not anyone waits, so
 # bounding it would add a clock where there is no wait, and every other tmux
@@ -163,13 +172,14 @@ done <<<"$(type -pa tmux 2>/dev/null || true)"
   echo "integration: found no tmux on PATH that is not itself a shim" >&2
   exit 1
 }
-cat > "$RUN_ROOT/bin/tmux" <<SH
+mkdir -p "$RUN_ROOT/waitbin"
+cat > "$RUN_ROOT/waitbin/tmux" <<SH
 #!/bin/sh
 : "\${GANG_TEST_WAIT_LEDGER:=$RUN_ROOT/wedged-barriers}"
 GANG_TEST_WAIT_STATE='$RUN_ROOT/wait-expiry'
 real='$REAL_TMUX'
 SH
-cat >> "$RUN_ROOT/bin/tmux" <<'SH'
+cat >> "$RUN_ROOT/waitbin/tmux" <<'SH'
 set -u
 
 # THE VERB IS NOT ALWAYS THE FIRST WORD. tmux takes its own options ahead of
@@ -232,8 +242,8 @@ fi
 rm -f "$expiry"
 exit "$rc"
 SH
-chmod +x "$RUN_ROOT/bin/tmux"
-PATH="$RUN_ROOT/bin:$PATH"
+chmod +x "$RUN_ROOT/waitbin/tmux"
+PATH="$RUN_ROOT/bin:$RUN_ROOT/waitbin:$PATH"
 export PATH
 
 # AN UNVERIFIABLE SUBMISSION IS AN UNKNOWN, AND AN UNKNOWN COSTS ONE ASSERTION.

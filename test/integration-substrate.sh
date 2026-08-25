@@ -668,6 +668,14 @@ barrier_answered_rc=0
 tmux wait-for "$barrier_probe_channel-answered" || barrier_answered_rc=$?
 equal "a barrier that is answered still returns clean through the ceiling" \
   "0" "$barrier_answered_rc"
+# AND THE CEILING IS NOT IN THE DIRECTORY CASES REMOVE. A case that needs the
+# production clock strips the compressed-clock shim's directory off PATH, and
+# while the two shims shared a directory that stripped the ceiling with it —
+# which is precisely where the wedge that proved the ceiling then happened. The
+# relationship is asserted rather than left to whoever edits either line next.
+equal "stripping the compressed-clock shim leaves the wait ceiling on PATH" \
+  "$RUN_ROOT/waitbin/tmux" \
+  "$(PATH="${PATH#"$RUN_ROOT/bin:"}"; command -v tmux)"
 
 unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n unadopted "PS1='❯ ' bash --norc")"
