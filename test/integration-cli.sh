@@ -791,7 +791,7 @@ claude_box_text() { # $1 = window name -> what the collar read there
 equal "a whole composer reads as a readable box" "0" "$(claude_box_status whole)"
 contains "a whole composer reads back what was typed in it" \
   "$(claude_box_text whole)" "hello"
-equal "a selected child composer is not the parent agent input" "1" \
+equal "a selected child composer is not the parent agent input" "4" \
   "$(claude_box_status subagent)"
 equal "a pane with no box at all refuses as an absent box" \
   "1" "$(claude_box_status absent)"

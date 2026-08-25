@@ -624,7 +624,9 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
 # never route a parent-addressed envelope into a child context.
 collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
                  # 2 = a box whose content outgrew the pane and cannot be read,
-                 # 3 = a pane that could not be read at all
+                 # 3 = a pane that could not be read at all,
+                 # 4 = a composer that is drawn but belongs to a selected
+                 #     in-process subagent, so keys typed there reach the child
   local pane box rc=0
   # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
   # taken into a variable before awk sees it, because awk's verdict on empty
@@ -651,6 +653,18 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       }
       t = $0; n = gsub(/─/, "", t)
       if (n && t == "") { prev = rule; prevw = rulew; rule = NR; rulew = n }
+      # THE NAMED BAND. Once the ACTIVE conversation carries a name, the
+      # harness burns that name into the rule that OPENS the composer and
+      # leaves the closing rule pure, so the two rules stop matching and the
+      # frame below stops being recognised at all. The band is recorded here
+      # and read in END: it says which conversation owns the box under it, and
+      # never on its own that the box is unusable.
+      else if (n > 10) {
+        band_line = $0; sub(/[[:space:]]+$/, "", band_line)
+        band_name = t
+        sub(/^[[:space:]]+/, "", band_name); sub(/[[:space:]]+$/, "", band_name)
+        if (band_name != "" && band_line ~ /^─/ && band_line ~ /─$/) band = NR
+      }
     }
     END {
       # A box the pane could not fit keeps the rule that opened it and loses the
@@ -662,28 +676,70 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
         if (line[i] ~ /^❯/) exit 2
         break
       }
-      if (!prev || !rule || rulew != prevw) exit 1
-      if (last - rule > 5) exit 1
+      # WHAT OPENED THE FRAME: ordinarily the matching pure rule above the
+      # caret, and where the active conversation has a name, the band carrying
+      # that name. The nearer of the two is the one this composer sits in.
+      opened = 0; named = 0
+      if (prev && rule && rulew == prevw) opened = prev
+      if (rule && band && band < rule && band > opened) { opened = band; named = 1 }
+      if (!rule || !opened) exit 1
+      # The distance bound stops a stale rule far up the transcript standing in
+      # for the rule that opened this box. A band earns that identity from
+      # adjacency instead, and the agent switcher drawn under a named frame is
+      # as long as the agent count, so the bound would only misread it.
+      if (!named && last - rule > 5) exit 1
       # TEXT ALONE IS NOT THE VERDICT. The pure dialog band must touch its
       # title, and the guide must be the last nonblank row before the opening
       # composer rule. A body carrying the same prose lives after that rule,
       # so it remains readable; ordinary transcript prose without the native
       # band does too. These positions are the second question paired with the
       # exact pinned copy, not a general parser for native dialogs.
-      before = prev - 1
+      before = opened - 1
       while (before && line[before] ~ /^[[:space:]]*$/) before--
       if (auto_nux_guide[before]) exit 1
-      seen = 0
-      for (i = prev + 1; i < rule; i++) {
+      seen = 0; rows = 0
+      for (i = opened + 1; i < rule; i++) {
         s = line[i]
         if (!seen) {
           if (s ~ /^[[:space:]]*$/) continue
           if (s !~ /^❯/) exit 1                # framed, but not the composer
           sub(/^❯/, "", s); seen = 1
         }
-        print s
+        box[++rows] = s
       }
-      if (!seen) print ""
+      if (!seen) box[++rows] = ""
+      # WHOSE COMPOSER IT IS. A titled parent session and a selected in-process
+      # subagent draw the SAME named frame, and the name inside it is free
+      # text, so the band cannot answer this. The footer can: the
+      # permission-mode control belongs to the parent conversation and is drawn
+      # under its composer in every mode (driven on claude-code 2.1.241 as
+      # auto, manual and plan), while a selected child carries that child own
+      # controls and no mode line at all.
+      #
+      # A named frame that cannot be shown to belong to the parent is refused
+      # under its OWN status rather than reported as a pane with no composer:
+      # driven on 2.1.241, typing into the selected child box resumed the
+      # CHILD, which answered in its own transcript, so a parent-addressed
+      # envelope delivered there would land in a subagent context.
+      if (named) {
+        mode = 0; elsewhere = 0
+        for (i = rule + 1; i <= last; i++) {
+          if (line[i] ~ / mode on/) mode = 1
+          row = line[i]
+          sub(/^❯/, "", row); sub(/^[[:space:]]+/, "", row)
+          # The agent switcher marks the ACTIVE conversation with a filled ring
+          # and every other one with an empty ring; the keyboard cursor is a
+          # separate caret, so the row under the cursor is not the row in use.
+          # main is the harness name for the root conversation.
+          if (row ~ /^● /) {
+            sub(/^● /, "", row); sub(/[[:space:]].*$/, "", row)
+            if (row != "main") elsewhere = 1
+          }
+        }
+        if (!mode || elsewhere) exit 4
+        exit 1
+      }
+      for (i = 1; i <= rows; i++) print box[i]
     }')" || rc=$?
   [ "$rc" -eq 0 ] || return "$rc"
   printf '%s' "$box" | tr -d '\302\240'

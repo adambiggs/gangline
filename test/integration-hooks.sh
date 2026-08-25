@@ -2963,6 +2963,164 @@ The old path is gone.
 BREAKING CHANGE: callers must pass --to.
 ')"
 
+# A COMPOSER THAT BELONGS TO SOMEBODY ELSE IS NOT AN ABSENT COMPOSER. Once the
+# active conversation carries a name, claude-code burns that name into the rule
+# that OPENS the composer and leaves the closing rule pure, so the two rules
+# stop matching and the reader used to answer "no box drawn" about a box that
+# is plainly drawn. Driven on 2.1.241, typing into that box while an in-process
+# subagent was selected resumed the CHILD, which answered in its own
+# transcript — so the frame has to be refused, and refused under a status that
+# says why, because "no composer" sends an operator after a stuck harness while
+# the harness is fine and its screen is showing a child it launched.
+#
+# The rows below are that capture, painted byte for byte, so the SHIPPED reader
+# meets what the harness printed rather than a reconstruction of it.
+cat > "$RUN_ROOT/collars/subframe-boot.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' subframe"
+GANG_STOP_HOOK=1
+SH
+cat > "$RUN_ROOT/collars/subframe-claude.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/claude-code.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' subframe"
+GANG_RESUME_LAUNCH=""
+GANG_SELF_COMPACT=""
+GANG_STOP_HOOK=1
+SH
+cat > "$RUN_ROOT/paint-capture.py" <<'PY'
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Raw mode so the pane holds exactly the painted rows: no echo of a key, and no
+# terminal translation between the capture and the screen. The saved settings
+# are restored on the way out, because the pane goes on being an ordinary
+# fixture shell after this frame is finished with.
+import os
+import subprocess
+import sys
+import termios
+import tty
+
+rows = open(os.environ["PAINT_CAPTURE"], encoding="utf-8").read().splitlines()
+fd = sys.stdin.fileno()
+saved = termios.tcgetattr(fd)
+tty.setraw(fd)
+sys.stdout.write("\x1b[2J\x1b[H" + "\r\n".join(rows) + "\r\n")
+sys.stdout.flush()
+subprocess.run(["tmux", "wait-for", "-S", os.environ["PAINT_READY"]], check=False)
+try:
+    while True:
+        key = sys.stdin.read(1)
+        if key == "" or key == "\x04":
+            break
+finally:
+    termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+PY
+chmod +x "$RUN_ROOT/paint-capture.py"
+
+paint_frame() { # $1 agent, $2 capture file; returns once the rows are on screen
+  local id ready command
+  id="$(window_id "$1")"
+  ready="painted-$1-$$"
+  printf -v command 'PAINT_CAPTURE=%q PAINT_READY=%q %q' \
+    "$2" "$ready" "$RUN_ROOT/paint-capture.py"
+  tmux send-keys -l -t "$id" "$command"
+  tmux send-keys -t "$id" Enter
+  tmux wait-for "$ready"
+}
+
+# Hitch under the framed Bash fixture, so startup readiness is proven before the
+# screen changes, then observe through the SHIPPED Claude reader without
+# relaunching or touching a byte of the pane under test.
+"$HITCH" subframe -c subframe-boot -d /tmp >/dev/null
+subframe_id="$(window_id subframe)"
+subframe_pane="$(tmux list-panes -t "$subframe_id" -F '#{pane_id}')"
+paint_frame subframe "$ROOT/test/fixtures/claude-selected-subagent.txt"
+tmux set-option -w -t "$subframe_id" @gl_collar subframe-claude
+# source-guard: producer@379cefca318e: paint_frame returns only after the fixture signalled the barrier it raises once these exact rows are on screen, so the capture is the only producer of this line
+contains "the selected-subagent frame is on screen from the captured rows" \
+  "$(pane subframe)" "Count slowly to 400"
+refuses "gang composer names the box as a subagent's rather than reporting none" \
+  "belongs to a selected in-process subagent" \
+  "$GANG" composer subframe
+
+printf 'MARK_SUBAGENT_FRAME' |
+  "$GANG" send --to subframe --from tester --stdin >/dev/null
+contains "a parent-addressed message parks rather than landing in the child" \
+  "$("$GANG" status subframe)" "spooled: 1"
+tmux wait-for "gang-spool-drain-$subframe_id" &
+subframe_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$subframe_pane" "$GANG" hook >/dev/null
+wait "$subframe_drain_waiter"
+subframe_status="$("$GANG" status subframe)"
+contains "the boundary records a drain failure, not another quiet retry" \
+  "$subframe_status" "spool drain NOT verified"
+equal "and that failure names the subagent composer it refused to type into" \
+  "the native delivery boundary exposed a composer belonging to a selected in-process subagent, where a delivery would reach the child rather than this agent; no delivery was attempted and the spool remains waiting" \
+  "$(tmux show-options -wqv -t "$subframe_id" @gl_spool_failed)"
+contains "the entry stays unclaimed and waiting behind it" \
+  "$subframe_status" "spooled: 1"
+
+# A LATER VERIFIED DRAIN CLEARS THE FACT. The failure describes one boundary,
+# not a condemned queue: the fixture shell comes back, the same window drains at
+# the next Stop, and the entry that was refused arrives.
+tmux send-keys -t "$subframe_id" C-d
+subframe_cleared="subframe-cleared-$$"
+tmux send-keys -l -t "$subframe_id" "clear; tmux wait-for -S $subframe_cleared"
+tmux send-keys -t "$subframe_id" Enter
+tmux wait-for "$subframe_cleared"
+tmux set-option -w -t "$subframe_id" @gl_collar subframe-boot
+tmux wait-for "gang-spool-drain-$subframe_id" &
+subframe_clear_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$subframe_pane" "$GANG" hook >/dev/null
+wait "$subframe_clear_waiter"
+subframe_cleared_status="$("$GANG" status subframe)"
+excludes "a verified drain clears the recorded failure" \
+  "$subframe_cleared_status" "spool drain NOT verified"
+excludes "and leaves nothing waiting behind it" \
+  "$subframe_cleared_status" "spooled:"
+# source-guard: producer@51cf2d717ba9: the only writer of this marker into that pane is the drain under test; the sender parked the body and typed nothing, so its arrival on screen is that drain
+contains "the refused message is what arrived" \
+  "$(pane subframe)" "MARK_SUBAGENT_FRAME"
+"$GANG" drop subframe >/dev/null
+
+# THE SAME BAND, DRAWN OVER THE PARENT'S OWN TITLED SESSION. A backgrounded
+# parent conversation carries a name too and draws the identical frame, so a
+# rule that read every named band as a subagent would rename an agent's own
+# composer. This capture is that state, from the same session: whatever the
+# reader decides about it, it is not a child.
+"$HITCH" parentframe -c subframe-boot -d /tmp >/dev/null
+parentframe_id="$(window_id parentframe)"
+paint_frame parentframe "$ROOT/test/fixtures/claude-named-composer-parent.txt"
+tmux set-option -w -t "$parentframe_id" @gl_collar subframe-claude
+# source-guard: producer@902434da358b: paint_frame returns only after the fixture signalled the barrier it raises once these exact rows are on screen, so the capture is the only producer of this line
+contains "the titled parent frame is on screen from its captured rows" \
+  "$(pane parentframe)" "Gangline probe contract"
+parentframe_composer="$("$GANG" composer parentframe 2>&1)" || true
+excludes "a titled parent composer is not reported as a subagent's" \
+  "$parentframe_composer" "selected in-process subagent"
+"$GANG" drop parentframe >/dev/null
+
+# THE CARET IN THE SWITCHER IS NOT THE CONVERSATION IN USE. The list marks the
+# active conversation with a filled ring and moves a separate caret under the
+# keyboard cursor, so a frame can show the cursor resting on main while the
+# child still owns the composer above it. This capture is that state: reading
+# the caret instead of the ring would hand a child composer back as the agent's
+# own.
+"$HITCH" cursorframe -c subframe-boot -d /tmp >/dev/null
+cursorframe_id="$(window_id cursorframe)"
+paint_frame cursorframe "$ROOT/test/fixtures/claude-subagent-cursor-on-main.txt"
+tmux set-option -w -t "$cursorframe_id" @gl_collar subframe-claude
+refuses "a cursor resting on main does not make the child composer the agent's" \
+  "belongs to a selected in-process subagent" \
+  "$GANG" composer cursorframe
+"$GANG" drop cursorframe >/dev/null
+
 # GATED TEARDOWN. `down` is the one irreversible verb, so it is exercised
 # against a session of its own: a guard that is missing must not end this run.
 teardown_session="teardown-probe-$$"

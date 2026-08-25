@@ -1131,7 +1131,7 @@ there, never in a harness-name branch in the core script.
 | `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
-| `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own |
+| `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses of its own. `claude-code` declares 4: a composer is drawn, but it belongs to a selected in-process subagent, so keys typed there reach the child. Gangline carries 4 through as its own refusal rather than flattening it into absence |
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |

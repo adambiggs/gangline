@@ -1891,12 +1891,17 @@ re_match() { # $1 = the collar variable NAME holding an ERE, $2 = text; 0 hit, 1
 # does not rest on it: composer_settled takes two looks and compares their
 # statuses, so no one absence is enough there whoever wrote the collar.
 input_read() { # $1 = window id; 0 box (printed), 1 no box,
-               # 2 box clipped by the pane, 3 the pane could not be read
+               # 2 box clipped by the pane, 3 the pane could not be read,
+               # 4 a composer that is drawn but is not this agent's to type in
   local box rc=0
   box="$(collar_input "$1")" || rc=$?
+  # A COLLAR STATUS THAT MEANS SOMETHING IS NOT "NO BOX". 4 says the harness
+  # drew a composer belonging to a selected in-process subagent: keys sent
+  # there reach the child, so it refuses like an unreadable pane, but the
+  # reason survives to the operator instead of being flattened into absence.
   case "$rc" in
     0) printf '%s' "$box"; return 0 ;;
-    2|3) return "$rc" ;;
+    2|3|4) return "$rc" ;;
   esac
   capture "$1" >/dev/null 2>&1 || return 3
   return 1
@@ -4003,6 +4008,10 @@ spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
     input_read "$1" >/dev/null || box_rc=$?
     [ "$box_rc" -ne 0 ] \
       || return 3
+    if [ "$box_rc" -eq 4 ]; then
+      printf 'the native delivery boundary exposed a composer belonging to a selected in-process subagent, where a delivery would reach the child rather than this agent; no delivery was attempted and the spool remains waiting\n' >&2
+      return 1
+    fi
     printf 'the native delivery boundary did not expose a readable composer (composer reading status %s); no delivery was attempted and the spool remains waiting\n' \
       "$box_rc" >&2
     return 1
@@ -4275,6 +4284,13 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
   fi
   if [ "${4:-0}" -eq 3 ]; then
     printf 'unread: the pane itself could not be read, so whether a box is drawn there is unknown (gang capture %s)' "$3"
+    return
+  fi
+  # A DRAWN BOX THAT BELONGS TO SOMEBODY ELSE. Reporting this as a harness
+  # refusing input sends the reader after a stuck agent; the agent is fine and
+  # its screen is showing a child it launched.
+  if [ "${4:-0}" -eq 4 ]; then
+    printf 'subagent: the composer on screen belongs to a selected in-process subagent, so typing there would reach the child (gang capture %s)' "$3"
     return
   fi
   if [ "${4:-0}" -ne 0 ]; then
@@ -8046,6 +8062,8 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
   # about a pane that answered.
   [ "$box_rc" -ne 3 ] \
     || die "cannot read the pane behind '$name', so whether it is showing a composer is unknown rather than settled (gang capture $name)"
+  [ "$box_rc" -ne 4 ] \
+    || die "the composer on screen in '$name' belongs to a selected in-process subagent, so it is not this agent's input and typing there would reach the child (gang capture $name)"
   [ "$box_rc" -eq 0 ] \
     || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
   grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule
