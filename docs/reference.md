@@ -494,6 +494,34 @@ second server sharing one lock root would read the first server's spools as
 unclaimed. This is the same assumption `spool_mint` already makes when it draws
 an identity no live window holds.
 
+### `gang at <duration|HH:MM> --to <name> [--from <sender>] --stdin` / `gang at --to <name> --clear`
+
+Parks an attributed message now and delivers it once the clock passes. The time
+is a duration (`90m`, `2h30m`) or a local clock time (`17:00`), which means its
+next occurrence. The envelope is minted at park time, while the sending window
+can still be observed: re-attributing it when the timer runs would downgrade an
+identity Gangline watched to one it was merely told, because a clock has no pane.
+
+There are no new delivery semantics. The message is written into the target's
+own spool as an ordinary three-line entry under a name beginning with a dot, and
+every path that drains, counts, ages or supersedes a queue matches `[0-9]*`, so
+nothing sees it while it waits. When the time passes, one transient systemd user
+timer renames it into that namespace and asks for a drain: from that moment it is
+ordinary waiting mail, delivered and verified like any other message, at the next
+opportunity its target exposes. Gangline runs no watcher, scheduler or retry loop.
+
+`gang roster` marks a target holding one as `timed=<n>`, and `gang status <name>`
+names when each comes due. Status reads the timer as well as the entry, because
+the two can outlive each other: a message whose timer is gone is reported as one
+nothing will promote, and a host that cannot answer that question is reported as
+unreadable rather than as either. A message already past its due time and still
+parked is a timer that did not run, and says so.
+
+If the timer cannot be created, nothing is parked. If the agent is dropped first,
+the entry is archived with the rest of its mail and arrives under a visible name,
+because a spool archives every child. `--clear` cancels every timed send parked
+for a target, stopping each timer before removing the message it would deliver.
+
 ### `gang flush [name]`
 
 Recovers a message the harness parked in its own input queue, as a verified

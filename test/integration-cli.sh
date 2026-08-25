@@ -19,7 +19,7 @@ dispatch_commands="$({
       }
     '
 } | awk '$0 != "hook" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
-bare_error_commands="hitch adopt send flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
+bare_error_commands="hitch adopt send at flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
 meaningful_bare_commands="up roster attach teams collars models roles config curfew notify upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
@@ -144,6 +144,7 @@ arity_probes=(
   "adopt|ghost STRAY|adopt: unknown argument 'STRAY'"
   "send|--to ghost --stdin STRAY|send: unknown argument 'STRAY'"
   "flush|ghost STRAY|flush: unexpected argument 'STRAY'"
+  "at|--to ghost STRAY|at: unknown argument 'STRAY' — a message body is not an argument"
   "mail|ghost STRAY|mail: unexpected argument 'STRAY'"
   "interrupt|ghost STRAY|interrupt: unexpected argument 'STRAY'"
   "compact|ghost STRAY|compact: unexpected argument 'STRAY'"

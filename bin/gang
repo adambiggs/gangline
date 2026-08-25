@@ -414,6 +414,7 @@ start and end a team
 
 talk to agents
   send      deliver a message to an agent
+  at        deliver a message at a time
   mail      read an agent's waiting queue
   flush     recover a harness-queued message
   interrupt stop an agent's current turn
@@ -623,6 +624,46 @@ gang send
   body may have been typed, left staged, or
   already delivered; read stderr, then read
   the target with gang status.
+EOF
+      ;;
+    at) cat <<'EOF'
+gang at
+  Park an attributed message now and deliver
+  it when the clock passes. The clock is a
+  sender, not a scheduler: when the time
+  arrives the message joins that agent's
+  ordinary queue and enters the session at the
+  next delivery opportunity, verified like any
+  other send.
+
+  gang at <duration|HH:MM> --to <name> --stdin
+    [--from <sender>]
+  gang at --to <name> --clear
+
+  The body is read from stdin:
+
+    printf '%s\n' "push window is open" |
+      gang at 17:00 --to lead --stdin
+
+  <time>        90m, 2h30m, or a local clock
+                time like 17:00, which means
+                its next occurrence.
+  --to <name>   who receives it
+  --stdin       read the body from stdin.
+                Required, and the only way to
+                pass a body.
+  --from <who>  who it is from. Required from
+                outside the team; an error
+                inside it. Attribution is
+                taken NOW, while the sending
+                window can still be seen.
+  --clear       cancel every timed send parked
+                for that target.
+
+  Until it is due, 'gang status <name>' names
+  it. If the agent is dropped first, the
+  message is archived with the rest of its
+  mail rather than vanishing.
 EOF
       ;;
     flush) cat <<'EOF'
@@ -3380,6 +3421,61 @@ spool_oldest_age() { # $1 = window id -> seconds the oldest waiting entry has wa
     return 0
   done
   return 1
+}
+
+# A TIMED SEND IS AN ORDINARY SPOOL ENTRY THAT IS NOT WAITING YET. It is written
+# into the target's own spool, in the same three-line shape as every other
+# entry, under a name beginning with a dot — and every path that drains, counts,
+# ages or supersedes the queue globs `[0-9]*`, so none of them can see it. That
+# is the whole mechanism: no new delivery semantics, no second store, and no
+# predicate anywhere had to learn about time.
+#
+# The dot is also why the rest falls out for free. `spool_dir_archive` archives
+# EVERY child of a spool and strips leading dots on the way, so an agent dropped
+# before its time arrives leaves this message in the archive under a readable
+# name rather than vanishing; `spool_sweep_orphans` carries the same entry out
+# of a spool no window claims. Its deletion path is the spool's, unchanged.
+#
+# What the clock does is promote: rename the entry into the namespace a drain
+# reads, then ask for a delivery. Nothing waits, nothing polls, and a promotion
+# that never happens leaves the entry exactly where a person can still find it.
+timed_stamp() { # $1 = due epoch -> the fixed-width field a glob reads soonest-first
+  printf '%010d' "$1"
+}
+
+timed_entries() { # $1 = window id; print each pending timed entry path, soonest first
+  local e
+  spool_existing "$1" || return 0
+  for e in "$SPOOL_DIR"/.timed-[0-9]*; do
+    [ -f "$e" ] && printf '%s\n' "$e"
+  done
+}
+
+timed_due_of() { # $1 = a timed entry path -> its due epoch; 1 = the name is unusable
+  local base due
+  base="${1##*/}"
+  due="${base#.timed-}"
+  due="${due%%-*}"
+  case "$due" in ''|*[!0-9]*) return 1 ;; esac
+  [ "${#due}" -eq 10 ] || return 1
+  printf '%s' "$((10#$due))"
+}
+
+timed_count() { # $1 = window id -> how many timed sends are parked against it
+  local e n=0
+  while read -r e; do [ -z "$e" ] || n=$((n + 1)); done <<<"$(timed_entries "$1")"
+  printf '%s' "$n"
+}
+
+# THE UNIT NAME IS DERIVED FROM THE ENTRY, not remembered beside it. The entry
+# file is the declaration — it outlives this process, the arming shell, and any
+# tmux option — so the callback's only test is the name it was armed under, and
+# that name has to be reconstructible from the entry alone.
+timed_unit() { # $1 = window id, $2 = entry basename -> a safe transient unit basename
+  local sum
+  sum="$(printf '%s:%s:%s\n' "$SESSION" "$1" "$2" | cksum)" \
+    || die "at: cannot derive a transient unit name"
+  printf 'gangline-at-%s-%s' "$(id -u)" "${sum%% *}"
 }
 
 spool_dir_of() { # $1 = window id -> its spool directory on stdout, nothing if it has none
@@ -6396,6 +6492,207 @@ cmd_send() {
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
 }
 
+TIMED_ENTRY=""
+timed_write() { # $1 window, $2 sender, $3 envelope, $4 fragment, $5 due; sets TIMED_ENTRY
+  local tmp
+  spool_establish "$1"
+  TIMED_ENTRY="$SPOOL_DIR/.timed-$(timed_stamp "$5")-$(mint_nonce)"
+  # Staged then renamed, like every other entry: a reader that meets this
+  # directory mid-write must never find a half-written message under a name
+  # that means "ready". The `.writing-` prefix is the one spool_abandoned
+  # already knows how to ask about and spool_dir_archive already carries out.
+  tmp="$SPOOL_DIR/.writing-$$-at-$(timed_stamp "$5")"
+  printf '%s\n%s\n%s\n' "$2" "$4" "$3" > "$tmp" \
+    || die "at: cannot write a timed message into $SPOOL_DIR"
+  mv -- "$tmp" "$TIMED_ENTRY" \
+    || { rm -f -- "$tmp"
+         die "at: cannot commit a timed message into $SPOOL_DIR — nothing was parked"; }
+}
+
+timed_arm() { # $1 window, $2 name, $3 entry path, $4 due; the clock that promotes it
+  local base unit out rc=0
+  base="${3##*/}"
+  unit="$(timed_unit "$1" "$base")"
+  local -a timer=(systemd-run --user --collect --unit="$unit"
+    --on-calendar="@$4" --timer-property=AccuracySec=1s
+    --property=Type=oneshot --setenv="GANG_SESSION=$SESSION"
+    --setenv="GANG_CONFIG_DIR=$CONFIG_DIR" --setenv="PATH=$PATH")
+  [ -z "${TMUX:-}" ] || timer+=(--setenv="TMUX=$TMUX")
+  [ -z "${TMUX_TMPDIR:-}" ] || timer+=(--setenv="TMUX_TMPDIR=$TMUX_TMPDIR")
+  [ -z "${GANG_COLLARS:-}" ] || timer+=(--setenv="GANG_COLLARS=$GANG_COLLARS")
+  [ -z "${GANG_LOCK_DIR:-}" ] || timer+=(--setenv="GANG_LOCK_DIR=$GANG_LOCK_DIR")
+  [ -z "${GANG_ARCHIVE_DIR:-}" ] || timer+=(--setenv="GANG_ARCHIVE_DIR=$GANG_ARCHIVE_DIR")
+  timer+=("$ROOT/bin/gang" at --fire "$base" --to "$2" --unit "$unit")
+  out="$("${timer[@]}" 2>&1)" || rc=$?
+  [ "$rc" -eq 0 ] || return 1
+  [ -z "$out" ] || printf '%s\n' "$out" >&2
+  return 0
+}
+
+# THE ENTRY IS THE DECLARATION, so a callback that cannot match it does nothing
+# and says nothing. Every early return here is a timer that outlived what it was
+# armed for — a promoted entry, a cancelled one, a recreated team — and none of
+# them may promote a message this timer was not armed to promote.
+timed_fire() { # $1 name, $2 entry basename, $3 the unit systemd is running
+  local name="$1" base="$2" fired="$3" id rc=0 entry due now err=""
+  id="$(win_id "$name")" || rc=$?
+  [ "$rc" -eq 0 ] || return 0    # a removed or replaced team makes this stale
+  spool_existing "$id" || return 0
+  entry="$SPOOL_DIR/$base"
+  [ -f "$entry" ] || return 0    # promoted, cancelled, or never this window's
+  [ "$(timed_unit "$id" "$base")" = "$fired" ] || return 0
+  due="$(timed_due_of "$entry")" || return 0
+  now="$(date +%s)"
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$due" -le "$now" ] || return 0   # an internal callback cannot deliver early
+  resolve "$name"
+  # PROMOTED BEFORE IT IS DELIVERED, and the rename is the whole promotion: the
+  # entry stops being invisible to the drain and becomes an ordinary waiting
+  # message, counted, aged, archived and superseded like any other. A drain that
+  # then refuses leaves it waiting for the next native boundary, which is the
+  # landing this verb promised — not a failure to be retried by anything here.
+  mv -- "$entry" "$SPOOL_DIR/$(spool_stamp)-$(mint_nonce)" \
+    || die "at: the timed message for $name came due and could not be moved into its queue; it is still at $entry"
+  err="$(spool_drain "$id" 2>&1)" || rc=$?
+  [ -z "$err" ] || printf '%s\n' "$err" >&2
+  return 0
+}
+
+# THE MESSAGE AND THE CLOCK THAT PROMOTES IT CAN OUTLIVE EACH OTHER, and the
+# entry alone then reports a delivery nothing will make. So the unit is read
+# too, and "gone" is kept apart from "could not be read": one is a message that
+# needs rescheduling and the other is a question this host could not answer.
+timed_unit_state() { # $1 = unit basename -> live | gone | unreadable
+  local state
+  command -v systemctl >/dev/null 2>&1 || { printf 'unreadable'; return; }
+  state="$(systemctl --user is-active "$1.timer" 2>/dev/null)" || true
+  case "$state" in
+    active|activating|reloading) printf 'live' ;;
+    inactive|failed|deactivating) printf 'gone' ;;
+    ''|unknown) printf 'unreadable' ;;
+    *) printf 'unreadable' ;;
+  esac
+}
+
+timed_report() { # $1 window id, $2 name; one truthful line per pending timed send
+  local e due now unit state
+  now="$(date +%s)"
+  case "$now" in ''|*[!0-9]*) return 0 ;; esac
+  while read -r e; do
+    [ -n "$e" ] || continue
+    if ! due="$(timed_due_of "$e")"; then
+      printf '%s\n' "timed send: an entry at $e carries no readable due time, so when it would be delivered is unknown; read it and remove it by hand"
+      continue
+    fi
+    unit="$(timed_unit "$1" "${e##*/}")"
+    state="$(timed_unit_state "$unit")"
+    if [ "$due" -gt "$now" ]; then
+      case "$state" in
+        live) printf '%s\n' "timed send: 1 message due $(curfew_format_epoch "$due") (in $(human_seconds "$(( due - now ))")), not waiting in the queue until then" ;;
+        gone) printf '%s\n' "timed send: 1 message due $(curfew_format_epoch "$due"), and the timer that would deliver it is GONE — nothing will promote it; re-park it with gang at, or read it at $e" ;;
+        *) printf '%s\n' "timed send: 1 message due $(curfew_format_epoch "$due"), and whether its timer still exists could not be read on this host; check with: systemctl --user list-units --all '$unit*'" ;;
+      esac
+    else
+      printf '%s\n' "timed send: 1 message came due $(human_seconds "$(( now - due ))") ago and is still parked, so its timer did not run — nothing will promote it; re-park it with gang at, or read it at $e"
+    fi
+  done <<<"$(timed_entries "$1")"
+}
+
+# THE TIMER GOES FIRST AND THE MESSAGE SECOND. A removed entry beside a live
+# timer is a callback that finds nothing and says nothing, which is harmless; a
+# stopped timer beside a live entry is a message nothing will ever promote,
+# reported as pending forever. Only one of those two orders can strand mail.
+timed_cancel_one() { # $1 window id, $2 entry path; 0 = the message is provably gone
+  local base unit
+  base="${2##*/}"
+  unit="$(timed_unit "$1" "$base")"
+  usage_unit_stop "$unit" \
+    || die "at: $USAGE_UNIT_TROUBLE, so the message it would deliver was left parked; recover with: $USAGE_UNIT_RECOVER"
+  rm -f -- "$2" || die "at: cannot remove the timed message $2"
+}
+
+cmd_at() { # park an attributed envelope now, deliver it when the clock passes
+  local when="" name="" from="" use_stdin=0 clear=0 fire="" fired_unit=""
+  local now due frag entry n=0 e
+  case "${1:-}" in ''|-*) ;; *) when="$1"; shift ;; esac
+  while [ $# -gt 0 ]; do case "$1" in
+    --to) [ $# -ge 2 ] || die "at: --to needs a value"
+          [ -z "$name" ] || die "at: --to may be passed only once"
+          name="$2"; shift 2 ;;
+    --from) [ $# -ge 2 ] || die "at: --from needs a value"; from="$2"; shift 2 ;;
+    --stdin) [ "$use_stdin" -eq 0 ] || die "at: --stdin may be passed only once"
+             use_stdin=1; shift ;;
+    --clear) clear=1; shift ;;
+    --fire) [ $# -ge 2 ] || die "at: --fire needs an entry name"; fire="$2"; shift 2 ;;
+    --unit) [ $# -ge 2 ] || die "at: --unit needs a transient unit name"
+            fired_unit="$2"; shift 2 ;;
+    -*) die "at: unknown argument '$1'" ;;
+    *) die "at: unknown argument '$1' — a message body is not an argument; gang reads it from stdin: gang at <time> --to <name> --stdin" ;;
+  esac; done
+  if [ -n "$fire" ]; then
+    [ -z "$when" ] && [ "$clear" -eq 0 ] && [ "$use_stdin" -eq 0 ] && [ -z "$from" ] \
+      || die "at: --fire is internal and takes only an entry name, a target and a unit"
+    [ -n "$name" ] || die "at: --fire needs the target it was armed for"
+    [ -n "$fired_unit" ] \
+      || die "at: --fire requires the --unit that armed it, so a stale timer cannot promote another message"
+    case "$fire" in
+      .timed-[0-9]*) ;;
+      *) die "at: --fire was given '$fire', which is not the name of a timed entry" ;;
+    esac
+    case "$fire" in */*) die "at: --fire takes an entry name, not a path" ;; esac
+    timed_fire "$name" "$fire" "$fired_unit"
+    return
+  fi
+  [ -z "$fired_unit" ] || die "at: --unit belongs to the internal --fire callback"
+  [ -n "$name" ] || die "at: target required (--to <name>)"
+  if [ "$clear" -eq 1 ]; then
+    [ -z "$when" ] && [ "$use_stdin" -eq 0 ] && [ -z "$from" ] \
+      || die "at: --clear cancels every timed send parked for a target and takes nothing else"
+    resolve "$name"
+    while read -r e; do
+      [ -n "$e" ] || continue
+      timed_cancel_one "$AGENT_ID" "$e"
+      n=$((n + 1))
+    done <<<"$(timed_entries "$AGENT_ID")"
+    [ "$n" -ne 0 ] || { printf 'no timed send parked for %s\n' "$name"; return; }
+    printf 'cancelled %s timed send(s) parked for %s\n' "$n" "$name"
+    return
+  fi
+  [ -n "$when" ] || die "at: a time is required: gang at <duration|HH:MM> --to <name> --stdin"
+  [ "$use_stdin" -eq 1 ] || die "at: message body required on stdin"
+  command -v systemd-run >/dev/null 2>&1 \
+    || die "at: systemd-run is required for the transient user timer that delivers a timed send; nothing was parked"
+  now="$(date +%s)"
+  curfew_parse "$when" "$now" \
+    || die "at: '$when' is not a time — use a duration like 90m or 2h30m, or a local clock time like 17:00"
+  due="$CURFEW_PARSED"
+  send_sender "$from" at
+  send_identity_guard at
+  stdin_body "at"
+  resolve "$name"
+  [ -z "$SEND_WINDOW" ] || [ "$SEND_WINDOW" != "$AGENT_ID" ] \
+    || refuse "at: '$name' resolves to this sending pane; a message that returns to its author is never intended"
+  envelope "$SEND_WIRE" "$STDIN_BODY"
+  frag="${STDIN_BODY%%$'\n'*}"
+  [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
+  # ATTRIBUTED NOW, DELIVERED LATER. The envelope is minted here, where the
+  # sender's pane can still be observed; re-attributing it in the callback would
+  # downgrade an identity Gangline watched to one it was merely told, because
+  # the clock has no pane of its own.
+  lock_pane "$AGENT_ID"
+  timed_write "$AGENT_ID" "$SEND_FROM" "$ENVELOPE" "$frag" "$due"
+  entry="$TIMED_ENTRY"
+  if ! timed_arm "$AGENT_ID" "$name" "$entry" "$due"; then
+    rm -f -- "$entry"
+    lock_release
+    die "at: the transient timer could not be created, so nothing will deliver this message and it was NOT parked"
+  fi
+  lock_release
+  printf '%s\n%s\n' \
+    "$(colour "$C_OK" "parked for $name as [gang:$SEND_WIRE] — due $(curfew_format_epoch "$due")")" \
+    "$(colour "$C_DIM" "(in $(human_seconds "$(( due - now ))")) it joins '$name's queue when the time passes and enters the session at the next delivery opportunity. 'gang status $name' names it until then; 'gang at --to $name --clear' cancels it.")"
+}
+
 # WHAT A PANE CAPTURE CAN CARRY, and nothing finer. One side of flush's
 # comparison is now the body Gangline itself composed, and the other is a
 # terminal capture of a composer holding it — so the two cannot be compared
@@ -7617,6 +7914,7 @@ usage_wake_status_report() { # $1 window
 
 cmd_status() {
   local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch skew="" current
+  local timed_line
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -7662,6 +7960,9 @@ cmd_status() {
       printf '%s\n' "$(colour "$C_WORK" "spooled: $spooled waiting for the next verified delivery opportunity")"
     fi
   fi
+  timed_report "$AGENT_ID" "$name" | while IFS= read -r timed_line; do
+    printf '%s\n' "$(colour "$C_WORK" "$timed_line")"
+  done
   held="$(spool_held "$AGENT_ID")"
   if [ "$held" -ne 0 ]; then
     held_dir="$(spool_dir_of "$AGENT_ID")"
@@ -7951,7 +8252,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
+  local prof state detail="" spooled timed age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -7973,6 +8274,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     detail="$detail spooled=$spooled"
     age="$(spool_oldest_age "$1")" && detail="$detail oldest=$(human_seconds "$age")"
   fi
+  timed="$(timed_count "$1")"
+  [ "$timed" -eq 0 ] || detail="$detail timed=$timed"
   held="$(spool_held "$1")"
   [ "$held" -eq 0 ] || detail="$detail spool-held=$held"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_stall_failed)" ] \
@@ -8655,6 +8958,7 @@ case "$cmd" in
   hitch)    cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   send)     cmd_send "$@" ;;
+  at)       cmd_at "$@" ;;
   flush)    cmd_flush "$@" ;;
   mail)     cmd_mail "$@" ;;
   interrupt) cmd_interrupt "$@" ;;

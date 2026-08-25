@@ -2043,6 +2043,174 @@ contains "and still hands over the body" \
   "$("$GANG" mail lostscreen)" "MARK_LOSTDRAIN"
 "$GANG" drop lostscreen >/dev/null
 
+# A TIMED SEND IS PARKED NOW AND PROMOTED LATER, AND NOTHING HERE WAITS. The
+# clock is faked at both ends: `systemd-run` records the argv Gangline built
+# instead of arming anything, and `date +%s` answers GANG_TEST_NOW where the
+# world needs the due time to have passed. Every assertion below reads state
+# that already exists once a command has returned.
+#
+# The unit name and the entry name are READ BACK OUT OF THE RECORDED ARGV
+# rather than restated here. Both are derived inside gang, and a test that
+# recomputed either would pass against a gang that derived them differently.
+at_bin="$RUN_ROOT/at-bin"
+at_args="$RUN_ROOT/at-timer-args"
+at_stops="$RUN_ROOT/at-timer-stops"
+at_real_date="$(command -v date)"
+mkdir -p "$at_bin"
+: > "$at_args"; : > "$at_stops"
+cat > "$at_bin/systemd-run" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" > "$at_args"
+exit \${GANG_TEST_ARM_FAIL:-0}
+SH
+cat > "$at_bin/systemctl" <<SH
+#!/bin/sh
+printf '%s\n' "\$@" >> "$at_stops"
+case "\${GANG_TEST_SYSTEMCTL:-armed}" in
+  armed) case "\$*" in *is-active*) echo active; exit 0 ;; *) exit 0 ;; esac ;;
+  gone)  case "\$*" in *is-active*) echo inactive; exit 3 ;; *) exit 5 ;; esac ;;
+  blind) exit 1 ;;
+esac
+SH
+cat > "$at_bin/date" <<SH
+#!/bin/sh
+if [ "\${1:-}" = +%s ] && [ -n "\${GANG_TEST_NOW:-}" ]; then
+  printf '%s\n' "\$GANG_TEST_NOW"
+else
+  exec "$at_real_date" "\$@"
+fi
+SH
+chmod +x "$at_bin/systemd-run" "$at_bin/systemctl" "$at_bin/date"
+
+"$HITCH" timed -c spoolable -d /tmp >/dev/null
+timed_id="$(window_id timed)"
+timed_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$timed_id" @gl_spool)"
+at_out="$(printf 'MARK_TIMED_BODY' | PATH="$at_bin:$PATH" \
+  "$GANG" at 90m --to timed --from tester --stdin)"
+contains "at reports the message parked rather than delivered" "$at_out" "parked for timed"
+contains "and names the identity it attributed now" "$at_out" "[gang:self-declared:tester]"
+at_entry="$(printf '%s\n' "$timed_spool"/.timed-* | head -n 1)"
+if [ -f "$at_entry" ]; then
+  pass "a timed send writes one entry into the target's own spool"
+else
+  fail "a timed send writes one entry into the target's own spool" \
+    "no .timed- entry under $timed_spool"
+fi
+# THE ENVELOPE IS MINTED AT PARK TIME, where the sender could still be resolved.
+contains "the parked entry carries the attributed envelope, not a bare body" \
+  "$(cat "$at_entry")" "[gang:self-declared:tester#"
+contains "and the body it was given" "$(cat "$at_entry")" "MARK_TIMED_BODY"
+# INVISIBLE TO THE QUEUE, which is the whole mechanism: every drain, count and
+# supersede path globs [0-9]*, so a dot-named entry is not waiting yet.
+equal "a parked timed send is not counted as waiting mail" "0" \
+  "$(printf '%s' "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "timed" { print $4 }')")"
+contains "but the roster names it as a timed send" \
+  "$("$GANG" roster | grep '^timed ')" "timed=1"
+at_status="$("$GANG" status timed)"
+contains "status says when it comes due" "$at_status" "timed send: 1 message due"
+excludes "and does not report it as spooled mail" "$at_status" "spooled:"
+excludes "the body has not entered the session" "$(pane timed)" "MARK_TIMED_BODY"
+
+at_unit="$(awk -F= '/^--unit=/ { print $2 }' "$at_args")"
+at_fire_name="$(tail -n 5 "$at_args" | head -n 1)"
+equal "the timer's callback is gang's own at --fire" "at --fire" \
+  "$(tail -n 6 "$at_args" | head -n 2 | tr '\n' ' ' | sed 's/.*\(at --fire\).*/\1/')"
+equal "and it names the entry the timer was armed for" "${at_entry##*/}" \
+  "$at_fire_name"
+contains "the timer is transient and collected" "$(<"$at_args")" "--collect"
+contains "and is armed on the due time as a calendar event" "$(<"$at_args")" "--on-calendar=@"
+
+# A CALLBACK THAT ARRIVES EARLY PROMOTES NOTHING. The due time is 90 minutes
+# out and the clock is real here, so this is the ordinary early case.
+PATH="$at_bin:$PATH" "$GANG" at --fire "${at_entry##*/}" --to timed \
+  --unit "$at_unit" >/dev/null
+if [ -f "$at_entry" ]; then
+  pass "an early callback leaves the timed message parked"
+else
+  fail "an early callback leaves the timed message parked" "$at_entry is gone"
+fi
+# A CALLBACK UNDER ANOTHER UNIT IS A TIMER THIS ENTRY WAS NOT ARMED BY.
+GANG_TEST_NOW="$(( $(date +%s) + 7200 ))" PATH="$at_bin:$PATH" \
+  "$GANG" at --fire "${at_entry##*/}" --to timed \
+  --unit "gangline-at-$(id -u)-0" >/dev/null
+if [ -f "$at_entry" ]; then
+  pass "a callback naming another unit promotes nothing"
+else
+  fail "a callback naming another unit promotes nothing" "$at_entry is gone"
+fi
+equal "and nothing reached the queue under it" "0" \
+  "$(printf '%s' "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "timed" { print $4 }')")"
+
+# DUE, AND THE CLOCK SAYS SO. The target holds a human draft, so the drain the
+# promotion asks for refuses before any keystroke and the message stays queued
+# — which is the landing this verb promises: it joins the ordinary queue.
+tmux send-keys -l -t "$timed_id" 'HUMAN_DRAFT'
+GANG_TEST_NOW="$(( $(date +%s) + 7200 ))" PATH="$at_bin:$PATH" \
+  "$GANG" at --fire "${at_entry##*/}" --to timed --unit "$at_unit" >/dev/null 2>&1
+if [ -f "$at_entry" ]; then
+  fail "a due callback promotes the timed message into the queue" \
+    "$at_entry is still parked"
+else
+  pass "a due callback promotes the timed message into the queue"
+fi
+equal "and it is ordinary waiting mail from that moment on" "1" \
+  "$(printf '%s' "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "timed" { print $4 }')")"
+excludes "the roster no longer calls it a timed send" \
+  "$("$GANG" roster | grep '^timed ')" "timed="
+contains "and the promoted entry is the envelope minted at park time" \
+  "$("$GANG" mail timed)" "[gang:self-declared:tester#"
+tmux send-keys -t "$timed_id" C-u
+"$GANG" drop timed >/dev/null
+
+# CANCELLATION STOPS THE EXACT UNIT AND THEN REMOVES THE MESSAGE.
+"$HITCH" timed-clear -c spoolable -d /tmp >/dev/null
+timed_clear_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$(window_id timed-clear)" @gl_spool)"
+printf 'MARK_TIMED_CLEAR' | PATH="$at_bin:$PATH" \
+  "$GANG" at 2h --to timed-clear --from tester --stdin >/dev/null
+at_clear_unit="$(awk -F= '/^--unit=/ { print $2 }' "$at_args")"
+: > "$at_stops"
+at_clear_out="$(PATH="$at_bin:$PATH" "$GANG" at --to timed-clear --clear)"
+contains "clear reports what it cancelled" "$at_clear_out" "cancelled 1 timed send"
+contains "and stops the exact transient timer it armed" \
+  "$(<"$at_stops")" "$at_clear_unit.timer"
+equal "the cancelled message is gone from the spool" "" \
+  "$(printf '%s\n' "$timed_clear_spool"/.timed-* | grep -v '\*$' || :)"
+equal "a target with nothing parked says so" "no timed send parked for timed-clear" \
+  "$(PATH="$at_bin:$PATH" "$GANG" at --to timed-clear --clear)"
+"$GANG" drop timed-clear >/dev/null
+
+# A TARGET DROPPED BEFORE ITS TIME DOES NOT SWALLOW THE MESSAGE. The entry is an
+# ordinary child of the spool, and teardown archives every child and strips the
+# leading dot on the way, so it arrives readable rather than vanishing.
+"$HITCH" timed-dropped -c spoolable -d /tmp >/dev/null
+printf 'MARK_TIMED_ARCHIVED' | PATH="$at_bin:$PATH" \
+  "$GANG" at 3h --to timed-dropped --from tester --stdin >/dev/null
+"$GANG" drop timed-dropped >/dev/null
+at_archived="$(grep -rl 'MARK_TIMED_ARCHIVED' "$GANG_ARCHIVE_DIR" 2>/dev/null | head -n 1)"
+if [ -n "$at_archived" ]; then
+  pass "a timed message outlives the agent it was parked for"
+else
+  fail "a timed message outlives the agent it was parked for" \
+    "nothing under $GANG_ARCHIVE_DIR carries the body"
+fi
+case "${at_archived##*/}" in
+  .*) fail "and it arrives in the archive visible, not hidden" "${at_archived##*/}" ;;
+  *) pass "and it arrives in the archive visible, not hidden" ;;
+esac
+
+# AN UNARMABLE CLOCK PARKS NOTHING. A message whose promotion nothing will make
+# is worse than a refusal: status would report a delivery that cannot happen.
+"$HITCH" timed-noarm -c spoolable -d /tmp >/dev/null
+timed_noarm_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$(window_id timed-noarm)" @gl_spool)"
+at_noarm_rc=0
+at_noarm_out="$(printf 'MARK_TIMED_NOARM' | GANG_TEST_ARM_FAIL=1 PATH="$at_bin:$PATH" \
+  "$GANG" at 45m --to timed-noarm --from tester --stdin 2>&1)" || at_noarm_rc=$?
+equal "a timer that cannot be created fails the park" "1" "$at_noarm_rc"
+contains "and says the message was not parked" "$at_noarm_out" "NOT parked"
+equal "leaving nothing behind in the spool" "" \
+  "$(printf '%s\n' "$timed_noarm_spool"/.timed-* | grep -v '\*$' || :)"
+"$GANG" drop timed-noarm >/dev/null
+
 # One spool is deliberately left alive for the teardown below to account for.
 "$HITCH" lingering -c spoolable -d /tmp >/dev/null
 lingering_id="$(window_id lingering)"
