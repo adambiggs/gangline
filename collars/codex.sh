@@ -373,6 +373,188 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   printf '%s' "$file"
 }
 
+# A STOPPED TURN CAN STILL HOLD NATIVE WORK. Codex keeps background terminal
+# processes under the harness process, spawned-agent edges in its state store,
+# and automatic goal continuations in its goal store. None is intent: each is a
+# resource the harness has actually retained after the turn. Observed on Codex
+# 0.149.1. This reader walks only a bounded process set and a bounded number/tail
+# of child records, and it is called only from Gangline's existing native-hook
+# pass — never by a patrol.
+collar_waiting() { # $1 target, $2 Stop payload; print witness, 0 held, 1 absent, 2 unknown
+  local pane_pid session_id codex_home
+  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" \
+    || pane_pid=""
+  session_id="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" \
+    || session_id=""
+  case "$pane_pid" in ''|*[!0-9]*) printf 'the Codex harness process id is unreadable'; return 2 ;; esac
+  case "$session_id" in
+    ''|*[!A-Za-z0-9._:-]*) printf 'the Codex session id is unreadable'; return 2 ;;
+  esac
+  codex_home="${CODEX_HOME:-$HOME/.codex}"
+  python3 - "$pane_pid" "$session_id" "$codex_home" <<'PY'
+import glob
+import json
+import os
+import sqlite3
+import sys
+from urllib.parse import quote
+
+root_pid = int(sys.argv[1])
+thread_id = sys.argv[2]
+codex_home = sys.argv[3]
+max_processes = 128
+max_children = 64
+tail_bytes = 262144
+shells = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
+
+
+def unknown(message):
+    print(message)
+    raise SystemExit(2)
+
+
+def proc_text(pid, leaf):
+    with open(f"/proc/{pid}/{leaf}", encoding="utf-8") as stream:
+        return stream.read().strip()
+
+
+try:
+    ancestors = set()
+    cursor = os.getpid()
+    while cursor > 1 and cursor not in ancestors:
+        ancestors.add(cursor)
+        fields = proc_text(cursor, "stat").rsplit(") ", 1)[1].split()
+        cursor = int(fields[1])
+    queue = [root_pid]
+    seen = {root_pid}
+    while queue:
+        parent = queue.pop(0)
+        try:
+            child_text = proc_text(parent, f"task/{parent}/children")
+        except FileNotFoundError:
+            if parent == root_pid:
+                raise
+            continue
+        for word in child_text.split():
+            child = int(word)
+            if child in seen:
+                continue
+            seen.add(child)
+            if len(seen) > max_processes:
+                unknown("the Codex child-process probe exceeded its 128-process bound")
+            if child in ancestors:
+                continue
+            queue.append(child)
+            try:
+                stat = proc_text(child, "stat").rsplit(") ", 1)[1].split()
+                command = proc_text(child, "comm")
+            except FileNotFoundError:
+                continue
+            if stat and stat[0] != "Z" and command in shells:
+                print("a live Codex child shell")
+                raise SystemExit(0)
+except FileNotFoundError:
+    unknown("the Codex child-process tree changed while it was being read")
+except (OSError, UnicodeError, ValueError):
+    unknown("the Codex child-process tree is unreadable")
+
+
+def open_readonly(path):
+    uri = f"file:{quote(os.path.abspath(path))}?mode=ro"
+    return sqlite3.connect(uri, uri=True, timeout=0.05)
+
+
+def newest_task_state(path):
+    try:
+        with open(path, "rb") as stream:
+            stream.seek(0, 2)
+            size = stream.tell()
+            start = max(0, size - tail_bytes)
+            stream.seek(start)
+            data = stream.read(tail_bytes)
+    except OSError:
+        return "unknown"
+    if start:
+        cut = data.find(b"\n")
+        if cut < 0:
+            return "unknown"
+        data = data[cut + 1 :]
+    if data and not data.endswith(b"\n"):
+        data = data.rsplit(b"\n", 1)[0] + b"\n"
+    for raw in reversed(data.splitlines()):
+        if b'"task_started"' not in raw and b'"task_complete"' not in raw:
+            continue
+        try:
+            record = json.loads(raw)
+        except (UnicodeError, ValueError):
+            return "unknown"
+        payload = record.get("payload")
+        kind = payload.get("type") if isinstance(payload, dict) else None
+        if kind == "task_started":
+            return "running"
+        if kind == "task_complete":
+            return "complete"
+    return "unknown" if start else "pending"
+
+
+state_paths = glob.glob(os.path.join(codex_home, "state_[0-9]*.sqlite"))
+if state_paths:
+    def state_version(path):
+        stem = os.path.basename(path)[len("state_") : -len(".sqlite")]
+        return int(stem) if stem.isdigit() else -1
+
+    state_path = max(state_paths, key=state_version)
+    try:
+        with open_readonly(state_path) as database:
+            rows = database.execute(
+                """
+                WITH RECURSIVE descendants(child_thread_id) AS (
+                    SELECT child_thread_id FROM thread_spawn_edges
+                    WHERE parent_thread_id = ? AND status = 'open'
+                    UNION ALL
+                    SELECT edge.child_thread_id FROM thread_spawn_edges AS edge
+                    JOIN descendants ON edge.parent_thread_id = descendants.child_thread_id
+                    WHERE edge.status = 'open'
+                )
+                SELECT descendants.child_thread_id, threads.rollout_path
+                FROM descendants
+                LEFT JOIN threads ON threads.id = descendants.child_thread_id
+                LIMIT ?
+                """,
+                (thread_id, max_children + 1),
+            ).fetchall()
+    except (OSError, sqlite3.Error):
+        unknown("the Codex spawned-task store is unreadable")
+    if len(rows) > max_children:
+        unknown("the Codex spawned-task probe exceeded its 64-task bound")
+    for _, rollout_path in rows:
+        if not isinstance(rollout_path, str) or not rollout_path:
+            unknown("a Codex spawned task has no readable session record")
+        state = newest_task_state(rollout_path)
+        if state in {"running", "pending"}:
+            print("an unfinished Codex spawned task")
+            raise SystemExit(0)
+        if state == "unknown":
+            unknown("a Codex spawned task has no readable exit record within the bounded scan")
+
+goals_path = os.path.join(codex_home, "goals_1.sqlite")
+if os.path.exists(goals_path):
+    try:
+        with open_readonly(goals_path) as database:
+            row = database.execute(
+                "SELECT status FROM thread_goals WHERE thread_id = ?",
+                (thread_id,),
+            ).fetchone()
+    except (OSError, sqlite3.Error):
+        unknown("the Codex goal-wakeup store is unreadable")
+    if row and row[0] in {"active", "usage_limited"}:
+        print("an armed Codex goal continuation")
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 collar_session_id() { # $1 = tmux target, $2 = native hook payload
   local value transcript
   value="$(printf '%s' "$2" | python3 -c '

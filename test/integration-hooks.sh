@@ -53,6 +53,18 @@ collar_bricked() {
     *) return 1 ;;
   esac
 }
+collar_waiting() {
+  local evidence=""
+  evidence="\$(cat "$RUN_ROOT/waiting-evidence" 2>/dev/null)" || evidence=""
+  case "\$evidence" in
+    held) printf 'fixture background child is live'; return 0 ;;
+    unknown) printf 'fixture background source unreadable'; return 2 ;;
+    held-empty) return 0 ;;
+    absent-witness) printf 'impossible absent witness'; return 1 ;;
+    invalid-verdict) return 7 ;;
+    *) return 1 ;;
+  esac
+}
 SH
 cat > "$RUN_ROOT/wait-arm-env" <<'SH'
 tmux() {
@@ -102,6 +114,167 @@ SH
 "$HITCH" waitable -c waitable -d /tmp >/dev/null
 waitable_id="$(window_id waitable)"
 waitable_pane="$(tmux list-panes -t "$waitable_id" -F '#{pane_id}')"
+
+# WAITING IS A LAST-WITNESSED STOP FACT. The collar's bounded probe names a
+# held resource; later native traffic retires that event fact without any
+# patrol, and an absent probe result lets the same Stop remain ordinary idle.
+printf '%s' held > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "a Stop with held background work reports waiting" \
+  "$("$GANG" status waitable)" "~wait~ (fixture background child is live)"
+contains "the human roster carries the waiting witness" \
+  "$("$GANG" roster)" "~wait~"
+equal "porcelain gives waiting its stable word" "waiting" \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "waitable" { print $3 }')"
+equal "waiting keeps the slack window glyph" "~waitable~" \
+  "$(tmux display-message -p -t "$waitable_id" '#W')"
+
+printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+equal "new native turn traffic retires the waiting witness" "" \
+  "$(tmux show-options -wqv -t "$waitable_id" @gl_waiting)"
+contains "the re-invoked turn is busy again" \
+  "$("$GANG" status waitable)" "-busy-"
+
+rm -f -- "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "a Stop with no held background work remains idle" \
+  "$("$GANG" status waitable)" "~idle~"
+
+printf '%s' unknown > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "an unreadable background source stays unknown" \
+  "$("$GANG" status waitable)" "?unknown? (fixture background source unreadable)"
+printf '%s' held-empty > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "a held verdict requires a named resource witness" \
+  "$("$GANG" status waitable)" "reported held background work without naming its witness"
+printf '%s' absent-witness > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "an absent verdict cannot carry a resource witness" \
+  "$("$GANG" status waitable)" "printed a witness while reporting no held background work"
+printf '%s' invalid-verdict > "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+contains "an undeclared waiting verdict stays unknown" \
+  "$("$GANG" status waitable)" "returned unknown verdict 7"
+rm -f -- "$RUN_ROOT/waiting-evidence"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+
+# THE SHIPPED CODEX PROBE WITNESSES A PROCESS, NOT A TRANSCRIPT SENTENCE. A
+# foreground child shell signals after it exists and blocks on a native tmux
+# channel. Releasing that channel lets the pane signal the second barrier only
+# after the child has exited, so both verdicts use immediate process evidence.
+codex_wait_home="$RUN_ROOT/codex-wait-home"
+mkdir -p "$codex_wait_home"
+codex_wait_name="codex-wait-native-$$"
+tmux new-window -d -t "=$GANG_SESSION" -n "$codex_wait_name" -c /tmp \
+  'exec bash --noprofile --norc'
+codex_wait_id="$(tmux display-message -p -t "=$GANG_SESSION:$codex_wait_name" '#{window_id}')"
+codex_wait_pane="$(tmux list-panes -t "$codex_wait_id" -F '#{pane_id}')"
+tmux set-option -w -t "$codex_wait_id" @gl_session_id fixture-codex-wait
+codex_wait_ready="gang-test-codex-wait-ready-$$"
+codex_wait_release="gang-test-codex-wait-release-$$"
+codex_wait_done="gang-test-codex-wait-done-$$"
+printf -v codex_wait_command \
+  "bash -c 'tmux wait-for -S %q; tmux wait-for %q; :'; tmux wait-for -S %q" \
+  "$codex_wait_ready" "$codex_wait_release" "$codex_wait_done"
+tmux send-keys -l -t "$codex_wait_pane" "$codex_wait_command"
+tmux send-keys -t "$codex_wait_pane" Enter
+tmux wait-for "$codex_wait_ready"
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "the Codex probe reports a live child shell as held work" "0" "$codex_wait_rc"
+equal "the Codex process witness names what is held" \
+  "a live Codex child shell" "$codex_wait_output"
+tmux wait-for -S "$codex_wait_release"
+tmux wait-for "$codex_wait_done"
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "the Codex probe distinguishes an exited child from held work" "1" "$codex_wait_rc"
+equal "an absent Codex waiting verdict prints no witness" "" "$codex_wait_output"
+
+codex_wait_child="$codex_wait_home/child.jsonl"
+printf '%s\n' '{"type":"event_msg","payload":{"type":"task_started"}}' \
+  > "$codex_wait_child"
+python3 - "$codex_wait_home/state_5.sqlite" "$codex_wait_child" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as database:
+    database.execute(
+        "CREATE TABLE thread_spawn_edges "
+        "(parent_thread_id TEXT, child_thread_id TEXT PRIMARY KEY, status TEXT)"
+    )
+    database.execute(
+        "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL)"
+    )
+    database.execute(
+        "INSERT INTO thread_spawn_edges VALUES (?, ?, 'open')",
+        ("fixture-codex-wait", "fixture-child"),
+    )
+    database.execute(
+        "INSERT INTO threads VALUES (?, ?)",
+        ("fixture-child", sys.argv[2]),
+    )
+PY
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "the Codex probe reports a spawned task without an exit" "0" "$codex_wait_rc"
+equal "the Codex task-record witness names what is unfinished" \
+  "an unfinished Codex spawned task" "$codex_wait_output"
+printf '%s\n' '{"type":"event_msg","payload":{"type":"task_complete"}}' \
+  >> "$codex_wait_child"
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "a Codex task exit retires its waiting evidence" "1" "$codex_wait_rc"
+
+python3 - "$codex_wait_home/goals_1.sqlite" <<'PY'
+import sqlite3
+import sys
+
+with sqlite3.connect(sys.argv[1]) as database:
+    database.execute(
+        "CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT NOT NULL)"
+    )
+    database.execute(
+        "INSERT INTO thread_goals VALUES (?, 'active')",
+        ("fixture-codex-wait",),
+    )
+PY
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "the Codex probe reports an armed goal continuation" "0" "$codex_wait_rc"
+equal "the Codex wake witness names the held continuation" \
+  "an armed Codex goal continuation" "$codex_wait_output"
+tmux kill-window -t "$codex_wait_id"
+
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_arm="gang-test-wait-arm-$$-done"
 wait_trace="$RUN_ROOT/wait-native-waits"

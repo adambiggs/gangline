@@ -410,9 +410,12 @@ Gangline selects evidence for each predicate rather than averaging it. Fresh
 native events outrank owned file state, which outranks pane scraping. Missing,
 expired, or contradictory evidence produces an explicit unknown state.
 
-`-busy-` means Gangline has positive evidence of work. `~idle~` means it has positive
-evidence the composer is ready. `!occupied!` means a native UI owns the composer.
-`?unknown?` means the available evidence can no longer answer truthfully.
+`-busy-` means Gangline has positive evidence of work. `~wait~` means the last
+native turn boundary found a harness resource still held for background work;
+it stays honestly stale until later hook traffic. `~idle~` means Gangline has
+positive evidence the composer is ready with no such last-witnessed resource.
+`!occupied!` means a native UI owns the composer. `?unknown?` means the
+available evidence can no longer answer truthfully.
 
 For the window-name glyph, its staleness, bare addressing, and tmux's appended
 flags, see [Observation](reference.md#observation); `gang roster` remains the

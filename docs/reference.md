@@ -746,11 +746,21 @@ Prints one current state:
 
 - `-busy-` — a native event, terminal activity, or collar marker
   witnesses active work;
+- `~wait~ (...)` — the last native turn boundary witnessed a harness resource
+  still held for background work;
 - `~idle~` — the evidence positively witnesses readiness;
 - `!occupied! (authority unknown)` — a native UI owns the composer;
 - `!bricked! (...)` — collar-native fatal evidence says the current session's
   turns cannot succeed until its cause is repaired;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
+
+Waiting is event-derived rather than a patrol. At Stop, an optional bounded
+collar probe may name a live child shell, an unfinished native task record, or
+an armed native continuation; Gangline records that held resource. The next
+recognized native event retires the record, while hook silence leaves it
+honestly stale. Mere intent to return later holds nothing and remains idle.
+The waiting and idle window names share the slack `~name~` glyph; the state word
+in `status` and `roster` carries the distinction.
 
 Fatal evidence is checked after native UI occupancy and before ordinary busy
 paint. That lets an operator-owned recovery UI remain occupied while preventing
@@ -993,8 +1003,8 @@ is deciding: read the rows, not the status.
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
 `state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
-word: `busy`, `idle`, `occupied`, `bricked`, or `unknown` for the five human
-glyph states. `unknown` covers both a state Gangline determined it could not
+word: `busy`, `waiting`, `idle`, `occupied`, `bricked`, or `unknown` for the
+human states. `unknown` covers both a state Gangline determined it could not
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
@@ -1212,6 +1222,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |
+| `collar_waiting target payload` | optional bounded Stop-time probe for native background resources; print the held-resource witness and return 0 waiting, return 1 with no output when none is held, or print a cause and return 2 when the native sources are unreadable. The result is cached only until later recognized hook traffic; intent without a held resource stays idle |
 | `collar_last_action target` | optional; print `at <epoch>` for the newest tool call the harness recorded, or `before <epoch>` when a scan bound was reached first and the newest call is older than that time. Return 0 having printed one of those, 1 with no output when the source holds no tool call at all, or print a reason and return 2 when no reading could be taken. A collar that does not declare it leaves the reading unknown, which is a distinct answer from an agent that has run nothing |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |

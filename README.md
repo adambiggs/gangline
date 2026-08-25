@@ -16,7 +16,7 @@ session of that harness has. Gangline supplies only the shared primitives:
 
 - start, attach, observe, and stop native harnesses;
 - send attributed messages through their terminal and verify delivery;
-- expose conservative -busy-, ~idle~, !occupied!, and ?unknown? state;
+- expose conservative -busy-, ~wait~, ~idle~, !occupied!, and ?unknown? state;
 - invoke each harness's native compaction, including Codex self-compaction;
 - optionally give agents yellow and red context, provider-usage, or team-time
   lights; and

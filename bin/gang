@@ -940,14 +940,15 @@ EOF
     status) cat <<'EOF'
 gang status
   Report what one agent is doing right now,
-  computed from live evidence.
+  from live evidence and the last native Stop.
 
   gang status [name]
 
   [name]  agent to inspect (default: this
           window)
 
-  One state line: -busy-, ~idle~, !occupied!
+  One state line: -busy-, ~wait~, ~idle~,
+  !occupied!
   where a native UI owns the input box,
   !bricked! where fatal turn evidence says no
   turn can succeed, or ?unknown? where the
@@ -1381,7 +1382,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_models collar_model_check collar_bricked \
+    collar_session_id collar_models collar_model_check collar_bricked collar_waiting \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -2775,6 +2776,84 @@ bricked() { # $1 window, collar loaded; 0 fatal, 1 absent, 2 unknown
       fi
       return 2 ;;
     *) die "collar_bricked in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
+WAITING_WHAT="background-work witness unavailable"
+
+waiting_read() { # $1 window -> 0 waiting, 1 absent, 2 unknown; sets WAITING_WHAT
+  local record kind what
+  WAITING_WHAT="background-work witness unavailable"
+  record="$(tmux show-options -wqv -t "$1" @gl_waiting 2>/dev/null)" || record=""
+  [ -n "$record" ] || return 1
+  IFS=$'\t' read -r kind what <<<"$record"
+  case "$kind" in
+    waiting)
+      [ -n "$what" ] || { WAITING_WHAT="the stored waiting witness is empty"; return 2; }
+      WAITING_WHAT="$what"
+      return 0 ;;
+    unknown)
+      [ -n "$what" ] || what="the stored waiting probe failure has no cause"
+      WAITING_WHAT="$what"
+      return 2 ;;
+    *) WAITING_WHAT="the stored waiting witness has an unknown verdict"; return 2 ;;
+  esac
+}
+
+waiting_clear() { # $1 window; a new native event retires the old Stop witness
+  tmux set-option -uw -t "$1" @gl_waiting 2>/dev/null || true
+}
+
+waiting_refresh() { # $1 window, $2 collar, $3 Stop payload; cache one bounded probe
+  local raw="" header="" output="" rc=0 source="collar '$2'"
+  # CONTAIN THE OPTIONAL RELOAD. Stop's universal turn boundary has always
+  # survived a collar removed after hitch; a derived-state reader cannot make
+  # that boundary depend on the file still existing. Capturing stderr also
+  # keeps a malformed load distinct from a clean absent verdict below.
+  raw="$( {
+    load_collar "$2"
+    if declare -F collar_waiting >/dev/null; then
+      printf 'declared:'
+      collar_waiting "$1" "$3"
+    else
+      printf 'absent:'
+    fi
+  } 2>&1)" || rc=$?
+  header="${raw%%:*}"
+  if [ "$header" = absent ] && [ "$rc" -eq 0 ]; then
+    waiting_clear "$1"
+    return 0
+  fi
+  if [ "$header" = declared ]; then
+    output="${raw#*:}"
+  else
+    output="$raw"
+    rc=2
+  fi
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0)
+      if [ -n "$output" ]; then
+        tmux set-option -w -t "$1" @gl_waiting "waiting"$'\t'"$output" 2>/dev/null || true
+      else
+        tmux set-option -w -t "$1" @gl_waiting \
+          "unknown"$'\t'"collar_waiting in $source reported held background work without naming its witness" \
+          2>/dev/null || true
+      fi ;;
+    1)
+      if [ -n "$output" ]; then
+        tmux set-option -w -t "$1" @gl_waiting \
+          "unknown"$'\t'"collar_waiting in $source printed a witness while reporting no held background work" \
+          2>/dev/null || true
+      else
+        waiting_clear "$1"
+      fi ;;
+    2)
+      [ -n "$output" ] || output="collar_waiting in $source reported unknown without a cause"
+      tmux set-option -w -t "$1" @gl_waiting "unknown"$'\t'"$output" 2>/dev/null || true ;;
+    *) tmux set-option -w -t "$1" @gl_waiting \
+         "unknown"$'\t'"collar_waiting in $source returned unknown verdict $rc" \
+         2>/dev/null || true ;;
   esac
 }
 
@@ -6113,6 +6192,9 @@ cmd_hitch() {
   hitch_register "$id" "$name" allow-rename off
   hitch_register "$id" "$name" @gl_agent "$name"
   hitch_register "$id" "$name" @gl_collar "$prof"
+  # Window options survive a resume respawn. A held resource belonged to the
+  # old native process; only the new launch's own Stop may witness another.
+  waiting_clear "$id"
   hitch_register "$id" "$name" @gl_root "$ROOT"
   stamp_binary_id "$id" "$name"
   spool_mint "$id"
@@ -7439,7 +7521,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
   local id="$1" state="$2" glyph="" bare current target
   case "$state" in
     -busy-*) glyph=- ;;
-    '~idle~'*) glyph='~' ;;
+    '~wait~'*|'~idle~'*) glyph='~' ;;
     '!occupied!'*) glyph='!' ;;
     '!bricked!'*) glyph='!' ;;
     '?unknown?'*) glyph='?' ;;
@@ -7480,7 +7562,7 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 }
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0 abandoned=0
+  local state busy_rc=0 bricked_rc=0 waiting_rc=1 abandoned=0
   STATE_NOW_RESULT=""
   if occupied "$1"; then
     activity_hold_clear "$1"
@@ -7516,7 +7598,14 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   abandoned="$TURN_ABANDONED"
   case "$busy_rc" in
     0) state="-busy-" ;;
-    1) state="~idle~" ;;
+    1) waiting_rc=0
+       waiting_read "$1" || waiting_rc=$?
+       case "$waiting_rc" in
+         0) state="~wait~ ($WAITING_WHAT)" ;;
+         1) state="~idle~" ;;
+         2) state="?unknown? ($WAITING_WHAT)" ;;
+         *) die "internal: waiting_read returned unknown verdict $waiting_rc" ;;
+       esac ;;
     2) state="?unknown? ($BUSY_EXPIRED_WHAT)" ;;
     *) die "internal: busy returned unknown verdict $busy_rc" ;;
   esac
@@ -8259,6 +8348,7 @@ roster_row_unread() { # $1 window, $2 name, $3 porcelain; the row for a row that
 roster_state_word() { # $1 decorated state -> one stable porcelain word
   case "$1" in
     -busy-*) printf busy ;;
+    '~wait~'*) printf waiting ;;
     '~idle~'*) printf idle ;;
     '!occupied!'*) printf occupied ;;
     '!bricked!'*) printf bricked ;;
@@ -8430,7 +8520,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload event collar kind="" window=""
+  local payload event collar kind="" window="" waiting_rc=1
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
   # its caller is a harness configuration and law 7 keeps hooks non-fatal. It
@@ -8485,6 +8575,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     }
   fi
   tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
+  [ "$event" = Stop ] || waiting_clear "$TMUX_PANE"
   case "$event" in
     Stop|PostCompact)
       window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
@@ -8508,7 +8599,14 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     Stop) turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
-          glyph_write "$TMUX_PANE" "~idle~"
+          waiting_refresh "$TMUX_PANE" "$collar" "$payload"
+          waiting_rc=0
+          waiting_read "$TMUX_PANE" || waiting_rc=$?
+          case "$waiting_rc" in
+            0) glyph_write "$TMUX_PANE" "~wait~" ;;
+            1) glyph_write "$TMUX_PANE" "~idle~" ;;
+            2) glyph_write "$TMUX_PANE" "?unknown?" ;;
+          esac
           wait_signal_registered "$window" "$TMUX_PANE"
           tmux set-option -w -t "$TMUX_PANE" @gl_context_ready 1 2>/dev/null || true
           # One native boundary starts one delivery action. Mail already
@@ -8640,6 +8738,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_collar "$collar"
+  waiting_clear "$id"
   stamp_binary_id "$id"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
