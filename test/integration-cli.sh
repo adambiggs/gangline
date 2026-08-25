@@ -862,9 +862,15 @@ cp "$claude_picker_capture" "$claude_nux_dir/picker"
 # is the overlay case at a width that is not its capture's, and it is the one
 # case in this file whose verdict depends on the band not being measured.
 cp "$claude_nux_dir/overlay" "$claude_nux_dir/narrow"
+# UPSTREAM 3.2a RECALCULATES A DETACHED NEW SESSION FROM ITS CALLING CLIENT
+# after honouring -x/-y. Ubuntu backported the later fix, which is why this
+# fixture kept its requested geometry on the distro build while the raw-bytes
+# source build silently painted it at the caller's eighty columns. Resize from
+# inside the new pane before painting: that pins the manual size on both worlds,
+# and the file is still first rendered at the geometry this case claims.
 claude_nux_session="claude-nux-$$"
 tmux new-session -d -s "$claude_nux_session" -n overlay -x 100 -y 24 \
-  "cat '$claude_nux_dir/overlay'; cat"
+  "tmux resize-window -x 100 -y 24; cat '$claude_nux_dir/overlay'; cat"
 for claude_nux_case in transcript-tail reworded prose-only message-body clipped; do
   tmux new-window -d -t "=$claude_nux_session" -n "$claude_nux_case" \
     "cat '$claude_nux_dir/$claude_nux_case'; cat"
@@ -876,10 +882,11 @@ tmux resize-window -t "=$claude_nux_session:picker" -x 120 -y 30
 # what is already drawn, which is why the picker above can be created here and
 # grown; narrowing one REFLOWS it, and the reflow rebuilds rows this case exists
 # to observe unrebuilt. The pane has to be PAINTED at eighty columns, so it gets
-# a session created at eighty rather than a resize down to it.
+# a session whose pane pins eighty before painting rather than a resize down
+# after it.
 claude_narrow_session="claude-narrow-$$"
 tmux new-session -d -s "$claude_narrow_session" -n narrow -x 80 -y 24 \
-  "cat '$claude_nux_dir/narrow'; cat"
+  "tmux resize-window -x 80 -y 24; cat '$claude_nux_dir/narrow'; cat"
 claude_nux_status() { # $1 window, $2 session -> shipped collar_input status
   local rc=0
   ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
