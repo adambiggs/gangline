@@ -826,6 +826,28 @@ equal "a claim the run could not settle is named without being counted either wa
 3 checks in 7s (1 unknown — see the ? lines above)" \
   "$("$tail_fix/run.sh" unknown)"
 
+# AND THE BRANCH A WEDGED RUN TAKES, which is the one no run of any colour
+# reaches while every barrier it waits on is answered. A barrier that expires is
+# neither a failed assertion nor a slow box: it is a channel this suite waited
+# on that nothing ever signalled, and before the wait was bounded it printed
+# nothing at all, because the run never got as far as its own summary. The shim
+# writes the channel down precisely so a fixture in a dying pane still leaves a
+# record, so the record is what is driven here.
+tail_ledger="$tail_fix/wedged"
+: > "$tail_ledger"
+equal "an empty barrier ledger says nothing at all" "" \
+  "$(. "$ROOT/test/suite-tail.sh"; suite_wedged_barriers "$tail_ledger")"
+equal "and a ledger that was never written says nothing either" "" \
+  "$(. "$ROOT/test/suite-tail.sh"; suite_wedged_barriers "$tail_fix/absent")"
+printf 'wait-for test-channel-nobody-signalled\t120\n' > "$tail_ledger"
+tail_wedged_out="$(. "$ROOT/test/suite-tail.sh"; suite_wedged_barriers "$tail_ledger")"
+contains "a recorded expiry is named rather than left to a process list" \
+  "$tail_wedged_out" "BARRIER(S) NEVER SIGNALLED"
+contains "and the channel it waited on is in that report" \
+  "$tail_wedged_out" "test-channel-nobody-signalled"
+contains "and how long it waited, so a ceiling is not mistaken for a slow box" \
+  "$tail_wedged_out" "waited 120s"
+
 # AND BOTH SUITES REACH IT THROUGH THAT FILE. A private copy of the summary in
 # either one is a copy the three checks above do not cover, which is how this
 # branch went unexercised in the first place.

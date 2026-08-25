@@ -111,6 +111,128 @@ esac
 exit 0
 SH
 chmod +x "$RUN_ROOT/bin/sleep"
+
+# A BARRIER WITH NO CEILING CANNOT GO RED, ONLY QUIET. `tmux wait-for` is a
+# client call with no timeout, so a signal that is sent and never arrives parks
+# the run forever: no assertion fails, no summary prints, and because the gate
+# serialises on one host lock, every other run queues behind it. Driven
+# 2026-08-24, that happened on two different barriers, on two trees, in runs
+# started by two different people, and each cost hours before anyone read a
+# process list. The suite already owns this bin directory and it is already
+# ahead of everything the run launches, so the ceiling goes here rather than at
+# a hundred and fifty call sites.
+#
+# WHAT IT BOUNDS AND WHAT IT LEAVES ALONE. Only a BLOCKING wait — `wait-for`
+# with a channel. A `-S` signal already returns whether or not anyone waits, so
+# bounding it would add a clock where there is no wait, and every other tmux
+# command runs untouched.
+#
+# THE CEILING, MEASURED HERE RATHER THAN REASONED ABOUT:
+#
+#   signalled barrier, waiter already blocked   ~10ms   (measured 2026-08-24)
+#   signalled barrier, latched then read back   ~17ms   (same box, under load)
+#   slowest legitimate wait in this suite       a boot, single-digit seconds
+#   this ceiling                                120s
+#   whole-suite budget in CI                    900s
+#
+# A hundred and twenty seconds is more than an order of magnitude past the
+# slowest wait any fixture here legitimately takes, so it cannot turn a slow box
+# into a red; and it is small enough that one expiry still leaves the run time
+# to finish and report inside the CI ceiling. It is deliberately not tight:
+# this is the difference between a wedge and a verdict, not a performance
+# assertion. GANG_TEST_WAIT_CEILING lowers it for the one fixture that proves
+# expiry works, which would otherwise spend the whole ceiling proving it.
+#
+# THE REAL TMUX IS THE ONE THAT IS NOT A SCRIPT, AND IT IS RESOLVED ONCE.
+# `command -v tmux` is not the answer: an agent already runs with its own tmux
+# guard ahead of tmux on PATH, so in an agent's environment that names a shim,
+# and a shim that calls a shim which resolves by "the first tmux that is not
+# mine" selects this one straight back. A shim is a `#!` file and tmux is a
+# binary, so that is the question asked instead — here, at generation, rather
+# than in the shim, because the shim runs on every tmux call this suite makes
+# and a PATH walk per call would be thousands of forks bought for one answer
+# that never changes.
+REAL_TMUX=""
+while IFS= read -r tmux_candidate; do
+  [ -x "$tmux_candidate" ] && [ ! -d "$tmux_candidate" ] || continue
+  [ "$(head -c 2 "$tmux_candidate" 2>/dev/null)" = '#!' ] && continue
+  REAL_TMUX="$tmux_candidate"
+  break
+done <<<"$(type -pa tmux 2>/dev/null || true)"
+[ -n "$REAL_TMUX" ] || {
+  echo "integration: found no tmux on PATH that is not itself a shim" >&2
+  exit 1
+}
+cat > "$RUN_ROOT/bin/tmux" <<SH
+#!/bin/sh
+: "\${GANG_TEST_WAIT_LEDGER:=$RUN_ROOT/wedged-barriers}"
+GANG_TEST_WAIT_STATE='$RUN_ROOT/wait-expiry'
+real='$REAL_TMUX'
+SH
+cat >> "$RUN_ROOT/bin/tmux" <<'SH'
+set -u
+
+# THE VERB IS NOT ALWAYS THE FIRST WORD. tmux takes its own options ahead of
+# the command, so `tmux -S <socket> wait-for <channel>` is the same blocking
+# wait as `tmux wait-for <channel>` and must be bounded the same. Reading only
+# $1 bounds one spelling and silently stops bounding the other, which is the
+# shape of guard that rots while everyone believes it holds. The argv is
+# scanned for the first word that is not an option or an option's value, and
+# the word after it decides whether this is a wait or a signal.
+verb=""
+verb_at=0
+next=""
+skip=0
+seen=0
+for word in "$@"; do
+  seen=$((seen + 1))
+  if [ "$skip" -eq 1 ]; then skip=0; continue; fi
+  case "$word" in
+    # The options that take a separate value; anything else beginning with a
+    # dash carries its own or takes none.
+    -[cfLST]) skip=1 ;;
+    -*) ;;
+    *) verb="$word"; verb_at=$seen; break ;;
+  esac
+done
+if [ "$verb" = wait-for ]; then
+  seen=0
+  for word in "$@"; do
+    seen=$((seen + 1))
+    [ "$seen" -eq $((verb_at + 1)) ] || continue
+    next="$word"
+    break
+  done
+fi
+[ "$verb" = wait-for ] && [ "$next" != -S ] || exec "$real" "$@"
+
+ceiling=${GANG_TEST_WAIT_CEILING:-120}
+expiry="$GANG_TEST_WAIT_STATE.$$"
+rm -f "$expiry"
+"$real" "$@" &
+waiter=$!
+# /bin/sleep BY PATH, because the shim beside this one shadows `sleep` and
+# returns immediately for every duration — an unqualified sleep here would
+# expire every barrier in the suite the instant it was asked to wait.
+( /bin/sleep "$ceiling"; : > "$expiry"; kill -TERM "$waiter" 2>/dev/null ) &
+guard=$!
+rc=0
+wait "$waiter" || rc=$?
+kill -TERM "$guard" 2>/dev/null
+wait "$guard" 2>/dev/null || true
+if [ -e "$expiry" ]; then
+  rm -f "$expiry"
+  # NAMED WHERE IT OUTLIVES THE PANE. A fixture's stderr goes to a pane that is
+  # about to be torn down, so the channel is also written where the run's own
+  # summary reads it and refuses to call the run green.
+  printf 'integration: BARRIER NEVER SIGNALLED after %ss: tmux %s\n' "$ceiling" "$*" >&2
+  printf '%s\t%s\n' "$*" "$ceiling" >> "$GANG_TEST_WAIT_LEDGER" 2>/dev/null || true
+  exit 111
+fi
+rm -f "$expiry"
+exit "$rc"
+SH
+chmod +x "$RUN_ROOT/bin/tmux"
 PATH="$RUN_ROOT/bin:$PATH"
 export PATH
 
@@ -159,6 +281,13 @@ HITCH="$RUN_ROOT/bin/hitch-guard"
 # starve still ends the run — but it ends it OUT LOUD, naming the coverage
 # reached and the reason, because a verdict nobody can read is what made the
 # original failure expensive.
+# The summary line this run ends on, and the subject of the fixture that drives
+# its failing branch — which this run, being green, never reaches. Sourced
+# ahead of the trap below rather than beside its own call, because the trap
+# reads the barrier ledger and a run that dies before this point is exactly the
+# run whose ledger has something in it.
+. "$ROOT/test/suite-tail.sh"
+
 summary_printed=0
 role_pid=""
 gate_pid=""
@@ -174,6 +303,7 @@ cleanup() {
   if [ "$summary_printed" -eq 0 ]; then
     printf '\nRUN ENDED EARLY after %s checks in %ss — no verdict on the rest.\n' \
       "$checks" "$SECONDS"
+    suite_wedged_barriers "$RUN_ROOT/wedged-barriers"
     if [ -s "$RUN_ROOT/unknowns" ]; then
       printf 'Gang could not verify these setup submissions: %s\n' \
         "$(tr '\n' ' ' < "$RUN_ROOT/unknowns")"
@@ -335,10 +465,6 @@ window_names() { # optional $1 session -> bare names, one per line
 pane() { tmux capture-pane -pJ -t "$(window_id "$1")"; }
 pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 
-# The summary line this run ends on, and the subject of the fixture that drives
-# its failing branch — which this run, being green, never reaches.
-. "$ROOT/test/suite-tail.sh"
-
 # THE ROLE INSTRUMENT OWNS A DIFFERENT TMUX SERVER AND DIFFERENT FIXTURE ROOT.
 # It shares no mutable state with this suite, and it is already independently
 # selectable for mutation calibration. Run it beside the substrate checks and
@@ -440,4 +566,11 @@ if [ -s "$RUN_ROOT/unknowns" ]; then
   printf 'Something missed the compressed clock budget above. This run\n'
   printf 'measured no cause and names none.\n'
 fi
-[ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ]
+# AN EXPIRED BARRIER IS ALSO A VERDICT. It reaches the shim's caller as a
+# nonzero status, which ends the run where that caller is this shell; a fixture
+# inside a pane has nowhere to fail to, so the ledger is what keeps the run from
+# ending green around it.
+barriers_wedged=0
+[ ! -s "$RUN_ROOT/wedged-barriers" ] || barriers_wedged=1
+suite_wedged_barriers "$RUN_ROOT/wedged-barriers"
+[ "$fails" -eq 0 ] && [ "$tree_moved" -eq 0 ] && [ "$barriers_wedged" -eq 0 ]

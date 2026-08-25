@@ -622,6 +622,53 @@ contains "bare resume reads the stamp from a surviving dead window" \
   "resume-surviving-native-id"
 "$GANG" drop survivor >/dev/null
 
+# A BARRIER NOBODY SIGNALS MUST GO RED, NOT QUIET. Every barrier above learns
+# its event from `tmux wait-for`, a client call with no timeout: a signal that
+# is sent and never arrives used to park the whole run, print nothing, and hold
+# the host's heavy test lock until somebody read a process list. Converting the
+# call sites one at a time fixes the ones converted; bounding the wait fixes the
+# ones nobody has looked at yet, which on the two occasions this happened is
+# where it happened. test/integration.sh puts that ceiling on a tmux shim in the
+# bin directory this run already owns and already leads PATH with.
+#
+# THIS IS THE ONE CHECK HERE WHOSE SUBJECT IS A TIMEOUT, so its clock is scaled
+# rather than stopped: stopping it would assert that an expiry which never
+# happens reports correctly. THE MARGIN, MEASURED 2026-08-24 on a loaded box:
+#
+#   signalled barrier, waiter already blocked   ~10ms
+#   this fixture's ceiling                      1s
+#   the suite's ceiling                         120s
+#
+# A hundredfold over the transport it is bounding, and a hundredth of the budget
+# a real barrier gets, so this spends a second to prove the second is enough.
+barrier_probe_ledger="$RUN_ROOT/barrier-probe-ledger"
+barrier_probe_channel="test-never-signalled-$$"
+barrier_probe_rc=0
+# ITS OWN LEDGER. The shim writes an expiry where the run's summary reads it and
+# refuses to end green; a probe that deliberately expires must not leave that
+# record behind, or this check would make its own run red.
+barrier_probe_out="$(GANG_TEST_WAIT_CEILING=1 \
+  GANG_TEST_WAIT_LEDGER="$barrier_probe_ledger" \
+  tmux wait-for "$barrier_probe_channel" 2>&1)" || barrier_probe_rc=$?
+equal "a barrier nothing signals is cut off instead of parking the run" \
+  "111" "$barrier_probe_rc"
+contains "and the cut-off says the barrier was never signalled" \
+  "$barrier_probe_out" "BARRIER NEVER SIGNALLED"
+contains "and names the channel that was waited on" \
+  "$barrier_probe_out" "$barrier_probe_channel"
+contains "and writes that channel where a dying pane cannot take it" \
+  "$(<"$barrier_probe_ledger")" "$barrier_probe_channel"
+equal "the run's own barrier ledger is untouched by the probe" "" \
+  "$(cat "$RUN_ROOT/wedged-barriers" 2>/dev/null || true)"
+# AND THE CEILING DOES NOT BOUND AN ANSWERED BARRIER INTO A FAILURE. A signal
+# is latched, so this pair is the ordinary path every other barrier here takes,
+# run through the same shim.
+tmux wait-for -S "$barrier_probe_channel-answered"
+barrier_answered_rc=0
+tmux wait-for "$barrier_probe_channel-answered" || barrier_answered_rc=$?
+equal "a barrier that is answered still returns clean through the ceiling" \
+  "0" "$barrier_answered_rc"
+
 unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n unadopted "PS1='❯ ' bash --norc")"
 unadopted_pane="$(tmux list-panes -t "$unadopted_id" -F '#{pane_id}')"
