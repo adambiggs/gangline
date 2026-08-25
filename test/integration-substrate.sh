@@ -812,8 +812,8 @@ cat > "$RUN_ROOT/dialog-fixture.py" <<'PY'
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
 import os
-import subprocess
 import sys
+import threading
 import tty
 
 variant = os.environ.get("DIALOG_VARIANT", "known")
@@ -862,6 +862,28 @@ def record(key):
     with open(log_path, "a", encoding="utf-8") as stream:
         stream.write(key + "\n")
 
+# A BARRIER THAT NEEDS THE TMUX SERVER CANNOT REPORT ON THE TMUX SERVER. These
+# two signals used to be `tmux wait-for -S`: a client call, from a pane inside
+# the very server whose responsiveness is not what any assertion here is about.
+# Driven 2026-08-24 on two independent runs, that call and the waiter opposite
+# it both sat alive and blocked — the fixture HAD reached its signal, and the
+# transport carrying it never completed. `tmux wait-for` has no timeout, so a
+# run could not go red on it, only quiet, and one such run held the gate lock
+# for close to four hours. The byte now goes down a pipe the run owns, so
+# neither side of the barrier is a tmux client.
+# WRITTEN FROM A THREAD, because the mechanism it replaces did not block. A
+# `tmux wait-for -S` returns whether or not anyone is waiting, so the fixture
+# went straight on to reading keystrokes; opening a pipe for write blocks until
+# a reader arrives, which would hold this fixture out of its input loop for as
+# long as the test took to reach the read. The thread keeps the old timing —
+# the fixture proceeds immediately — while the reader still blocks on a real
+# byte, so the barrier stays an event rather than becoming a clock.
+def signal(path):
+    def write():
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write("x")
+    threading.Thread(target=write, daemon=True).start()
+
 # THE MENU ONLY MOVES FOR AN ANSWER, and every byte that arrives is recorded
 # first, so a key Gangline should not have sent cannot be hidden by the screen
 # reacting to it: the assertions read the log as well as the pane. Enter is the
@@ -874,7 +896,7 @@ if capture:
     paint_capture()
 else:
     paint()
-subprocess.run(["tmux", "wait-for", "-S", ready], check=True)
+signal(ready)
 while True:
     char = os.read(sys.stdin.fileno(), 1)
     if composer:
@@ -895,7 +917,7 @@ while True:
         sys.stdout.write("\x1b[2J\x1b[H\u276f ")
         sys.stdout.flush()
         if answered:
-            subprocess.run(["tmux", "wait-for", "-S", answered], check=True)
+            signal(answered)
     else:
         record(repr(char))
 PY
@@ -947,18 +969,42 @@ No, disable external imports
 Enter to confirm · Esc to cancel'
 SH
 
+# THE SAME BARRIER RULE THE SURVIVOR FIXTURE ALREADY FOLLOWS. Both of this
+# fixture's signals travel down pipes this run owns rather than through the
+# tmux server, for the reason recorded beside `signal` above. The read blocks
+# on the byte exactly as the channel blocked on the signal, so this stays an
+# event and spends no wall time.
+dialog_channel() { # $1 agent, $2 ready|answered -> that run-owned pipe's path
+  printf '%s/dialog-%s-%s' "$RUN_ROOT" "$2" "$1"
+}
+
+# A WRITER THAT OPENED AND CLOSED WITHOUT WRITING IS NOT A FIXTURE THAT REACHED
+# ITS SIGNAL, and under set -e an empty read would end the run rather than name
+# what happened.
+# READ WHERE THE COUNTERS LIVE. Two of the three callers of dialog_start
+# capture its stdout, and an assertion made inside a command substitution
+# increments its counters in a subshell that exits — the check would run, pass
+# or fail, and be recorded nowhere. So the barrier is awaited by the caller.
+dialog_await() { # $1 agent, $2 ready|answered; assert the byte it was sent
+  local channel byte="" rc=0
+  channel="$(dialog_channel "$1" "$2")"
+  IFS= read -r -n 1 byte < "$channel" || rc=$?
+  equal "the $2 signal of $1 arrived from the fixture itself" "0 x" "$rc $byte"
+}
+
 dialog_start() { # $1 agent, $2 variant, $3 collar, $4 capture file
   local name="$1" variant="$2" id command
   "$HITCH" "$name" -c "${3:-dialog}" -d /tmp >/dev/null
   id="$(window_id "$name")"
   : > "$RUN_ROOT/$name.keys"
+  rm -f "$(dialog_channel "$name" ready)" "$(dialog_channel "$name" answered)"
+  mkfifo "$(dialog_channel "$name" ready)" "$(dialog_channel "$name" answered)"
   printf -v command 'DIALOG_VARIANT=%q DIALOG_KEY_LOG=%q DIALOG_READY=%q DIALOG_ANSWERED=%q DIALOG_CAPTURE=%q %q' \
-    "$variant" "$RUN_ROOT/$name.keys" "dialog-ready-$name-$$" \
-    "dialog-answered-$name-$$" "${4:-}" \
+    "$variant" "$RUN_ROOT/$name.keys" "$(dialog_channel "$name" ready)" \
+    "$(dialog_channel "$name" answered)" "${4:-}" \
     "$RUN_ROOT/dialog-fixture.py"
   tmux send-keys -l -t "$id" "$command"
   tmux send-keys -t "$id" Enter
-  tmux wait-for "dialog-ready-$name-$$"
 }
 
 # The Codex wait screen and the directory-trust prompt are the two records the
@@ -966,6 +1012,7 @@ dialog_start() { # $1 agent, $2 variant, $3 collar, $4 capture file
 # the operator's behalf. Both are now refused like any other occupied screen.
 for dialog_case in known trust; do
   dialog_start "dialog-$dialog_case" "$dialog_case" dialog
+  dialog_await "dialog-$dialog_case" ready
   dialog_before="$(pane "dialog-$dialog_case")"
   equal "a $dialog_case menu is occupancy of unknown authority" \
     "!occupied! (authority unknown)" \
@@ -997,7 +1044,7 @@ for dialog_case in known trust; do
   # records them, so the emptiness asserted above is the absence of a keystroke
   # rather than a fixture that stopped listening.
   tmux send-keys -t "$(window_id "dialog-$dialog_case")" Down Enter
-  tmux wait-for "dialog-answered-dialog-$dialog_case-$$"
+  dialog_await "dialog-$dialog_case" answered
   equal "the key log records the answer the operator sends by hand" \
     $'Down\nEnter' "$(<"$RUN_ROOT/dialog-$dialog_case.keys")"
   "$GANG" drop "dialog-$dialog_case" >/dev/null
@@ -1012,6 +1059,9 @@ dialog_external_load="$(dialog_start dialog-external external-import \
   || dialog_external_hitch=$?
 if [ "$dialog_external_hitch" -eq 0 ]; then
   pass "a collar declaring an authority-shaped legacy record loads"
+  # Awaited only where the launch succeeded: a fixture that never started would
+  # otherwise be waited on for a byte nothing is going to write.
+  dialog_await dialog-external ready
 else
   fail "a collar declaring an authority-shaped legacy record loads" \
     "$dialog_external_load"
@@ -1049,6 +1099,7 @@ printf '%s\n%s\n%s\n%s\n%s\n' \
   '  bypass permissions on' >> "$RUN_ROOT/claude-auto-nux-overlay.txt"
 dialog_start dialog-auto-nux external-import dialog \
   "$RUN_ROOT/claude-auto-nux-overlay.txt"
+dialog_await dialog-auto-nux ready
 # Hitch used the ordinary framed Bash fixture so startup readiness was already
 # proven before the screen changed. Observation now uses the shipped Claude
 # reader, without relaunching or changing a byte of the pane under test.

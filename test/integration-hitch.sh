@@ -15,14 +15,26 @@
 # PATH ahead of it, so without the recording line every budget spent under a
 # boot barrier would be unmeasurable — the exact silence test/integration.sh
 # describes where it writes that ledger.
-prompt_boot_barrier() { # $1 = bin dir, $2 = seen marker, $3 = fixture channel
+# A BARRIER THAT NEEDS THE TMUX SERVER CANNOT REPORT ON THE TMUX SERVER, and
+# this one waits on a fixture running inside that very server. It used to block
+# on `tmux wait-for`, a client call with no timeout, so a server that stopped
+# answering could only make the run quiet — never red. Observed 2026-08-24 on
+# the sibling barrier in test/integration-substrate.sh: the waiter and the
+# fixture's signaller both sat alive and blocked, and the run held the gate lock
+# for hours. The byte now travels down a pipe this run owns, so neither side is
+# a tmux client. The shim cannot assert, so the caller reads the marker; what it
+# guarantees is that a stalled fixture stalls on its own pipe rather than on a
+# shared server.
+prompt_boot_barrier() { # $1 = bin dir, $2 = seen marker, $3 = fixture pipe path
   mkdir -p "$1"
+  rm -f "$3"
+  mkfifo "$3"
   cat > "$1/sleep" <<SH
 #!/bin/sh
 [ -z "\${GANG_TEST_CLOCK_LEDGER:-}" ] || printf '%s\n' "\$1" >> "\$GANG_TEST_CLOCK_LEDGER"
 if [ ! -e '$2' ]; then
   : > '$2'
-  tmux wait-for '$3'
+  head -c 1 < '$3' > /dev/null
 fi
 exit 0
 SH
@@ -38,11 +50,11 @@ cat > "$RUN_ROOT/collars/dialog-observe-boot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$RUN_ROOT/collars/dialog.sh"
-GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='dialog-observe-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-observe-boot.keys' DIALOG_READY='$RUN_ROOT/dialog-observe-boot-ready' '$RUN_ROOT/dialog-fixture.py'"
 SH
 : > "$RUN_ROOT/dialog-observe-boot.keys"
 prompt_boot_barrier "$RUN_ROOT/observe-boot-bin" \
-  "$RUN_ROOT/observe-boot-seen" "dialog-observe-boot-ready-$$"
+  "$RUN_ROOT/observe-boot-seen" "$RUN_ROOT/dialog-observe-boot-ready"
 observe_boot_pipe="$RUN_ROOT/dialog-observe-boot.out"
 mkfifo "$observe_boot_pipe"
 exec 8<>"$observe_boot_pipe"
@@ -87,11 +99,11 @@ cat > "$RUN_ROOT/collars/dialog-trust-boot.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$RUN_ROOT/collars/dialog.sh"
-GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot.keys' DIALOG_READY='dialog-trust-boot-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+GANG_LAUNCH="env DIALOG_VARIANT=trust DIALOG_KEY_LOG='$RUN_ROOT/dialog-trust-boot.keys' DIALOG_READY='$RUN_ROOT/dialog-trust-boot-ready' '$RUN_ROOT/dialog-fixture.py'"
 SH
 : > "$RUN_ROOT/dialog-trust-boot.keys"
 prompt_boot_barrier "$RUN_ROOT/trust-boot-bin" \
-  "$RUN_ROOT/trust-boot-seen" "dialog-trust-boot-ready-$$"
+  "$RUN_ROOT/trust-boot-seen" "$RUN_ROOT/dialog-trust-boot-ready"
 trust_boot_pipe="$RUN_ROOT/dialog-trust-boot.out"
 mkfifo "$trust_boot_pipe"
 exec 8<>"$trust_boot_pipe"
@@ -136,11 +148,11 @@ cat > "$RUN_ROOT/collars/dialog-gate-budget.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$RUN_ROOT/collars/dialog.sh"
-GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-gate-budget.keys' DIALOG_READY='dialog-gate-budget-ready-$$' '$RUN_ROOT/dialog-fixture.py'"
+GANG_LAUNCH="env DIALOG_VARIANT=known DIALOG_KEY_LOG='$RUN_ROOT/dialog-gate-budget.keys' DIALOG_READY='$RUN_ROOT/dialog-gate-budget-ready' '$RUN_ROOT/dialog-fixture.py'"
 SH
 : > "$RUN_ROOT/dialog-gate-budget.keys"
 prompt_boot_barrier "$RUN_ROOT/gate-budget-bin" \
-  "$RUN_ROOT/gate-budget-seen" "dialog-gate-budget-ready-$$"
+  "$RUN_ROOT/gate-budget-seen" "$RUN_ROOT/dialog-gate-budget-ready"
 # THREE LOOKS RATHER THAN ONE, SO THE PACE BETWEEN THEM IS MEASURABLE. The
 # give-up is asserted exactly as before and at the same budget boundary; what
 # a budget of one could not show is the second between observations, because
@@ -308,13 +320,15 @@ submitted "the foreground-delivered startup contract was submitted" startup-gate
 # second. This models the Codex ordering where hook review precedes directory
 # trust; gang answers neither.
 startup_second_clear="test-startup-second-clear-$$"
+rm -f "$RUN_ROOT/startup-second-ready"
+mkfifo "$RUN_ROOT/startup-second-ready"
 cat > "$RUN_ROOT/startup-second.sh" <<SH
 #!/bin/sh
 printf 'FIRST_RUN_GATE\n'
 tmux wait-for "$startup_second_clear"
 exec env DIALOG_VARIANT=trust \
   DIALOG_KEY_LOG='$RUN_ROOT/startup-second.keys' \
-  DIALOG_READY='test-startup-second-ready-$$' \
+  DIALOG_READY='$RUN_ROOT/startup-second-ready' \
   '$RUN_ROOT/dialog-fixture.py'
 SH
 chmod +x "$RUN_ROOT/startup-second.sh"
@@ -341,7 +355,16 @@ done
 contains "the first gate commits the startup contract before its successor" \
   "$startup_second_out" "queued startup contract for startup-second"
 tmux wait-for -S "$startup_second_clear"
-tmux wait-for "test-startup-second-ready-$$"
+# The same run-owned pipe, and the byte is asserted rather than assumed: a
+# writer that opened and closed without writing is not a fixture that reached
+# its signal, and under set -e an empty read would end the run instead of
+# naming what happened.
+startup_second_signal=""
+startup_second_read_rc=0
+IFS= read -r -n 1 startup_second_signal < "$RUN_ROOT/startup-second-ready" \
+  || startup_second_read_rc=$?
+equal "the second startup fixture announced its own readiness" \
+  "0 x" "$startup_second_read_rc $startup_second_signal"
 equal "the second prompt receives no key from the observer" "" \
   "$(<"$RUN_ROOT/startup-second.keys")"
 tmux send-keys -t "$(window_id startup-second)" Enter
