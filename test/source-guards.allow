@@ -18,7 +18,6 @@ d163257bc1f78b0259e4	1	source-collision migration review: a multiline doctrine d
 cb854c673fcf40ec93e4	1	source-collision migration review: startup ends instead of polling for work
 0d148a1a387bd40ed4e4	1	source-collision migration review: paired stripping preserves a bare trailing dash
 096bd80fadf29e8ebc03	1	source-collision migration review: --resume replaces the default continuation
-a5fdb2c15f28fc7fcd8a	1	source-collision migration review: each drained message keeps its own sender's attribution
 2bc926075858c5ca8f47	1	source-collision migration review: AC4 states message-level precedence
 a85bfced6fda7229450a	1	source-collision migration review: verified send reaches the intended pane
 8e37282cdce46db2c7fb	1	source-collision migration review: a native awaiting-input witness reaches the declared target

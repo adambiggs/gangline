@@ -88,6 +88,7 @@ collar_input() { # once per armed drain, report what the spool and the lock look
       cross_step ready-two
       tmux wait-for -S "$cross_ready_two"
     fi
+    cross_step signalled
     tmux wait-for -L "$cross_release"
     cross_step released
     tmux wait-for -U "$cross_release"
@@ -213,6 +214,7 @@ contains "including the message from the other sender" \
 # Both senders reach this spool from outside any Gangline window, so both are
 # self-declared: what this reads is that the spool keeps them APART, not that
 # either was observed.
+# source-guard: producer@189a33caafab: the send from 'other' is the only thing in this run attributed to that name, so its opening tag reaches this pane from that spool entry and nowhere else; the drain that put it there was already read out of the same capture two assertions above
 contains "each drained message keeps its own sender's attribution" \
   "$parker_drained" "[gang:self-declared:other#"
 excludes "a superseded message is never delivered" "$parker_drained" "MARK_STALE"
