@@ -49,7 +49,7 @@ tmux set-option -uw -t "$(window_id 1)" @gl_staged
 tmux set-option -w -t "$(window_id 1)" @gl_staged \
   "'MARK_OLD' is staged unsent in this box"
 tmux send-keys -l -t "$(window_id 1)" 'blocking draft'
-if printf 'MARK_RETAIN' | "$GANG" send --to 1 --from tester --stdin >/dev/null 2>&1; then
+if printf 'MARK_RETAIN' | "$GANG" send --to 1 --from tester --live-only --stdin >/dev/null 2>&1; then
   fail "a refused delivery does not clear another record" "send succeeded over a draft"
 else
   pass "a refused delivery does not clear another record"
@@ -187,7 +187,7 @@ equal "delivery leaves the turn bracket to its native owner, byte-identical" \
   "$stale_bracket" "$(tmux show-options -wqv -t "$(window_id 1)" @gl_turn)"
 tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(( $(date +%s) - 400 ))"
 tmux send-keys -l -t "$(window_id 1)" 'half a draft'
-if veto_draft="$(printf 'MARK_NODRAFT' | "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
+if veto_draft="$(printf 'MARK_NODRAFT' | "$GANG" send --to 1 --from tester --live-only --stdin 2>&1)"; then
   fail "an expired bracket over a drafted box still refuses" "send succeeded"
 else
   pass "an expired bracket over a drafted box still refuses"
@@ -199,7 +199,7 @@ contains "and the box state, not a mid-turn claim" \
   "$veto_draft" "not provably empty"
 tmux send-keys -t "$(window_id 1)" C-u
 tmux set-option -w -t "$(window_id 1)" @gl_turn "open $(date +%s)"
-if fresh_veto="$(printf 'MARK_FRESH' | "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
+if fresh_veto="$(printf 'MARK_FRESH' | "$GANG" send --to 1 --from tester --live-only --stdin 2>&1)"; then
   fail "a fresh open bracket still refuses mid-turn" "send succeeded"
 else
   pass "a fresh open bracket still refuses mid-turn"
@@ -236,7 +236,7 @@ SH
 tmux set-option -w -t "$(window_id vanish)" @gl_turn "open $(( $(date +%s) - 400 ))"
 printf '1' > "$RUN_ROOT/vanish-tickets"
 touch "$RUN_ROOT/vanish-flag"
-if vanish_out="$(printf 'MARK_VANISH' | "$GANG" send --to vanish --from tester --stdin 2>&1)"; then
+if vanish_out="$(printf 'MARK_VANISH' | "$GANG" send --to vanish --from tester --live-only --stdin 2>&1)"; then
   fail "a box that vanishes before the fall-through's read still refuses" \
     "send succeeded"
 else
@@ -284,7 +284,7 @@ tmux send-keys -l -t "$(window_id emptied)" 'MARK_LEAVING'
 printf '6' > "$RUN_ROOT/emptied-tickets"
 touch "$RUN_ROOT/emptied-flag"
 if emptied_out="$(printf 'MARK_EMPTIED' |
-  "$GANG" send --to emptied --from tester --stdin 2>&1)"; then
+  "$GANG" send --to emptied --from tester --live-only --stdin 2>&1)"; then
   fail "a box emptying under the refusal is still a refusal" "send succeeded"
 else
   pass "a box emptying under the refusal is still a refusal"
@@ -351,7 +351,7 @@ fossil_active="$(GANG_ACTIVITY_WINDOW=100000 "$GANG" status fossil | sed -n '1p'
 equal "recent pty activity keeps the busy verdict itself, not its explanation" \
   "-busy-" "$fossil_active"
 if printf 'MARK_ACTIVE' | GANG_ACTIVITY_WINDOW=100000 \
-  "$GANG" send --to fossil --from tester --stdin >/dev/null 2>&1; then
+  "$GANG" send --to fossil --from tester --live-only --stdin >/dev/null 2>&1; then
   fail "recent pty activity keeps refusing delivery mid-turn" "send succeeded"
 else
   pass "recent pty activity keeps refusing delivery mid-turn"
@@ -542,7 +542,7 @@ SH
 tmux set-option -w -t "$(window_id seamsend)" @gl_turn "open $(( $(date +%s) - 400 ))"
 seamsend_out=""
 if seamsend_out="$(printf 'MARK_LIVE_SEND' | PATH="$RUN_ROOT/bin-seam:$PATH" \
-  GANG_ACTIVITY_WINDOW=0 "$GANG" send --to seamsend --from tester --stdin 2>&1)"; then
+  GANG_ACTIVITY_WINDOW=0 "$GANG" send --to seamsend --from tester --live-only --stdin 2>&1)"; then
   fail "a turn painted during the decision refuses the delivery" "send succeeded"
 else
   pass "a turn painted during the decision refuses the delivery"
@@ -570,7 +570,7 @@ SH
 tmux set-option -w -t "$(window_id noreader)" @gl_turn \
   "open $(( $(date +%s) - 400 ))"
 if noreader_out="$(printf 'MARK_NOREADER' | GANG_ACTIVITY_WINDOW=0 \
-  "$GANG" send --to noreader --from tester --stdin 2>&1)"; then
+  "$GANG" send --to noreader --from tester --live-only --stdin 2>&1)"; then
   fail "an expired witness over a collar with no input reader refuses" \
     "send succeeded"
 else
@@ -632,7 +632,7 @@ equal "a churning pane keeps the busy verdict itself, not its explanation" \
      GANG_ACTIVITY_WINDOW=0 "$GANG" status ticker | sed -n '1p')"
 if ticker_out="$(printf 'MARK_TICKER' | CHURN_PANE="$CHURN_PANE" \
   PATH="$RUN_ROOT/churn-bin:$PATH" GANG_ACTIVITY_WINDOW=0 \
-  "$GANG" send --to ticker --from tester --stdin 2>&1)"; then
+  "$GANG" send --to ticker --from tester --live-only --stdin 2>&1)"; then
   fail "a churning pane keeps refusing delivery mid-turn" "send succeeded"
 else
   pass "a churning pane keeps refusing delivery mid-turn"
@@ -662,7 +662,7 @@ SH
 "$HITCH" blindbox -c blindbox -d /tmp >/dev/null
 tmux set-option -w -t "$(window_id blindbox)" @gl_turn "open $(( $(date +%s) - 400 ))"
 touch "$RUN_ROOT/blindbox-flag"
-if blind_out="$(printf 'MARK_BLIND' | "$GANG" send --to blindbox --from tester --stdin 2>&1)"; then
+if blind_out="$(printf 'MARK_BLIND' | "$GANG" send --to blindbox --from tester --live-only --stdin 2>&1)"; then
   fail "an expired bracket over an unreadable box still refuses" "send succeeded"
 else
   pass "an expired bracket over an unreadable box still refuses"
@@ -1691,7 +1691,7 @@ masking_id="$(window_id masking)"
 masking_send() { # $1 = the reads to refuse, $2 = the marker to deliver
   : > "$RUN_ROOT/masking-count"
   printf '%s' "$1" > "$RUN_ROOT/masking-refuse-at"
-  printf '%s' "$2" | "$GANG" send --to masking --from tester --stdin 2>&1
+  printf '%s' "$2" | "$GANG" send --to masking --from tester --live-only --stdin 2>&1
 }
 
 : > "$RUN_ROOT/masking-reads.log"

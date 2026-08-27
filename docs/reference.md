@@ -26,7 +26,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `rename`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `teams`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 Resolving self is not a promise that the command proceeds. `gang compact`
 self-targets and is then refused, or deferred, on that same agent's own turn
@@ -118,13 +118,14 @@ terminal is free to keep waiting. `gang up` is exempt: it has already put its
 caller in a tmux client looking at the prompt, so there is no stalled third
 party, and giving up would detach the one client that can answer.
 
-Gangline starts no watcher, so a hitch that stops waiting — at that bound or on
-an interrupt — leaves the attributed entry inspectable but not owned by a future
-drain before the target has a turn, and an agent still behind its first-run
-prompt has taken none. Answer the prompt, then drop and hitch again; the answer
-is a native, persisted choice, so the second hitch boots past it. The printed
-`--resume` form applies only if a native session was stamped, and a pre-turn
-gate normally has no resumable identity.
+Gangline starts no resident watcher. A hitch that stops waiting — at that bound
+or on an interrupt — leaves the attributed entry inspectable. After the prompt
+is answered, any later Gangline invocation supplies a one-shot tick that retries
+that spool through the ordinary delivery gates; no turn from the recipient is
+required merely to create the opportunity. Drop and hitch again only when the
+native process itself must be replaced. The printed `--resume` form applies only
+if a native session was stamped, and a pre-turn gate normally has no resumable
+identity.
 `gang up` needs a terminal for the tmux client that exposes the prompt; without
 one it refuses and leaves the contract queued rather than pretending the prompt
 was exposed.
@@ -299,6 +300,32 @@ This exists because tmux clients discover the default socket while a private
 `TMUX_TMPDIR` moves it, so a live team can be unreachable from a shell that lost
 that environment and look exactly like a team that has gone.
 
+### `gang tick`
+
+Runs one cooperative full pass synchronously. Every other invocation that can
+address the live team launches the same pass detached after its main work and
+preserves its own exit status. `tick` exists as the deterministic operator and
+test entry point; ordinary use does not need to call it explicitly.
+
+One pass visits every hitched window, retries every waiting spool through the
+same occupancy, turn, copy-mode, composer and verified-submission gates used by
+`send`, then retries deferred self-compaction only where those gates leave it
+safe. It also asks collars that declare `collar_live_session_id` whether the
+process currently holding the pane is the registered native session. A
+contradiction becomes `session-lost`, blocks delivery, and fails the pass rather
+than letting a restarted harness impersonate the old agent.
+
+One per-team pid lock admits a worker. A concurrent candidate touches a dirty
+marker and exits immediately; the owner consumes that marker with another pass.
+A dead pid is reclaimed, and the worker and its descendants are killed at a
+hard 60-second deadline. A detached failure cannot change the command that
+spawned it. It writes `health` and `tick.log` under
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`; the next
+invocation, `status`, and `roster` report the last failure. An attached client
+also gets a silent-until-failed status-right segment, a display-message flash,
+and a `gangline-alerts` window with activity and bell monitoring. A later clean
+pass replaces failed health with `ok`; `down` removes that team's health files.
+
 ### `gang drop <name>`
 
 Prints the window's stamped native session id, then kills the exact agent
@@ -378,8 +405,11 @@ An expired busy witness alone does not veto delivery: could-not-determine
 falls through to direct box evidence, a provably empty composer proceeds
 under the full submission verification, and anything less refuses naming both
 the expired witness and the box state. No reader writes turn state — not
-delivery, not status: the bracket is written only by the native hooks that
-own it. A malformed value is reported as unreadable, never repaired, and eligibility
+ordinary delivery and not status. A tick delivery into a hook-enabled target
+records the positive open edge it creates before Enter, so the native
+UserPromptSubmit/Stop pair can overwrite it even when that turn opens and
+closes before verification returns. A malformed value is reported as
+unreadable, never repaired, and eligibility
 is re-derived from live evidence on every send.
 
 The frozen-paint demotion requires an expired bracket, so a window with no
@@ -425,7 +455,8 @@ fate is unknown and a second copy would be a second message. Pass `--live-only`
 for an availability probe that must return a refusal to its caller instead of
 parking it; without the spool, it cannot use steering.
 
-The target's own native Stop event drains ordinary mail. On a `steer` collar,
+Every cooperative tick retries ordinary mail across all windows. The target's
+own native Stop event remains an immediate opportunity. On a `steer` collar,
 PostToolUse also tries the spool while the turn remains open; a free composer
 accepts its claim as native steering, while an occupied composer defers without
 typing. An open compaction is not a steering composer for peer mail: its native
@@ -436,7 +467,8 @@ the same oldest-first verified delivery path. The pane delivery lock is taken
 before the first entry is
 claimed and held through delivery and claim retirement, so crossed native
 workers cannot split or reorder the queue. Copy-mode and other pre-keystroke
-refusals leave entries live and unclaimed for the next native opportunity. A
+refusals leave entries live and unclaimed for the next tick or native
+opportunity. A
 drain that cannot read a composer after an idle native boundary leaves its
 entries waiting and records a visible drain failure; it never types through
 that uncertainty. A
@@ -486,9 +518,10 @@ whether that second message parks or is delivered live. Pass it only when the
 newer message genuinely replaces everything that sender has parked.
 
 A collar that declares no `GANG_STOP_HOOK` still receives the ordinary live
-attempt. If that attempt is refused, Gangline exits with the refusal, says the
-message was not parked, and names the missing declaration because nothing else
-would drain its spool.
+attempt. A pre-keystroke refusal parks for a later cooperative tick, which
+retries the same verified path without inventing native turn evidence. Such a
+collar still cannot satisfy `gang wait`, raise an immediate Stop opportunity,
+or witness an inside-harness deferred self-compaction request.
 
 Spool entries live under `GANG_LOCK_DIR`, keyed to an identity minted into the
 target's window options at `hitch` or `adopt` — never later, so that senders
@@ -593,7 +626,7 @@ reason before releasing that lock. The reason is never spooled: a queued stop
 would arrive after the work it was meant to stop. If the composer does not
 return or delivery cannot be verified, the reason is printed back to the caller
 in full and reported as not delivered and not parked. Existing backlog remains
-untouched for the next native delivery opportunity.
+untouched for the next cooperative tick or native delivery opportunity.
 
 Omitting the name stops the calling window's own turn, with or without a
 reason. A reason that returns to its own author is refused on `send` and
@@ -616,10 +649,14 @@ supplies none.
 
 When a hooked Codex or claude-code agent requests its own compaction, Gangline
 records a one-shot request. Its native Stop hook submits `/compact` after the
-active turn releases the composer, then the continuation behind it. `status` and
+active turn releases the composer, then the continuation behind it. A later
+cooperative tick also retries the request once pending mail is drained and the
+same turn and composer gates prove it safe; copy-mode therefore cannot park the
+request behind a boundary the idle recipient will never raise. `status` and
 `roster` expose pending or failed self-compaction. A guarded claude-code launch
-that cannot install hooks declares neither Stop support nor deferred
-self-compaction.
+that cannot install hooks cannot witness deferred self-compaction requests from
+inside that harness, but tick delivery remains available for requests already
+recorded.
 
 ### `gang notify [<name>|clear]`
 
@@ -823,7 +860,8 @@ It also reports staged input and the current box reading, pending or failed
 self-compaction, the number of messages spooled for that target and how long
 the oldest has waited, held-message
 details and their directory, a spool drain that could not be verified, a stall
-note that could not be accepted, native-session identity mismatch, and binary
+note that could not be accepted, live native-session loss, the last cooperative
+tick failure, and binary
 skew when the window has no hitch/adopt stamp or its executable-byte witness
 differs from the invoked `gang` binary. An unavailable witness is reported
 explicitly instead of treated as either match or mismatch.
@@ -833,9 +871,10 @@ explicitly instead of treated as either match or mismatch.
 From inside an agent pane, prints the Gangline agent name, pane id, collar,
 stamped harness session id, latest live hook-payload id, team session, and any
 recorded identity mismatch. A native hook stamps `@gl_session_id` on first
-sighting and compares every later live id against it. A mismatch is visible in
-status and roster and blocks sends from that pane until a matching hook repairs
-the record.
+sighting and compares every later live id against it. The cooperative tick also
+records a collar's independently observed live id. A mismatch is visible as
+`session-lost` in status and roster and blocks all injection and spool drains
+until the intended native session is re-established and its identity matches.
 
 ### `gang context [name]`
 
@@ -1003,8 +1042,8 @@ is deciding: read the rows, not the status.
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
 `state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
-word: `busy`, `waiting`, `idle`, `occupied`, `bricked`, or `unknown` for the
-human states. `unknown` covers both a state Gangline determined it could not
+word: `busy`, `waiting`, `idle`, `occupied`, `bricked`, `session-lost`, or
+`unknown` for the human states. `unknown` covers both a state Gangline determined it could not
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
@@ -1227,7 +1266,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
-| `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness can drain a spool |
+| `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness supplies an immediate native turn boundary; cooperative ticks retry spools independently |
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |
@@ -1244,8 +1283,17 @@ there, never in a harness-name branch in the core script.
 | `collar_context_lights model` | optional; print this collar's default `yellow,red` or `yellow%,red%` thresholds for that model, or return 1 with no output where it has no default for it. Consulted only where the collar also declares `collar_context`. A malformed spec, or any other status, is refused under the collar's name rather than the operator's setting |
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
+| `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
 | `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |
+
+The shipped Codex live-id probe asks tmux to run in the server's host namespace,
+then inspects the active pane process's open descriptors through `/proc`. It
+accepts an id only when exactly one value is shared by a
+`thread-writer-locks/<id>.lock` descriptor and that process's rollout JSONL.
+The bounded helper writes through a cleanup-owned temporary file because the
+calling agent's sandbox may be unable to read host `/proc` directly. Ambiguous,
+missing, or unreadable evidence is a loud probe failure, never a guessed id.
 
 Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.

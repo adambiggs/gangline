@@ -96,12 +96,13 @@ themselves with `--from`. Delivery succeeds only after the target composer
 visibly accepts the paste and submission.
 
 A target that cannot take input right now gets the message parked by default:
-it waits in the target's spool, and the target's own native delivery
-opportunities carry it through the same verified path. A collar may declare
-that a free composer accepts native mid-turn steering; attribution still lands
-in the spool before the first keystroke. Drafts and tmux copy-mode remain
-parked. `--live-only` refuses instead of parking when a message is only worth
-sending now.
+it waits in the target's spool. Native delivery opportunities and the
+cooperative tick carried by every later Gangline invocation retry it through
+the same verified path. A collar may declare that a free composer accepts
+native mid-turn steering; attribution still lands in the spool before the first
+keystroke. Drafts and tmux copy-mode remain parked, then drain as soon as their
+gates clear and any team window invokes Gangline. `--live-only` refuses instead
+of parking when a message is only worth sending now.
 
 Observe and control the team without replacing the harness interface:
 
@@ -228,8 +229,11 @@ refuses ambiguous tmux targets, occupied native dialogs, non-empty composers,
 and state it cannot determine. It never answers permission prompts or weakens a
 harness sandbox.
 
-State lives in tmux options and dies with its window or team. There is no daemon,
-database, cloud service, or private agent protocol.
+State lives in tmux options and dies with its window or team. There is no
+resident daemon, database, cloud service, or private agent protocol. Each
+Gangline invocation may leave one detached tick process behind only for the
+bounded pass it was born to finish; a singleton lock, dirty rerun edge, and hard
+deadline keep it ephemeral.
 
 ## Documentation
 

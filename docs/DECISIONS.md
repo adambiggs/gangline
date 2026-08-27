@@ -187,12 +187,13 @@ pane and an unrecognised frame each cost a sentence, never a delivery.
 A refusal happens before any keystroke, so the body is still the sender's and
 parking it loses nothing; a failure after a paste has an unknown fate, and a
 second copy of a message that may have landed is worse than one loud failure.
-Parking is the default and `--live-only` is the explicit probe. Every collar
-drains on the target's native Stop event; a `steer` collar may also drain at
+Parking is the default and `--live-only` is the explicit probe. A collar with a
+native Stop event drains there immediately; a `steer` collar may also drain at
 PostToolUse when its composer is free, after attribution has committed the
-entry. There is no poller, scheduler, or watcher. A collar whose harness
-announces no delivery boundary degrades to live-only and names the missing
-declaration rather than holding a message nothing would drain. An entry is claimed out of
+entry. Every later Gangline invocation supplies the bounded cooperative tick,
+so hookless collars can park pre-keystroke refusals without a resident poller,
+scheduler, or watcher. Missing hooks still mean missing native facts, not
+missing retry. An entry is claimed out of
 the spool before it is delivered, because ownership has to span the submission
 AND the retirement: the pane lock is released inside the delivery, so anything
 still live afterwards could be sent again by the next drain or the next
@@ -472,14 +473,18 @@ model names, effort levels, and policy remain the collar's and operator's words.
 
 For each fact, prefer the freshest owned event, then owned file state, then pane
 scraping; witnesses do not vote. Expired or contradictory evidence is
-unknown and surfaced, hooks only translate facts, and no background
-processor reconciles them. Unknown never vetoes an action that fresher
+unknown and surfaced, and hooks translate native facts. No resident process
+continuously reconciles them; the cooperative tick takes one bounded fresh
+reading per invocation. Unknown never vetoes an action that fresher
 direct evidence proves safe — the action's own verification carries the
 residual risk — and state the new evidence refutes is retired at that moment,
-never by a patrol. Retirement applies only to state gang alone writes: the
-turn bracket belongs to lock-free native hooks and tmux offers no atomic
-compare-and-delete, so no reader — delivery or status — writes it at all; a
-malformed value is reported as unreadable, never repaired, and eligibility
+never by a patrol. Retirement applies only to state gang alone writes. No
+reader — delivery or status — repairs the turn bracket because tmux offers no
+atomic compare-and-delete. A tick delivery into a hook-enabled target is the
+one writer outside the hooks: it records the positive open edge it creates
+before Enter, so a native UserPromptSubmit/Stop pair can overwrite even when a
+tiny turn closes before verification returns. A malformed value is reported as
+unreadable, never repaired, and eligibility
 is re-derived per action. A hookless window without mid-turn input whose
 pane keeps a frozen busy marker therefore stays refused until the marker
 scrolls off or the agent is renewed — fail-closed by intent.
@@ -610,19 +615,31 @@ a refusal rather than a guess, because a silently wrong target is worse than no
 target. tmux appends its own flags after the name; that rendering is documented,
 not fought.
 
-## Native hooks share an opportunistic refresh pass
+## Every Gangline invocation ends with a cooperative tick
 
-Native hook traffic is Gangline's cooperative event loop: no patrol, watcher,
-timer, daemon, background processor, job queue, or scheduler duplicates it.
-Every selected native hook invokes the one Gangline hook handler; collars own
-event selection and mapping. A recognized event first applies its specific fact,
-then one cheap, bounded, idempotent common pass may refresh derived state and do
-work proved safe and useful on every invocation. A verified frequent hook may
-carry that pass only when the refresh is its concrete live consumer. Unknown
-event semantics stay loud, though safe event-independent maintenance may still
-run. Hook silence leaves last-witnessed state honestly stale: refresh is
-opportunistic, not continuous. Expensive or unsafe work stays throttled or
-event-specific.
+Every invocation that can address a live team launches one detached, one-shot
+tick after preserving its own result. The tick makes one full pass over every
+hitched window: it retries all waiting spool entries through the existing
+verified-delivery gates, retries safe deferred self-compaction, and verifies a
+collar's live native-session identity where one can be read. Native hooks still
+own their event facts and event-specific work; a tick may prefer a closed native
+turn witness over contradictory stale pane paint, but it grants no new
+permission to interrupt or type.
+
+This supersedes hook-frequency selection. Copy-mode, an idle pane that raises no
+later boundary, a hook disabled at launch, and a falsely occupied screen can no
+longer leave accepted work dependent on that same recipient producing another
+event. Any later Gangline activity in the team supplies the retry.
+
+The worker is ephemeral, not resident: no process outlives the pass it was born
+to finish. A per-team pid lock admits one worker; a contender marks it dirty and
+exits, and the owner consumes that edge with one more pass before release. Dead
+pid locks are reclaimed and a hard process-group deadline bounds the whole
+worker. Tick failure never changes the spawning command's status. It is instead
+written to per-team health and log state, repeated by the next invocation and
+status/roster, flashed to the attached client, and raised in a dedicated tmux
+alerts window. This retains the no-resident-daemon decision while keeping
+verified delivery and loud failure as the non-negotiable result.
 
 ## Instale data is refused from documentation
 
@@ -920,10 +937,12 @@ a crossed native drain. This remains correct if an operator declines configured
 hooks at a native security gate, adds no harness event or persistent fact, and
 leaves the envelope inspectable if hitch is interrupted.
 Once that positive evidence commits the entry, the hitch remains its foreground
-owner without a post-gate deadline; Gangline starts no background watcher. An
-interrupted gated hitch therefore requires drop and re-hitch/resume recovery
-rather than a second hand-sent contract; resume applies only where a native
-session identity was stamped before interruption.
+owner without a post-gate deadline; Gangline starts no resident watcher. If the
+foreground hitch is interrupted, the cooperative tick of any later Gangline
+invocation becomes the retry owner once the prompt clears. Drop and re-hitch is
+reserved for replacing the native process, and resume applies only where a
+native session identity was stamped before interruption. A second hand-sent
+contract is never the recovery.
 Unknown stable screens still fail loudly instead of being called startup
 prompts. Spool drains take the pane delivery lock before the first claim, so
 crossed native workers cannot split or reorder the oldest-first bundle. A
@@ -1341,10 +1360,11 @@ has already attached its caller to a tmux client showing the prompt: there is no
 stalled third party there, and the give-up would detach the one client that can
 answer — reporting that nobody answered by removing the means to.
 
-The budget cannot be recovered by waiting longer, because nothing claims a spool
-before its agent takes a turn and an agent behind its first-run prompt has taken
-none. So the recovery named is the one that works: answer the prompt, drop, and
-hitch again. Answering is a native persisted choice, and codex's hook trust in
+The budget cannot be recovered by waiting longer, because the prompt still owns
+the composer. The cooperative tick changes what happens after it clears: any
+later Gangline invocation retries the existing spool without waiting for that
+idle agent to raise a boundary. Answering is a native persisted choice, and
+codex's hook trust in
 particular is keyed on the hook definition rather than on the bytes of the
 script the hook command names — so ordinary development on `bin/gang` leaves an
 answered gate answered, while a `gang` at a different path raises a new one.
@@ -1403,8 +1423,9 @@ trusts about its own holder.
 
 ## A harness with no hook command still has a session identity
 
-Gangline learns a native session id only from a hook payload, so a collar whose
-harness ships no hook command can never stamp one. `drop` then reports UNSTAMPED
+Gangline requires an exact native source for a registered session id; the
+ordinary source is a hook payload, so a collar whose harness ships no hook
+command cannot stamp one that way. `drop` then reports UNSTAMPED
 after the conversation is already gone, and every agent on that harness is
 unresumable — a fact the operator needed at hitch time, when the harness was
 chosen.
@@ -1419,6 +1440,11 @@ as an event the collar gives no other meaning, so identity is recorded and no
 turn bracket opens that no event would close; a collar that cannot witness turn
 boundaries still declares no Stop hook. A stamp is an identity, not a way back,
 and the two halves stay separately earned.
+
+An optional live-session probe is a separate exact source. The cooperative tick
+uses it to compare the process currently holding the pane with the registered
+id; agreement can establish a missing first stamp, while contradiction records
+session loss and blocks delivery. It grants no turn-boundary meaning.
 
 ## A prompt the harness draws into an empty box is not a human's line
 
@@ -1533,7 +1559,8 @@ transcript. Refusal is the safe direction and every uncertainty takes it.
 
 ## A turn bracket that reached its bound is a boundary nobody raised
 
-Every spool drain hangs off an event the harness announces. Measured on
+Before the cooperative tick, every spool drain hung off an event the harness
+announced. Measured on
 claude-code 2.1.241, a turn a person ends by declining a permission dialog
 announces nothing at all: no `Stop`, no `StopFailure`, no `PermissionDenied`,
 no `PostToolUseFailure`, and no late `Notification` — three denials by two
@@ -1544,8 +1571,10 @@ why: `PermissionDenied` fires only for an auto-mode classifier denial,
 query loop that a denial aborts past. Registering an event, which is what the
 report proposed, has nothing to register.
 
-The bracket's expiry is Gangline's own fact and already licenses an idle
-verdict, so it also offers the window one delivery opportunity. It does NOT
+The cooperative tick now supplies the missing retry independently of that
+event. The bracket's expiry is still Gangline's own fact and already licenses
+an idle verdict, so an attempt may offer the window one delivery opportunity.
+It does NOT
 rewrite the bracket: stamping it closed would convert `turn_witness`'s
 could-not-determine verdict into a confident idle one, and a tool call longer
 than `GANG_TURN_LIMIT` is exactly the turn that would then be typed into. What

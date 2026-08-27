@@ -6,9 +6,9 @@
 # in order and it reads that shell's fixtures, helpers and counters.
 # SPOOLED DELIVERY. A refused delivery is a live target that cannot take input
 # yet, and every refusal happens before a keystroke — so the body is still the
-# sender's and can be parked. Nothing in this world polls or schedules: the only
-# thing that drains a spool is a native Stop event, which the world fires by
-# hand exactly as a harness would.
+# sender's and can be parked. This collar deliberately has no native hook: it
+# proves the cooperative tick is the universal retry consumer rather than a
+# hook being a prerequisite for durable acceptance.
 cat > "$RUN_ROOT/collars/nodrain.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -21,31 +21,36 @@ nodrain_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$nodrain_id" @g
 tmux send-keys -l -t "$nodrain_id" 'HUMAN_DRAFT'
 if nohook_out="$(printf 'MARK_NOHOOK' |
   "$GANG" send --to nodrain --from tester --stdin 2>&1)"; then
-  fail "a target with no turn boundary does not park a refusal" \
-    "send reported success"
+  pass "a hookless target parks behind a human draft"
 else
-  equal "a target with no turn boundary keeps refusal status" "3" "$?"
+  fail "a hookless target parks behind a human draft" "$nohook_out"
 fi
-contains "naming the declaration a drain would need" "$nohook_out" "GANG_STOP_HOOK"
-contains "and says the message was not parked" "$nohook_out" "NOT parked"
+contains "the hookless delivery names its durable queue" \
+  "$nohook_out" "queued for nodrain"
 excludes "the refusing target received no body" "$(pane nodrain)" "MARK_NOHOOK"
-# THE EXPECTATION THIS CHECK WAS ALWAYS ABOUT, now measured directly. It used
-# to read the DIRECTORY's absence, which answered the right question only while
-# the directory was created by the first parked message. It is now created at
-# hitch, because a published spool identity with nothing on disk is a name a
-# later mint draws again and hands to a second window. So the directory is an
-# identity and its presence says nothing about mail; what must still be true —
-# and is what the refusal above promises — is that this spool holds NOTHING, no
-# entry a drain could claim and no child of any kind. A directory that exists
-# and is empty is not an undrainable message, and the count below cannot be
-# passed by the same conflation the old form allowed.
+# The directory is an identity and its presence says nothing about mail, so
+# count actual children. The old guard required zero because there was no
+# consumer without GANG_STOP_HOOK. The first-class tick makes one queued child
+# drainable even for this collar, which is the behavior this preserved guard
+# now measures directly.
 nodrain_children=0
 for nodrain_entry in "$nodrain_spool"/* "$nodrain_spool"/.[!.]* "$nodrain_spool"/..?*; do
   # -L TOO: a dangling symlink is a child, and -e alone answers no for one.
   [ -e "$nodrain_entry" ] || [ -L "$nodrain_entry" ] || continue
   nodrain_children=$((nodrain_children + 1))
 done
-equal "nothing undrainable was put on disk" "0" "$nodrain_children"
+equal "one hookless delivery is durable on disk" "1" "$nodrain_children"
+tmux send-keys -t "$nodrain_id" C-u
+"$GANG" tick >/dev/null
+# source-guard: whole-surface@bd9f7f28bb5a: the unique body can appear in this fixture pane only after the one queued producer is submitted
+contains "the cooperative tick delivers after the draft clears" \
+  "$(pane nodrain)" "MARK_NOHOOK"
+nodrain_children=0
+for nodrain_entry in "$nodrain_spool"/* "$nodrain_spool"/.[!.]* "$nodrain_spool"/..?*; do
+  [ -e "$nodrain_entry" ] || [ -L "$nodrain_entry" ] || continue
+  nodrain_children=$((nodrain_children + 1))
+done
+equal "the hookless spool is empty after the tick" "0" "$nodrain_children"
 "$GANG" drop nodrain >/dev/null
 if super_out="$(printf 'MARK_LONE_SUPERSEDE' |
   "$GANG" send --to alpha --from tester --supersede --live-only --stdin 2>&1)"; then
@@ -544,6 +549,11 @@ for parker_entry in "$parker_spool"/[0-9]*; do
 done
 [ -n "$parker_live_entry" ] \
   && cp "$parker_live_entry" "$RUN_ROOT/pre-archive-body"
+archive_count_before_parker=0
+for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
+  [ -d "$archive_dir" ] \
+    && archive_count_before_parker=$((archive_count_before_parker + 1))
+done
 "$GANG" drop parker >/dev/null
 [ ! -d "$parker_spool" ] \
   && pass "dropping an agent deletes its spool" \
@@ -555,7 +565,8 @@ for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
   parker_archive_count=$((parker_archive_count + 1))
   parker_archive_dir="$archive_dir"
 done
-equal "dropping mail creates exactly one teardown archive" "1" \
+equal "dropping mail creates exactly one teardown archive" \
+  "$((archive_count_before_parker + 1))" \
   "$parker_archive_count"
 [ -d "$parker_archive_dir/parker" ] \
   && pass "the teardown archive groups entries under the agent name" \
@@ -580,12 +591,14 @@ archive_second_id="$(window_id archive-second)"
 tmux send-keys -l -t "$archive_second_id" 'HUMAN_DRAFT'
 printf 'MARK_SECOND_ARCHIVE' |
   "$GANG" send --to archive-second --from tester --stdin >/dev/null
+archive_count_before_second="$parker_archive_count"
 "$GANG" drop archive-second >/dev/null
 archive_count=0
 for archive_dir in "$GANG_ARCHIVE_DIR"/*; do
   [ -d "$archive_dir" ] && archive_count=$((archive_count + 1))
 done
-equal "a second teardown claims a distinct archive directory" "2" \
+equal "a second teardown claims a distinct archive directory" \
+  "$((archive_count_before_second + 1))" \
   "$archive_count"
 
 "$HITCH" archive-empty -c spoolable -d /tmp >/dev/null
@@ -1256,11 +1269,12 @@ rm -f -- "$superseder_spool/99999999999999999999-deadbeef"
 # path above puts the predecessors back; if putting one back is itself what
 # fails, the body is still on disk and teardown will still archive it, but no
 # drain will ever claim it again. Nothing can make that outcome good — what
-# separates it from silent loss is the refusal naming the file, so this fixture
-# is about the diagnostic, which is the only thing standing between a stranded
-# message and nobody knowing. The rollback is failed on its own: setting an entry
-# aside moves TO .retiring-, putting it back moves FROM it, so a stub keyed on
-# the SOURCE breaks only the restore and lets the sweep run exactly as it would.
+# separates it from silent loss is the refusal naming the file. Before the
+# cooperative tick, a hookless collar made spool_available fail after the
+# retirement. Hookless spools now have a consumer, so this fixture reaches the
+# same rollback arm by failing the replacement's commit. The mv shim allows the
+# move TO .retiring-, then fails both the .writing- commit and the restore FROM
+# .retiring-.
 "$HITCH" norollback -c nodrain -d /tmp >/dev/null
 norollback_id="$(window_id norollback)"
 norollback_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$norollback_id" @gl_spool)"
@@ -1277,17 +1291,19 @@ cat > "$RUN_ROOT/norollback/mv" <<SH
 REAL="$(command -v mv)"
 SH
 cat >> "$RUN_ROOT/norollback/mv" <<'SH'
-case "$2" in */.retiring-*) exit 1 ;; esac
+# mv receives `-- source destination`: allow a predecessor's move TO the
+# retirement namespace, then fail both commit and rollback by their sources.
+case "$2" in */.writing-*|*/.retiring-*) exit 1 ;; esac
 exec "$REAL" "$@"
 SH
 chmod +x "$RUN_ROOT/norollback/mv"
 if norollback_out="$(printf 'MARK_UNDELIVERED' |
   PATH="$RUN_ROOT/norollback:$PATH" "$GANG" send --to norollback --from tester \
     --supersede --stdin 2>&1)"; then
-  fail "a supersession to a target nothing would drain is refused" \
+  fail "a supersession whose commit and rollback fail is refused" \
     "send reported success"
 else
-  pass "a supersession to a target nothing would drain is refused"
+  pass "a supersession whose commit and rollback fail is refused"
 fi
 contains "and a restore it could not make is named, not swallowed" \
   "$norollback_out" ".retiring-00000000000000000042-deadbeef"

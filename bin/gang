@@ -424,6 +424,7 @@ talk to agents
 watch agents
   roster    list the team and its state
   status    inspect one agent's state
+  tick      run one cooperative retry pass
   explain   show why a state was classified
   wait      wait for an agent boundary
   capture   read an agent's pane
@@ -963,6 +964,24 @@ gang status
   agent.
 EOF
       ;;
+    tick) cat <<'EOF'
+gang tick
+  Run one synchronous cooperative retry pass
+  across every hitched agent in the team.
+
+  Ordinary gang commands launch this same pass
+  detached after their own result is settled.
+  Use the explicit command for deterministic
+  diagnostics and tests. It takes no arguments.
+
+  The pass retries parked delivery and deferred
+  self-compaction only through their existing
+  turn-boundary safety gates. A singleton lock
+  folds concurrent candidates into one dirty
+  rerun, and a hard deadline kills the one-shot
+  worker rather than leaving a resident process.
+EOF
+      ;;
     explain) cat <<'EOF'
 gang explain
   Show how one live state read was classified.
@@ -1382,7 +1401,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_models collar_model_check collar_bricked collar_waiting \
+    collar_session_id collar_live_session_id collar_models collar_model_check collar_bricked collar_waiting \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -1558,6 +1577,32 @@ identity_mismatch_read() { # $1 window; print the recorded mismatch, or nonzero
   mismatch="$(tmux show-options -wqv -t "$1" @gl_session_mismatch 2>/dev/null)" || mismatch=""
   [ -n "$mismatch" ] || return 1
   printf '%s' "$mismatch"
+}
+
+session_identity_record() { # $1 window, $2 exact live native id
+  local live="$2" stamped registered name
+  tmux set-option -w -t "$1" @gl_session_live_id "$live" 2>/dev/null || return 1
+  name="$(agent_name_of "$1")"
+  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
+  if [ -z "$registered" ]; then
+    tmux set-option -w -t "$1" @gl_agent "$name" 2>/dev/null || return 1
+  elif [ "$registered" != "$name" ]; then
+    tmux set-option -w -t "$1" @gl_session_mismatch \
+      "agent '$registered' != window '$name'" 2>/dev/null || true
+    return 2
+  fi
+  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
+  if [ -z "$stamped" ]; then
+    tmux set-option -w -t "$1" @gl_session_id "$live" 2>/dev/null || return 1
+    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
+  elif [ "$stamped" != "$live" ]; then
+    tmux set-option -w -t "$1" @gl_session_mismatch \
+      "stamped '$stamped' != live '$live'" 2>/dev/null || true
+    return 2
+  else
+    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
+  fi
+  return 0
 }
 
 send_identity_guard() { # a pane with a contradicted native identity may not speak
@@ -2501,7 +2546,7 @@ self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled
   # direction. Each of these reports only what was true at the boundary it
   # names, and sends the agent to the state rather than asserting it.
   case "$3" in
-    rescheduled) body="A self-compaction you scheduled did not run at a turn boundary: $2 It was put back rather than dropped, so gang retries it at a later boundary. Run gang status to see whether it is still pending." ;;
+    rescheduled) body="A self-compaction you scheduled did not run at a turn boundary: $2 It was put back rather than dropped, so gang retries it on a later cooperative tick or native boundary. Run gang status to see whether it is still pending." ;;
     *) body="A self-compaction you scheduled did not run and was NOT put back: $2 Your context was not compacted at that boundary and nothing will retry it. Run gang status, then gang compact again." ;;
   esac
   envelope gangline "$body"
@@ -2531,19 +2576,16 @@ self_compact_claim_failed() { # $1 window, $2 request token, $3 claim diagnostic
 # change behaviour for every harness declaring less. Answer it by driving a
 # deferred self-compaction with the bracket wired and watching what each one
 # contributes, not by reading this comment and agreeing with it.
-self_compact_dispatch() { # $1 = the window a native Stop fired in, $2 = collar
-  local win="$1" request
+self_compact_run() ( # $1 window, $2 collar, $3 exact request token
+  local win="$1" request="$3"
   # The compaction delivers, and delivery serializes on the WINDOW's lock, for
   # the same reason spool_event receives the resolved window before draining:
   # a lock named after the firing pane would not exclude an ordinary send
   # holding the one named after its window. The spool this falls back to is
   # keyed by window as well.
   [ -n "$win" ] || return 0
-  request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
-    || request=""
   [ -n "$request" ] || return 0
-  (
-    trap '' HUP INT TERM
+  trap '' HUP INT TERM
     # A REQUEST TOKEN IS THE EPISODE IDENTITY. Two Stop hooks can cross before
     # either clears the option, and tmux offers no compare-and-set. Claiming the
     # token in the worker makes one process own the read-decide-write sequence;
@@ -2623,7 +2665,19 @@ self_compact_dispatch() { # $1 = the window a native Stop fired in, $2 = collar
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
          self_compact_note "$win" "$err" dropped || true ;;
     esac
-  ) </dev/null >/dev/null 2>&1 &
+)
+
+self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync
+  local win="$1" request
+  [ -n "$win" ] || return 0
+  request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
+    || request=""
+  [ -n "$request" ] || return 0
+  if [ "${3:-}" = sync ]; then
+    self_compact_run "$win" "$2" "$request" </dev/null >/dev/null 2>&1
+    return 0
+  fi
+  ( self_compact_run "$win" "$2" "$request" ) </dev/null >/dev/null 2>&1 &
   disown
 }
 
@@ -2688,7 +2742,15 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
 
 occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   if occupied_witness "$1"; then return 0; fi
-  local pane live_rc=0 painted_rc=0
+  local pane live_rc=0 painted_rc=0 turn_rc=0
+  # PermissionRequest remains stronger above. During a cooperative retry, a
+  # readable closed turn from a hook-enabled collar outranks old transcript
+  # paint that happens to match the occupied-menu regex. Ordinary state reads
+  # retain the screen classification; only the retry pass spends this fact.
+  if [ "${TICK_PASS:-0}" = 1 ] && [ "${GANG_STOP_HOOK:-}" = 1 ]; then
+    turn_witness "$1" || turn_rc=$?
+    [ "$turn_rc" -ne 1 ] || return 1
+  fi
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
     if re_match GANG_OCCUPIED_REGEX "$pane"; then
@@ -3139,7 +3201,17 @@ hitch_up_abort() { # detach only the external client this invocation created
   hitch_up_state_clear
 }
 
-on_exit() { spool_retire_abort; lock_release; hitch_up_abort; wait_hook_cleanup; }
+on_exit() {
+  local rc=$?
+  set +e
+  spool_retire_abort
+  lock_release
+  tick_lock_release
+  hitch_up_abort
+  wait_hook_cleanup
+  tick_launch
+  return "$rc"
+}
 
 landing_zone() { # $1 = window id; the input box, or the whole pane if none is
                  # declared; 3 = the pane could not be read at all
@@ -3248,11 +3320,12 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # drains at Stop; hitch remains foreground to drain a startup contract once the
 # first composer appears.
 #
-# The spool is not a retry manager: ordinary mail drains only at a native
-# boundary the harness announces. The pre-turn exception remains inside the
-# foreground hitch command that already observes boot; no watcher survives it.
-# A collar with no Stop hook still gets a live send attempt, but an ordinary
-# refusal cannot be parked where nothing would drain it.
+# The spool is not a resident retry manager. Native boundaries remain immediate
+# opportunities, and every later Gangline invocation supplies one bounded
+# cooperative tick across the whole team. The pre-turn exception remains inside
+# the foreground hitch command that already observes boot; no watcher survives
+# either path. A collar with no Stop hook therefore still parks a pre-keystroke
+# refusal for the next tick, but cannot supply hook-owned turn facts.
 #
 # Entries are named by a fixed-width nanosecond stamp, so the glob that reads
 # them is already oldest-first. They live under a token minted into the target's
@@ -3351,6 +3424,359 @@ cmd_teams() { # every team gang wrote down, and whether its server still answers
     || printf '%s\n' "$(colour "$C_DIM" "no teams recorded under $root")"
 }
 
+# THE COOPERATIVE TICK. Every ordinary invocation launches one detached,
+# one-shot candidate after its own result is settled. Candidates serialize on
+# one pid-bearing symlink per team. A contender touches the dirty marker and
+# exits immediately; the holder consumes that marker with another complete
+# pass before it releases the lock. There is no resident process: the deadline
+# controller and its worker exist only to finish this invocation's bounded pass.
+TICK_DIR="" TICK_HEALTH="" TICK_LOG=""
+TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+
+tick_state_root() {
+  printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick"
+}
+
+tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller result
+  tmux has-session -t "=$SESSION" >/dev/null 2>&1
+}
+
+tick_paths_set() { # resolve the current team to its health/log directory
+  local socket digest
+  TICK_DIR="" TICK_HEALTH="" TICK_LOG=""
+  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
+    || return 1
+  [ -n "$socket" ] || return 1
+  digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' "$socket" "$SESSION")" \
+    || return 1
+  TICK_DIR="$(tick_state_root)/$digest"
+  TICK_HEALTH="$TICK_DIR/health"
+  TICK_LOG="$TICK_DIR/tick.log"
+}
+
+tick_state_prepare() {
+  local root
+  root="$(tick_state_root)"
+  lock_base "$root"
+  lock_base "$TICK_DIR"
+}
+
+tick_health_read() { # print state, epoch, message; 1 absent or unreadable
+  local line state at note extra
+  tick_paths_set || return 1
+  [ -f "$TICK_HEALTH" ] && [ -r "$TICK_HEALTH" ] || return 1
+  IFS= read -r line < "$TICK_HEALTH" || return 1
+  IFS=$'\t' read -r state at note extra <<<"$line"
+  case "$state" in ok|failed) ;; *) return 1 ;; esac
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  [ -z "$extra" ] || return 1
+  printf '%s\t%s\t%s' "$state" "$at" "$note"
+}
+
+tick_health_store() { # $1 ok|failed, $2 message
+  local state="$1" note="$2" tmp
+  tick_paths_set || return 1
+  tick_state_prepare
+  note="$(printf '%s' "$note" | config_sanitize)"
+  tmp="$TICK_HEALTH.new.${BASHPID:-$$}"
+  printf '%s\t%s\t%s\n' "$state" "$(date +%s)" "$note" > "$tmp" \
+    || return 1
+  mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
+}
+
+tick_health_ok() {
+  tick_paths_set || return 1
+  tick_state_prepare
+  printf 'ok\t%s\ttick completed for %s\n' "$(date +%s)" "$SESSION" > "$TICK_LOG" \
+    || return 1
+  tick_health_store ok ""
+}
+
+tick_alert_window() { # refresh the non-resident alerts window from TICK_LOG
+  local id="" marked name command channel
+  while read -r id marked; do
+    [ "$marked" = 1 ] && break
+    id=""
+  done <<<"$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}' 2>/dev/null || :)"
+  command="$(shell_quote "$ROOT/statusline/gang-tick-alert.sh") $(shell_quote "$TICK_LOG")"
+  if [ -n "$id" ]; then
+    tmux respawn-pane -k -t "$id" "$command" 2>/dev/null || true
+    return 0
+  fi
+  channel="gang-tick-alert-$(mint_nonce)"
+  name=gangline-alerts
+  command="$(shell_quote "$(command -v tmux)") wait-for $(shell_quote "$channel"); exec $command"
+  id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" "$command" 2>/dev/null)" \
+    || return 0
+  tmux set-option -w -t "$id" @gl_tick_alerts 1 2>/dev/null || true
+  tmux set-option -w -t "$id" remain-on-exit on 2>/dev/null || true
+  tmux set-option -w -t "$id" monitor-activity on 2>/dev/null || true
+  tmux set-option -w -t "$id" monitor-bell on 2>/dev/null || true
+  tmux wait-for -S "$channel" 2>/dev/null || true
+}
+
+tick_failure_surface() { # $1 sanitized failure summary; never affects a caller
+  local note="$1"
+  tmux display-message -t "=$SESSION:" "gang: last tick failed: $note" 2>/dev/null || true
+  tick_alert_window || true
+}
+
+tick_health_fail() { # $1 complete worker diagnostic
+  local note="$1"
+  [ -n "$note" ] || note="the tick worker failed without a diagnostic"
+  note="${note##*$'\n'}"
+  tick_paths_set || return 1
+  tick_state_prepare
+  printf 'FAILED\t%s\t%s\n' "$(date +%s)" "$(printf '%s' "$1" | config_sanitize)" > "$TICK_LOG" \
+    || return 1
+  tick_health_store failed "$note" || return 1
+  tick_failure_surface "$(printf '%s' "$note" | config_sanitize)"
+}
+
+tick_health_warn() { # the next invocation carries the last failure on stderr
+  local record state at note
+  tick_session_live || return 0
+  record="$(tick_health_read)" || return 0
+  IFS=$'\t' read -r state at note <<<"$record"
+  [ "$state" = failed ] || return 0
+  printf 'gang: last tick failed: %s\n' "$note" >&2
+}
+
+tick_health_report() {
+  local record state at note
+  record="$(tick_health_read)" || return 0
+  IFS=$'\t' read -r state at note <<<"$record"
+  [ "$state" = failed ] || return 0
+  printf '%s\n' "$(colour "$C_BAD" "last tick failed: $note")"
+}
+
+tick_state_forget() { # health is team-scoped and dies with that team
+  tick_paths_set || return 0
+  rm -f -- "$TICK_HEALTH" "$TICK_LOG" 2>/dev/null || true
+  rmdir -- "$TICK_DIR" 2>/dev/null || true
+}
+
+tick_ui_ensure() { # install the silent-until-failed status-right segment
+  local right segment
+  tick_paths_set || return 1
+  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" || return 1
+  case "$right" in *gang-tick-health.sh*) return 0 ;; esac
+  segment="#($(shell_quote "$ROOT/statusline/gang-tick-health.sh") $(shell_quote "$TICK_HEALTH"))"
+  right="${right:+$right }$segment"
+  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null
+}
+
+tick_lock_paths_set() {
+  local socket digest base
+  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
+    || return 1
+  digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' "$socket" "$SESSION")" \
+    || return 1
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}/tick"
+  lock_base "$base"
+  TICK_LOCK_PATH="$base/$digest.lock"
+  TICK_DIRTY_PATH="$base/$digest.dirty"
+}
+
+tick_lock_release() {
+  local holder=""
+  [ -n "$TICK_LOCK_PATH" ] || return 0
+  holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
+  [ "$holder" != "$TICK_LOCK_PID" ] || rm -f -- "$TICK_LOCK_PATH"
+  TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+}
+
+tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
+  local holder="" again="" err=""
+  tick_lock_paths_set || return 1
+  lock_self_pid
+  TICK_LOCK_PID="$LOCK_SELF_PID"
+  while :; do
+    err=""
+    if err="$(ln -s "$TICK_LOCK_PID" "$TICK_LOCK_PATH" 2>&1)"; then
+      return 0
+    fi
+    [ -L "$TICK_LOCK_PATH" ] \
+      || { printf 'tick lock %s cannot be created: %s\n' "$TICK_LOCK_PATH" "${err:-unknown error}" >&2; return 1; }
+    holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
+    case "$holder" in
+      ''|*[!0-9]*) printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
+    esac
+    if kill -0 "$holder" 2>/dev/null; then
+      touch -- "$TICK_DIRTY_PATH" || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
+      again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
+      if [ "$again" = "$holder" ] && kill -0 "$holder" 2>/dev/null; then
+        TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+        return 75
+      fi
+      continue
+    fi
+    rm -f -- "$TICK_LOCK_PATH" \
+      || { printf 'cannot clear stale tick lock %s held by dead pid %s\n' "$TICK_LOCK_PATH" "$holder" >&2; return 1; }
+  done
+}
+
+tick_identity_verify() { # $1 window, $2 collar; 0 match, 1 unavailable, 2 lost
+  local live="" rc=0
+  declare -F collar_live_session_id >/dev/null || return 0
+  live="$(collar_live_session_id "$1")" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    tmux set-option -w -t "$1" @gl_session_probe_failed \
+      "live harness session id could not be read" 2>/dev/null || true
+    return 1
+  fi
+  tmux set-option -uw -t "$1" @gl_session_probe_failed 2>/dev/null || true
+  session_identity_record "$1" "$live" || rc=$?
+  return "$rc"
+}
+
+tick_delivery_active() { # $1 window; 0 = a live tick owns delivery sequencing
+  local holder=""
+  holder="$(tmux show-options -wqv -t "$1" @gl_tick_delivery 2>/dev/null)" \
+    || holder=""
+  case "$holder" in
+    ''|*[!0-9]*) [ -z "$holder" ] \
+                   || tmux set-option -uw -t "$1" @gl_tick_delivery 2>/dev/null || true
+                 return 1 ;;
+  esac
+  kill -0 "$holder" 2>/dev/null && return 0
+  tmux set-option -uw -t "$1" @gl_tick_delivery 2>/dev/null || true
+  return 1
+}
+
+tick_delivery_release() { # $1 window; clear only this worker's marker
+  local holder=""
+  holder="$(tmux show-options -wqv -t "$1" @gl_tick_delivery 2>/dev/null)" \
+    || holder=""
+  [ "$holder" != "$$" ] \
+    || tmux set-option -uw -t "$1" @gl_tick_delivery 2>/dev/null || true
+}
+
+tick_full_pass_once() {
+  local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
+  local TICK_PASS=1
+  tick_ui_ensure || { printf 'tick could not install the status-right health segment\n' >&2; rc=1; }
+  wins="$(tmux list-windows -t "=$SESSION" \
+    -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
+    || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
+  while read -r id agent collar special; do
+    [ -n "$id" ] || continue
+    [ "$special" != 1 ] || continue
+    [ -n "$agent" ] && [ -n "$collar" ] || continue
+    if ! load_collar "$collar"; then
+      printf "tick could not load collar '%s' for %s\n" "$collar" "$agent" >&2
+      rc=1
+      continue
+    fi
+    pass_rc=0
+    tick_identity_verify "$id" "$collar" || pass_rc=$?
+    if [ "$pass_rc" -eq 2 ]; then
+      err="$(identity_mismatch_read "$id" 2>/dev/null || printf 'live identity contradicted the registered session')"
+      printf 'session-lost: %s: %s\n' "$agent" "$err" >&2
+      glyph_write "$id" "!session-lost! ($err)"
+      rc=1
+      continue
+    fi
+    if [ "$(spool_count "$id")" -gt 0 ]; then
+      pass_rc=0 err=""
+      if ! tmux set-option -w -t "$id" @gl_tick_delivery "$$" 2>/dev/null; then
+        printf 'tick could not mark delivery ownership for %s\n' "$agent" >&2
+        rc=1
+        continue
+      fi
+      err="$(spool_drain "$id" 2>&1)" || pass_rc=$?
+      tick_delivery_release "$id"
+      case "$pass_rc" in
+        0) tmux set-option -uw -t "$id" @gl_spool_failed 2>/dev/null || true ;;
+        3|4) ;;
+        *) [ -n "$err" ] || err="the global spool retry failed"
+           tmux set-option -w -t "$id" @gl_spool_failed "${err##*$'\n'}" 2>/dev/null || true
+           printf 'tick spool failure for %s: %s\n' "$agent" "$err" >&2
+           rc=1 ;;
+      esac
+    fi
+    pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
+    if [ -n "$pending" ] && [ "$(spool_count "$id")" -eq 0 ]; then
+      busy_rc=0
+      busy "$id" || busy_rc=$?
+      if [ "$busy_rc" -eq 1 ]; then
+        self_compact_dispatch "$id" "$collar" sync
+        pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
+        if [ -z "$pending" ] && self_compact_failed_read "$id" | grep -q .; then
+          printf 'tick self-compaction failure for %s: %s\n' "$agent" "$(self_compact_failed_read "$id")" >&2
+          rc=1
+        fi
+      fi
+    fi
+  done <<<"$wins"
+  return "$rc"
+}
+
+cmd_tick_worker() { # internal lock/dirty owner; status 75 means another owns it
+  local rc=0 lock_rc=0 pass=0
+  [ $# -eq 0 ] || die "internal tick worker takes no arguments"
+  session_live || return 0
+  tick_lock_acquire || lock_rc=$?
+  [ "$lock_rc" -eq 0 ] || return "$lock_rc"
+  while :; do
+    rm -f -- "$TICK_DIRTY_PATH"
+    pass=$((pass + 1))
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_TICK_LEDGER:-}" ]; then
+      printf '%s\n' "$pass" >> "$GANG_TEST_TICK_LEDGER"
+    fi
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ "$pass" -eq 1 ] \
+       && [ -n "${GANG_TEST_TICK_READY_FIFO:-}" ] \
+       && [ -n "${GANG_TEST_TICK_RELEASE_FIFO:-}" ]; then
+      printf x > "$GANG_TEST_TICK_READY_FIFO"
+      IFS= read -r _ < "$GANG_TEST_TICK_RELEASE_FIFO" || true
+    fi
+    rc=0
+    tick_full_pass_once || rc=$?
+    [ -e "$TICK_DIRTY_PATH" ] && continue
+    tick_lock_release
+    if [ -e "$TICK_DIRTY_PATH" ]; then
+      lock_rc=0
+      tick_lock_acquire || lock_rc=$?
+      case "$lock_rc" in 0) continue ;; 75) return 75 ;; *) return "$lock_rc" ;; esac
+    fi
+    return "$rc"
+  done
+}
+
+cmd_tick() { # public synchronous seam; its worker is always self-deadlined
+  local out="" rc=0
+  [ $# -eq 0 ] || die "tick: takes no arguments"
+  session_live || return 0
+  out="$(GANG_TICK_INTERNAL=1 "$ROOT/libexec/gang-tick-deadline" \
+    "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
+  case "$rc" in
+    0) tick_health_ok \
+         || { tick_health_fail "the tick completed but its health file could not be written" || true; return 1; } ;;
+    75) return 0 ;;
+    *) [ -z "$out" ] || printf '%s\n' "$out" >&2
+       tick_health_fail "$out" || true
+       return 1 ;;
+  esac
+}
+
+tick_launch() { # isolate a post-command candidate from the command's own result
+  [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
+  case "${cmd:-}" in tick|__tick-worker) return 0 ;; esac
+  tick_session_live || return 0
+  case "${GANG_TEST_TICK_MODE:-}" in
+    manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
+    sync) if [ "${GANG_TEST_COLLARS:-}" = 1 ]; then
+            ( trap - EXIT HUP INT TERM
+              GANG_TICK_INTERNAL=1 "$ROOT/bin/gang" tick </dev/null >/dev/null 2>&1 )
+            return 0
+          fi ;;
+  esac
+  ( trap - EXIT HUP INT TERM
+    GANG_TICK_INTERNAL=1 "$ROOT/bin/gang" tick </dev/null >/dev/null 2>&1 ) &
+  disown
+  return 0
+}
+
 spool_root_of() { printf '%s/spool' "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"; }
 
 spool_root_prepare() { # establish the shared roots before a window depends on them
@@ -3378,10 +3804,6 @@ spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had
 SPOOL_UNAVAILABLE_WHY=""
 spool_available() { # $1 = window id, $2 = target name; 0 = a parked message would drain
   SPOOL_UNAVAILABLE_WHY=""
-  if [ "${GANG_STOP_HOOK:-}" != 1 ]; then
-    SPOOL_UNAVAILABLE_WHY="collar '$AGENT_COLLAR' declares no GANG_STOP_HOOK, so no native turn boundary reaches Gangline and nothing would ever drain a spool for '$2'"
-    return 1
-  fi
   if ! spool_existing "$1"; then
     SPOOL_UNAVAILABLE_WHY="the window of '$2' carries no spool identity — it is minted at hitch and adopt, so re-hitch or re-adopt '$2' before a refused message can park"
     return 1
@@ -4108,7 +4530,7 @@ EOF
 }
 
 spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
-  local e claim rc err failed unver busy_rc=0 compaction_rc=0 witness="" keep_lock=0
+  local e claim rc err failed unver busy_rc=0 compaction_rc=0 witness="" keep_lock=0 mismatch=""
   local bundle="" frags="" claims="" n=0 nl=$'\n'
   spool_existing "$1" || return 4
   [ -d "$SPOOL_DIR" ] || return 4
@@ -4121,6 +4543,12 @@ spool_drain() { # $1 window id; whole queue oldest-first; optional $2 = locked
             keep_lock=1 ;;
     *) die "internal: spool_drain received unknown lock mode '$2'" ;;
   esac
+  mismatch="$(identity_mismatch_read "$1")" || mismatch=""
+  if [ -n "$mismatch" ]; then
+    printf 'spool drain stopped before claiming: session-lost (%s); the spool remains waiting\n' "$mismatch" >&2
+    [ "$keep_lock" -eq 1 ] || lock_release
+    return 3
+  fi
   # Copy-mode and its cousins are operator-owned tmux UI, not the target pty.
   # Refuse before the first claim: no entry leaves the live queue, no paste or
   # Enter is interpreted as a mode command, and scroll/selection is preserved.
@@ -4702,7 +5130,7 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
 inject() { # $1 window, $2 text, $3 head, $4 locked,
            # $5 witness: queued for compaction, steer for attributed mid-turn input
   local buf="gang-$$" frag before before_rc=0 after after_rc=0 paste_looks=0
-  local tname keep_lock=0
+  local tname keep_lock=0 mismatch=""
   frag="${2%%$'\n'*}"
   [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
   tname="$(agent_name_of "$1")"
@@ -4711,6 +5139,9 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     locked) [ -n "$LOCK_PATH" ] || die "internal: inject called locked without a pane lock"; keep_lock=1 ;;
     *) die "internal: inject received unknown lock mode '$4'" ;;
   esac
+  mismatch="$(identity_mismatch_read "$1")" || mismatch=""
+  [ -z "$mismatch" ] \
+    || refuse "refusing to deliver '$frag': $tname is session-lost ($mismatch). Nothing was typed; restart or re-hitch the intended native session before delivering to this pane"
   pane_mode_free "$1" \
     || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
   ! occupied "$1" \
@@ -4827,6 +5258,13 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
     stage_record "$1" "'$3' is staged unsent in this box — tmux mode took the pane before Enter could be sent" "$2"
     die "submit NOT performed: tmux mode owns the pane of $tname, so Enter was NOT sent; the $noun is staged in the composer underneath (leave copy-mode, then gang attach)"
   }
+  # This Enter is Gangline's own positive turn edge. Stamp it before the key so
+  # a native UserPromptSubmit/Stop pair can overwrite it even when a tiny turn
+  # opens and closes before submission verification returns. A collar without
+  # Stop cannot close the bracket, and a compaction continuation is meant to
+  # remain queued, so neither acquires this event fact.
+  [ "${TICK_PASS:-0}" != 1 ] || [ "${GANG_STOP_HOOK:-}" != 1 ] || [ -n "${5:-}" ] \
+    || turn_state_write "$1" open
   tmux send-keys -t "$1" Enter
   while :; do
     sleep 0.4
@@ -6363,8 +6801,10 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   [ "$HITCH_SWITCHED" -eq 0 ] || return 0
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "up: '$name' vanished between hitch and attach"; }
   if [ -n "${TMUX:-}" ]; then
+    tick_launch || true
     exec tmux switch-client -t "=$SESSION" \; select-window -t "$id"
   fi
+  tick_launch || true
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
@@ -7524,6 +7964,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
     '~wait~'*|'~idle~'*) glyph='~' ;;
     '!occupied!'*) glyph='!' ;;
     '!bricked!'*) glyph='!' ;;
+    '!session-lost!'*) glyph='!' ;;
     '?unknown?'*) glyph='?' ;;
     *) return 0 ;;
   esac
@@ -7562,8 +8003,17 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 }
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0 waiting_rc=1 abandoned=0
+  local state busy_rc=0 bricked_rc=0 waiting_rc=1 abandoned=0 mismatch=""
   STATE_NOW_RESULT=""
+  mismatch="$(identity_mismatch_read "$1")" || mismatch=""
+  if [ -n "$mismatch" ]; then
+    activity_hold_clear "$1"
+    state="!session-lost! ($mismatch)"
+    glyph_write "$1" "$state"
+    STATE_NOW_RESULT="$state"
+    printf '%s\n' "$state"
+    return 0
+  fi
   if occupied "$1"; then
     activity_hold_clear "$1"
     state="!occupied! (authority unknown)"
@@ -7923,7 +8373,7 @@ cmd_wait() {
     wait_target_validate "$name" "$AGENT_ID" "$pane"
     state="$(state_now "$AGENT_ID")"
     case "$state" in
-      '~idle~'*) wait_hook_cleanup; trap - EXIT; return 0 ;;
+      '~idle~'*) wait_hook_cleanup; return 0 ;;
       '!bricked!'*) die "wait: '$name' is $state — a fatal turn cannot reach the requested boundary" ;;
       '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
     esac
@@ -7935,9 +8385,9 @@ cmd_wait() {
       '!bricked!'*) die "wait: '$name' is $state after its boundary — the turn ended fatally" ;;
       '?unknown?'*) die "wait: '$name' is $state after its boundary — refusing to consume unknown as completion" ;;
     esac
-    if [ "$until" = "done" ]; then trap - EXIT; return 0; fi
+    if [ "$until" = "done" ]; then return 0; fi
     case "$state" in
-      '~idle~'*) trap - EXIT; return 0 ;;
+      '~idle~'*) return 0 ;;
     esac
   done
 }
@@ -7966,6 +8416,7 @@ paint_state() { # $1 = a state phrase, padding and all
   case "$1" in
     '!occupied!'*) colour "$C_BAD" "$1" ;;
     '!bricked!'*) colour "$C_BAD" "$1" ;;
+    '!session-lost!'*) colour "$C_BAD" "$1" ;;
     '?unknown?'*) colour "$C_BAD" "$1" ;;
     '-busy-'*) colour "$C_WORK" "$1" ;;
     *)      colour "$C_OK"   "$1" ;;
@@ -8050,7 +8501,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
   local timed_line
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
@@ -8064,6 +8515,7 @@ cmd_status() {
   resolve "$name"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
+  tick_health_report
   action_status_report "$AGENT_ID"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
   [ -z "$self_failed" ] \
@@ -8130,6 +8582,9 @@ cmd_status() {
   mismatch="$(identity_mismatch_read "$AGENT_ID")" || mismatch=""
   [ -z "$mismatch" ] \
     || printf '%s\n' "$(colour "$C_BAD" "harness session identity MISMATCH: $mismatch")"
+  probe_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_session_probe_failed 2>/dev/null)" || probe_failed=""
+  [ -z "$probe_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "harness session identity UNVERIFIED: $probe_failed")"
   current="$(binary_id)"
   skew="$(binary_skew_note "$AGENT_ID" "$current")" || skew=""
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
@@ -8287,7 +8742,7 @@ cmd_whoami() {
 # in order, immediately above the row it explains, and a listing whose rows are
 # all readable still writes nothing there.
 cmd_roster() {
-  local porcelain=0 id name bare wins current unread="" rc
+  local porcelain=0 id name bare special wins current unread="" rc
   if [ $# -eq 1 ] && [ "$1" = --porcelain ]; then
     porcelain=1
   elif [ $# -ne 0 ]; then
@@ -8298,10 +8753,12 @@ cmd_roster() {
       || printf '%s\n' "$(colour "$C_DIM" "no team (session '$SESSION' not running)")"
     return
   fi
+  [ "$porcelain" -eq 1 ] || tick_health_report
   current="$(binary_id)"
-  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W')"
-  while read -r id name; do
+  wins="$(tmux list-windows -t "=$SESSION" -F '#{window_id} #W #{@gl_tick_alerts}')"
+  while read -r id name special; do
     [ -n "$id" ] || continue
+    [ "$special" != 1 ] || continue
     bare="$(bare_name "$name")"
     rc=0
     if [ "$porcelain" -eq 1 ]; then
@@ -8352,6 +8809,7 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
     '~idle~'*) printf idle ;;
     '!occupied!'*) printf occupied ;;
     '!bricked!'*) printf bricked ;;
+    '!session-lost!'*) printf session-lost ;;
     '?unknown?'*) printf unknown ;;
     *) die "internal: no porcelain word for state '$1'" ;;
   esac
@@ -8390,7 +8848,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed age held skew="" mismatch usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -8452,6 +8910,8 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     || detail="$detail usage-wake-failed"
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] || detail="$detail identity-mismatch=[$mismatch]"
+  probe_failed="$(tmux show-options -wqv -t "$1" @gl_session_probe_failed 2>/dev/null)" || probe_failed=""
+  [ -z "$probe_failed" ] || detail="$detail identity-unverified=[$probe_failed]"
   skew="$(binary_skew_note "$1" "$3")" || skew=""
   [ -z "$skew" ] || detail="$detail $skew"
   # WHICH unknown this is. A state gang determined it could not settle names its
@@ -8464,7 +8924,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
 }
 
 hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a harness
-  local live stamped registered name
+  local live
   live="$(
     {
       load_collar "$2"
@@ -8473,26 +8933,7 @@ hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a 
     } 2>/dev/null
   )" || return 0
   case "$live" in ''|*[!A-Za-z0-9._:-]*) return 0 ;; esac
-  tmux set-option -w -t "$1" @gl_session_live_id "$live" 2>/dev/null || return 0
-  name="$(agent_name_of "$1")"
-  registered="$(tmux show-options -wqv -t "$1" @gl_agent 2>/dev/null)" || registered=""
-  if [ -z "$registered" ]; then
-    tmux set-option -w -t "$1" @gl_agent "$name" 2>/dev/null || return 0
-  elif [ "$registered" != "$name" ]; then
-    tmux set-option -w -t "$1" @gl_session_mismatch \
-      "agent '$registered' != window '$name'" 2>/dev/null || true
-    return 0
-  fi
-  stamped="$(tmux show-options -wqv -t "$1" @gl_session_id 2>/dev/null)" || stamped=""
-  if [ -z "$stamped" ]; then
-    tmux set-option -w -t "$1" @gl_session_id "$live" 2>/dev/null || true
-    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
-  elif [ "$stamped" != "$live" ]; then
-    tmux set-option -w -t "$1" @gl_session_mismatch \
-      "stamped '$stamped' != live '$live'" 2>/dev/null || true
-  else
-    tmux set-option -uw -t "$1" @gl_session_mismatch 2>/dev/null || true
-  fi
+  session_identity_record "$1" "$live" >/dev/null 2>&1 || true
 }
 
 # A SHAPE GANG CANNOT INTERPRET IS A FAILURE, NOT A NO-OP. Swallowing the parse
@@ -8614,7 +9055,13 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           # standing for a later Stop; otherwise the compaction owns it. This
           # keeps the two workers from racing for the same pane lock and makes
           # the choice from the queue state that existed at the boundary.
-          if [ "$(spool_count "$window")" -gt 0 ]; then
+          # A tick that caused this Stop still owns the pane lock and will
+          # sequence the remaining spool and self-compaction work itself. The
+          # native facts above are kept; only the duplicate dispatcher is
+          # suppressed. A killed tick leaves a pid that the next hook clears.
+          if tick_delivery_active "$window"; then
+            :
+          elif [ "$(spool_count "$window")" -gt 0 ]; then
             spool_event "$window" "$collar"
           else
             self_compact_dispatch "$window" "$collar"
@@ -8867,7 +9314,7 @@ cmd_drop() {
 }
 
 cmd_down() { # inverse of up: end the whole team's session
-  local named="${1:-}" id raw shown names="" self="" wait_ids="" ids
+  local named="${1:-}" id raw special shown names="" self="" wait_ids="" ids=""
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -8879,10 +9326,14 @@ cmd_down() { # inverse of up: end the whole team's session
      && [ "${TMUX%%,*}" = "$(tmux display-message -p '#{socket_path}' 2>/dev/null)" ]; then
     refuse "down: this shell is inside the tmux server that holds '$SESSION' and does not name a pane, so Gangline cannot tell whether it is running inside the team it would end. Run it from a shell outside tmux"
   fi
-  while IFS= read -r raw; do
+  while read -r raw special; do
+    [ "$special" != 1 ] || continue
     names="$names$(bare_name "$raw") "
-  done < <(tmux list-windows -t "=$SESSION" -F '#W')
-  ids="$(tmux list-windows -t "=$SESSION" -F '#{window_id}')"
+  done < <(tmux list-windows -t "=$SESSION" -F '#W #{@gl_tick_alerts}')
+  while read -r id special; do
+    [ "$special" != 1 ] || continue
+    ids="${ids:+$ids$'\n'}$id"
+  done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}')
   # WHOLE-TEAM PREFLIGHT. Each window's archive is internally all-or-nothing,
   # but down used to archive and detach the spools of earlier windows before a
   # later unarchiveable child refused the teardown. The session stayed live
@@ -8907,6 +9358,7 @@ cmd_down() { # inverse of up: end the whole team's session
     spool_archive "$id"
     spool_forget "$id"
   done <<<"$ids"
+  tick_state_forget
   tmux kill-session -t "=$SESSION"
   team_socket_forget "$SESSION"
   for id in $wait_ids; do wait_signal_registered "$id"; done
@@ -8919,7 +9371,10 @@ cmd_attach() {
   # exactly what it always was. Only when the team is not on it does the
   # written-down socket matter, and that is the disconnect this exists for: the
   # server is alive on a private TMUX_TMPDIR that this shell no longer carries.
-  ! session_live || exec tmux attach -t "=$SESSION"
+  if session_live; then
+    tick_launch || true
+    exec tmux attach -t "=$SESSION"
+  fi
   socket="$(team_socket_read "$SESSION")" \
     || die "no session '$SESSION' running, and no socket is recorded for it (gang teams lists what gang wrote down)"
   team_live_on "$socket" "$SESSION" || rc=$?
@@ -9113,11 +9568,14 @@ cmd_upgrade() {
   GANGLINE_UPGRADE=1 GANGLINE_HOME="$ROOT" GANGLINE_BIN="$invoked_bin_dir" \
     sh "$tmp" ${mode:+"$mode"} || rc=$?
   rm -f -- "$tmp"
-  trap - EXIT HUP INT TERM
+  trap 'on_exit' EXIT
+  trap - HUP INT TERM
   return "$rc"
 }
 
 cmd="${1:-}"
+trap 'on_exit' EXIT
+[ -n "${GANG_TICK_INTERNAL:-}" ] || tick_health_warn
 [ "$cmd" = hook ] || dirty_execution_warn
 # NO ARGUMENTS IS NOT A MISTAKE. An agent told to "run gang" is asking where it
 # is, and answering with the inventory on stderr at exit 1 tells it that asking
@@ -9170,6 +9628,11 @@ case "$cmd" in
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
   teams)    cmd_teams "$@" ;;
+  tick)     cmd_tick "$@" ;;
+  __tick-worker)
+            [ "${GANG_TICK_INTERNAL:-}" = 1 ] \
+              || die "__tick-worker is internal; run gang tick"
+            cmd_tick_worker "$@" ;;
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;

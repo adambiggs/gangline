@@ -373,6 +373,8 @@ export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
 export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
+export XDG_STATE_HOME="$RUN_ROOT/state"
+export GANG_TEST_TICK_MODE=manual
 # A COLLAR MAY READ ITS HARNESS'S OWN CONFIGURATION, and the Codex collar reads
 # $CODEX_HOME to learn which model a hitch without -m will launch. Pointed at a
 # directory this run owns and never creates, every such read is a definite
@@ -560,6 +562,7 @@ gate_pid=$!
 . "$ROOT/test/integration-spool.sh"
 . "$ROOT/test/integration-readiness.sh"
 . "$ROOT/test/integration-hooks.sh"
+. "$ROOT/test/integration-tick.sh"
 
 # Join the isolated self-test at the same point where it used to run. Its output
 # stays contiguous, and its checks and failures remain part of this suite's one

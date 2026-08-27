@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Read the exact Codex session id from one harness process's open files."""
+
+import os
+import re
+import sys
+
+
+ID = r"[A-Za-z0-9._:-]+"
+LOCK = re.compile(rf"/thread-writer-locks/({ID})\.lock$")
+
+
+def main() -> int:
+    if len(sys.argv) != 2 or not sys.argv[1].isdigit():
+        return 2
+
+    fd_root = f"/proc/{sys.argv[1]}/fd"
+    locks: set[str] = set()
+    rollouts: list[str] = []
+    try:
+        entries = list(os.scandir(fd_root))
+    except OSError:
+        return 1
+
+    for entry in entries:
+        try:
+            target = os.readlink(entry.path)
+        except OSError:
+            continue
+        match = LOCK.search(target)
+        if match:
+            locks.add(match.group(1))
+        if "/sessions/" in target and target.endswith(".jsonl"):
+            rollouts.append(os.path.basename(target))
+
+    witnessed = {
+        session_id
+        for session_id in locks
+        if any(name.endswith(f"-{session_id}.jsonl") for name in rollouts)
+    }
+    if len(witnessed) != 1:
+        return 1
+    print(next(iter(witnessed)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

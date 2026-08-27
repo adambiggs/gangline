@@ -66,15 +66,16 @@ wait has no time bound: `GANG_BOOT_TIMEOUT` becomes the length of each
 observation slice, not a deadline that drops ownership. Run a hitch that may
 meet first-run authority from an operator terminal; an agent that invokes it
 remains occupied until the operator answers, by design, because Gangline starts
-no background watcher.
+no resident watcher.
 Do not send a second copy by hand. `gang roster` and `gang status <name>` show
 the contract queued until the verified drain completes. Interrupting hitch
 leaves that attributed envelope in the spool for inspection rather than
-silently discarding it, but also leaves no process that will drain it before a
-turn exists. Recover an interrupted gated hitch by dropping that exact window
-and re-hitching after resolving the native gate. Use `--resume` only when drop
-prints a stamped native-session line; a pre-turn gate normally has no native
-identity to resume. Do not send a replacement contract by hand.
+silently discarding it. After resolving the native gate, invoke any Gangline
+command from the team; its one-shot tick retries the contract without requiring
+the idle recipient to create a turn boundary. Drop and re-hitch only if the
+native process itself must be replaced. Use `--resume` only when drop prints a
+stamped native-session line; a pre-turn gate normally has no native identity to
+resume. Do not send a replacement contract by hand.
 
 Native sandboxes must be able to reach the tmux server and the `gang` executable.
 For Codex, this commonly means the tmux socket and Gangline checkout need to be
@@ -178,8 +179,10 @@ operator housekeeping should remove read and teardown archives that no longer
 have a recovery purpose.
 
 For a harness whose native Stop event does not reach Gangline, an ordinary send
-still tries live delivery. A refusal is not parked, and names the missing
-`GANG_STOP_HOOK`, because nothing would drain the message.
+still tries live delivery. A pre-keystroke refusal parks normally and every
+later Gangline invocation supplies a cooperative retry. The missing hook still
+means there is no immediate Stop opportunity and no native turn fact for
+`gang wait` or inside-harness deferred self-compaction.
 
 ## Working in the shared checkout
 
@@ -417,6 +420,13 @@ positive evidence the composer is ready with no such last-witnessed resource.
 `!occupied!` means a native UI owns the composer. `?unknown?` means the
 available evidence can no longer answer truthfully.
 
+`!session-lost!` means the live native session holding a pane contradicts the
+session registered for that agent. Treat it as an identity failure, not an idle
+or busy verdict: delivery is blocked until the intended session is re-hitched.
+`last tick failed:` is team-level health rather than an agent verdict; it is
+repeated by the next command and by status/roster until a clean pass replaces
+it.
+
 For the window-name glyph, its staleness, bare addressing, and tmux's appended
 flags, see [Observation](reference.md#observation); `gang roster` remains the
 live-computed truth.
@@ -458,6 +468,40 @@ delete the exact smoke session afterward. Mandatory tests use a private tmux
 server and stand-in collar; they do not spend real harness turns.
 
 ## Recovery
+
+### A delivery was refused while the pane was in copy-mode
+
+Gangline types nothing while tmux copy-mode or scrollback owns the pane. A
+default send remains in the target's spool, and a deferred self-compaction
+request remains recorded. Leave copy-mode, then invoke any Gangline command
+from any team window. Its cooperative tick retries both actions through their
+ordinary safety gates; the idle recipient does not need a manual nudge or a new
+turn boundary. Use `gang status <name>` to confirm the queue and compaction
+request retired. `--live-only` is the exception: it explicitly refuses without
+parking, so its caller still owns that body.
+
+### Status says `last tick failed`
+
+The spawning command already completed with its own result; tick failure is
+isolated. Read `gang status <name>` or `gang roster` for the surfaced reason,
+then inspect the per-team `tick.log` under
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/`. The attached client also
+flashes the failure, shows `tick!` in status-right, and raises activity/bell in
+the `gangline-alerts` window. Repair the named condition and run `gang tick` for
+one synchronous retry. A clean pass records `ok` and removes the warning; do not
+delete the health file to manufacture green.
+
+### An agent reads `session-lost`
+
+The live native session holding that pane does not match the session Gangline
+registered for the agent. This commonly means a harness restarted in place.
+Gangline blocks sends, spool drains, and compaction injection; do not clear the
+tmux options or treat the new process as the old agent. Inspect the registered
+and live ids with `gang status <name>`, preserve any queued bodies with
+`gang mail <name>`, then replace or re-hitch the pane onto the intended native
+session. If teardown is required, `gang drop` archives the waiting spool before
+ending the wrong pane; re-send from that archive only after the intended
+identity is established.
 
 ### A malformed occupancy witness refuses observation
 
@@ -544,16 +588,16 @@ counted as agreement. Both are warnings: the hitch continues, because a
 deliberate change of path is legitimate and only the surprise is not.
 
 And continuing WITHOUT trusting is the option to avoid. It leaves codex running
-with its hooks inert, so that agent has no `Stop` hook: no spool drain and no
-deferred self-compaction. Gangline waits on turn boundaries that never arrive,
-and the roster shows a teammate that looks alive.
+with its hooks inert, so that agent supplies no native `Stop` witness or
+inside-harness deferred self-compaction request. Cooperative ticks still retry
+already accepted mail through live composer gates, but cannot invent the native
+facts the disabled hooks would have supplied.
 
 Hitch does not hold the terminal for this indefinitely. It parks the contract,
 says the prompt is waiting, and after `GANG_GATE_LOOKS` observations of an
 unanswered prompt it exits 4 with the agent still alive and the contract still
-in its spool. Nothing claims that spool before the agent takes a turn, and it
-cannot take one from behind the prompt, so the recovery is to answer the prompt
-and then `gang drop` and hitch again.
+in its spool. Answer the prompt, then invoke any Gangline command to supply the
+cooperative retry; re-hitch only if the process itself needs replacement.
 
 An operator who wants no gate at all sets that in their own configuration
 rather than in a collar: codex takes `--dangerously-bypass-hook-trust`, and a

@@ -40,7 +40,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # carries this install root, so a new install, an upgrade or a worktree
       # presents hashes codex has never seen and it opens its hooks-review menu
       # before drawing a composer. Nothing in Gangline can answer that menu, so
-      # an unattended hitch waits on a person indefinitely. The preflight runs
+      # an unattended hitch waits on a person until its foreground gate bound.
+      # The preflight runs
       # in the pane ahead of the harness and turns that wait into an immediate,
       # explained refusal; it grants no trust. It wraps only this branch,
       # because a launch that installs no hooks raises no review.
@@ -358,8 +359,9 @@ GANG_INTERRUPT_KEY="Escape"
 # Nothing here answers it. A collar that pressed "Trust all and continue" would
 # be granting the operator's approval to run hooks outside the sandbox on their
 # behalf, and option 3 is a keystroke away from a codex agent with no Stop hook
-# at all: no spool drain, no deferred self-compaction, gang waiting on turn
-# boundaries that never arrive.
+# at all. Cooperative ticks can still retry accepted mail against the live
+# composer, but no native turn fact, wait boundary, or inside-harness deferred
+# self-compaction request will arrive.
 #
 # GANG_OCCUPIED_REGEX matches this menu, so the window reads !occupied!
 # (authority unknown) and no key is sent. Hitch parks its startup contract,
@@ -371,6 +373,27 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   file="$(tmux show-options -wqv -t "$1" @gl_session)" || file=""
   [ -n "$file" ] && [ -f "$file" ] || return 1
   printf '%s' "$file"
+}
+
+# THE LIVE PROCESS, NOT THE SESSIONS DIRECTORY. A Codex process holds both its
+# thread-writer lock and its rollout open for the life of the conversation. A
+# restarted harness therefore presents a different exact id even when it was
+# launched in the same pane and cwd. Gang's ordinary sandbox cannot see the
+# tmux server's host /proc namespace, so this bounded read runs through tmux's
+# server-side run-shell and returns through one cleanup-owned temporary file.
+# The helper accepts an id only when both independent fd paths name it.
+collar_live_session_id() { # $1 = tmux target; print the exact id, or return 1
+  local pane_pid tmp command live=""
+  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" \
+    || pane_pid=""
+  case "$pane_pid" in ''|*[!0-9]*) return 1 ;; esac
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gangline-codex-live-id.XXXXXX")" || return 1
+  command="$(shell_quote "$ROOT/libexec/gang-codex-live-id") $(shell_quote "$pane_pid") > $(shell_quote "$tmp")"
+  tmux run-shell -t "$1" "$command" >/dev/null 2>&1 || :
+  IFS= read -r live < "$tmp" || live=""
+  rm -f -- "$tmp"
+  case "$live" in ''|*[!A-Za-z0-9._:-]*) return 1 ;; esac
+  printf '%s' "$live"
 }
 
 # A STOPPED TURN CAN STILL HOLD NATIVE WORK. Codex keeps background terminal

@@ -112,30 +112,32 @@ contains "a stale delivery lock is recovered exactly once" \
   || fail "a recovered delivery releases its lock" "$alpha_delivery_lock remains"
 
 tmux send-keys -l -t "$(window_id 1)" HUMAN_DRAFT
-draft_refusal=""
-if draft_refusal="$(printf 'MARK_DRAFT' |
+if draft_queued="$(printf 'MARK_DRAFT' |
   "$GANG" send --to 1 --from tester --stdin 2>&1)"; then
-  fail "delivery refuses a human draft" "send exited successfully"
+  pass "delivery parks behind a human draft"
 else
-  pass "delivery refuses a human draft"
+  fail "delivery parks behind a human draft" "$draft_queued"
 fi
-# The command a refusal names is the one that answers the question it raises.
-# That was `gang capture`, whose raw pane renders a dim suggested-prompt
-# placeholder identically to a half-written line — the reading that produced a
-# public misdiagnosis. `gang composer` is the collar's styled reading, so what
-# it prints is what a human typed; the next check spends it on this very box.
-contains "a delivery refusal names a runnable inspection command" \
-  "$draft_refusal" "gang composer 1"
+# This used to refuse because only a native Stop hook could consume a parked
+# message. Every invocation now carries the cooperative tick, so keeping the
+# sender's body would discard the retry path the command can guarantee. The
+# original safety decision remains: the draft is inspected through the collar
+# and neither the send nor its parking types into it.
+contains "the accepted delivery names its durable queue" \
+  "$draft_queued" "queued for 1"
 if "$GANG" composer 1 >/dev/null; then
-  pass "the inspection command named by the refusal runs"
+  pass "the draft inspection command runs"
 else
-  fail "the inspection command named by the refusal runs" "gang composer 1 failed"
+  fail "the draft inspection command runs" "gang composer 1 failed"
 fi
-contains "and classifies what it refused on" "$draft_refusal" "[draft:"
-# the refusal above is the barrier proving the draft is on screen
 contains "composer prints what a human typed" \
   "$("$GANG" composer 1)" "HUMAN_DRAFT"
+excludes "parking types nothing into the draft" "$(pane 1)" "MARK_DRAFT"
 tmux send-keys -t "$(window_id 1)" C-u
+"$GANG" tick >/dev/null
+# source-guard: whole-surface@550cc2e2558d: the unique body can appear in this fixture pane only after the queued producer is submitted
+contains "a later cooperative tick delivers after the draft clears" \
+  "$(pane 1)" "MARK_DRAFT"
 
 # A harness may park the Enter in its own input queue: the fixture's composer
 # flips to the queue hint once the strand flag exists, exactly as claude
@@ -143,16 +145,22 @@ tmux send-keys -t "$(window_id 1)" C-u
 # parked preview in the transcript looks like a submitted prompt. The box
 # changing is therefore not proof of entry, and delivery must say so instead
 # of reporting success.
+queue_clear_channel="test-queue-clear-$$"
 cat > "$RUN_ROOT/queue-rc" <<'RC'
 PS1='❯ '
-PROMPT_COMMAND='[ -f "$QUEUE_STRAND" ] && PS1="❯ Press up to edit queued messages"'
+PROMPT_COMMAND='if [ -f "$QUEUE_STRAND" ]; then
+  PS1="❯ Press up to edit queued messages"
+else
+  PS1="❯ "
+  [ -z "$QUEUE_CLEAR_CHANNEL" ] || tmux wait-for -S "$QUEUE_CLEAR_CHANNEL"
+fi'
 RC
 mkdir -p "$RUN_ROOT/collars"
 cat > "$RUN_ROOT/collars/queueing.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
 . "$ROOT/collars/bash.sh"
-GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand ENV=$RUN_ROOT/queue-rc exec bash --posix' fixture"
+GANG_LAUNCH="sh -c 'QUEUE_STRAND=$RUN_ROOT/queue-strand QUEUE_CLEAR_CHANNEL=$queue_clear_channel ENV=$RUN_ROOT/queue-rc exec bash --posix' fixture"
 GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
 SH
 export GANG_COLLARS="$RUN_ROOT/collars"
@@ -178,16 +186,35 @@ contains "status classifies the parked box, not just the record" \
   "$strand_status" "box: parked:"
 contains "and points at the recovery for that class" \
   "$strand_status" "gang flush strand"
-# With the queue still parked, the NEXT delivery is refused before anything is
-# typed, named as the queue rather than blamed on a half-written draft.
+# With the queue still parked, the NEXT default delivery is durably queued
+# before anything is typed. The old refusal was correct only while no universal
+# retry consumer existed; the cooperative tick now owns that retry. Live-only
+# retains the refusal for callers that explicitly forbid parking.
 if strand_more="$(printf 'MARK_SECOND' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
   strand_more_rc=0
 else
   strand_more_rc=$?
 fi
-equal "a parked queue refuses the next delivery without typing" "3" "$strand_more_rc"
-contains "naming the queue it is waiting on" \
-  "$strand_more" "parked earlier input in its own queue"
+equal "a parked queue accepts the next delivery without typing" "0" "$strand_more_rc"
+contains "naming the durable queue it is waiting in" \
+  "$strand_more" "queued for strand"
+contains "status counts the delivery behind the parked queue" \
+  "$("$GANG" status strand)" "spooled: 1"
+excludes "the accepted delivery does not enter the parked composer" \
+  "$(pane strand)" "MARK_SECOND"
+if strand_live="$(printf 'MARK_LIVE_QUEUE' |
+  "$GANG" send --to strand --from tester --live-only --stdin 2>&1)"; then
+  strand_live_rc=0
+else
+  strand_live_rc=$?
+fi
+equal "live-only still refuses a parked queue" "3" "$strand_live_rc"
+contains "the live-only refusal names the queue" \
+  "$strand_live" "parked earlier input in its own queue"
+contains "live-only adds no second durable copy" \
+  "$("$GANG" status strand)" "spooled: 1"
+excludes "live-only types nothing into the parked composer" \
+  "$(pane strand)" "MARK_LIVE_QUEUE"
 # Recovery is the collar's word too. This collar declares the evidence and no
 # recall key, so gang knows the composer is parked and does not know which
 # keystroke loads the body back — which is a refusal, never a guessed keypress.
@@ -198,6 +225,15 @@ else
 fi
 contains "and the refusal names the missing declaration" \
   "$norecall_out" "GANG_QUEUE_RECALL_KEY"
+tmux wait-for "$queue_clear_channel" &
+queue_clear_waiter=$!
+rm -f -- "$RUN_ROOT/queue-strand"
+tmux send-keys -t "$(window_id strand)" Enter
+wait "$queue_clear_waiter"
+"$GANG" tick >/dev/null
+# source-guard: whole-surface@eb33ff00ebb7: the unique second body has one queued producer and this tick is its only drain before teardown
+contains "the cooperative tick drains the parked-queue successor once the queue clears" \
+  "$(pane_all strand)" "MARK_SECOND"
 "$GANG" drop strand >/dev/null
 
 # THE PARKED QUEUE, RECOVERED RATHER THAN DESCRIBED. The fixture's composer
@@ -1263,7 +1299,7 @@ contains "a target still painting work stays busy after the interrupt" \
 excludes "the interrupt never invents an idle the pane contradicts" \
   "$stubborn_state" "~idle~"
 if midturn_out="$(printf 'MARK_MIDTURN' |
-  "$GANG" send --to stubborn --from tester --stdin 2>&1)"; then
+  "$GANG" send --to stubborn --from tester --live-only --stdin 2>&1)"; then
   fail "and it stays unreachable while that work is painted" "send entered mid-turn"
 else
   pass "and it stays unreachable while that work is painted"
