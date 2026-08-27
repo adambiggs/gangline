@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.5.0](https://github.com/adambiggs/gangline/compare/gangline-v2.4.0...gangline-v2.5.0) (2026-08-27)
+
+
+### Features
+
+* **delivery:** add cooperative retry tick ([8e0707a](https://github.com/adambiggs/gangline/commit/8e0707a02066130b83d332ceddb7599469257984))
+
+
+### Bug Fixes
+
+* **tick:** isolate smoke and repair health segment ([2e08046](https://github.com/adambiggs/gangline/commit/2e0804644e047b105f2000f2f08f4e3120308e2e))
+
 ## [2.4.0](https://github.com/adambiggs/gangline/compare/gangline-v2.3.0...gangline-v2.4.0) (2026-08-25)
 
 
