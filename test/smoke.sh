@@ -19,6 +19,13 @@ trap 'rm -rf -- "$CONFIG_ROOT"' EXIT HUP INT TERM
 export GANG_LOCK_DIR="$CONFIG_ROOT/lock"
 export GANG_ARCHIVE_DIR="$CONFIG_ROOT/archive"
 
+# Smoke is routinely invoked from an attached development pane. The command
+# surface is its subject; a cooperative pass against that pane's live team is
+# not. Use the same suite-only switch as integration so no snapshot executable
+# can mutate the operator's tmux session on EXIT.
+export GANG_TEST_COLLARS=1
+export GANG_TEST_TICK_MODE=manual
+
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" help >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" collars >/dev/null
 GANG_CONFIG_DIR="$CONFIG_ROOT" "$ROOT/bin/gang" models -c claude-code \

@@ -3557,13 +3557,33 @@ tick_state_forget() { # health is team-scoped and dies with that team
 }
 
 tick_ui_ensure() { # install the silent-until-failed status-right segment
-  local right segment
+  local right segment previous="" legacy=""
+  local legacy_re='#\([^)]*gang-tick-health\.sh[^)]*\)'
   tick_paths_set || return 1
   right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" || return 1
-  case "$right" in *gang-tick-health.sh*) return 0 ;; esac
   segment="#($(shell_quote "$ROOT/statusline/gang-tick-health.sh") $(shell_quote "$TICK_HEALTH"))"
+  previous="$(tmux show-options -qv -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null)" \
+    || previous=""
+  if [ "$previous" = "$segment" ]; then
+    case "$right" in *"$segment"*) return 0 ;; esac
+  fi
+  if [ -n "$previous" ]; then
+    while [[ "$right" == *"$previous"* ]]; do
+      right="${right%%"$previous"*}${right#*"$previous"}"
+    done
+  else
+    # Early cooperative-tick builds recorded no owning option. Replace that
+    # one legacy command instead of accepting an upgrade/snapshot path that no
+    # longer exists, while preserving every unrelated operator segment.
+    while [[ "$right" =~ $legacy_re ]]; do
+      legacy="${BASH_REMATCH[0]}"
+      right="${right%%"$legacy"*}${right#*"$legacy"}"
+    done
+  fi
+  right="${right% }"
   right="${right:+$right }$segment"
-  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null
+  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
+  tmux set-option -t "=$SESSION:" @gl_tick_health_segment "$segment" >/dev/null
 }
 
 tick_lock_paths_set() {

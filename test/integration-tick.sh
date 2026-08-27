@@ -171,9 +171,21 @@ equal "the completed singleton leaves no lock or dirty residue" 0 \
 # exact team lock name observed above; a made-up parallel path would not prove
 # the production stale-lock branch.
 ln -s 99999999 "$tick_lock_path"
+tmux set-option -t "=$GANG_SESSION:" status-right \
+  "operator-left #('/stale/snapshot/gang-tick-health.sh' '/stale/health') operator-right"
+tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
 "$GANG" tick >/dev/null
 equal "a dead pid in the team tick lock is reclaimed" absent \
   "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+tick_repaired_right="$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)"
+excludes "a tick replaces a health segment owned by an obsolete snapshot" \
+  "$tick_repaired_right" "/stale/snapshot"
+contains "status repair preserves the operator's unrelated left segment" \
+  "$tick_repaired_right" "operator-left"
+contains "status repair preserves the operator's unrelated right segment" \
+  "$tick_repaired_right" "operator-right"
+contains "status repair installs the running tree's health reader" \
+  "$tick_repaired_right" "$ROOT/statusline/gang-tick-health.sh"
 contains "the deadline controller fixes the production budget at sixty seconds" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
 contains "deadline expiry kills the worker's whole process group" \
