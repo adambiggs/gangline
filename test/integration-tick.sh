@@ -337,8 +337,52 @@ contains "and that refusal is recorded where status and roster read it" \
   "$(tmux show-options -wqv -t "$tick_wrong_id" @gl_session_probe_failed)" \
   "live harness session id could not be read"
 
+# AN EXPECTED MISS MUST NOT LAND ON THE AGENT'S SCREEN. tmux renders a
+# run-shell that exits nonzero into the target pane: it drops that pane into
+# view-mode over the harness TUI and prints "'<command>' returned 1" there,
+# taking the window's name to [tmux] as well wherever one is not pinned. The
+# mode is the witness asserted below, because it is the part no naming choice
+# can mask. The identity probe misses for ordinary reasons -- a harness still
+# starting, one that has not opened its lock -- and every ordinary miss used to
+# cover the agent's screen and divert its keystrokes into a copy-mode overlay,
+# once per tick, which is once per Gangline invocation.
+tick_bare_ready="$RUN_ROOT/tick-codex-bare-ready"
+mkfifo "$tick_bare_ready"
+tick_bare_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-bare \
+  "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_bare_ready'")"
+IFS= read -r -N 1 _ < "$tick_bare_ready"
+"$GANG" adopt tick-bare -c codex >/dev/null
+
+# CALIBRATE THE INSTRUMENT ON THE FAULT IT MUST CATCH. A pane that is never
+# hijacked and a reader that cannot see a hijack look identical from the
+# assertion below, so the unguarded command shape is driven once against a
+# throwaway window first and required to produce exactly what the fix removes.
+tick_calib_ready="$RUN_ROOT/tick-codex-calib-ready"
+mkfifo "$tick_calib_ready"
+tick_calib_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-calib \
+  "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_calib_ready'")"
+IFS= read -r -N 1 _ < "$tick_calib_ready"
+tmux run-shell -t "$tick_calib_id" "exit 1" >/dev/null 2>&1 || :
+equal "an unguarded run-shell failure does put its target pane in view-mode" \
+  "view-mode" \
+  "$(tmux display-message -p -t "$tick_calib_id" '#{?pane_in_mode,#{pane_mode},none}')"
+tmux kill-window -t "$tick_calib_id" 2>/dev/null || :
+
+"$GANG" tick >/dev/null
+equal "a probe that finds no id leaves the agent's pane out of any mode" \
+  "none" \
+  "$(tmux display-message -p -t "$tick_bare_id" '#{?pane_in_mode,#{pane_mode},none}')"
+contains "while the miss itself is still recorded on the window" \
+  "$(tmux show-options -wqv -t "$tick_bare_id" @gl_session_probe_failed)" \
+  "live harness session id could not be read"
+equal "and a silent probe miss does not fail the tick" 0 \
+  "$( "$GANG" tick >/dev/null 2>&1; printf '%s' $?)"
+
 "$GANG" drop tick-fresh >/dev/null 2>&1
 "$GANG" drop tick-wrong >/dev/null 2>&1
+"$GANG" drop tick-bare >/dev/null 2>&1
 
 # Team teardown ignores the special alert pane as an agent and retires the
 # ephemeral health files with the session that gave them meaning.

@@ -390,7 +390,17 @@ collar_live_session_id() { # $1 = tmux target; print the exact id, or return 1
     || pane_pid=""
   case "$pane_pid" in ''|*[!0-9]*) return 1 ;; esac
   tmp="$(mktemp "${TMPDIR:-/tmp}/gangline-codex-live-id.XXXXXX")" || return 1
-  command="$(shell_quote "$ROOT/libexec/gang-codex-live-id") $(shell_quote "$pane_pid") > $(shell_quote "$tmp")"
+  # THE FAILURE GUARD BELONGS INSIDE THE COMMAND, NOT AROUND THE CLIENT CALL.
+  # tmux renders a run-shell that exits nonzero into the TARGET PANE: it names
+  # the window [tmux], drops the pane into view-mode over the harness TUI, and
+  # prints "'<command>' returned 1" there. Redirecting this client's own output
+  # cannot reach that -- the server draws it, and the pane it draws over is the
+  # agent's. A probe that finds no id yet is an ordinary answer on this path
+  # (the harness has not opened its lock, or has only just been launched), so
+  # every unremarkable miss covered the agent's screen and took its keystrokes
+  # into a copy-mode overlay. Exiting zero inside the command is what the
+  # server reads; emptiness of the temp file is what tells this caller.
+  command="$(shell_quote "$ROOT/libexec/gang-codex-live-id") $(shell_quote "$pane_pid") > $(shell_quote "$tmp") 2>/dev/null || :"
   tmux run-shell -t "$1" "$command" >/dev/null 2>&1 || :
   IFS= read -r live < "$tmp" || live=""
   rm -f -- "$tmp"
