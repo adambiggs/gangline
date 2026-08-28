@@ -39,6 +39,21 @@ def main() -> int:
         for session_id in locks
         if any(name.endswith(f"-{session_id}.jsonl") for name in rollouts)
     }
+    # A SESSION BEFORE ITS FIRST TURN HAS ONLY ITS LOCK TO OFFER. Codex takes
+    # the thread-writer lock as the session opens, but it creates the rollout
+    # lazily on the first turn: an agent sitting at a composer nobody has
+    # prompted yet holds the lock and no rollout at all -- not as an open fd,
+    # not on disk. Observed on codex-cli 0.149.1. Demanding both witnesses
+    # there is not strictness, it is a state no freshly hitched agent can leave
+    # until someone talks to it, and hitch is when this is read most.
+    #
+    # Corroboration is still required wherever it can exist. A rollout naming
+    # some other thread contradicts the lock rather than being merely absent,
+    # and one process holding two locks is ambiguous with nothing to break the
+    # tie; both keep refusing. Only the case with no rollout evidence at all
+    # falls back, and only when a single lock makes the answer unambiguous.
+    if not witnessed and not rollouts and len(locks) == 1:
+        witnessed = set(locks)
     if len(witnessed) != 1:
         return 1
     print(next(iter(witnessed)))

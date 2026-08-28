@@ -375,13 +375,15 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   printf '%s' "$file"
 }
 
-# THE LIVE PROCESS, NOT THE SESSIONS DIRECTORY. A Codex process holds both its
-# thread-writer lock and its rollout open for the life of the conversation. A
-# restarted harness therefore presents a different exact id even when it was
-# launched in the same pane and cwd. Gang's ordinary sandbox cannot see the
-# tmux server's host /proc namespace, so this bounded read runs through tmux's
-# server-side run-shell and returns through one cleanup-owned temporary file.
-# The helper accepts an id only when both independent fd paths name it.
+# THE LIVE PROCESS, NOT THE SESSIONS DIRECTORY. A Codex process holds its
+# thread-writer lock open for the life of the conversation, and its rollout
+# from its first turn onward. A restarted harness therefore presents a
+# different exact id even when it was launched in the same pane and cwd. Gang's
+# ordinary sandbox cannot see the tmux server's host /proc namespace, so this
+# bounded read runs through tmux's server-side run-shell and returns through
+# one cleanup-owned temporary file. The helper reads the lock as the authority
+# and the rollout as corroboration wherever one exists; it refuses an id that
+# either witness contradicts, and refuses when neither settles a single answer.
 collar_live_session_id() { # $1 = tmux target; print the exact id, or return 1
   local pane_pid tmp command live=""
   pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" \

@@ -276,6 +276,70 @@ equal "a detached tick failure never changes its spawning command result" 0 "$ti
 excludes "a later successful pass clears the health failure" \
   "$(<"$tick_health_file")" $'failed\t'
 
+# A CODEX SESSION BEFORE ITS FIRST TURN HOLDS ITS LOCK AND NO ROLLOUT. Codex
+# opens the thread-writer lock as the session opens but creates the rollout
+# lazily, on the first turn, so a freshly hitched agent sitting at a composer
+# nobody has prompted holds exactly one witness. Verified against codex-cli
+# 0.149.1: before the first turn the rollout is absent as an fd and absent from
+# the sessions tree; after it, both descriptors are open. Requiring both made
+# the identity probe unsatisfiable for the whole of the state hitch leaves an
+# agent in.
+tick_fresh_root="$RUN_ROOT/tick-codex-fresh"
+tick_fresh_ready="$RUN_ROOT/tick-codex-fresh-ready"
+mkdir -p "$tick_fresh_root/thread-writer-locks"
+tick_fresh_lock="$tick_fresh_root/thread-writer-locks/fresh-session-333.lock"
+: > "$tick_fresh_lock"
+mkfifo "$tick_fresh_ready"
+cat > "$RUN_ROOT/tick-codex-holder.py" <<'PY'
+import signal
+import sys
+
+held = [open(path) for path in sys.argv[2:]]
+with open(sys.argv[1], "w") as ready:
+    ready.write("x")
+signal.pause()
+PY
+tick_fresh_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-fresh \
+  "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_fresh_ready' '$tick_fresh_lock'")"
+IFS= read -r -N 1 _ < "$tick_fresh_ready"
+"$GANG" adopt tick-fresh -c codex >/dev/null
+tmux set-option -w -t "$tick_fresh_id" @gl_session_id fresh-session-333
+"$GANG" tick >/dev/null
+equal "a Codex session that has taken no turn yet is still identified by its lock" \
+  fresh-session-333 \
+  "$(tmux show-options -wqv -t "$tick_fresh_id" @gl_session_live_id)"
+equal "and its identity is verified rather than left unread" "" \
+  "$(tmux show-options -wqv -t "$tick_fresh_id" @gl_session_probe_failed)"
+excludes "so a pre-first-turn agent is not reported session-lost" \
+  "$("$GANG" status tick-fresh 2>/dev/null)" "!session-lost!"
+
+# CORROBORATION IS STILL REQUIRED WHEREVER IT EXISTS. The lock is the authority
+# only when nothing contradicts it: a rollout naming another thread is evidence
+# against the lock rather than evidence missing, and it keeps refusing.
+tick_wrong_root="$RUN_ROOT/tick-codex-wrong"
+tick_wrong_ready="$RUN_ROOT/tick-codex-wrong-ready"
+mkdir -p "$tick_wrong_root/thread-writer-locks" "$tick_wrong_root/sessions"
+tick_wrong_lock="$tick_wrong_root/thread-writer-locks/wrong-session-444.lock"
+tick_wrong_rollout="$tick_wrong_root/sessions/rollout-fixture-other-session-555.jsonl"
+: > "$tick_wrong_lock"
+: > "$tick_wrong_rollout"
+mkfifo "$tick_wrong_ready"
+tick_wrong_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-wrong \
+  "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_wrong_ready' '$tick_wrong_lock' '$tick_wrong_rollout'")"
+IFS= read -r -N 1 _ < "$tick_wrong_ready"
+"$GANG" adopt tick-wrong -c codex >/dev/null
+"$GANG" tick >/dev/null
+equal "a rollout naming another thread refuses rather than trusting the lock" "" \
+  "$(tmux show-options -wqv -t "$tick_wrong_id" @gl_session_live_id)"
+contains "and that refusal is recorded where status and roster read it" \
+  "$(tmux show-options -wqv -t "$tick_wrong_id" @gl_session_probe_failed)" \
+  "live harness session id could not be read"
+
+"$GANG" drop tick-fresh >/dev/null 2>&1
+"$GANG" drop tick-wrong >/dev/null 2>&1
+
 # Team teardown ignores the special alert pane as an agent and retires the
 # ephemeral health files with the session that gave them meaning.
 "$GANG" down "$GANG_SESSION" >/dev/null
