@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.5.1](https://github.com/adambiggs/gangline/compare/gangline-v2.5.0...gangline-v2.5.1) (2026-08-28)
+
+
+### Bug Fixes
+
+* **codex:** identify a session that has taken no turn yet ([0de7576](https://github.com/adambiggs/gangline/commit/0de757602ecc36a8905dff2699b65c1a03559ccb))
+* **codex:** keep an expected identity miss off the agent's pane ([b0afddc](https://github.com/adambiggs/gangline/commit/b0afddc1f7eeff0eceb3267c6250cc60b72128a9))
+
 ## [2.5.0](https://github.com/adambiggs/gangline/compare/gangline-v2.4.0...gangline-v2.5.0) (2026-08-27)
 
 
