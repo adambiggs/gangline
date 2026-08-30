@@ -301,7 +301,7 @@ try:
             if scanned >= ACTION_BOUND:
                 break
             continue
-        if mode == "fatal":
+        if mode in ("fatal", "blocked"):
             relevant = semantic(record)
         else:
             relevant = (
@@ -312,7 +312,7 @@ try:
             latest = record
             break
 except (OSError, UnicodeError, ValueError, json.JSONDecodeError, OverflowError):
-    if mode == "fatal":
+    if mode in ("fatal", "blocked"):
         print("bound Claude transcript is unreadable")
     if mode == "action":
         print("bound Claude transcript is unreadable")
@@ -352,6 +352,46 @@ if latest.get("type") != "assistant":
     raise SystemExit(1)
 if latest.get("isApiErrorMessage") is not True:
     raise SystemExit(1)
+
+
+def fatal_claims(record):
+    # THE CLASSES THE FATAL READER POSITIVELY OWNS. This is the same decision
+    # the fatal branch below makes, kept as one expression so the two readers
+    # cannot drift into claiming a record together or into claiming none.
+    # A model_not_found record whose message shape is unrecognized is still
+    # owned here: the fatal reader reports it as unknown, which is its answer
+    # to give, not one for the blocked reader to overwrite.
+    error = record.get("error")
+    if error == "model_not_found":
+        return True
+    if error != "server_error":
+        return False
+    if "apiErrorStatus" not in record:
+        return True
+    status = record.get("apiErrorStatus")
+    return status == 529 and not isinstance(status, bool)
+
+
+# THE SHAPE IS isApiErrorMessage, NOT THE ERROR VOCABULARY. A record the
+# harness marks as an API error is a turn that ended without producing work,
+# whatever it is called; the window still draws a composer, so every guard
+# gang has on the input box says it is fine. Naming the classes that count
+# would make each one the harness adds a fresh window that reads idle, which
+# is the defect this reader exists to remove. Only what the fatal reader
+# positively claims is withheld, so a class neither reader names is reported
+# here rather than passing as a healthy window.
+if mode == "blocked":
+    if fatal_claims(latest):
+        raise SystemExit(1)
+    name = latest.get("error")
+    # The value reaches an operator-facing state line, so it is admitted only
+    # in the token shape the harness has been seen to use. Anything else is
+    # reported honestly as unnamed rather than pasted into the line.
+    if isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", name):
+        print(f"Claude Code ended the latest turn on an API error ({name})")
+    else:
+        print("Claude Code ended the latest turn on an API error it did not name")
+    raise SystemExit(0)
 
 if latest.get("error") == "server_error":
     # A STREAM THAT DIED CARRIES NO HTTP STATUS. The key is absent rather than
@@ -399,6 +439,12 @@ collar_bricked() { # $1 target; print cause, 0 fatal, 1 absent, 2 unknown
   local file
   file="$(claude_session_file "$1")" || return 1
   claude_record_read "$file" fatal
+}
+
+collar_blocked() { # $1 target; print reason, 0 blocked, 1 absent, 2 unknown
+  local file
+  file="$(claude_session_file "$1")" || return 1
+  claude_record_read "$file" blocked
 }
 
 # EVIDENCE OF ACTION, WHICH IS NOT EVIDENCE OF HEALTH. This reports when the

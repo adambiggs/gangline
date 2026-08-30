@@ -53,6 +53,19 @@ collar_bricked() {
     *) return 1 ;;
   esac
 }
+collar_blocked() {
+  local evidence=""
+  evidence="\$(cat "$RUN_ROOT/block-evidence" 2>/dev/null)" || evidence=""
+  case "\$evidence" in
+    blocked) printf 'the fixture turn ended without producing work'; return 0 ;;
+    unknown) printf 'fixture blocking evidence unreadable'; return 2 ;;
+    blocked-empty) return 0 ;;
+    absent-reason) printf 'impossible unblocked reason'; return 1 ;;
+    unknown-empty) return 2 ;;
+    invalid-verdict) return 7 ;;
+    *) return 1 ;;
+  esac
+}
 collar_waiting() {
   local evidence=""
   evidence="\$(cat "$RUN_ROOT/waiting-evidence" 2>/dev/null)" || evidence=""
@@ -409,6 +422,104 @@ printf '%s' unknown > "$RUN_ROOT/brick-evidence"
 contains "an unreadable fatal source stays unknown instead of becoming busy" \
   "$("$GANG" status waitable)" "?unknown? (fixture fatal evidence unreadable)"
 rm -f -- "$RUN_ROOT/brick-evidence"
+
+# A WINDOW THAT WILL ACCEPT INPUT AND WILL NOT ACT ON WHAT IT WAS GIVEN. The
+# composer is free here, which is exactly what makes the state invisible to
+# every guard gang keeps on the input box: without this tier the pane reads
+# idle, a send reports delivered, and a boundary wait returns satisfied.
+# The busy marker is repainted first so the ordering below is asserted against
+# a live positive busy rule rather than against whatever the pane retained.
+blocked_painted="gang-test-blocked-painted-$$"
+printf -v blocked_command \
+  "printf 'EXPLAIN_BUSY_%%s\\\\n' \"\$((6*8))\"; tmux wait-for -S %q" \
+  "$blocked_painted"
+tmux send-keys -l -t "$waitable_pane" "$blocked_command"
+tmux send-keys -t "$waitable_pane" Enter
+tmux wait-for "$blocked_painted"
+contains "a repainted busy marker is the live state before the blocked tier" \
+  "$("$GANG" status waitable)" "-busy-"
+
+printf '%s' blocked > "$RUN_ROOT/block-evidence"
+contains "a turn that produced no work outranks the busy paint it left behind" \
+  "$("$GANG" status waitable)" \
+  "!blocked! (the fixture turn ended without producing work)"
+contains "the human roster surfaces the same blocked state" \
+  "$("$GANG" roster)" "!blocked!"
+equal "porcelain gives the blocked state its stable word" "blocked" \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "waitable" { print $3 }')"
+blocked_explain="$("$GANG" explain waitable)"
+contains "explain names the collar blocked reader that matched" \
+  "$blocked_explain" "collar_blocked: matched"
+contains "explain prints the collar's blocking reason" \
+  "$blocked_explain" "reason: the fixture turn ended without producing work"
+
+# A BLOCKED WINDOW MUST NOT SATISFY A BOUNDARY. Reporting satisfied here is the
+# same lie as reporting idle: the turn the caller is waiting on already ended
+# without doing anything, and nothing further is coming unattended.
+refuses "wait refuses a blocked target instead of arming a boundary" \
+  "cannot reach the requested boundary" \
+  "$GANG" wait waitable --until "done"
+refuses "wait refuses a blocked target for an idle boundary too" \
+  "cannot reach the requested boundary" \
+  "$GANG" wait waitable --until "idle"
+
+# REFUSING BEATS A FALSE DELIVERED. The composer here is genuinely free, so
+# every other delivery guard passes and only the state read can stop the paste.
+blocked_send_rc=0
+blocked_send_out="$(printf 'BLOCKED_BODY' | "$GANG" send \
+  --to waitable --from tester --live-only --stdin 2>&1)" || blocked_send_rc=$?
+equal "a blocked window refuses delivery before any paste" "refused" \
+  "$([ "$blocked_send_rc" -ne 0 ] && printf refused || printf sent)"
+contains "the pre-paste refusal names the blocking reason" \
+  "$blocked_send_out" "is blocked (the fixture turn ended without producing work)"
+# The busy marker painted above is still on this screen. Delivery decides in its
+# own tier, before the one inject keeps, so without the same ordering there it
+# answers a finished turn from the paint that turn left behind.
+excludes "the blocked refusal outranks the busy paint the ended turn left" \
+  "$blocked_send_out" "is mid-turn"
+
+# A QUEUE BEHIND A DEAD TURN IS NOT AN ORDINARY WAIT. The standing notice tells
+# a sender that nothing further is needed from them, which is true only of a
+# window that will take another turn. Parking against this one must say the
+# opposite, or the queue absorbs the message as quietly as an idle verdict did.
+blocked_queue_out="$(printf 'BLOCKED_QUEUE_BODY' | "$GANG" send \
+  --to waitable --from tester --stdin 2>&1)"
+contains "parking against a blocked window is still accepted" \
+  "$blocked_queue_out" "accepted, not yet in the session"
+contains "the queue notice names the blocked window and its reason" \
+  "$blocked_queue_out" "'waitable' is blocked (the fixture turn ended without producing work)"
+contains "the queue notice refuses to promise an unattended drain" \
+  "$blocked_queue_out" "will NOT drain on its own"
+excludes "the queue notice does not tell the sender nothing further is needed" \
+  "$blocked_queue_out" "nothing further is needed from you"
+
+# FATAL OUTRANKS BLOCKED. A window that cannot work at all is repaired by
+# re-hitching it, not by re-driving it, and reporting the recoverable state
+# would send its owner down the wrong repair.
+printf '%s' fatal > "$RUN_ROOT/brick-evidence"
+contains "fatal-turn evidence outranks a blocked window" \
+  "$("$GANG" status waitable)" "!bricked! (selected model 'fixture-bad' was rejected)"
+contains "explain leaves the blocked reader unevaluated once fatal evidence settles state" \
+  "$("$GANG" explain waitable)" "collar_blocked: not evaluated"
+rm -f -- "$RUN_ROOT/brick-evidence"
+
+printf '%s' blocked-empty > "$RUN_ROOT/block-evidence"
+refuses "a blocked verdict without a reason is malformed collar evidence" \
+  "reported a blocked window without a reason" "$GANG" status waitable
+printf '%s' absent-reason > "$RUN_ROOT/block-evidence"
+refuses "an absent verdict cannot smuggle a blocking reason" \
+  "printed a reason while reporting no blocked window" "$GANG" status waitable
+printf '%s' unknown-empty > "$RUN_ROOT/block-evidence"
+refuses "an unknown blocked verdict requires an operator-facing cause" \
+  "reported unknown without a cause" "$GANG" status waitable
+printf '%s' invalid-verdict > "$RUN_ROOT/block-evidence"
+refuses "an undeclared blocked-reader verdict is refused" \
+  "returned unknown verdict 7" "$GANG" status waitable
+
+printf '%s' unknown > "$RUN_ROOT/block-evidence"
+contains "an unreadable blocking source stays unknown instead of becoming busy" \
+  "$("$GANG" status waitable)" "?unknown? (fixture blocking evidence unreadable)"
+rm -f -- "$RUN_ROOT/block-evidence"
 
 refuses "a collar declaration without native turn evidence cannot hang a caller" \
   "no native turn evidence" "$GANG" wait waitable --until "done"

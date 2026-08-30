@@ -1436,7 +1436,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_models collar_model_check collar_bricked collar_waiting \
+    collar_session_id collar_live_session_id collar_models collar_model_check collar_bricked collar_blocked collar_waiting \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -2007,6 +2007,8 @@ EXPLAIN_OCCUPIED_RESULT=""
 EXPLAIN_OCCUPIED_FRAGMENT=""
 EXPLAIN_BRICKED_RESULT=""
 EXPLAIN_BRICKED_CAUSE=""
+EXPLAIN_BLOCKED_RESULT=""
+EXPLAIN_BLOCKED_CAUSE=""
 
 explain_match_record() { # $1 collar variable, $2 grep verdict, $3 first matching line
   local variable="$1" verdict="$2" fragment="$3" result
@@ -2890,6 +2892,47 @@ bricked() { # $1 window, collar loaded; 0 fatal, 1 absent, 2 unknown
       fi
       return 2 ;;
     *) die "collar_bricked in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
+BLOCKED_WHAT="blocking cause unavailable"
+
+# A WINDOW THAT WILL ACCEPT INPUT AND WILL NOT ACT ON IT. Occupancy is a UI
+# holding the box, and a fatal turn is a session that cannot work at all. This
+# is the third thing: the composer is free, so every guard gang owns on the
+# input box passes, and the turn the window was already given produced nothing.
+# The collar names why; gang does not act on it.
+blocked() { # $1 window, collar loaded; 0 blocked, 1 absent, 2 unknown
+  local output="" rc=0
+  BLOCKED_WHAT="blocking cause unavailable"
+  declare -F collar_blocked >/dev/null || return 1
+  output="$(collar_blocked "$1")" || rc=$?
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0)
+      [ -n "$output" ] \
+        || die "collar_blocked in $GANG_COLLAR_FILE reported a blocked window without a reason"
+      BLOCKED_WHAT="$output"
+      if [ "$EXPLAINING" -eq 1 ]; then
+        EXPLAIN_BLOCKED_RESULT=matched
+        EXPLAIN_BLOCKED_CAUSE="$output"
+      fi
+      return 0 ;;
+    1)
+      [ -z "$output" ] \
+        || die "collar_blocked in $GANG_COLLAR_FILE printed a reason while reporting no blocked window"
+      [ "$EXPLAINING" -ne 1 ] || EXPLAIN_BLOCKED_RESULT="did not match"
+      return 1 ;;
+    2)
+      [ -n "$output" ] \
+        || die "collar_blocked in $GANG_COLLAR_FILE reported unknown without a cause"
+      BLOCKED_WHAT="$output"
+      if [ "$EXPLAINING" -eq 1 ]; then
+        EXPLAIN_BLOCKED_RESULT="could not determine"
+        EXPLAIN_BLOCKED_CAUSE="$output"
+      fi
+      return 2 ;;
+    *) die "collar_blocked in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
   esac
 }
 
@@ -5323,6 +5366,17 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
   ! occupied "$1" \
     || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach).$(overlay_note "$1")"
+  # REFUSING BEATS A FALSE DELIVERED. Every other guard here asks about the
+  # input box, and a blocked window's box is genuinely free: the paste would
+  # land, the Enter would submit, and gang would report a delivery that nothing
+  # is going to act on. Only the state read can see that, so this is the one
+  # guard that consults it. An unknown reading is deliberately NOT refused —
+  # the state surface already reports it, and one corrupt transcript line must
+  # not strand delivery to a window whose composer answered for itself.
+  local blocked_rc=0
+  blocked "$1" || blocked_rc=$?
+  [ "$blocked_rc" -ne 0 ] \
+    || refuse "refusing to deliver '$frag': $tname is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste here would be reported delivered with nothing acting on it. Nothing was typed and the body is still the sender's; no turn boundary is coming from it unattended, so the body waits rather than draining on its own (gang capture $tname)"
   local settled_rc=0
   composer_settled "$1" || settled_rc=$?
   [ "$settled_rc" -ne 3 ] \
@@ -7069,7 +7123,7 @@ cmd_talk() { # compose with the terminal editor, then hand the bytes to send
 send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
               # AGENT_ID and ENVELOPE set.
               # 3 = refused, nothing typed
-  local busy_rc=0 box="" keep_lock=0
+  local busy_rc=0 blocked_rc=0 box="" keep_lock=0
   # THE CALLER MAY OWN THE LOCK. Where the queue choice and the claim have to be
   # one critical section, the lock is taken before this function and outlives
   # it: a command substitution's exit does not fire the EXIT trap that would
@@ -7086,6 +7140,15 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
   # disagreement decided whether the default parked a message or dropped it.
   ! occupied "$AGENT_ID" \
     || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+  # AND IT HAS TO BE ASKED HERE TOO, in the same order state reads ask it. This
+  # tier decides before inject's does, so leaving the question to inject alone
+  # would answer a blocked window with whatever its stale screen still shows —
+  # mid-turn, from busy paint a finished turn left behind — and answer one with
+  # a quiet screen by typing into it. Above busy for the same reason the state
+  # read puts it there: a turn-ending record makes a busy marker retained paint.
+  blocked "$AGENT_ID" || blocked_rc=$?
+  [ "$blocked_rc" -ne 0 ] \
+    || refuse "'$1' is blocked ($BLOCKED_WHAT) — its input box is free, but the turn it was already given ended without producing work, so a paste would be reported delivered with nothing acting on it; inspect it with gang capture"
   busy "$AGENT_ID" || busy_rc=$?
   case "$busy_rc" in
     0) # States the fact and stops there. The instruction that used to live here
@@ -7315,6 +7378,21 @@ cmd_send() {
   # survives only on the NOT-parked path above, which exits 3. And the drain
   # promise stays conditional on a later turn: an agent that never takes
   # another one never drains.
+  # A QUEUE THAT DRAINS AND A QUEUE THAT WAITS FOREVER READ THE SAME. The
+  # ordinary promise is conditional on a later turn, and for a window that will
+  # take another one it is the whole answer: the operator does nothing and the
+  # message lands. A window whose turn already ended without producing work
+  # takes no further turn unattended, so telling its sender that nothing further
+  # is needed from them is the same false reassurance as reporting it idle. The
+  # question is asked of the collar rather than of the refusal's wording.
+  local queue_blocked=0
+  blocked "$AGENT_ID" || queue_blocked=$?
+  if [ "$queue_blocked" -eq 0 ]; then
+    printf '%s\n%s\n' \
+      "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
+      "$(colour "$C_BAD" "($(spool_count "$AGENT_ID") waiting) '$name' is blocked ($BLOCKED_WHAT). No turn boundary is coming from it unattended, so this will NOT drain on its own — it waits until somebody repairs that window (gang capture $name; gang attach $name). 'gang roster' shows it queued against a blocked window.")"
+    return 0
+  fi
   printf '%s\n%s\n' \
     "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
@@ -8223,6 +8301,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
     '!occupied!'*) glyph='!' ;;
     '!dead!'*) glyph='!' ;;
     '!bricked!'*) glyph='!' ;;
+    '!blocked!'*) glyph='!' ;;
     '!session-lost!'*) glyph='!' ;;
     '?unknown?'*) glyph='?' ;;
     *) return 0 ;;
@@ -8262,7 +8341,7 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 }
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0 waiting_rc=1 abandoned=0 mismatch=""
+  local state busy_rc=0 bricked_rc=0 blocked_rc=0 waiting_rc=1 abandoned=0 mismatch=""
   STATE_NOW_RESULT=""
   # PANE DEATH IS TMUX'S DIRECT ANSWER, not a screen classification. A held
   # corpse can preserve its last composer or any transcript marker, but none
@@ -8312,6 +8391,29 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
       return 0 ;;
     *) die "internal: bricked returned unknown verdict $bricked_rc" ;;
   esac
+  # BELOW A FATAL TURN AND ABOVE BUSY. Unrecoverable outranks recoverable, so a
+  # window that is both is reported as the one that cannot be repaired in place.
+  # A turn-ending record means the turn is over, so a busy marker still on the
+  # screen is retained paint — the same ordering collar_bricked already has
+  # over a retained retry line.
+  blocked "$1" || blocked_rc=$?
+  case "$blocked_rc" in
+    0)
+      activity_hold_clear "$1"
+      state="!blocked! ($BLOCKED_WHAT)"
+      glyph_write "$1" "$state"
+      STATE_NOW_RESULT="$state"
+      printf '%s\n' "$state"
+      return 0 ;;
+    1) ;;
+    2)
+      state="?unknown? ($BLOCKED_WHAT)"
+      glyph_write "$1" "$state"
+      STATE_NOW_RESULT="$state"
+      printf '%s\n' "$state"
+      return 0 ;;
+    *) die "internal: blocked returned unknown verdict $blocked_rc" ;;
+  esac
   busy "$1" "${2:-}" || busy_rc=$?
   # READ BEFORE ANYTHING ELSE CAN OVERWRITE IT. turn_witness clears the fact on
   # every call, and the verdict this expiry needs is not one verdict: a stale
@@ -8353,6 +8455,12 @@ explain_bricked_report() {
     || printf '  cause: %s\n' "$EXPLAIN_BRICKED_CAUSE"
 }
 
+explain_blocked_report() {
+  printf 'collar_blocked: %s\n' "$EXPLAIN_BLOCKED_RESULT"
+  [ -z "$EXPLAIN_BLOCKED_CAUSE" ] \
+    || printf '  reason: %s\n' "$EXPLAIN_BLOCKED_CAUSE"
+}
+
 cmd_explain() {
   local name="${1:-}" pane
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
@@ -8379,6 +8487,12 @@ cmd_explain() {
     EXPLAIN_BRICKED_RESULT="not declared"
   fi
   EXPLAIN_BRICKED_CAUSE=""
+  if declare -F collar_blocked >/dev/null; then
+    EXPLAIN_BLOCKED_RESULT="not evaluated"
+  else
+    EXPLAIN_BLOCKED_RESULT="not declared"
+  fi
+  EXPLAIN_BLOCKED_CAUSE=""
   # Pass the pinned pane rather than the window id. Current Gangline state
   # normally follows a window's active pane; a diagnostic must not explain a
   # different pane merely because selection changed between its two regexes.
@@ -8389,6 +8503,7 @@ cmd_explain() {
   explain_rule_report GANG_OCCUPIED_REGEX \
     "$EXPLAIN_OCCUPIED_RESULT" "$EXPLAIN_OCCUPIED_FRAGMENT"
   explain_bricked_report
+  explain_blocked_report
   explain_rule_report GANG_BUSY_REGEX \
     "$EXPLAIN_BUSY_RESULT" "$EXPLAIN_BUSY_FRAGMENT"
 }
@@ -8630,6 +8745,7 @@ cmd_wait() {
     '~idle~'*) return 0 ;;
     '!dead!'*) die "wait: '$name' is $state — no native boundary can arrive from a window where nothing is running" ;;
     '!bricked!'*) die "wait: '$name' is $state — a fatal turn cannot reach the requested boundary" ;;
+    '!blocked!'*) die "wait: '$name' is $state — a window that will not act on what it was given cannot reach the requested boundary" ;;
     '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
   esac
   [ "${GANG_STOP_HOOK:-}" = 1 ] \
@@ -8649,6 +8765,7 @@ cmd_wait() {
       '~idle~'*) wait_hook_cleanup; return 0 ;;
       '!dead!'*) die "wait: '$name' is $state — no native boundary can arrive from a window where nothing is running" ;;
       '!bricked!'*) die "wait: '$name' is $state — a fatal turn cannot reach the requested boundary" ;;
+      '!blocked!'*) die "wait: '$name' is $state — a window that will not act on what it was given cannot reach the requested boundary" ;;
       '?unknown?'*) die "wait: '$name' is $state — refusing to hang on evidence Gangline cannot settle" ;;
     esac
     wait_boundary "$WAIT_CHANNEL" "$bound" "$name"
@@ -8658,6 +8775,7 @@ cmd_wait() {
     case "$state" in
       '!dead!'*) die "wait: '$name' is $state after its boundary — the target process exited rather than reporting completion" ;;
       '!bricked!'*) die "wait: '$name' is $state after its boundary — the turn ended fatally" ;;
+      '!blocked!'*) die "wait: '$name' is $state after its boundary — the turn ended without acting on what the window was given" ;;
       '?unknown?'*) die "wait: '$name' is $state after its boundary — refusing to consume unknown as completion" ;;
     esac
     if [ "$until" = "done" ]; then return 0; fi
@@ -8692,6 +8810,7 @@ paint_state() { # $1 = a state phrase, padding and all
     '!occupied!'*) colour "$C_BAD" "$1" ;;
     '!dead!'*) colour "$C_BAD" "$1" ;;
     '!bricked!'*) colour "$C_BAD" "$1" ;;
+    '!blocked!'*) colour "$C_BAD" "$1" ;;
     '!session-lost!'*) colour "$C_BAD" "$1" ;;
     '?unknown?'*) colour "$C_BAD" "$1" ;;
     '-busy-'*) colour "$C_WORK" "$1" ;;
@@ -9096,6 +9215,7 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
     '!occupied!'*) printf occupied ;;
     '!dead!'*) printf dead ;;
     '!bricked!'*) printf bricked ;;
+    '!blocked!'*) printf blocked ;;
     '!session-lost!'*) printf session-lost ;;
     '?unknown?'*) printf unknown ;;
     *) die "internal: no porcelain word for state '$1'" ;;

@@ -1651,3 +1651,36 @@ shim, or a tmux named by an absolute path. A `-S` signal blocks on nothing and
 is left alone. The ceiling's reach into a pane, where every measured wedge
 happened, is asserted rather than assumed: a pane's environment comes from the
 tmux server rather than from the client that opened the window.
+## A blocked window is read from the error's shape, never from its vocabulary
+
+A window whose turn ended without producing work draws a free composer, so every
+guard Gangline keeps on the input box passes it. It reported `~idle~`; `send`
+typed into it and reported delivered; `wait --until idle` returned satisfied.
+
+The evidence was already being read. The claude-code fatal reader walks to the
+newest semantic record and reaches the very record that proves the turn ended,
+then returns absent because its `error` value is outside the two classes that
+reader owns. Enumerating the classes that count makes every class the harness
+later ships a fresh window that reads idle, arriving with no signal.
+
+So the shape is `isApiErrorMessage`, which the harness sets on a record it
+wrote, and the `error` value is a reason rather than a criterion. A value the
+reader cannot recognise is reported as blocked with an unnamed reason, never as
+absent. Only what the fatal reader positively claims is withheld, so a class
+neither reader names is still reported.
+
+`!blocked!` is not folded into `!bricked!`. Bricked says the session cannot
+work and is repaired by re-hitching; blocked says this input got no work and the
+same window is revived by re-driving it. Collapsing them would send an owner
+down the wrong repair. It sits below both `!occupied!` and `!bricked!` —
+unrecoverable outranks recoverable — and above `-busy-`, since a turn-ending
+record makes a busy marker still on the screen retained paint.
+
+Delivery consults the state here and nowhere else, because this is the only
+state whose composer answers for itself. An unknown reading is deliberately not
+refused: the state surface already reports it, and one corrupt transcript line
+must not strand delivery to a window whose composer read back clean.
+
+Codex binds a rollout and records a native turn bracket, but no turn-ending
+error class appears in any rollout inspected, so it declares no reader rather
+than a guessed one.

@@ -761,7 +761,7 @@ whole number of seconds; without the flag, `GANG_TURN_LIMIT` supplies the bound.
 
 The registration pins both the target's window id and active pane id. A missing,
 replaced, ambiguous, or pane-switched target fails loudly rather than transferring
-the wait. `?unknown?` and `!bricked!` fail instead of hanging. Natural
+the wait. `?unknown?`, `!bricked!` and `!blocked!` fail instead of hanging. Natural
 pane-process exit plus Gangline's `drop` and `down` release temporary
 registrations, so those teardown paths are observed and reported as a vanished
 target. Direct `tmux kill-pane` and `tmux kill-window` do not emit the supported
@@ -814,6 +814,9 @@ Prints one current state:
   has exited;
 - `!bricked! (...)` — collar-native fatal evidence says the current session's
   turns cannot succeed until its cause is repaired;
+- `!blocked! (...)` — collar-native evidence says the turn this window was
+  given ended without producing work, and none is coming unattended; its
+  composer is free, so nothing else gang reads can see this;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
 
 Waiting is event-derived rather than a patrol. At Stop, an optional bounded
@@ -823,6 +826,14 @@ recognized native event retires the record, while hook silence leaves it
 honestly stale. Mere intent to return later holds nothing and remains idle.
 The waiting and idle window names share the slack `~name~` glyph; the state word
 in `status` and `roster` carries the distinction.
+
+Blocking evidence is checked after fatal evidence and before ordinary busy
+paint: unrecoverable outranks recoverable, so a window that is both is reported
+as the one that cannot be repaired in place, and a turn-ending record means a
+busy marker still on the screen is retained paint. A blocked window refuses
+delivery and names its reason rather than accepting a paste nothing will act
+on; the message stays spooled and drains at that window's next real turn
+boundary. Gang answers no dialog, retries no turn and drops no window for it.
 
 Fatal evidence is checked after native UI occupancy and before ordinary busy
 paint. That lets an operator-owned recovery UI remain occupied while preventing
@@ -1297,6 +1308,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |
+| `collar_blocked target` | inspect native evidence that the turn this window was given ended without producing work; print a reason and return 0 blocked, return 1 with no output when absent, or print a cause and return 2 when unreadable. Declare it only where the harness exposes such evidence; a collar that declares nothing simply cannot answer, which `gang explain` reports as `not declared` |
 | `collar_waiting target payload` | optional bounded Stop-time probe for native background resources; print the held-resource witness and return 0 waiting, return 1 with no output when none is held, or print a cause and return 2 when the native sources are unreadable. The result is cached only until later recognized hook traffic; intent without a held resource stays idle |
 | `collar_last_action target` | optional; print `at <epoch>` for the newest tool call the harness recorded, or `before <epoch>` when a scan bound was reached first and the newest call is older than that time. Return 0 having printed one of those, 1 with no output when the source holds no tool call at all, or print a reason and return 2 when no reading could be taken. A collar that does not declare it leaves the reading unknown, which is a distinct answer from an agent that has run nothing |
 | `GANG_QUEUED_REGEX` | input-box evidence that the harness parked input in a native queue instead of submitting |

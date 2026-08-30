@@ -1159,6 +1159,105 @@ claude_malformed_read="$(CLAUDE_TRANSCRIPT="$claude_malformed_transcript" ROOT="
 equal "a complete malformed Claude record remains loud unknown evidence" \
   $'2\tbound Claude transcript is unreadable' "$claude_malformed_read"
 
+# A TURN THAT ENDED ON AN API ERROR THE FATAL READER DOES NOT OWN. The window
+# accepts keystrokes, so every composer guard gang has says it is fine; the
+# transcript says the turn it was given produced nothing. These read the shape
+# the harness sets, never the error's prose, which is per-model and varies.
+claude_blocked_transcript="$RUN_ROOT/claude-blocked-refusal.jsonl"
+cat > "$claude_blocked_transcript" <<'JSONL'
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"work"}}
+{"type":"system","subtype":"model_refusal_no_fallback"}
+{"type":"assistant","uuid":"refusal-record","isSidechain":false,"isApiErrorMessage":true,"error":"invalid_request","message":{"content":[{"type":"text","text":"API Error: safeguards flagged this message."}]}}
+{"type":"system","subtype":"turn_duration"}
+JSONL
+claude_blocked_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@5f3f4d796f76: this fixture alone puts a newest top-level API-error record, of a class the fatal reader does not own, at the tail
+equal "Claude reports a turn that ended on an unowned API error as blocked" \
+  $'0\tClaude Code ended the latest turn on an API error (invalid_request)' \
+  "$claude_blocked_read"
+
+claude_blocked_not_bricked="$(CLAUDE_TRANSCRIPT="$claude_blocked_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_bricked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@ac6db7d11c77: the same fixture holds an API-error class that only the blocked reader claims
+equal "a blocked turn is not reported as a fatal one" $'1\t' \
+  "$claude_blocked_not_bricked"
+
+# THE ALLOWLIST MUST NOT GROW BACK. An error class no rule names is still a turn
+# that produced nothing, and reporting absent here is the original defect.
+claude_unnamed_transcript="$RUN_ROOT/claude-blocked-unnamed.jsonl"
+cat > "$claude_unnamed_transcript" <<'JSONL'
+{"type":"assistant","uuid":"unnamed-record","isSidechain":false,"isApiErrorMessage":true,"message":{"content":[{"type":"text","text":"API Error: something the harness has not shipped yet."}]}}
+JSONL
+claude_unnamed_read="$(CLAUDE_TRANSCRIPT="$claude_unnamed_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@ca5777110662: this fixture alone holds an API-error record carrying no error name at all
+equal "an API error the harness does not name is still blocked" \
+  $'0\tClaude Code ended the latest turn on an API error it did not name' \
+  "$claude_unnamed_read"
+
+claude_blocked_model_transcript="$RUN_ROOT/claude-blocked-model.jsonl"
+cat > "$claude_blocked_model_transcript" <<'JSONL'
+{"type":"assistant","uuid":"fatal-model-record","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
+JSONL
+claude_blocked_model_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_model_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@69b9342fd9a4: this fixture holds the selected-model failure class the fatal reader owns and the blocked reader must decline
+equal "the blocked reader declines a class the fatal reader owns" $'1\t' \
+  "$claude_blocked_model_read"
+
+claude_blocked_recovery_transcript="$RUN_ROOT/claude-blocked-recovery.jsonl"
+cat > "$claude_blocked_recovery_transcript" <<'JSONL'
+{"type":"assistant","uuid":"refusal-record","isSidechain":false,"isApiErrorMessage":true,"error":"invalid_request","message":{"content":[{"type":"text","text":"API Error: safeguards flagged this message."}]}}
+{"type":"user","isSidechain":false,"message":{"role":"user","content":"recovery turn"}}
+JSONL
+claude_blocked_recovery_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_recovery_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@69c8884c0369: this fixture holds a real string-content user turn newer than the blocking API-error record
+equal "a real newer Claude user turn clears older blocking evidence" $'1\t' \
+  "$claude_blocked_recovery_read"
+
+claude_blocked_malformed_transcript="$RUN_ROOT/claude-blocked-malformed.jsonl"
+cat > "$claude_blocked_malformed_transcript" <<'JSONL'
+{"type":"assistant","isSidechain":false,"isApiErrorMessage":true,"error":"invalid_request","message":{"content":[{"type":"text","text":"API Error: safeguards flagged this message."}]}}
+{"type":"assistant"
+JSONL
+claude_blocked_malformed_read="$(CLAUDE_TRANSCRIPT="$claude_blocked_malformed_transcript" ROOT="$ROOT" \
+  GANG_CONTEXT_LIGHTS=off bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CLAUDE_TRANSCRIPT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$claude_collar")"
+# source-guard: producer@bf97e61b3b9f: this fixture holds a newline-terminated malformed record newer than the blocking API-error record
+equal "a complete malformed Claude record is unknown rather than blocked" \
+  $'2\tbound Claude transcript is unreadable' "$claude_blocked_malformed_read"
+
 claude_auto_fatal_transcript="$RUN_ROOT/claude-auto-resume-model-fatal.jsonl"
 cat > "$claude_auto_fatal_transcript" <<'JSONL'
 {"type":"assistant","uuid":"fatal-model-record","isSidechain":false,"isApiErrorMessage":true,"error":"model_not_found","message":{"content":[{"type":"text","text":"There's an issue with the selected model (opus-5). It may not exist or you may not have access to it. Run /model to pick a different model."}]}}
