@@ -4,11 +4,22 @@
 set -euo pipefail
 
 log="${1:-}"
-printf '\nGangline cooperative tick alert — %s\n\n' "$(date)"
-if [ -n "$log" ] && [ -r "$log" ]; then
-  cat "$log"
+record="" state="" at="" note="" extra=""
+if [ -n "$log" ] && [ -r "$log" ] && IFS= read -r record < "$log"; then
+  # A failed controller can reach this body after a newer clean controller has
+  # replaced the shared log. Snapshot once, then decline before any alert
+  # output: a second read could mix the two tick results again.
+  IFS=$'\t' read -r state at note extra <<<"$record"
+  if [ "$state" = ok ] && [ -z "$extra" ]; then
+    case "$at" in
+      ''|*[!0-9]*) ;;
+      *) case "$note" in 'tick completed for '?*) exit 0 ;; esac ;;
+    esac
+  fi
 else
-  printf 'The tick log could not be read. Run gang status.\n'
+  record='The tick log could not be read. Run gang status.'
 fi
+printf '\nGangline cooperative tick alert — %s\n\n' "$(date)"
+printf '%s\n' "$record"
 printf '\a\n'
 exit 1
