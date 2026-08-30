@@ -1543,6 +1543,169 @@ equal "a codex window with no bound rollout is unknown rather than inactive" \
   $'2\tno codex rollout is bound to this window yet' \
   "$(codex_action_read "$RUN_ROOT/codex-never-written.jsonl")"
 
+# A CODEX TURN THAT ENDED WITHOUT PRODUCING WORK. Codex has no error-typed
+# terminator at all, so the signal is a conjunction on an ordinary completion:
+# no closing message, no first token, and a turn body holding nothing but the
+# input. Each field alone is worthless — turns that ran to dozens of tool calls
+# end with no closing message — so every assertion below removes exactly one leg
+# of the conjunction and requires the reader to fall silent.
+codex_blocked_read() { # $1 = rollout path
+  CODEX_ROLLOUT="$1" ROOT="$ROOT" GANG_TEST_COLLARS='' bash -c '
+    . "$1"
+    tmux() { printf "%s" "$CODEX_ROLLOUT"; }
+    output="$(collar_blocked fixture)"; rc=$?
+    printf "%s\t%s" "$rc" "$output"
+  ' fixture "$codex_collar"
+}
+codex_blocked_reason='the codex turn that took the last input ended without producing work (no reply, and no first token)'
+
+codex_hollow="$RUN_ROOT/codex-blocked-hollow.jsonl"
+cat > "$codex_hollow" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:lead] do the thing"}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+# The whole conjunction, and nothing else in the body but the input that opened it.
+equal "codex reports a turn that ended with nothing produced as blocked" \
+  "0$(printf '\t')$codex_blocked_reason" "$(codex_blocked_read "$codex_hollow")"
+
+codex_worked="$RUN_ROOT/codex-blocked-worked.jsonl"
+cat > "$codex_worked" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","id":"c1"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+# Same completion shape; one tool call in the body is the leg that removes it.
+equal "a codex turn that worked and closed without a message is not blocked" \
+  $'1\t' "$(codex_blocked_read "$codex_worked")"
+
+codex_spoke="$RUN_ROOT/codex-blocked-spoke.jsonl"
+cat > "$codex_spoke" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":842,"duration_ms":1498}}
+JSONL
+# Empty body, but the model did emit a first token, so the turn was answered.
+equal "a codex turn whose model produced a first token is not blocked" \
+  $'1\t' "$(codex_blocked_read "$codex_spoke")"
+
+codex_compacted="$RUN_ROOT/codex-blocked-compaction.jsonl"
+cat > "$codex_compacted" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"context_compacted"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+# Byte-identical completion; the compaction record in the body is what makes it healthy.
+equal "a codex compaction turn is not blocked" $'1\t' \
+  "$(codex_blocked_read "$codex_compacted")"
+
+codex_interrupted="$RUN_ROOT/codex-blocked-interrupted.jsonl"
+cat > "$codex_interrupted" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"t1","reason":"interrupted"}}
+JSONL
+# The terminator a person produces with Esc.
+equal "an interrupted codex turn is not blocked — the interruption was the intervention" \
+  $'1\t' "$(codex_blocked_read "$codex_interrupted")"
+
+codex_inflight="$RUN_ROOT/codex-blocked-inflight.jsonl"
+cat > "$codex_inflight" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t0","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":900}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:lead] and again"}]}}
+JSONL
+# Newest bracket event is a start nothing closes, sitting over an older hollow
+# completion. A live turn and a harness that died mid-turn are identical here.
+equal "a codex turn still in flight is absent, never blocked" $'1\t' \
+  "$(codex_blocked_read "$codex_inflight")"
+
+codex_retired="$RUN_ROOT/codex-blocked-retired.jsonl"
+cat > "$codex_retired" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] relaunched you"}}
+{"type":"response_item","payload":{"type":"custom_tool_call","id":"c1"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t2","last_agent_message":"done","time_to_first_token_ms":700,"duration_ms":9000}}
+JSONL
+# A later turn that started and produced work — what a delivered intervention
+# leaves behind, and what retires the hollow completion before it.
+equal "a newer codex turn retires older blocking evidence" $'1\t' \
+  "$(codex_blocked_read "$codex_retired")"
+
+codex_newcall="$RUN_ROOT/codex-blocked-new-family.jsonl"
+cat > "$codex_newcall" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"response_item","payload":{"type":"brand_new_call","id":"c1"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+# UNKNOWN IS THE DEFAULT, and these are the names that proved it has to be. A
+# suffix test caught brand_new_call and let three real vocabulary members
+# through, each of which turned a turn that worked into a blocked window: the
+# families here are _call, _call_output, _call_end and bare _output, so matching
+# a suffix only ever buys the next name. Every payload type present in the
+# rollouts is now classified by name, which is what makes an unknown mean
+# "nobody has classified this" rather than "nothing happened".
+equal "an unrecognized codex payload type is unknown rather than nothing produced" \
+  $'2\tthis codex rollout records a turn payload gang does not read: brand_new_call' \
+  "$(codex_blocked_read "$codex_newcall")"
+
+for codex_worked_family in mcp_tool_call_end tool_search_output thread_goal_updated; do
+  codex_worked_new="$RUN_ROOT/codex-blocked-work-$codex_worked_family.jsonl"
+  {
+    printf '{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}\n'
+    printf '{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}\n'
+    printf '{"type":"response_item","payload":{"type":"%s","id":"c1"}}\n' "$codex_worked_family"
+    printf '{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}\n'
+  } > "$codex_worked_new"
+  equal "a codex turn whose only work is $codex_worked_family is not blocked" \
+    $'1\t' "$(codex_blocked_read "$codex_worked_new")"
+done
+
+# THE TRUE POSITIVE SURVIVES THE INVERSION. The real specimen's turn body also
+# carries a typeless turn_context and world_state and a developer-role message.
+# Classifying by payload type alone would leave those unnamed, and the inverted
+# default would then turn the one frame this reader exists for into an unknown.
+codex_typeless="$RUN_ROOT/codex-blocked-typeless.jsonl"
+cat > "$codex_typeless" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}
+{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions>"}]}}
+{"type":"world_state","payload":{}}
+{"type":"turn_context","payload":{}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"[gang:lead] do the thing"}]}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+equal "typeless records and a developer message do not hide a blocked turn" \
+  "0$(printf '\t')$codex_blocked_reason" "$(codex_blocked_read "$codex_typeless")"
+
+codex_headless="$RUN_ROOT/codex-blocked-headless.jsonl"
+cat > "$codex_headless" <<'JSONL'
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+# A completion with no start anywhere in the file.
+equal "a codex completion with no start is unknown rather than blocked" \
+  $'2\tbound codex rollout holds no start for its newest turn' \
+  "$(codex_blocked_read "$codex_headless")"
+
+# THE SAME SHAPE, REACHED PAST A RECORD THE WALK MEETS ON THE WAY OUT. A
+# session_meta never appears inside a turn body, but a terminator with no start
+# before it puts one in the walk's path. Leaving it unclassified answered with
+# the record it choked on instead of the shape that was actually wrong.
+codex_headless_meta="$RUN_ROOT/codex-blocked-headless-meta.jsonl"
+cat > "$codex_headless_meta" <<'JSONL'
+{"type":"session_meta","payload":{}}
+{"type":"event_msg","payload":{"type":"user_message","message":"[gang:lead] do the thing"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t1","last_agent_message":null,"time_to_first_token_ms":null,"duration_ms":1498}}
+JSONL
+equal "a startless codex turn reports its shape, not the record the walk met" \
+  $'2\tbound codex rollout holds no start for its newest turn' \
+  "$(codex_blocked_read "$codex_headless_meta")"
+
 codex_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_COMPACT_CMD"' fixture "$codex_collar")"
 equal "the Codex collar keeps native compaction" "/compact" "$codex_compact"

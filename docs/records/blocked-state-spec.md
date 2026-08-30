@@ -24,8 +24,14 @@ says the window is fine.
 
 ## What blocked means
 
-**A window is blocked when the last input it accepted produced no work and none
-is coming without intervention.**
+**A window is blocked when a delivery gang reported as made produced no work,
+and none is coming until something else is sent.**
+
+The first clause matters as much as the second. A turn a person interrupts also
+ends without producing work, and it is *not* blocked: the interruption was the
+intervention, performed knowingly, and the window takes the next turn normally.
+What makes this a defect is that a message gang *said it delivered* died
+silently and nobody was told.
 
 That is wider than "a dialogue is up". Two instances:
 
@@ -174,20 +180,150 @@ Recorded for the reader: the specimen's refusal is a per-model safeguard
 response. The same prompt on another model does not reproduce it, and the
 sentence varies. Detection keys on record structure, never on that prose.
 
-### codex — native material, no evidence to write a reader from
+### codex — native, on a conjunction rather than an error class
 
-`collars/codex.sh` declares `GANG_STOP_HOOK=1` and binds a rollout jsonl per
-window (`codex_session_file`). It declares no `collar_bricked` and no
-`GANG_STALL_TYPES`.
+Codex has no error-typed terminator at all. There is no `"type":"error"` record,
+no `stream_error`, no `task_failed`. What it does have is a complete turn
+bracket: `task_started` is closed by exactly one of `task_complete` (carrying
+`last_agent_message`, `time_to_first_token_ms`, `duration_ms`) or `turn_aborted`
+(carrying `reason`). So "the turn ended" is a record here too, and the criterion
+transfers; what does not transfer is a record saying it ended *badly*.
 
-A codex rollout carries top-level `response_item`, `event_msg`, `turn_context`,
-`world_state`, `session_meta` and `compacted` records; its `event_msg` payloads
-include `task_started` and `task_complete`, a clean native turn bracket.
+`turn_aborted` looks like the shape to key on and is not. Every abort observed
+carries `reason: "interrupted"` — a person pressing Esc. That turn ended and
+produced nothing, and the window takes the next turn normally, because the
+interruption **was** the intervention. Keying on the abort would mark every
+interrupted window blocked.
 
-No turn-ending error class appears in any rollout available here, because no
-session on hand was blocked. So a codex blocked reader **cannot be written from evidence
-yet**, and will not be guessed at. Codex declares nothing here until a codex
-blocked frame is driven and captured.
+The signal is a conjunction on an ordinary completion: no `last_agent_message`,
+**and** no `time_to_first_token_ms`, **and** a turn body holding nothing but the
+input that opened it. No leg carries it alone — turns that ran to dozens of tool
+calls routinely end with no closing message, and a compaction turn is otherwise
+byte-identical to a blocked one until you look inside it.
+
+Reading the body means classifying every payload type in it, and the default is
+**unknown by name** rather than "not work". A suffix test on `_call` was tried
+first and was the wrong shape: this vocabulary carries `_call`, `_call_output`,
+`_call_end` and bare `_output`, and `custom_tool_call_output` had to be listed
+explicitly precisely because the suffix never reached it. Three real payload
+types slipped through that test and each turned a turn that had worked into a
+blocked window. Extending the suffix list buys the next name and not the one
+after it, so the inversion is the fix: a name nobody has classified costs an
+honest unknown, never a false verdict, and a record whose payload carries no
+type of its own is named by its record instead so nothing goes unclassified by
+accident. That also turns the rollout corpus into a real negative control —
+every name in it is classified today, so a future unknown is a genuinely new
+name rather than a silent pass.
+
+**Duration is rejected as a signal.** The observed blocked population runs from
+949ms to 83s, overlapping healthy turns at both ends. It separates nothing, and
+recording that it was tried is worth as much as recording what was chosen.
+
+Only the newest turn counts, and the reason is weaker than it first looks. It is
+tempting to argue that a codex turn only ever begins from an input, so a newer
+`task_started` proves something was **sent**. That is false: measured over the
+rollouts, about an eighth of all turns begin with no input record at all, and
+pure auto-compaction turns — `context_compacted` and a token count, nothing else
+— are the clean counter-example. Codex opens those itself.
+
+What the rule actually rests on is that a newer terminator means the record can
+no longer speak to the older turn, whatever opened the newer one. That is true
+unconditionally, and it is all the reader needs: it retires spent evidence
+exactly as a newer user turn retires it on the claude-code side.
+
+The intervention is nonetheless in the corpus verbatim where it happened. One
+window took three deliveries that produced nothing, and the turn after them
+opens with a message saying the agent had been relaunched on a different
+model. Three messages lost in silence, and the recovery in the record is a person
+working out what was wrong.
+
+**Residual exposure, stated rather than argued away:** a hollow completion
+followed by an input-less turn flips the verdict to absent with nobody having
+intervened. On a genuinely stuck window the exposure is small — no turns are
+running, so context is not growing and auto-compaction is unlikely to fire — but
+it is not zero.
+
+### The typeless-payload trap, worked
+
+Inverting the default is right, and the whole risk of doing it sits on the
+*benign* side of the line rather than the work side. A work record wrongly
+called bookkeeping is the same defect the inversion was built to remove, just
+moved; and a benign record left unclassified turns a true positive into an
+unknown.
+
+The specimen proves the second half by itself. Its turn body is not only the
+input — it also carries a `world_state` record, a `turn_context` record, and a
+`message` with role `developer` alongside the user one. The first two have **no
+`type` field in their payload at all**.
+
+So a reader that classifies by payload type alone leaves them unnamed, and under
+an inverted default an unnamed record is an unknown. The frame this whole reader
+exists for would report `?unknown?` instead of `!blocked!` — the inversion would
+have removed the false positives and destroyed the one true positive with them.
+
+The fix is one line of care: a payload carrying no type of its own is named by
+its **record** type instead, so `turn_context` and `world_state` are classified
+rather than skipped. `test/integration-cli.sh` pins this with a fixture built
+from the specimen's own shape — typeless records and a developer-role message —
+asserting it still reads blocked.
+
+Anyone extending this vocabulary should assume the same trap is waiting. The
+question to ask of a new name is not "is this work?" but "if I get this wrong in
+the benign direction, which frame stops being detected?"
+
+### Prefer a probe you can run to a reader you can trust
+
+The inversion above was first written with a slice between two anchors, one of
+which also matched inside `codex_action_read` earlier in the same file. The end
+anchor resolved *before* the start anchor, and the edit silently duplicated the
+whole reader function.
+
+It would have passed review by reading. It did not survive one run: every probe
+returned a `NameError` immediately.
+
+The lesson is narrow and worth obeying — any change that slices, generates, or
+rewrites code needs an executable check, because the failure modes of editing
+are not the failure modes the eye is looking for. Reading the diff is not enough
+when the diff is itself the product of a pattern match.
+
+**Both failures on this page are the same failure.** A suffix test on `_call`
+looked like a rule about tool calls and was actually a rule about the last five
+characters of a name, so it missed `tool_search_output` and `mcp_tool_call_end`.
+A slice anchored on `def newest_lines(path):` looked like a rule about one
+function and was actually a rule about the first match in a file, so it resolved
+inside a different reader. In both cases a rule that reads as specific is
+general, and the gap only shows when something in the general set turns up that
+the specific reading never imagined. That is the generalisation worth carrying
+out of this work: when a rule is expressed as a pattern, ask what else matches
+the pattern — not what the pattern was for.
+
+### What this reader does NOT cover, and must not grow to
+
+A harness process that dies mid-turn reports **nothing** from the codex reader,
+and that is correct rather than a shortfall. Its rollout ends with a
+`task_started` nothing closes — and a turn still running looks exactly the same,
+because a process that dies does not get to record that it died. The reader
+therefore treats an unfinished bracket as absent, always.
+
+A window whose harness panicked is a **liveness** question about the process, not
+a state question about the record, and it is answered elsewhere. It is not
+`!blocked!` and must not be folded into it. Blurring the two would buy coverage
+of the panic by reporting every working codex agent as blocked, which is the
+inversion this whole design exists to refuse.
+
+### The corpus this was measured against
+
+The reader was driven over every rollout on the host it was written on. It
+reports blocked on the sessions whose newest turn is hollow — the specimen among
+them — and stays silent on every other file, with no unknown verdicts. Silence
+across the four healthy populations is the claim: ordinary completions,
+turns that worked and closed without a message, compaction turns, and
+interrupted aborts.
+
+The counts are deliberately not written down here, because they change whenever
+the corpus does. `test/probes/codex-hollow-turns.py` reproduces the measurement
+and prints the current population sizes, so the numbers are checkable rather
+than believed.
 
 ### opencode, pi, bash
 

@@ -746,6 +746,171 @@ collar_last_action() { # $1 target -> "at <epoch>" | "before <epoch>";
   codex_action_read "$file"
 }
 
+# A TURN THAT ENDED WITHOUT PRODUCING WORK, STATED BY CODEX RATHER THAN INFERRED.
+# Codex closes every turn with exactly one terminator, so "the turn ended" is a
+# record and not an absence. What it does not have is a terminator meaning the
+# turn ended BADLY: there is no error-typed record in this harness's vocabulary,
+# and every turn_aborted observed carries reason "interrupted", which is a person
+# pressing Esc — a turn that ended, produced nothing, and leaves a window that
+# takes the next turn normally. Keying on the abort would mark every interrupted
+# window blocked.
+#
+# THE CONJUNCTION IS THE SIGNAL, NOT ANY ONE FIELD. An absent last_agent_message
+# alone is worthless: turns that ran to dozens of tool calls end with no closing
+# message and are perfectly healthy. Blocked is a task_complete carrying no
+# last_agent_message AND no time_to_first_token_ms AND a turn body holding
+# nothing but the input that opened it. Duration is deliberately NOT part of it:
+# the observed population runs from 949ms to 83s, so it separates nothing.
+#
+# ONLY THE NEWEST TURN COUNTS, which is what carries the second half of the
+# claim. A codex turn only ever begins from an input, so a task_started newer
+# than a hollow completion is evidence that something was sent, not that the
+# window recovered by itself; the newest-terminator rule retires old evidence
+# exactly as a newer user turn retires it on the claude-code side.
+#
+# AN UNFINISHED BRACKET IS ABSENT, AND MUST STAY ABSENT. A turn still running
+# and a harness that died mid-turn look identical from here, and nothing in a
+# rollout can separate them — a process that dies does not get to record that it
+# did. So this reader reports NOTHING for a panicked harness, on purpose. That
+# case is a liveness question about the process, not a state question about the
+# record, and it is answered elsewhere; it must not be folded in here.
+codex_blocked_read() { # $1 = rollout path
+  python3 -c '
+import json, sys
+
+# Payload types that are the harness doing something. A turn containing any of
+# them produced work, whatever it ended with.
+# WHAT COUNTS AS THE HARNESS DOING SOMETHING. A turn holding any of these
+# produced work, whatever it ended with.
+WORK = {
+    # response_item payloads
+    "reasoning", "custom_tool_call", "custom_tool_call_output",
+    "function_call", "function_call_output", "local_shell_call",
+    "local_shell_call_output", "web_search_call", "tool_search_call",
+    "tool_search_output", "mcp_tool_call_end",
+    # event_msg payloads
+    "item_completed", "agent_message", "patch_apply_end", "web_search_end",
+    "sub_agent_activity", "context_compacted", "thread_goal_updated",
+    # record types whose payload carries no type of its own
+    "compacted",
+}
+# The input that opened the turn, and the bookkeeping around it. Neither is the
+# harness working. Every name here was checked against the rollouts rather than
+# assumed benign for looking harmless, because this is the side of the line a
+# mistake is dangerous on: a work record wrongly called bookkeeping turns a turn
+# that worked into a blocked window.
+BOOKKEEPING = {
+    "message", "user_message", "token_count", "thread_settings_applied",
+    "turn_context", "world_state", "inter_agent_communication_metadata",
+    # Never observed inside a turn body — a second one always lands outside a
+    # bracket — but a terminator with no start before it makes the walk meet it
+    # on the way to byte zero. Naming it keeps that case reporting the shape it
+    # actually is, rather than choking on a record that was never the problem.
+    "session_meta",
+}
+
+
+def newest_lines(path):
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        pos = f.tell()
+        carry = b""
+        while pos:
+            size = min(65536, pos)
+            pos -= size
+            f.seek(pos)
+            parts = (f.read(size) + carry).split(b"\n")
+            carry = parts[0]
+            yield from reversed(parts[1:])
+        if carry:
+            yield carry
+
+
+scanning_body = False
+try:
+    for raw in newest_lines(sys.argv[1]):
+        if not raw.strip():
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            # An append still in flight is not a record yet. Skipping it can only
+            # hide a terminator, which lands on absent rather than on blocked.
+            continue
+        if not isinstance(rec, dict):
+            continue
+        payload = rec.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+        kind = payload.get("type")
+        record = rec.get("type")
+
+        if not scanning_body:
+            if kind == "task_started":
+                # The newest bracket event opens a turn nothing has closed.
+                raise SystemExit(1)
+            if kind in ("turn_aborted", "task_aborted"):
+                raise SystemExit(1)
+            if kind != "task_complete":
+                continue
+            message = payload.get("last_agent_message")
+            first_token = payload.get("time_to_first_token_ms")
+            if message or first_token is not None:
+                raise SystemExit(1)
+            scanning_body = True
+            continue
+
+        if kind == "task_started":
+            print(
+                "the codex turn that took the last input ended without "
+                "producing work (no reply, and no first token)"
+            )
+            raise SystemExit(0)
+        if kind in ("task_complete", "turn_aborted", "task_aborted"):
+            # Two terminators with no start between them is a shape this reader
+            # cannot account for; saying so is the answer, not guessing past it.
+            print("bound codex rollout closes a turn that never opened")
+            raise SystemExit(2)
+        if record == "response_item" and kind == "message":
+            if payload.get("role") == "assistant":
+                raise SystemExit(1)
+            continue
+        # A payload carrying no type of its own is named by its record instead,
+        # so turn_context and world_state are classified rather than skipped.
+        name = kind if isinstance(kind, str) and kind else record
+        if name in WORK:
+            raise SystemExit(1)
+        if name in BOOKKEEPING:
+            continue
+        # UNKNOWN IS THE DEFAULT, AND THAT IS THE POINT. Falling through to "not
+        # work" would let any payload type this reader has never seen turn a turn
+        # that worked into a blocked window, which is the one failure direction
+        # that matters here. Matching a suffix instead only buys the next name:
+        # this vocabulary already carries _call, _call_output, _call_end and bare
+        # _output, and _call_output is listed above precisely because a "_call"
+        # test does not reach it. So an unclassified name costs an honest
+        # unknown, and the rollout corpus becomes a real negative control — after
+        # this inversion a new unknown is a name nobody has classified rather
+        # than a silent pass.
+        print(f"this codex rollout records a turn payload gang does not read: {name}")
+        raise SystemExit(2)
+except (OSError, UnicodeError, ValueError, OverflowError):
+    print("bound codex rollout is unreadable")
+    raise SystemExit(2)
+
+# Reaching byte zero inside a body means the turn has no start in this file.
+if scanning_body:
+    print("bound codex rollout holds no start for its newest turn")
+    raise SystemExit(2)
+raise SystemExit(1)
+' "$1"
+}
+
+collar_blocked() { # $1 target; print reason, 0 blocked, 1 absent, 2 unknown
+  local file
+  file="$(codex_session_file "$1")" || return 1
+  codex_blocked_read "$file"
+}
+
 collar_context() { # $1 = tmux target; file-based — reads the rollout, never the pane
   local file
   file="$(codex_session_file "$1")" \
