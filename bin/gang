@@ -3867,6 +3867,52 @@ spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had
   SPOOL_DIR="$(spool_root_of)/$token"
 }
 
+# WHO CREATED THIS AGENT, RECORDED SO A RENAME CANNOT ROT IT. A bare name goes
+# stale the moment the hitcher is renamed, and `gang rename` deliberately leaves
+# @gl_spool alone — so the spool token is the identity stamped here, and it is
+# resolved back to a current name at read time. The name witnessed at the stamp
+# is kept beside it for the one case the token can no longer be resolved: the
+# hitcher's window is gone. A hitch that did not come from an agent's window
+# records the sentinel instead, which no minted token can spell because tokens
+# are hexadecimal and this is not.
+HITCHED_BY_OPERATOR=operator
+
+hitched_by_of() { # -> the stamp this process should leave: token TAB name
+  local origin token="" name=""
+  origin="$(self_window)" || origin=""
+  if [ -n "$origin" ]; then
+    token="$(tmux show-options -wqv -t "$origin" @gl_spool 2>/dev/null)" || token=""
+    name="$(tmux show-options -wqv -t "$origin" @gl_agent 2>/dev/null)" || name=""
+  fi
+  # A pane with no spool identity of its own is not an agent gang can name
+  # later, so it is recorded as the operator rather than as an agent nothing
+  # will resolve.
+  [ -n "$token" ] && [ -n "$name" ] || { printf '%s\t' "$HITCHED_BY_OPERATOR"; return 0; }
+  printf '%s\t%s' "$token" "$name"
+}
+
+hitched_by_read() { # $1 window -> the hitcher's name; 1 = nothing recorded,
+                    # 0 = a live window still claims that identity,
+                    # 3 = the identity is gone and this is the name last witnessed
+  local token witnessed wtok wagent
+  token="$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || token=""
+  [ -n "$token" ] || return 1
+  [ "$token" != "$HITCHED_BY_OPERATOR" ] || { printf 'the operator'; return 0; }
+  while read -r wtok wagent; do
+    [ -n "$wtok" ] && [ -n "$wagent" ] || continue
+    [ "$wtok" = "$token" ] || continue
+    printf '%s' "$wagent"
+    return 0
+  done <<EOF
+$(tmux list-windows -a -F '#{@gl_spool} #{@gl_agent}' 2>/dev/null || :)
+EOF
+  witnessed="$(tmux show-options -wqv -t "$1" @gl_hitched_by_name 2>/dev/null)" \
+    || witnessed=""
+  [ -n "$witnessed" ] || return 1
+  printf '%s' "$witnessed"
+  return 3
+}
+
 SPOOL_UNAVAILABLE_WHY=""
 spool_available() { # $1 = window id, $2 = target name; 0 = a parked message would drain
   SPOOL_UNAVAILABLE_WHY=""
@@ -6494,6 +6540,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local hitched_by=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "hitch: '$name' is not usable — use letters, digits, dot, dash and underscore; do not start with dash or dot; hitch and gangline are reserved"
@@ -6714,6 +6761,9 @@ cmd_hitch() {
   hitch_register "$id" "$name" allow-rename off
   hitch_register "$id" "$name" @gl_agent "$name"
   hitch_register "$id" "$name" @gl_collar "$prof"
+  hitched_by="$(hitched_by_of)"
+  hitch_register "$id" "$name" @gl_hitched_by "${hitched_by%%$'\t'*}"
+  hitch_register "$id" "$name" @gl_hitched_by_name "${hitched_by#*$'\t'}"
   # Window options survive a resume respawn. A held resource belonged to the
   # old native process; only the new launch's own Stop may witness another.
   waiting_clear "$id"
@@ -8645,7 +8695,7 @@ usage_wake_status_report() { # $1 window
 
 cmd_status() {
   local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
-  local timed_line
+  local timed_line hitched hitched_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -8658,6 +8708,16 @@ cmd_status() {
   resolve "$name"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
+  # PROVENANCE, RESOLVED RATHER THAN REMEMBERED. The stamp is a spool identity,
+  # so the name printed here is the hitcher's CURRENT name; only a hitcher whose
+  # window is gone is reported under the name it had when it hitched, and it is
+  # said that it is gone rather than printed as though it were still there.
+  hitched_rc=0
+  hitched="$(hitched_by_read "$AGENT_ID")" || hitched_rc=$?
+  case "$hitched_rc" in
+    0) printf '%s\n' "$(colour "$C_DIM" "hitched by $hitched")" ;;
+    3) printf '%s\n' "$(colour "$C_DIM" "hitched by $hitched, whose window is gone")" ;;
+  esac
   tick_health_report
   action_status_report "$AGENT_ID"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
@@ -9292,7 +9352,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" collar="" id rc=0
+  local name="" collar="" id rc=0 hitched_by=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
@@ -9318,6 +9378,9 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_collar "$collar"
+  hitched_by="$(hitched_by_of)"
+  tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
+  tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
   waiting_clear "$id"
   stamp_binary_id "$id"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then

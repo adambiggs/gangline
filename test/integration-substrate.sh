@@ -373,7 +373,40 @@ adopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
 "$GANG" adopt adopted -c bash >/dev/null
 equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
+equal "a registration made outside an agent window records the operator" \
+  operator "$(tmux show-options -wqv -t "$adopted_id" @gl_hitched_by)"
+contains "and status says so rather than naming an agent" \
+  "$("$GANG" status adopted)" "hitched by the operator"
 "$GANG" drop adopted >/dev/null
+
+# WHO CREATED THIS AGENT, RESOLVED RATHER THAN REMEMBERED. The stamp is the
+# hitcher's @gl_spool token, which `gang rename` deliberately preserves, so the
+# name reported is whatever that window is called NOW. A bare name would have
+# gone stale at the first rename — that is the case driven below, along with the
+# only one the witnessed name is for: the hitcher's window no longer exists.
+# $TMUX_PANE is how gang answers "which window am I in", so it is the input that
+# makes this registration come from an agent's window rather than a terminal.
+origin_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-origin "PS1='❯ ' bash --norc")"
+"$GANG" adopt hitch-origin -c bash >/dev/null
+origin_pane="$(tmux list-panes -t "$origin_id" -F '#{pane_id}')"
+origin_token="$(tmux show-options -wqv -t "$origin_id" @gl_spool)"
+helper_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n hitch-helper "PS1='❯ ' bash --norc")"
+TMUX_PANE="$origin_pane" "$GANG" adopt hitch-helper -c bash >/dev/null
+equal "a registration made from an agent's window records that agent's spool identity" \
+  "$origin_token" "$(tmux show-options -wqv -t "$helper_id" @gl_hitched_by)"
+equal "and witnesses the name it had at the time" "hitch-origin" \
+  "$(tmux show-options -wqv -t "$helper_id" @gl_hitched_by_name)"
+contains "status resolves the identity to a name" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin"
+"$GANG" rename hitch-origin hitch-renamed >/dev/null
+contains "which is the hitcher's CURRENT name after a rename, not the stale one" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-renamed"
+"$GANG" drop hitch-renamed >/dev/null
+contains "and falls back to the name last witnessed once that window is gone" \
+  "$("$GANG" status hitch-helper)" "hitched by hitch-origin, whose window is gone"
+"$GANG" drop hitch-helper >/dev/null
 
 # ADOPTION NAMES A HARNESS ALREADY RUNNING IN THE WINDOW. A held corpse still
 # has a window name, and before this precondition adopt registered that empty

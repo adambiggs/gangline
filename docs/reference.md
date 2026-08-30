@@ -251,6 +251,13 @@ startup text or retroactively add launch-time native hooks. A collar whose
 context source requires hitch-time identity may therefore report context
 unavailable.
 
+Both hitch and adopt also stamp provenance: `@gl_hitched_by` holds the `@gl_spool`
+token of the agent window the command ran in, or `operator` when it did not run in
+one, and `@gl_hitched_by_name` holds the hitcher's name as witnessed at that moment.
+`gang status` resolves the token back to whatever that window is called now, so a
+later `gang rename` of the hitcher does not rot the record; the witnessed name is
+printed, and said to be gone, only when no live window claims the token.
+
 Both hitch and adopt stamp the agent name in `@gl_agent` and the executable
 identity in `@gl_binary_id`. Reusing a window whose recorded identity names
 another agent refuses. The binary identity is
