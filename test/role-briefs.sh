@@ -100,6 +100,11 @@ ac1() {
   value="$(<"$prefix.2.bin")"
   contains "AC1 system prompt carries the shipped role body" "$value" \
     "Delegate each whole result as one arc"
+  # The marker above proves the body was reached, not that all of it arrived.
+  # Without this, a delivery truncated after the first decision would still
+  # satisfy every content lock AC16 makes against the file on disk.
+  contains "AC1 system prompt carries the whole shipped lead body" "$value" \
+    "$(cat "$PRODUCT_ROOT/roles/lead.md")"
   equal "AC1 the startup contract was submitted" "" \
     "$("$GANG" composer role-ac1)"
   drop_agent role-ac1
@@ -441,7 +446,7 @@ ac15() {
 }
 
 ac16() {
-  local config="$TEST_ROOT/ac16-config" name body role_flag doctrine_flag
+  local config="$TEST_ROOT/ac16-config" name body role_flag doctrine_flag lead
   mkdir -p "$config/roles"
   printf 'SMALL_ROLE\n' > "$config/roles/small.md"
   for doctrine_flag in absent present; do
@@ -465,18 +470,96 @@ ac16() {
   excludes "AC16 the contract does not impose lead delegation policy on every role" \
     "$(tr '\n' ' ' < "$PRODUCT_ROOT/CONTRACT.md" | tr -s ' ')" \
     "Let the teammate choose its method"
-  contains "AC16 the lead brief leaves methods to the teammate" \
-    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+  # Each expectation below locks one decision the shipped lead brief carries.
+  # A lock catches that decision being deleted or reworded away. It cannot catch
+  # a later sentence that negates it, and no assertion here proves a lead obeyed
+  # one; see docs/records/lead-brief-revision-2026-08-30.md.
+  lead="$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')"
+  contains "AC16 the lead brief leaves methods to the teammate" "$lead" \
     "The arc owner chooses the method, decomposition, delegation, and independent reviewer."
-  contains "AC16 the lead does not prescribe how an arc is worked" \
-    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+  contains "AC16 the lead does not prescribe how an arc is worked" "$lead" \
     "Do not prescribe how an arc is worked."
-  contains "AC16 the lead commissions rather than performs review" \
-    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+  contains "AC16 the lead commissions rather than performs review" "$lead" \
     "Do not review the result yourself."
-  contains "AC16 the lead stays idle while an arc runs" \
-    "$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/lead.md" | tr -s ' ')" \
+  contains "AC16 the lead stays idle while an arc runs" "$lead" \
     "Stay idle while an arc runs."
+  contains "AC16 concurrent arcs are compared by the files they write" "$lead" \
+    "compare the files each will write, not the tasks each was given"
+  contains "AC16 a shared file is sequenced and both owners are told" "$lead" \
+    "sequence them and tell both owners which goes first"
+  contains "AC16 an agent's state is reported only from observation" "$lead" \
+    "Report an agent's state only from what you have observed."
+  contains "AC16 silence is not evidence of progress" "$lead" \
+    "silence is not evidence that its arc is progressing"
+  contains "AC16 a lost agent leaves its arc unfinished" "$lead" \
+    "An arc whose agent is gone is unfinished"
+  contains "AC16 a lost arc is re-owned from what it left behind" "$lead" \
+    "briefed from the files it left behind"
+  contains "AC16 a step routed through the lead twice becomes an arc" "$lead" \
+    "that step is the next arc"
+  contains "AC16 the lead's own decisions are not that step" "$lead" \
+    "A decision only you can make is not that step."
+  contains "AC16 launch choices buy every owner an unshared reviewer" "$lead" \
+    "every owner has an available reviewer whose error modes differ from its own"
+  contains "AC16 a contradicted ruling is re-decided, not defended" "$lead" \
+    "re-decide it on that evidence rather than defending it"
+  contains "AC16 a re-decided ruling reaches whoever was told the old one" "$lead" \
+    "send the outcome to every teammate you had told the old ruling"
+  contains "AC16 direct action is bounded to a failing substrate" "$lead" \
+    "Act on the substrate yourself only when what every arc depends on is failing"
+  contains "AC16 the substrate repair returns to an owner" "$lead" \
+    "hand the repair to an owner as an arc"
+  # A brief is delivered beside the contract and costs every lead that reads it,
+  # so no shipped brief may repeat a contract sentence. This catches a copy, not
+  # a paraphrase: matching is exact once whitespace and terminal punctuation are
+  # normalized. The fixture below is what proves it still catches anything.
+  restated() {
+    python3 - "$@" <<'RESTATE'
+import pathlib, re, sys
+
+
+def sentences(path):
+    # These files are Markdown, so a copy can hide behind its markup: a heading
+    # terminates no sentence and glues itself to the sentence below, and an
+    # emphasis or code marker after a full stop keeps the splitter from ending
+    # the sentence at all. Strip the markup, then the terminal punctuation a
+    # copy could otherwise escape through by changing it alone. Underscore is
+    # left in place: it spells identifiers here far more often than emphasis.
+    lines = pathlib.Path(path).read_text().splitlines()
+    prose = [line for line in lines if not line.lstrip().startswith("#")]
+    text = " ".join(" ".join(prose).split()).replace("*", "").replace("`", "")
+    parts = [s.strip().rstrip(".:!?") for s in re.split(r"(?<=[.:!?])\s+", text)]
+    return [s for s in parts if len(s) >= 40]
+
+
+contract = set(sentences(sys.argv[1]))
+repeats = [(p, s) for p in sys.argv[2:] for s in sentences(p) if s in contract]
+for path, sentence in repeats:
+    print(f"{path}: {sentence}", file=sys.stderr)
+raise SystemExit(1 if repeats else 0)
+RESTATE
+  }
+  if restated "$PRODUCT_ROOT/CONTRACT.md" "$PRODUCT_ROOT/roles/"*.md
+  then pass "AC16 no shipped brief restates a contract sentence"
+  else fail "AC16 no shipped brief restates a contract sentence" "duplicated sentence above"
+  fi
+  # A green above is only evidence if the same matcher goes red on a copy. Each
+  # brief below copies the contract sentence and hides the copy behind one thing
+  # an earlier build of the matcher let through: changed terminal punctuation,
+  # then Markdown emphasis around the whole sentence.
+  printf '# Heading\nPut unfinished work and supporting detail in files that teammates can read\nwithout you. Send a file path when you refer to its contents.\n' \
+    > "$config/restate-contract.md"
+  printf '# Lead\nPut unfinished work and supporting detail in files that teammates can read\nwithout you!\n' \
+    > "$config/restate-punctuation.md"
+  printf '# Lead\n**Put unfinished work and supporting detail in files that teammates can read\nwithout you.**\n' \
+    > "$config/restate-emphasis.md"
+  for disguise in punctuation emphasis; do
+    if restated "$config/restate-contract.md" "$config/restate-$disguise.md" 2>/dev/null
+    then fail "AC16 the restatement guard detects a copy disguised by $disguise" \
+      "fixture copy went unreported"
+    else pass "AC16 the restatement guard detects a copy disguised by $disguise"
+    fi
+  done
 }
 
 ac17() {
