@@ -803,6 +803,8 @@ Prints one current state:
   still held for background work;
 - `~idle~` — the evidence positively witnesses readiness;
 - `!occupied! (authority unknown)` — a native UI owns the composer;
+- `!dead! (nothing is running in this window)` — every pane in the held window
+  has exited;
 - `!bricked! (...)` — collar-native fatal evidence says the current session's
   turns cannot succeed until its cause is repaired;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
@@ -1058,7 +1060,7 @@ is deciding: read the rows, not the status.
 `gang roster --porcelain` is the scripting interface. It prints one unpadded,
 uncoloured TSV row per window with these columns in order: `name`, `collar`,
 `state`, `spooled`, `oldest_age_s`, and `session_id`. State is one lowercase
-word: `busy`, `waiting`, `idle`, `occupied`, `bricked`, `session-lost`, or
+word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, or
 `unknown` for the human states. `unknown` covers both a state Gangline determined it could not
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.

@@ -1587,3 +1587,12 @@ ordinary send against the same window.
 
 The full measurement, its raw hook log and the probe that produced it are at
 `~/Documents/agent-artifacts/2026-08-24-stopsmith/issue123-measurement.md`.
+
+## A held window with no live pane is dead, not a screen state
+
+Tmux reports pane death directly. A remain-on-exit corpse can retain an old
+composer or transcript marker, but screen classifiers cannot turn those bytes
+back into a running process. State observation therefore asks whether every
+pane has exited before reading occupancy, fatal evidence, or activity. Human
+status says `!dead!`, and porcelain says `dead`; one live split pane is enough
+to keep the window on its ordinary classifier.

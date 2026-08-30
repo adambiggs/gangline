@@ -2160,6 +2160,10 @@ excludes "a corpse in front of a live pane is not read as an empty window" \
   "$splitcorpse_out" "nothing is running in its window"
 contains "so the refusal is the ordinary one, which destroys nothing" \
   "$splitcorpse_out" "already exists"
+tmux select-pane -t "$splitcorpse_live"
+equal "a quiet live pane beside a held corpse keeps its ordinary state" \
+  "~idle~" \
+  "$("$GANG" status splitcorpse | sed -n '1p')"
 tmux send-keys -l -t "$splitcorpse_live" 'exit 7'
 tmux send-keys -t "$splitcorpse_live" Enter
 cat <&4 >/dev/null
@@ -2167,6 +2171,12 @@ exec 4<&-
 tmux run-shell true >/dev/null
 equal "and every pane in the window is a settled death before it is read" \
   "" "$(tmux list-panes -t "$splitcorpse_id" -F '#{pane_dead}' | grep -vx 1)"
+equal "status reports that nothing is running in a held corpse window" \
+  "!dead! (nothing is running in this window)" \
+  "$("$GANG" status splitcorpse | sed -n '1p')"
+equal "porcelain roster gives a dead window its own stable word" dead \
+  "$("$GANG" roster --porcelain \
+    | awk -F '\t' '$1 == "splitcorpse" { print $3 }')"
 refuses "and once every pane has exited the same window reads as empty" \
   "already exists and nothing is running in its window" \
   "$GANG" hitch splitcorpse -c bash -d /tmp
