@@ -3309,7 +3309,18 @@ pane_mode_free() { # $1 = window id; 0 only when tmux will route keys to the pty
     || die "cannot read tmux mode state for pane $1 — refusing to send a key whose recipient is unknown"
   case "$mode" in
     0) return 0 ;;
-    1) return 1 ;;
+    1)
+      # MODE CAN END BETWEEN OBSERVATION AND REFUSAL. Confirm the owned state
+      # once at the decision edge: a current zero is safe to type into, while
+      # two ones preserve copy-mode byte-for-byte. This also keeps decorative
+      # window glyphs out of the verdict; only pane_in_mode is consulted.
+      mode="$(tmux display-message -p -t "$1" '#{pane_in_mode}' 2>/dev/null)" \
+        || die "cannot confirm tmux mode state for pane $1 — refusing to send a key whose recipient is unknown"
+      case "$mode" in
+        0) return 0 ;;
+        1) return 1 ;;
+        *) die "tmux returned unreadable confirmed pane_in_mode state '$mode' for pane $1 — refusing to send a key whose recipient is unknown" ;;
+      esac ;;
     *) die "tmux returned unreadable pane_in_mode state '$mode' for pane $1 — refusing to send a key whose recipient is unknown" ;;
   esac
 }
