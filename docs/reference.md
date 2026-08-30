@@ -846,6 +846,12 @@ an unreadable or future-stamped bracket is unknown rather than abandoned. Within
 its bound the bracket still outranks the tiers beneath it, and a provably empty
 box already accepted delivery while the state read `?unknown?`.
 
+A closed bracket remains a native turn boundary after its age bound. If later
+TUI chrome is still writing to the pane while the harness's own composer is on
+screen and empty, the closed boundary and current composer agree on `~idle~`.
+A draft, absent composer, or unreadable composer keeps the state `?unknown?`;
+recent paint alone supplies no new turn boundary.
+
 A decay refused because the pane was being written to during the decision reads
 `?unknown? (the pane was written to while gang was deciding)`, and that reason
 refuses delivery rather than falling through to the empty-box check. A harness

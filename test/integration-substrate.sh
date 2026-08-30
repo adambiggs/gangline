@@ -375,6 +375,47 @@ equal "adopt stamps the current binary identity" "$binary_stamp" \
   "$(tmux show-options -wqv -t "$adopted_id" @gl_binary_id)"
 "$GANG" drop adopted >/dev/null
 
+# A CLOSED TURN FOLLOWED BY NORMAL TUI CHROME IS STILL A CLOSED TURN. Once an
+# activity-only episode reaches its bound, the old classifier kept the state
+# unknown for as long as the pane continued to redraw, even with the harness's
+# own empty composer visibly restored. Drive the clocks as inputs: the bracket
+# and activity hold are old, while one direct pty write makes the post-turn
+# chrome current. The drafted control keeps the same recent paint from becoming
+# permission to call a non-empty composer idle.
+cat > "$RUN_ROOT/collars/post-turn-chrome.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_QUIET_AT_REST=1
+eval "\$(declare -f collar_input | sed '1s/collar_input/post_turn_chrome_real_input/')"
+collar_input() {
+  if [ -e "$RUN_ROOT/post-turn-chrome.draft" ]; then
+    printf 'a draft still owns this box'
+    return 0
+  fi
+  post_turn_chrome_real_input "\$1"
+}
+SH
+"$HITCH" post-turn-chrome -c post-turn-chrome -d /tmp >/dev/null
+post_turn_chrome_id="$(window_id post-turn-chrome)"
+post_turn_chrome_old=$(( $(date +%s) - 400 ))
+tmux set-option -w -t "$post_turn_chrome_id" @gl_turn \
+  "closed $post_turn_chrome_old"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_activity_only_since \
+  "$post_turn_chrome_old"
+post_turn_chrome_tty="$(tmux display-message -p -t "$post_turn_chrome_id" '#{pane_tty}')"
+printf '\npost-turn chrome\n' > "$post_turn_chrome_tty"
+equal "an empty composer settles a closed turn despite recent pane chrome" \
+  "~idle~" \
+  "$(GANG_ACTIVITY_WINDOW=100000 GANG_ACTIVITY_LIMIT=0 \
+    "$GANG" status post-turn-chrome | sed -n '1p')"
+: > "$RUN_ROOT/post-turn-chrome.draft"
+equal "recent pane chrome cannot settle a drafted composer" \
+  "?unknown? (turn-bracket closed while the pane kept being written to)" \
+  "$(GANG_ACTIVITY_WINDOW=100000 GANG_ACTIVITY_LIMIT=0 \
+    "$GANG" status post-turn-chrome | sed -n '1p')"
+"$GANG" drop post-turn-chrome >/dev/null
+
 # ADOPTION NAMES A HARNESS ALREADY RUNNING IN THE WINDOW. A held corpse still
 # has a window name, and before this precondition adopt registered that empty
 # window, minted its spool, and reported it as an agent. The pane's own fifo is

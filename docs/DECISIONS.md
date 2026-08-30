@@ -1596,3 +1596,11 @@ back into a running process. State observation therefore asks whether every
 pane has exited before reading occupancy, fatal evidence, or activity. Human
 status says `!dead!`, and porcelain says `dead`; one live split pane is enough
 to keep the window on its ordinary classifier.
+
+## A closed turn and a ready composer outrank post-turn paint
+
+Harnesses keep drawing recap, update, and spinner chrome after their native
+turn-close event. Pane activity cannot reopen that event. Once the current
+composer is readable and empty, it agrees with the closed bracket and the state
+is idle; a draft, absent box, or unreadable box preserves unknown. This spends
+positive current input evidence, not a quiet-time guess.

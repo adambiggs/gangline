@@ -2303,6 +2303,12 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
   if [ "$TURN_STATE" != open ]; then
     [ $(( now - TURN_AT )) -ge "$GANG_TURN_LIMIT" ] || return 1
     turn_pane_still_writing "$1" || return 1
+    # A CLOSED BRACKET SAYS THE TURN ENDED; an empty live composer says where
+    # the keyboard is now. Once both agree, subsequent pty writes are ordinary
+    # post-turn chrome, not evidence that resurrects the closed turn. Keep the
+    # positive composer requirement here: a draft, a missing box, or a reader
+    # Gangline cannot interpret preserves the unknown below.
+    composer_ready "$1" && return 1
     BUSY_EXPIRED_WHAT="turn-bracket closed while the pane kept being written to"
     return 2
   fi
