@@ -6242,46 +6242,54 @@ advisory_reply() { # $1 event, $2 collar; emit at most one native hook payload
 # three-way `collar_model_check`: 0 recognized, 1 unrecognized, 2 unknown.
 # Recognition is deliberately not availability; only the provider can answer
 # whether this account may use a recognized full model name.
-model_rows_normalize() { # $1 raw rows -> sorted, validated rows; 1 = malformed
+# A ROW GANG CANNOT READ COSTS THAT ROW, NOT THE COLLAR. opencode's OpenRouter
+# provider spells some ids with a `~` routing prefix, which this vocabulary has
+# no use for; refusing the catalog over them blocked every opencode hitch on the
+# host, including hitches for models on other providers that read fine. The
+# model a caller actually asked for is the only row that has to be usable, so an
+# unreadable row is dropped and named instead. What stays fatal is what leaves
+# no readable catalog behind: a producer whose every row is unusable, and a
+# repeated id, where the ambiguity is over which row wins rather than whether a
+# row can be used at all.
+model_rows_normalize() { # $1 raw rows -> sorted, usable rows; 1 = no usable catalog
   local raw="$1" line id details normalized="" seen=$'\n' number=0
+  local reason skipped=0 first_skip="" skipped_rows=rows
   [ -n "$raw" ] || return 1
   while IFS= read -r line || [ -n "$line" ]; do
     number=$(( number + 1 ))
+    reason=""
     case "$line" in
       ''|*$'\r'*|*$'\t'*$'\t'*)
-        printf 'gang: model catalog row %s is not one or two nonempty TSV fields\n' \
-          "$number" >&2
-        return 1 ;;
+        reason="is not one or two nonempty TSV fields" ;;
     esac
-    if [[ "$line" == *$'\t'* ]]; then
-      id="${line%%$'\t'*}"
-      details="${line#*$'\t'}"
-      [ -n "$details" ] || {
-        printf 'gang: model catalog row %s has an empty effort field\n' \
-          "$number" >&2
-        return 1
-      }
-    else
-      id="$line" details=""
+    if [ -z "$reason" ]; then
+      if [[ "$line" == *$'\t'* ]]; then
+        id="${line%%$'\t'*}"
+        details="${line#*$'\t'}"
+        [ -n "$details" ] || reason="has an empty effort field"
+      else
+        id="$line" details=""
+      fi
     fi
-    case "$id" in
-      ''|*[!A-Za-z0-9._:/@-]*)
-        printf "gang: model catalog row %s has unusable id '%s'\n" \
-          "$number" "$(printf '%s' "$id" | config_sanitize)" >&2
-        return 1 ;;
-    esac
-    case "$details" in
-      *[!A-Za-z0-9._:/@,-]*)
-        printf 'gang: model catalog row %s has an unusable effort field\n' \
-          "$number" >&2
-        return 1 ;;
-      *) ;;
-    esac
-    case "$details" in ,*|*,|*,,*)
-      printf 'gang: model catalog row %s has an empty effort name\n' \
-        "$number" >&2
-      return 1 ;;
-    esac
+    if [ -z "$reason" ]; then
+      case "$id" in
+        ''|*[!A-Za-z0-9._:/@-]*)
+          reason="has unusable id '$(printf '%s' "$id" | config_sanitize)'" ;;
+      esac
+    fi
+    if [ -z "$reason" ]; then
+      case "$details" in
+        *[!A-Za-z0-9._:/@,-]*) reason="has an unusable effort field" ;;
+      esac
+    fi
+    if [ -z "$reason" ]; then
+      case "$details" in ,*|*,|*,,*) reason="has an empty effort name" ;; esac
+    fi
+    if [ -n "$reason" ]; then
+      skipped=$(( skipped + 1 ))
+      [ -n "$first_skip" ] || first_skip="row $number $reason"
+      continue
+    fi
     case "$seen" in
       *$'\n'"$id"$'\n'*)
         printf "gang: model catalog repeats id '%s'\n" "$id" >&2
@@ -6290,6 +6298,15 @@ model_rows_normalize() { # $1 raw rows -> sorted, validated rows; 1 = malformed
     seen="$seen$id"$'\n'
     normalized="$normalized$id${details:+$'\t'$details}"$'\n'
   done <<<"$raw"
+  if [ "$skipped" -gt 0 ]; then
+    [ "$skipped" -ne 1 ] || skipped_rows=row
+    printf 'gang: skipped %s model catalog %s gang cannot use; first was %s\n' \
+      "$skipped" "$skipped_rows" "$first_skip" >&2
+  fi
+  [ -n "$normalized" ] || {
+    printf 'gang: no model catalog row is usable\n' >&2
+    return 1
+  }
   printf '%s' "$normalized" | LC_ALL=C sort
 }
 

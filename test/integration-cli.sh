@@ -1734,6 +1734,42 @@ refuses "duplicate native model ids make the collar catalog unreadable" \
   "returned a model catalog Gangline cannot interpret" \
   "$GANG" models -c malformed-models
 
+# ONE UNREADABLE ROW USED TO COST THE WHOLE COLLAR. opencode's OpenRouter
+# provider spells ids with a `~` routing prefix that this vocabulary cannot use,
+# and refusing the catalog over them blocked every opencode hitch on the host —
+# including hitches for models on providers whose rows read fine. The requested
+# model's row is the only one that has to be usable.
+cat > "$RUN_ROOT/collars/skippable-models.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_MODEL_OPT='--model'
+collar_models() {
+  printf 'zeta\topus,haiku\nopenrouter/~anthropic/claude-fable-latest\nalpha\n'
+}
+SH
+skippable_err="$RUN_ROOT/skippable-models.err"
+skippable_models="$($GANG models -c skippable-models 2> "$skippable_err")"
+equal "an unusable id costs its own row and nothing else" \
+  $'alpha\nzeta\topus,haiku' "$skippable_models"
+contains "and the dropped row is named rather than dropped in silence" \
+  "$(grep -v '^gang: WARNING: executing dirty ' "$skippable_err")" \
+  "openrouter/~anthropic/claude-fable-latest"
+
+# A CATALOG WITH NOTHING LEFT IN IT IS STILL A BROKEN PRODUCER, said out loud.
+# Skipping rows must not turn an enumerator that emits nothing usable into a
+# quiet empty success.
+cat > "$RUN_ROOT/collars/all-unusable-models.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_MODEL_OPT='--model'
+collar_models() { printf 'a~b\nc~d\n'; }
+SH
+refuses "a catalog whose every row is unusable is still unreadable" \
+  "returned a model catalog Gangline cannot interpret" \
+  "$GANG" models -c all-unusable-models
+
 claude_alias_err="$RUN_ROOT/claude-alias-models.err"
 claude_alias_models="$($GANG models -c claude-code 2> "$claude_alias_err")"
 equal "Claude discovery prints only aliases documented by its native help" \
