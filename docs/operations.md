@@ -637,9 +637,14 @@ settings Gangline passes at launch, so no launch option could carry it and no
 collar can decline it on the operator's behalf. Run the harness once in that
 directory, answer what it asks, and hitch afterwards.
 
-### The harness parked a message in its own input queue
+### The harness may have parked a message in its own input queue
 
-Delivery reports this instead of claiming success. Recover it:
+If the queue hint was already present before delivery, Gangline refuses without
+typing. If the hint first appeared after Enter, delivery reports an unknown
+outcome because the hint can race a turn the session already accepted. Inspect
+the recipient's transcript or current context before taking recovery action.
+
+Only after that evidence confirms the body is parked, recover it:
 
 ```sh
 gang flush worker
@@ -649,9 +654,9 @@ Gangline presses the collar's recall key, reads the loaded composer back
 against the message it recorded as parked, and submits it only if they match.
 It refuses when the composer no longer shows queue evidence, when it holds no
 record of the parked body, or when the readback does not match — without
-pressing Enter. If the flush reports that the harness parked the message again,
-the queue is hard-stuck: `gang drop` that agent, copy its printed explicit-id
-relaunch line, run that line, and re-send what the queue swallowed.
+pressing Enter. If a queue hint appears again after that Enter, the flush
+outcome is likewise unknown; inspect the session again rather than assuming the
+body was re-parked or sending another copy.
 
 ### Something is in the input box and it is not clear what
 

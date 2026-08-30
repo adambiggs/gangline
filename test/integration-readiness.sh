@@ -844,6 +844,65 @@ else
 fi
 "$GANG" drop selfable >/dev/null 2>&1 || :
 
+# A COMPACTION COMMAND CAN RUN BEFORE ITS COMPOSER PAINTS THE QUEUE HINT.
+# This collar creates an execution artifact from the compact command, then
+# answers every verification look with the declared hint. The old dispatcher
+# spent that ambiguous hint as proof the compaction did not run and told the
+# freshly compacted agent to compact again. The request must not be restored or
+# repeated; its note and status can report only the unknown submission outcome.
+self_unknown_executed="$RUN_ROOT/self-compact-unknown-executed"
+cat > "$RUN_ROOT/collars/self-unknown.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD=": > '$self_unknown_executed'"
+GANG_SELF_COMPACT=deferred
+GANG_STOP_HOOK=1
+GANG_QUEUED_REGEX='^[[:space:]]*Press up to edit queued messages[[:space:]]*\$'
+_gl_self_unknown_input="\$(declare -f collar_input)"
+eval "self_unknown_real_input \${_gl_self_unknown_input#collar_input}"
+collar_input() {
+  [ ! -e "$self_unknown_executed" ] \
+    || { printf 'Press up to edit queued messages'; return; }
+  self_unknown_real_input "\$1"
+}
+SH
+"$HITCH" self-unknown -c self-unknown -d /tmp >/dev/null
+self_unknown_id="$(window_id self-unknown)"
+self_unknown_pane="$(tmux list-panes -t "$self_unknown_id" -F '#{pane_id}')"
+self_unknown_token="test-self-unknown-$$"
+tmux set-option -w -t "$self_unknown_id" @gl_self_compact_requested \
+  "$self_unknown_token"
+tmux wait-for "gang-self-compact-$self_unknown_token" &
+self_unknown_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$self_unknown_pane" "$GANG" hook >/dev/null
+wait "$self_unknown_waiter"
+equal "the unverified self-compaction command actually executed" present \
+  "$([ -e "$self_unknown_executed" ] && printf present || printf absent)"
+equal "an unknown compaction outcome is not scheduled a second time" "" \
+  "$(tmux show-options -wqv -t "$self_unknown_id" @gl_self_compact_requested)"
+self_unknown_failed="$(tmux show-options -wqv -t "$self_unknown_id" @gl_self_compact_failed)"
+contains "the dispatcher records an unknown outcome rather than a failed command" \
+  "$self_unknown_failed" "submission outcome unknown:"
+self_unknown_status="$("$GANG" status self-unknown)"
+contains "status names the self-compaction uncertainty" \
+  "$self_unknown_status" "self-compaction outcome unknown after Stop:"
+excludes "status does not claim the command was not submitted" \
+  "$self_unknown_status" "self-compaction NOT submitted"
+excludes "status exposes no retry request that could compact twice" \
+  "$self_unknown_status" "self-compaction requested"
+self_unknown_mail="$("$GANG" mail self-unknown)"
+contains "the agent note says the compaction may have run" \
+  "$self_unknown_mail" "may have run"
+contains "the note requires current-context evidence before another compaction" \
+  "$self_unknown_mail" "request another compaction only if that evidence shows this one did not run"
+excludes "the note never claims the fresh context was not compacted" \
+  "$self_unknown_mail" "Your context was not compacted"
+excludes "the note removes the old categorical compact-again instruction" \
+  "$self_unknown_mail" "Run gang status, then gang compact again"
+"$GANG" drop self-unknown >/dev/null 2>&1 || :
+
 # TWO STOP EVENTS CAN READ ONE REQUEST BEFORE EITHER CONSUMES IT. tmux has no
 # compare-and-set for user options, so the fixture makes that crossing exact:
 # both hooks read the standing token through the real tmux, and then both
