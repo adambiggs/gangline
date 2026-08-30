@@ -9087,16 +9087,6 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
             self_compact_dispatch "$window" "$collar"
           fi ;;
     PreCompact) compaction_state_write "$TMUX_PANE" open
-                # The harness names its own cause in the payload, so gang never
-                # has to infer the origin from how the compaction was started.
-                # Recorded rather than acted on: every trigger observed so far
-                # reads "manual", and the value is what will identify an "auto"
-                # the first time a real session produces one.
-                kind="$(printf '%s' "$payload" \
-                  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("trigger",""))' \
-                    2>/dev/null)" || kind=""
-                [ -z "$kind" ] \
-                  || tmux set-option -w -t "$TMUX_PANE" @gl_compaction_trigger "$kind" 2>/dev/null || true
                 glyph_write "$TMUX_PANE" "-busy-" ;;
     PostCompact) compaction_state_write "$TMUX_PANE" closed
                  # Closing this bracket drains, exactly as closing a turn does.

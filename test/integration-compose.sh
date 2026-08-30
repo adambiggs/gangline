@@ -635,8 +635,6 @@ bracket_hook Stop                       # a closed turn: the state gang used to 
 bracket_hook PreCompact ',"trigger":"manual"'
 contains "PreCompact opens the compaction bracket" \
   "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction)" "open "
-equal "and records the cause the harness named" "manual" \
-  "$(tmux show-options -wqv -t "$bracket_id" @gl_compaction_trigger)"
 contains "a compacting agent reads busy though its turn bracket is closed" \
   "$("$GANG" status bracket 2>&1)" "-busy-"
 bracket_out="$(printf 'MARK_MIDCOMPACT' \
