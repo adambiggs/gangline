@@ -3653,7 +3653,7 @@ tick_lock_release() {
 }
 
 tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
-  local holder="" again="" err=""
+  local holder="" again="" err="" read_rc=0 read_races=0
   tick_lock_paths_set || return 1
   lock_self_pid
   TICK_LOCK_PID="$LOCK_SELF_PID"
@@ -3664,7 +3664,30 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
     fi
     [ -L "$TICK_LOCK_PATH" ] \
       || { printf 'tick lock %s cannot be created: %s\n' "$TICK_LOCK_PATH" "${err:-unknown error}" >&2; return 1; }
-    holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
+    # A valid owner may release between the -L observation and readlink. Its
+    # absence is ordinary resolved contention, so reattempt the atomic claim.
+    # A replacement can appear between those reads too: read it once more
+    # before calling it malformed, and bound repeated vanishes at one retry.
+    holder="" read_rc=0
+    if holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)"; then
+      :
+    elif [ -L "$TICK_LOCK_PATH" ]; then
+      if holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)"; then
+        :
+      elif [ -L "$TICK_LOCK_PATH" ]; then
+        holder=""
+      else
+        read_rc=1
+      fi
+    else
+      read_rc=1
+    fi
+    if [ "$read_rc" -ne 0 ]; then
+      read_races=$((read_races + 1))
+      [ "$read_races" -le 1 ] \
+        || { printf 'tick lock %s disappeared twice while Gangline was resolving contention\n' "$TICK_LOCK_PATH" >&2; return 1; }
+      continue
+    fi
     case "$holder" in
       ''|*[!0-9]*) printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
     esac

@@ -167,6 +167,103 @@ equal "the singleton consumes the dirty edge with exactly one rerun" "1 2 " \
 equal "the completed singleton leaves no lock or dirty residue" 0 \
   "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
 
+# A LIVE TICK OWNER MAY RELEASE AFTER -L BUT BEFORE READLINK. The shim is the
+# exact seam: tick_lock_acquire made its own failed ln and successful -L
+# observation before invoking this external readlink. The internal worker
+# keeps an expected lock fault off the health and alerts surfaces under test.
+tick_lock_race_bin="$RUN_ROOT/tick-lock-race-bin"
+tick_lock_race_seen="$RUN_ROOT/tick-lock-race-seen"
+mkdir -p "$tick_lock_race_bin"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v readlink)"
+  printf 'LOCK=%q\n' "$tick_lock_path"
+  printf 'SEEN=%q\n' "$tick_lock_race_seen"
+  cat <<'SH'
+if [ "${1:-}" = "$LOCK" ] && [ ! -e "$SEEN" ]; then
+  : > "$SEEN"
+  rm -f -- "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_lock_race_bin/readlink"
+chmod +x "$tick_lock_race_bin/readlink"
+ln -s "$$" "$tick_lock_path"
+tick_lock_race_rc=0
+GANG_TICK_INTERNAL=1 PATH="$tick_lock_race_bin:$PATH" \
+  "$GANG" __tick-worker > "$RUN_ROOT/tick-lock-race.out" 2>&1 \
+  || tick_lock_race_rc=$?
+equal "a released live tick lock is retried atomically" 0 "$tick_lock_race_rc"
+equal "the tick owner released after the symlink observation" present \
+  "$([ -e "$tick_lock_race_seen" ] && printf present || printf absent)"
+equal "the retried tick worker releases its lock" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+
+# A PERSISTENT UNREADABLE OWNER REMAINS A FAULT. The vanished-owner retry must
+# not turn an actually malformed symlink into contention that resolved.
+ln -s not-a-pid "$tick_lock_path"
+tick_bad_lock_rc=0
+GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+  > "$RUN_ROOT/tick-bad-lock.out" 2>&1 || tick_bad_lock_rc=$?
+equal "a present nonnumeric tick lock stays fail-closed" 1 "$tick_bad_lock_rc"
+contains "a present nonnumeric tick lock names its unreadable owner" \
+  "$(<"$RUN_ROOT/tick-bad-lock.out")" "unreadable pid 'not-a-pid'"
+equal "the malformed tick lock is not deleted" not-a-pid \
+  "$(readlink "$tick_lock_path")"
+rm -f -- "$tick_lock_path"
+
+# TWO RELEASES CANNOT TURN THE RETRY INTO A LOOP. The first readlink removes
+# the observed owner. The ln wrapper installs a replacement before the one
+# permitted retry, and the next readlink removes that owner too.
+tick_lock_bound_bin="$RUN_ROOT/tick-lock-bound-bin"
+tick_lock_bound_reads="$RUN_ROOT/tick-lock-bound-reads"
+tick_lock_bound_lns="$RUN_ROOT/tick-lock-bound-lns"
+mkdir -p "$tick_lock_bound_bin"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v readlink)"
+  printf 'LOCK=%q\n' "$tick_lock_path"
+  printf 'READS=%q\n' "$tick_lock_bound_reads"
+  cat <<'SH'
+if [ "${1:-}" = "$LOCK" ] && [ -L "$LOCK" ]; then
+  printf x >> "$READS"
+  rm -f -- "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_lock_bound_bin/readlink"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v ln)"
+  printf 'LOCK=%q\n' "$tick_lock_path"
+  printf 'HOLDER=%q\n' "$$"
+  printf 'LNS=%q\n' "$tick_lock_bound_lns"
+  cat <<'SH'
+last=''
+for arg in "$@"; do last=$arg; done
+if [ "$last" = "$LOCK" ]; then
+  lns=0
+  [ ! -f "$LNS" ] || IFS= read -r lns < "$LNS"
+  lns=$((lns + 1))
+  printf '%s\n' "$lns" > "$LNS"
+  [ "$lns" -ne 2 ] || "$REAL" -s "$HOLDER" "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_lock_bound_bin/ln"
+chmod +x "$tick_lock_bound_bin/readlink" "$tick_lock_bound_bin/ln"
+ln -s "$$" "$tick_lock_path"
+tick_lock_bound_rc=0
+GANG_TICK_INTERNAL=1 PATH="$tick_lock_bound_bin:$PATH" \
+  "$GANG" __tick-worker > "$RUN_ROOT/tick-lock-bound.out" 2>&1 \
+  || tick_lock_bound_rc=$?
+equal "a tick lock that disappears twice fails at its retry bound" \
+  1 "$tick_lock_bound_rc"
+contains "the twice-vanished tick lock explains its bounded failure" \
+  "$(<"$RUN_ROOT/tick-lock-bound.out")" "disappeared twice"
+equal "the tick retry bound observes exactly two released owners" xx \
+  "$(<"$tick_lock_bound_reads")"
+
 # The same pid-bearing symlink is reclaimable after a killed owner. Reuse the
 # exact team lock name observed above; a made-up parallel path would not prove
 # the production stale-lock branch.
