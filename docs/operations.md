@@ -429,6 +429,11 @@ The screen may still contain a composer, transcript, or death banner, but no
 process is running behind it; clear or relaunch the window instead of waiting
 on its painted state.
 
+After a native turn closes, recap blocks, update notices, and other TUI chrome
+may continue writing. A current empty composer confirms the closed turn is
+idle even while those writes are recent. A draft or unreadable composer does
+not: it remains unknown rather than letting pane motion or silence decide.
+
 `!session-lost!` means the live native session holding a pane contradicts the
 session registered for that agent. Treat it as an identity failure, not an idle
 or busy verdict: delivery is blocked until the intended session is re-hitched.
