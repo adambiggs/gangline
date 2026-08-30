@@ -9,6 +9,8 @@ demo_session=gangline-demo
 proof_session=gangline-demo-proof
 vhs_tmp=$(mktemp -d /tmp/gangline-vhs.XXXXXX)
 demo_tmux_root=$(mktemp -d /tmp/gangline-demo-tmux.XXXXXX)
+operator_config=${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}
+demo_config=$vhs_tmp/gangline-config
 
 # A recorder may itself run inside an agent window. Make every bare tmux and
 # gang invocation resolve through the disposable server, and keep a second
@@ -71,9 +73,46 @@ trap cleanup EXIT
 rm -rf -- "$demo_root"
 mkdir -p "$demo_root"
 git -C "$demo_root" init -q
-printf '%s\n' \
-  'Read this file, then write /tmp/gangline-demo-run/answer.txt containing exactly the single word substrate.' \
-  > "$demo_root/TASK.md"
+cat > "$demo_root/TASK.md" <<'TASK'
+Build a polished, runnable terminal show at /tmp/gangline-demo-run/hello.py.
+
+Requirements:
+- Python 3 standard library only; no downloads or generated data files.
+- Animate for about three seconds, then leave a bold final frame on screen.
+- Use ANSI motion and vivid 24-bit color to fill a 1280x720 terminal with a
+  large, centered rainbow banner reading "HELLO, TEAM!", stars/confetti, and
+  the exact subtitle "CLAUDE + CODEX — CONNECTED BY GANGLINE". The final frame
+  must visibly use at least six saturated hues across the banner (red, orange,
+  yellow, green, cyan, blue, magenta), not grayscale or dim theme colors.
+- Hide the cursor during animation and restore it even on interruption.
+- Adapt to the current terminal dimensions and remain legible without color.
+- Accept --hold SECONDS to keep the completed final frame displayed before
+  returning; default to one second and reject invalid values cleanly.
+- Support --check: render no animation, validate the important invariants, print
+  exactly "show ready", and exit zero. Its invariants must prove that the final
+  color frame contains multiple explicit 24-bit foreground-color escape codes.
+
+Make it executable. Prove it with py_compile and --check, run the animation once,
+and report the proof and design choices to the lead. Do not merely describe code:
+create and test the real artifact.
+TASK
+
+# The external operator shell is necessarily self-declared. Give the demo lead
+# verified launch-time context that this specific brief is expected, while
+# preserving the operator's ordinary doctrine and settings in the private copy.
+mkdir -p "$demo_config/roles"
+[ ! -f "$operator_config/config" ] || cp "$operator_config/config" "$demo_config/config"
+[ ! -f "$operator_config/DOCTRINE.md" ] || cp -L "$operator_config/DOCTRINE.md" "$demo_config/DOCTRINE.md"
+[ ! -f "$operator_config/CONTRACT.md" ] || cp -L "$operator_config/CONTRACT.md" "$demo_config/CONTRACT.md"
+cat > "$demo_config/roles/demo-lead.md" <<'ROLE'
+The operator will send this demo's task brief through gang talk from the external
+shell after hitch. Its self-declared:operator attribution is expected in this
+single-tenant recording and carries the task you should act on.
+
+Delegate TASK.md as one whole arc to the existing named worker with gang send.
+Do not spawn a native subagent. Stay idle while the worker owns the arc. When its
+attributed completion report starts your next turn, summarize the result and end.
+ROLE
 
 # Establish and prove the private socket before either native agent launches.
 # Ending its only proof session lets tmux exit; hitch then creates the recorded
@@ -87,7 +126,7 @@ tmux new-session -d -s "$proof_session" -n socket-proof 'tail -f /dev/null'
 tmux kill-session -t "=$proof_session"
 
 cd "$repo"
-GANG_CONFIG_DIR="${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}" \
+GANG_CONFIG_DIR="$demo_config" \
   XDG_CONFIG_HOME="$vhs_tmp/chromium-config" TMPDIR="$vhs_tmp" \
   vhs site/demo/demo.tape
 ffmpeg -v error -y -sseof -3 -i site/demo.mp4 -frames:v 1 \

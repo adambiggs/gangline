@@ -1,4 +1,4 @@
-# Gangline demo: talk to a real Claude Code lead and Codex worker, then watch them.
+# Gangline demo: a real Claude Code lead and Codex worker build the finale.
 
 Output site/demo.gif
 Output site/demo.mp4
@@ -17,39 +17,19 @@ Env GANG_COLLAR "claude-code"
 Env VISUAL "vim -f -i NONE"
 
 Hide
-Type "unset TMUX TMUX_PANE; PS1='$ '; cd /tmp/gangline-demo-run; clear"
+Type "unset TMUX TMUX_PANE NO_COLOR; PS1='$ '; cd /tmp/gangline-demo-run; clear"
 Enter
 Show
 
 # Native harnesses become ordinary named tmux windows.
-Type "gang hitch lead -c claude-code -d /tmp -m sonnet -e high"
+Type "gang hitch lead -c claude-code -d . -m sonnet -e high -r demo-lead"
 Enter
 Wait+Screen@120s /delivered startup contract to lead/
 Sleep 2s
-Type "gang hitch worker -c codex -d /tmp -m gpt-5.6-terra -e high"
+Type "gang hitch worker -c codex -d . -m gpt-5.6-terra -e high"
 Enter
 Wait+Screen@120s /delivered startup contract to worker/
 Sleep 2s
-
-# Attach is the view: these are the harnesses themselves, in named tmux windows.
-Type "clear"
-Enter
-Type "gang attach"
-Sleep 1s
-Hide
-Enter
-Sleep 1s
-Ctrl+b
-Type "w"
-Sleep 1s
-Show
-Sleep 5s
-Hide
-Escape
-Ctrl+b
-Type "d"
-Sleep 2s
-Show
 
 # Talk opens a real editor; closing it delivers through Gangline's verified path.
 Type "clear"
@@ -58,29 +38,58 @@ Type "gang talk lead"
 Enter
 Wait+Screen@30s /gang-talk\./
 Type "i"
-Type@45ms "Ask worker to read /tmp/gangline-demo-run/TASK.md."
+Type@28ms "Build the animated terminal show in TASK.md with the Codex worker."
 Enter
-Type@45ms "Verify the result, then finish with: TEAM READY"
-Sleep 2s
+Type@28ms "Delegate TASK.md via gang send --to worker --stdin; do not spawn a subagent."
+Enter
+Type@28ms "When worker reports completion, summarize the result and end your turn."
+Sleep 1s
 Escape
 Type ":wq"
 Enter
 Wait+Screen@60s /delivered to lead as/
-Sleep 3s
+Sleep 2s
 
-# Let the native team work; neither inference nor polling is part of the cut.
+# Once delegation lands, attach to the actual harness panes. The work starts on
+# screen; the long inference stretch is cut rather than played in real time.
 Hide
-Type `while [ ! -f answer.txt ]; do sleep 1; done; echo ARTIFACT-"READY"`
+Type `while ! gang capture worker 30 2>/dev/null | grep -q 'TASK.md'; do sleep 1; done; echo WORK-"STARTED"`
 Enter
-Wait+Screen@300s /ARTIFACT-READY/
-Type `while ! gang capture lead 20 2>/dev/null | grep -q 'TEAM READY'; do sleep 1; done; echo LEAD-"READY"`
-Enter
-Wait+Screen@300s /LEAD-READY/
+Wait+Screen@300s /WORK-STARTED/
 Type "clear"
 Enter
-Sleep 500ms
 Show
-Type "cat answer.txt"
+Type "gang attach"
 Enter
-Wait+Screen@30s /substrate/
+Sleep 1s
+Sleep 4s
+Hide
+Ctrl+b
+Type "n"
+Sleep 1s
+Show
 Sleep 5s
+Hide
+Ctrl+b
+Type "d"
+Sleep 1s
+
+# Time-lapse through implementation and the lead's handling of the attributed
+# completion report. Returning idle closes the lead's later turn.
+Type `while ! gang capture lead 80 2>/dev/null | grep -q '\[gang:worker#'; do sleep 1; done; while ! NO_COLOR=1 gang status lead 2>/dev/null | grep -q '~idle~'; do sleep 1; done; echo SHOW-"READY"`
+Enter
+Wait+Screen@300s /SHOW-READY/
+Type "clear"
+Enter
+Show
+Type "gang capture lead 20"
+Enter
+Sleep 4s
+
+# End on the artifact itself: the team's animated work owns the final screen.
+Type "clear"
+Enter
+Type "python3 hello.py --hold 8"
+Enter
+Wait+Screen@30s /CONNECTED BY GANGLINE/
+Sleep 6s
