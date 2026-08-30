@@ -4,11 +4,11 @@ Gangline runs Claude Code, Codex, OpenCode, and Pi as named windows in one tmux
 session, so they can hand each other work by name and you can watch the whole
 thing happen.
 
-[![Two native Codex sessions using Gangline to deliver attributed work, verify the result, and return idle](site/demo.gif)](https://gangline.ai/#demo)
+[![A Claude Code lead using Gangline to delegate work to a Codex worker, verify its attributed result, and return idle](site/demo.gif)](https://gangline.ai/#demo)
 
-<p align="center"><em>One goal, two native Codex sessions. The worker's
-attributed report starts the lead's next turn; delivery, pane output, and final
-state are real.</em></p>
+<p align="center"><em>One goal, a Claude Code lead, and a Codex worker. The
+worker's attributed report starts the lead's next turn; delivery, pane output,
+and final state are real.</em></p>
 
 A team is a tmux session, and each agent is one window running its harness's own
 CLI with the terminal, tools, permissions, subscription, and context an ordinary

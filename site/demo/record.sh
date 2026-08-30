@@ -7,6 +7,34 @@ repo=$(cd "$(dirname "$0")/../.." && pwd)
 demo_root=/tmp/gangline-demo-run
 demo_session=gangline-demo
 vhs_tmp=$(mktemp -d /tmp/gangline-vhs.XXXXXX)
+demo_tmux_root=$(mktemp -d /tmp/gangline-demo-tmux.XXXXXX)
+
+# A recorder may itself run inside an agent window. Make every bare tmux and
+# gang invocation resolve through the disposable server, and keep a second
+# checkout's guard shim out of the PATH inherited by the recorded agents.
+unset TMUX TMUX_PANE
+export TMUX_TMPDIR="$demo_tmux_root"
+export GANG_LOCK_DIR="$demo_tmux_root/locks"
+export GANG_ARCHIVE_DIR="$demo_tmux_root/archive"
+export XDG_STATE_HOME="$demo_tmux_root/state"
+# A generated follow-up occupies Claude Code's composer after the lead ends its
+# turn, so Gangline correctly parks the worker report instead of overwriting it.
+export CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION=false
+# The recorder tty may have no usable systemd user bus. The exact private
+# server and session teardown below own this short-lived team's containment.
+export GANG_SCOPE=off
+clean_path=""
+old_ifs=$IFS
+IFS=:
+for path_entry in $PATH; do
+  case "$path_entry" in
+    */libexec/gang-tmux-guard) continue ;;
+  esac
+  clean_path="${clean_path:+$clean_path:}$path_entry"
+done
+IFS=$old_ifs
+PATH="$clean_path"
+export PATH
 
 [ "$demo_root" = /tmp/gangline-demo-run ] || {
   echo "refusing unexpected demo root: $demo_root" >&2
@@ -17,7 +45,7 @@ vhs_tmp=$(mktemp -d /tmp/gangline-vhs.XXXXXX)
   exit 1
 }
 
-for tool in vhs ffmpeg ttyd chromium tmux codex git; do
+for tool in vhs ffmpeg ttyd chromium tmux gang claude codex git; do
   command -v "$tool" >/dev/null || {
     echo "missing demo dependency: $tool" >&2
     exit 1
@@ -25,15 +53,16 @@ for tool in vhs ffmpeg ttyd chromium tmux codex git; do
 done
 
 cleanup() {
-  tmux has-session -t "$demo_session" 2>/dev/null &&
-    tmux kill-session -t "$demo_session" || true
+  tmux -S "$demo_tmux_root/tmux-$(id -u)/default" \
+    has-session -t "=$demo_session" 2>/dev/null &&
+    tmux -S "$demo_tmux_root/tmux-$(id -u)/default" \
+      kill-session -t "=$demo_session" || true
   rm -rf -- "$demo_root"
   rm -rf -- "$vhs_tmp"
+  rm -rf -- "$demo_tmux_root"
 }
 trap cleanup EXIT
 
-tmux has-session -t "$demo_session" 2>/dev/null &&
-  tmux kill-session -t "$demo_session"
 rm -rf -- "$demo_root"
 mkdir -p "$demo_root"
 git -C "$demo_root" init -q
@@ -41,9 +70,19 @@ printf '%s\n' \
   'Read this file, then write answer.txt containing exactly the single word substrate.' \
   > "$demo_root/TASK.md"
 
+# Establish and prove the private server before either native agent launches.
+tmux new-session -d -s "$demo_session" -n sandbox-proof 'tail -f /dev/null'
+[ "$(tmux list-sessions -F '#S')" = "$demo_session" ] || {
+  echo "private demo server contains an unexpected session" >&2
+  tmux list-sessions >&2
+  exit 1
+}
+
 cd "$repo"
-TMPDIR="$vhs_tmp" vhs site/demo/demo.tape
-ffmpeg -v error -y -ss 00:00:56 -i site/demo.mp4 -frames:v 1 \
+GANG_CONFIG_DIR="${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}" \
+  XDG_CONFIG_HOME="$vhs_tmp/chromium-config" TMPDIR="$vhs_tmp" \
+  vhs site/demo/demo.tape
+ffmpeg -v error -y -sseof -3 -i site/demo.mp4 -frames:v 1 \
   site/demo-poster.jpg
 
 echo "recorded site/demo.gif, site/demo.mp4, and site/demo-poster.jpg"

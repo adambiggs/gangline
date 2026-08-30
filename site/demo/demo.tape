@@ -1,4 +1,4 @@
-# Gangline demo: two real Codex sessions in a disposable tmux team.
+# Gangline demo: a real Claude Code lead and Codex worker in a disposable team.
 
 Output site/demo.gif
 Output site/demo.mp4
@@ -13,7 +13,7 @@ Set WaitTimeout 300s
 Set TypingSpeed 28ms
 
 Env GANG_SESSION "gangline-demo"
-Env GANG_COLLAR "codex"
+Env GANG_COLLAR "claude-code"
 
 Hide
 Type "unset TMUX TMUX_PANE; PS1='$ '; cd /tmp/gangline-demo-run; clear"
@@ -21,10 +21,14 @@ Enter
 Show
 
 # Native harnesses become ordinary named tmux windows.
-Type "gang hitch lead -c codex -d /tmp"
+Type "gang hitch lead -c claude-code -d /tmp"
 Enter
 Wait+Screen@120s /delivered startup contract to lead/
 Sleep 2s
+Hide
+Type "tmux kill-window -t gangline-demo:sandbox-proof"
+Enter
+Show
 Type "gang hitch worker -c codex -d /tmp"
 Enter
 Wait+Screen@120s /delivered startup contract to worker/
@@ -37,7 +41,7 @@ Sleep 4s
 # The operator supplies a goal, not a coordination schema.
 Type "clear"
 Enter
-Type@12ms `printf '%s\n' 'Use gang send --to worker --stdin to ask worker to read /tmp/gangline-demo-run/TASK.md, write /tmp/gangline-demo-run/answer.txt containing exactly substrate, and prove it with wc -c and od only; do not print file-owner metadata. You own only delegation and verification: do not edit the file yourself. Verify the worker result and finish with the exact words TEAM READY.' | gang send --to lead --from operator --stdin`
+Type@12ms `printf '%s\n' 'Use gang send --to worker --stdin to ask worker to read /tmp/gangline-demo-run/TASK.md, write /tmp/gangline-demo-run/answer.txt containing exactly substrate, and prove it with wc -c and od only; do not print file-owner metadata. You own only delegation and verification: do not edit the file yourself. After delegating, end your turn immediately; do not run gang wait, status, or capture, and do not inspect answer.txt until the worker report starts a later turn. Then verify the result and finish with exactly the two words TEAM and READY separated by one space.' | gang send --to lead --from operator --stdin`
 Enter
 Wait+Screen@60s /delivered to lead as/
 Sleep 4s
@@ -57,6 +61,8 @@ Wait+Screen@30s /substrate/
 Sleep 8s
 
 # The lead receives the worker's attributed report and verifies the result.
+# The literal success phrase is absent from the request above, so this cannot
+# pass by rediscovering the operator's own words in the lead pane.
 Hide
 Type `while ! gang capture lead 40 2>/dev/null | grep -q 'TEAM READY'; do sleep 1; done; echo LEAD-"READY"`
 Enter
