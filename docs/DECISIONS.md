@@ -1560,6 +1560,15 @@ carries through instead of flattening into absence, because driven on 2.1.241
 typing into the selected child's box resumed the CHILD in the child's own
 transcript. Refusal is the safe direction and every uncertainty takes it.
 
+## A new-session composer is not an agent composer
+
+claude-code's background-sessions view draws a framed composer, but text typed
+there creates a new session rather than reaching the hitched conversation.
+Generic pane and tmux state cannot distinguish two native composers, so the
+claude-code collar owns the distinction. The paired view notice and new-session
+placeholder observed on 2.1.251 produce status 6 before clipped-box handling;
+core delivery carries that status through as a named refusal.
+
 ## A turn bracket that reached its bound is a boundary nobody raised
 
 Before the cooperative tick, every spool drain hung off an event the harness

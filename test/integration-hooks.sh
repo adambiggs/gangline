@@ -3301,6 +3301,28 @@ equal "so the agent behind a named session is reachable rather than occupied" \
   "~idle~" "$(GANG_ACTIVITY_WINDOW=0 state_word parentframe)"
 "$GANG" drop parentframe >/dev/null
 
+# THE BACKGROUND-SESSIONS BOX CREATES A SESSION; IT DOES NOT ADDRESS THIS ONE.
+# The native rows are the byte-for-byte 2.1.251 capture used by the collar unit
+# above. This path asks the operator-facing commands too, so status 6 cannot be
+# flattened into a generic absent or clipped box on its way through delivery.
+"$HITCH" backgroundframe -c subframe-boot -d /tmp >/dev/null
+backgroundframe_id="$(window_id backgroundframe)"
+tmux resize-window -t "$backgroundframe_id" -x 100 -y 30
+paint_frame backgroundframe "$ROOT/test/fixtures/claude-background-sessions.txt"
+tmux set-option -w -t "$backgroundframe_id" @gl_collar subframe-claude
+refuses "gang composer names the background-sessions box" \
+  "would create a new session instead of reaching this agent" \
+  "$GANG" composer backgroundframe
+background_send_rc=0
+background_send="$(printf 'MARK_BACKGROUND_VIEW' |
+  "$GANG" send --to backgroundframe --from tester --live-only --stdin 2>&1)" \
+  || background_send_rc=$?
+equal "delivery refuses the background-sessions composer" "3" \
+  "$background_send_rc"
+contains "and names the new-session destination rather than clipping" \
+  "$background_send" "background-sessions view"
+"$GANG" drop backgroundframe >/dev/null
+
 # THE CARET IN THE SWITCHER IS NOT THE CONVERSATION IN USE. The list marks the
 # active conversation with a filled ring and moves a separate caret under the
 # keyboard cursor, so a frame can show the cursor resting on main while the
