@@ -1,5 +1,21 @@
 # Changelog
 
+## [2.6.0](https://github.com/adambiggs/gangline/compare/gangline-v2.5.1...gangline-v2.6.0) (2026-08-30)
+
+
+### Features
+
+* **talk:** compose messages in an editor ([d9c3d54](https://github.com/adambiggs/gangline/commit/d9c3d54977d73a30bd37029127baafdeb276454e))
+
+
+### Bug Fixes
+
+* **demo:** end on the team's animated result ([a00e0a9](https://github.com/adambiggs/gangline/commit/a00e0a9572321834f148fa702175bf55dff18604))
+* **demo:** publish and re-record native media ([3983dda](https://github.com/adambiggs/gangline/commit/3983dda21d9b6bd5c28d8f19fe9091f00868c60b))
+* **demo:** show interactive operator flow ([2412e68](https://github.com/adambiggs/gangline/commit/2412e68759864c308c1f1bd8b3d990e4d6d66755))
+* remove stale compaction trigger state ([9d1cc38](https://github.com/adambiggs/gangline/commit/9d1cc38a5a204fcb3a088b2c95057a5ab5326fff))
+* **tmux:** harden guard and pane locks ([ab93a7a](https://github.com/adambiggs/gangline/commit/ab93a7ae07a08123c25a597d7fc558e0719fb10a))
+
 ## [2.5.1](https://github.com/adambiggs/gangline/compare/gangline-v2.5.0...gangline-v2.5.1) (2026-08-28)
 
 
