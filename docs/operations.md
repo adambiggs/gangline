@@ -103,6 +103,10 @@ the forwarding off; the declaration also dies with the team session.
 
 ## Sending messages safely
 
+At a terminal, use `gang talk worker` to compose in `${VISUAL:-${EDITOR:-vi}}`;
+closing an empty draft cancels it. That command is for people. Agents and
+scripts keep the direct stdin form below, which does not require a terminal.
+
 Pass message prose on standard input so shell syntax remains data:
 
 ```sh

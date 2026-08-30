@@ -348,6 +348,22 @@ an agent must not be able to end the team it is running in.
 
 ## Delivery and compaction
 
+### `gang talk <name> [--from <sender>] [--live-only] [--supersede]`
+
+Opens `${VISUAL:-${EDITOR:-vi}}` with a private empty draft, then gives its
+non-empty contents to `send` after the editor exits successfully. It is the
+terminal-authoring complement to `send`: closing an empty draft cancels without
+sending, while every non-empty draft gets the same attributed, verified
+delivery and exit result as `gang send --to <name> --stdin`.
+
+`talk` requires stdin, stdout, and stderr to be terminals. Scripts and agents
+always use `send --stdin`, which remains non-interactive and unchanged. An
+operator outside a Gangline agent window defaults to the clearly claimed sender
+`operator`; an agent's sender is observed as it is for `send`. `--from`,
+`--live-only`, and `--supersede` retain their `send` meanings. An editor that
+exits non-zero sends nothing and returns its status. The temporary draft is
+removed before delivery begins.
+
 ### `gang send --to <name> [--from <sender>] [--live-only] [--supersede] --stdin`
 
 Reads the full message body from standard input. Inside the team, Gangline derives

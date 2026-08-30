@@ -39,6 +39,63 @@ contains "bare capture targets the calling agent window" \
 equal "bare composer targets the calling agent window" "" \
   "$(TMUX_PANE="$alpha_tmux_pane" "$GANG" composer)"
 
+# `talk` is for an operator at a terminal; the non-interactive surface remains
+# `send --stdin`, so it must refuse before launching an editor from this test
+# shell, which deliberately has no tty.
+cat > "$RUN_ROOT/talk-editor" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+: > "$RUN_ROOT/talk-editor-opened"
+printf '%s\\n' 'MARK_TALK_FIRST' 'MARK_TALK_SECOND' > "\$1"
+SH
+chmod +x "$RUN_ROOT/talk-editor"
+refuses "talk tells a non-terminal caller to use stdin delivery" \
+  "talk: requires a terminal" \
+  env EDITOR="$RUN_ROOT/talk-editor" "$GANG" talk alpha
+excludes "the non-terminal refusal does not launch the editor" \
+  "$(test -e "$RUN_ROOT/talk-editor-opened" && printf opened)" "opened"
+
+# A disposable tmux window is the operator terminal. Its own TMUX_PANE is
+# deliberately absent: this is a human outside the team, so talk's default
+# sender must be the clearly claimed `operator`, not a fictitious agent.
+talk_done="talk-done-$$"
+cat > "$RUN_ROOT/talk-terminal" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+unset TMUX_PANE
+GANG_SESSION="$GANG_SESSION" VISUAL= EDITOR="$RUN_ROOT/talk-editor" NO_COLOR=1 \
+  "$GANG" talk alpha --live-only
+rc=\$?
+printf '%s\\n' "\$rc" > "$RUN_ROOT/talk-rc"
+tmux wait-for -S "$talk_done"
+exec bash --norc
+SH
+chmod +x "$RUN_ROOT/talk-terminal"
+talk_pane="$(tmux new-window -d -P -F '#{pane_id}' -t "=$GANG_SESSION" \
+  -n talk-terminal "$RUN_ROOT/talk-terminal")"
+tmux wait-for "$talk_done"
+talk_rc="$(<"$RUN_ROOT/talk-rc")"
+if [ "$talk_rc" = 0 ]; then
+  pass "talk sends through the ordinary verified delivery path"
+else
+  fail "talk sends through the ordinary verified delivery path" \
+    "$(tmux capture-pane -pt "$talk_pane")"
+fi
+# source-guard: whole-surface@e0ed4860e2f7: the terminal output is produced only by the talk invocation above, and the fresh disposable pane has no earlier output
+contains "talk's happy path prints the verified delivery verdict" \
+  "$(tmux capture-pane -pt "$talk_pane")" "delivered to alpha as [gang:self-declared:operator]"
+excludes "deliberate talk flags add no warning to its happy path" \
+  "$(tmux capture-pane -pt "$talk_pane")" "WARNING:"
+# source-guard: whole-surface@38b579e98109: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
+contains "talk records its external human sender distinctly" \
+  "$(pane alpha)" "[gang:self-declared:operator#"
+# source-guard: whole-surface@ac197782d7b9: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
+contains "talk preserves the editor's first line" "$(pane alpha)" "MARK_TALK_FIRST"
+# source-guard: whole-surface@e6d25106a01c: the just-submitted talk body is the only new producer in alpha's pane, and the empty-composer assertion below independently witnesses submission
+contains "talk preserves the editor's second line" "$(pane alpha)" "MARK_TALK_SECOND"
+submitted "talk leaves the recipient's composer submitted" alpha
+tmux kill-window -t "$talk_pane"
+
 # 2.0 removed the pre-rename spellings. The alias no longer resolves to
 # -c/--collar, so it is refused as an unknown argument before a window exists.
 refuses "the removed hitch collar flag is an unknown argument" \

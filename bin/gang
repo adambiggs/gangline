@@ -414,6 +414,7 @@ start and end a team
   down      end the team
 
 talk to agents
+  talk      compose a message in your editor
   send      deliver a message to an agent
   at        deliver a message at a time
   mail      read an agent's waiting queue
@@ -640,6 +641,38 @@ gang send
   body may have been typed, left staged, or
   already delivered; read stderr, then read
   the target with gang status.
+EOF
+      ;;
+    talk) cat <<'EOF'
+gang talk
+  Compose a message to one agent in your
+  editor, then deliver it through gang send.
+
+  gang talk <name>
+    [--from <sender>]
+    [--live-only]
+    [--supersede]
+
+  Opens VISUAL, then EDITOR, then vi, with an
+  empty private draft. Close the editor to
+  send it; close an empty draft to cancel.
+
+  <name>        who receives it
+  --from <who>  who it is from. Outside the
+                team it defaults to operator.
+                Inside it gang observes this
+                window's identity as usual.
+  --live-only   report a refusal instead of
+                parking the message.
+  --supersede   retire this sender's older
+                waiting messages for this
+                target when this one lands.
+
+  talk requires a terminal. Agents and scripts
+  always use gang send --to <name> --stdin;
+  its stdin body and exit meanings are
+  unchanged. An editor failure sends nothing
+  and returns its status.
 EOF
       ;;
     at) cat <<'EOF'
@@ -6842,6 +6875,65 @@ cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it
   exec tmux attach -t "=$SESSION" \; select-window -t "$id"
 }
 
+cmd_talk() { # compose with the terminal editor, then hand the bytes to send
+  local name="${1:-}" from="" from_seen=0 editor draft edit_rc=0
+  local -a send_args=()
+  case "$name" in ''|-*) usage_die ;; esac
+  shift
+  while [ $# -gt 0 ]; do case "$1" in
+    --from) [ $# -ge 2 ] || die "talk: --from needs a value"
+            from="$2"; from_seen=1; shift 2 ;;
+    --live-only|--supersede) send_args+=("$1"); shift ;;
+    --stdin) die "talk: the body opens in your editor; --stdin belongs to gang send" ;;
+    -*) die "talk: unknown argument '$1'" ;;
+    *) die "talk: unknown argument '$1' — name the recipient first: gang talk <name>" ;;
+  esac; done
+  [ -t 0 ] && [ -t 1 ] && [ -t 2 ] \
+    || die "talk: requires a terminal; non-interactive callers use gang send --to $name --stdin"
+  # An operator shell has no observable Gangline window, so it makes a plainly
+  # claimed attribution by default. An agent keeps send's observed identity and
+  # never receives a --from that would make send reject it.
+  if [ "$from_seen" -eq 0 ] && ! self_window >/dev/null; then from=operator; fi
+  editor="${VISUAL:-${EDITOR:-vi}}"
+  [ -n "$editor" ] || die "talk: VISUAL and EDITOR are both empty; set one to an editor command"
+  draft="$(mktemp "${TMPDIR:-/tmp}/gang-talk.XXXXXX")" \
+    || die "talk: cannot create a private draft under ${TMPDIR:-/tmp}"
+  # Keep the private draft from outliving an interrupted editor, just as
+  # upgrade keeps its private installer from outliving an interrupted update.
+  trap 'rm -f -- "$draft"; exit 129' HUP
+  trap 'rm -f -- "$draft"; exit 130' INT
+  trap 'rm -f -- "$draft"; exit 143' TERM
+  # EDITOR conventionally includes its own arguments (for example `code --wait`).
+  # The draft itself stays a positional parameter, so shell metacharacters in its
+  # path cannot change the configured editor command.
+  if sh -c "exec $editor \"\$1\"" gang-talk-editor "$draft"; then
+    :
+  else
+    edit_rc=$?
+    rm -f -- "$draft"
+    trap - HUP INT TERM
+    printf 'talk: editor exited %s; nothing sent\n' "$edit_rc" >&2
+    return "$edit_rc"
+  fi
+  if [ ! -s "$draft" ]; then
+    rm -f -- "$draft"
+    trap - HUP INT TERM
+    printf '%s\n' "talk: cancelled (empty draft)"
+    return 0
+  fi
+  # Bash 3.2 lacks anonymous descriptors. Descriptor 9 keeps the body readable
+  # after its pathname disappears, before any delivery verdict can exit gang.
+  exec 9<"$draft" || { rm -f -- "$draft"; die "talk: cannot reopen the completed draft"; }
+  rm -f -- "$draft" || { exec 9<&-; die "talk: cannot remove the completed draft"; }
+  trap - HUP INT TERM
+  send_args=(--to "$name" --stdin "${send_args[@]}")
+  if [ "$from_seen" -ne 0 ] || [ -n "$from" ]; then send_args+=(--from "$from"); fi
+  cmd_send "${send_args[@]}" <&9
+  edit_rc=$?
+  exec 9<&-
+  return "$edit_rc"
+}
+
 send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
               # AGENT_ID and ENVELOPE set.
               # 3 = refused, nothing typed
@@ -9619,7 +9711,7 @@ fi
 # clock passes, and hitch, adopt and rename name a window that is not this one.
 if [ $# -eq 0 ]; then
   case "$cmd" in
-    hitch|adopt|rename|send|at|wait|explain|drop|down)
+    hitch|adopt|rename|talk|send|at|wait|explain|drop|down)
       cmd_help "$cmd"
       exit 1
       ;;
@@ -9630,6 +9722,7 @@ case "$cmd" in
   hitch)    cmd_hitch "$@" ;;
   adopt)    cmd_adopt "$@" ;;
   rename)   cmd_rename "$@" ;;
+  talk)     cmd_talk "$@" ;;
   send)     cmd_send "$@" ;;
   at)       cmd_at "$@" ;;
   flush)    cmd_flush "$@" ;;
