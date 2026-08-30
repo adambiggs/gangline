@@ -10,14 +10,17 @@
 # Gang cannot intercept every tmux invocation an agent might make, and this does
 # not pretend to: it is a shim gang puts at the front of an agent's PATH, so it
 # sees what that agent's shells run and nothing else. What it decides is one
-# question — would this teardown land on the socket this agent's own team is
-# recorded on — asked against the recorded socket rather than against the shape
-# of the command line, because the shape is exactly what misled the operator.
+# question — does the socket this teardown would reach carry a Gangline agent
+# window? That fact lives on the tmux server itself. The team record remains a
+# useful corroborating hint, but an agent testing Gangline has to override its
+# GANG_SESSION and GANG_LOCK_DIR, so it must never be the only evidence that
+# the guard uses to protect a server.
 #
-# IT NEVER BREAKS AN AGENT. Every reading it cannot take ends in the real tmux
-# running unchanged; only the positive conjunction refuses. A refusal is also
-# written down under the lock root, because a guard whose refusals live only in
-# a pane leaves nothing behind when the pane does.
+# AN UNREADABLE PANE SERVER FAILS CLOSED. An unreachable explicit private
+# socket still reaches real tmux for its ordinary error. Every teardown verdict
+# is written under the configured, launch-time team, and default roots when
+# distinct, because a caller can redirect the configured root while testing and
+# a verdict only there leaves no forensics behind.
 set -u
 
 guard_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || guard_dir=""
@@ -47,17 +50,30 @@ run_real() { exec "$real_tmux" "$@"; }
 # AN EXPLICIT OVERRIDE, NOT A SILENT ONE. Nothing here is a security boundary —
 # an agent that means to end its own server can say so — but it has to say so,
 # and saying so is recorded like a refusal.
-guard_state="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u 2>/dev/null || echo 0)}"
-guard_log="$guard_state/tmux-guard.log"
+default_guard_state="/tmp/gangline-$(id -u 2>/dev/null || echo 0)"
+guard_state="${GANG_LOCK_DIR:-$default_guard_state}"
+team_guard_state="${GANG_TMUX_GUARD_LOG_DIR:-$default_guard_state}"
+
+note_append() { # $1 state, $2 verdict, rest = argv
+  note_state=$1
+  note_verdict=$2
+  shift 2
+  [ -d "$note_state" ] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time)" \
+    "$note_verdict" "${GANG_SESSION:-unknown-session}" "${TMUX_PANE:-no-pane}" "tmux $*" \
+    >> "$note_state/tmux-guard.log" 2>/dev/null || true
+}
 
 note() { # $1 verdict, rest = argv, appended where it outlives the pane
   verdict=$1
   shift
-  [ -d "$guard_state" ] || return 0
-  printf '%s\t%s\t%s\t%s\t%s\n' \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown-time)" \
-    "$verdict" "${GANG_SESSION:-unknown-session}" "${TMUX_PANE:-no-pane}" "tmux $*" \
-    >> "$guard_log" 2>/dev/null || true
+  note_append "$guard_state" "$verdict" "$@"
+  [ "$team_guard_state" = "$guard_state" ] \
+    || note_append "$team_guard_state" "$verdict" "$@"
+  [ "$guard_state" = "$default_guard_state" ] \
+    || [ "$team_guard_state" = "$default_guard_state" ] \
+    || note_append "$default_guard_state" "$verdict" "$@"
 }
 
 [ "${GANG_TMUX_GUARD:-on}" = off ] && { note override "$@"; run_real "$@"; }
@@ -106,32 +122,95 @@ if [ -z "$socket" ]; then
   fi
 fi
 
-# THE TEAM'S OWN SOCKET, as gang wrote it down when it opened the team. Without
-# that record there is no team to compare against and the guard has no opinion.
+# THE RECORD IS A HINT, NEVER AUTHORITY. A live server's window registrations
+# below decide the guard. Keeping the record lets its usual team name enrich a
+# verdict, but a sandbox override that makes it vanish cannot make a teardown
+# safe.
+recorded_team=""
 session="${GANG_SESSION:-}"
-[ -n "$session" ] || run_real "$@"
-case "$session" in */*|.|..) run_real "$@" ;; esac
-team_record="$guard_state/teams/$session"
-[ -f "$team_record" ] || run_real "$@"
-IFS= read -r team_socket < "$team_record" || team_socket=""
-[ -n "$team_socket" ] || run_real "$@"
-[ "$socket" = "$team_socket" ] || run_real "$@"
+case "$session" in
+  ''|*/*|.|..) ;;
+  *) team_record="$guard_state/teams/$session"
+     if [ -f "$team_record" ]; then
+       IFS= read -r team_socket < "$team_record" || team_socket=""
+       [ "$team_socket" != "$socket" ] || recorded_team="$session"
+     fi ;;
+esac
+
+# This is read through the real tmux, never the shim: an invocation only gains
+# protection from a registration the server itself still has. Return 0 with
+# protected_session set, 1 if no Gangline window is there, or 2 if the reading
+# itself failed. The latter is not permission to tear down an unknown server.
+protected_session=""
+guard_tab="$(printf '\t')"
+guard_format="#{session_name}${guard_tab}#{@gl_agent}"
+guard_agent_on_socket() { # $1 socket, optional $2 session target
+  guard_socket=$1
+  guard_target=${2:-}
+  if [ -n "$guard_target" ]; then
+    guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -t "$guard_target" \
+      -F "$guard_format" 2>/dev/null)" || return 2
+  else
+    guard_rows="$("$real_tmux" -S "$guard_socket" list-windows -a \
+      -F "$guard_format" 2>/dev/null)" || return 2
+  fi
+  protected_session=""
+  while IFS="$guard_tab" read -r guard_session guard_agent; do
+    [ -n "$guard_agent" ] || continue
+    protected_session="$guard_session"
+    return 0
+  done <<EOF
+$guard_rows
+EOF
+  return 1
+}
+
+guard_refuse_unreadable_server() {
+  note refused-unreadable-server "$@"
+  printf 'gang tmux guard: REFUSED — Gangline could not read the window registrations on %s, so it will not tear down a server whose team state it cannot determine. Inspect the socket, or set GANG_TMUX_GUARD=off for a deliberate teardown.\n' \
+    "$socket" >&2
+  exit 3
+}
+
+guard_unreadable_server() {
+  # An explicit private socket that is already gone is not a server Gangline
+  # can protect; tmux will report that ordinary failure itself. Only an
+  # unreadable socket that this pane is actually attached to is dangerous.
+  if [ -n "${TMUX:-}" ] && [ "$socket" = "${TMUX%%,*}" ]; then
+    guard_refuse_unreadable_server "$@"
+  fi
+  note fall-open-unreachable-socket "$@"
+  run_real "$@"
+}
+
+guard_team_name() {
+  [ -n "$recorded_team" ] && [ "$recorded_team" = "$protected_session" ] \
+    && { printf '%s' "$recorded_team"; return; }
+  printf '%s' "$protected_session"
+}
 
 if [ "$seen_command" = kill-server ]; then
+  guard_rc=0
+  guard_agent_on_socket "$socket" || guard_rc=$?
+  case "${guard_rc:-0}" in
+    1) note fall-open-no-gangline-agent "$@"; run_real "$@" ;;
+    2) guard_unreadable_server "$@" ;;
+  esac
+  team="$(guard_team_name)"
   note refused "$@"
   printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.\n' \
-    "$socket" "$session" >&2
+    "$socket" "$team" >&2
   printf 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.\n' >&2
-  printf 'Aim it: tmux -S <socket> kill-server for a private server, or gang down %s to end this team on purpose.\n' \
-    "$session" >&2
+  printf 'Aim it: tmux -S <socket> kill-server for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+    "$team" >&2
   printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
   exit 3
 fi
 
-# kill-session: which session it lands on decides it. No -t is the session this
-# pane is in, which is the team. A -t naming another session on the same server
-# is aimed somewhere real and is allowed, loudly, because the server it shares
-# is still the team's.
+# KILL-SESSION IS DECIDED BY THE TARGET'S OWN WINDOWS. No -t is this pane's
+# session, so any Gangline registration on the reached server is enough to
+# refuse it. An explicit -t is allowed only when that target session itself has
+# none; another disposable session sharing a server remains a valid teardown.
 target=""
 prev=""
 for word in "$@"; do
@@ -146,22 +225,48 @@ for word in "$@"; do
   esac
 done
 
-if [ -z "$target" ] || [ "$target" = "$session" ] || [ "$target" = "=$session" ]; then
+if [ -z "$target" ]; then
+  guard_rc=0
+  guard_agent_on_socket "$socket" || guard_rc=$?
+  case "$guard_rc" in
+    1) note fall-open-no-gangline-agent "$@"; run_real "$@" ;;
+    2) guard_unreadable_server "$@" ;;
+  esac
+  team="$(guard_team_name)"
   note refused "$@"
-  if [ -z "$target" ]; then
-    printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.\n' \
-      "$session" "$socket" >&2
-  else
-    printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.\n' \
-      "$session" "$socket" >&2
-  fi
-  printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or gang down %s to end this team on purpose.\n' \
-    "$session" >&2
+  printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.\n' \
+    "$team" "$socket" >&2
+  printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+    "$team" >&2
   printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
   exit 3
 fi
 
-note allowed-on-team-server "$@"
-printf 'gang tmux guard: this kill-session is on %s, the same tmux server that holds team '\''%s'\''. Running it: it names another session.\n' \
-  "$socket" "$session" >&2
+guard_rc=0
+guard_agent_on_socket "$socket" "$target" || guard_rc=$?
+case "$guard_rc" in
+  0) team="$(guard_team_name)"
+     note refused "$@"
+     printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.\n' \
+       "$team" "$socket" >&2
+     printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+       "$team" >&2
+     printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
+     exit 3 ;;
+  2) guard_unreadable_server "$@" ;;
+esac
+
+# The target is verified free of Gangline windows. Read the whole server only
+# to explain the normal, useful case where a disposable session shares it; a
+# failure here does not erase the target-specific proof that made this safe.
+guard_rc=0
+guard_agent_on_socket "$socket" || guard_rc=$?
+case "$guard_rc" in
+  0) team="$(guard_team_name)"
+     note allowed-on-team-server "$@"
+     printf 'gang tmux guard: this kill-session is on %s, the same tmux server that holds team '\''%s'\''. Running it: it names another session.\n' \
+       "$socket" "$team" >&2 ;;
+  1) note fall-open-no-gangline-agent "$@" ;;
+  2) note allowed-verified-target "$@" ;;
+esac
 run_real "$@"

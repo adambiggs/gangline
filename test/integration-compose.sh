@@ -111,6 +111,117 @@ contains "a stale delivery lock is recovered exactly once" \
   && pass "a recovered delivery releases its lock" \
   || fail "a recovered delivery releases its lock" "$alpha_delivery_lock remains"
 
+# A LIVE OWNER MAY RELEASE AFTER -L BUT BEFORE READLINK. The shim is the exact
+# seam: lock_pane made its own failed ln and successful -L observation before
+# it invokes this external readlink. Releasing here makes the former holder
+# disappear in that interval; no fake lock_pane or wall-clock race is involved.
+lock_release_race_bin="$RUN_ROOT/lock-release-race-bin"
+lock_release_race_seen="$RUN_ROOT/lock-release-race-seen"
+mkdir -p "$lock_release_race_bin"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v readlink)"
+  printf 'LOCK=%q\n' "$alpha_delivery_lock"
+  printf 'SEEN=%q\n' "$lock_release_race_seen"
+  cat <<'SH'
+if [ "${1:-}" = "$LOCK" ] && [ ! -e "$SEEN" ]; then
+  : > "$SEEN"
+  rm -f -- "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$lock_release_race_bin/readlink"
+chmod +x "$lock_release_race_bin/readlink"
+ln -s "$$" "$alpha_delivery_lock"
+if printf 'MARK_RELEASE_BETWEEN_L_AND_READLINK' |
+  PATH="$lock_release_race_bin:$PATH" "$GANG" send --to alpha --from tester --stdin >/dev/null; then
+  pass "a released live delivery lock is retried atomically"
+else
+  fail "a released live delivery lock is retried atomically" \
+    "gang reported [$?] after the owner released between -L and readlink"
+fi
+[ -f "$lock_release_race_seen" ] \
+  && pass "the lock owner released after lock_pane observed its symlink" \
+  || fail "the lock owner released after lock_pane observed its symlink" \
+    "the readlink seam never ran"
+# source-guard: producer@ebb53c70c9db: the unique marker is supplied only by the guarded send above, and the seam file independently proves the release occurred inside lock_pane
+contains "the released live lock still delivers exactly once" \
+  "$(pane alpha)" "MARK_RELEASE_BETWEEN_L_AND_READLINK"
+[ ! -e "$alpha_delivery_lock" ] \
+  && pass "the retried delivery releases its lock" \
+  || fail "the retried delivery releases its lock" "$alpha_delivery_lock remains"
+
+ln -s not-a-pid "$alpha_delivery_lock"
+if unreadable_lock_out="$(printf 'MARK_UNREADABLE_LOCK' |
+  "$GANG" send --to alpha --from tester --stdin 2>&1)"; then
+  fail "a present nonnumeric delivery lock stays fail-closed" \
+    "gang accepted a lock without a numeric owner"
+else
+  pass "a present nonnumeric delivery lock stays fail-closed"
+fi
+contains "a present nonnumeric lock still names its unreadable owner" \
+  "$unreadable_lock_out" "unreadable owner 'not-a-pid'"
+excludes "a present nonnumeric lock prevents the paste" \
+  "$(pane alpha)" "MARK_UNREADABLE_LOCK"
+rm -f -- "$alpha_delivery_lock"
+
+# TWO RELEASES CANNOT TURN THE RETRY INTO A LOOP. The first readlink removes
+# the observed owner. The ln wrapper puts a replacement in place before the
+# one permitted retry, so its readlink removes a second observed owner. This
+# drives the real loop to its bound without a clock or a fake lock_pane.
+lock_bound_race_bin="$RUN_ROOT/lock-bound-race-bin"
+lock_bound_reads="$RUN_ROOT/lock-bound-race-reads"
+lock_bound_lns="$RUN_ROOT/lock-bound-race-lns"
+mkdir -p "$lock_bound_race_bin"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v readlink)"
+  printf 'LOCK=%q\n' "$alpha_delivery_lock"
+  printf 'READS=%q\n' "$lock_bound_reads"
+  cat <<'SH'
+if [ "${1:-}" = "$LOCK" ]; then
+  printf x >> "$READS"
+  rm -f -- "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$lock_bound_race_bin/readlink"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v ln)"
+  printf 'LOCK=%q\n' "$alpha_delivery_lock"
+  printf 'HOLDER=%q\n' "$$"
+  printf 'LNS=%q\n' "$lock_bound_lns"
+  cat <<'SH'
+last=''
+for arg in "$@"; do last=$arg; done
+if [ "$last" = "$LOCK" ]; then
+  lns=0
+  [ ! -f "$LNS" ] || IFS= read -r lns < "$LNS"
+  lns=$((lns + 1))
+  printf '%s\n' "$lns" > "$LNS"
+  [ "$lns" -ne 2 ] || "$REAL" -s "$HOLDER" "$LOCK"
+fi
+exec "$REAL" "$@"
+SH
+} > "$lock_bound_race_bin/ln"
+chmod +x "$lock_bound_race_bin/readlink" "$lock_bound_race_bin/ln"
+ln -s "$$" "$alpha_delivery_lock"
+if bounded_lock_out="$(printf 'MARK_BOUND_LOCK_RACE' |
+  PATH="$lock_bound_race_bin:$PATH" "$GANG" send --to alpha --from tester --stdin 2>&1)"; then
+  fail "a delivery lock that disappears twice refuses at its retry bound" \
+    "gang accepted two forced releases"
+else
+  pass "a delivery lock that disappears twice refuses at its retry bound"
+fi
+contains "the twice-vanished lock explains its bounded refusal" \
+  "$bounded_lock_out" "disappeared twice"
+equal "the retry bound observes exactly two released owners" "xx" \
+  "$(cat "$lock_bound_reads")"
+excludes "the bounded lock refusal prevents the paste" \
+  "$(pane alpha)" "MARK_BOUND_LOCK_RACE"
+rm -f -- "$alpha_delivery_lock"
+
 tmux send-keys -l -t "$(window_id 1)" HUMAN_DRAFT
 if draft_queued="$(printf 'MARK_DRAFT' |
   "$GANG" send --to 1 --from tester --stdin 2>&1)"; then

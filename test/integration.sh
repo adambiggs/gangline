@@ -361,6 +361,8 @@ cleanup() {
       printf 'none.\n'
     fi
   fi
+  [ -z "${guard_live_socket:-}" ] \
+    || "$REAL_TMUX" -S "$guard_live_socket" kill-server 2>/dev/null || true
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
 }

@@ -1187,7 +1187,7 @@ Exactly these keys are settable:
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
-| `GANG_TMUX_GUARD` | `on` | `on` to put a `tmux` shim at the front of every hitched agent's `PATH` that refuses a `kill-server` or `kill-session` landing on the team's own socket, or `off` to launch agents with an untouched `PATH` |
+| `GANG_TMUX_GUARD` | `on` | `on` to put a `tmux` shim at the front of every hitched agent's `PATH`; it refuses destructive commands when the resolved server has live `@gl_agent` registrations, or `off` to launch agents with an untouched `PATH` |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
@@ -1200,6 +1200,11 @@ sourcing the selected collar; put those values in a custom collar and point
 `GANG_CONFIG_DIR` cannot set the file that is already being read, and internal
 variables are refused. Any malformed file refuses every command, including
 native hooks; recovery is in `docs/operations.md`.
+
+`hitch` also exports `GANG_TMUX_GUARD_LOG_DIR` into guarded agent launches. It
+is the launch-time team log root, retained when a test redirects
+`GANG_LOCK_DIR` so each teardown verdict remains attributable. It is internal
+provenance, not a settable configuration key.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
 no NUL, no controls other than tab and newline, and valid UTF-8. Byte count does

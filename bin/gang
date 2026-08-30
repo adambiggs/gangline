@@ -3282,7 +3282,7 @@ lock_self_pid() { # sets LOCK_SELF_PID to the pid that will actually hold a clai
 }
 
 lock_pane() { # $1 = window id; held until lock_release or this process exits
-  local base holder name path err me
+  local base holder name path err me read_races=0
   lock_self_pid
   me="$LOCK_SELF_PID"
   base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
@@ -3295,11 +3295,24 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
   # write down a pid that dies while the lock is still held, and the next
   # process would read the lock as stale, delete it, and paste into the same
   # composer concurrently. BASHPID is the process that actually holds it.
-  err="$(ln -s "$me" "$path" 2>&1)" \
-    && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
-  [ -L "$path" ] \
-    || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
-  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  while :; do
+    err="$(ln -s "$me" "$path" 2>&1)" \
+      && { LOCK_PATH="$path"; trap 'on_exit' EXIT; return; }
+    [ -L "$path" ] \
+      || die "cannot take the delivery lock at $path — ${err:-unknown error}. Nothing holds this lock; the path cannot be created atomically, so retrying will not help. Remove any lock left by an older Gangline, or point GANG_LOCK_DIR at somewhere writable by every Gangline process that delivers to this pane."
+    # A valid owner may release between the -L observation and readlink. Its
+    # absence is ordinary resolved contention, so reattempt the atomic claim.
+    # A replacement can appear between those reads too: read it once more
+    # before calling it malformed, and bound repeated vanishes at one retry.
+    if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
+    if [ -L "$path" ]; then
+      if holder="$(readlink "$path" 2>/dev/null)"; then break; fi
+      [ ! -L "$path" ] || { holder=""; break; }
+    fi
+    read_races=$((read_races + 1))
+    [ "$read_races" -le 1 ] \
+      || refuse "the delivery lock for $name disappeared twice while Gangline was resolving contention — inspect it with gang capture $name before retrying"
+  done
   case "$holder" in
     ''|*[!0-9]*) die "delivery lock $path has an unreadable owner '$holder' — refusing to delete state Gangline cannot identify" ;;
   esac
@@ -6360,7 +6373,7 @@ tmux_guard_dir() { printf '%s/libexec/gang-tmux-guard' "$ROOT"; }
 # shell under it — on the original PATH. That reads as a guard that is installed
 # and is not.
 tmux_guard_wrap() {
-  local dir
+  local dir log_dir
   [ "$GANG_TMUX_GUARD" = on ] || return 0
   dir="$(tmux_guard_dir)"
   [ -x "$dir/tmux" ] || {
@@ -6368,7 +6381,8 @@ tmux_guard_wrap() {
       "$dir" >&2
     return 0
   }
-  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; $GANG_LAUNCH"
+  log_dir="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_LOG_DIR=$(shell_quote "$log_dir"); $GANG_LAUNCH"
 }
 
 scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope

@@ -818,18 +818,22 @@ the live server. Every sandbox-aimed tmux command must therefore carry
 (`env -u TMUX tmux ...`, or `unset TMUX TMUX_PANE` at the top of a script).
 
 With `GANG_TMUX_GUARD=on`, the default, `hitch` puts a `tmux` shim at the front
-of every agent's `PATH`. It refuses a `kill-server`, or a `kill-session` naming
-the team or naming nothing, when the socket that command would reach is the one
-this agent's own team is recorded on. It compares recorded sockets rather than
-command shapes, because the shape is exactly what misleads. Everything else runs
-untouched, including an aimed teardown of a private server, and every reading it
-cannot take ends with the real tmux running.
+of every agent's `PATH`. It resolves the socket the command would reach, then
+asks that server for its live `@gl_agent` window registrations. A `kill-server`
+is refused when any registration is present; a `kill-session` is refused when
+it names a registered session or names no session. A team record can corroborate
+the displayed name, but is not protective authority: a Gangline test may
+legitimately replace `GANG_SESSION` and `GANG_LOCK_DIR` with a fresh sandbox.
+An aimed private session with no registration runs, loudly when it shares a
+server with one. An unreadable socket that is this pane's server refuses; an
+unreachable explicit private socket reaches real tmux for its ordinary error.
 
 It is a guardrail, not a boundary: `GANG_TMUX_GUARD=off` in front of one command
-runs it anyway. Refusals and overrides are both appended to
-`GANG_LOCK_DIR/tmux-guard.log`, so what the guard decided outlives the pane that
-asked. A team that has died leaving no gangline-side record at all is the state
-that made the 2026-08-17 reconstruction depend entirely on journald.
+runs it anyway. Every teardown verdict — refusal, override, or fall-open — is
+appended to `tmux-guard.log` under the caller's `GANG_LOCK_DIR` and the original
+team log root `hitch` exported as `GANG_TMUX_GUARD_LOG_DIR`; the default root is
+also used when distinct. `GANG_TMUX_GUARD_LOG_DIR` is internal launch provenance,
+not an operator configuration key. Those records outlive the pane that asked.
 
 The guard addresses that 2026-08-17 class. It does not explain the 2026-08-24
 session death, where every tmux call in both live agents' transcripts was

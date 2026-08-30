@@ -1766,23 +1766,55 @@ SH
 # $TMUX names the current server and outranks TMUX_TMPDIR, so a teardown that
 # reads as aimed at a sandbox lands on the live server; on 2026-08-17 that took
 # a team while the sandbox server survived. The shim gang puts at the front of
-# an agent's PATH decides one question — would this land on the socket this
-# agent's own team is recorded on — and every reading it cannot take ends with
-# the real tmux running unchanged.
+# an agent's PATH decides whether the resolved socket still carries a Gangline
+# registration. The record a caller names is corroboration only: testing
+# Gangline itself legitimately replaces it with an empty sandbox.
 guard_shim="$ROOT/libexec/gang-tmux-guard/tmux"
 guard_home="$RUN_ROOT/tmux-guard"
 guard_bin="$guard_home/bin"
 guard_state="$guard_home/state"
 guard_ran="$guard_home/real-tmux-argv"
+guard_servers="$guard_home/agent-servers"
+guard_unreadable_servers="$guard_home/unreadable-servers"
+guard_agent_rows="$guard_home/agent-rows"
+guard_fake_uid="guard-test-$$"
 mkdir -p "$guard_bin" "$guard_state/teams"
 cat > "$guard_bin/tmux" <<SH
 #!/bin/sh
+socket=""
+if [ "\${1:-}" = -S ]; then
+  socket="\${2:-}"
+  shift 2
+fi
+if [ "\${1:-}" = list-windows ]; then
+  target=""
+  shift
+  while [ \$# -gt 0 ]; do
+    case "\$1" in
+      -t) target="\${2:-}"; shift 2; continue ;;
+      -t*) target="\${1#-t}" ;;
+    esac
+    shift
+  done
+  if grep -Fqx "\$socket" "$guard_unreadable_servers"; then
+    exit 1
+  elif grep -Fqx "\$socket" "$guard_servers"; then
+    case "\$target" in
+      ''|guardteam|=guardteam) cat "$guard_agent_rows" ;;
+    esac
+  fi
+  exit 0
+fi
 printf '%s\n' "\$*" > "$guard_ran"
 exit 0
 SH
-chmod +x "$guard_bin/tmux"
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' '$guard_fake_uid'" > "$guard_bin/id"
+chmod +x "$guard_bin/tmux" "$guard_bin/id"
 guard_team_socket="$guard_home/team-socket"
 printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
+printf '%s\n' "$guard_team_socket" > "$guard_servers"
+: > "$guard_unreadable_servers"
+printf 'guardteam\tguard-agent\n' > "$guard_agent_rows"
 
 guard_session=guardteam
 # THE ENVIRONMENT IS THE INPUT UNDER TEST, so each call states it and the next
@@ -1822,6 +1854,58 @@ fi
 contains "a refusal outlives the pane it was made in" \
   "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "refused"
 
+# THE RECURRING BYPASS. A test of Gangline legitimately replaces both values
+# that locate a team record with a fresh empty sandbox. The protected socket is
+# still the one $TMUX names, and its own registration must keep the guard shut.
+guard_sandbox_state="$guard_home/empty-sandbox"
+mkdir -p "$guard_sandbox_state"
+rm -f -- "$guard_ran"
+guard_rc=0
+guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_sandbox_state" \
+  TMUX="$guard_team_socket,1,0" TMUX_TMPDIR="$guard_home/sandbox" \
+  "$guard_shim" kill-server 2>&1 >/dev/null)" || guard_rc=$?
+equal "an empty sandbox record cannot blind the live-server guard" 3 "$guard_rc"
+if guard_reached_tmux; then
+  fail "an empty sandbox record still cannot reach tmux" "the real tmux ran"
+else
+  pass "an empty sandbox record still cannot reach tmux"
+fi
+contains "the sandbox-bypassed refusal is still logged" \
+  "$(cat "$guard_sandbox_state/tmux-guard.log" 2>/dev/null)" "refused"
+
+# This one drives a separately owned tmux server, not the fake above: tmux
+# format strings do not turn a literal backslash-t into a field separator. A
+# broken guard can only destroy this disposable server, never the integration
+# server that is carrying the rest of the suite.
+guard_real_bin="$guard_home/real-bin"
+guard_real_state="$guard_home/real-state"
+guard_team_log="$guard_home/team-log"
+guard_live_socket="$guard_home/live-server"
+guard_live_session="guard-live-$$"
+mkdir -p "$guard_real_bin" "$guard_real_state" "$guard_team_log"
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' '$guard_fake_uid-real'" > "$guard_real_bin/id"
+chmod +x "$guard_real_bin/id"
+"$REAL_TMUX" -S "$guard_live_socket" new-session -d -s "$guard_live_session" -n agent 'exec cat'
+"$REAL_TMUX" -S "$guard_live_socket" set-option -w -t "=$guard_live_session:agent" @gl_agent probe-agent
+guard_rc=0
+guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_real_bin:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  GANG_TMUX_GUARD_LOG_DIR="$guard_team_log" TMUX="$guard_live_socket,1,0" \
+  "$guard_shim" kill-server 2>&1 >/dev/null)" || guard_rc=$?
+equal "a real tmux registration survives an empty sandbox record" 3 "$guard_rc"
+contains "the real-server refusal names its registered team" "$guard_out" "team '$guard_live_session'"
+if "$REAL_TMUX" -S "$guard_live_socket" has-session -t "=$guard_live_session" >/dev/null 2>&1; then
+  pass "a refused real-server teardown leaves its disposable server alive"
+else
+  fail "a refused real-server teardown leaves its disposable server alive" \
+    "the guard allowed kill-server to end $guard_live_session"
+fi
+"$REAL_TMUX" -S "$guard_live_socket" kill-server >/dev/null 2>&1 || true
+# source-guard: producer@44c7b12a6b77: the direct real-server guard invocation above is the sole writer to this fresh team-log directory
+contains "the original team root receives the sandbox refusal" \
+  "$(cat "$guard_team_log/tmux-guard.log" 2>/dev/null)" "refused"
+
 # AIMED COMMANDS ARE THE POINT OF THE RULE, so they have to keep working — a
 # guard that refused these would only teach agents to bypass it.
 guard_out="$(guard_run "$guard_team_socket,1,0" - - -S "$guard_home/private-socket" kill-server)"
@@ -1834,6 +1918,15 @@ fi
 guard_out="$(guard_run - "$guard_home/sandbox" - kill-server)"
 equal "a kill-server with TMUX unset and a private TMUX_TMPDIR runs" \
   0 "$(printf '%s' "$guard_out" | head -1)"
+contains "an unprotected teardown fall-open is recorded" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "fall-open-no-gangline-agent"
+guard_unreadable_socket="$guard_home/unreadable-socket"
+printf '%s\n' "$guard_unreadable_socket" > "$guard_unreadable_servers"
+guard_out="$(guard_run - - - -S "$guard_unreadable_socket" kill-server)"
+equal "an unreadable explicit private socket still reaches tmux" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+contains "the unreadable private socket fall-open is recorded" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "fall-open-unreachable-socket"
 guard_out="$(guard_run "$guard_team_socket,1,0" - - list-sessions)"
 equal "a command that is not a teardown runs untouched" \
   0 "$(printf '%s' "$guard_out" | head -1)"
@@ -1843,9 +1936,10 @@ equal "and the guard says nothing about it" "" \
 # -L RESOLVES THROUGH TMUX_TMPDIR the same way tmux resolves it, so a label
 # that names the team's own socket is the same command by another spelling.
 guard_label_home="$guard_home/labelled"
-mkdir -p "$guard_label_home/tmux-$(id -u)"
-guard_label_socket="$guard_label_home/tmux-$(id -u)/team"
+mkdir -p "$guard_label_home/tmux-$guard_fake_uid"
+guard_label_socket="$guard_label_home/tmux-$guard_fake_uid/team"
 printf '%s\n' "$guard_label_socket" > "$guard_state/teams/guardteam"
+printf '%s\n' "$guard_label_socket" >> "$guard_servers"
 guard_out="$(guard_run - "$guard_label_home" - -L team kill-server)"
 equal "a -L label resolving to the team's socket is refused" \
   3 "$(printf '%s' "$guard_out" | head -1)"
@@ -1866,17 +1960,16 @@ equal "a kill-session naming another session on that server runs" \
 contains "and is loud about sharing the team's server" \
   "$guard_out" "same tmux server that holds team"
 
-# NO RECORD IS NO OPINION. Without a socket written down for this agent's team
-# there is nothing to compare against, and a guard that guessed instead would
-# refuse teardowns it knows nothing about.
+# A CALLER-SUPPLIED RECORD IS NO LONGER AUTHORITY. The agent registration on
+# the reached server survives a different GANG_SESSION and still blocks it.
 guard_session=unrecorded
 guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-server)"
 guard_session=guardteam
-equal "a team with no recorded socket is left alone" 0 "$(printf '%s' "$guard_out" | head -1)"
+equal "a team with no recorded socket is still protected" 3 "$(printf '%s' "$guard_out" | head -1)"
 if guard_reached_tmux; then
-  pass "and its teardown reaches the real tmux"
+  fail "and its teardown never reaches the real tmux" "the real tmux ran"
 else
-  fail "and its teardown reaches the real tmux" "the real tmux never ran"
+  pass "and its teardown never reaches the real tmux"
 fi
 
 # AN OVERRIDE IS EXPLICIT AND RECORDED. Nothing here is a security boundary; an
