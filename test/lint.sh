@@ -123,6 +123,108 @@ if [ -n "$timing_hits" ]; then
   exit 1
 fi
 
+# AND A BARRIER THEY MAY NOT ESCAPE. Refusing sleep and timeout is what steered
+# fixture authors onto `tmux wait-for`, which has no timeout of its own: a
+# signal that is sent and never arrives parks the run forever, prints nothing,
+# and — because the gate serialises on one host lock — queues every other run
+# behind it. Two of those cost 25 minutes and 3h56m of held lock. The ceiling
+# that turns such a wedge into a named verdict is a tmux shim at the front of
+# the run's PATH, so a blocking wait only gets it when the command it runs is
+# one PATH resolves: the bare word, or a variable the file captured from
+# `command -v tmux` while the shim still led PATH.
+#
+# WHAT THIS REFUSES IS THE SPELLING THAT DELIBERATELY LEAVES PATH BEHIND.
+# test/integration.sh resolves REAL_TMUX by walking PATH for the tmux that is
+# NOT a script, precisely so the shims it generates do not call themselves; a
+# blocking wait issued through it is unbounded by construction, and so is one
+# naming a tmux binary by an absolute path. A `-S` signal returns whether or not
+# anyone waits, so it needs no ceiling and is left alone.
+#
+# THE ACCEPTED VARIABLE NAMES ARE COLLECTED PER FILE rather than assumed,
+# because a fixture shim named `tmux` cannot call `tmux` and has to carry the
+# path it captured. A file that ever captured one keeps that name accepted,
+# which is the imprecision this buys its lack of an allowlist with.
+#
+# The program takes the single quote as a variable so that its own text needs
+# none: the predicate has to talk about quoted spellings, and a lint written in
+# a single-quoted shell string cannot spell one without breaking itself.
+ceiling_awk='
+  FILENAME ~ /lint\.sh$/ { next }       # the checker has to name what it refuses
+  /^[[:space:]]*#/ { next }
+  { line = $0
+    hash = index(line, " #")
+    if (hash > 0) line = substr(line, 1, hash - 1) }
+  line !~ /wait-for/ { next }
+  line ~ /wait-for[[:space:]]+-S/ { next }        # a signal waits on nothing
+  line ~ ("[\"" q "]wait-for") { next }           # a literal, not an invocation
+  line ~ /=[[:space:]]*wait-for/ { next }         # a shim reading its own verb
+  { head = substr(line, 1, index(line, "wait-for") - 1) }
+  head ~ ("(^|[;&|([:space:]\"" q "])(command[[:space:]]+)?tmux[[:space:]]") { next }
+  {
+    n = split(captured, names, "|")
+    for (i = 1; i <= n; i++) {
+      if (names[i] == "") continue
+      if (head ~ ("[$][{]?" names[i] "[}]?[\"" q "]?[[:space:]]")) next
+    }
+    print FILENAME ":" FNR ":" $0
+  }
+'
+
+ceiling_names() { # $1 file -> the tmux paths this file captured, | separated
+  # A leading space so a capture at the start of a line is still a whole word.
+  sed -n 's/^/ /; s/.*[^A-Za-z0-9_]\([A-Za-z_][A-Za-z0-9_]*\)=[^=]*command -v tmux.*/\1/p' "$1" \
+    | sort -u | grep -v '^REAL_TMUX$' | tr '\n' '|'
+}
+
+ceiling_check() { # $1 file -> the barriers in it that PATH cannot bound
+  awk -v q="'" -v captured="$(ceiling_names "$1")" "$ceiling_awk" "$1"
+}
+
+# A CHECKER PROVES ITSELF BEFORE IT JUDGES, in both directions: a predicate that
+# accepted everything would pass a safe-lines-only calibration while leaving the
+# class free to regrow.
+ceiling_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+cat > "$ceiling_cal/bad" <<'CAL'
+REAL="$(command -v tmux)"
+"$REAL_TMUX" wait-for "$chan"
+$REAL_TMUX wait-for "$chan"
+/usr/bin/tmux wait-for "$chan"
+out="$("$REAL_TMUX" -S "$sock" wait-for "$chan")"
+CAL
+cat > "$ceiling_cal/safe" <<'CAL'
+REAL="$(command -v tmux)"
+tmux wait-for "$chan"
+command tmux wait-for "$chan"
+"$REAL_TMUX" wait-for -S "$chan"
+"$REAL" wait-for "$chan"
+printf 'wait-for some-channel\t120\n' > "$ledger"
+[ "${1:-}" = wait-for ] && shift
+CAL
+ceiling_bad="$(ceiling_check "$ceiling_cal/bad" | wc -l | tr -d ' ')"
+ceiling_safe="$(ceiling_check "$ceiling_cal/safe")"
+rm -rf -- "$ceiling_cal"
+if [ "$ceiling_bad" != 4 ] || [ -n "$ceiling_safe" ]; then
+  printf '%s\n' \
+    "lint: the wait-ceiling check does not hold its own calibration, so its verdict about the tree means nothing." \
+    "rejected $ceiling_bad of 4 known-unbounded barriers; wrongly rejected: ${ceiling_safe:-none}" >&2
+  exit 1
+fi
+
+ceiling_hits=""
+for f in test/*.sh .github/workflows/*.sh; do
+  [ -f "$f" ] || continue
+  [ "$f" = "$E2E_LANE" ] && continue
+  hits="$(ceiling_check "$f")"
+  [ -z "$hits" ] || ceiling_hits="${ceiling_hits}${ceiling_hits:+
+}${hits}"
+done
+if [ -n "$ceiling_hits" ]; then
+  printf '%s\n' \
+    "lint: a blocking tmux wait-for in a mandatory test must resolve through PATH so the suite's wait ceiling can bound it — write the bare tmux word, or a path the file captured from command -v tmux:" \
+    "$ceiling_hits" >&2
+  exit 1
+fi
+
 # A FIXTURE SHELL MUST NOT READ THE OPERATOR'S SYSTEM BASH STARTUP FILES.
 # --rcfile and --init-file replace ~/.bashrc and leave /etc/bash.bashrc, where
 # Debian installs a command_not_found_handle that runs a Python program against

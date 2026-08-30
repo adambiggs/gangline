@@ -1634,3 +1634,20 @@ current. A registration that did not come from an agent's window records a
 fixed sentinel that no minted token can spell. Harness session ids stay out of
 it: the collar already stamps resumable session identity, and a second copy
 would drift.
+
+## A mandatory barrier must stay inside the wait ceiling
+
+`tmux wait-for` has no timeout, so a barrier that is never answered parks a run
+forever, prints nothing, and — because the gate serialises on one host lock —
+queues every other run behind it. Two such wedges held that lock for 25 minutes
+and for 3h56m. The suite's answer is a ceiling: a tmux shim at the front of the
+run's PATH that cuts a blocking wait off and names it.
+
+Because the ceiling is a PATH shim, a barrier only gets it when the command it
+runs is one PATH resolves. `test/lint.sh` therefore refuses a blocking
+`wait-for` issued through the spelling that deliberately leaves PATH behind —
+`REAL_TMUX`, which `test/integration.sh` resolves to the tmux that is NOT a
+shim, or a tmux named by an absolute path. A `-S` signal blocks on nothing and
+is left alone. The ceiling's reach into a pane, where every measured wedge
+happened, is asserted rather than assumed: a pane's environment comes from the
+tmux server rather than from the client that opened the window.
