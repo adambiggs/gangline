@@ -1618,3 +1618,19 @@ caller asked for is the only row that has to be usable. What stays fatal is
 what would leave nothing readable behind: a producer whose every row is
 unusable, and a repeated id, where the ambiguity is over which row wins rather
 than over whether a row can be used at all.
+
+## Provenance is a spool identity, resolved rather than remembered
+
+`gang hitch` and `gang adopt` record which context created an agent, because a
+lead's helpers, an orphaned spool and a window with no recorded gang path are
+all easier to act on when the creator can be named.
+
+What is stamped is the hitcher's `@gl_spool` token, not its name: a name goes
+stale the moment the hitcher is renamed, and `gang rename` deliberately leaves
+the token alone. The name is resolved from the live windows at read time. The
+name witnessed at the stamp is kept for one case only — no live window claims
+the token — and is reported as gone rather than printed as though it were
+current. A registration that did not come from an agent's window records a
+fixed sentinel that no minted token can spell. Harness session ids stay out of
+it: the collar already stamps resumable session identity, and a second copy
+would drift.
