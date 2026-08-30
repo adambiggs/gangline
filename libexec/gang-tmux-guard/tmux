@@ -25,6 +25,23 @@ set -u
 
 guard_dir=$(CDPATH= cd -P "$(dirname "$0")" && pwd) || guard_dir=""
 
+# EVERY GUARD ON PATH IS SKIPPED, NOT JUST THIS ONE. Excluding only its own
+# directory made two shims select each other: an installed guard and a checkout
+# guard both ahead of tmux left each one re-execing the other forever, and
+# because the real tmux is resolved before the command is dispatched, an
+# ordinary `tmux list-sessions` hung the same way a teardown did. A guard is
+# recognised the way the integration suite already recognises one — a `#!`
+# script rather than the tmux binary — narrowed to the directory name gang
+# installs it under, so a fixture that legitimately puts a shell script called
+# tmux on PATH is still the tmux this shim runs.
+guard_is_guard() { # $1 candidate directory
+  case "$1" in
+    gang-tmux-guard|*/gang-tmux-guard) ;;
+    *) return 1 ;;
+  esac
+  [ "$(head -c 2 "$1/tmux" 2>/dev/null)" = '#!' ]
+}
+
 real_tmux=""
 saved_ifs=$IFS
 IFS=:
@@ -34,6 +51,7 @@ for entry in $PATH; do
     "$guard_dir") continue ;;
   esac
   if [ -x "$entry/tmux" ] && [ ! -d "$entry/tmux" ]; then
+    guard_is_guard "$entry" && continue
     real_tmux="$entry/tmux"
     break
   fi

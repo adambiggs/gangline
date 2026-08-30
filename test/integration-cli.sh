@@ -1996,3 +1996,47 @@ guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bare" GANG_SESSION=guard
 equal "a PATH with no real tmux refuses rather than reporting success" 127 "$guard_rc"
 contains "and says which shim was the only tmux it found" \
   "$guard_out" "no tmux on PATH beyond this shim"
+
+# TWO GUARD DIRECTORIES ON PATH USED TO SELECT EACH OTHER FOREVER. An installed
+# guard and a checkout guard both ahead of tmux left each shim excluding only
+# its own directory, so each picked the other and re-execed without end; and
+# because the real tmux is resolved before the command is dispatched, an
+# ordinary read hung exactly as a teardown did. Both orders are driven, because
+# the defect is symmetric and a fix that only skips what precedes it would pass
+# one of them.
+#
+# BOUNDED BY CPU, NOT BY THE CLOCK. A shim that selects another shim is an
+# unbounded exec loop, so this case needs a ceiling to reach a verdict rather
+# than wedge the run. A CPU-second limit is not a wall-clock wait: resolving
+# tmux is one PATH walk and one fork, microseconds of processor time however
+# loaded the box is, while a loop re-entering that walk consumes it without
+# bound and is killed at the limit. A shim killed there has execed no tmux at
+# all, so the log the second assertion reads separates the two outcomes without
+# depending on the status the first one names.
+guard_dup_home="$guard_home/two-guards"
+guard_dup_bin="$guard_dup_home/bin"
+guard_dup_log="$guard_dup_home/ran"
+mkdir -p "$guard_dup_bin" "$guard_dup_home/installed" "$guard_dup_home/checkout"
+cp -R "$ROOT/libexec/gang-tmux-guard" "$guard_dup_home/installed/gang-tmux-guard"
+cp -R "$ROOT/libexec/gang-tmux-guard" "$guard_dup_home/checkout/gang-tmux-guard"
+printf '%s\n' '#!/bin/sh' "printf '%s\\n' \"\$*\" >> '$guard_dup_log'" 'exit 0' \
+  > "$guard_dup_bin/tmux"
+chmod +x "$guard_dup_bin/tmux"
+for guard_first in installed checkout; do
+  case "$guard_first" in
+    installed) guard_second=checkout ;;
+    *) guard_second=installed ;;
+  esac
+  : > "$guard_dup_log"
+  guard_rc=0
+  ( ulimit -t 1
+    PATH="$guard_dup_home/$guard_first/gang-tmux-guard:$guard_dup_home/$guard_second/gang-tmux-guard:$guard_dup_bin:/usr/bin:/bin" \
+      GANG_SESSION=guardteam GANG_LOCK_DIR="$guard_state" \
+      exec "$guard_dup_home/$guard_first/gang-tmux-guard/tmux" list-sessions
+  ) >/dev/null 2>&1 || guard_rc=$?
+  equal "an ordinary command survives a second guard directory on PATH ($guard_first first)" \
+    0 "$guard_rc"
+  # source-guard: whole-surface@e19cd4ffadb8: the log is truncated immediately above, and the only executable named tmux behind the two guard directories on that PATH is the fake that writes it
+  equal "and reaches the real tmux exactly once ($guard_first first)" \
+    "list-sessions" "$(cat "$guard_dup_log" 2>/dev/null)"
+done
