@@ -2067,7 +2067,8 @@ re_match() { # $1 = the collar variable NAME holding an ERE, $2 = text; 0 hit, 1
 input_read() { # $1 = window id; 0 box (printed), 1 no box,
                # 2 box clipped by the pane, 3 the pane could not be read,
                # 4 a composer that is drawn but is not this agent's to type in,
-               # 5 the collar returned a status Gangline cannot interpret
+               # 5 the collar returned a status Gangline cannot interpret,
+               # 6 a harness view whose composer creates another session
   local box rc=0
   box="$(collar_input "$1")" || rc=$?
   # A COLLAR STATUS THAT MEANS SOMETHING IS NOT "NO BOX". 4 says the harness
@@ -2078,7 +2079,7 @@ input_read() { # $1 = window id; 0 box (printed), 1 no box,
     0) printf '%s' "$box"; return 0 ;;
     1) capture "$1" >/dev/null 2>&1 || return 3
        return 1 ;;
-    2|3|4) return "$rc" ;;
+    2|3|4|6) return "$rc" ;;
   esac
   # A FUTURE COLLAR STATUS IS EVIDENCE GANGLINE DOES NOT YET UNDERSTAND, not
   # another spelling of the one absence status it does understand. Preserve a
@@ -2794,7 +2795,9 @@ occupied_witness() { # $1 = window id; 0 = the event tier answers occupied
   return 0
 }
 
+OCCUPIED_SURFACE=""
 occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
+  OCCUPIED_SURFACE=""
   if occupied_witness "$1"; then return 0; fi
   local pane live_rc=0 painted_rc=0 turn_rc=0
   # PermissionRequest remains stronger above. During a cooperative retry, a
@@ -2808,9 +2811,19 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   if [ -n "${GANG_OCCUPIED_REGEX:-}" ]; then
     pane="$(capture_joined "$1")" || die "cannot read pane $1 — refusing to guess occupancy"
     if re_match GANG_OCCUPIED_REGEX "$pane"; then
-      composer_live "$1" || live_rc=$?
+      if declare -F collar_input >/dev/null; then
+        input_read "$1" >/dev/null || live_rc=$?
+      else
+        live_rc=1
+      fi
       [ "$live_rc" -ne 3 ] \
         || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+      [ "$live_rc" -ne 5 ] \
+        || die "the collar input reader returned a status Gangline cannot interpret (reported above) — refusing to spend an unknown composer as occupancy"
+      if [ "$live_rc" -eq 6 ]; then
+        OCCUPIED_SURFACE=background-sessions
+        return 0
+      fi
       [ "$live_rc" -eq 0 ] || return 0
     fi
   fi
@@ -2822,6 +2835,10 @@ occupied() { # $1 = window id, collar loaded; exit 0 if a UI owns the input box
   input_painted "$1" || painted_rc=$?
   [ "$painted_rc" -ne 3 ] \
     || die "cannot read the composer in pane $1 — refusing to guess occupancy"
+  if [ "$painted_rc" -eq 6 ]; then
+    OCCUPIED_SURFACE=background-sessions
+    return 0
+  fi
   [ "$painted_rc" -ne 0 ] || return 1
   ! busy_painted "$1"
 }
@@ -4915,6 +4932,14 @@ spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
       printf 'the native delivery boundary exposed a composer belonging to a selected in-process subagent, where a delivery would reach the child rather than this agent; no delivery was attempted and the spool remains waiting\n' >&2
       return 1
     fi
+    if [ "$box_rc" -eq 5 ]; then
+      printf 'the native delivery boundary exposed a composer result the collar could not interpret; no delivery was attempted and the spool remains waiting\n' >&2
+      return 1
+    fi
+    if [ "$box_rc" -eq 6 ]; then
+      printf 'the native delivery boundary exposed the background-sessions view, whose composer would create a new session instead of reaching this agent; no delivery was attempted and the spool remains waiting\n' >&2
+      return 1
+    fi
     printf 'the native delivery boundary did not expose a readable composer (composer reading status %s); no delivery was attempted and the spool remains waiting\n' \
       "$box_rc" >&2
     return 1
@@ -5154,16 +5179,19 @@ stall_clear() { tmux set-option -uw -t "$1" @gl_stall 2>/dev/null || true; }
 composer_settled() { # $1 = window id; 0 = nobody is typing into the box right
                      # now, 1 = somebody is, 3 = the pane could not be read,
                      # 4 = no settled reading of the box,
-                     # 5 = the collar returned an uninterpretable status
+                     # 5 = the collar returned an uninterpretable status,
+                     # 6 = a recognised non-agent composer surface
   declare -F collar_input >/dev/null || return 0
   local a b a_rc=0 b_rc=0
   a="$(input_read "$1")" || a_rc=$?
   [ "$a_rc" -ne 3 ] || return 3
   [ "$a_rc" -ne 5 ] || return 5
+  [ "$a_rc" -ne 6 ] || return 6
   sleep 0.3
   b="$(input_read "$1")" || b_rc=$?
   [ "$b_rc" -ne 3 ] || return 3
   [ "$b_rc" -ne 5 ] || return 5
+  [ "$b_rc" -ne 6 ] || return 6
   [ "$a_rc" -eq 0 ] && [ "$b_rc" -eq 0 ] || return 4
   [ "$a" = "$b" ]
 }
@@ -5197,6 +5225,14 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
   # its screen is showing a child it launched.
   if [ "${4:-0}" -eq 4 ]; then
     printf 'subagent: the composer on screen belongs to a selected in-process subagent, so typing there would reach the child (gang capture %s)' "$3"
+    return
+  fi
+  if [ "${4:-0}" -eq 5 ]; then
+    printf 'unreadable: the collar returned a composer result Gangline cannot interpret (gang capture %s)' "$3"
+    return
+  fi
+  if [ "${4:-0}" -eq 6 ]; then
+    printf 'background-sessions: the composer on screen creates a new session instead of reaching this agent (gang capture %s)' "$3"
     return
   fi
   if [ "${4:-0}" -ne 0 ]; then
@@ -5364,8 +5400,14 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     || refuse "refusing to deliver '$frag': $tname is session-lost ($mismatch). Nothing was typed; restart or re-hitch the intended native session before delivering to this pane"
   pane_mode_free "$1" \
     || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
-  ! occupied "$1" \
-    || refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach).$(overlay_note "$1")"
+  # A collar may sharpen the occupied paint while taking the read occupancy
+  # already needs. Carry that name out rather than taking an extra look: some
+  # collars report a moving surface across successive observations.
+  if occupied "$1"; then
+    [ "$OCCUPIED_SURFACE" != background-sessions ] \
+      || refuse "refusing to deliver '$frag': $tname is showing the background-sessions view, whose composer creates a new session instead of reaching this agent. Nothing was typed and the body is still the sender's — return to the agent conversation, then try again"
+    refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach).$(overlay_note "$1")"
+  fi
   # REFUSING BEATS A FALSE DELIVERED. Every other guard here asks about the
   # input box, and a blocked window's box is genuinely free: the paste would
   # land, the Enter would submit, and gang would report a delivery that nothing
@@ -5383,6 +5425,10 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
     || refuse "refusing to deliver '$frag': the input box of $tname cannot be read, so whether somebody is typing into it is unknown — the paste would land on top of whatever is there. Nothing was typed and the body is still the sender's (gang capture $tname)"
   [ "$settled_rc" -ne 4 ] \
     || refuse "refusing to deliver '$frag': gang got no settled reading of the input box of $tname — the two looks it takes did not both come back with a box it could parse, so whether somebody is typing into it is unknown. Either its harness is drawing or dropping the composer, or its collar is answering a refused read as an absent box. Nothing was typed and the body is still the sender's (gang capture $tname)"
+  [ "$settled_rc" -ne 5 ] \
+    || refuse "refusing to deliver '$frag': the collar input reader for $tname returned a status Gangline cannot interpret (reported above), so whether its composer is safe is unknown. Nothing was typed and the body is still the sender's (gang capture $tname)"
+  [ "$settled_rc" -ne 6 ] \
+    || refuse "refusing to deliver '$frag': $tname is showing the background-sessions view, whose composer creates a new session instead of reaching this agent. Nothing was typed and the body is still the sender's — return to the agent conversation, then try again"
   [ "$settled_rc" -eq 0 ] \
     || refuse "refusing to deliver '$frag': somebody is typing into $tname right now — the paste would interleave with their draft mid-word (try again in a moment)"
   stage_clear "$1"
@@ -7138,8 +7184,11 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
   # carries the same verdict: nothing was typed, the body is still the sender's,
   # and later is a different answer from never. Where these two disagreed, the
   # disagreement decided whether the default parked a message or dropped it.
-  ! occupied "$AGENT_ID" \
-    || refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+  if occupied "$AGENT_ID"; then
+    [ "$OCCUPIED_SURFACE" != background-sessions ] \
+      || refuse "'$1' is showing the background-sessions view, whose composer creates a new session instead of reaching this agent; nothing was typed — return to the agent conversation, then try again"
+    refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
+  fi
   # AND IT HAS TO BE ASKED HERE TOO, in the same order state reads ask it. This
   # tier decides before inject's does, so leaving the question to inject alone
   # would answer a blocked window with whatever its stale screen still shows —
@@ -9549,6 +9598,10 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
     || die "cannot read the pane behind '$name', so whether it is showing a composer is unknown rather than settled (gang capture $name)"
   [ "$box_rc" -ne 4 ] \
     || die "the composer on screen in '$name' belongs to a selected in-process subagent, so it is not this agent's input and typing there would reach the child (gang capture $name)"
+  [ "$box_rc" -ne 5 ] \
+    || die "the collar input reader for '$name' returned a status Gangline cannot interpret (reported above), so its composer state is unknown (gang capture $name)"
+  [ "$box_rc" -ne 6 ] \
+    || die "the composer on screen in '$name' belongs to the background-sessions view, so typing there would create a new session instead of reaching this agent (gang capture $name)"
   [ "$box_rc" -eq 0 ] \
     || die "no composer on screen in '$name' — the harness has not drawn its input box (gang capture $name)"
   grep -q '[^[:space:]]' <<<"$box" || return 0  # prompt padding only: empty, input_clear's rule

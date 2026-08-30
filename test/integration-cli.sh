@@ -807,6 +807,28 @@ equal "a clipped composer offers no reading for a paste to be checked against" \
   "" "$(claude_box_text clipped)"
 tmux kill-session -t "=$claude_box_session"
 
+# THE BACKGROUND-SESSIONS VIEW DRAWS A DIFFERENT COMPOSER. Typing into it does
+# not reach the active conversation: it starts a new session. The rows are a
+# byte-for-byte pane capture from claude-code 2.1.251, painted at the same
+# geometry, so the shipped reader has to classify the native surface itself
+# rather than a reconstruction of its labels.
+claude_background_session="claude-background-$$"
+claude_background_ready="claude-background-ready-$$"
+printf -v claude_background_command \
+  "tmux resize-window -x 100 -y 30; cat %q; tmux wait-for -S %q; cat" \
+  "$ROOT/test/fixtures/claude-background-sessions.txt" \
+  "$claude_background_ready"
+tmux new-session -d -s "$claude_background_session" -n view -x 100 -y 30 \
+  "$claude_background_command"
+tmux wait-for "$claude_background_ready"
+background_status=0
+ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
+  '. "$1"; collar_input "$2" >/dev/null' fixture "$claude_collar" \
+  "=$claude_background_session:view" || background_status=$?
+equal "the background-sessions view is not the active agent composer" \
+  "6" "$background_status"
+tmux kill-session -t "=$claude_background_session"
+
 # THE PINNED AUTO-MODE FRAME NEEDS TWO STRUCTURAL QUESTIONS. The fixture is the
 # right-trimmed live 2.1.239 capture; each derived pane changes only its relation
 # to a real composer. No test restates the native copy the collar recognizes.

@@ -711,11 +711,20 @@ collar_context() { # $1 = tmux target; reads the gangline statusline beacon
 # own transcript; it does not reach the hitched parent. The pure opening-rule
 # requirement below intentionally leaves that view unreadable, so delivery can
 # never route a parent-addressed envelope into a child context.
+#
+# THE BACKGROUND-SESSIONS VIEW HAS A COMPOSER TOO, but it creates a new session
+# instead of addressing the conversation in this pane. Observed on 2.1.251: the
+# view says the current conversation moved to the background and offers a box
+# whose placeholder is "describe a task for a new session". That surface must
+# be classified before the clipped-box heuristic: an older rendering lost the
+# bottom of this fullscreen view and reached status 2 by accident, which was a
+# safe refusal with no durable reason.
 collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
                  # 2 = a box whose content outgrew the pane and cannot be read,
                  # 3 = a pane that could not be read at all,
                  # 4 = a composer that is drawn but belongs to a selected
-                 #     in-process subagent, so keys typed there reach the child
+                 #     in-process subagent, so keys typed there reach the child,
+                 # 6 = the background-sessions view, whose box creates a session
   local pane box rc=0
   # A PANE THAT COULD NOT BE READ IS NOT A PANE WITH NO BOX. The capture is
   # taken into a variable before awk sees it, because awk's verdict on empty
@@ -754,6 +763,14 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       # Position is what discriminates, and position is measured below.
       plain = $0
       sub(/^[[:space:]]*/, "", plain); sub(/[[:space:]]*$/, "", plain)
+      # PINNED NATIVE COPY, paired so transcript prose can only cause a
+      # fail-closed refusal. The first row identifies the fullscreen view; the
+      # second names what its box does. Both are present in the byte-for-byte
+      # 2.1.251 capture in test/fixtures/claude-background-sessions.txt.
+      if (plain ~ /^Your conversation moved to the background .*enter opens it/) {
+        background_view = 1
+      }
+      if (plain ~ /^❯.*describe a task for a new session$/) new_session_box = 1
       if ($0 ~ /^▔+$/) dialog_band = NR
       if (plain != "" && dialog_band && dialog_band == NR - 1) dialog_title = NR
       if (plain ~ /Esc to / && dialog_title && dialog_title < NR) {
@@ -775,6 +792,10 @@ collar_input() { # $1 = tmux target; prints what a HUMAN TYPED, 1 = no box,
       }
     }
     END {
+      # This check precedes clipped-composer classification deliberately. The
+      # fullscreen view can push its closing rule below the pane; that geometry
+      # does not turn its new-session box into the active conversation composer.
+      if (background_view && new_session_box) exit 6
       # A box the pane could not fit keeps the rule that opened it and loses the
       # one that closes it, so the last rule on screen has the caret under it
       # instead of the status lines. Its tail is below the fold and unreadable;
