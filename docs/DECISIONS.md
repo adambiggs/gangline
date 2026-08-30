@@ -959,6 +959,14 @@ never cancels operator-owned mode state. Post-paste verification tolerates
 bounded unreadable or unchanged redraw frames, then opens the staged-unknown
 record and fails closed if no changed composer appears.
 
+## A tmux mode refusal needs a current second witness
+
+Window-name glyphs report Gangline state and are not tmux mode evidence.
+Delivery reads only `#{pane_in_mode}`; when the first read says a mode owns the
+pane, it confirms that answer once at the refusal edge. Two positive reads
+preserve copy-mode untouched, while a changed zero means tmux routes keys to the
+pty now and avoids parking an idle recipient behind a mode that already ended.
+
 ## State explanations instrument the classified read
 
 `gang explain` records match/miss results only while the ordinary live state

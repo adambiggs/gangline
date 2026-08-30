@@ -69,10 +69,13 @@ SH
 
 "$HITCH" tick-copy -c tick-native -d /tmp >/dev/null
 "$HITCH" tick-false -c tick-false-occupied -d /tmp >/dev/null
+"$HITCH" tick-mode -c tick-native -d /tmp >/dev/null
 tick_copy_id="$(window_id tick-copy)"
 tick_copy_pane="$(tmux list-panes -t "$tick_copy_id" -F '#{pane_id}')"
 tick_false_id="$(window_id tick-false)"
 tick_false_pane="$(tmux list-panes -t "$tick_false_id" -F '#{pane_id}')"
+tick_mode_id="$(window_id tick-mode)"
+tick_mode_pane="$(tmux list-panes -t "$tick_mode_id" -F '#{pane_id}')"
 
 # Keep the startup prompt free of hook work so hitch can verify its contract,
 # then establish one explicit native Stop in each fixture with event barriers.
@@ -83,13 +86,63 @@ tmux wait-for "gang-tick-prompt-${tick_copy_pane#%}" &
 tick_copy_prompt_waiter=$!
 tmux wait-for "gang-tick-prompt-${tick_false_pane#%}" &
 tick_false_prompt_waiter=$!
+tmux wait-for "gang-tick-prompt-${tick_mode_pane#%}" &
+tick_mode_prompt_waiter=$!
 tmux send-keys -t "$tick_copy_id" Enter
 tmux send-keys -t "$tick_false_id" Enter
-wait "$tick_copy_prompt_waiter" "$tick_false_prompt_waiter"
+tmux send-keys -t "$tick_mode_id" Enter
+wait "$tick_copy_prompt_waiter" "$tick_false_prompt_waiter" "$tick_mode_prompt_waiter"
 printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_copy_pane" "$GANG" hook >/dev/null
 printf '%s' '{"hook_event_name":"Stop"}' \
   | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_false_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$tick_mode_pane" "$GANG" hook >/dev/null
+
+# A WINDOW GLYPH IS NOT TMUX MODE STATE. The issue arrived with ?name? on the
+# window while tmux itself reported pane_in_mode=0. Reproduce the consequential
+# race deterministically: a PATH-local tmux returns one stale 1 for the first
+# authoritative mode read, then the real zero. Delivery must re-read before it
+# refuses, rather than park an idle recipient until some unrelated boundary.
+tmux rename-window -t "$tick_mode_id" '?tick-mode?'
+equal "the issue-shaped window carries unknown decoration" '?tick-mode?' \
+  "$(tmux display-message -p -t "$tick_mode_id" '#{window_name}')"
+equal "and tmux says its pane is not in a mode" 0 \
+  "$(tmux display-message -p -t "$tick_mode_id" '#{pane_in_mode}')"
+tick_mode_bin="$RUN_ROOT/tick-mode-bin"
+tick_mode_once="$RUN_ROOT/tick-mode-once"
+tick_mode_ledger="$RUN_ROOT/tick-mode-ledger"
+tick_mode_delivered="$RUN_ROOT/tick-mode-delivered"
+tick_real_tmux="$(command -v tmux)"
+mkdir -p "$tick_mode_bin"
+cat > "$tick_mode_bin/tmux" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = display-message ] && [ "\${*: -1}" = '#{pane_in_mode}' ]; then
+  if [ ! -e '$tick_mode_once' ]; then
+    : > '$tick_mode_once'
+    printf '1\n' >> '$tick_mode_ledger'
+    printf '1\n'
+    exit 0
+  fi
+  mode="\$('$tick_real_tmux' "\$@")" || exit \$?
+  printf '%s\n' "\$mode" >> '$tick_mode_ledger'
+  printf '%s\n' "\$mode"
+  exit 0
+fi
+exec '$tick_real_tmux' "\$@"
+SH
+chmod +x "$tick_mode_bin/tmux"
+tick_mode_out="$(printf ": > '%s'" "$tick_mode_delivered" |
+  PATH="$tick_mode_bin:$PATH" GANG_TEST_TICK_MODE=sync \
+  "$GANG" send --to tick-mode --from tester --stdin 2>&1)"
+excludes "a stale mode sample is re-read before refusing the decorated window" \
+  "$tick_mode_out" "tmux mode owns"
+equal "the decision consumed the stale one and the current zero" '1 0 ' \
+  "$(awk 'NR <= 2 { printf "%s ", $0 }' "$tick_mode_ledger")"
+equal "the same invocation reaches the idle recipient" present \
+  "$([ -e "$tick_mode_delivered" ] && printf present || printf absent)"
+equal "and leaves no delivery waiting for an idle turn" 0 \
+  "$("$GANG" roster --porcelain | awk -F '\t' '$1 == "tick-mode" { print $4 }')"
 
 # Copy-mode owns tmux's key table, so both actions remain live state and type
 # nothing. No later recipient boundary is raised between this refusal and the

@@ -396,9 +396,11 @@ submits it, and reports success only after verification.
 Gangline refuses a missing or occupied composer, a human draft, tmux copy-mode,
 unknown state, and unsafe mid-turn input. Copy-mode is operator-owned: Gangline
 does not cancel it, and checks `#{pane_in_mode}` before every paste, submit,
-queue-recall, clear, and interrupt key. A collar may declare that its native
-harness accepts ordinary mid-turn input, or that a free mid-turn composer
-accepts attributed spool entries as native steering.
+queue-recall, clear, and interrupt key. A positive mode read is confirmed once
+before refusal, so a mode that ended between reads does not strand an idle
+recipient; window-name state glyphs never enter this decision. A collar may
+declare that its native harness accepts ordinary mid-turn input, or that a free
+mid-turn composer accepts attributed spool entries as native steering.
 
 A refusal on a box that is not provably empty classifies what Gangline read, in
 one word with the look or recovery that settles it: `draft` (a human line
