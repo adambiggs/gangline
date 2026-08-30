@@ -817,6 +817,59 @@ equal "an answered barrier inside a command substitution closes it" \
   "$(tmux wait-for "$barrier_probe_channel-answered-in-substitution" \
     && printf answered)"
 
+# AND IT REACHES A WAITER INSIDE A PANE, which is the only population that has
+# ever wedged: on both measured incidents the blocked client was a fixture shell
+# in a pane, waiting on the very server running that pane. Every check above
+# runs the ceiling from the suite's own shell, where PATH is set two lines after
+# the shim is written. A pane's environment does not come from the client that
+# opened the window — it comes from the tmux SERVER, as it stood when the server
+# started — so whether the ceiling covers a pane at all is a fact about the
+# order this run sets PATH in and starts its server in. Nothing asserted it, and
+# a reordering that took it away would be silent in exactly the place the wedges
+# happen.
+#
+# THE CLOCK IS SCALED, NOT STOPPED, for the reason the probes above are: the
+# subject IS an expiry. THE MARGIN, MEASURED 2026-08-30:
+#
+#   pane-side barrier answered before it blocked   29ms (pane launch included)
+#   this fixture's ceiling                         2s
+#   the suite's ceiling                            120s
+#
+# Seventy times the latency it bounds, and a sixtieth of the budget a real
+# barrier gets, so this spends two seconds to prove that two seconds are enough.
+#
+# THE VERDICT COMES BACK DOWN A PIPE THE RUN OWNS, not down a second tmux
+# channel: a barrier reporting on the tmux transport cannot be carried by it.
+barrier_pane_channel="test-pane-never-signalled-$$"
+barrier_pane_rc_file="$RUN_ROOT/barrier-pane-rc"
+barrier_pane_err="$RUN_ROOT/barrier-pane-err"
+barrier_pane_done="$RUN_ROOT/barrier-pane-done"
+mkfifo "$barrier_pane_done"
+cat > "$RUN_ROOT/barrier-pane.sh" <<SH
+#!/bin/sh
+rc=0
+GANG_TEST_WAIT_CEILING=2 GANG_TEST_WAIT_LEDGER='$barrier_probe_ledger' \\
+  tmux wait-for '$barrier_pane_channel' 2> '$barrier_pane_err' || rc=\$?
+printf '%s' "\$rc" > '$barrier_pane_rc_file'
+printf x > '$barrier_pane_done'
+exec cat
+SH
+chmod +x "$RUN_ROOT/barrier-pane.sh"
+barrier_pane_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n barrier-pane "$RUN_ROOT/barrier-pane.sh")"
+barrier_pane_byte=""
+barrier_pane_read_rc=0
+IFS= read -r -n 1 barrier_pane_byte < "$barrier_pane_done" || barrier_pane_read_rc=$?
+equal "the pane-side barrier reported a verdict rather than parking the run" \
+  "0 x" "$barrier_pane_read_rc $barrier_pane_byte"
+equal "the ceiling cuts off a barrier waiting inside a pane" \
+  "111" "$(<"$barrier_pane_rc_file")"
+contains "and names the pane-side barrier it cut off" \
+  "$(<"$barrier_pane_err")" "$barrier_pane_channel"
+equal "the run's own barrier ledger is still untouched" "" \
+  "$(cat "$RUN_ROOT/wedged-barriers" 2>/dev/null || true)"
+tmux kill-window -t "$barrier_pane_id"
+
 unadopted_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n unadopted "PS1='❯ ' bash --norc")"
 unadopted_pane="$(tmux list-panes -t "$unadopted_id" -F '#{pane_id}')"
