@@ -424,6 +424,11 @@ positive evidence the composer is ready with no such last-witnessed resource.
 `!occupied!` means a native UI owns the composer. `?unknown?` means the
 available evidence can no longer answer truthfully.
 
+`!dead!` means tmux reports that every pane in the retained window has exited.
+The screen may still contain a composer, transcript, or death banner, but no
+process is running behind it; clear or relaunch the window instead of waiting
+on its painted state.
+
 `!session-lost!` means the live native session holding a pane contradicts the
 session registered for that agent. Treat it as an identity failure, not an idle
 or busy verdict: delivery is blocked until the intended session is re-hitched.
