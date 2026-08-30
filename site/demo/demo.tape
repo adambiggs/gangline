@@ -1,4 +1,4 @@
-# Gangline demo: a real Claude Code lead and Codex worker in a disposable team.
+# Gangline demo: talk to a real Claude Code lead and Codex worker, then watch them.
 
 Output site/demo.gif
 Output site/demo.mp4
@@ -10,10 +10,11 @@ Set Height 720
 Set Padding 18
 Set Theme "GitHub Dark"
 Set WaitTimeout 300s
-Set TypingSpeed 28ms
+Set TypingSpeed 32ms
 
 Env GANG_SESSION "gangline-demo"
 Env GANG_COLLAR "claude-code"
+Env VISUAL "vim -f -i NONE"
 
 Hide
 Type "unset TMUX TMUX_PANE; PS1='$ '; cd /tmp/gangline-demo-run; clear"
@@ -21,68 +22,64 @@ Enter
 Show
 
 # Native harnesses become ordinary named tmux windows.
-Type "gang hitch lead -c claude-code -d /tmp"
+Type "gang hitch lead -c claude-code -d /tmp -m sonnet -e high"
 Enter
 Wait+Screen@120s /delivered startup contract to lead/
 Sleep 2s
-Hide
-Type "tmux kill-window -t gangline-demo:sandbox-proof"
-Enter
-Show
-Type "gang hitch worker -c codex -d /tmp"
+Type "gang hitch worker -c codex -d /tmp -m gpt-5.6-terra -e high"
 Enter
 Wait+Screen@120s /delivered startup contract to worker/
 Sleep 2s
-Type "gang roster"
-Enter
-Wait+Screen@30s /worker/
-Sleep 4s
 
-# The operator supplies a goal, not a coordination schema.
+# Attach is the view: these are the harnesses themselves, in named tmux windows.
 Type "clear"
 Enter
-Type@12ms `printf '%s\n' 'Use gang send --to worker --stdin to ask worker to read /tmp/gangline-demo-run/TASK.md, write /tmp/gangline-demo-run/answer.txt containing exactly substrate, and prove it with wc -c and od only; do not print file-owner metadata. You own only delegation and verification: do not edit the file yourself. After delegating, end your turn immediately; do not run gang wait, status, or capture, and do not inspect answer.txt until the worker report starts a later turn. Then verify the result and finish with exactly the two words TEAM and READY separated by one space.' | gang send --to lead --from operator --stdin`
+Type "gang attach"
+Sleep 1s
+Hide
+Enter
+Sleep 1s
+Ctrl+b
+Type "w"
+Sleep 1s
+Show
+Sleep 5s
+Hide
+Escape
+Ctrl+b
+Type "d"
+Sleep 2s
+Show
+
+# Talk opens a real editor; closing it delivers through Gangline's verified path.
+Type "clear"
+Enter
+Type "gang talk lead"
+Enter
+Wait+Screen@30s /gang-talk\./
+Type "i"
+Type@45ms "Ask worker to read /tmp/gangline-demo-run/TASK.md."
+Enter
+Type@45ms "Verify the result, then finish with: TEAM READY"
+Sleep 2s
+Escape
+Type ":wq"
 Enter
 Wait+Screen@60s /delivered to lead as/
-Sleep 4s
+Sleep 3s
 
-# Cut inference time, but gate the cut on the requested artifact.
+# Let the native team work; neither inference nor polling is part of the cut.
 Hide
 Type `while [ ! -f answer.txt ]; do sleep 1; done; echo ARTIFACT-"READY"`
 Enter
 Wait+Screen@300s /ARTIFACT-READY/
-Type "clear"
-Enter
-Sleep 500ms
-Show
-Type "gang capture worker 8"
-Enter
-Wait+Screen@30s /substrate/
-Sleep 8s
-
-# The lead receives the worker's attributed report and verifies the result.
-# The literal success phrase is absent from the request above, so this cannot
-# pass by rediscovering the operator's own words in the lead pane.
-Hide
-Type `while ! gang capture lead 40 2>/dev/null | grep -q 'TEAM READY'; do sleep 1; done; echo LEAD-"READY"`
+Type `while ! gang capture lead 20 2>/dev/null | grep -q 'TEAM READY'; do sleep 1; done; echo LEAD-"READY"`
 Enter
 Wait+Screen@300s /LEAD-READY/
 Type "clear"
 Enter
 Sleep 500ms
 Show
-Type "gang capture lead 40"
-Enter
-Wait+Screen@30s /TEAM READY/
-Sleep 8s
-
-# Gangline still owns only the transparent substrate and current state.
-Type "clear"
-Enter
-Type "gang roster"
-Enter
-Wait+Screen@30s /worker/
-Sleep 5s
 Type "cat answer.txt"
 Enter
 Wait+Screen@30s /substrate/

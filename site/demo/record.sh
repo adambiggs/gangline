@@ -6,6 +6,7 @@ set -euo pipefail
 repo=$(cd "$(dirname "$0")/../.." && pwd)
 demo_root=/tmp/gangline-demo-run
 demo_session=gangline-demo
+proof_session=gangline-demo-proof
 vhs_tmp=$(mktemp -d /tmp/gangline-vhs.XXXXXX)
 demo_tmux_root=$(mktemp -d /tmp/gangline-demo-tmux.XXXXXX)
 
@@ -44,6 +45,10 @@ export PATH
   echo "refusing unexpected demo session: $demo_session" >&2
   exit 1
 }
+[ "$proof_session" = gangline-demo-proof ] || {
+  echo "refusing unexpected proof session: $proof_session" >&2
+  exit 1
+}
 
 for tool in vhs ffmpeg ttyd chromium tmux gang claude codex git; do
   command -v "$tool" >/dev/null || {
@@ -67,16 +72,19 @@ rm -rf -- "$demo_root"
 mkdir -p "$demo_root"
 git -C "$demo_root" init -q
 printf '%s\n' \
-  'Read this file, then write answer.txt containing exactly the single word substrate.' \
+  'Read this file, then write /tmp/gangline-demo-run/answer.txt containing exactly the single word substrate.' \
   > "$demo_root/TASK.md"
 
-# Establish and prove the private server before either native agent launches.
-tmux new-session -d -s "$demo_session" -n sandbox-proof 'tail -f /dev/null'
-[ "$(tmux list-sessions -F '#S')" = "$demo_session" ] || {
+# Establish and prove the private socket before either native agent launches.
+# Ending its only proof session lets tmux exit; hitch then creates the recorded
+# team on the same isolated socket root without an unregistered window in it.
+tmux new-session -d -s "$proof_session" -n socket-proof 'tail -f /dev/null'
+[ "$(tmux list-sessions -F '#S')" = "$proof_session" ] || {
   echo "private demo server contains an unexpected session" >&2
   tmux list-sessions >&2
   exit 1
 }
+tmux kill-session -t "=$proof_session"
 
 cd "$repo"
 GANG_CONFIG_DIR="${GANG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/gangline}" \
