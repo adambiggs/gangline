@@ -1646,6 +1646,36 @@ done
 
 "$GANG" drop refused >/dev/null
 
+# A COLLAR STATUS GANGLINE DOES NOT KNOW IS NOT "NO COMPOSER". The collar
+# contract may grow another positive status, or a reader may fail with an exit
+# Gangline has never assigned; either way the raw status is the only fact the
+# classifier owns. Drive that answer through the ordinary status path against
+# a live pane. Before issue #158, input_read probed the healthy pane, converted
+# this 17 to status 1, and state_now confidently reported occupied.
+cat > "$RUN_ROOT/collars/unrecognised-input.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+collar_input() { return 17; }
+SH
+"$HITCH" unrecognised-input -c bash -d /tmp >/dev/null
+tmux set-option -w -t "$(window_id unrecognised-input)" \
+  @gl_collar unrecognised-input
+unrecognised_input_rc=0
+unrecognised_input_status="$("$GANG" status unrecognised-input 2>&1)" \
+  || unrecognised_input_rc=$?
+equal "an unrecognised collar input status fails the state read loudly" \
+  1 "$unrecognised_input_rc"
+contains "the refusal preserves the raw collar status" \
+  "$unrecognised_input_status" "status 17"
+contains "and names the composer state as unknown" \
+  "$unrecognised_input_status" "unknown"
+excludes "so the unread collar result is never reported as occupancy" \
+  "$unrecognised_input_status" "!occupied!"
+equal "the unrecognised-status fixture remained a live pane" 0 \
+  "$(tmux display-message -p -t "$(window_id unrecognised-input)" '#{pane_dead}')"
+"$GANG" drop unrecognised-input >/dev/null
+
 # A REFUSAL THAT HEALS, THROUGH A COLLAR THAT CANNOT REPORT ONE. Gang asks the
 # pane directly when a collar answers "no box", and that probe can only turn an
 # absence back into an unknown while the transport is still refusing. A refusal
