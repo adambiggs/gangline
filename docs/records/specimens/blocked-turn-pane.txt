@@ -1,0 +1,30 @@
+A pane frame from a window in the blocked state: the turn is over and the
+composer is free, yet the turn produced no work.
+
+Placeholders stand in for the model name, the request id and the error class,
+and the surrounding envelope, recap and footer rows are omitted. The prose of
+this error is per-model and the design relies on none of it; the frame is kept
+for its shape, which is unaltered.
+
+  Ran 1 shell command
+
+◍ API Error: <model>'s safeguards flagged this message
+  (https://www.anthropic.com/legal/aup). Our intentionally
+  broad safeguards allow us to deliver more capabilities
+  faster, but can sometimes flag legitimate coding,
+  cybersecurity, and biology tasks. Claude Code can't respond
+  to this message with <model>.
+
+  Double press esc to edit your last message, or try a
+  different model with /model.
+
+  Send feedback with /feedback or learn more:
+  https://support.claude.com/en/articles/15363606
+
+  Details: `[<class>]`
+
+  Request ID: <redacted>
+
+✻ Cooked for 23s · done
+
+(an empty composer follows, drawn normally)

@@ -1,0 +1,13 @@
+Specimen: `gang explain` against the window showing the frame in
+blocked-turn-pane.txt. Redacted: the agent name and the pane id. Every verdict
+below is as printed.
+
+  agent: <redacted>
+  pane: <redacted>
+  collar: claude-code
+  state: ~idle~
+  GANG_OCCUPIED_REGEX: did not match
+    rule: ^ +❯|Esc to
+  collar_bricked: did not match
+  GANG_BUSY_REGEX: did not match
+    rule: ^[^ ] [A-Z][a-zé]+(…|\.\.\.) *(\(|$)|Retrying in [0-9]+s|API Error: 529 Overloaded\.|▰|▱

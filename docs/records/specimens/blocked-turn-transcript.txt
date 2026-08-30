@@ -1,0 +1,12 @@
+Specimen: the tail of the harness transcript bound to that same window, reduced
+to the fields the fatal reader consults. The turn is over — no further assistant
+record follows — and the error record is structurally marked.
+
+  {"type":"user",      ...}
+  {"type":"attachment",...}
+  {"type":"system",    "subtype":"model_refusal_no_fallback", ...}
+  {"type":"assistant", "isApiErrorMessage":true, "error":"invalid_request", ...}
+  {"type":"system",    "subtype":"turn_duration", ...}
+
+`claude_record_read` mode `fatal` walks back to the assistant record and returns
+absent, because `invalid_request` is not in its allowlist of error values.
