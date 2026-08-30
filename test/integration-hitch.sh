@@ -1128,13 +1128,13 @@ printf 'TAIL_MARK\n\n\n' > "$DOCTRINE_CASES/trailing/DOCTRINE.md"
 : > "$RUN_ROOT/doctrine-queue-arm"
 if trailing_out="$(GANG_CONFIG_DIR="$DOCTRINE_CASES/trailing" \
   "$GANG" hitch doctrine-trailing -c doctrine-queueing -d /tmp 2>&1)"; then
-  fail "the trailing-newline witness parks the startup contract" \
+  fail "the trailing-newline witness leaves the startup outcome unknown" \
     "hitch unexpectedly succeeded"
 else
   case "$trailing_out" in
-    *"parked it in its own input queue"*)
-      pass "the trailing-newline witness parks the startup contract" ;;
-    *) fail "the trailing-newline witness parks the startup contract" "$trailing_out" ;;
+    *"submission outcome unknown"*)
+      pass "the trailing-newline witness leaves the startup outcome unknown" ;;
+    *) fail "the trailing-newline witness leaves the startup outcome unknown" "$trailing_out" ;;
   esac
 fi
 trailing_id="$(window_id doctrine-trailing)"

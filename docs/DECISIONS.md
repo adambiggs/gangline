@@ -133,16 +133,18 @@ cannot submit it during its own turn.
 A harness may accept the Enter and park the message in its own input queue —
 claude's queue strand renders the parked body exactly like a submitted prompt
 and empties the composer, so "the box changed" cannot prove entry into the
-session. The one place the states differ is the composer itself, which reads
-as the harness's queue hint; the collar declares that evidence
-(`GANG_QUEUED_REGEX`), matched against the box reading only so a delivered
-body quoting the hint can never trip it. Parked input is a failed delivery
-named with the recovery `gang flush` performs, before pasting and after Enter
-alike, and an unreadable verification capture in the queue check is ambiguity
-that fails closed. A hard-stuck variant re-queues even typed input and the
-recalled body while reporting idle, and nothing drains; its recovery — drop and
-resume, re-sending what the queue swallowed — belongs to the operator, never to
-gang.
+session. The collar declares the queue hint (`GANG_QUEUED_REGEX`), matched
+against the box reading only so a delivered body quoting the hint can never
+trip it. When the hint already stands before a delivery, it is current queue
+evidence and Gangline does not paste another body into it. When the hint is
+first observed after Gangline presses Enter, it does not settle that Enter's
+fate: the session can accept the turn before the next composer frame paints the
+same hint. That outcome is unverified, distinct from both delivered and parked;
+Gangline records the body for conditional recovery but does not prescribe a
+flush, re-send, or drop until the transcript or current context confirms what
+happened. The same rule applies after a recalled body and to deferred
+self-compaction, where an automatic retry could compact twice. An unreadable
+verification capture remains ambiguity that fails closed.
 
 The contract is scoped to verified harness renderings: the pin is the
 composer hint observed on claude-code 2.1.223, an unobserved version narrows

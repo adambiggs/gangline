@@ -717,21 +717,23 @@ EOF
       ;;
     flush) cat <<'EOF'
 gang flush
-  Recover a message the harness parked in its
-  own input queue instead of taking it.
+  Recover a message confirmed to be parked in
+  the harness's own input queue.
 
   gang flush [name]
 
-  Reach for it only when a send says the
-  harness parked the message in its own queue
-  and names gang flush. An ordinary "queued
+  Reach for it only after session transcript or
+  current context confirms the body is parked.
+  A queue hint first seen after Enter is not
+  proof: it can race a turn already entered.
+  An ordinary "queued
   for <name>" is gang's own spool instead, and
   needs nothing: it enters the session at the
   next turn boundary.
 
   Gang presses the collar's recall key, reads
   the loaded body back against the one it
-  watched get parked, and presses Enter only
+  recorded with the hint, and presses Enter only
   on an exact match.
 
   [name]  agent to recover for (default:
@@ -2590,8 +2592,8 @@ self_compact_failed_read() { # $1 window -> only a failure current for its state
   printf '%s' "$failed"
 }
 
-self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled|dropped
-  local name body
+self_compact_note() { # $1 window id, $2 last line, $3 rescheduled|unverified|dropped
+  local name body fragment
   name="$(agent_name_of "$1")"
   spool_available "$1" "$name" || return 1
   # WORDED FOR AN ARRIVAL LATER THAN ITS CAUSE. A spooled note waits for a turn
@@ -2602,10 +2604,15 @@ self_compact_note() { # $1 window id, $2 the attempt's last line, $3 rescheduled
   # names, and sends the agent to the state rather than asserting it.
   case "$3" in
     rescheduled) body="A self-compaction you scheduled did not run at a turn boundary: $2 It was put back rather than dropped, so gang retries it on a later cooperative tick or native boundary. Run gang status to see whether it is still pending." ;;
+    unverified) body="A self-compaction you scheduled may have run at a turn boundary, but Gangline could not verify its submission: $2 Gangline did not schedule a retry because repeating an operation that may have run could compact twice. Inspect your current context and the pane or session evidence now; request another compaction only if that evidence shows this one did not run." ;;
     *) body="A self-compaction you scheduled did not run and was NOT put back: $2 Your context was not compacted at that boundary and nothing will retry it. Run gang status, then gang compact again." ;;
   esac
+  case "$3" in
+    unverified) fragment="self-compaction outcome unknown" ;;
+    *) fragment="self-compaction did not run" ;;
+  esac
   envelope gangline "$body"
-  spool_write "$1" gangline "$ENVELOPE" "self-compaction did not run"
+  spool_write "$1" gangline "$ENVELOPE" "$fragment"
 }
 
 self_compact_claim_failed() { # $1 window, $2 request token, $3 claim diagnostic
@@ -2715,6 +2722,15 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token
             && self_compact_note "$win" "$err" rescheduled; then
            tmux set-option -w -t "$win" @gl_self_compact_noted "$request" 2>/dev/null || true
          fi ;;
+      # A POST-ENTER QUEUE HINT DOES NOT SETTLE THE COMMAND'S FATE. The
+      # compaction may already have run before the next composer frame painted
+      # that hint. Restoring the request here can compact twice, so preserve
+      # the uncertainty and require direct context/session evidence instead.
+      5) [ -n "$err" ] || err="the command was entered, but its submission could not be verified."
+         tmux set-option -w -t "$win" @gl_self_compact_failed \
+           "submission outcome unknown: $err No retry was scheduled because the compaction may already have run." 2>/dev/null || true
+         tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
+         self_compact_note "$win" "$err" unverified || true ;;
       *) [ -n "$err" ] || err="self-compaction dispatcher failed"
          tmux set-option -w -t "$win" @gl_self_compact_failed "$err" 2>/dev/null || true
          tmux set-option -uw -t "$win" @gl_self_compact_noted 2>/dev/null || true
@@ -3902,7 +3918,7 @@ tick_full_pass_once() {
         self_compact_dispatch "$id" "$collar" sync
         pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
         if [ -z "$pending" ] && self_compact_failed_read "$id" | grep -q .; then
-          printf 'tick self-compaction failure for %s: %s\n' "$agent" "$(self_compact_failed_read "$id")" >&2
+          printf 'tick self-compaction issue for %s: %s\n' "$agent" "$(self_compact_failed_read "$id")" >&2
           rc=1
         fi
       fi
@@ -5260,6 +5276,10 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
     return
   fi
   if box_queued "$2"; then
+    if [ "$(tmux show-options -wqv -t "$1" @gl_parked_unverified 2>/dev/null)" = 1 ]; then
+      printf 'queue-hint-unverified: first observed after Enter, so it may be a parked body or may have raced an entered turn; inspect the session before gang flush %s' "$3"
+      return
+    fi
     printf 'parked: the harness queued earlier input (gang flush %s)' "$3"
     return
   fi
@@ -5305,11 +5325,13 @@ staged_current() { # $1 = window id -> the record, freshness-checked at read tim
 }
 
 # THE THIRD STATE IS CLOSED BY A LATER READ, never by a watcher. Gang records
-# that the harness parked a body; the composer is fresher evidence than that
-# record, and any command that reports on this window re-reads it here. A hint
-# that is gone means the harness drained its queue, so the record retires and
-# leaves the same mark stage_forget leaves — the absence of a record has two
-# causes, and "it drained" must not read as "there was never one".
+# a queue-like composer reading; @gl_parked_unverified distinguishes one first
+# observed after Enter from a queue already standing before an operation. The
+# composer is fresher evidence than that record, and any command that reports
+# on this window re-reads it here. A hint that is gone means the recorded
+# obstruction is gone, so the record retires and leaves the same mark
+# stage_forget leaves — the absence of a record has two causes, and "it is gone"
+# must not read as "there was never one".
 #
 # Keyed on the declared hint rather than on emptiness: an unreadable box refutes
 # nothing, so the record stands and the state stays reported.
@@ -5321,6 +5343,7 @@ parked_current() { # $1 = window id -> the parked body, freshness-checked at rea
   if box="$(landing_zone "$1")" && ! box_queued "$box"; then
     tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
     tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_parked_unverified 2>/dev/null || true
     tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
     return 0
   fi
@@ -5342,16 +5365,17 @@ stage_forget() { # $1 = window id
   # against either.
   #
   # Retiring it leaves a mark, because the ABSENCE of a record has two causes
-  # an operator must not confuse: gang never watched a park here, or it did and
-  # the queue has since drained on its own — which is what a harness does when
-  # a compaction ends. Both reach flush as an empty @gl_parked, and reaching
-  # for flush a moment too late is how an operator gets told "no record" about
-  # a message that was delivered.
+  # an operator must not confuse: gang never recorded a queue-like hint here,
+  # or it did and that hint has since disappeared — which can happen when a
+  # harness drains after compaction. Both reach flush as an empty @gl_parked,
+  # and reaching for flush a moment too late is how an operator gets told "no
+  # record" about a message that was delivered.
   if [ -n "$(tmux show-options -wqv -t "$1" @gl_parked 2>/dev/null)" ]; then
     tmux set-option -w -t "$1" @gl_parked_drained 1 2>/dev/null || true
   fi
   tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_parked_unverified 2>/dev/null || true
 }
 
 clear_box() { # $1 = window id, $2 = the box its caller just read (optional second
@@ -5625,8 +5649,9 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   stage_forget "$1"
 }
 
-parked_record() { # $1 window id, $2 whole composer reading before the parked Enter,
-                  # $3 the body gang composed and pasted
+parked_record() { # $1 window id, $2 whole composer reading before Enter whose
+                  # post-Enter check showed queue evidence, $3 composed body,
+                  # $4 = unverified if the Enter outcome is uncertain
   [ -z "$2" ] || tmux set-option -w -t "$1" @gl_parked "$2" 2>/dev/null || true
   # THE BODY, BESIDE THE RENDERING OF IT. The reading above says what the
   # composer looked like with this message in it, which is what later reads
@@ -5637,6 +5662,11 @@ parked_record() { # $1 window id, $2 whole composer reading before the parked En
   # A fresh park replaces the history: whatever drained before this one is no
   # longer the answer to "where did my message go".
   [ -z "$2" ] || tmux set-option -uw -t "$1" @gl_parked_drained 2>/dev/null || true
+  if [ -n "$2" ] && [ "${4:-}" = unverified ]; then
+    tmux set-option -w -t "$1" @gl_parked_unverified 1 2>/dev/null || true
+  else
+    tmux set-option -uw -t "$1" @gl_parked_unverified 2>/dev/null || true
+  fi
 }
 
 submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the Enter went against,
@@ -5652,14 +5682,15 @@ submit_parked() { # $1 window id, $2 fragment, $3 paste|recall, $4 the box the E
     # freshness reads that ask whether this park is still the state of the
     # window — never as the artifact a recovery compares against.
     #
-    # Recorded HERE and only here: this is the one moment gang knows both that
-    # the harness parked something and exactly which body it parked.
-    parked_record "$1" "$4" "${5:-}"
-    stage_record "$1" "'$2' was pasted and Enter sent, but the harness parked it in its own input queue — it never entered the session; recover it with gang flush $tname" ""
-    die "submit NOT verified: '$2' entered the composer of $tname but the harness parked it in its own input queue instead of the session. The Enter queued rather than submitted; recover it with gang flush $tname. If even that re-queues, the queue is hard-stuck: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
+    # Recorded HERE and only here: this is the one moment gang knows both which
+    # post-Enter hint it saw and exactly which body may be behind that hint.
+    parked_record "$1" "$4" "${5:-}" unverified
+    stage_record "$1" "'$2' was pasted and Enter sent; a queue hint appeared afterwards, but that hint can race an entered turn, so the submission outcome is unknown" ""
+    unverified "submission outcome unknown, and submission is NOT ruled out: '$2' entered the composer of $tname and Enter was pressed. The queue hint observed afterwards can describe parked input or race a turn already accepted by the session, so the body may already have entered the session. Gang will not flush or send it again on a guess; check the recipient's transcript or current context before gang flush $tname or sending it again"
   fi
-  stage_record "$1" "'$2' was recalled out of the harness's queue and Enter sent, and the harness parked it again — it never entered the session" ""
-  die "flush NOT verified: '$2' was loaded back into the composer of $tname and the Enter parked it in the harness's queue again. The queue is not draining, so no keystroke gang can send will submit it: gang drop $tname and hitch --resume, then re-send — parked messages do not survive the harness"
+  parked_record "$1" "$4" "${5:-}" unverified
+  stage_record "$1" "'$2' was recalled and Enter sent; a queue hint appeared afterwards, but that hint can race an entered turn, so the flush outcome is unknown" ""
+  unverified "flush outcome unknown, and submission is NOT ruled out: '$2' was loaded back into the composer of $tname and Enter was pressed. The queue hint observed afterwards can describe a body parked again or race a turn already accepted by the session, so the body may already have entered the session. Gang will not press Enter or send it again on a guess; check the recipient's transcript or current context before gang flush $tname or sending it again"
 }
 
 context_now() { # $1 = window id, collar loaded; read the native source
@@ -7699,13 +7730,14 @@ flush_stranded() { # $1 = target name
 }
 
 # The recovery gang already diagnoses, performed as a verified operation rather
-# than described in a refusal. Everything it needs is evidence it already owns:
-# the collar's queue hint says the composer is parked, the collar's own recall
-# key loads the parked body, and the record written when gang watched the
-# harness park it says WHICH body must come back. No record, no hint, or a
-# readback that does not match, and no Enter is pressed.
+# than described in a refusal. The collar's queue hint identifies the recovery
+# surface, its recall key loads a body, and Gangline's record says WHICH body
+# must come back. A post-Enter record is not itself proof that the body is still
+# parked, so flush warns that transcript/current-context confirmation belongs
+# before this command. No record, no hint, or a readback that does not match,
+# and no Enter is pressed.
 cmd_flush() {
-  local name="${1:-}" parked body frag box loaded
+  local name="${1:-}" parked body frag box loaded unverified_record
   [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -7722,9 +7754,12 @@ cmd_flush() {
   parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
   if [ -z "$parked" ]; then
     [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_drained)" ] \
-      || refuse "flush: the message gang watched the harness park in '$name' is NOT parked any more — its composer came back empty, so the queue drained itself (a harness does this when a compaction ends) or somebody submitted it by hand. There is nothing left here to recover, and this is not the same as never having been parked: look for it in the transcript before sending it again (gang capture $name)"
-    refuse "flush: gang has no record of a message parked in the queue of '$name'. It recovers only a body it watched the harness park, because that record is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
+      || refuse "flush: the queue hint Gangline recorded in '$name' is gone — its composer came back empty, so the body may have entered at a boundary or been submitted by hand. There is nothing left here to recover, and this is not the same as never having had a record: look for it in the transcript before sending it again (gang capture $name)"
+    refuse "flush: gang has no body recorded alongside a queue hint in '$name'. It recovers only a recorded body, because that is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
   fi
+  unverified_record="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_unverified)"
+  [ "$unverified_record" != 1 ] \
+    || printf "flush: warning: Gangline first saw this queue hint after Enter, so it is not proof the body is parked. Continue only if the recipient's transcript or current context confirms that; otherwise this recovery can submit it twice.\n" >&2
   # THE BODY IS THE RECORD THAT MATTERS, and a park recorded without one is a
   # park gang cannot verify a recovery against — a message parked by an older
   # gang that recorded only the rendering. Saying so is the whole answer here:
@@ -7789,7 +7824,7 @@ cmd_flush() {
   # exactly what a capture of the second rendering can still carry.
   [ "$(flush_canon "$loaded")" = "$(flush_canon "$body")" ] \
     || { stage_record "$AGENT_ID" "'$frag' was recalled out of the harness's queue into this box and read back as something other than the message gang recorded as parked — it is sitting there unsent" "$loaded"
-         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than the message gang parked into the composer of $name — gang submits a recalled body only when the whole of it reads back as the body it watched the harness park. $(flush_stranded "$name")"; }
+         die "flush NOT performed: $GANG_QUEUE_RECALL_KEY loaded something other than Gangline's recorded body into the composer of $name — gang submits a recalled body only when the whole of it reads back exactly as that record. $(flush_stranded "$name")"; }
   submit_verify "$AGENT_ID" "$loaded" "$frag" recall '' "$body"
   lock_release
   printf '%s %s\n' \
@@ -8956,7 +8991,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc parked spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
+  local state self_failed self_pending staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
   local timed_line hitched hitched_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
@@ -8983,20 +9018,30 @@ cmd_status() {
   tick_health_report
   action_status_report "$AGENT_ID"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
-  [ -z "$self_failed" ] \
-    || printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")"
+  if [ -n "$self_failed" ]; then
+    case "$self_failed" in
+      'submission outcome unknown:'*)
+        printf '%s\n' "$(colour "$C_BAD" "self-compaction outcome unknown after Stop: $self_failed")" ;;
+      *) printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")" ;;
+    esac
+  fi
   self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_requested)"
   [ -n "$self_pending" ] \
     || self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_dispatching)"
   [ -z "$self_pending" ] \
     || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
   staged="$(staged_current "$AGENT_ID")"
+  park_unverified="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_unverified 2>/dev/null)"
   # "on record", not "in the input box": the body may sit in the box, in the
   # harness's own queue, or in a state gang could not read — the note carries
   # what is actually known, and its later clearing means the obstruction is
   # gone, never that the recorded body was retroactively delivered.
   if [ -n "$staged" ]; then
-    printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+    if [ "$park_unverified" = 1 ]; then
+      printf '%s\n' "$(colour "$C_BAD" "submission outcome unknown on record: $staged")"
+    else
+      printf '%s\n' "$(colour "$C_BAD" "undelivered input on record: $staged")"
+    fi
     # The record says what gang did; this says what is in that box now, so the
     # operator is not left to read a raw capture and guess.
     staged_box_rc=0
@@ -9004,8 +9049,13 @@ cmd_status() {
     printf '%s\n' "$(colour "$C_BAD" "box: $(box_class "$AGENT_ID" "$staged_box" "$name" "$staged_box_rc")")"
   fi
   parked="$(parked_current "$AGENT_ID")"
-  [ -z "$parked" ] \
-    || printf '%s\n' "$(colour "$C_WORK" "parked native input: the harness queue holds a body Gangline recorded; recover it with gang flush $name")"
+  if [ -n "$parked" ]; then
+    if [ "$park_unverified" = 1 ]; then
+      printf '%s\n' "$(colour "$C_WORK" "submission outcome unknown: the post-Enter queue hint may describe a parked body or race one already submitted; inspect the session before gang flush $name or sending it again")"
+    else
+      printf '%s\n' "$(colour "$C_WORK" "parked native input: the harness queue holds a body Gangline recorded; recover it with gang flush $name")"
+    fi
+  fi
   spooled="$(spool_count "$AGENT_ID")"
   if [ "$spooled" -ne 0 ]; then
     if age="$(spool_oldest_age "$AGENT_ID")"; then

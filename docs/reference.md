@@ -443,14 +443,18 @@ busy marker stays refused until the marker scrolls off or the agent is
 dropped.
 
 An unexpected queue is not delivered: where a collar declares queue evidence,
-an ordinary submission the harness parks is reported as a failed delivery
-naming the `gang flush` recovery, both before pasting and after Enter. The
-exception is a claim that arrived through a collar's explicit `steer` path;
-there, native mid-turn queueing is the declared destination. Gangline records
-the exact pre-Enter composer even though the attributed spool claim retires, so
-status can expose the parked landing and `gang flush` can verify a later recall.
-An unreadable verification capture after Enter remains ambiguity and fails
-closed.
+a hint already present before a new delivery prevents Gangline from pasting
+another body. A hint first observed after Gangline presses Enter is different:
+it can describe parked input or race a turn the session already accepted, so
+Gangline reports the submission outcome as unknown. It retains the exact body
+and composer evidence for conditional recovery, but status requires transcript
+or current-context evidence before `gang flush` or re-send; it does not infer a
+drop-and-resume repair. The exception is a claim that arrived through a collar's
+explicit `steer` path; there, native mid-turn queueing is the declared
+destination. Gangline records the exact composer even though the attributed
+spool claim retires, so status can expose that declared parked landing and
+`gang flush` can verify a later recall. An unreadable verification capture after
+Enter remains ambiguity and fails closed.
 
 This detection is scoped to verified harness renderings: the claude-code pin
 is the composer hint observed on 2.1.223, and a harness version whose
@@ -605,9 +609,10 @@ for a target, stopping each timer before removing the message it would deliver.
 
 Recovers a message the harness parked in its own input queue, as a verified
 operation. Gangline presses the collar's declared recall key, reads the loaded
-composer back against the body it recorded when it watched the harness park the
-message, submits it, and verifies the submission the way any delivery is
-verified.
+composer back against the body it recorded alongside the queue hint, submits
+it, and verifies the submission the way any delivery is verified. When that
+record came from a hint first observed after Enter, transcript or current-
+context evidence must first confirm that the body is parked.
 
 The readback is against the body Gangline composed, never against a second
 reading of the composer: two readings taken at different moments are two

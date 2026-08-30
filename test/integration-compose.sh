@@ -250,13 +250,14 @@ tmux send-keys -t "$(window_id 1)" C-u
 contains "a later cooperative tick delivers after the draft clears" \
   "$(pane 1)" "MARK_DRAFT"
 
-# A harness may park the Enter in its own input queue: the fixture's composer
-# flips to the queue hint once the strand flag exists, exactly as claude
-# 2.1.223 leaves its box reading "Press up to edit queued messages" while the
-# parked preview in the transcript looks like a submitted prompt. The box
-# changing is therefore not proof of entry, and delivery must say so instead
-# of reporting success.
+# A QUEUE HINT FIRST SEEN AFTER ENTER DOES NOT PROVE THE ENTER QUEUED. The
+# fixture's shell executes the submitted command and creates an artifact, then
+# its next prompt flips to the same hint claude 2.1.223 uses for parked input.
+# That deterministic ordering reproduces the issue race: the session consumed
+# the body, while the post-Enter composer alone looks parked. The verdict must
+# remain unverified and must not prescribe the duplicate flush/re-send path.
 queue_clear_channel="test-queue-clear-$$"
+queue_executed="$RUN_ROOT/queue-enter-executed"
 cat > "$RUN_ROOT/queue-rc" <<'RC'
 PS1='❯ '
 PROMPT_COMMAND='if [ -f "$QUEUE_STRAND" ]; then
@@ -277,26 +278,33 @@ SH
 export GANG_COLLARS="$RUN_ROOT/collars"
 "$HITCH" strand -c queueing -d /tmp >/dev/null
 touch "$RUN_ROOT/queue-strand"
-if strand_out="$(printf 'MARK_QUEUED' | "$GANG" send --to strand --from tester --stdin 2>&1)"; then
-  fail "a submission the harness parks in its queue is not a delivery" \
-    "send reported success"
-else
-  pass "a submission the harness parks in its queue is not a delivery"
-fi
-contains "the failure names the parked queue" \
-  "$strand_out" "parked it in its own input queue"
-contains "and hands over the automated recovery" "$strand_out" "gang flush strand"
-contains "the parked message is recorded against the window" \
-  "$(tmux show-options -wqv -t "$(window_id strand)" @gl_staged)" "queue"
+strand_rc=0
+strand_out="$(printf ": > '%s'" "$queue_executed" |
+  "$GANG" send --to strand --from tester --stdin 2>&1)" || strand_rc=$?
+equal "post-Enter queue evidence is an unverified outcome" 5 "$strand_rc"
+equal "the body reached the session despite that queue hint" present \
+  "$([ -e "$queue_executed" ] && printf present || printf absent)"
+contains "the verdict says the body may already have entered" \
+  "$strand_out" "may already have entered the session"
+contains "and requires session evidence before the duplicate recovery" \
+  "$strand_out" "check the recipient's transcript or current context before gang flush strand or sending it again"
+excludes "the uncertain verdict never prescribes destroying the session" \
+  "$strand_out" "gang drop"
+contains "the unknown outcome is recorded against the window" \
+  "$(tmux show-options -wqv -t "$(window_id strand)" @gl_staged)" "outcome is unknown"
+equal "the recovery record retains its unverified provenance" 1 \
+  "$(tmux show-options -wqv -t "$(window_id strand)" @gl_parked_unverified)"
 # The record says what gang did; the status line says what is in the box now.
 # An operator reading a raw capture here sees the harness's queue hint and has
 # to know what it means — the classification says it, with the verb that fixes
 # it, so a parked queue is never diagnosed as somebody's half-written line.
 strand_status="$("$GANG" status strand)"
-contains "status classifies the parked box, not just the record" \
-  "$strand_status" "box: parked:"
-contains "and points at the recovery for that class" \
-  "$strand_status" "gang flush strand"
+contains "status preserves the unknown submission outcome" \
+  "$strand_status" "submission outcome unknown"
+contains "the box classification keeps the post-Enter hint unverified" \
+  "$strand_status" "box: queue-hint-unverified:"
+contains "and status requires evidence before flush" \
+  "$strand_status" "inspect the session before gang flush strand"
 # With the queue still parked, the NEXT default delivery is durably queued
 # before anything is typed. The old refusal was correct only while no universal
 # retry consumer existed; the cooperative tick now owns that retry. Live-only
@@ -326,9 +334,9 @@ contains "live-only adds no second durable copy" \
   "$("$GANG" status strand)" "spooled: 1"
 excludes "live-only types nothing into the parked composer" \
   "$(pane strand)" "MARK_LIVE_QUEUE"
-# Recovery is the collar's word too. This collar declares the evidence and no
-# recall key, so gang knows the composer is parked and does not know which
-# keystroke loads the body back — which is a refusal, never a guessed keypress.
+# Recovery is the collar's word too. This collar declares the queue-like
+# composer evidence and no recall key, so gang cannot know which keystroke
+# loads a body back — which is a refusal, never a guessed keypress.
 if norecall_out="$("$GANG" flush strand 2>&1)"; then
   fail "a collar with no declared recall key refuses to flush" "flush reported success"
 else
@@ -616,9 +624,9 @@ if unrecorded_out="$("$GANG" flush parked 2>&1)"; then
 else
   unrecorded_rc=$?
 fi
-equal "an unrecorded parked message refuses the flush" "3" "$unrecorded_rc"
+equal "a queue hint without a recorded body refuses the flush" "3" "$unrecorded_rc"
 contains "naming the record it will not proceed without" \
-  "$unrecorded_out" "no record of a message parked"
+  "$unrecorded_out" "no body recorded alongside a queue hint"
 tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
 
 # A PARK UNDER A RUNNING TURN IS THE HARNESS WORKING, and every other flush
@@ -689,10 +697,10 @@ else
   drained_record_rc=$?
 fi
 equal "flushing a drained queue refuses" "3" "$drained_record_rc"
-contains "and says the park is gone rather than never recorded" \
-  "$drained_record_out" "NOT parked any more"
-excludes "so it cannot be read as a message that never arrived" \
-  "$drained_record_out" "no record of a message parked"
+contains "and says the recorded queue hint is gone rather than never recorded" \
+  "$drained_record_out" "the queue hint Gangline recorded"
+excludes "so it cannot be read as a queue hint with no recorded body" \
+  "$drained_record_out" "no body recorded alongside a queue hint"
 # Hand the world back the way the next case expects to find it: this one
 # retired the record on purpose, and the readback cases below need it.
 tmux set-option -w -t "$parked_id" @gl_parked "$parked_record"
@@ -1007,13 +1015,11 @@ else
 fi
 flush_settle
 
-# THE DIAGNOSIS THE OPEN-TURN REFUSAL WAS PROTECTING. Refusing a flush against a
-# running turn is only right because a re-park under a turn means the harness is
-# working; the verdict it withholds — this queue drains for nothing gang can
-# send, so drop the agent and hitch --resume — has to stay reachable for the
-# target the verdict is actually about, one at rest. Here nothing is holding a
-# turn open and the strand stays up across the Enter, so the recalled body is
-# parked a second time and that is what the operator is told.
+# A SECOND POST-ENTER HINT IS STILL NOT PROOF OF A SECOND PARK. Refusing a flush
+# against a running turn remains right because the harness is expected to queue
+# there, but an at-rest target does not make its next composer frame a session
+# receipt. The same hint can race the recalled body entering, so the result is
+# unverified and must not revive the old destructive drop/resume prescription.
 : > "$RUN_ROOT/flush-drain"
 flush_settle
 : > "$RUN_ROOT/flush-arm"
@@ -1026,18 +1032,23 @@ else
 fi
 equal "and no turn is open, so nothing refuses ahead of the recall" "" \
   "$(tmux show-options -wqv -t "$parked_id" @gl_turn)"
+repark_rc=0
 if repark_out="$("$GANG" flush parked 2>&1)"; then
   fail "an at-rest target that parks the recalled body again is not reported flushed" \
     "flush reported success"
 else
+  repark_rc=$?
   pass "an at-rest target that parks the recalled body again is not reported flushed"
 fi
-contains "and the verdict is the terminal one, reached rather than described" \
-  "$repark_out" "flush NOT verified"
-contains "naming the recovery that outlives a queue nothing drains" \
+equal "the second post-Enter hint leaves an unverified flush outcome" 5 "$repark_rc"
+contains "and the verdict preserves that unknown outcome" \
+  "$repark_out" "flush outcome unknown"
+excludes "without prescribing a destructive relaunch" \
   "$repark_out" "hitch --resume"
-contains "with the second park recorded against the window" \
-  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "parked it again"
+contains "with the unknown flush recorded against the window" \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_staged)" "flush outcome is unknown"
+equal "and its recovery evidence remains explicitly unverified" 1 \
+  "$(tmux show-options -wqv -t "$parked_id" @gl_parked_unverified)"
 : > "$RUN_ROOT/flush-drain"
 flush_settle
 "$GANG" drop parked >/dev/null
