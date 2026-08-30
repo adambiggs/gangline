@@ -1587,3 +1587,17 @@ ordinary send against the same window.
 
 The full measurement, its raw hook log and the probe that produced it are at
 `~/Documents/agent-artifacts/2026-08-24-stopsmith/issue123-measurement.md`.
+
+## One unusable catalog row costs that row, not the collar
+
+A collar's model enumerator is a producer Gangline does not control. An id
+spelled with characters this vocabulary has no use for — OpenRouter's `~`
+routing prefix, reaching gang through opencode — used to refuse the whole
+catalog, and with it every hitch on that collar on the host, including hitches
+for models on providers whose rows read fine.
+
+A row Gangline cannot read is dropped and named on stderr instead. The model a
+caller asked for is the only row that has to be usable. What stays fatal is
+what would leave nothing readable behind: a producer whose every row is
+unusable, and a repeated id, where the ambiguity is over which row wins rather
+than over whether a row can be used at all.
