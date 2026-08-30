@@ -210,6 +210,19 @@ scanner="$(git config --global --get snubline.piiScanner)" || {
 bash "$scanner" --stdin < body.txt
 ```
 
+### A closing comment on an already-closed issue is silently dropped
+
+`gh issue close --comment` on an issue that is already closed refuses the close,
+discards the comment with it, and still exits 0. A loop closing several issues
+therefore reads as success while publishing nothing on the ones that were
+already shut, and no status distinguishes the two.
+
+A `Closes #N` footer closes its issue the moment the commit reaches the default
+branch, so landing a branch and then closing its issues by hand is exactly the
+order that meets this. Comment with `gh issue comment` where a footer has
+already closed the issue, and read the issue back rather than trusting the close
+command's status.
+
 ## Releases
 
 - Release Please owns release commits, tags, GitHub Releases, and `CHANGELOG.md`.
