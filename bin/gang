@@ -3530,11 +3530,17 @@ tick_health_store() { # $1 ok|failed, $2 message
   mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
 }
 
+tick_log_store() { # $1 ok|FAILED, $2 single-line detail; paths already prepared
+  local tmp="$TICK_LOG.new.${BASHPID:-$$}"
+  printf '%s\t%s\t%s\n' "$1" "$(date +%s)" "$2" > "$tmp" \
+    || return 1
+  mv -f -- "$tmp" "$TICK_LOG" || { rm -f -- "$tmp"; return 1; }
+}
+
 tick_health_ok() {
   tick_paths_set || return 1
   tick_state_prepare
-  printf 'ok\t%s\ttick completed for %s\n' "$(date +%s)" "$SESSION" > "$TICK_LOG" \
-    || return 1
+  tick_log_store ok "tick completed for $SESSION" || return 1
   tick_health_store ok ""
 }
 
@@ -3573,8 +3579,7 @@ tick_health_fail() { # $1 complete worker diagnostic
   note="${note##*$'\n'}"
   tick_paths_set || return 1
   tick_state_prepare
-  printf 'FAILED\t%s\t%s\n' "$(date +%s)" "$(printf '%s' "$1" | config_sanitize)" > "$TICK_LOG" \
-    || return 1
+  tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || return 1
   tick_health_store failed "$note" || return 1
   tick_failure_surface "$(printf '%s' "$note" | config_sanitize)"
 }

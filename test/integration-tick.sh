@@ -345,6 +345,7 @@ equal "and its delivery remains parked for an intended replacement" 1 \
   "$("$GANG" roster --porcelain 2>/dev/null | awk -F '\t' '$1 == "tick-restart" { print $4 }')"
 
 tick_health_file="$(find "$XDG_STATE_HOME/gangline/tick" -type f -name health -print | head -1)"
+tick_log_file="${tick_health_file%/*}/tick.log"
 contains "the failed tick writes its per-team health state" \
   "$(<"$tick_health_file")" $'failed\t'
 contains "status surfaces the last tick failure" \
@@ -372,6 +373,36 @@ equal "a detached tick failure never changes its spawning command result" 0 "$ti
 "$GANG" tick >/dev/null
 excludes "a later successful pass clears the health failure" \
   "$(<"$tick_health_file")" $'failed\t'
+# source-guard: producer@5a0aff3445c2: the synchronous tick immediately above is the only writer in this fixture and an ok-prefixed record is its successful result
+equal "the clean pass records an ok log fixture" ok \
+  "$(case "$(<"$tick_log_file")" in $'ok\t'*) printf ok ;; *) printf other ;; esac)"
+
+# THE ALERT BODY MUST REJECT A SUCCESS RECORD AT THE LAST POSSIBLE READ. A
+# failed controller can reach the alert launch after a newer clean controller
+# replaces the shared log. The event barriers run the real one-shot body in a
+# disposable window on this suite's private server and hold the pane after the
+# body returns, so both its status and complete output are immediate evidence.
+tick_ok_alert_start="gang-tick-ok-alert-start-$$"
+tick_ok_alert_done="gang-tick-ok-alert-done-$$"
+tick_ok_alert_release="gang-tick-ok-alert-release-$$"
+printf -v tick_ok_alert_command \
+  '%q wait-for %q; %q %q; alert_rc=$?; %q set-option -w -t "$TMUX_PANE" @test_tick_alert_rc "$alert_rc"; %q wait-for -S %q; %q wait-for %q; exit "$alert_rc"' \
+  "$REAL_TMUX" "$tick_ok_alert_start" \
+  "$ROOT/statusline/gang-tick-alert.sh" "$tick_log_file" \
+  "$REAL_TMUX" "$REAL_TMUX" "$tick_ok_alert_done" \
+  "$REAL_TMUX" "$tick_ok_alert_release"
+tick_ok_alert_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n tick-ok-alert-probe "$tick_ok_alert_command")"
+tmux wait-for -S "$tick_ok_alert_start"
+tmux wait-for "$tick_ok_alert_done"
+# source-guard: producer@a4c3578f10d4: the prior assertion independently verifies the ok record and the done barrier proves this option came from the real alert body's completed status
+equal "an ok tick log makes the alert body decline cleanly" 0 \
+  "$(tmux show-options -wqv -t "$tick_ok_alert_id" @test_tick_alert_rc)"
+tick_ok_alert_capture="$(tmux capture-pane -pJ -S - -t "$tick_ok_alert_id")"
+# source-guard: producer@d1c27ea27709: the verified ok fixture and done barrier prove the real alert body completed while the held pane preserves its entire output
+equal "an ok tick log emits no alert header, body, or bell" "" \
+  "$tick_ok_alert_capture"
+tmux wait-for -S "$tick_ok_alert_release"
 
 # A CODEX SESSION BEFORE ITS FIRST TURN HOLDS ITS LOCK AND NO ROLLOUT. Codex
 # opens the thread-writer lock as the session opens but creates the rollout
