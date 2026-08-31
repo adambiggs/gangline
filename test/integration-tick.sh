@@ -397,7 +397,14 @@ equal "the contradicted pane receives none of the parked delivery" absent \
 equal "and its delivery remains parked for an intended replacement" 1 \
   "$("$GANG" roster --porcelain 2>/dev/null | awk -F '\t' '$1 == "tick-restart" { print $4 }')"
 
-tick_health_file="$(find "$XDG_STATE_HOME/gangline/tick" -type f -name health -print | head -1)"
+# Health is per team (socket plus session), not a singleton below XDG state.
+# Another private team can legitimately have ticked earlier in this integration
+# run, so selecting the first file would make this fixture read its health and
+# then call the current team's teardown incomplete.
+tick_health_socket="$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')"
+tick_health_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$tick_health_socket" "$GANG_SESSION")"
+tick_health_file="$XDG_STATE_HOME/gangline/tick/$tick_health_digest/health"
 tick_log_file="${tick_health_file%/*}/tick.log"
 contains "the failed tick writes its per-team health state" \
   "$(<"$tick_health_file")" $'failed\t'
