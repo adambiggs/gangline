@@ -366,7 +366,26 @@ cleanup() {
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
 }
-trap cleanup EXIT HUP INT TERM
+# A SIGNAL ENDS THE RUN; IT DOES NOT ANNOTATE IT. One handler for the exit and
+# for the signals reads as if a signalled run stops here, and it does not: a
+# bash signal handler RETURNS to the interrupted flow. The teardown below then
+# runs at the signal — banner, tmux server, RUN_ROOT — and execution resumes
+# with every fixture deleted, so the checks after it fail against nothing and
+# name real assertions while doing it. Two banners print with different counts,
+# which is the run stating twice, differently, how much it covered.
+# Exiting from the signal handler is what stops that flow. The teardown itself
+# is unchanged and still destroys everything this run created; what changes is
+# that nothing executes afterwards. The disposition is cleared first so a second
+# signal arriving during the exit cannot re-enter this and start a second
+# teardown over the first.
+on_signal() { # $1 = signal number, for the conventional 128 + signo status
+  trap - HUP INT TERM
+  exit "$((128 + $1))"
+}
+trap cleanup EXIT
+trap 'on_signal 1' HUP
+trap 'on_signal 2' INT
+trap 'on_signal 15' TERM
 
 export TMUX_TMPDIR="$RUN_ROOT"
 export GANG_CONFIG_DIR="$RUN_ROOT/config"
@@ -474,6 +493,33 @@ equal "the clock reader counts only the duration it was asked about" \
   "$(clock_naps "$clock_cal" 1) $(clock_naps "$clock_cal" 2) $(clock_naps "$clock_cal" 3)"
 equal "and a ledger that was never written answers unknown rather than zero" \
   "unknown" "$(clock_naps "$RUN_ROOT/clock-never-written" 1)"
+
+# THIS RUN'S OWN SIGNAL DISPOSITION IS SOMETHING IT CAN READ NOW. A bash signal
+# handler returns to the interrupted flow, so a teardown installed on TERM does
+# not end a run: it deletes RUN_ROOT and kills the private tmux server, and the
+# remaining checks then execute against nothing and fail while naming real
+# assertions. Whether that happens is decided by two things, and both are
+# readable here without signalling anything — the handler must not return, and
+# TERM must reach it rather than the teardown.
+#
+# The subshell clears EXIT first because a subshell INHERITS it: without that,
+# proving the handler exits would run the teardown and delete this run's
+# fixtures, which is the very failure under test.
+# The status is taken on the assignment itself, because under `set -e` a
+# command substitution that fails ENDS THE SCRIPT at the assignment and the
+# line below it never runs — which is what a handler exiting 143 looks like to
+# the shell reading it.
+signal_handler_rc=0
+signal_handler_out="$( ( trap - EXIT HUP INT TERM; on_signal 15; printf 'RETURNED\n' ) 2>&1 )" \
+  || signal_handler_rc=$?
+equal "the signal handler ends the run instead of returning to it" \
+  "143 []" "$signal_handler_rc [$signal_handler_out]"
+if trap -p TERM | grep -q on_signal; then
+  pass "and a TERM reaches that handler rather than the teardown"
+else
+  fail "and a TERM reaches that handler rather than the teardown" \
+    "TERM is [$(trap -p TERM)], which returns to the run after tearing it down"
+fi
 
 mkdir -p "$RUN_ROOT/no-utf8-bin"
 cat > "$RUN_ROOT/no-utf8-bin/locale" <<'SH'
