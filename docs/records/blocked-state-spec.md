@@ -271,31 +271,28 @@ Anyone extending this vocabulary should assume the same trap is waiting. The
 question to ask of a new name is not "is this work?" but "if I get this wrong in
 the benign direction, which frame stops being detected?"
 
-### Prefer a probe you can run to a reader you can trust
+### `newest_lines` is defined twice in this collar
 
-The inversion above was first written with a slice between two anchors, one of
-which also matched inside `codex_action_read` earlier in the same file. The end
-anchor resolved *before* the start anchor, and the edit silently duplicated the
-whole reader function.
+`codex_action_read` and `codex_blocked_read` each carry their own copy of
+`def newest_lines(path):`. Any edit, patch, or tool that anchors on that
+signature resolves to the first occurrence, which is inside the action reader
+rather than this one. An edit bounded by it duplicates the function it meant to
+change; the duplicate parses, the collar sources without error, and the failure
+surfaces only when the stale copy runs.
 
-It would have passed review by reading. It did not survive one run: every probe
-returned a `NameError` immediately.
+That hazard and the suffix test this section replaced are the same failure. A
+suffix test on `_call` reads as a rule about tool calls and is a rule about the
+last five characters of a name, which is why it admitted `tool_search_output`
+and `mcp_tool_call_end`. An anchor on a function signature reads as a rule about
+one function and is a rule about the first match in a file. Both look specific,
+both are general, and both hold until something in the general set turns up that
+the specific reading never imagined. **When a rule is written as a pattern, ask
+what else matches the pattern rather than what the pattern was for.**
 
-The lesson is narrow and worth obeying — any change that slices, generates, or
-rewrites code needs an executable check, because the failure modes of editing
-are not the failure modes the eye is looking for. Reading the diff is not enough
-when the diff is itself the product of a pattern match.
-
-**Both failures on this page are the same failure.** A suffix test on `_call`
-looked like a rule about tool calls and was actually a rule about the last five
-characters of a name, so it missed `tool_search_output` and `mcp_tool_call_end`.
-A slice anchored on `def newest_lines(path):` looked like a rule about one
-function and was actually a rule about the first match in a file, so it resolved
-inside a different reader. In both cases a rule that reads as specific is
-general, and the gap only shows when something in the general set turns up that
-the specific reading never imagined. That is the generalisation worth carrying
-out of this work: when a rule is expressed as a pattern, ask what else matches
-the pattern — not what the pattern was for.
+It is also why the guards here are executable rather than review-time. A
+duplicated function reads as correct and a vocabulary gap reads as absent, so
+neither is visible to inspection; `test/probes/codex-hollow-turns.py` and the
+fixtures in `test/integration-cli.sh` check both by running.
 
 ### What this reader does NOT cover, and must not grow to
 

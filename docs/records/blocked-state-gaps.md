@@ -95,42 +95,55 @@ The fact and its delivery are different things and only one is the window's
 state. Nothing in `!blocked!` reads `@gl_stall`, which is why it was not changed
 alongside it.
 
-## Method: what went wrong while building this, and how each was caught
+## Standing hazards in this code, and what each would cost
 
-Recorded because the next person to write a collar reader needs this more than
-they need either reader. Three defects, none found by reading.
+Three properties of the code below are load-bearing, and each has a guard
+against it because the failure it permits is silent. What follows states the
+defect and its price, not its history.
 
-**A false argument, believed and repeated.** The codex reader was justified on
-"a codex turn only ever begins from an input, so a newer turn proves someone
-intervened". It is false — about an eighth of turns begin with no input record —
-and it had already been accepted by others on the strength of being stated
-confidently. The reader survives on a weaker claim that is unconditionally true:
-a newer terminator means the record can no longer speak to the older turn,
-whatever opened it. A justification that is merely usually true is worth less
-than the weaker one that always is, and the difference is invisible until
-somebody measures it.
+**The newest-terminator rule needs its weaker justification, not its stronger
+one.** Two arguments support it. The strong one — a codex turn only ever begins
+from an input, so a newer `task_started` proves something was sent — is false:
+about an eighth of codex turns begin with no input record at all, and pure
+auto-compaction turns are the clean case, since the harness opens those itself.
+The weak one is unconditionally true: a newer terminator means the record can no
+longer speak to the older turn, whatever opened it. The reader is correct under
+the second and unsupported under the first. Cost of resting it on the strong
+claim: a spec falsifiable in one command over the rollouts, and a maintainer who
+checks it correctly concluding the reader is unsound when it is not.
 
-**A guard placed in one of two tiers.** Delivery decides in `send_live` before
-it decides in `inject`. Guarding only the inner tier left a blocked window
-answering from whatever its screen still showed — mid-turn, off busy paint the
-finished turn had left behind — and left a quiet one to be typed into. Found by
-the suite, not by inspection, because the wrong answer was still an answer.
+**Delivery decides in two tiers and `send_live` decides first.** A state guard
+present in `inject` alone does not run before `send_live` has already answered.
+A blocked window still carrying busy paint from its finished turn then refuses
+as "mid-turn" — the wrong reason, taken from a screen the ended turn left
+behind — and a blocked window with a quiet screen is typed into and reported
+delivered. That is the original defect reproduced inside its own fix, so both
+tiers ask, in the state read's order, and `test/integration-hooks.sh` asserts
+the refusal does not say "mid-turn" while that paint is on screen.
 
-**An edit that silently duplicated the code it was editing.** An inversion was
-applied by slicing between two anchors, and the end anchor also matched inside a
-different reader earlier in the same file, so it resolved before the start. The
-whole function was duplicated. It would have passed review by reading; it died
-on the first probe run.
+**`collars/codex.sh` defines `newest_lines(path)` twice.** `codex_action_read`
+and `codex_blocked_read` each carry their own copy. Any edit, patch, or tool
+that anchors on that signature resolves to the first occurrence, which is not
+the reader a change to the blocked path means to reach; an edit bounded by it
+duplicates the function instead of modifying it. The duplicate parses, the
+collar sources without error, and the failure appears only when the stale copy
+runs. The property is in the file today and applies to the next edit as much as
+the last.
 
-The two that are the same failure are worth naming together. A suffix test on
-`_call` read as a rule about tool calls and was a rule about the last five
-characters of a name. A slice anchored on a function signature read as a rule
-about one function and was a rule about the first match in a file. Both look
-specific and are general, and both hold until something in the general set turns
-up that the specific reading never imagined. When a rule is written as a
-pattern, ask what else matches the pattern rather than what the pattern was for.
+The first and third are the same failure wearing different clothes, and naming
+the pair is the durable part. A suffix test on `_call` reads as a rule about
+tool calls and is a rule about the last five characters of a name — which is why
+it admitted `tool_search_output` and `mcp_tool_call_end`. A slice anchored on a
+function signature reads as a rule about one function and is a rule about the
+first match in a file. Both look specific and are general, and both hold right
+up until something in the general set turns up that the specific reading never
+imagined. **When a rule is written as a pattern, ask what else matches the
+pattern rather than what the pattern was for.**
 
-The practice that caught all three: drive it. Executable probes over careful
-reading, on anything that slices code, generates code, or classifies a
-vocabulary — the failure modes of those are not the failure modes the eye is
-looking for.
+This is also why the guards for all three are executable rather than
+review-time. Anything that slices code, generates code, or classifies a
+vocabulary fails in ways reading does not look for: a duplicated function reads
+as correct, a vocabulary gap reads as absent, and a justification that is merely
+usually true reads as true. `test/probes/codex-hollow-turns.py` and the fixtures
+in `test/integration-cli.sh` exist so those three claims are checked by running
+rather than by inspection.
