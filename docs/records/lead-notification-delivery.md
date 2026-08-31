@@ -1,6 +1,6 @@
 # Lead notification delivery — design
 
-> Status: Proposed 2026-08-30. The blocked-state reader is a prerequisite.
+> Status: Implemented 2026-08-30.
 
 ## Purpose
 
@@ -48,13 +48,13 @@ false claim that no event occurred.
 
 ## Dead-state reconciliation
 
-Tmux's `pane-died` hook gives a fast dead notice when it fires, but retained
+Tmux's `pane-died` hook starts a fast cooperative tick when it fires, but retained
 corpses can miss that hook. Gangline's existing cooperative tick reconciles the
 same window state on its next pass. The comparison is only `!dead!` against the
 notified-state latch; it does not add a new poller or reclassify every state.
 Thus the guarantee is one dead note by the next cooperative tick, not an
 untrue claim that every process exit is immediately observable. The body names
-whether `pane-died` or `tick` found it.
+`tick`, the state reader that made the verdict.
 
 Hook then tick, or repeated ticks while the notify target is absent, leave one
 transition and one eventual note: neither may duplicate it.

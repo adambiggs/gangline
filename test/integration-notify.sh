@@ -249,6 +249,7 @@ else
     "$("$GANG" explain state-codex)" "harness identity: not recorded"
 fi
 
+"$GANG" notify clear >/dev/null
 "$GANG" drop state-codex >/dev/null
 "$GANG" drop state-dead >/dev/null
 "$GANG" drop state-returned >/dev/null

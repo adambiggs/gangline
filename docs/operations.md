@@ -90,8 +90,8 @@ doctrine.
 ## Forwarding native stall witnesses
 
 Declare one optional receiver with `gang notify <name>`. Gangline forwards only
-events the native harness itself reports as awaiting a person; it never infers a
-stall from a quiet pane and runs no patrol. Claude Code can witness its declared
+native stall witnesses and positively established unusable states; it never
+infers a stall from a quiet pane and runs no patrol. Claude Code can witness its declared
 `Notification` kinds and permission requests. Codex has no `Notification` hook,
 so its shipped collar witnesses only permission requests. opencode and Pi
 declare no stall source, so they raise no notes.
@@ -100,6 +100,14 @@ A note accepted live or parked is debounced until the raising harness reports
 movement or the repeat bound expires. `gang status` and `gang roster` expose a
 delivery failure until a later note is accepted. Use `gang notify clear` to turn
 the forwarding off; the declaration also dies with the team session.
+
+For `!blocked!` and `!bricked!`, an `idle_prompt` is only a wake and the collar
+reader supplies the verdict. `!dead!` and a positively recorded Codex
+`!harness-lost!` are reconciled by the existing `gang tick`; a missed pane hook
+therefore reaches the receiver by the next tick. `gang explain` says whether
+process-liveness coverage is recorded, not recorded, lost, or unreadable. A
+live process is not treated as healthy: a wedged-alive harness remains an
+explicit uncovered gap.
 
 ## Sending messages safely
 

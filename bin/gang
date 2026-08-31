@@ -1438,7 +1438,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_models collar_model_check collar_bricked collar_blocked collar_waiting \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -3845,6 +3845,53 @@ tick_identity_verify() { # $1 window, $2 collar; 0 match, 1 unavailable, 2 lost
   return "$rc"
 }
 
+# THE ROOT WITNESS IS RECORDED ONCE, at hitch/adopt. A later quiet process is
+# not evidence of health, so tick compares only a positive identity a collar
+# already established. PID plus the kernel's process-start stamp defeats reuse.
+harness_identity_establish() { # $1 window; absence is visible, never a failure
+  local observed="" rc=0
+  tmux set-option -uw -t "$1" @gl_harness_identity 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_harness_lost 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_harness_identity_unreadable 2>/dev/null || true
+  declare -F collar_harness_identity >/dev/null || return 0
+  observed="$(collar_harness_identity "$1")" || rc=$?
+  case "$rc" in
+    0)
+      [[ "$observed" =~ ^[0-9]+$'\t'[0-9]+$ ]] \
+        || die "collar_harness_identity in $GANG_COLLAR_FILE returned an invalid process identity"
+      tmux set-option -w -t "$1" @gl_harness_identity "$observed" 2>/dev/null || true ;;
+    1) ;;
+    2) tmux set-option -w -t "$1" @gl_harness_identity_unreadable "$observed" 2>/dev/null || true ;;
+    *) die "collar_harness_identity in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
+harness_identity_verify() { # $1 window; 0 match/not-recorded, 1 unreadable, 2 lost
+  local recorded="" observed="" rc=0
+  recorded="$(tmux show-options -wqv -t "$1" @gl_harness_identity 2>/dev/null)" || recorded=""
+  [ -n "$recorded" ] || return 0
+  declare -F collar_harness_identity >/dev/null || return 1
+  observed="$(collar_harness_identity "$1")" || rc=$?
+  case "$rc" in
+    0)
+      if [ "$observed" = "$recorded" ]; then
+        tmux set-option -uw -t "$1" @gl_harness_identity_unreadable 2>/dev/null || true
+        return 0
+      fi
+      tmux set-option -w -t "$1" @gl_harness_lost \
+        "the recorded pane-root process no longer matches" 2>/dev/null || true
+      return 2 ;;
+    1)
+      tmux set-option -w -t "$1" @gl_harness_lost \
+        "the recorded pane-root process is gone or replaced" 2>/dev/null || true
+      return 2 ;;
+    2)
+      tmux set-option -w -t "$1" @gl_harness_identity_unreadable "$observed" 2>/dev/null || true
+      return 1 ;;
+    *) die "collar_harness_identity in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
 tick_delivery_active() { # $1 window; 0 = a live tick owns delivery sequencing
   local holder=""
   holder="$(tmux show-options -wqv -t "$1" @gl_tick_delivery 2>/dev/null)" \
@@ -3883,6 +3930,12 @@ tick_full_pass_once() {
       rc=1
       continue
     fi
+    state_note_retry "$id"
+    if launch_dead "$id"; then
+      glyph_write "$id" "!dead! (nothing is running in this window)"
+      state_note "$id" dead tick
+      continue
+    fi
     pass_rc=0
     tick_identity_verify "$id" "$collar" || pass_rc=$?
     if [ "$pass_rc" -eq 2 ]; then
@@ -3890,6 +3943,13 @@ tick_full_pass_once() {
       printf 'session-lost: %s: %s\n' "$agent" "$err" >&2
       glyph_write "$id" "!session-lost! ($err)"
       rc=1
+      continue
+    fi
+    pass_rc=0
+    harness_identity_verify "$id" || pass_rc=$?
+    if [ "$pass_rc" -eq 2 ]; then
+      glyph_write "$id" "!harness-lost! (the recorded pane-root process is gone or replaced)"
+      state_note "$id" harness-lost tick
       continue
     fi
     if [ "$(spool_count "$id")" -gt 0 ]; then
@@ -5050,7 +5110,7 @@ event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decisi
   EVENT_CLAIM=""
   EVENT_CLAIM_ERROR=""
   case "$family" in
-    stall|auto-resume|self-compact) ;;
+    stall|auto-resume|self-compact|state-note) ;;
     *) EVENT_CLAIM_ERROR="unknown event-claim family '$family'"
        printf '%s\n' "$EVENT_CLAIM_ERROR" >&2
        return 2 ;;
@@ -5118,6 +5178,72 @@ event_claim() { # $1 family, $2 window, $3 key; 0 = this process owns the decisi
 }
 
 event_claim_release() { [ -z "$EVENT_CLAIM" ] || rm -f -- "$EVENT_CLAIM"; EVENT_CLAIM=""; }
+
+state_note_failed_write() { # $1 raising window, $2 reason
+  tmux set-option -w -t "$1" @gl_state_note_failed "$2" 2>/dev/null || true
+}
+
+state_note_clear() { # a new native turn makes a later unusable transition distinct
+  tmux set-option -uw -t "$1" @gl_state_note_noted 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_state_note_failed 2>/dev/null || true
+}
+
+state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
+  local agent notify="" target="" rc=0 deliver_rc=0 err="" body
+  agent="$(agent_name_of "$1")" || return 1
+  notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
+  [ -n "$notify" ] || return 1
+  target="$(win_id "$notify" 2>/dev/null)" || {
+    rc=$?
+    case "$rc" in
+      1) state_note_failed_write "$1" "state note NOT accepted: notify target '$notify' does not exist" ;;
+      3) state_note_failed_write "$1" "state note NOT accepted: notify target '$notify' is the window title of another registered agent" ;;
+      *) state_note_failed_write "$1" "state note NOT accepted: notify target '$notify' is ambiguous" ;;
+    esac
+    return 1
+  }
+  [ "$target" != "$1" ] || {
+    state_note_failed_write "$1" "notify target '$notify' is the affected agent itself"
+    return 1
+  }
+  body="state alert ($3): $agent is $2 — inspect with gang explain $agent"
+  err="$(stall_deliver "$target" "$notify" "$agent" "$body" 2>&1)" || deliver_rc=$?
+  if [ "$deliver_rc" -eq 0 ]; then
+    tmux set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null || return 1
+    tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_state_note_failed 2>/dev/null || true
+    return 0
+  fi
+  state_note_failed_write "$1" "state note NOT accepted: ${err##*$'\n'}"
+  return 1
+}
+
+state_note() { # $1 window, $2 state word, $3 origin; never fatal to hook/tick
+  local noted="" pending="" claim_rc=0
+  case "$2" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
+  noted="$(tmux show-options -wqv -t "$1" @gl_state_note_noted 2>/dev/null)" || noted=""
+  [ "$noted" != "$2" ] || return 0
+  pending="$(tmux show-options -wqv -t "$1" @gl_state_note_pending 2>/dev/null)" || pending=""
+  if [ -z "$pending" ]; then
+    tmux set-option -w -t "$1" @gl_state_note_pending "$2 $3" 2>/dev/null || return 0
+  fi
+  event_claim state-note "$1" "$2" || claim_rc=$?
+  [ "$claim_rc" -eq 0 ] || return 0
+  state_note_attempt "$1" "$2" "$3" || true
+  event_claim_release
+}
+
+state_note_retry() { # $1 window; retry the exact retained transition, no reread
+  local pending state origin extra
+  pending="$(tmux show-options -wqv -t "$1" @gl_state_note_pending 2>/dev/null)" || pending=""
+  [ -n "$pending" ] || return 0
+  read -r state origin extra <<<"$pending"
+  [ -z "$extra" ] || return 0
+  case "$state" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
+  [ -n "$origin" ] || return 0
+  state_note "$1" "$state" "$origin"
+}
 
 stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
   local raising="$1" raising_win="" kind="$2" notify target
@@ -5433,6 +5559,8 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   mismatch="$(identity_mismatch_read "$1")" || mismatch=""
   [ -z "$mismatch" ] \
     || refuse "refusing to deliver '$frag': $tname is session-lost ($mismatch). Nothing was typed; restart or re-hitch the intended native session before delivering to this pane"
+  [ -z "$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" ] \
+    || refuse "refusing to deliver '$frag': $tname is harness-lost — its recorded harness root is gone or replaced. Nothing was typed; re-hitch this agent before delivering to this pane"
   pane_mode_free "$1" \
     || refuse "refusing to deliver '$frag': tmux mode owns the pane of $tname, so paste and Enter would act on operator-owned mode state instead of the composer. Nothing was typed and the body is still the sender's — leave copy-mode, then try again"
   # A collar may sharpen the occupied paint while taking the read occupancy
@@ -6998,6 +7126,8 @@ cmd_hitch() {
   if [ "$GANG_AUTO_RESUME" != off ]; then
     hitch_register "$id" "$name" @gl_auto_resume "$GANG_AUTO_RESUME"
   fi
+  state_note_clear "$id"
+  harness_identity_establish "$id"
   exists "$name" || {
     lookup_rc=$?
     win_id_missing "$lookup_rc" "'$name' died at launch (cmd: $GANG_LAUNCH)"
@@ -7231,6 +7361,8 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
       || refuse "'$1' is showing the background-sessions view, whose composer creates a new session instead of reaching this agent; nothing was typed — return to the agent conversation, then try again"
     refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
   fi
+  [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_lost 2>/dev/null)" ] \
+    || refuse "'$1' is harness-lost — its recorded harness root is gone or replaced; re-hitch this agent before delivering to this pane"
   # AND IT HAS TO BE ASKED HERE TOO, in the same order state reads ask it. This
   # tier decides before inject's does, so leaving the question to inject alone
   # would answer a blocked window with whatever its stale screen still shows —
@@ -8032,12 +8164,16 @@ cmd_notify() { # declare, show, or clear one optional stall-note target
   fi
   if [ "$name" = clear ]; then
     tmux set-option -u -t "=$SESSION:" @gl_notify 2>/dev/null || true
+    tmux set-hook -u -t "=$SESSION:" pane-died 2>/dev/null || true
     printf 'notify target cleared\n'
     return 0
   fi
   valid_name "$name" || die "notify: '$name' is not a valid agent name"
   tmux set-option -t "=$SESSION:" @gl_notify "$name" \
     || die "notify: could not store the declaration for session '$SESSION'"
+  tmux set-hook -t "=$SESSION:" pane-died \
+    "run-shell $(shell_quote "$ROOT/bin/gang tick")" \
+    || die "notify: could not install the pane-died wake for session '$SESSION'"
   printf 'notify target: %s\n' "$name"
 }
 
@@ -8398,6 +8534,7 @@ glyph_write() { # $1 = window id, $2 = state phrase
     '!bricked!'*) glyph='!' ;;
     '!blocked!'*) glyph='!' ;;
     '!session-lost!'*) glyph='!' ;;
+    '!harness-lost!'*) glyph='!' ;;
     '?unknown?'*) glyph='?' ;;
     *) return 0 ;;
   esac
@@ -8436,7 +8573,7 @@ turn_abandoned_event() { # $1 = window id, $2 = the fact turn_witness recorded
 }
 
 state_now() { # $1 = window id, collar loaded -> the state, in words
-  local state busy_rc=0 bricked_rc=0 blocked_rc=0 waiting_rc=1 abandoned=0 mismatch=""
+  local state busy_rc=0 bricked_rc=0 blocked_rc=0 waiting_rc=1 abandoned=0 mismatch="" harness_lost=""
   STATE_NOW_RESULT=""
   # PANE DEATH IS TMUX'S DIRECT ANSWER, not a screen classification. A held
   # corpse can preserve its last composer or any transcript marker, but none
@@ -8455,6 +8592,15 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   if [ -n "$mismatch" ]; then
     activity_hold_clear "$1"
     state="!session-lost! ($mismatch)"
+    glyph_write "$1" "$state"
+    STATE_NOW_RESULT="$state"
+    printf '%s\n' "$state"
+    return 0
+  fi
+  harness_lost="$(tmux show-options -wqv -t "$1" @gl_harness_lost 2>/dev/null)" || harness_lost=""
+  if [ -n "$harness_lost" ]; then
+    activity_hold_clear "$1"
+    state="!harness-lost! ($harness_lost)"
     glyph_write "$1" "$state"
     STATE_NOW_RESULT="$state"
     printf '%s\n' "$state"
@@ -8557,7 +8703,7 @@ explain_blocked_report() {
 }
 
 cmd_explain() {
-  local name="${1:-}" pane
+  local name="${1:-}" pane harness_identity="" harness_lost="" harness_unreadable=""
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
   case "$name" in ''|-*) cmd_help explain; exit 1 ;; esac
   resolve "$name"
@@ -8595,6 +8741,18 @@ cmd_explain() {
   EXPLAINING=0
   printf 'agent: %s\npane: %s\ncollar: %s\nstate: %s\n' \
     "$name" "$pane" "$AGENT_COLLAR" "$STATE_NOW_RESULT"
+  harness_identity="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity 2>/dev/null)" || harness_identity=""
+  harness_lost="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_lost 2>/dev/null)" || harness_lost=""
+  harness_unreadable="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity_unreadable 2>/dev/null)" || harness_unreadable=""
+  if [ -n "$harness_lost" ]; then
+    printf 'harness identity: lost\n'
+  elif [ -n "$harness_identity" ]; then
+    printf 'harness identity: recorded\n'
+  elif [ -n "$harness_unreadable" ]; then
+    printf 'harness identity: unreadable\n'
+  else
+    printf 'harness identity: not recorded\n'
+  fi
   explain_rule_report GANG_OCCUPIED_REGEX \
     "$EXPLAIN_OCCUPIED_RESULT" "$EXPLAIN_OCCUPIED_FRAGMENT"
   explain_bricked_report
@@ -8991,7 +9149,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
+  local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
   local timed_line hitched hitched_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
@@ -9017,6 +9175,9 @@ cmd_status() {
   esac
   tick_health_report
   action_status_report "$AGENT_ID"
+  state_note_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_state_note_failed 2>/dev/null)" || state_note_failed=""
+  [ -z "$state_note_failed" ] \
+    || printf '%s\n' "$(colour "$C_BAD" "$state_note_failed")"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
   if [ -n "$self_failed" ]; then
     case "$self_failed" in
@@ -9326,6 +9487,7 @@ roster_state_word() { # $1 decorated state -> one stable porcelain word
     '!dead!'*) printf dead ;;
     '!bricked!'*) printf bricked ;;
     '!blocked!'*) printf blocked ;;
+    '!harness-lost!'*) printf harness-lost ;;
     '!session-lost!'*) printf session-lost ;;
     '?unknown?'*) printf unknown ;;
     *) die "internal: no porcelain word for state '$1'" ;;
@@ -9542,6 +9704,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   esac
   case "$event" in
     UserPromptSubmit|PostToolUse) stall_clear "$TMUX_PANE"
+                                  [ "$event" != UserPromptSubmit ] || state_note_clear "$TMUX_PANE"
                                   turn_state_write "$TMUX_PANE" open
                                   compaction_state_settle "$TMUX_PANE"
                                   glyph_write "$TMUX_PANE" "-busy-"
@@ -9601,6 +9764,13 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
                     if [ "$resumed" -eq 0 ]; then
                       case " $GANG_STALL_TYPES " in
                         *" $kind "*) stall_note "$TMUX_PANE" "$kind" ;;
+                      esac
+                    fi
+                    if [ "$kind" = idle_prompt ]; then
+                      state_now "$TMUX_PANE" >/dev/null
+                      case "$STATE_NOW_RESULT" in
+                        '!blocked!'*) state_note "$TMUX_PANE" blocked idle_prompt ;;
+                        '!bricked!'*) state_note "$TMUX_PANE" bricked idle_prompt ;;
                       esac
                     fi
                   ) || true ;;
@@ -9701,6 +9871,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
   waiting_clear "$id"
   stamp_binary_id "$id"
+  state_note_clear "$id"
+  harness_identity_establish "$id"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     tmux set-option -w -t "$id" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi

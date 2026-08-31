@@ -690,7 +690,7 @@ recorded.
 
 ### `gang notify [<name>|clear]`
 
-Declares, shows, or clears the optional agent that receives stall notes. The
+Declares, shows, or clears the optional agent that receives stall and unusable-state notes. The
 target is stored as the session option `@gl_notify`; it need not exist when
 declared, and no target is inferred. `gang notify clear` removes the declaration
 sooner, and ending the tmux session deletes it with the rest of the team state.
@@ -703,6 +703,14 @@ prompt, tool, or Stop event clears that debounce because it proves movement; an
 older stamp permits a fresh note without any patrol or timer. A delivery failure
 is recorded on the raising window for `status` and `roster`, and is retired only
 after a later note is accepted live or parked.
+
+An `idle_prompt` is only a wake: when its collar's current reader proves
+`!blocked!` or `!bricked!`, Gangline sends one state note. `pane-died` may send
+the corresponding `!dead!` note promptly; the cooperative `gang tick` also
+reconciles dead panes and retained failed notes, so the durable guarantee is
+delivery by the next tick. Notes accepted while the receiver is busy are parked
+through the ordinary spool. A missing receiver leaves the exact pending state
+and a visible `state note NOT accepted` record for later retry.
 
 ### `gang curfew [<duration|HH:MM>|clear]`
 
@@ -824,6 +832,8 @@ Prints one current state:
 - `!blocked! (...)` — collar-native evidence says the turn this window was
   given ended without producing work, and none is coming unattended; its
   composer is free, so nothing else gang reads can see this;
+- `!harness-lost! (...)` — a collar-recorded harness root process is gone or
+  replaced while its tmux pane remains alive;
 - `?unknown? (...)` — the available evidence can no longer determine the answer.
 
 Waiting is event-derived rather than a patrol. At Stop, an optional bounded
@@ -1339,6 +1349,7 @@ there, never in a harness-name branch in the core script.
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |
+| `collar_harness_identity target` | optional positive root-process witness; print `pid<TAB>kernel-start-stamp` and return 0 only when the collar can demonstrate the pane root is its live harness, return 1 when no identity is recorded, or return 2 with a cause when unreadable. Gangline records it only at hitch/adopt and tick treats a later missing or changed witness as `!harness-lost!` |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
 | `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |
 
