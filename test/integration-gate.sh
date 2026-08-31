@@ -670,6 +670,14 @@ contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
   "$gate_default_out" "passed lint, smoke, and the integration suite"
+# THE LAST LINE IS THE ONLY PART OF A RUN A PIPED READER IS SURE TO SEE, and
+# the status is the part it is sure to lose: `test/gate.sh 2>&1 | tail -30` is
+# how this is invoked whenever the output will not fit, and `$?` is then tail's.
+# Asserting on the last line rather than anywhere in the output is the point —
+# a verdict that can be followed by anything is a verdict a truncation can cut
+# off, and the reader is left concluding green from the absence of a FAIL.
+equal "a green gate ends on a verdict a truncated read still carries" \
+  "gate: VERDICT PASS (status 0)" "$(printf '%s\n' "$gate_default_out" | tail -n 1)"
 
 # THE GATE IS THE ONE FILE A TEAMMATE'S SAVE CAN STILL CORRUPT. Bash reads a
 # script while it runs it, so an edit landing mid-run is read from a stale byte
@@ -734,6 +742,12 @@ chmod +x "$gate_run/test/integration.sh"
 gate_fail_rc=0
 gate_fail_out="$("$gate_run/test/gate.sh" 2>&1)" || gate_fail_rc=$?
 equal "a failing suite is the gate's own exit status" "3" "$gate_fail_rc"
+# The refusal ends on the same line in the same place, after the kept-snapshot
+# notes rather than before them, and it carries a status the gate never chose
+# for itself — so the word is decided by whether this run reached a verdict,
+# not by a list of statuses somebody remembered to keep current.
+equal "a refused gate ends on that same verdict, carrying its status" \
+  "gate: VERDICT REFUSED (status 3)" "$(printf '%s\n' "$gate_fail_out" | tail -n 1)"
 contains "a failed gate keeps the snapshot that produced the verdict" \
   "$gate_fail_out" "kept for reading"
 gate_kept="$(printf '%s\n' "$gate_fail_out" | awk '/^  \// { print $1; exit }')"

@@ -410,6 +410,31 @@ snapshot_into() { # $1 = destination directory, $2 = scratch directory
   }
 }
 
+# THE LAST LINE CARRIES THE VERDICT, because the exit status does not survive
+# the ordinary invocation. `test/gate.sh 2>&1 | tail -30` is how this gets run
+# whenever the full output will not fit the reader, and `$?` is then tail's —
+# zero whatever the gate decided. What is left in the transcript is a plausible
+# tail of suite output and a success status, with nothing in it marking the
+# verdict as discarded. A reader who concludes green from the absence of a FAIL
+# is reading a truncation.
+#
+# So the run ends on one line of a fixed shape that a reader can assert on by
+# PRESENCE, printed on stdout because a pipe without `2>&1` still carries it.
+# UNKNOWN is a third word rather than a refusal: a run killed before it decided
+# has produced no verdict on the tree, and calling that a refusal claims
+# evidence the run never collected.
+gate_verdict() { # $1 = exit status, $2 = 1 if the gate reached a decision
+  local word
+  if [ "${2:-0}" -ne 1 ]; then
+    word=UNKNOWN
+  elif [ "$1" -eq 0 ]; then
+    word=PASS
+  else
+    word=REFUSED
+  fi
+  printf 'gate: VERDICT %s (status %s)\n' "$word" "$1"
+}
+
 # BASH READS A SCRIPT WHILE IT RUNS IT, so an edit that lands during a run is
 # read from a stale byte offset and executed as whatever now sits there. This
 # is the only file in the gate that runs from the live tree — lint and the
@@ -463,18 +488,24 @@ main() {
         '  --assert-unmoved  refuse if the identity is no longer the one given'
       exit 0 ;;
     '') ;;
-    *) echo "gate: unknown argument '$1'" >&2; exit 2 ;;
+    *)
+      echo "gate: unknown argument '$1'" >&2
+      # A refused invocation is a decision: the gate answered, and answered no.
+      gate_verdict 2 1
+      exit 2 ;;
   esac
 
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/gangline-gate.XXXXXX")"
   SNAP="$WORK/tree"
   keep=0
   lint_pid=""
+  decided=0
   # A FAILED RUN KEEPS ITS EVIDENCE, AND SAYS HOW THAT EVIDENCE DIES. Nothing
   # collects these later — no gate run touches another run's snapshot — so the
   # deletion is the reader's, stated as the exact command rather than left to be
   # discovered as accumulated copies of the source under TMPDIR.
   cleanup() {
+    local status=$?
     if [ -n "$lint_pid" ]; then
       kill "$lint_pid" 2>/dev/null || true
       wait "$lint_pid" 2>/dev/null || true
@@ -488,6 +519,7 @@ main() {
     else
       rm -rf -- "$WORK"
     fi
+    gate_verdict "$status" "$decided"
   }
   # A SIGNAL ENDS THE GATE; IT DOES NOT ANNOTATE IT. One handler for the exit
   # and for the signals reads as if a signalled gate stops here, and it does
@@ -541,9 +573,11 @@ main() {
   [ "$rc" -ne 0 ] || rc="$integration_rc"
   if [ "$rc" -ne 0 ]; then
     keep=1
+    decided=1
     printf '\ngate: REFUSED (status %s)\n' "$rc" >&2
     exit "$rc"
   fi
+  decided=1
   printf '\ngate: the snapshot passed lint, smoke, and the integration suite.\n'
 }
 
