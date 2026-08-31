@@ -132,3 +132,24 @@ team may be active.
 
 Never run an unaimed `tmux kill-server` or `tmux kill-session`. Experiments use
 an explicit private socket and exact disposable session names.
+
+Never kill a process because it holds a shared resource. A lock holder, a
+snapshot directory or a stale-looking suite is evidence that something is
+running, not evidence of whose it is. Resolve ownership first — read
+`/proc/PID/cwd`, or look for a file unique to your own tree — and kill only what
+matches. The gate's host lock and the snapshot directories it keeps are shared
+by every agent, so inference here ends someone else's work with no trace back to
+you.
+
+Resolve ownership in a command that COMPLETES BEFORE the one that kills.
+`ls -l /proc/$p/cwd; kill $p` is not a check: both run, the kill lands, and the
+evidence prints after the fact. A test sequenced after an irreversible act is a
+receipt, not a safeguard, and it reads in a transcript exactly like a safeguard
+that held. Having the check is not the property that matters; being able to act
+on it is.
+
+The procedure is not the hard part; keeping it under pressure is. A filter
+dropped for a single cleanup, and a filter that shares a command with the kill,
+leave behind exactly what a filter that held leaves behind: nothing. Neither is
+visible afterwards in the tree, the log, or the lock, so neither can be caught by
+review. That is why this is a written rule rather than a matter of care.
