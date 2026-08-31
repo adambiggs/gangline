@@ -167,18 +167,22 @@ Gangline submits the collar's native compaction command. Codex cannot submit
 native Stop hook submits it once at the turn boundary. Failure remains visible
 in `gang status` and `gang roster`.
 
-Context lights default to the collar's own thresholds for the model being
-hitched, so a team mixing harnesses gets working lights on every agent with
-nothing configured. Override them for one agent, or for the whole team, with
-percentages that serve mixed windows or absolute tokens for a single observed
-one. Keep both edges high, but below the harness's observed automatic-compaction
-boundary:
+Context lights default to the collar's own thresholds for the launched
+configuration, so a team mixing harnesses gets working lights on every agent
+with nothing configured. Override them for one agent, or for the whole team,
+with percentages that serve mixed windows or absolute tokens for a single
+observed one. Keep both edges high, but below the harness's observed
+automatic-compaction boundary:
 
 ```sh
 gang hitch worker -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT"
 gang hitch narrow -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights 50%,80%
 gang hitch quiet  -c codex -m "$CODEX_MODEL" -e "$CODEX_EFFORT" --lights off
 ```
+
+Where a collar must classify the launched window, that default remains pending
+through the empty pre-turn context frame and settles on the first native event
+that can read a numeric window.
 
 The native hook advises once when usage crosses yellow and once when it crosses
 red. Dropping below yellow starts a new context epoch. Lights are guidance only;

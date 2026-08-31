@@ -331,7 +331,7 @@ operator command dispatch with the exact path and HEAD; the native hook endpoint
 stays silent except for a crossed light. Keep live-by-path installation, because
 a merge can intentionally upgrade a running team.
 
-## Context lights are minimal, and their default is the collar's per model
+## Context lights are minimal, and their default is collar-native
 
 Expose exactly yellow and red at intentionally high thresholds, notify once per
 context epoch, and leave the decision to compact with the agent. Place both
@@ -342,13 +342,16 @@ are different acts.
 
 One team-wide absolute pair cannot fit a mixed team: a red sized for the widest
 native window cannot fire in the narrowest at all. So the thresholds an agent
-gets default to the collar's own answer for the hitched model, and the collar
-answers per model because one harness runs models whose windows differ
-several-fold and the same fraction leaves very different absolute runway in
-each. Collars express those defaults as fractions, since the window a model
-reports is the provider's to change while the fraction stays correct. An
-explicit spec overrides that answer for one agent or for the team, and absolute
-tokens remain available there for a single observed window.
+gets default to the collar's own answer. Most collars answer from the hitched
+model before launch. A collar whose same model can run with different windows
+records its unanswered choice on the launched window and settles it at the
+first native event whose context source reports a numeric window; a ready
+composer alone is not that evidence, and a hitch command ending before
+readiness does not end the window's choice. The model name cannot classify that
+session. Collars express those defaults as fractions, since the reported window
+is the provider's to change while the fraction stays correct. An explicit spec
+overrides that answer for one agent or for the team, and absolute tokens remain
+available there for a single observed window.
 
 A default never arms a light its own collar cannot take a reading for; an
 explicitly configured threshold still does, because that was an ask. Where a

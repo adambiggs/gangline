@@ -320,8 +320,14 @@ perform no context read and add no prompt or roster noise. An absolute red
 threshold above the window reports one invalid notice as soon as the native
 source makes that window readable; it never remains silently armed. That notice
 is what a team-wide absolute pair produces on the harness with the smaller
-window, which is why the collar's own per-model default is the built-in value
-and absolute thresholds are an override.
+window, which is why the collar's own native-window-aware default is the
+built-in value and absolute thresholds are an override.
+
+Claude's composer can be ready before its statusline has a numeric context
+window. Its collar default stays pending across that frame and across a hitch
+command that exits while the native window remains alive. The first later
+prompt, tool, or Stop event with a numeric reading stamps the thresholds once;
+a frame with no reading leaves the pending choice unchanged.
 
 Claude Code reads its hook configuration once, at process startup, and
 re-executes the statusline script from disk on every repaint. A change on the

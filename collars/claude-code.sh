@@ -2,29 +2,37 @@
 # shellcheck disable=SC2034  # consumed by bin/gang load_collar via source
 # SPDX-License-Identifier: Apache-2.0
 [ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
-# CONTEXT-LIGHT DEFAULTS ARE A PER-MODEL ANSWER, because this harness runs
-# models whose native windows differ by five times. The same fraction does not
-# mean the same thing in each: 80% of a 1000k window leaves 200k of runway for
-# an agent to finish an arc and compact, while 80% of a 200k window leaves 40k
-# and the red light arrives too late to act on. Smaller windows therefore get
-# an earlier pair, so the absolute headroom behind red stays comparable.
+# CONTEXT-LIGHT DEFAULTS FOLLOW THE WINDOW THIS SESSION REPORTS, because the
+# same model can launch with either a 200k or 1M window. A name-keyed table
+# cannot distinguish them: 40% of a 1M window is the requested early planning
+# edge, while that same edge at 80k in a 200k window is noise. The smaller
+# class keeps its established 45%,65% pair.
 #
 # Fractions rather than token counts, because the window a model reports is the
 # provider's to change and `collar_context` already reads the live one; a
 # fraction stays correct across that change where a token pair silently stops
-# fitting. Observed 2026-08-24 on this installation: claude-opus-5 reports a
-# 1000k window. Haiku is the 200k class. A model matching neither is given the
-# earlier pair, since firing early costs a checkpoint and firing late costs the
-# arc.
+# fitting. Claude currently exposes two observed classes: a reported window of
+# at least 1000k is the 1M class, and every numeric window below it is treated as
+# the 200k class. A third class needs its own operator decision before changing
+# that two-bucket rule; a frame with no numeric window is not classified at all.
 #
-# Omitting -m leaves the model, and so the window class, unknown; hitch already
-# warns about that, and guessing a light here would be the second guess.
-collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
-  case "$1" in
-    '') return 1 ;;
-    *haiku*) printf '45%%,65%%\n' ;;
-    *) printf '55%%,80%%\n' ;;
+# Omitting -m leaves nothing to key the launch-time source on; hitch already
+# warns about that, and guessing a light here would be a second guess.
+GANG_CONTEXT_LIGHTS_LIVE=1
+collar_context_lights() { # $1 model, $2 live target; 0 thresholds, 1 = no default
+  local reading window
+  [ -n "$1" ] || return 1
+  reading="$(collar_context "$2")" || return $?
+  window="${reading#*/}"
+  window="${window%%k *}"
+  case "$window" in
+    ''|*[!0-9]*) return 3 ;;
   esac
+  if [ "$window" -ge 1000 ]; then
+    printf '20%%,40%%\n'
+  else
+    printf '45%%,65%%\n'
+  fi
 }
 GANG_LAUNCH="claude"
 GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
@@ -44,19 +52,12 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # THE BEACON IS WIRED ONLY WHERE A LIGHT WILL READ IT. `statusLine`
       # replaces whatever status line the operator configured for themselves,
       # so it is not painted over a hitch that asked for no lights. `collar`
-      # asks this file's own default the same question bin/gang asks it, so
-      # the wiring and the armed thresholds cannot disagree about this model.
+      # A collar default needs the beacon to classify the launched window, so a
+      # named model wires it before that answer exists. No model still means no
+      # default and no replacement of the operator's own status line.
       case "${GANG_CONTEXT_LIGHTS:-off}" in
         off|'') _gl_cc_light=0 ;;
-        collar)
-          # AN `&&` TAIL HERE WOULD END GANG. bin/gang runs under set -e, and a
-          # collar with no default for this model returns 1, so the whole list
-          # would fail the hitch instead of leaving the beacon unwired.
-          if collar_context_lights "${GANG_MODEL:-}" >/dev/null; then
-            _gl_cc_light=1
-          else
-            _gl_cc_light=0
-          fi ;;
+        collar) [ -n "${GANG_MODEL:-}" ] && _gl_cc_light=1 || _gl_cc_light=0 ;;
         *) _gl_cc_light=1 ;;
       esac
       case "$_gl_cc_light" in

@@ -1638,6 +1638,9 @@ contains "and it carries the effort too" "$effres_line" "--effort=low"
 lights_stamp() { # $1 agent -> the thresholds hitch registered on its window
   tmux show-options -wqv -t "$(window_id "$1")" @gl_context_lights 2>/dev/null || :
 }
+lights_pending_stamp() { # $1 agent -> the model awaiting a live-window answer
+  tmux show-options -wqv -t "$(window_id "$1")" @gl_context_lights_pending 2>/dev/null || :
+}
 cat > "$RUN_ROOT/collars/model-lights.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1665,7 +1668,7 @@ equal "a collar shipping no default leaves the lights off, as before defaults" \
 # launch that wired no native source for them to read.
 equal "an off hitch still writes the stamp, so no earlier one can survive it" \
   1 "$(tmux show-options -w -t "$(window_id lightsnone)" \
-    | grep -c '^@gl_context_lights')"
+    | grep -c '^@gl_context_lights ')"
 GANG_CONTEXT_LIGHTS=90000,120000 "$HITCH" lightsteam -c model-lights \
   -d /tmp -m exact >/dev/null
 equal "a team-wide spec overrides the collar's default" \
@@ -1726,24 +1729,139 @@ equal "but an explicit spec still arms them there" \
 "$GANG" drop lightsblind >/dev/null
 "$GANG" drop lightsblindset >/dev/null
 
-# THE SHIPPED COLLARS ANSWER, AND THEIR ANSWERS DEPEND ON THE MODEL. This is the
-# mixed-window team the absolute-threshold setting could not serve: one unset
-# team config, working lights on every agent, sized for the window each one has.
+# STATIC SHIPPED COLLAR DEFAULTS CAN STILL ANSWER BEFORE LAUNCH.
 lights_shipped() { # $1 collar file, $2 model -> its default, or "none"
   ROOT="$ROOT" bash -c \
     '. "$1"; if out="$(collar_context_lights "$2")"; then printf "%s" "$out"; else printf none; fi' \
     fixture "$1" "$2"
 }
-equal "claude-code sizes its 1M-window models for the runway they leave" \
-  "55%,80%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-opus-5)"
-equal "and gives its 200k class an earlier pair for the same absolute headroom" \
-  "45%,65%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-haiku-4-5-20251001)"
-equal "no model means no window class, so claude-code offers no default" \
-  "none" "$(lights_shipped "$ROOT/collars/claude-code.sh" "")"
 equal "codex holds its lights until the window is nearly spent" \
   "75%,90%" "$(lights_shipped "$ROOT/collars/codex.sh" gpt-5-codex)"
 equal "and codex offers none either" \
   "none" "$(lights_shipped "$ROOT/collars/codex.sh" "")"
+
+# THE SAME CLAUDE MODEL CAN ARRIVE WITH EITHER WINDOW, AND THE COMPOSER ARRIVES
+# FIRST. Claude's statusline has no numeric context before the first API turn,
+# so a fixture that paints `ctx` before its prompt erases the ordinary ordering
+# this mechanism exists to handle. This collar retains the shipped policy but
+# launches a bare composer. The test first drives a real readable-frame miss
+# through a native hook, then paints the numeric line and drives another hook.
+# The observable is the threshold on the window, not a direct helper answer,
+# because that stamp is what every later hook actually uses.
+cat > "$RUN_ROOT/collars/claude-live-window.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/claude-code.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_RESUME_LAUNCH=""
+collar_model_check() { return 0; }
+collar_input() {
+  local pane line
+  pane="\$(tmux capture-pane -pJ -t "\$1")" || return 3
+  line="\$(printf '%s\n' "\$pane" |
+    awk '{ i = index(\$0, "❯")
+           if (i > 0 && (i == 1 || substr(\$0, 1, i - 1) ~ /[^ \t]/)) line = \$0 }
+         END { print line }')" || return 1
+  case "\$line" in *❯*) ;; *) return 1 ;; esac
+  printf '%s' "\${line#*❯}" | tr -d '\302\240'
+}
+SH
+claude_context_reveal() { # $1 agent, $2 native window in k
+  local id channel
+  id="$(window_id "$1")"
+  channel="test-claude-context-$1-$$"
+  tmux send-keys -l -t "$id" \
+    "printf 'ctx 1k/$2k 1%%\\n'; tmux wait-for -S '$channel'"
+  tmux send-keys -t "$id" Enter
+  tmux wait-for "$channel"
+}
+claude_context_hook() { # $1 agent -> run the native prompt hook
+  local pane_id
+  pane_id="$(tmux list-panes -t "$(window_id "$1")" -F '#{pane_id}')"
+  printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
+    TMUX_PANE="$pane_id" "$GANG" hook
+}
+
+for claude_agent in lightsclaude1m lightsclaude200k; do
+  "$HITCH" "$claude_agent" -c claude-live-window -d /tmp \
+    -m claude-opus-5 >/dev/null
+  equal "a ready Claude composer with no numeric context keeps its default pending" \
+    "claude-opus-5" "$(lights_pending_stamp "$claude_agent")"
+  equal "and does not guess the smaller-window thresholds" \
+    "" "$(lights_stamp "$claude_agent")"
+  claude_miss_rc=0
+  claude_miss_err="$(claude_context_hook "$claude_agent" 2>&1 >/dev/null)" \
+    || claude_miss_rc=$?
+  equal "a native context miss while classification is pending stays non-fatal" \
+    0 "$claude_miss_rc"
+  equal "and the pending miss is silent to the native hook caller" \
+    "" "$claude_miss_err"
+  equal "and the miss is not recorded as an uninterpretable hook" "" \
+    "$(tmux show-options -wqv -t "$(window_id "$claude_agent")" @gl_hook_failed)"
+  equal "and the live-window answer remains pending for a later event" \
+    "claude-opus-5" "$(lights_pending_stamp "$claude_agent")"
+done
+
+claude_context_reveal lightsclaude1m 1000
+claude_context_hook lightsclaude1m >/dev/null
+equal "a later 1M-window answer registers its early planning thresholds" \
+  "20%,40%" "$(lights_stamp lightsclaude1m)"
+equal "the resolved 1M-window answer is no longer pending" \
+  "" "$(lights_pending_stamp lightsclaude1m)"
+claude_context_reveal lightsclaude200k 200
+claude_context_hook lightsclaude200k >/dev/null
+equal "the same Claude model in a later 200k-window answer keeps the smaller-window pair" \
+  "45%,65%" "$(lights_stamp lightsclaude200k)"
+equal "the resolved 200k-window answer is no longer pending" \
+  "" "$(lights_pending_stamp lightsclaude200k)"
+
+"$HITCH" lightsclaudenomodel -c claude-live-window -d /tmp >/dev/null
+equal "a Claude hitch with no model still registers no default lights" \
+  "" "$(lights_stamp lightsclaudenomodel)"
+equal "and has no live-window classification pending" \
+  "" "$(lights_pending_stamp lightsclaudenomodel)"
+"$GANG" drop lightsclaude1m >/dev/null
+"$GANG" drop lightsclaude200k >/dev/null
+"$GANG" drop lightsclaudenomodel >/dev/null
+
+# A FAILED BOOT WAIT ENDS THE HITCH COMMAND, NOT THE WINDOW. The default must
+# survive on that window so the documented attach/send recovery can finish the
+# same launch. This collar deliberately hides its already-running composer for
+# one compressed boot observation, then the test makes both the composer and
+# the first numeric context answer readable without respawning the window.
+cat > "$RUN_ROOT/collars/claude-late-ready.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/claude-live-window.sh"
+_gl_late_ready_input="\$(declare -f collar_input)"
+eval "late_ready_input \${_gl_late_ready_input#collar_input}"
+collar_input() {
+  [ ! -e "$RUN_ROOT/claude-late-ready-blocked" ] || return 1
+  late_ready_input "\$1"
+}
+SH
+touch "$RUN_ROOT/claude-late-ready-blocked"
+late_ready_ledger="$(clock_ledger claude-late-ready)"
+late_ready_rc=0
+late_ready_out="$(GANG_BOOT_TIMEOUT=1 GANG_TEST_CLOCK_LEDGER="$late_ready_ledger" \
+  "$GANG" hitch lightsclaudelate -c claude-late-ready -d /tmp \
+    -m claude-opus-5 2>&1)" || late_ready_rc=$?
+equal "a Claude window hidden beyond the boot wait ends the hitch nonzero" \
+  1 "$late_ready_rc"
+equal "the failed readiness wait spends its declared observation" \
+  1 "$(clock_naps "$late_ready_ledger" 1)"
+contains "the failed hitch names the still-live recovery" \
+  "$late_ready_out" "once the input box appears the agent is healthy"
+equal "the live window keeps its unresolved context-light default" \
+  "claude-opus-5" "$(lights_pending_stamp lightsclaudelate)"
+rm -f -- "$RUN_ROOT/claude-late-ready-blocked"
+claude_context_reveal lightsclaudelate 1000
+claude_context_hook lightsclaudelate >/dev/null
+equal "a later native answer resolves the failed hitch's surviving window" \
+  "20%,40%" "$(lights_stamp lightsclaudelate)"
+equal "that recovered window no longer carries pending classification" \
+  "" "$(lights_pending_stamp lightsclaudelate)"
+"$GANG" drop lightsclaudelate >/dev/null
 
 # Each hitched harness in its own killable cgroup. systemd-oomd kills the
 # descendant LEAF cgroup holding the most swap, and a tmux server inherits the

@@ -219,22 +219,27 @@ that bar and the swap policy selecting nobody where it previously selected the
 team. `oomctl` prints the live policy; `GANG_SCOPE` changes what the victim pool
 looks like, not what the thresholds are.
 
-The thresholds settled at hitch are written to the window on every hitch,
-including a hitch that settles on none, and nothing re-resolves them later. A
-`--resume` respawns the window it is registered to and window options outlive a
-respawn, so the empty write is what stops an earlier launch's thresholds from
-staying armed over a launch that wired no native source to read them. A resume
-that omits `-m` therefore resolves no collar default, exactly as a first hitch
-would; `gang drop` prints no model in its relaunch line, so pass `-m` or `-l`
-again to keep the lights the agent had. Which thresholds those are is
-decided in one pass: `-l`/`--lights` if given, otherwise `GANG_CONTEXT_LIGHTS`,
-whose built-in value `collar` asks the collar for its own default for the
-hitched model. A collar answers per model because one harness runs models whose
-native windows differ several-fold, and the same fraction leaves very different
-absolute runway in each. A collar that declares no default, or none for that
-model, leaves the lights off, and so does a collar with no native context source
-to read — a default never arms a light its own collar cannot take a reading for.
-An explicitly configured threshold still arms there, because that was an ask.
+The threshold and any unanswered live-window choice are written to the window
+on every hitch. A `--resume` respawns the window it is registered to and window
+options outlive a respawn, so both writes are what stop an earlier launch's
+thresholds or pending model from surviving into a launch that did not choose
+them. A resume that omits `-m` therefore resolves no collar default, exactly as
+a first hitch would; `gang drop` prints no model in its relaunch line, so pass
+`-m` or `-l` again to keep the lights the agent had. Which thresholds those are
+is decided by `-l`/`--lights` if given, otherwise `GANG_CONTEXT_LIGHTS`, whose
+built-in value `collar` asks the collar for its own default. Most collars answer
+from the hitched model before launch. A collar declaring
+`GANG_CONTEXT_LIGHTS_LIVE=1` records the named model as pending on the launched
+window. Prompt, tool, and Stop hooks ask again until its native context source
+reports a numeric window; a readable-frame miss leaves the choice pending. The
+first answer is stamped on that window and is never re-resolved. Because the
+choice belongs to the window, it survives a hitch command that ends while the
+native process remains alive. Claude uses this path because the same model can
+run with either a 200k or 1M native window. A collar that declares no default,
+or none for that launch, leaves the lights off, and so does a collar with no
+native context source to read — a default never arms a light its own collar
+cannot take a reading for. An explicitly configured threshold still arms there,
+because that was an ask.
 
 Percentages are relative to each native window and serve mixed-window teams.
 Absolute tokens remain supported for an observed fixed window. Place both high
@@ -1343,9 +1348,10 @@ there, never in a harness-name branch in the core script.
 | `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |
 | `GANG_USAGE_LIMIT_MAX_AGE` | maximum seconds a native sample may drive a light; zero accepts any age before its reset |
+| `GANG_CONTEXT_LIGHTS_LIVE=1` | record a named model's default context-light answer as pending on the launched window; native prompt, tool, and Stop events call `collar_context_lights` with that window until it returns a numeric-window answer |
 | `collar_input target` | print human-authored composer contents; 1 when the harness has drawn no composer, 3 when the pane itself could not be read, and a collar may declare further statuses only when Gangline has learned their meaning. `claude-code` declares 4 for a selected in-process subagent composer and 6 for the background-sessions composer that creates a new session; Gangline carries both through as named refusals rather than flattening them into absence. Any status Gangline does not recognise is normalized to a loud status 5 unknown that preserves the raw value, never absence |
 | `collar_overlay target` | optional; print the visible title of a native overlay dialog owning the screen, return 1 when none is recognised, and 3 when the pane could not be read. Naming only: Gangline quotes it in a refusal a delivery already reached, so an absent reader, an unreadable pane and an unrecognised frame each cost the sentence and never the decision |
-| `collar_context_lights model` | optional; print this collar's default `yellow,red` or `yellow%,red%` thresholds for that model, or return 1 with no output where it has no default for it. Consulted only where the collar also declares `collar_context`. A malformed spec, or any other status, is refused under the collar's name rather than the operator's setting |
+| `collar_context_lights model [target]` | optional; print this collar's default `yellow,red` or `yellow%,red%` thresholds, return 1 with no output where it has no default, or return 2 when a live target has no numeric window yet. A static collar receives the model before launch. With `GANG_CONTEXT_LIGHTS_LIVE=1`, a named model is recorded as pending and the function receives both model and launched window on native prompt, tool, and Stop events until it answers. Consulted only where the collar also declares `collar_context`. A malformed spec, or any other status, is recorded as a loud hook failure under the collar's name rather than the operator's setting |
 | `collar_context target` | print `usedk/windowk (percent%)`; return 2 when a readable native frame transiently carries no readout, or otherwise fail loudly, keeping a refused pane read distinct from both |
 | `collar_session_id target payload` | print the exact native session id witnessed by a hook, or fail without fabricating one |
 | `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |

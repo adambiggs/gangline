@@ -1437,6 +1437,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   GANG_USAGE_LIGHT_INTERVAL=0 GANG_USAGE_LIMIT_MAX_AGE=0
   GANG_QUIET_AT_REST="" GANG_MODEL_OPT="" GANG_MODEL_ALIASES=""
   GANG_EFFORT_OPT="" GANG_EFFORT_CMD=""
+  GANG_CONTEXT_LIGHTS_LIVE=0
   GANG_ROLE_PROMPT_OPT="" GANG_HARNESS_PROMPT=""
   GANG_COLLAR_FILE="$f"
   # EVERY OPTIONAL COLLAR FUNCTION, because the whole point of this list is that
@@ -1454,6 +1455,10 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   esac
   case "$GANG_USAGE_LIMIT_MAX_AGE" in
     ''|*[!0-9]*) die "collar '$1' has an invalid GANG_USAGE_LIMIT_MAX_AGE declaration" ;;
+  esac
+  case "$GANG_CONTEXT_LIGHTS_LIVE" in
+    0|1) ;;
+    *) die "collar '$1' has an invalid GANG_CONTEXT_LIGHTS_LIVE declaration" ;;
   esac
   [ -n "$GANG_LAUNCH" ] || die "collar '$1' sets no GANG_LAUNCH"
   [ -z "$GANG_HARNESS_PROMPT" ] || [ -n "$GANG_ROLE_PROMPT_OPT" ] \
@@ -6098,7 +6103,7 @@ LIGHT_RED=0
 LIGHT_RELATIVE=0
 # A REFUSAL NAMES WHERE THE SPEC CAME FROM. The same grammar now arrives from
 # three places — the operator's config, one agent's `--lights`, and a collar's
-# own per-model default — and a malformed collar default reported as the
+# own collar-native default — and a malformed collar default reported as the
 # operator's GANG_CONTEXT_LIGHTS sends them to edit a setting they never wrote.
 # The origin note is looked up only for the unnamed caller, so the per-hook read
 # below never pays for a config lookup it would not print.
@@ -6136,20 +6141,19 @@ context_lights_parse() { # $1 = off or yellow,red thresholds; $2 = subject for r
   esac
 }
 
-# WHICH THRESHOLDS SUIT AN AGENT IS A PER-MODEL QUESTION, and only the collar
-# can answer it: one harness runs models whose native windows differ by more
-# than fourfold, so a fraction leaving useful headroom in the larger one fires
-# far too late in the smaller, and an absolute pair sized for the larger cannot
-# fire in the smaller at all. `collar` asks the collar for the hitched model;
-# an explicit spec from the operator overrides that answer for the whole team
-# or for one agent.
+# WHICH THRESHOLDS SUIT AN AGENT IS A COLLAR-NATIVE QUESTION. Most collars can
+# answer from the model before launch. A live-window collar cannot: the same
+# model may launch with materially different windows, and the native source
+# that tells them apart may have no numeric answer until after the composer is
+# ready. `collar` asks the collar; an explicit operator spec overrides that
+# answer for the whole team or for one agent.
 #
 # THE ANSWER IS A GLOBAL RATHER THAN STDOUT because a bad collar default is
 # refused here: `die` inside $(...) ends only that subshell and the caller reads
 # the empty string as a pass.
 CONTEXT_LIGHTS_SPEC=""
 CONTEXT_LIGHTS_SUBJECT=""
-context_lights_resolve() { # $1 collar name, collar loaded; $2 model, $3 spec, $4 subject
+context_lights_resolve() { # $1 collar, $2 model, $3 spec, $4 subject, $5 live target if launched
   local answer="" rc=0
   CONTEXT_LIGHTS_SPEC="$3"
   CONTEXT_LIGHTS_SUBJECT="$4"
@@ -6164,13 +6168,70 @@ context_lights_resolve() { # $1 collar name, collar loaded; $2 model, $3 spec, $
   # explicitly still gets that report, because they asked for the light.
   declare -F collar_context >/dev/null || return 0
   declare -F collar_context_lights >/dev/null || return 0
-  answer="$(collar_context_lights "$2")" || rc=$?
+  # A LIVE-WINDOW DEFAULT CANNOT ANSWER BEFORE ITS WINDOW EXISTS. The model is
+  # still required: omitting -m means the launch choice itself is unknown and
+  # preserves the existing no-default answer. A named model defers exactly this
+  # collar-owned decision. Hitch records that pending model on the launched
+  # window; a later native event settles it only after the context reader has a
+  # numeric answer.
+  if [ "$GANG_CONTEXT_LIGHTS_LIVE" -eq 1 ] && [ -n "$2" ] && [ -z "${5:-}" ]; then
+    CONTEXT_LIGHTS_SPEC=collar
+    return 0
+  fi
+  answer="$(collar_context_lights "$2" "${5:-}")" || rc=$?
   case "$rc" in
     0) CONTEXT_LIGHTS_SPEC="$(printf '%s' "$answer" | config_sanitize)" ;;
     1) ;;
     *) die "hitch: collar '$1' returned unknown context-light-default status $rc for model '${2:-(none)}'" ;;
   esac
   [ -n "$CONTEXT_LIGHTS_SPEC" ] || CONTEXT_LIGHTS_SPEC=off
+}
+
+# A LIVE-WINDOW ANSWER BELONGS TO THE WINDOW THAT SUPPLIES ITS EVIDENCE. Hitch
+# records the model before waiting for readiness, so a first-run prompt or an
+# unrecognized boot screen can end the hitch command without losing the choice
+# from the still-running window. Native prompt/tool/Stop events revisit it. A
+# readable frame with no numeric beacon is not a class and changes nothing;
+# every other unrecognized answer stays loud through the hook failure surface.
+context_lights_pending_resolve() { # $1 target, $2 collar; 0 none/resolved, 2 not readable yet
+  local answer="" lights="" model rc=0 subject
+  model="$(tmux show-options -wqv -t "$1" @gl_context_lights_pending 2>/dev/null)" \
+    || {
+      printf 'could not read the pending context-light model from window %s\n' "$1" >&2
+      return 3
+    }
+  [ -n "$model" ] || return 0
+  load_collar "$2"
+  [ "$GANG_CONTEXT_LIGHTS_LIVE" -eq 1 ] \
+    || {
+      printf "collar '%s' no longer declares a live-window context-light default\n" "$2" >&2
+      return 3
+    }
+  if ! declare -F collar_context >/dev/null \
+      || ! declare -F collar_context_lights >/dev/null; then
+      printf "collar '%s' no longer declares the readers its pending context-light default needs\n" "$2" >&2
+      return 3
+  fi
+  answer="$(collar_context_lights "$model" "$1")" || rc=$?
+  subject="collar '$2' context-light default for model '$model'"
+  case "$rc" in
+    0)
+      answer="$(printf '%s' "$answer" | config_sanitize)"
+      if context_lights_parse "${answer:-off}" "$subject"; then
+        lights="$answer"
+      fi ;;
+    1) ;;
+    2) return 2 ;;
+    *) printf "collar '%s' returned unknown context-light-default status %s for model '%s'\n" \
+         "$2" "$rc" "$model" >&2
+       return 3 ;;
+  esac
+  tmux set-option -w -t "$1" @gl_context_lights "$lights" \; \
+    set-option -uw -t "$1" @gl_context_lights_pending 2>/dev/null \
+    || {
+      printf 'could not register the resolved context-light default on window %s\n' "$1" >&2
+      return 3
+    }
 }
 
 context_lights_for() { # $1 = window; load its hitch-time setting
@@ -7136,7 +7197,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 
 cmd_hitch() {
   local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
-  local lights="" lights_arg="" lights_given=0 lights_subject="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
+  local lights="" lights_arg="" lights_given=0 lights_subject="" lights_pending="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local hitched_by=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
@@ -7292,12 +7353,15 @@ cmd_hitch() {
     GANG_LAUNCH="$GANG_LAUNCH $GANG_EFFORT_OPT$effort"
   fi
 
-  # AFTER THE MODEL IS SETTLED, because the collar's default is a per-model
-  # answer and an unvalidated model is not one to ask about. Still before the
-  # first tmux mutation, so a spec this refuses leaves no registered agent
-  # behind.
+  # AFTER THE MODEL IS SETTLED, because an unvalidated launch choice is not one
+  # to ask about. Static collar defaults still resolve before the first tmux
+  # mutation, so a spec they refuse leaves no registered agent behind. A collar
+  # declaring a live-window default defers only its own answer until a native
+  # event can read a numeric context answer from the launched window.
   context_lights_resolve "$prof" "$model" "$GANG_CONTEXT_LIGHTS" "$lights_subject"
-  if context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
+  if [ "$CONTEXT_LIGHTS_SPEC" = collar ]; then
+    lights_pending="$model"
+  elif context_lights_parse "$CONTEXT_LIGHTS_SPEC" "$CONTEXT_LIGHTS_SUBJECT"; then
     lights="$CONTEXT_LIGHTS_SPEC"
   fi
 
@@ -7384,6 +7448,11 @@ cmd_hitch() {
   # reading it could not take. The lights an agent has are the ones its own
   # launch resolved; an empty value is off, exactly as an absent one is.
   hitch_register "$id" "$name" @gl_context_lights "$lights"
+  # THE PENDING CHOICE IS ALSO WRITTEN ON EVERY HITCH. It is the only route by
+  # which a surviving window can finish a live-window default after this hitch
+  # command exits on an unready composer, and the empty write retires any model
+  # left on a respawned window by its earlier native process.
+  hitch_register "$id" "$name" @gl_context_lights_pending "$lights_pending"
   if [ "$GANG_USAGE_LIGHTS" != off ]; then
     hitch_register "$id" "$name" @gl_usage_lights "$GANG_USAGE_LIGHTS"
   fi
@@ -9914,7 +9983,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 }
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
-  local payload event collar kind="" window="" waiting_rc=1
+  local payload event collar kind="" window="" waiting_rc=1 pending_rc=0 pending_err=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
   # its caller is a harness configuration and law 7 keeps hooks non-fatal. It
@@ -9970,6 +10039,18 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     }
   fi
   tmux set-option -uw -t "$TMUX_PANE" @gl_hook_failed 2>/dev/null || true
+  case "$event" in
+    UserPromptSubmit|PostToolUse|Stop)
+      pending_rc=0
+      pending_err="$(context_lights_pending_resolve "$TMUX_PANE" "$collar" 2>&1)" \
+        || pending_rc=$?
+      case "$pending_rc" in
+        0|2) ;;
+        *) pending_err="${pending_err#gang: }"
+           hook_uninterpretable "$TMUX_PANE" \
+             "the pending context-light default could not be resolved${pending_err:+ — $pending_err}" ;;
+      esac ;;
+  esac
   [ "$event" = Stop ] || waiting_clear "$TMUX_PANE"
   case "$event" in
     Stop|PostCompact)
