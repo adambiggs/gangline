@@ -2338,3 +2338,52 @@ on stderr, so the ambiguity stays recoverable and cannot disappear as an
 unexplained count change. Waiting delivery entries and kept ambiguity stay
 separate in operator output: `spooled` is mail Gangline will deliver, while
 `spool-held` is a record it will not deliver.
+
+## Brief conduct is scored off-gate, by argv, on one line
+
+Every mandatory assertion about `roles/lead.md` proves the brief is delivered:
+its bytes validate, reach a system prompt intact, and are still in the shipped
+file. None reads what a lead did after receiving one, so none separates a line
+that changes behaviour from a line that only reads as though it would.
+
+`test/leadeval.sh` closes that gap for one line — that every owner has an
+available reviewer whose error modes differ from its own. It stages a lead in a
+disposable session, gives it independent results to dispatch, and scores the
+collar and model in the `gang` invocations it actually made. The verdict is
+computed from argv and never from prose, so a lead that dispatches a monoculture
+while explaining diversity fails. That line is scored because it is the only
+decision in the brief visible in argv alone; the rest need a manifest the lane
+would supply, or a model judging prose, and a model judge is not a test.
+
+The lane is opt-in and never gates a commit. Its subject is a model's choice, so
+one run is one draw, and a verdict from it is evidence about the fixture before
+it is evidence about the brief. `test/gate.sh` therefore does not invoke it, and
+`test/lint.sh` proves that: the wall-time exemption naming this lane is refused
+if the gate ever calls it, so exempting a file and then wiring it into the
+mandatory suite fails loudly instead of buying that file a licence to sleep.
+
+The scorer answers for itself before any budget is spent.
+`test/leadeval/score-selftest.sh` is deterministic, needs no harness or clock,
+and the lane runs it first. It pins the false-pass shapes in particular: a hitch
+that launches nothing still parses as a hitch and carries defaults, so counting
+one adds a phantom agent differing from every real one, which supplies the
+missing reviewer and turns a monoculture into a PASS. A scorer that fails toward
+PASS retires the question it exists to ask.
+
+The recorder is a shim named `gang` placed ahead of the real one on the staged
+lead's PATH, and its three guards are mandatory. It resolves the real binary
+from an absolute path baked in at write time and never through PATH, because a
+lookup from a shim that is first on PATH returns the shim and each call forks
+another copy — unbounded, self-accelerating, and fatal to every unrelated process
+on the host. It carries a depth ceiling, because a hitched agent's own harness
+invokes `gang` and legitimate nesting must be bounded rather than forbidden. It
+refuses when the path it is about to run is itself, checking the conclusion
+rather than trusting the substitution. Under an opt-in flag the two commands
+that would launch something are recorded and answered without running, since
+scoring a dispatch decision needs argv and nothing else; a scenario that needs
+live teammates must not set it.
+
+The scored line is unsatisfiable through a harness's own sub-agents, which
+inherit the lead's harness and model and therefore its error modes. A scenario
+measuring the line must name Gangline dispatch, or it scores a lead that had no
+choice to make.

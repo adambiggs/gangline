@@ -1,0 +1,100 @@
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+#
+# RECORDS ONE `gang` INVOCATION, THEN RUNS THE REAL ONE.
+#
+# This file is a template. test/leadeval.sh writes a copy with @GANG_REAL@ and
+# @RECORD_DIR@ replaced by absolute paths, names the copy `gang`, and puts it
+# ahead of the real one on a staged lead's PATH. The staged lead then dispatches
+# normally and every dispatch it makes is on disk afterwards.
+#
+# WHY EVERY GUARD BELOW EXISTS. A shim named for the thing it wraps is one
+# lookup away from finding itself: if it resolves its target through PATH it
+# resolves to itself, and each call forks another copy. The recursion is
+# unbounded and self-accelerating, so it exhausts the process table rather than
+# failing, and it takes down every unrelated process on the host with it. The
+# three guards below make that shape unreachable; none of them is optional.
+set -eu
+
+# GUARD 1 - THE REAL BINARY IS ABSOLUTE AND BAKED IN AT WRITE TIME.
+# Never `command -v gang`, never `PATH` resolution of any kind. A lookup from
+# inside a shim that is first on PATH returns the shim. This single line is the
+# difference between wrapping gang and calling yourself forever.
+GANG_REAL='@GANG_REAL@'
+RECORD_DIR='@RECORD_DIR@'
+
+# GUARD 2 - DEPTH CEILING.
+# Recursion here is expected, not merely possible: a staged lead runs
+# `gang hitch`, which launches a harness, and that agent's own collar may invoke
+# gang again through this same PATH. So the ceiling bounds legitimate nesting
+# rather than forbidding it, and refuses loudly past it instead of unwinding
+# quietly.
+GANG_SHIM_DEPTH="${GANG_SHIM_DEPTH:-0}"
+case "$GANG_SHIM_DEPTH" in
+  ''|*[!0-9]*) echo "gang-shim: GANG_SHIM_DEPTH is not a count: $GANG_SHIM_DEPTH" >&2; exit 97 ;;
+esac
+if [ "$GANG_SHIM_DEPTH" -ge 8 ]; then
+  echo "gang-shim: depth $GANG_SHIM_DEPTH reached the ceiling; refusing to recurse" >&2
+  exit 97
+fi
+GANG_SHIM_DEPTH=$((GANG_SHIM_DEPTH + 1))
+export GANG_SHIM_DEPTH
+
+# GUARD 3 - THE REAL BINARY MUST BE A DIFFERENT FILE FROM THIS ONE.
+# Guard 1 can be defeated by a bad substitution at write time, so the shim
+# checks the conclusion rather than trusting the input: if the path it is about
+# to run is this very file, it refuses instead of proving it the expensive way.
+if [ "$GANG_REAL" = "$0" ]; then
+  echo "gang-shim: real gang resolves to the shim itself; refusing" >&2
+  exit 97
+fi
+[ -x "$GANG_REAL" ] || { echo "gang-shim: real gang not executable at $GANG_REAL" >&2; exit 97; }
+
+# THE RECORD IS ONE FILE PER INVOCATION, NOT A SHARED APPEND.
+# Several agents can invoke gang at once; concurrent appends to one log
+# interleave and a torn record is indistinguishable from an argument containing
+# a newline. A unique file per call cannot interleave, and NUL separation
+# survives arguments containing spaces, newlines and quotes - which briefs do.
+record="$(mktemp "$RECORD_DIR/call.XXXXXXXX")" \
+  || { echo "gang-shim: cannot write a record under $RECORD_DIR" >&2; exit 97; }
+{
+  printf 'depth\0%s\0' "$GANG_SHIM_DEPTH"
+  printf 'cwd\0%s\0' "$PWD"
+  printf 'argv\0'
+  for arg in "$@"; do printf '%s\0' "$arg"; done
+} > "$record" || { echo "gang-shim: record write failed" >&2; exit 97; }
+
+# DRY DISPATCH, opt-in and off unless the lane sets it.
+#
+# Scoring which harness and model a lead chose needs the lead's ARGV and nothing
+# else: no window has to open, no harness has to boot, no tokens have to be
+# spent by anyone but the lead itself. So under GANG_SHIM_DRY_DISPATCH the two
+# commands that would launch something are recorded, answered as though they
+# succeeded, and not run.
+#
+# EVERY OTHER SUBCOMMAND STILL RUNS FOR REAL. A staged lead that could not read
+# its own roster or send a message would be a different agent than the one whose
+# behaviour is being measured, and the dry answer below is deliberately shaped
+# like gang's own success line so the lead has no way to tell it is staged.
+#
+# The cost of this mode is that the staged lead's later beliefs are wrong: it
+# thinks it has teammates. That is sound for scoring one dispatch decision and
+# unsound for anything that then talks to them, so a scenario that needs live
+# teammates must not set this.
+if [ "${GANG_SHIM_DRY_DISPATCH:-0}" = 1 ]; then
+  case "${1:-}" in
+    hitch|up)
+      name=""
+      for arg in "$@"; do
+        case "$arg" in -*) continue ;; hitch|up) continue ;; *) [ -z "$name" ] && name="$arg" ;;
+        esac
+      done
+      printf 'hitched %s\n' "${name:-agent}"
+      exit 0
+      ;;
+  esac
+fi
+
+# exec, not a call: replacing the process means this shim cannot sit in the
+# tree holding a descriptor, and it keeps the real gang's exit status exact.
+exec "$GANG_REAL" "$@"

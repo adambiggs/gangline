@@ -177,6 +177,12 @@ fi
 # pass it. The check is a tripwire on the ordinary way in, not a proof of
 # unreachability; the rule it guards is stated in CONTRIBUTING.md.
 E2E_LANE=test/e2e.sh
+# THE OPT-IN LANES. Neither is invoked by test/gate.sh, so neither is part of
+# the mandatory suite and the wall-time rule below does not reach them. The list
+# is not taken on trust: the loop after it proves each named lane really is
+# absent from the gate, so exempting a file and then wiring it into the gate
+# fails loudly instead of quietly buying that file a licence to sleep.
+OPT_IN_LANES="$E2E_LANE test/leadeval.sh"
 E2E_WORKFLOW=.github/workflows/e2e.yml
 if [ -f "$E2E_LANE" ]; then
   auto_hits=""
@@ -233,10 +239,20 @@ fi
 # timeout behaviour. Real harness probes are operator commands, not this suite.
 # Include executable CI helpers as well as test/: hiding a slow test beside its
 # workflow does not make it any less part of the suite.
+for lane in $OPT_IN_LANES; do
+  [ -f "$lane" ] || { printf '%s\n' "lint: $lane is exempted from the wall-time rule but does not exist" >&2; exit 1; }
+  if grep -q "$(basename "$lane")" test/gate.sh; then
+    printf '%s\n' \
+      "lint: $lane is exempted from the wall-time rule but test/gate.sh invokes it;" \
+      "      an exemption is only sound while the lane stays out of the mandatory gate." >&2
+    exit 1
+  fi
+done
+
 timing_hits=""
 for f in test/*.sh .github/workflows/*.sh; do
   [ -f "$f" ] || continue
-  [ "$f" = "$E2E_LANE" ] && continue
+  case " $OPT_IN_LANES " in *" $f "*) continue ;; esac
   hits="$(awk '
     /^[[:space:]]*#/ { next }
     {
