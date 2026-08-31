@@ -489,7 +489,26 @@ main() {
       rm -rf -- "$WORK"
     fi
   }
-  trap cleanup EXIT HUP INT TERM
+  # A SIGNAL ENDS THE GATE; IT DOES NOT ANNOTATE IT. One handler for the exit
+  # and for the signals reads as if a signalled gate stops here, and it does
+  # not: a bash signal handler returns to the interrupted flow. Bash holds the
+  # handler until the foreground child returns, so what resumes after the
+  # teardown is whatever follows the gates — the verdict itself. A signalled
+  # run therefore deletes its own snapshot and then reads lint's output out of
+  # it: `cat: .../lint.out: No such file or directory`, and no verdict line at
+  # all. What a reader is left holding is the suite's own green count with
+  # nothing after it saying the gate never decided.
+  # The teardown is unchanged and still removes what this run created; what
+  # changes is that nothing runs after it. The disposition is cleared first so a
+  # second signal cannot re-enter this over the first.
+  gate_on_signal() { # $1 = signal number, for the conventional 128 + signo
+    trap - HUP INT TERM
+    exit "$((128 + $1))"
+  }
+  trap cleanup EXIT
+  trap 'gate_on_signal 1' HUP
+  trap 'gate_on_signal 2' INT
+  trap 'gate_on_signal 15' TERM
 
   snapshot_into "$SNAP" "$WORK"
 

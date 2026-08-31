@@ -761,6 +761,84 @@ else
     "no removal command was printed for $gate_kept"
 fi
 
+# A SIGNALLED GATE STOPS AT THE SIGNAL. One handler for the exit and for the
+# signals does not end a run — a bash signal handler returns to the interrupted
+# flow — and bash holds it until the foreground child returns, so the teardown
+# lands after the gates and what resumes is the verdict itself. The run then
+# reads lint's output out of the directory it has just deleted, ends 1 instead
+# of the conventional signal status, and reports no verdict at all.
+#
+# The signal is sent BY the stand-in suite, which needs no barrier and no clock:
+# the gate is inside that call and blocked on it, so the handler runs the moment
+# it returns.
+#
+# FINDING THE GATE IS THE PART THAT CAN GO WRONG SILENTLY. A bash subshell
+# shares its parent's cmdline, so the nearest ancestor matching the gate is the
+# fork that ran this suite, not the gate: killing that one makes the gate report
+# a failed suite and refuse, which looks the same whether the fix is present or
+# not. The walk therefore climbs to the HIGHEST ancestor still carrying this
+# fixture's own gate path and stops at the first that does not — and the path
+# being this fixture's own is what keeps it off any other gate on the host,
+# including the run executing this line.
+gate_signal="$RUN_ROOT/gate-signalled"
+mkdir -p "$gate_signal/test"
+cp "$ROOT/test/gate.sh" "$gate_signal/test/gate.sh"
+gate_signal="$(cd -P "$gate_signal" && pwd)"
+gate_signal_found="$RUN_ROOT/gate-signalled-found"
+for gate_signal_stub in lint smoke; do
+  cat > "$gate_signal/test/$gate_signal_stub.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+exit 0
+SH
+done
+cat > "$gate_signal/test/integration.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+target=""
+p=\$PPID
+while [ -n "\$p" ] && [ "\$p" != 1 ]; do
+  cmd=\$(tr '\\0' ' ' < /proc/\$p/cmdline 2>/dev/null)
+  case "\$cmd" in
+    *"$gate_signal/test/gate.sh"*) target=\$p ;;
+    *) [ -n "\$target" ] && break ;;
+  esac
+  set -- \$(sed 's/^.*) //' /proc/\$p/stat 2>/dev/null)
+  p=\$2
+done
+printf '%s\\n' "\${target:-no-gate-in-ancestry}" > "$gate_signal_found"
+[ -n "\$target" ] && kill -TERM "\$target"
+exit 0
+SH
+chmod +x "$gate_signal/test/lint.sh" "$gate_signal/test/smoke.sh" \
+  "$gate_signal/test/integration.sh"
+git -C "$gate_signal" init -q
+git -C "$gate_signal" add -A
+git -C "$gate_signal" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: signalled gate fixture'
+gate_signal_rc=0
+# The lock marker is INHERITED rather than unset: a nested fixture gate that
+# re-execs under the real heavy lock would block on whatever holds it, up to and
+# including the run that is executing this line.
+gate_signal_out="$("$gate_signal/test/gate.sh" 2>&1)" || gate_signal_rc=$?
+# A stub that never found the gate leaves a run nobody interrupted, and every
+# assertion below it passes for that reason rather than for the property.
+if [ "$(cat "$gate_signal_found" 2>/dev/null)" -gt 0 ] 2>/dev/null; then
+  pass "the stand-in suite signalled the gate itself, not the subshell running it"
+else
+  fail "the stand-in suite signalled the gate itself, not the subshell running it" \
+    "the ancestry walk recorded [$(cat "$gate_signal_found" 2>/dev/null)]"
+fi
+equal "a signalled gate ends on the signal rather than on a status it computed" \
+  "143" "$gate_signal_rc"
+if printf '%s\n' "$gate_signal_out" | grep -q 'No such file or directory'; then
+  fail "and nothing below the teardown reads the snapshot it deleted" \
+    "the run continued past its own teardown: $(printf '%s\n' "$gate_signal_out" \
+      | grep 'No such file or directory' | head -n 1)"
+else
+  pass "and nothing below the teardown reads the snapshot it deleted"
+fi
+
 # THE WIRING, not a restatement of it: both mandatory entry points are run
 # against a tree they would not own and must refuse before doing any work.
 gate_wire="$RUN_ROOT/gate-wiring"
