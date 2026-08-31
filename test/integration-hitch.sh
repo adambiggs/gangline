@@ -1734,9 +1734,9 @@ lights_shipped() { # $1 collar file, $2 model -> its default, or "none"
     '. "$1"; if out="$(collar_context_lights "$2")"; then printf "%s" "$out"; else printf none; fi' \
     fixture "$1" "$2"
 }
-equal "claude-code sizes its 1M-window models for the runway they leave" \
-  "55%,80%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-opus-5)"
-equal "and gives its 200k class an earlier pair for the same absolute headroom" \
+equal "claude-code prices its 1M-window models by cost, not remaining room" \
+  "20%,40%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-opus-5)"
+equal "and sizes its 200k class for the runway behind red" \
   "45%,65%" "$(lights_shipped "$ROOT/collars/claude-code.sh" claude-haiku-4-5-20251001)"
 equal "no model means no window class, so claude-code offers no default" \
   "none" "$(lights_shipped "$ROOT/collars/claude-code.sh" "")"

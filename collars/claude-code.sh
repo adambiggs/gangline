@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 [ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 # CONTEXT-LIGHT DEFAULTS ARE A PER-MODEL ANSWER, because this harness runs
-# models whose native windows differ by five times. The same fraction does not
-# mean the same thing in each: 80% of a 1000k window leaves 200k of runway for
-# an agent to finish an arc and compact, while 80% of a 200k window leaves 40k
-# and the red light arrives too late to act on. Smaller windows therefore get
-# an earlier pair, so the absolute headroom behind red stays comparable.
+# models whose native windows differ by five times, and the two classes ration
+# different things. The 1000k-class pair is a cost threshold, not a room
+# threshold: the window holds far more than 400k, but every turn after that
+# point is billed at that size, so yellow at 20% (~200k) marks where turns
+# start getting expensive and red at 40% says finish the arc and rotate — a
+# fresh hitch reading the artifact costs less than resuming the window. The
+# 200k-class pair rations room: 65% red already leaves only ~70k of runway to
+# finish and compact, and a later red arrives too late to act on.
 #
 # Fractions rather than token counts, because the window a model reports is the
 # provider's to change and `collar_context` already reads the live one; a
@@ -23,7 +26,7 @@ collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
   case "$1" in
     '') return 1 ;;
     *haiku*) printf '45%%,65%%\n' ;;
-    *) printf '55%%,80%%\n' ;;
+    *) printf '20%%,40%%\n' ;;
   esac
 }
 GANG_LAUNCH="claude"
