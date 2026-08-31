@@ -564,7 +564,7 @@ gate_pid=$!
 IFS=, read -r -a integration_selected_parts <<< "${GANG_INTEGRATION_PARTS:-all}"
 for integration_selected_part in "${integration_selected_parts[@]}"; do
   case "$integration_selected_part" in
-    all|cli|substrate|hitch|compose|spool|readiness|hooks|tick) ;;
+    all|cli|substrate|hitch|compose|spool|readiness|hooks|notify|tick) ;;
     *) printf 'integration: unknown focused part %s\n' "$integration_selected_part" >&2
        exit 2 ;;
   esac
@@ -583,6 +583,7 @@ integration_part compose && . "$ROOT/test/integration-compose.sh"
 integration_part spool && . "$ROOT/test/integration-spool.sh"
 integration_part readiness && . "$ROOT/test/integration-readiness.sh"
 integration_part hooks && . "$ROOT/test/integration-hooks.sh"
+integration_part notify && . "$ROOT/test/integration-notify.sh"
 integration_part tick && . "$ROOT/test/integration-tick.sh"
 
 # Join the isolated self-test at the same point where it used to run. Its output
