@@ -1723,3 +1723,14 @@ negated by a sentence added after it, and nothing in that gate can show a lead
 obeyed any of them. Measuring conduct needs a separate opt-in lane, and only the
 decisions that turn on a window are observable without a task manifest the eval
 supplies itself. See `docs/records/lead-brief-revision-2026-08-30.md`.
+
+## Codex root loss is a process identity, not transcript state
+
+A Codex process can die inside a live pane without writing a terminal rollout
+record. An unclosed native turn is also the ordinary shape of live work, so a
+transcript reader would alert healthy agents. Tmux's pane root is the only
+universal process boundary that does not confuse a sandboxed tool child for
+the harness. The Codex collar therefore accepts only that root when Linux
+reports it as a non-zombie `codex` process, paired with its kernel start stamp
+to defeat PID reuse. A missing or changed recorded witness is harness loss;
+an unrecorded or unreadable witness remains visibly unobserved, not healthy.

@@ -408,6 +408,45 @@ collar_live_session_id() { # $1 = tmux target; print the exact id, or return 1
   printf '%s' "$live"
 }
 
+# A HARNESS ROOT IS A NARROWER WITNESS THAN A PANE. The pane may remain alive
+# after Codex exits, but a descendant scan would mistake one ordinary sandboxed
+# tool call for the harness. At hitch/adopt Gangline records this root's PID
+# together with Linux's non-reusable process start stamp. Later tick passes ask
+# for the same positive witness; a process that is merely alive is never spent
+# as a health verdict.
+collar_harness_identity() { # $1 = tmux target; PID<TAB>start stamp, 0/1/2
+  local pane_pid tmp status command observed="" probe_rc=""
+  pane_pid="$(tmux display-message -p -t "$1" '#{pane_pid}' 2>/dev/null)" \
+    || pane_pid=""
+  case "$pane_pid" in
+    ''|*[!0-9]*) printf 'the Codex pane-root process id is unreadable'; return 2 ;;
+  esac
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gangline-codex-process-identity.XXXXXX")" \
+    || { printf 'could not reserve a Codex liveness probe result'; return 2; }
+  status="${tmp}.status"
+  # See collar_live_session_id above: a nonzero run-shell result paints an
+  # overlay in the target pane. The helper's status is therefore carried in a
+  # cleanup-owned side file while the server-side command itself succeeds.
+  command="$(shell_quote "$ROOT/libexec/gang-codex-process-identity") $(shell_quote "$pane_pid") > $(shell_quote "$tmp") 2>/dev/null; printf '%s\\n' \$? > $(shell_quote "$status"); :"
+  tmux run-shell -t "$1" "$command" >/dev/null 2>&1 || :
+  IFS= read -r observed < "$tmp" || observed=""
+  IFS= read -r probe_rc < "$status" || probe_rc=""
+  rm -f -- "$tmp" "$status"
+  case "$probe_rc" in
+    0)
+      if [[ "$observed" =~ ^[0-9]+$'\t'[0-9]+$ ]] \
+        && [ "${observed%%$'\t'*}" = "$pane_pid" ]; then
+        printf '%s' "$observed"
+        return 0
+      fi
+      printf 'the Codex liveness probe returned an invalid identity'
+      return 2 ;;
+    1) return 1 ;;
+    2) printf 'the Codex pane-root liveness witness is unreadable'; return 2 ;;
+    *) printf 'the Codex liveness probe returned no readable status'; return 2 ;;
+  esac
+}
+
 # A STOPPED TURN CAN STILL HOLD NATIVE WORK. Codex keeps background terminal
 # processes under the harness process, spawned-agent edges in its state store,
 # and automatic goal continuations in its goal store. None is intent: each is a
