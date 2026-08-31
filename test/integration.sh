@@ -557,14 +557,33 @@ gate_pid=$!
 # A part is a fragment, so shellcheck cannot see across the boundary. A variable
 # that crosses one carries a directive naming the file at the other end; that
 # directive is the record that the crossing was deliberate.
-. "$ROOT/test/integration-cli.sh"
-. "$ROOT/test/integration-substrate.sh"
-. "$ROOT/test/integration-hitch.sh"
-. "$ROOT/test/integration-compose.sh"
-. "$ROOT/test/integration-spool.sh"
-. "$ROOT/test/integration-readiness.sh"
-. "$ROOT/test/integration-hooks.sh"
-. "$ROOT/test/integration-tick.sh"
+# A focused part still receives this file's private server, fake clock, helpers,
+# and teardown; it only skips independent source fragments. Running all of
+# integration to learn one assertion is needlessly slow, while sourcing a
+# fragment directly would omit its fixture substrate.
+IFS=, read -r -a integration_selected_parts <<< "${GANG_INTEGRATION_PARTS:-all}"
+for integration_selected_part in "${integration_selected_parts[@]}"; do
+  case "$integration_selected_part" in
+    all|cli|substrate|hitch|compose|spool|readiness|hooks|tick) ;;
+    *) printf 'integration: unknown focused part %s\n' "$integration_selected_part" >&2
+       exit 2 ;;
+  esac
+done
+unset integration_selected_part integration_selected_parts
+
+integration_part() {
+  local part="$1" selected=",${GANG_INTEGRATION_PARTS:-all},"
+  [[ "$selected" == *,all,* || "$selected" == *,"$part",* ]]
+}
+
+integration_part cli && . "$ROOT/test/integration-cli.sh"
+integration_part substrate && . "$ROOT/test/integration-substrate.sh"
+integration_part hitch && . "$ROOT/test/integration-hitch.sh"
+integration_part compose && . "$ROOT/test/integration-compose.sh"
+integration_part spool && . "$ROOT/test/integration-spool.sh"
+integration_part readiness && . "$ROOT/test/integration-readiness.sh"
+integration_part hooks && . "$ROOT/test/integration-hooks.sh"
+integration_part tick && . "$ROOT/test/integration-tick.sh"
 
 # Join the isolated self-test at the same point where it used to run. Its output
 # stays contiguous, and its checks and failures remain part of this suite's one
