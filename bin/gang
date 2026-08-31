@@ -1444,7 +1444,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_hitch_check collar_bricked collar_blocked collar_waiting \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -1492,6 +1492,18 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
         || die "collar '$1' declares $declared '$key', which is not a tmux key name — gang refuses to send it, because tmux would deliver the letters instead of the key" ;;
     esac
   done
+}
+
+validate_collar_hitch() { # $1 collar, $2 target directory; collar loaded
+  local output="" rc=0 reason
+  declare -F collar_hitch_check >/dev/null || return 0
+  output="$(collar_hitch_check "$2")" || rc=$?
+  reason="$(printf '%s' "$output" | config_sanitize)"
+  if [ "$rc" -ne 0 ]; then
+    die "hitch: collar '$1' preflight refused${reason:+ — $reason}"
+  fi
+  [ -z "$output" ] \
+    || die "hitch: collar '$1' preflight returned output on success — $reason"
 }
 
 valid_name() { # $1 = a name; usable as identity, tmux target, shell word, JSON string
@@ -7182,6 +7194,14 @@ cmd_hitch() {
   # shellcheck disable=SC2034  # read by the collar sourced on the next line
   GANG_MODEL="$model"
   load_collar "$prof"
+  # A COLLAR PREFLIGHT MAY USE THE SAME SHIPPED PYTHON HELPERS as the rest of
+  # hitch. Preserve the named dependency refusal instead of letting a missing
+  # interpreter collapse the preflight's own reason into an empty answer.
+  require_python3
+  # A COLLAR-SPECIFIC LAUNCH REQUIREMENT IS CHEAP ONLY HERE. After the first
+  # tmux mutation it becomes a dead or misleading window; after the agent tries
+  # to use the missing capability it becomes an unrelated downstream failure.
+  validate_collar_hitch "$prof" "$dir"
   ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
     valid_role_name "$role" \
@@ -7301,7 +7321,6 @@ cmd_hitch() {
     lights="$CONTEXT_LIGHTS_SPEC"
   fi
 
-  require_python3
   contract_read
   doctrine_read
 

@@ -98,6 +98,15 @@ cannot drift to another session or configuration layer on the same tmux server.
 File-layer settings therefore reach nested hitches. Other per-invocation
 environment overrides do not become sticky inside the agent.
 
+Before any tmux mutation, a collar may validate a harness-specific launch
+requirement. The Codex collar reads the effective `$CODEX_HOME/config.toml`
+without invoking Codex, resolves `default_permissions` and its inherited
+filesystem rules, and refuses unless the selected profile grants the whole
+state home write access. A missing config, an undefined selected profile, an
+unreadable policy, and a selected profile missing that grant are named as
+different failures. This protects nested `codex exec` initialization as a
+property; it does not pin the set of files a particular Codex release creates.
+
 If a first-run prompt owns the screen before the composer appears, `hitch`
 directs the operator to `gang attach` as soon as the collar's occupied pattern
 provides positive pane evidence. It immediately parks the attributed contract
@@ -1322,6 +1331,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_EFFORT_CMD` | prints the effort vocabulary, one level per line, given `GANG_MODEL`; empty output means could-not-determine |
 | `GANG_ROLE_PROMPT_OPT` | optional native option whose next argument is a system-prompt addition passed by value |
 | `GANG_HARNESS_PROMPT` | optional harness-specific prose included in that system-prompt addition; requires `GANG_ROLE_PROMPT_OPT` |
+| `collar_hitch_check dir` | optional byte-silent preflight for a harness-specific launch requirement; nonzero prints the reason and refuses before any tmux mutation. The shipped Codex collar resolves its configured default permission profile and requires that profile to grant write access to the effective `CODEX_HOME`, so nested Codex processes can initialize without enumerating their current state files |
 | `GANG_BUSY_REGEX` | pane evidence of an active turn |
 | `GANG_OCCUPIED_REGEX` | pane evidence that a native UI owns input |
 | `collar_bricked target` | inspect native fatal-turn evidence; print a cause and return 0 fatal, return 1 with no output when absent, or print a cause and return 2 when unreadable |

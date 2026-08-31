@@ -78,6 +78,15 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   esac
 fi
 unset _gl_codex_dir
+
+# A NESTED CODEX INITIALIZES ITS OWN STATE HOME before it can scan a commit or
+# any other body. Hitch validates that property from Codex's selected permission
+# profile, not from today's state filenames: those are an implementation detail
+# and have already changed. This helper reads TOML only; asking codex to validate
+# the profile would require the very initialization this preflight protects.
+collar_hitch_check() { # $1 hitch directory; byte-silent success, reason on refusal
+  python3 "${BASH_SOURCE[0]%/*}/plugins/codex-permissions-check.py" "$1"
+}
 GANG_MODEL_OPT="-m"
 # CONTEXT-LIGHT DEFAULTS FOR A NARROW WINDOW. Observed 2026-08-24 on this
 # installation: a codex agent reports a 258k window, and every model this

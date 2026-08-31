@@ -1384,6 +1384,150 @@ else
   pass "an unknown target is refused"
 fi
 
+# Codex starts nested codex processes from ordinary agent work such as gated
+# pushes. Every one initializes state beneath its effective CODEX_HOME before it
+# can do useful work, so a permission profile that leaves that home read-only is
+# a broken hitch, not a later tool failure. The fixture sources the shipped
+# collar but replaces only its TUI launch; the preflight remains the production
+# one while a regression in current code cannot start a real harness.
+codex_readonly_home="$RUN_ROOT/codex-home-readonly"
+mkdir -p "$codex_readonly_home"
+cat > "$codex_readonly_home/config.toml" <<'TOML'
+default_permissions = "nested-check"
+
+[permissions.nested-check.filesystem]
+":root" = "read"
+TOML
+cat > "$RUN_ROOT/collars/codex-profile-check.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/codex.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_RESUME_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' resume-{{session_id}}"
+GANG_MODEL_OPT=""
+GANG_EFFORT_OPT=""
+GANG_EFFORT_CMD=""
+GANG_STOP_HOOK=""
+GANG_SELF_COMPACT=""
+SH
+
+ln -s "$(command -v tr)" "$no_python_path/tr"
+codex_no_python_rc=0
+codex_no_python_out="$(env PATH="$no_python_path" \
+  GANG_SESSION=codex-no-python-dependency CODEX_HOME="$codex_readonly_home" \
+  /bin/bash "$GANG" hitch \
+  codex-no-python -c codex-profile-check -d /tmp 2>&1)" \
+  || codex_no_python_rc=$?
+equal "a Codex hitch keeps the named missing-python dependency refusal" \
+  "1 gang: python3 is required for native hook payloads, wait deadlines, context lights, operator doctrine validation, and curfew clock times" \
+  "$codex_no_python_rc $codex_no_python_out"
+
+codex_profile_rc=0
+codex_profile_out="$(CODEX_HOME="$codex_readonly_home" \
+  "$GANG" hitch codex-profile-check -c codex-profile-check -d /tmp 2>&1)" \
+  || codex_profile_rc=$?
+if [ "$codex_profile_rc" -eq 0 ]; then
+  "$GANG" drop codex-profile-check >/dev/null
+fi
+equal "a Codex hitch refuses a profile that cannot initialize CODEX_HOME" \
+  "1 gang: hitch: collar 'codex-profile-check' preflight refused — Codex permission profile 'nested-check' in $codex_readonly_home/config.toml does not grant write access to CODEX_HOME $codex_readonly_home; nested codex cannot initialize there" \
+  "$codex_profile_rc $codex_profile_out"
+equal "the refused Codex permission profile leaves no window behind" "" \
+  "$(window_id codex-profile-check)"
+
+# The failure branches are intentionally different instructions. A missing
+# config cannot identify any policy; a config without a selection says what to
+# name; a selected but undefined profile points at the mismatch; malformed TOML
+# names the unreadable policy; and a parsed profile without the grant points at
+# the property to add. None of those answers may be borrowed from running codex,
+# because the missing write is what stops that command from initializing.
+codex_absent_home="$RUN_ROOT/codex-home-absent"
+mkdir -p "$codex_absent_home"
+codex_absent_rc=0
+codex_absent_out="$(env CODEX_HOME="$codex_absent_home" bash -c \
+  'ROOT="$1"; . "$2"; collar_hitch_check "$3"' fixture \
+  "$ROOT" "$ROOT/collars/codex.sh" /tmp 2>&1)" || codex_absent_rc=$?
+equal "an absent Codex config is named as absent, not as a bad profile" \
+  "1 Codex config $codex_absent_home/config.toml is absent, so Gangline cannot identify the permission profile this hitch would use" \
+  "$codex_absent_rc $codex_absent_out"
+
+codex_unselected_home="$RUN_ROOT/codex-home-unselected"
+mkdir -p "$codex_unselected_home"
+cat > "$codex_unselected_home/config.toml" <<'TOML'
+[permissions.somewhere-else.filesystem]
+":root" = "read"
+TOML
+codex_unselected_rc=0
+codex_unselected_out="$(env CODEX_HOME="$codex_unselected_home" bash -c \
+  'ROOT="$1"; . "$2"; collar_hitch_check "$3"' fixture \
+  "$ROOT" "$ROOT/collars/codex.sh" /tmp 2>&1)" || codex_unselected_rc=$?
+equal "a Codex config without a default profile names the missing selection" \
+  "2 Codex config $codex_unselected_home/config.toml does not name default_permissions, so Gangline cannot identify the permission profile this hitch would use" \
+  "$codex_unselected_rc $codex_unselected_out"
+
+codex_undefined_home="$RUN_ROOT/codex-home-undefined"
+mkdir -p "$codex_undefined_home"
+cat > "$codex_undefined_home/config.toml" <<'TOML'
+default_permissions = "not-defined"
+
+[permissions.somewhere-else.filesystem]
+":root" = "read"
+TOML
+codex_undefined_rc=0
+codex_undefined_out="$(env CODEX_HOME="$codex_undefined_home" bash -c \
+  'ROOT="$1"; . "$2"; collar_hitch_check "$3"' fixture \
+  "$ROOT" "$ROOT/collars/codex.sh" /tmp 2>&1)" || codex_undefined_rc=$?
+equal "an undefined selected Codex profile names the mismatched selection" \
+  "2 Codex config $codex_undefined_home/config.toml selects permission profile 'not-defined', but profile 'not-defined' is not defined" \
+  "$codex_undefined_rc $codex_undefined_out"
+
+codex_malformed_home="$RUN_ROOT/codex-home-malformed"
+mkdir -p "$codex_malformed_home"
+cat > "$codex_malformed_home/config.toml" <<'TOML'
+default_permissions = [
+TOML
+codex_malformed_rc=0
+codex_malformed_out="$(env CODEX_HOME="$codex_malformed_home" bash -c \
+  'ROOT="$1"; . "$2"; collar_hitch_check "$3"' fixture \
+  "$ROOT" "$ROOT/collars/codex.sh" /tmp 2>&1)" || codex_malformed_rc=$?
+equal "malformed Codex TOML is named as unreadable, not as a profile miss" \
+  "1 Codex config $codex_malformed_home/config.toml is not readable TOML (TOMLDecodeError), so Gangline cannot validate its permission profile" \
+  "$codex_malformed_rc $codex_malformed_out"
+
+codex_writable_home="$RUN_ROOT/codex-home-writable"
+mkdir -p "$codex_writable_home" "$RUN_ROOT/no-codex-bin"
+cat > "$codex_writable_home/config.toml" <<TOML
+default_permissions = "nested-check"
+
+[permissions.nested-check]
+extends = ":read-only"
+
+[permissions.nested-check.filesystem]
+"$RUN_ROOT" = "write"
+
+[permissions.nested-check.filesystem.":workspace_roots"]
+"**/*.env" = "deny"
+TOML
+cat > "$RUN_ROOT/no-codex-bin/codex" <<SH
+#!/bin/sh
+: > "$RUN_ROOT/codex-permission-check-ran-codex"
+exit 91
+SH
+chmod +x "$RUN_ROOT/no-codex-bin/codex"
+codex_writable_rc=0
+codex_writable_out="$(env CODEX_HOME="$codex_writable_home" \
+  PATH="$RUN_ROOT/no-codex-bin:$PATH" bash -c \
+  'ROOT="$1"; . "$2"; collar_hitch_check "$3"' fixture \
+  "$ROOT" "$ROOT/collars/codex.sh" "$ROOT" 2>&1)" || codex_writable_rc=$?
+equal "an inherited profile may grant CODEX_HOME through a writable ancestor" \
+  "0 " "$codex_writable_rc $codex_writable_out"
+equal "the Codex permission preflight never invokes Codex" "" \
+  "$(if [ "$codex_writable_rc" -ne 0 ]; then
+       printf 'preflight status %s' "$codex_writable_rc"
+     elif test -e "$RUN_ROOT/codex-permission-check-ran-codex"; then
+       printf ran
+     fi)"
+
 # Effort at hitch: the same shape as -m with one difference the worlds pin —
 # the join carries no space, because the separator belongs to the harness's
 # own spelling. The refusals are separated the way the code separates them: no

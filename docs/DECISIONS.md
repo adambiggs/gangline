@@ -1734,3 +1734,18 @@ the harness. The Codex collar therefore accepts only that root when Linux
 reports it as a non-zombie `codex` process, paired with its kernel start stamp
 to defeat PID reuse. A missing or changed recorded witness is harness loss;
 an unrecorded or unreadable witness remains visibly unobserved, not healthy.
+
+## A harness preflight proves a capability, not today's failure paths
+
+A Codex agent can launch nested Codex work from an ordinary tool path. That
+child initializes state below the effective `CODEX_HOME` before it can do the
+requested work, so a permission profile that leaves the state home read-only is
+a broken hitch even when the interactive parent opens normally.
+
+The Codex collar resolves the configured default permission profile and proves
+that the state home is writable before tmux is touched. It does not run Codex:
+initialization is the capability under test, so asking the harness would fail at
+the same hidden boundary. It also does not name the files one release happened
+to create. The durable property is write access to the whole state home; absent,
+undefined, unreadable and insufficient profiles stay distinct refusals. Other
+collars declare no preflight and pay nothing for a Codex-specific requirement.
