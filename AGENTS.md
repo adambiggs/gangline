@@ -31,9 +31,10 @@ An existing assertion records a decision. Changing its expectation requires
 showing why the old behavior was wrong; deleting it requires the same proof.
 Do not edit a test merely because it blocks a behavior change.
 
-Green is not sufficient when a fixture produced no evidence. Keep unknown
-distinct from both pass and fail, and require immediate observable readiness
-before asserting state.
+Green is not sufficient when a fixture produced no evidence, and a check that
+prints only on success produced none: its failure is an absent line, which reads
+exactly like output nobody examined. Keep unknown distinct from both pass and
+fail, and require immediate observable readiness before asserting state.
 
 ## Keep the agent surface small
 
