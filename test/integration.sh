@@ -557,24 +557,62 @@ gate_pid=$!
 # A part is a fragment, so shellcheck cannot see across the boundary. A variable
 # that crosses one carries a directive naming the file at the other end; that
 # directive is the record that the crossing was deliberate.
-# A focused part still receives this file's private server, fake clock, helpers,
-# and teardown; it only skips independent source fragments. Running all of
-# integration to learn one assertion is needlessly slow, while sourcing a
-# fragment directly would omit its fixture substrate.
+# A focused part still receives this file's fake clock, helpers, and teardown,
+# but source fragments deliberately share fixture state. The dependency manifest
+# below names that closure before any fragment sources: a partial request that
+# omits one refuses with the exact parts to add, rather than failing later on a
+# raw tmux or missing-fixture read.
+integration_parts="cli substrate hitch compose spool readiness hooks notify tick"
 IFS=, read -r -a integration_selected_parts <<< "${GANG_INTEGRATION_PARTS:-all}"
 for integration_selected_part in "${integration_selected_parts[@]}"; do
-  case "$integration_selected_part" in
-    all|cli|substrate|hitch|compose|spool|readiness|hooks|notify|tick) ;;
-    *) printf 'integration: unknown focused part %s\n' "$integration_selected_part" >&2
-       exit 2 ;;
-  esac
+  [ "$integration_selected_part" = all ] || [[ " $integration_parts " == *" $integration_selected_part "* ]] || {
+    printf 'integration: unknown focused part %s\n' "$integration_selected_part" >&2
+    exit 2
+  }
 done
-unset integration_selected_part integration_selected_parts
 
 integration_part() {
   local part="$1" selected=",${GANG_INTEGRATION_PARTS:-all},"
   [[ "$selected" == *,all,* || "$selected" == *,"$part",* ]]
 }
+
+integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit prerequisites
+  case "$1" in
+    cli) printf '\n' ;;
+    substrate|spool|notify|tick) printf 'cli\n' ;;
+    hitch|compose|readiness) printf 'cli substrate\n' ;;
+    hooks) printf 'cli substrate spool\n' ;;
+    *) return 2 ;;
+  esac
+}
+
+for integration_declared_part in $integration_parts; do
+  integration_part_dependencies "$integration_declared_part" >/dev/null || {
+    printf 'integration: no dependency declaration for selectable part %s\n' \
+      "$integration_declared_part" >&2
+    exit 2
+  }
+done
+
+if ! integration_part all; then
+  for integration_selected_part in "${integration_selected_parts[@]}"; do
+    integration_required_parts="$(integration_part_dependencies "$integration_selected_part")" \
+      || { printf 'integration: no dependency declaration for focused part %s\n' \
+             "$integration_selected_part" >&2; exit 2; }
+    integration_missing_parts=""
+    for integration_required_part in $integration_required_parts; do
+      integration_part "$integration_required_part" \
+        || integration_missing_parts="${integration_missing_parts:+$integration_missing_parts,}$integration_required_part"
+    done
+    [ -z "$integration_missing_parts" ] && continue
+    printf 'integration: focused part %s requires %s; run GANG_INTEGRATION_PARTS=%s,%s\n' \
+      "$integration_selected_part" "$integration_missing_parts" \
+      "$integration_missing_parts" "$integration_selected_part" >&2
+    exit 2
+  done
+fi
+unset integration_declared_part integration_missing_parts integration_parts \
+  integration_required_part integration_required_parts integration_selected_part integration_selected_parts
 
 integration_part cli && . "$ROOT/test/integration-cli.sh"
 integration_part substrate && . "$ROOT/test/integration-substrate.sh"
