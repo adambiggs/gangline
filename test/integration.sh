@@ -609,7 +609,9 @@ gate_pid=$!
 # omits one refuses with the exact parts to add, rather than failing later on a
 # raw tmux or missing-fixture read.
 integration_parts="cli substrate hitch compose spool readiness hooks notify tick"
-IFS=, read -r -a integration_selected_parts <<< "${GANG_INTEGRATION_PARTS:-all}"
+integration_declared_parts="$integration_parts"
+integration_selector="${GANG_INTEGRATION_PARTS:-all}"
+IFS=, read -r -a integration_selected_parts <<< "$integration_selector"
 for integration_selected_part in "${integration_selected_parts[@]}"; do
   [ "$integration_selected_part" = all ] || [[ " $integration_parts " == *" $integration_selected_part "* ]] || {
     printf 'integration: unknown focused part %s\n' "$integration_selected_part" >&2
@@ -641,6 +643,8 @@ for integration_declared_part in $integration_parts; do
 done
 
 if ! integration_part all; then
+  integration_summary_clause="focused parts $integration_selector (full suite: $integration_declared_parts)"
+  printf 'integration: %s\n' "$integration_summary_clause"
   for integration_selected_part in "${integration_selected_parts[@]}"; do
     integration_required_parts="$(integration_part_dependencies "$integration_selected_part")" \
       || { printf 'integration: no dependency declaration for focused part %s\n' \
@@ -657,19 +661,38 @@ if ! integration_part all; then
     exit 2
   done
 fi
-unset integration_declared_part integration_missing_parts integration_parts \
-  integration_required_part integration_required_parts integration_selected_part integration_selected_parts
-
-integration_part cli && . "$ROOT/test/integration-cli.sh"
-integration_part substrate && . "$ROOT/test/integration-substrate.sh"
-integration_part hitch && . "$ROOT/test/integration-hitch.sh"
-integration_part compose && . "$ROOT/test/integration-compose.sh"
-integration_part spool && . "$ROOT/test/integration-spool.sh"
-integration_part readiness && . "$ROOT/test/integration-readiness.sh"
-integration_part hooks && . "$ROOT/test/integration-codex-stop-hook.sh"
+integration_ran_parts=""
+integration_part cli && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }cli"; . "$ROOT/test/integration-cli.sh"; }
+integration_part substrate && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }substrate"; . "$ROOT/test/integration-substrate.sh"; }
+integration_part hitch && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hitch"; . "$ROOT/test/integration-hitch.sh"; }
+integration_part compose && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }compose"; . "$ROOT/test/integration-compose.sh"; }
+integration_part spool && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }spool"; . "$ROOT/test/integration-spool.sh"; }
+integration_part readiness && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }readiness"; . "$ROOT/test/integration-readiness.sh"; }
+integration_part hooks && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hooks"; . "$ROOT/test/integration-codex-stop-hook.sh"; }
 integration_part hooks && . "$ROOT/test/integration-hooks.sh"
-integration_part notify && . "$ROOT/test/integration-notify.sh"
-integration_part tick && . "$ROOT/test/integration-tick.sh"
+integration_part notify && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }notify"; . "$ROOT/test/integration-notify.sh"; }
+integration_part tick && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }tick"; . "$ROOT/test/integration-tick.sh"; }
+
+if [ "${GANG_INTEGRATION_REQUIRE_ALL:-0}" = 1 ]; then
+  integration_missing_parts=""
+  for integration_declared_part in $integration_declared_parts; do
+    case " $integration_ran_parts " in
+      *" $integration_declared_part "*) ;;
+      *) integration_missing_parts="${integration_missing_parts:+$integration_missing_parts,}$integration_declared_part" ;;
+    esac
+  done
+  if [ -n "$integration_missing_parts" ]; then
+    printf 'integration: required full run omitted declared parts: %s\n' \
+      "$integration_missing_parts" >&2
+    exit 1
+  fi
+  printf 'integration: every declared part ran\n'
+fi
+
+unset integration_declared_part integration_declared_parts integration_missing_parts \
+  integration_parts integration_ran_parts integration_required_part \
+  integration_required_parts integration_selected_part integration_selected_parts \
+  integration_selector
 
 # Join the isolated self-test at the same point where it used to run. Its output
 # stays contiguous, and its checks and failures remain part of this suite's one
@@ -707,7 +730,11 @@ tree_moved=0
 
 summary_printed=1
 printf '\n'
-suite_tail "$checks" "$fails" "$SECONDS" "$(suite_unknown_clause "$unknowns")"
+integration_tail_clause="$(suite_unknown_clause "$unknowns")"
+[ -z "${integration_summary_clause:-}" ] \
+  || integration_tail_clause="${integration_tail_clause:+$integration_tail_clause; }$integration_summary_clause"
+suite_tail "$checks" "$fails" "$SECONDS" "$integration_tail_clause"
+unset integration_summary_clause integration_tail_clause
 if [ "$tree_moved" -eq 1 ]; then
   printf 'THE SOURCE TREE MOVED DURING THIS RUN, so the count above is not a\n'
   printf 'verdict on any tree. The refusal above says what changed.\n'

@@ -78,3 +78,20 @@ case stays unknown until a live specimen establishes a stronger native signal.
 An unclosed `task_started` bracket and a `turn_aborted` record whose reason is
 `interrupted` are explicit negative controls: both occur in healthy Codex
 sessions and neither participates in this predicate.
+
+## Focused integration coverage
+
+The mandatory gate clears an inherited `GANG_INTEGRATION_PARTS` selector and
+requires the integration suite to attest that every declared part ran. Focused
+runs remain available and name their selected scope on the shared summary line.
+
+The real-selector probes make a focused `cli` run perform two nested focused
+runs. Measured during this change, that command rose from roughly 28 seconds to
+roughly 84 seconds. The mandatory gate absorbs the probes in its parallel
+self-test; the focused path deliberately pays the cost so a false all-parts
+attestation has a direct regression test.
+
+The focused-scope fixture reads the normal suite summary as its final line.
+If a future focused run deliberately emits unknown or barrier diagnostics after
+that summary, update the fixture to select the summary line; that is a fixture
+assumption, not a claim that those diagnostics cannot occur.

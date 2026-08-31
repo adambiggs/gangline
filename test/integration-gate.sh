@@ -605,6 +605,7 @@ cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
 gate_run="$(cd -P "$gate_run" && pwd)"
 gate_order="$RUN_ROOT/gate-default-order"
 gate_where="$RUN_ROOT/gate-default-where"
+gate_parts="$RUN_ROOT/gate-default-parts"
 cat > "$gate_run/test/lint.sh" <<SH
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
@@ -616,6 +617,9 @@ cat > "$gate_run/test/integration.sh" <<SH
 # SPDX-License-Identifier: Apache-2.0
 printf 'integration\n' >> "$gate_order"
 printf 'integration %s\n' "\$PWD" >> "$gate_where"
+printf 'parts=<%s> require=<%s>\n' "\${GANG_INTEGRATION_PARTS-}" \
+  "\${GANG_INTEGRATION_REQUIRE_ALL-}" > "$gate_parts"
+printf 'integration: every declared part ran\n'
 SH
 cat > "$gate_run/test/smoke.sh" <<SH
 #!/bin/sh
@@ -645,7 +649,7 @@ shift
 exec "\$@"
 SH
 chmod +x "$gate_flock_bin/flock"
-gate_default_out="$(env -u _GANGLINE_GATE_LOCKED \
+gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
 equal "the ordinary gate owns a close-on-exec heavy-test lock" \
   "$(printf '%s\n' -o /tmp/gangline-heavy.lock "$gate_run/test/gate.sh")" \
@@ -670,6 +674,10 @@ contains "an uncommitted tree is announced as one" \
   "$gate_default_out" "unsettled"
 contains "a green gate says which gates were green" \
   "$gate_default_out" "passed lint, smoke, and the integration suite"
+contains "the mandatory gate names a selector it ignored" \
+  "$gate_default_out" "ignoring GANG_INTEGRATION_PARTS=cli"
+equal "the mandatory gate does not pass a focused selector to integration" \
+  "parts=<> require=<1>" "$(<"$gate_parts")"
 # THE LAST LINE IS THE ONLY PART OF A RUN A PIPED READER IS SURE TO SEE, and
 # the status is the part it is sure to lose: `test/gate.sh 2>&1 | tail -30` is
 # how this is invoked whenever the output will not fit, and `$?` is then tail's.
@@ -678,6 +686,40 @@ contains "a green gate says which gates were green" \
 # off, and the reader is left concluding green from the absence of a FAIL.
 equal "a green gate ends on a verdict a truncated read still carries" \
   "gate: VERDICT PASS (status 0)" "$(printf '%s\n' "$gate_default_out" | tail -n 1)"
+
+# REQUIRE_ALL is the gate's evidence, not a permission to print its verdict. A
+# nested real focused run reaches the actual omitted-part branch. Its own gate
+# self-test skips this probe, so this remains one child rather than recursing.
+if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
+  require_all_probe_rc=0
+  require_all_probe_out="$(env GANG_INTEGRATION_PARTS=cli GANG_INTEGRATION_REQUIRE_ALL=1 \
+    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)" \
+    || require_all_probe_rc=$?
+  equal "a required full run refuses a focused selector" \
+    "1" "$require_all_probe_rc"
+  contains "the required run names every part cli omitted" \
+    "$require_all_probe_out" \
+    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,tick"
+  excludes "a focused required run never attests every part ran" \
+    "$require_all_probe_out" "integration: every declared part ran"
+
+  focused_probe_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL GANG_INTEGRATION_PARTS=cli \
+    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)"
+  contains "a focused run carries its scope in the terminal summary" \
+    "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
+    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify tick)"
+fi
+
+cat > "$gate_run/test/integration.sh" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration\n' >> "$gate_order"
+exit 0
+SH
+chmod +x "$gate_run/test/integration.sh"
+refuses "the gate refuses a suite without every-part attestation" \
+  "integration did not attest that every declared part ran" \
+  "$gate_run/test/gate.sh"
 
 # THE GATE IS THE ONE FILE A TEAMMATE'S SAVE CAN STILL CORRUPT. Bash reads a
 # script while it runs it, so an edit landing mid-run is read from a stale byte
@@ -709,6 +751,7 @@ SH
 cat > "$gate_edit/test/integration.sh" <<'SH'
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
+printf 'integration: every declared part ran\n'
 exit 0
 SH
 cp "$gate_edit/test/integration.sh" "$gate_edit/test/smoke.sh"

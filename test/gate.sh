@@ -558,12 +558,25 @@ main() {
   # below the documented 2 GB gate ceiling while integration itself is small;
   # the documented systemd-run command remains the aggregate memory proof.
   lint_out="$WORK/lint.out"
+  integration_out="$WORK/integration.out"
   ( cd "$SNAP" && ./test/lint.sh ) > "$lint_out" 2>&1 &
   lint_pid=$!
   smoke_rc=0
   integration_rc=0
   ( cd "$SNAP" && ./test/smoke.sh ) || smoke_rc=$?
-  ( cd "$SNAP" && ./test/integration.sh ) || integration_rc=$?
+  if [ -n "${GANG_INTEGRATION_PARTS+x}" ]; then
+    printf 'gate: ignoring GANG_INTEGRATION_PARTS=%q; mandatory gate runs every declared integration part.\n' \
+      "$GANG_INTEGRATION_PARTS"
+  fi
+  ( cd "$SNAP" && env -u GANG_INTEGRATION_PARTS -u GANG_INTEGRATION_REQUIRE_ALL_PROBE \
+      GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh ) > "$integration_out" 2>&1 \
+    || integration_rc=$?
+  cat "$integration_out"
+  if [ "$integration_rc" -eq 0 ] \
+      && ! grep -Fx 'integration: every declared part ran' "$integration_out" >/dev/null; then
+    integration_rc=1
+    printf 'gate: integration did not attest that every declared part ran.\n' >&2
+  fi
   lint_rc=0
   wait "$lint_pid" || lint_rc=$?
   lint_pid=""
