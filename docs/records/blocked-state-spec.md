@@ -310,7 +310,7 @@ inversion this whole design exists to refuse.
 
 ### The corpus this was measured against
 
-The reader was driven over every rollout on the host it was written on. It
+Measured across a corpus spanning every rollout shape the reader can meet, it
 reports blocked on the sessions whose newest turn is hollow — the specimen among
 them — and stays silent on every other file, with no unknown verdicts. Silence
 across the four healthy populations is the claim: ordinary completions,

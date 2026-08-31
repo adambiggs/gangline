@@ -1688,7 +1688,7 @@ for codex_worked_family in mcp_tool_call_end tool_search_output thread_goal_upda
     $'1\t' "$(codex_blocked_read "$codex_worked_new")"
 done
 
-# THE TRUE POSITIVE SURVIVES THE INVERSION. The real specimen's turn body also
+# THE TRUE POSITIVE SURVIVES THE INVERSION. A genuine blocked turn body also
 # carries a typeless turn_context and world_state and a developer-role message.
 # Classifying by payload type alone would leave those unnamed, and the inverted
 # default would then turn the one frame this reader exists for into an unknown.
