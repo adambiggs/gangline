@@ -23,6 +23,22 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
+      # Codex runs this Stop handler instead of the generic gang hook. It
+      # blocks only the first objectively proved unreported turn; every allowed
+      # boundary delegates back to `gang hook` so ordinary turn bookkeeping,
+      # spool delivery, and deferred compaction retain their existing owner.
+      # CODEX TRUSTS THIS EVENT/COMMAND STRING, NOT THE CONTENTS OF THE
+      # EXECUTABLE IT NAMES.  An in-place edit to codex-stop-hook.py therefore
+      # runs on later turns without a new native trust prompt; changing this
+      # command or its path mints a new hash and requires a person to trust it.
+      # This is trust-on-first-use over a name, not code attestation.  Do not
+      # add a changing version token here: it would impose a re-trust dialog on
+      # every helper edit.  A Gangline-side content check has no consumer yet;
+      # build one only if this boundary must become an enforced control.
+      # The native bound is the outer fuse for the helper.  Its three Gangline
+      # subprocesses each have their own smaller bound, so neither a wedged
+      # lock nor a failed recovery can hold Codex at Stop indefinitely.
+      _gl_codex_stop_hook="[{ hooks = [{ type = \"command\", command = \"python3 \\\"$_gl_codex_dir/plugins/codex-stop-hook.py\\\" \\\"$ROOT/bin/gang\\\"\", timeout = 15 }] }]"
       _gl_codex_hook_flags=""
       # PreCompact/PostCompact are wired for the same reason claude-code wires
       # them: @gl_turn is closed for the whole of a compaction, and the turn
@@ -30,10 +46,11 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # agent reads IDLE and gang delivers into it. Codex declares no queue
       # evidence, so that delivery would be reported submitted when the harness
       # had parked it. Verified firing on 0.146.0.
-      for _gl_codex_event in UserPromptSubmit PostToolUse Stop PermissionRequest \
+      for _gl_codex_event in UserPromptSubmit PostToolUse PermissionRequest \
                              PreCompact PostCompact; do
         _gl_codex_hook_flags+=" -c 'hooks.$_gl_codex_event=$_gl_codex_hook'"
       done
+      _gl_codex_hook_flags+=" -c 'hooks.Stop=$_gl_codex_stop_hook'"
       GANG_LAUNCH="$GANG_LAUNCH$_gl_codex_hook_flags"
       GANG_RESUME_LAUNCH="$GANG_RESUME_LAUNCH$_gl_codex_hook_flags"
       # THE HOOKS INSTALLED ABOVE ARE WHAT CODEX ASKS ABOUT. Their command
@@ -56,7 +73,7 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # launch above claims neither.
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
-      unset _gl_codex_hook _gl_codex_hook_flags _gl_codex_event
+      unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_hook_flags _gl_codex_event
       ;;
   esac
 fi

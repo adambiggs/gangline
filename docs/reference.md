@@ -1364,6 +1364,37 @@ missing, or unreadable evidence is a loud probe failure, never a guessed id.
 Collars may install native event hooks by composing them into their launch
 command. They must not weaken sandboxing, approvals, or operator permissions.
 
+### Codex hook trust boundary
+
+Codex trusts a native hook by its event and command string. It does **not**
+attest the contents of the executable named by that command. Thus trust once
+granted for Gangline's Codex Stop hook covers later in-place edits to
+`collars/plugins/codex-stop-hook.py` indefinitely. Changing the configured
+command or its path creates a new hash and requires native re-trust.
+
+This is trust-on-first-use over a name, not over the code that runs. Anyone
+able to edit that helper can change what executes at every Codex turn end on
+this machine without a new Codex prompt. That grants no capability beyond a
+writer who can already alter the Gangline checkout and its collars; it is a
+boundary to state, not a sandbox Gangline claims to provide.
+
+When Codex has not trusted the current command, Gangline refuses the hitch
+before opening a composer and holds the window with this final line (with its
+live count and directory substituted):
+
+```
+gang: N codex hook(s) are untrusted here — run the codex line above in CWD once, answer 'Trust all and continue', then re-hitch (this held window carries the full list: gang capture <name> 40).
+```
+
+The refusal prints the exact `codex` command above that line. From a terminal
+in that same working directory, run that command, choose Codex's native
+**Trust all and continue**, then re-run `gang hitch`. The native menu requires
+a terminal; Gangline deliberately cannot grant trust. There is no Gangline
+pre-hitch provisioning command: the held refusal is the once-per-machine,
+operator-visible recovery path. An edit that changes the configured command or
+path can therefore cause every later Codex hitch on that machine to refuse
+until a person completes those steps.
+
 A pane reading Gangline could not take is unknown, and unknown is neither an
 absent composer nor a settled one. Reporting it is the collar's obligation:
 status 3, produced by reading the capture into a variable and checking that

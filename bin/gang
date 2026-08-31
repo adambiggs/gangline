@@ -1135,6 +1135,12 @@ gang whoami
   was refused on identity grounds.
 EOF
       ;;
+    reported-to-hitcher) cat <<'EOF'
+gang reported-to-hitcher <turn-id>
+  Internal Codex Stop-hook query. The calling pane is the identity; it prints
+  one TSV verdict for the current native turn. Do not call it by hand.
+EOF
+      ;;
     attach) cat <<'EOF'
 gang attach
   Join the team in tmux.
@@ -4086,6 +4092,34 @@ spool_existing() { # $1 = window id; SPOOL_DIR = its spool; 1 = it has never had
 # are hexadecimal and this is not.
 HITCHED_BY_OPERATOR=operator
 
+# Report-before-idle keeps a second, native-turn-specific provenance record.
+# @gl_hitched_by tells people who created a window; this one tells the Stop
+# query whether that creation was a policy-exempt human/operator action or an
+# agent-to-agent delegation.  It is written only at hitch/adopt, never guessed
+# later from missing metadata.
+REPORT_ORIGIN_HUMAN_HITCHED='human-hitched'
+REPORT_ORIGIN_OPERATOR_ADOPTED='operator-adopted'
+REPORT_ORIGIN_AGENT_HITCHED='agent-hitched'
+REPORT_ORIGIN_AGENT_ADOPTED='agent-adopted'
+
+report_origin_write() { # $1 window, $2 hitch|adopt, $3 parent token
+  local origin
+  case "$2:$3" in
+    hitch:"$HITCHED_BY_OPERATOR") origin="$REPORT_ORIGIN_HUMAN_HITCHED" ;;
+    adopt:"$HITCHED_BY_OPERATOR") origin="$REPORT_ORIGIN_OPERATOR_ADOPTED" ;;
+    hitch:*) origin="$REPORT_ORIGIN_AGENT_HITCHED" ;;
+    adopt:*) origin="$REPORT_ORIGIN_AGENT_ADOPTED" ;;
+    *) die "internal: report origin has no registration kind" ;;
+  esac
+  tmux set-option -w -t "$1" @gl_report_origin "$origin" \
+    || die "could not record report-before-idle origin on $1"
+}
+
+report_lead_write() { # $1 name; the first hitched window is this team's lead
+  tmux set-option -t "=$SESSION:" @gl_report_lead "$1" \
+    || die "could not record the team lead for report-before-idle"
+}
+
 hitched_by_of() { # -> the stamp this process should leave: token TAB name
   local origin token="" name=""
   origin="$(self_window)" || origin=""
@@ -4120,6 +4154,138 @@ EOF
   [ -n "$witnessed" ] || return 1
   printf '%s' "$witnessed"
   return 3
+}
+
+# The Stop query needs a machine answer rather than the display-oriented
+# provenance above.  In particular, a parent whose window is gone and a tmux
+# reading that failed demand opposite alerts.  Keep those results separate.
+report_parent_live() { # $1 child -> live parent name; 3 gone, 4 unreadable, 1 no record
+  local token rows wtoken wname
+  token="$(tmux show-options -wqv -t "$1" @gl_hitched_by 2>/dev/null)" || return 4
+  [ -n "$token" ] || return 1
+  [ "$token" != "$HITCHED_BY_OPERATOR" ] || return 1
+  # tmux formats do not decode C-style `\t`; use the already-safe agent-name
+  # separator that the parent resolver uses rather than parsing literal slashes.
+  rows="$(tmux list-windows -a -F '#{@gl_spool} #{@gl_agent}' 2>/dev/null)" \
+    || return 4
+  while read -r wtoken wname; do
+    [ "$wtoken" = "$token" ] || continue
+    valid_name "$wname" || return 4
+    printf '%s' "$wname"
+    return 0
+  done <<<"$rows"
+  return 3
+}
+
+REPORT_LEAD="" REPORT_LEAD_CAUSE=""
+report_lead_live() { # sets REPORT_LEAD; 1 leaves a named cause for the visible fallback
+  local lead rc=0
+  REPORT_LEAD=""; REPORT_LEAD_CAUSE=""
+  lead="$(tmux show-options -qv -t "=$SESSION:" @gl_report_lead 2>/dev/null)" \
+    || { REPORT_LEAD_CAUSE="team-lead-unreadable"; return 1; }
+  [ -n "$lead" ] || { REPORT_LEAD_CAUSE="no-team-lead-record"; return 1; }
+  valid_name "$lead" || { REPORT_LEAD_CAUSE="invalid-team-lead-record"; return 1; }
+  win_id "$lead" >/dev/null 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || { REPORT_LEAD_CAUSE="recorded-team-lead-gone"; return 1; }
+  REPORT_LEAD="$lead"
+}
+
+report_parent_witness() { # $1 child -> recorded parent name; 1 unreadable or unusable
+  local name
+  name="$(tmux show-options -wqv -t "$1" @gl_hitched_by_name 2>/dev/null)" || return 1
+  valid_name "$name" || return 1
+  printf '%s' "$name"
+}
+
+report_turn_open() { # $1 window, $2 native UserPromptSubmit payload
+  local origin turn
+  origin="$(tmux show-options -wqv -t "$1" @gl_report_origin 2>/dev/null)" || return 0
+  case "$origin" in
+    "$REPORT_ORIGIN_AGENT_HITCHED"|"$REPORT_ORIGIN_AGENT_ADOPTED") ;;
+    *) return 0 ;;
+  esac
+  turn="$(printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("turn_id")
+if not isinstance(value, str): raise ValueError("turn_id")
+print(value)
+' 2>/dev/null)" || turn=""
+  case "$turn" in ''|*[!A-Za-z0-9._:-]*)
+    tmux set-option -uw -t "$1" @gl_report_turn 2>/dev/null || true
+    tmux set-option -uw -t "$1" @gl_reported_to_hitcher 2>/dev/null || true
+    return 0 ;;
+  esac
+  tmux set-option -w -t "$1" @gl_report_turn "$turn" 2>/dev/null || return 0
+  tmux set-option -uw -t "$1" @gl_reported_to_hitcher 2>/dev/null || true
+}
+
+report_send_accepted() { # $1 target name; records only a current delegated turn
+  local origin turn parent rc=0
+  [ -n "$SEND_WINDOW" ] || return 0
+  origin="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_report_origin 2>/dev/null)" || return 0
+  case "$origin" in
+    "$REPORT_ORIGIN_AGENT_HITCHED"|"$REPORT_ORIGIN_AGENT_ADOPTED") ;;
+    *) return 0 ;;
+  esac
+  turn="$(tmux show-options -wqv -t "$SEND_WINDOW" @gl_report_turn 2>/dev/null)" || return 0
+  case "$turn" in ''|*[!A-Za-z0-9._:-]*) return 0 ;; esac
+  parent="$(report_parent_live "$SEND_WINDOW")" || rc=$?
+  [ "$rc" -eq 0 ] && [ "$parent" = "$1" ] || return 0
+  tmux set-option -w -t "$SEND_WINDOW" @gl_reported_to_hitcher "$turn" 2>/dev/null || true
+}
+
+report_verdict() { # $1 status, $2 destination, $3 cause; every answer is exit 0
+  printf '%s\t%s\t%s\n' "$1" "$2" "$3"
+}
+
+cmd_reported_to_hitcher() { # private, native Stop query; caller identity is TMUX_PANE
+  local turn="${1:-}" child="" origin="" parent="" lead="" reported="" rc=0 lead_rc=0 fallback=team-lead-unavailable
+  [ "$#" -eq 1 ] || return 1
+  report_lead_live || lead_rc=$?
+  lead="$REPORT_LEAD"
+  [ "$lead_rc" -ne 0 ] || fallback="$lead"
+  case "$turn" in
+    ''|*[!A-Za-z0-9._:-]*) report_verdict unknown "$fallback" "malformed-turn-id:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0 ;;
+  esac
+  child="$(self_window)" || { report_verdict unknown "$fallback" "caller-unresolvable:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0; }
+  origin="$(tmux show-options -wqv -t "$child" @gl_report_origin 2>/dev/null)" || {
+    report_verdict unknown "$fallback" "tmux-failure:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0;
+  }
+  case "$origin" in
+    "$REPORT_ORIGIN_HUMAN_HITCHED"|"$REPORT_ORIGIN_OPERATOR_ADOPTED")
+      report_verdict exempt - -; return 0 ;;
+    "$REPORT_ORIGIN_AGENT_HITCHED"|"$REPORT_ORIGIN_AGENT_ADOPTED") ;;
+    '') report_verdict unknown "$fallback" "missing-origin:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0 ;;
+    *) report_verdict unknown "$fallback" "missing-origin:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0 ;;
+  esac
+  parent="$(report_parent_live "$child")" || rc=$?
+  case "$rc" in
+    0) ;;
+    3)
+      # No live lead means no one can receive the escalation. Aim ordinary
+      # attributed delivery at the recorded parent name so its refusal becomes
+      # the child-visible idle-notice failure instead of a silent exit.
+      if [ "$lead_rc" -ne 0 ]; then
+        parent="$(report_parent_witness "$child")" || parent="$fallback"
+        report_verdict parent-gone "$parent" "recorded-parent-gone:${REPORT_LEAD_CAUSE}"
+      else
+        report_verdict parent-gone "$lead" recorded-parent-gone
+      fi
+      return 0 ;;
+    4) report_verdict unknown "$fallback" "parent-unreadable:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0 ;;
+    *) report_verdict unknown "$fallback" "missing-origin:${REPORT_LEAD_CAUSE:-live-team-lead}"; return 0 ;;
+  esac
+  if ! reported="$(tmux show-options -wqv -t "$child" @gl_report_turn 2>/dev/null)"; then
+    report_verdict unknown "$parent" tmux-failure
+  elif [ "$reported" != "$turn" ]; then
+    report_verdict unknown "$parent" no-open-turn-record
+  else
+    reported="$(tmux show-options -wqv -t "$child" @gl_reported_to_hitcher 2>/dev/null)" || {
+      report_verdict unknown "$parent" tmux-failure; return 0;
+    }
+    if [ "$reported" = "$turn" ]; then report_verdict reported "$parent" -
+    else report_verdict unreported "$parent" -; fi
+  fi
 }
 
 SPOOL_UNAVAILABLE_WHY=""
@@ -4604,6 +4770,43 @@ archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its direc
   mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing the operation while the mail has nowhere to go"
   ARCHIVE_DIR="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
   mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
+}
+
+IDLE_NOTICE_FAILED=""
+idle_notice_failed_read() { # $1 window; 0 present, 1 absent, 2 unreadable
+  IDLE_NOTICE_FAILED=""
+  if ! IDLE_NOTICE_FAILED="$(tmux show-options -wqv -t "$1" @gl_idle_notice_failed 2>/dev/null)"; then
+    return 2
+  fi
+  [ -n "$IDLE_NOTICE_FAILED" ] || return 1
+  return 0
+}
+
+idle_notice_archive_preflight() { # $1 window; establish before any team's mail moves
+  local rc=0
+  idle_notice_failed_read "$1" || rc=$?
+  case "$rc" in
+    0) archive_establish "$SESSION" ;;
+    1) ;;
+    *) die "cannot read idle-notice failure on $1 before teardown, so no mail has moved and no window has ended" ;;
+  esac
+}
+
+idle_notice_archive() { # $1 window; preserve a failed notice, never call it repaired
+  local rc=0 name dest
+  idle_notice_failed_read "$1" || rc=$?
+  case "$rc" in
+    1) return 0 ;;
+    2) die "cannot read idle-notice failure on $1 while preserving teardown evidence, so the window has not ended" ;;
+  esac
+  archive_establish "$SESSION"
+  name="$(agent_name_of "$1" 2>/dev/null)" || name=""
+  valid_name "$name" || name="${1#@}"
+  dest="$ARCHIVE_DIR/$name"
+  mkdir -p "$dest" || die "cannot create $dest for the unresolved idle notice; no window has ended"
+  printf '%s\n' "$IDLE_NOTICE_FAILED" > "$dest/idle-notice-failed" \
+    || die "cannot archive the unresolved idle notice at $dest; no window has ended"
+  printf '%s\n' "$(colour "$C_BAD" "idle notice NOT accepted for $name; preserved at $dest/idle-notice-failed before teardown")"
 }
 
 SPOOL_PREFLIGHT_ERROR=""
@@ -7099,6 +7302,8 @@ cmd_hitch() {
   hitched_by="$(hitched_by_of)"
   hitch_register "$id" "$name" @gl_hitched_by "${hitched_by%%$'\t'*}"
   hitch_register "$id" "$name" @gl_hitched_by_name "${hitched_by#*$'\t'}"
+  report_origin_write "$id" hitch "${hitched_by%%$'\t'*}"
+  [ "$opened_session" -eq 0 ] || report_lead_write "$name"
   # Window options survive a resume respawn. A held resource belonged to the
   # old native process; only the new launch's own Stop may witness another.
   waiting_clear "$id"
@@ -7466,6 +7671,7 @@ cmd_send() {
   envelope "$SEND_WIRE" "$body"
   if [ "$live_only" -eq 1 ]; then
     send_live "$name" "" live-only
+    report_send_accepted "$name"
     printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
     return 0
   fi
@@ -7504,6 +7710,7 @@ cmd_send() {
        [ "$supersede" -eq 0 ] || spool_retire_commit \
          || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
        lock_release
+       report_send_accepted "$name"
        [ -z "$err" ] || printf '%s\n' "$err" >&2
        printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
        return 0 ;;
@@ -7580,6 +7787,7 @@ cmd_send() {
     drain_err="$(trap - EXIT; spool_drain "$AGENT_ID" locked 2>&1)" || drain_rc=$?
     case "$drain_rc" in
       0) lock_release
+         report_send_accepted "$name"
          [ -z "$drain_err" ] || printf '%s\n' "$drain_err" >&2
          printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified from its attributed spool into collar-declared mid-turn input)")"
          return 0 ;;
@@ -7616,6 +7824,7 @@ cmd_send() {
       "$(colour "$C_BAD" "($(spool_count "$AGENT_ID") waiting) '$name' is blocked ($BLOCKED_WHAT). No turn boundary is coming from it unattended, so this will NOT drain on its own — it waits until somebody repairs that window (gang capture $name; gang attach $name). 'gang roster' shows it queued against a blocked window.")"
     return 0
   fi
+  report_send_accepted "$name"
   printf '%s\n%s\n' \
     "$(colour "$C_OK" "queued for $name as [gang:$SEND_WIRE] — accepted, not yet in the session")" \
     "$(colour "$C_DIM" "($(spool_count "$AGENT_ID") waiting) ${err##*$'\n'} — it enters the session when '$name' $next_opportunity, and nothing further is needed from you. Until then 'gang roster' shows it queued.")"
@@ -9679,6 +9888,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   [ -n "$collar" ] || exit 0
   hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
   if [ "$event" = UserPromptSubmit ]; then
+    report_turn_open "$TMUX_PANE" "$payload"
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
   fi
   if [ "$event" = Notification ]; then
@@ -9869,6 +10079,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   hitched_by="$(hitched_by_of)"
   tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
   tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
+  report_origin_write "$id" adopt "${hitched_by%%$'\t'*}"
   waiting_clear "$id"
   stamp_binary_id "$id"
   state_note_clear "$id"
@@ -9988,8 +10199,10 @@ cmd_drop() {
   parting_lines "$id" "$shown"
   # A spool would outlive its window on disk, which is not a design: this is
   # its deletion path — but a composed message is archived out of it first.
+  idle_notice_archive_preflight "$id"
   usage_wake_cancel "$id" quiet
   spool_archive "$id"
+  idle_notice_archive "$id"
   spool_forget "$id"
   tmux kill-window -t "$id"
   # kill-window does not promise pane-exited on every supported tmux. Any
@@ -10027,6 +10240,7 @@ cmd_down() { # inverse of up: end the whole team's session
   # before cancelling a wake or moving the first entry anywhere.
   while read -r id; do
     [ -n "$id" ] || continue
+    idle_notice_archive_preflight "$id"
     spool_archive_preflight "$id"
   done <<<"$ids"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
@@ -10042,6 +10256,7 @@ cmd_down() { # inverse of up: end the whole team's session
     parting_lines "$id" "$shown"
     usage_wake_cancel "$id" quiet
     spool_archive "$id"
+    idle_notice_archive "$id"
     spool_forget "$id"
   done <<<"$ids"
   tick_state_forget
@@ -10309,6 +10524,7 @@ case "$cmd" in
   status)   cmd_status "$@" ;;
   explain)  cmd_explain "$@" ;;
   hook)     cmd_hook "$@" ;;
+  reported-to-hitcher) cmd_reported_to_hitcher "$@" ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;

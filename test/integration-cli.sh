@@ -18,7 +18,7 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "__tick-worker" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+} | awk '$0 != "hook" && $0 != "reported-to-hitcher" && $0 != "__tick-worker" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt rename talk send at flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
 meaningful_bare_commands="up roster attach teams tick collars models roles config curfew notify upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
@@ -567,7 +567,7 @@ codex_launch() { # $1 fake install root, $2 GANG_LAUNCH|GANG_RESUME_LAUNCH
     fixture "$collar_file" "$launch_name"
 }
 
-codex_hook_command() { # $1 launch line, $2 captured -c options
+codex_hook_commands() { # $1 launch line, $2 captured -c options -> event->command JSON
   local launch="$1" options="$2"
   : > "$options"
   CODEX_OPTIONS="$options" sh -c 'PATH="$1"; export PATH; eval "$2"' sh \
@@ -583,10 +583,10 @@ events = {
 }
 shape = re.compile(
     r'hooks\.([A-Za-z]+)=\[\{ hooks = \[\{ type = "command", '
-    r'command = "((?:\\.|[^"\\])*)" \}\] \}\]'
+    r'command = "((?:\\.|[^"\\])*)"(?:, time' r'out = [0-9]+)? \}\] \}\]'
 )
 seen = set()
-commands = set()
+commands = {}
 for option in open(sys.argv[1], encoding="utf-8"):
     if not option.startswith("hooks."):
         continue
@@ -594,10 +594,10 @@ for option in open(sys.argv[1], encoding="utf-8"):
     if match is None:
         raise SystemExit(1)
     seen.add(match.group(1))
-    commands.add(json.loads('"' + match.group(2) + '"'))
-if seen != events or len(commands) != 1:
+    commands[match.group(1)] = json.loads('"' + match.group(2) + '"')
+if seen != events or set(commands) != events:
     raise SystemExit(1)
-print(commands.pop())
+print(json.dumps(commands, sort_keys=True))
 PY
 }
 
@@ -612,12 +612,24 @@ SH
   chmod +x "$install_root/bin/gang"
   for launch_var in GANG_LAUNCH GANG_RESUME_LAUNCH; do
     options="$RUN_ROOT/${install_name}-${launch_var}.options"
-    command="$(codex_hook_command "$(codex_launch "$install_root" "$launch_var")" "$options")"
+    commands="$(codex_hook_commands "$(codex_launch "$install_root" "$launch_var")" "$options")"
+    command="$(printf '%s' "$commands" | python3 -c '
+import json
+import sys
+print(json.load(sys.stdin)["UserPromptSubmit"])
+')"
+    stop_command="$(printf '%s' "$commands" | python3 -c '
+import json
+import sys
+print(json.load(sys.stdin)["Stop"])
+')"
     "$install_root/bin/gang" true >/dev/null 2>&1 || true
     : > "$install_root/bin/gang.args"
     sh -c "$command" </dev/null
     args="$(tr '\n' ' ' < "$install_root/bin/gang.args")"
     hook_receipts="$hook_receipts${hook_receipts:+ | }$install_name/$launch_var=$args"
+    contains "the Codex Stop event routes through its report-before-idle helper" \
+      "$stop_command" "codex-stop-hook.py"
   done
 done
 equal "Codex native hooks survive fresh and resumed launch paths" \
