@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Rebase every clean worktree in one repository onto its fetched origin/main.
+set -euo pipefail
+
+if [ -n "${REBASE_WORKTREES_SEQUENCE_MARKER:-}" ]; then
+  printf 'started\n' > "$REBASE_WORKTREES_SEQUENCE_MARKER"
+  exit 0
+fi
+
+SELF="$(cd -P "$(dirname "$0")" && pwd)/${0##*/}"
+
+usage() {
+  printf 'usage: %s REPOSITORY\n' "${0##*/}" >&2
+}
+
+die() {
+  printf '%s: %s\n' "${0##*/}" "$1" >&2
+  exit 2
+}
+
+worktree_operation() { # $1 = worktree; print an unfinished Git operation
+  local dir name
+  dir="$(git -C "$1" rev-parse --git-dir 2>/dev/null)" || return 1
+  case "$dir" in /*) ;; *) dir="$1/$dir" ;; esac
+  for name in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply BISECT_LOG; do
+    if [ -e "$dir/$name" ]; then
+      printf '%s' "$name"
+      return 0
+    fi
+  done
+  return 1
+}
+
+WORKTREE_SEAM_REASON=""
+
+worktree_clean() { # $1 = worktree; 0 clean, 1 not a seam, 2 unreadable
+  local status tags operation
+  WORKTREE_SEAM_REASON=""
+  status="$(git -C "$1" -c core.fsmonitor=false status --porcelain \
+    --untracked-files=all --ignore-submodules=none 2>/dev/null)" || {
+      WORKTREE_SEAM_REASON="unreadable"
+      return 2
+    }
+  tags="$(git -C "$1" ls-files -v 2>/dev/null)" || {
+    WORKTREE_SEAM_REASON="unreadable"
+    return 2
+  }
+  if LC_ALL=C grep -q '^[a-zS]' <<<"$tags"; then
+    WORKTREE_SEAM_REASON="index conceals paths"
+    return 1
+  fi
+  operation="$(worktree_operation "$1")" || operation=""
+  if [ -n "$operation" ]; then
+    WORKTREE_SEAM_REASON="$operation"
+    return 1
+  fi
+  if ! git -C "$1" symbolic-ref -q HEAD >/dev/null 2>&1; then
+    WORKTREE_SEAM_REASON="detached HEAD"
+    return 1
+  fi
+  if [ -n "$status" ]; then
+    WORKTREE_SEAM_REASON="uncommitted changes"
+    return 1
+  fi
+  return 0
+}
+
+rebase_one() { # $1 = worktree; return nonzero only for a skipped worktree
+  local worktree="$1" before_head before_status after_head after_status marker marker_state="" operation="" own_rebase_aborted=0
+  if ! worktree_clean "$worktree"; then
+    printf '%s: skipped-dirty (%s)\n' "$worktree" "$WORKTREE_SEAM_REASON"
+    return 1
+  fi
+  if git -C "$worktree" merge-base --is-ancestor origin/main HEAD >/dev/null 2>&1; then
+    printf '%s: already-current\n' "$worktree"
+    return 0
+  fi
+  before_head="$(git -C "$worktree" rev-parse HEAD)"
+  before_status="$(git -C "$worktree" -c core.fsmonitor=false status --porcelain \
+    --untracked-files=all --ignore-submodules=none)"
+  marker="$(mktemp "${TMPDIR:-/tmp}/rebase-worktrees.XXXXXX")" || {
+    printf '%s: skipped-conflict (could not make this invocation marker)\n' "$worktree"
+    return 1
+  }
+  printf 'pending\n' > "$marker"
+  # Git invokes the sequence editor only after this rebase owns its state. The
+  # marker is therefore this invocation's proof that an abort is safe.
+  if REBASE_WORKTREES_SEQUENCE_MARKER="$marker" GIT_SEQUENCE_EDITOR="$SELF" \
+      git -C "$worktree" rebase --interactive origin/main >/dev/null 2>&1; then
+    rm -f -- "$marker"
+    printf '%s: rebased\n' "$worktree"
+    return 0
+  fi
+  marker_state="$(<"$marker")" || marker_state=""
+  operation="$(worktree_operation "$worktree")" || operation=""
+  if [ "$marker_state" = started ] && [ -n "$operation" ]; then
+    git -C "$worktree" rebase --abort >/dev/null 2>&1 || {
+      rm -f -- "$marker"
+      printf '%s: skipped-conflict (this invocation could not abort its own rebase)\n' "$worktree"
+      return 1
+    }
+    own_rebase_aborted=1
+  fi
+  after_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" || after_head=""
+  after_status="$(git -C "$worktree" -c core.fsmonitor=false status --porcelain \
+    --untracked-files=all --ignore-submodules=none 2>/dev/null)" || after_status='!unreadable!'
+  rm -f -- "$marker"
+  if [ "$marker_state" != started ] && [ -n "$operation" ]; then
+    printf '%s: skipped-conflict (a Git operation began before this rebase started)\n' "$worktree"
+    return 1
+  fi
+  if [ "$after_head" != "$before_head" ] || [ "$after_status" != "$before_status" ]; then
+    printf '%s: skipped-conflict (this invocation changed the tree and could not restore it)\n' "$worktree"
+    return 1
+  fi
+  if [ "$own_rebase_aborted" = 1 ]; then
+    printf '%s: skipped-conflict (this invocation began and aborted its own rebase)\n' "$worktree"
+    return 1
+  fi
+  printf '%s: skipped-conflict (the rebase did not begin)\n' "$worktree"
+  return 1
+}
+
+[ "$#" -eq 1 ] || { usage; exit 2; }
+ROOT="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" \
+  || die "'$1' is not a Git worktree"
+COMMON="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" \
+  || die "could not locate shared Git metadata for $ROOT"
+exec {lock_fd}>"$COMMON/rebase-worktrees.lock" \
+  || die "could not open the repository rebase lock"
+flock "$lock_fd" || die "could not acquire the repository rebase lock"
+git -C "$ROOT" fetch --quiet origin || die "could not fetch origin from $ROOT"
+git -C "$ROOT" rev-parse --verify --quiet origin/main >/dev/null \
+  || die "origin/main is not readable from $ROOT"
+
+rebase_record() { # $1 worktree, $2 prunable marker
+  if [ "$2" = 1 ]; then
+    printf '%s: skipped-dirty (prunable)\n' "$1"
+    rc=1
+  else
+    rebase_one "$1" || rc=1
+  fi
+}
+
+rc=0
+worktree="" prunable=0
+while IFS= read -r line || [ -n "$line" ]; do
+  case "$line" in
+    'worktree '*)
+      [ -z "$worktree" ] || rebase_record "$worktree" "$prunable"
+      worktree="${line#worktree }" prunable=0 ;;
+    prunable*) prunable=1 ;;
+    '')
+      [ -z "$worktree" ] || rebase_record "$worktree" "$prunable"
+      worktree="" prunable=0 ;;
+  esac
+done < <(git -C "$ROOT" worktree list --porcelain)
+[ -z "$worktree" ] || rebase_record "$worktree" "$prunable"
+exit "$rc"
