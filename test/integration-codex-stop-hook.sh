@@ -43,6 +43,53 @@ equal "a report query never reads an absent native turn as reported" \
 equal "a gone recorded parent routes the idle notice to the team lead" \
   $'parent-gone\talpha\trecorded-parent-gone' \
   "$(TMUX_PANE="$report_child_pane" "$GANG" reported-to-hitcher turn-176)"
+
+# A failed idle notice is durable child state, not helper stderr.  Both rows
+# must remain visible: one names an ordinary hitcher and one the honest
+# team-lead-unavailable fallback from an unknown composite cause.
+tmux set-option -w -t "$report_child_id" @gl_idle_notice_failed \
+  $'turn-176\tstop-parent\tordinary attributed send was not accepted: no-open-turn-record:live-team-lead\nturn-unknown\tteam-lead-unavailable\tordinary attributed send was not accepted: parent-unreadable:team-lead-unavailable\nturn:176\tstop-parent\tordinary attributed send was not accepted::'
+report_notice_status="$("$GANG" status stop-child)"
+contains "status renders the first unresolved idle notice" "$report_notice_status" \
+  "idle notice NOT accepted: turn turn-176 to stop-parent — ordinary attributed send was not accepted: no-open-turn-record:live-team-lead"
+contains "status renders the unavailable-lead idle notice and composite cause" "$report_notice_status" \
+  "idle notice NOT accepted: turn turn-unknown to team-lead-unavailable — ordinary attributed send was not accepted: parent-unreadable:team-lead-unavailable"
+contains "status keeps legal turn and failure colons out of terminal malformed evidence" "$report_notice_status" \
+  "idle notice NOT accepted: turn turn:176 to stop-parent — ordinary attributed send was not accepted::"
+contains "roster carries unresolved idle notices" \
+  "$("$GANG" roster)" "idle-notice-failed"
+tmux set-option -uw -t "$report_child_id" @gl_idle_notice_failed
+excludes "an older child with no idle-notice field remains quiet" \
+  "$("$GANG" status stop-child)" "idle notice NOT accepted"
+excludes "roster omits an absent idle-notice field" \
+  "$("$GANG" roster)" "idle-notice-failed"
+
+# Malformed is terminal: neither the native helper nor this reader may make it
+# look absent or repaired.  The operator gets the bad evidence, not a guessed
+# notice row.
+tmux set-option -w -t "$report_child_id" @gl_idle_notice_failed 'not a TSV record'
+contains "status makes terminal malformed idle-notice evidence loud" \
+  "$("$GANG" status stop-child)" \
+  "idle notice failure MALFORMED (terminal): not a TSV record"
+contains "roster distinguishes malformed idle-notice evidence" \
+  "$("$GANG" roster)" "idle-notice-failed=malformed"
+
+# The three independent fields are each required.  These fixtures must reach
+# the field-presence guard rather than merely the earlier tab-count guard.
+tmux set-option -w -t "$report_child_id" @gl_idle_notice_failed \
+  $'\tstop-parent\tmissing turn'
+contains "an empty idle-notice turn is terminal" \
+  "$("$GANG" status stop-child)" "idle notice failure MALFORMED (terminal):"
+tmux set-option -w -t "$report_child_id" @gl_idle_notice_failed \
+  $'turn-empty\t\tmissing destination'
+contains "an empty idle-notice destination is terminal" \
+  "$("$GANG" status stop-child)" "idle notice failure MALFORMED (terminal):"
+tmux set-option -w -t "$report_child_id" @gl_idle_notice_failed \
+  $'turn-empty\tstop-parent\t'
+contains "an empty idle-notice failure is terminal" \
+  "$("$GANG" status stop-child)" "idle notice failure MALFORMED (terminal):"
+
+tmux set-option -uw -t "$report_child_id" @gl_idle_notice_failed
 "$GANG" drop stop-child >/dev/null
 
 # A team that existed before report-before-idle has no lead stamp. That must

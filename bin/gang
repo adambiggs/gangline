@@ -4782,6 +4782,65 @@ idle_notice_failed_read() { # $1 window; 0 present, 1 absent, 2 unreadable
   return 0
 }
 
+# The Stop helper owns the writes, but its failure record is state the operator
+# needs without opening the child pane.  Keep this parser stricter than a
+# display split: a malformed list is terminal for the writer, so treating one
+# bad row as absent (or merely hiding it behind a good row) would call a repair
+# complete that the helper deliberately refused to make.
+idle_notice_failed_records() { # $1 window -> turn TAB destination TAB failure rows; 0 valid, 1 absent, 2 unobservable, 3 malformed
+  local rc=0 row turn destination failure rest
+  idle_notice_failed_read "$1" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) return 1 ;;
+    *) return 2 ;;
+  esac
+  while IFS= read -r row || [ -n "$row" ]; do
+    turn="${row%%$'\t'*}"
+    rest="${row#*$'\t'}"
+    destination="${rest%%$'\t'*}"
+    failure="${rest#*$'\t'}"
+    case "$row" in
+      *$'\t'*$'\t'*) ;;
+      *) return 3 ;;
+    esac
+    [ -n "$turn" ] && [ -n "$destination" ] && [ -n "$failure" ] || return 3
+    case "$failure" in *$'\t'*) return 3 ;; esac
+    case "$row" in *[$'\001'-$'\010'$'\013'-$'\037'$'\177']*) return 3 ;; esac
+    printf '%s\t%s\t%s\n' "$turn" "$destination" "$failure"
+  done <<<"$IDLE_NOTICE_FAILED"
+}
+
+idle_notice_failed_status_report() { # $1 window; every outstanding row, never a guessed repair
+  local records="" rc=0 turn destination failure raw
+  records="$(idle_notice_failed_records "$1")" || rc=$?
+  case "$rc" in
+    1) return 0 ;;
+    2) return 0 ;;
+    3)
+      # records ran in a substitution so its global read was local to that
+      # subshell. Re-read the terminal evidence here; a malformed value must
+      # be shown, never degraded into an empty placeholder.
+      idle_notice_failed_read "$1" || true
+      raw="$(printf '%s' "$IDLE_NOTICE_FAILED" | config_sanitize)"
+      printf '%s\n' "$(colour "$C_BAD" "idle notice failure MALFORMED (terminal): ${raw:-<empty>}")"
+      return 0 ;;
+  esac
+  while IFS=$'\t' read -r turn destination failure; do
+    printf '%s\n' "$(colour "$C_BAD" "idle notice NOT accepted: turn $(printf '%s' "$turn" | config_sanitize) to $(printf '%s' "$destination" | config_sanitize) — $(printf '%s' "$failure" | config_sanitize)")"
+  done <<<"$records"
+}
+
+idle_notice_failed_roster_detail() { # $1 window -> absent | present | malformed
+  local rc=0
+  idle_notice_failed_records "$1" >/dev/null || rc=$?
+  case "$rc" in
+    0) printf present ;;
+    1|2) printf absent ;;
+    *) printf malformed ;;
+  esac
+}
+
 idle_notice_archive_preflight() { # $1 window; establish before any team's mail moves
   local rc=0
   idle_notice_failed_read "$1" || rc=$?
@@ -9387,6 +9446,7 @@ cmd_status() {
   state_note_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_state_note_failed 2>/dev/null)" || state_note_failed=""
   [ -z "$state_note_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "$state_note_failed")"
+  idle_notice_failed_status_report "$AGENT_ID"
   self_failed="$(self_compact_failed_read "$AGENT_ID")"
   if [ -n "$self_failed" ]; then
     case "$self_failed" in
@@ -9736,7 +9796,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed age held skew="" mismatch probe_failed usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -9768,6 +9828,11 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     || detail="$detail auto-resume-failed"
   [ -z "$(tmux show-options -wqv -t "$1" @gl_hook_failed)" ] \
     || detail="$detail hook-failed"
+  idle_notice="$(idle_notice_failed_roster_detail "$1")"
+  case "$idle_notice" in
+    present) detail="$detail idle-notice-failed" ;;
+    malformed) detail="$detail idle-notice-failed=malformed" ;;
+  esac
   usage_record="$(usage_limit_record_read "$1")" || usage_rc=$?
   if [ "$usage_rc" -eq 0 ]; then
     read -r usage_state _ _ usage_observed _ <<<"$usage_record"

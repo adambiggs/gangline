@@ -23,6 +23,11 @@ called repaired. `cmd_hook` must never clear it merely because a native event
 parsed. Notify owns its readers: `status` renders every outstanding row and
 `roster` adds `idle-notice-failed`.
 
+The roster token intentionally carries no row count: it remains a compact alert
+surface, while `status` is the command that renders the outstanding records.
+One outstanding row and many therefore look alike in the roster; a lead needs
+`status` to distinguish a single failure from a pile.
+
 Malformed is terminal for that option: every physical row must have exactly
 three nonempty tab-separated fields, with no blank row or C0/DEL control byte.
 Once any row violates that shape, the helper refuses both later appends and
