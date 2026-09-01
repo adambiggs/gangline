@@ -827,7 +827,9 @@ fi
 #
 # The signal is sent BY the stand-in suite, which needs no barrier and no clock:
 # the gate is inside that call and blocked on it, so the handler runs the moment
-# it returns.
+# it returns. The line immediately before that signal is evidence only execution
+# can produce. It must already be in the gate's transcript when the handler
+# exits, because cleanup removes the captured file before any later replay.
 #
 # FINDING THE GATE IS THE PART THAT CAN GO WRONG SILENTLY. A bash subshell
 # shares its parent's cmdline, so the nearest ancestor matching the gate is the
@@ -864,6 +866,7 @@ while [ -n "\$p" ] && [ "\$p" != 1 ]; do
   p=\$2
 done
 printf '%s\\n' "\${target:-no-gate-in-ancestry}" > "$gate_signal_found"
+printf '%s\\n' 'integration output before the gate signal'
 [ -n "\$target" ] && kill -TERM "\$target"
 exit 0
 SH
@@ -888,6 +891,13 @@ else
 fi
 equal "a signalled gate ends on the signal rather than on a status it computed" \
   "143" "$gate_signal_rc"
+# The selector calibrations above recursively re-enter this self-test, but only
+# their requested output is read back; their counters never join this parent's
+# verdict. The outer run owns this assertion once, where its failure is visible.
+if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
+  contains "and preserves integration output produced before the signal" \
+    "$gate_signal_out" "integration output before the gate signal"
+fi
 if printf '%s\n' "$gate_signal_out" | grep -q 'No such file or directory'; then
   fail "and nothing below the teardown reads the snapshot it deleted" \
     "the run continued past its own teardown: $(printf '%s\n' "$gate_signal_out" \

@@ -568,10 +568,26 @@ main() {
     printf 'gate: ignoring GANG_INTEGRATION_PARTS=%q; mandatory gate runs every declared integration part.\n' \
       "$GANG_INTEGRATION_PARTS"
   fi
+  # INTEGRATION OUTPUT IS BOTH LIVE AND KEPT. A signal handler runs only after
+  # its foreground child returns, then exits before any later replay; capturing
+  # only to a file therefore made every line before a gate signal disappear
+  # with cleanup. The file remains the all-parts attestation instrument, while
+  # tee keeps the transcript current. Its success is not the suite's success:
+  # PIPESTATUS is copied before another command can replace it, and a failure
+  # from either producer or recorder refuses the gate.
+  integration_pipe_status=()
+  set +e
   ( cd "$SNAP" && env -u GANG_INTEGRATION_PARTS -u GANG_INTEGRATION_REQUIRE_ALL_PROBE \
-      GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh ) > "$integration_out" 2>&1 \
-    || integration_rc=$?
-  cat "$integration_out"
+      GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh ) 2>&1 \
+    | tee "$integration_out"
+  integration_pipe_status=("${PIPESTATUS[@]}")
+  set -e
+  integration_rc="${integration_pipe_status[0]}"
+  if [ "${integration_pipe_status[1]}" -ne 0 ]; then
+    printf 'gate: could not preserve integration output (tee status %s).\n' \
+      "${integration_pipe_status[1]}" >&2
+    [ "$integration_rc" -ne 0 ] || integration_rc="${integration_pipe_status[1]}"
+  fi
   if [ "$integration_rc" -eq 0 ] \
       && ! grep -Fx 'integration: every declared part ran' "$integration_out" >/dev/null; then
     integration_rc=1
