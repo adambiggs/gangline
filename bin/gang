@@ -9922,7 +9922,9 @@ channel = sys.argv[2]
 child = None
 received = [None]
 clock_failed = [False]
+completed_before_alarm = [False]
 nanoseconds_per_second = 1_000_000_000
+clock_helper_seconds = 1.0
 clock_path = os.environ.get("GANGLINE_CLOCK_HELPER", "")
 started_ns = None
 duration_ns = seconds * nanoseconds_per_second
@@ -9948,8 +9950,9 @@ def clock(*arguments):
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            timeout=clock_helper_seconds,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise ClockError from exc
 
 
@@ -9981,10 +9984,18 @@ def kill_child():
 
 def stop(signum, _frame):
     if signum == signal.SIGALRM:
-        if child is not None and child.returncode is not None:
+        if child is None:
             if received[0] is None:
                 received[0] = signum
             return
+        if child.returncode is not None:
+            if child.returncode == 0:
+                completed_before_alarm[0] = True
+            if received[0] is None:
+                received[0] = signum
+            return
+        if received[0] is None:
+            received[0] = signum
         raise AlarmBoundary
     if received[0] is None:
         received[0] = signum
@@ -10034,6 +10045,7 @@ try:
                     (remaining_ns + nanoseconds_per_second - 1)
                     // nanoseconds_per_second,
                 )
+                received[0] = None
                 signal.alarm(remaining_s)
             except ClockError:
                 clock_failed[0] = True
@@ -10049,7 +10061,9 @@ finally:
 
 # Once wait() has captured a successful native release, a signal handled just
 # after that release cannot truthfully turn it into a missing boundary.
-if status == 0:
+if status == 0 and (
+    received[0] != signal.SIGALRM or completed_before_alarm[0]
+):
     sys.exit(0)
 if clock_failed[0]:
     sys.exit(125)
