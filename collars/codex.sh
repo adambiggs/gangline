@@ -671,7 +671,11 @@ def process_table():
         pid = int(entry)
         try:
             parent = int(proc_text(pid, "stat").rsplit(") ", 1)[1].split()[1])
-        except (FileNotFoundError, IndexError, ValueError):
+        except (OSError, UnicodeError, IndexError, ValueError):
+            # A PID THIS PROBE CANNOT READ IS NOT EVIDENCE ABOUT CODEX. It
+            # belongs to somebody else, or it exited between the listing and
+            # the read; letting either reach the outer handler would report an
+            # unreadable Codex tree because an unrelated process was there.
             continue
         table.setdefault(parent, []).append(pid)
     return table
@@ -684,11 +688,19 @@ def printable(value):
 def held_witness(pid, own_tree):
     """Name pid when it is work Codex is holding, else None.
 
-    Codex's own session-lifetime helpers run its shipped binaries out of
-    CODEX_HOME; a tool call runs a program from outside it, and often not a
-    shell -- an uncontained command is exec'd directly and a sandboxed one
-    runs under a container helper. A Codex-owned process is therefore walked
+    Codex's own session-lifetime helpers run its shipped binaries, and a tool
+    call runs a program that is not one of them -- often not a shell either,
+    since an uncontained command is exec'd directly and a sandboxed one runs
+    under a container helper. A Codex-owned process is therefore walked
     through rather than skipped, because the command sits beneath it.
+
+    Two things are recognised as Codex's own, because one alone is not enough.
+    A standalone install keeps its helpers and its sandbox arg0 copies under
+    CODEX_HOME, but an install elsewhere keeps them beside the harness's own
+    program instead, and reporting one of those as held work would leave a
+    window waiting forever. Neither test is an authenticated lineage; both are
+    the strongest evidence /proc offers, and a program that satisfies neither
+    is reported as what it is.
     """
     try:
         state = proc_text(pid, "stat").rsplit(") ", 1)[1].split()[0]
@@ -704,13 +716,26 @@ def held_witness(pid, own_tree):
         exe = ""
     if exe.endswith(" (deleted)"):
         exe = exe[: -len(" (deleted)")]
-    if exe and os.path.realpath(exe).startswith(own_tree):
+    if exe and codex_owned(os.path.realpath(exe), own_tree):
         return None
     try:
         command = proc_text(pid, "comm")
     except FileNotFoundError:
         return None
     return f"a live Codex child process ({printable(command)})"
+
+
+def codex_owned(exe, own_tree):
+    """True when exe is one of Codex's own shipped programs."""
+    if exe.startswith(own_tree):
+        return True
+    if not harness_exe:
+        return False
+    if exe == harness_exe:
+        return True
+    return os.path.dirname(exe) == os.path.dirname(harness_exe) and os.path.basename(
+        exe
+    ).startswith(os.path.basename(harness_exe) + "-")
 
 
 def held_read(ancestors, own_tree):
@@ -738,6 +763,10 @@ def held_read(ancestors, own_tree):
 
 try:
     own_tree = os.path.realpath(codex_home) + os.sep
+    try:
+        harness_exe = os.path.realpath(os.readlink(f"/proc/{root_pid}/exe"))
+    except OSError:
+        harness_exe = ""
     ancestors = own_ancestry()
     held = ""
     settled = False
