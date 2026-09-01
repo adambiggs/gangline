@@ -195,12 +195,30 @@ teardown() {
     settle "stub exit" not_running "$STUB_PID" || leaked=1
   fi
   if [ -n "${TMUX_SOCKET:-}" ] && [ -S "$TMUX_SOCKET" ]; then
-    tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+    # END THE AGENT BEFORE ASKING FOR THE SERVER. Gangline's tmux guard refuses
+    # any kill-server aimed at a socket carrying a window with @gl_agent set,
+    # and it is right to: those are live agents, whoever started them. This lane
+    # hitches one, so its own teardown was refused, and because the status below
+    # was thrown away the refusal surfaced only as a leak — a tmux server and a
+    # live harness per run, with nothing in the report naming the cause. Drop
+    # what this lane hitched and the refusal is untrue rather than unenforced;
+    # the last window going takes the server with it, and the kill-server below
+    # is then the ordinary belt-and-braces on a socket that carries nobody.
     # A SWALLOWED kill-server IS INDISTINGUISHABLE FROM A SERVER THAT NEVER
-    # DIED, and this lane runs a real harness inside that server. Ask the
-    # socket rather than trusting the exit status of the command that was
-    # supposed to close it.
-    settle "tmux exit" server_gone || leaked=1
+    # DIED, and this lane runs a real harness inside that server. Ask the socket
+    # rather than trusting the exit status of the command that was supposed to
+    # close it — and keep what that command said, because when the socket then
+    # disagrees its message is the only account of why.
+    local kill_said="" kill_rc=0
+    "$GANG" drop "$AGENT" >/dev/null 2>&1 || true
+    if ! server_gone; then
+      kill_said="$(tmux -S "$TMUX_SOCKET" kill-server 2>&1)" || kill_rc=$?
+    fi
+    if ! settle "tmux exit" server_gone; then
+      leaked=1
+      printf 'e2e: kill-server exited %s and said: %s\n' \
+        "$kill_rc" "${kill_said:-nothing}" >&2
+    fi
   fi
   # THE HARNESS OUTLIVES ITS PANE, AND REMOVAL IS NOT THE TEST. A killed claude
   # is still flushing its own config directory after the window is gone, so a
