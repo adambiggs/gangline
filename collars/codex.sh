@@ -651,6 +651,9 @@ def own_ancestry():
     raise TreeRaced
 
 
+OPAQUE = []
+
+
 def process_table():
     """Parent to children, from one pass over /proc.
 
@@ -665,17 +668,29 @@ def process_table():
     if not os.path.isdir(f"/proc/{root_pid}"):
         raise TreeGone
     table = {}
+    opaque = OPAQUE
+    opaque.clear()
     for entry in os.listdir("/proc"):
         if not entry.isdigit():
             continue
         pid = int(entry)
         try:
             parent = int(proc_text(pid, "stat").rsplit(") ", 1)[1].split()[1])
+        except FileNotFoundError:
+            # Gone between the listing and the read. Not a gap: a process that
+            # has exited is not work Codex is still holding, and the repeated
+            # reading below settles a tree that is moving.
+            continue
         except (OSError, UnicodeError, IndexError, ValueError):
-            # A PID THIS PROBE CANNOT READ IS NOT EVIDENCE ABOUT CODEX. It
-            # belongs to somebody else, or it exited between the listing and
-            # the read; letting either reach the outer handler would report an
-            # unreadable Codex tree because an unrelated process was there.
+            # A PID THIS PROBE CANNOT READ IS NOT EVIDENCE ABOUT CODEX -- and
+            # it is not evidence of absence either. Reporting an unreadable
+            # Codex tree because an unrelated process was there would recreate
+            # the persistent unknown this reader exists to remove; dropping it
+            # silently would let a descendant that denies its own /proc record
+            # pass as an agent with nothing running. So it is skipped and
+            # counted, and the count decides whether "nothing held" is a
+            # finding or a gap.
+            opaque.append(pid)
             continue
         table.setdefault(parent, []).append(pid)
     return table
@@ -694,13 +709,11 @@ def held_witness(pid, own_tree):
     under a container helper. A Codex-owned process is therefore walked
     through rather than skipped, because the command sits beneath it.
 
-    Two things are recognised as Codex's own, because one alone is not enough.
-    A standalone install keeps its helpers and its sandbox arg0 copies under
-    CODEX_HOME, but an install elsewhere keeps them beside the harness's own
-    program instead, and reporting one of those as held work would leave a
-    window waiting forever. Neither test is an authenticated lineage; both are
-    the strongest evidence /proc offers, and a program that satisfies neither
-    is reported as what it is.
+    An install that kept its helpers somewhere other than CODEX_HOME would
+    have them reported as held work, and such a window would read as waiting
+    for as long as it lived. That is the direction this errs in deliberately:
+    the witness names the process, so the misreading is visible and
+    diagnosable, where classing a live process as Codex's own hides real work.
     """
     try:
         state = proc_text(pid, "stat").rsplit(") ", 1)[1].split()[0]
@@ -726,20 +739,21 @@ def held_witness(pid, own_tree):
 
 
 def codex_owned(exe, own_tree):
-    """True when exe is one of Codex's own shipped programs."""
-    if exe.startswith(own_tree):
-        return True
-    if not harness_exe:
-        return False
-    if exe == harness_exe:
-        return True
-    return os.path.dirname(exe) == os.path.dirname(harness_exe) and os.path.basename(
-        exe
-    ).startswith(os.path.basename(harness_exe) + "-")
+    """True when exe is one of Codex's own shipped programs.
+
+    Two tests, both provenance rather than naming: the program lives under
+    CODEX_HOME, where a standalone install keeps its helpers and the arg0
+    copies its sandbox re-execs itself through, or it IS the harness's own
+    program. A name is not a third test: any tool sitting beside the harness
+    under a codex- prefix would satisfy one, and being classed as Codex's own is
+    precisely what stops a live process from being reported as held work.
+    """
+    return exe.startswith(own_tree) or (bool(harness_exe) and exe == harness_exe)
 
 
 def held_read(ancestors, own_tree):
     table = process_table()
+    unread = list(OPAQUE)
     queue = [root_pid]
     seen = {root_pid}
     while queue:
@@ -758,6 +772,11 @@ def held_read(ancestors, own_tree):
             witness = held_witness(child, own_tree)
             if witness is not None:
                 return witness
+    if unread:
+        unknown(
+            "%d process record(s) on this host could not be read, so whether "
+            "Codex still holds background work is unknown" % len(unread)
+        )
     return ""
 
 
