@@ -1,0 +1,240 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Read one process generation, or terminate one exact Linux generation."""
+
+import os
+import select
+import signal
+import sys
+
+
+# BLAST RADIUS: every ordinary gang command can reach this SIGKILL through its
+# detached tick. It may terminate only the pidfd-bound leader generation whose
+# start token was recorded in the expired lock. Never replace this with killpg:
+# a PGID is a bare reusable number and carries no process generation.
+RECLAIM_SIGNAL = signal.SIGKILL
+DEATH_CONFIRM_SECONDS = 1.0
+# Measured 2026-08-31 on Linux 6.8.0: 40 owned paused Python leaders reached
+# dead/zombie 0.052-0.212ms after pidfd SIGKILL (median 0.084ms). This bound is
+# over 4,700x the measured maximum and is the fail-closed production budget.
+
+
+class DeadProcess(Exception):
+    pass
+
+
+class UnknownProcess(Exception):
+    pass
+
+
+def linux_record(pid: int, expected_session=None):
+    try:
+        with open(f"/proc/{pid}/comm", encoding="utf-8") as stream:
+            command = stream.read().strip()
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:
+            stat = stream.read().strip()
+        with open("/proc/stat", encoding="utf-8") as stream:
+            boot_line = next((line for line in stream if line.startswith("btime ")), "")
+    except FileNotFoundError as exc:
+        raise DeadProcess from exc
+    except (OSError, UnicodeError) as exc:
+        raise UnknownProcess from exc
+
+    before, delimiter, after = stat.rpartition(")")
+    fields = after.split()
+    try:
+        if not delimiter or not before.startswith(str(pid) + " ("):
+            raise ValueError
+        state = fields[0]
+        pgrp = int(fields[2])
+        session = int(fields[3])
+        start_ticks = int(fields[19])
+        boot_seconds = int(boot_line.split()[1])
+        ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
+    except (IndexError, TypeError, ValueError) as exc:
+        raise UnknownProcess from exc
+    if state == "Z":
+        raise DeadProcess
+    if not state or start_ticks < 0 or ticks_per_second <= 0:
+        raise UnknownProcess
+
+    born_ns = boot_seconds * 1_000_000_000 + (
+        start_ticks * 1_000_000_000 // ticks_per_second
+    )
+    role = 0
+    if expected_session is not None:
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as stream:
+                argv = [part.decode("utf-8") for part in stream.read().split(b"\0") if part]
+            with open(f"/proc/{pid}/environ", "rb") as stream:
+                environment = {}
+                for part in stream.read().split(b"\0"):
+                    if b"=" in part:
+                        key, value = part.split(b"=", 1)
+                        environment[key.decode("utf-8")] = value.decode("utf-8")
+        except FileNotFoundError as exc:
+            raise DeadProcess from exc
+        except (OSError, UnicodeError) as exc:
+            raise UnknownProcess from exc
+        role = int(
+            bool(argv)
+            and argv[-1] == "__tick-worker"
+            and environment.get("GANG_TICK_INTERNAL") == "1"
+            and environment.get("GANG_SESSION") == expected_session
+        )
+    return command, state, pgrp, session, str(start_ticks), born_ns, role, 1
+
+
+def darwin_record(pid: int, expected_session=None):
+    import ctypes
+    import errno
+
+    class ProcBsdInfo(ctypes.Structure):
+        _fields_ = [
+            ("flags", ctypes.c_uint32),
+            ("status", ctypes.c_uint32),
+            ("xstatus", ctypes.c_uint32),
+            ("pid", ctypes.c_uint32),
+            ("ppid", ctypes.c_uint32),
+            ("uid", ctypes.c_uint32),
+            ("gid", ctypes.c_uint32),
+            ("ruid", ctypes.c_uint32),
+            ("rgid", ctypes.c_uint32),
+            ("svuid", ctypes.c_uint32),
+            ("svgid", ctypes.c_uint32),
+            ("reserved", ctypes.c_uint32),
+            ("comm", ctypes.c_char * 16),
+            ("name", ctypes.c_char * 32),
+            ("nfiles", ctypes.c_uint32),
+            ("pgrp", ctypes.c_uint32),
+            ("pjobc", ctypes.c_uint32),
+            ("tdev", ctypes.c_uint32),
+            ("tpgid", ctypes.c_uint32),
+            ("nice", ctypes.c_int32),
+            ("start_seconds", ctypes.c_uint64),
+            ("start_microseconds", ctypes.c_uint64),
+        ]
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        proc_pidinfo = library.proc_pidinfo
+        proc_pidinfo.argtypes = (
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        )
+        proc_pidinfo.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        size = proc_pidinfo(
+            pid, 3, 0, ctypes.byref(info), ctypes.sizeof(ProcBsdInfo)
+        )
+        if size == 0:
+            if ctypes.get_errno() in (errno.ENOENT, errno.ESRCH):
+                raise DeadProcess
+            raise UnknownProcess
+        if size != ctypes.sizeof(ProcBsdInfo) or info.pid != pid:
+            raise UnknownProcess
+        pgrp = os.getpgid(pid)
+        session = os.getsid(pid)
+    except ProcessLookupError as exc:
+        raise DeadProcess from exc
+    except (OSError, AttributeError) as exc:
+        raise UnknownProcess from exc
+    if info.status == 5:
+        raise DeadProcess
+    token = f"{info.start_seconds}x{info.start_microseconds}"
+    born_ns = info.start_seconds * 1_000_000_000 + info.start_microseconds * 1000
+    # libproc supplies exact subsecond generation identity, but role evidence
+    # remains unavailable here, so Darwin can detect replacement but not kill.
+    return "", str(info.status), pgrp, session, token, born_ns, 0, 0
+
+
+def record(pid: int, expected_session=None):
+    if sys.platform == "linux":
+        return linux_record(pid, expected_session)
+    if sys.platform == "darwin":
+        return darwin_record(pid, expected_session)
+    raise UnknownProcess
+
+
+def print_codex(pid: int) -> int:
+    if sys.platform != "linux":
+        return 1
+    try:
+        command, _state, _pgrp, _session, token, _born, _role, _safe = record(pid)
+    except DeadProcess:
+        return 1
+    except UnknownProcess:
+        return 2
+    if command != "codex":
+        return 1
+    print(pid, token, sep="\t")
+    return 0
+
+
+def print_tick(pid: int, expected_session: str) -> int:
+    try:
+        _command, _state, pgrp, session, token, born_ns, role, safe = record(
+            pid, expected_session
+        )
+    except DeadProcess:
+        return 1
+    except UnknownProcess:
+        return 2
+    print(pid, token, pgrp, session, born_ns, role, safe, sep="\t")
+    return 0
+
+
+def kill_generation(pid: int, expected_token: str, expected_session: str) -> int:
+    if sys.platform != "linux" or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
+        return 2
+    try:
+        pidfd = os.pidfd_open(pid)
+    except ProcessLookupError:
+        return 1
+    except OSError:
+        return 2
+    try:
+        try:
+            current = linux_record(pid, expected_session)
+        except DeadProcess:
+            return 1
+        except UnknownProcess:
+            return 2
+        _command, _state, pgrp, session, token, _born, role, safe = current
+        if token != expected_token:
+            return 1
+        if pgrp != pid or session != pid or role != 1 or safe != 1:
+            return 2
+        try:
+            signal.pidfd_send_signal(pidfd, RECLAIM_SIGNAL)
+        except ProcessLookupError:
+            return 1
+        except OSError:
+            return 2
+        poller = select.poll()
+        poller.register(pidfd, select.POLLIN)
+        if not poller.poll(round(DEATH_CONFIRM_SECONDS * 1000)):
+            return 3
+        # Readability is the kernel's death notification for this open pidfd.
+        # It confirms exit of the bound generation without reopening /proc,
+        # whose files can disappear piecemeal while the parent reaps it.
+        return 0
+    finally:
+        os.close(pidfd)
+
+
+def main() -> int:
+    if len(sys.argv) == 4 and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
+        return print_tick(int(sys.argv[2]), sys.argv[3])
+    if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():
+        return print_codex(int(sys.argv[2]))
+    if len(sys.argv) == 5 and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
+        return kill_generation(int(sys.argv[2]), sys.argv[3], sys.argv[4])
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -322,10 +322,20 @@ process currently holding the pane is the registered native session. A
 contradiction becomes `session-lost`, blocks delivery, and fails the pass rather
 than letting a restarted harness impersonate the old agent.
 
-One per-team pid lock admits a worker. A concurrent candidate touches a dirty
-marker and exits immediately; the owner consumes that marker with another pass.
-A dead pid is reclaimed, and the worker and its descendants are killed at a
-hard 60-second deadline. A detached failure cannot change the command that
+One per-team generation lock admits a worker. A concurrent candidate touches a
+dirty marker and exits immediately; the owner consumes that marker with another
+pass. Dead, zombie, and replaced generations are reclaimed. A matching owner
+older than the hard 60-second worker deadline fails health instead of looking
+like clean contention. At twice that published budget, Linux may reclaim only
+an exact tick-worker leader: it sends one SIGKILL through a generation-bound
+pidfd, confirms exit for at most one second, and retires the unchanged lock.
+It never signals a bare PID or process-group number. A legacy pid-only lock is
+retired when process birth proves PID reuse; ambiguous identity and failed
+termination retain the lock and fail loudly. Recovery is cooperative, so it
+begins on the next Gangline invocation rather than in a resident watcher.
+
+The worker and its descendants are also killed by their owning deadline
+controller at 60 seconds. A detached failure cannot change the command that
 spawned it. It writes `health` and `tick.log` under
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`; the next
 invocation, `status`, and `roster` report the last failure. An attached client

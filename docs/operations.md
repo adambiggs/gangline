@@ -513,6 +513,16 @@ the `gangline-alerts` window. Repair the named condition and run `gang tick` for
 one synchronous retry. A clean pass records `ok` and removes the warning; do not
 delete the health file to manufacture green.
 
+For a tick-lock failure, the named age controls the response. Contention inside
+the 60-second worker budget is folded normally. Beyond it, Gangline records
+failed health; at 120 seconds a later Linux invocation may terminate only the
+exact pidfd-bound tick-worker leader and report that no pass ran. Run `gang
+tick` once more after a successful retirement. If identity is ambiguous, the
+owner cannot be killed and confirmed within the one-second bound, or no later
+Gangline command runs, the lock remains fail-closed. Inspect the named process
+and lock rather than deleting health state; manual lock removal remains an
+operator decision when exact identity cannot be established.
+
 ### An agent reads `session-lost`
 
 The live native session holding that pane does not match the session Gangline

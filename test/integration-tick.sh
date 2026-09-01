@@ -8,6 +8,7 @@
 tick_original_session="$GANG_SESSION"
 tick_original_collars="${GANG_COLLARS:-}"
 export GANG_SESSION="gangtick-test-$$"
+export GANG_TICK_DEADLINE_SECONDS=60
 
 tmux new-session -d -s "$GANG_SESSION" -n caller "PS1='❯ ' bash --norc"
 "$GANG" adopt caller -c bash >/dev/null
@@ -327,6 +328,150 @@ tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
 "$GANG" tick >/dev/null
 equal "a dead pid in the team tick lock is reclaimed" absent \
   "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+
+# A ZOMBIE HAS EXITED EVEN WHILE ITS PID REMAINS ALLOCATED. waitid observes
+# the exit without reaping it, and only then publishes the PID to the test.
+tick_zombie_ready="$RUN_ROOT/tick-zombie-ready"
+mkfifo "$tick_zombie_ready"
+cat > "$RUN_ROOT/tick-zombie.py" <<'PY'
+import os
+import signal
+import sys
+
+child = os.fork()
+if child == 0:
+    os._exit(0)
+os.waitid(os.P_PID, child, os.WEXITED | os.WNOWAIT)
+with open(sys.argv[1], "w", encoding="utf-8") as ready:
+    ready.write(str(child) + "\n")
+signal.pause()
+PY
+python3 "$RUN_ROOT/tick-zombie.py" "$tick_zombie_ready" &
+tick_zombie_parent=$!
+IFS= read -r tick_zombie_pid < "$tick_zombie_ready"
+ln -s "$tick_zombie_pid" "$tick_lock_path"
+"$GANG" tick >/dev/null
+equal "a zombie owner is dead and its tick lock is reclaimed" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+
+# A NEW RECORD DISTINGUISHES PID ALLOCATION FROM THE RECORDED GENERATION.
+# The live shell is deliberately paired with an impossible start token; it
+# must not be dirtied or signalled as though it were the vanished owner.
+tick_shell_identity="$("$ROOT/libexec/gang-process-identity" --tick "$$" "$GANG_SESSION")"
+IFS=$'\t' read -r _ tick_shell_token tick_shell_pgrp _ _ _ _ \
+  <<<"$tick_shell_identity"
+ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:later" "$tick_lock_path"
+tick_bad_v2_rc=0
+GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+  > "$RUN_ROOT/tick-bad-v2.out" 2>&1 || tick_bad_v2_rc=$?
+equal "an alphabetic v2 acquisition time is unreadable" 1 "$tick_bad_v2_rc"
+contains "the malformed v2 record is named before arithmetic" \
+  "$(<"$RUN_ROOT/tick-bad-v2.out")" "has an unreadable owner"
+equal "the malformed v2 record remains fail-closed" \
+  "v2:$$:$tick_shell_token:$tick_shell_pgrp:later" \
+  "$(readlink "$tick_lock_path")"
+rm -f -- "$tick_lock_path"
+
+ln -s "v2:$$:0:$tick_shell_pgrp:$(date +%s)" "$tick_lock_path"
+"$GANG" tick >/dev/null
+equal "a generation mismatch is reclaimed without signalling the reused pid" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+
+# ROLLING UPGRADE SAFETY RETAINS A RECENT LEGACY OWNER. This live shell is not
+# a worker, but before the published budget expires the old record lacks the
+# evidence needed to call it stale.
+ln -s "$$" "$tick_lock_path"
+"$GANG" tick >/dev/null
+equal "a recent live legacy lock remains owned" "$$" \
+  "$(readlink "$tick_lock_path")"
+equal "a recent live legacy owner receives the cooperative dirty edge" present \
+  "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
+rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+
+# THE FIRST DERIVED EDGE IS HEALTH, NOT A KILL. A matching generation at 61s
+# is surfaced through the public seam while the 120s reclaim edge stays shut.
+tick_over_budget=$(( $(date +%s) - 61 ))
+ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:$tick_over_budget" \
+  "$tick_lock_path"
+tick_over_budget_rc=0
+"$GANG" tick > "$RUN_ROOT/tick-over-budget.out" 2>&1 \
+  || tick_over_budget_rc=$?
+equal "an over-budget live owner fails instead of returning silent contention" \
+  1 "$tick_over_budget_rc"
+contains "the over-budget failure names the worker and reclaim budgets" \
+  "$(<"$RUN_ROOT/tick-over-budget.out")" "generation-verified reclaim starts at 120s"
+equal "the first expiry edge retains the exact live generation" present \
+  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+"$GANG" tick >/dev/null
+
+# A LEGACY PID MAY NOW NAME A DIFFERENT LIVE PROCESS. Backdating the symlink
+# makes the chronology exact: the readiness-proven Python parent above was born
+# after the recorded lock, so it cannot be the worker that acquired it. The
+# public seam must retire that legacy incident and surface that no cooperative
+# pass ran without signalling the unrelated live generation.
+ln -s "$tick_zombie_parent" "$tick_lock_path"
+python3 - "$tick_lock_path" <<'PY'
+import os
+import sys
+import time
+
+then = time.time() - 120
+os.utime(sys.argv[1], (then, then), follow_symlinks=False)
+PY
+tick_legacy_reuse_rc=0
+"$GANG" tick > "$RUN_ROOT/tick-legacy-reuse.out" 2>&1 \
+  || tick_legacy_reuse_rc=$?
+equal "a reused live pid cannot retain an expired legacy tick lock" \
+  1 "$tick_legacy_reuse_rc"
+equal "the expired legacy lock is retired before recovery is reported" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+if kill -0 "$tick_zombie_parent" 2>/dev/null; then
+  pass "legacy PID-reuse migration does not signal the unrelated generation"
+else
+  fail "legacy PID-reuse migration does not signal the unrelated generation" \
+    "the readiness-proven process $tick_zombie_parent died"
+fi
+kill "$tick_zombie_parent"
+wait "$tick_zombie_parent" 2>/dev/null || true
+rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+"$GANG" tick >/dev/null
+
+# AN EXPIRED GENERATION IS TERMINATED BY PIDFD, NEVER BY ITS BARE PROCESS
+# GROUP. Hold a real public worker after acquisition, then move only the
+# immutable acquisition stamp behind the derived reclaim edge. The contender
+# must surface recovery without claiming that it ran a pass.
+tick_expired_ready="$RUN_ROOT/tick-expired-ready"
+tick_expired_release="$RUN_ROOT/tick-expired-release"
+mkfifo "$tick_expired_ready" "$tick_expired_release"
+GANG_TEST_TICK_READY_FIFO="$tick_expired_ready" \
+GANG_TEST_TICK_RELEASE_FIFO="$tick_expired_release" \
+  "$GANG" tick > "$RUN_ROOT/tick-expired-owner.out" 2>&1 &
+tick_expired_owner=$!
+IFS= read -r -N 1 _ < "$tick_expired_ready"
+tick_expired_record="$(readlink "$tick_lock_path")"
+IFS=: read -r tick_expired_version tick_expired_pid tick_expired_token \
+  tick_expired_pgrp _ <<<"$tick_expired_record"
+equal "the expiry fixture owns a generation-bearing production lock" v2 \
+  "$tick_expired_version"
+equal "the expiry fixture worker is its own process-group leader" \
+  "$tick_expired_pid" "$tick_expired_pgrp"
+tick_expired_old=$(( $(date +%s) - 120 ))
+rm -f -- "$tick_lock_path"
+ln -s "v2:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old" \
+  "$tick_lock_path"
+tick_expired_rc=0
+"$GANG" tick > "$RUN_ROOT/tick-expired-reclaim.out" 2>&1 \
+  || tick_expired_rc=$?
+equal "an expired exact worker generation is reclaimed as a surfaced failure" \
+  1 "$tick_expired_rc"
+equal "pidfd-confirmed expiry retires the worker lock" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+tick_expired_owner_rc=0
+wait "$tick_expired_owner" || tick_expired_owner_rc=$?
+equal "the expired worker owner reports the surfaced recovery failure" \
+  1 "$tick_expired_owner_rc"
+"$GANG" tick >/dev/null
 tick_repaired_right="$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)"
 excludes "a tick replaces a health segment owned by an obsolete snapshot" \
   "$tick_repaired_right" "/stale/snapshot"

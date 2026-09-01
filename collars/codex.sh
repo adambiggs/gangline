@@ -444,7 +444,7 @@ collar_harness_identity() { # $1 = tmux target; PID<TAB>start stamp, 0/1/2
   # See collar_live_session_id above: a nonzero run-shell result paints an
   # overlay in the target pane. The helper's status is therefore carried in a
   # cleanup-owned side file while the server-side command itself succeeds.
-  command="$(shell_quote "$ROOT/libexec/gang-codex-process-identity") $(shell_quote "$pane_pid") > $(shell_quote "$tmp") 2>/dev/null; printf '%s\\n' \$? > $(shell_quote "$status"); :"
+  command="$(shell_quote "$ROOT/libexec/gang-process-identity") --codex $(shell_quote "$pane_pid") > $(shell_quote "$tmp") 2>/dev/null; printf '%s\\n' \$? > $(shell_quote "$status"); :"
   tmux run-shell -t "$1" "$command" >/dev/null 2>&1 || :
   IFS= read -r observed < "$tmp" || observed=""
   IFS= read -r probe_rc < "$status" || probe_rc=""

@@ -216,6 +216,17 @@ if [ "$(uname -s)" = Linux ]; then
     fail "a demonstrable Codex pane root records pid plus kernel start stamp" \
       "got [$(tmux show-options -wqv -t "$state_codex_id" @gl_harness_identity)]"
   fi
+  state_codex_identity="$(tmux show-options -wqv -t "$state_codex_id" @gl_harness_identity)"
+  IFS=$'\t' read -r state_codex_pid state_codex_token <<<"$state_codex_identity"
+  state_codex_kernel_token="$(python3 - "$state_codex_pid" <<'PY'
+import sys
+
+with open(f"/proc/{sys.argv[1]}/stat", encoding="utf-8") as stream:
+    print(stream.read().strip().rpartition(")")[2].split()[19])
+PY
+)"
+  equal "the shared Codex identity reader records kernel start field 22" \
+    "$state_codex_kernel_token" "$state_codex_token"
   contains "explain makes the recorded liveness coverage visible" \
     "$("$GANG" explain state-codex)" "harness identity: recorded"
   excludes "an unclosed or interrupted healthy Codex turn is not harness-lost" \

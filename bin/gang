@@ -3604,7 +3604,7 @@ cmd_teams() { # every team gang wrote down, and whether its server still answers
 # pass before it releases the lock. There is no resident process: the deadline
 # controller and its worker exist only to finish this invocation's bounded pass.
 TICK_DIR="" TICK_HEALTH="" TICK_LOG=""
-TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
 
 tick_state_root() {
   printf '%s' "${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick"
@@ -3780,18 +3780,122 @@ tick_lock_release() {
   local holder=""
   [ -n "$TICK_LOCK_PATH" ] || return 0
   holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
-  [ "$holder" != "$TICK_LOCK_PID" ] || rm -f -- "$TICK_LOCK_PATH"
-  TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+  # RECORDED AT ACQUISITION. Never re-derive the process identity here: an
+  # unreadable owner at exit must neither leak this lock nor release another.
+  [ "$holder" != "$TICK_LOCK_RECORD" ] || rm -f -- "$TICK_LOCK_PATH"
+  TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+}
+
+TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
+TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
+TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_STATE=""
+tick_process_read() { # $1 pid; live/dead/unknown in TICK_PROCESS_STATE
+  local out="" rc=0 extra=""
+  TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
+  TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
+  TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_STATE=unknown
+  out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0)
+      IFS=$'\t' read -r TICK_PROCESS_PID TICK_PROCESS_TOKEN TICK_PROCESS_PGRP \
+        TICK_PROCESS_SESSION TICK_PROCESS_BORN_NS TICK_PROCESS_ROLE \
+        TICK_PROCESS_SIGNAL_SAFE extra <<<"$out"
+      if [ -z "$extra" ] && [ "$TICK_PROCESS_PID" = "$1" ]; then
+        case "$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$TICK_PROCESS_SESSION:$TICK_PROCESS_BORN_NS:$TICK_PROCESS_ROLE:$TICK_PROCESS_SIGNAL_SAFE" in
+          *[!A-Za-z0-9:]*|*::*|:*) return 0 ;;
+          *) TICK_PROCESS_STATE=live; return 0 ;;
+        esac
+      fi ;;
+    1) TICK_PROCESS_STATE=dead; return 0 ;;
+    2) return 0 ;;
+  esac
+}
+
+tick_lock_mtime_ns() { # $1 symlink
+  python3 - "$1" <<'PY'
+import os
+import sys
+try:
+    print(os.lstat(sys.argv[1]).st_mtime_ns)
+except OSError:
+    raise SystemExit(1)
+PY
+}
+
+tick_lock_recovered() { # $1 diagnostic; lock already retired, no pass ran
+  printf '%s\n' "$1" >&2
+  TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+  return 1
+}
+
+tick_lock_expired() { # holder pid token pgrp age format [mtime_ns]
+  local holder="$1" pid="$2" token="$3" pgrp="$4" age="$5" format="$6"
+  local mtime_ns="${7:-}" again="" kill_rc=0 reclaim=$((GANG_TICK_DEADLINE_SECONDS * 2))
+  if [ "$age" -le "$GANG_TICK_DEADLINE_SECONDS" ]; then return 1; fi
+  if [ "$age" -lt "$reclaim" ]; then
+    printf 'tick lock %s is over its %ss worker budget: %s owner pid %s has held it for %ss; generation-verified reclaim starts at %ss\n' \
+      "$TICK_LOCK_PATH" "$GANG_TICK_DEADLINE_SECONDS" "$format" "$pid" "$age" "$reclaim" >&2
+    return 0
+  fi
+
+  if [ "$format" = legacy ] && [ "$TICK_PROCESS_BORN_NS" -gt "$mtime_ns" ]; then
+    again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
+    [ "$again" = "$holder" ] \
+      || { printf 'tick lock %s changed while expired legacy pid %s was being classified\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
+    rm -f -- "$TICK_LOCK_PATH" \
+      || { printf 'cannot retire expired legacy tick lock %s whose pid %s was reused\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
+    tick_lock_recovered "expired legacy tick lock $TICK_LOCK_PATH recorded pid $pid, but that process generation was born after the lock; the stale lock was retired and no cooperative pass ran"
+    return 0
+  fi
+
+  if [ "$TICK_PROCESS_SIGNAL_SAFE" != 1 ] || [ "$TICK_PROCESS_ROLE" != 1 ] \
+     || [ "$TICK_PROCESS_PGRP" != "$pid" ] || [ "$TICK_PROCESS_SESSION" != "$pid" ]; then
+    printf 'expired tick lock %s held by pid %s cannot be reclaimed safely: exact leader generation, tick-worker role, or session leadership is unknown\n' \
+      "$TICK_LOCK_PATH" "$pid" >&2
+    return 0
+  fi
+  again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
+  [ "$again" = "$holder" ] \
+    || { printf 'tick lock %s changed before expired owner pid %s could be signalled\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
+
+  # BLAST RADIUS: every ordinary gang command launches this contender and may
+  # therefore terminate ONE process. The helper binds SIGKILL to the pidfd for
+  # this exact recorded leader generation and waits at most 1.0s for death. A
+  # PGID is a reusable bare number, so this path must never call killpg.
+  "$ROOT/libexec/gang-process-identity" --kill "$pid" "$token" "$SESSION" >/dev/null 2>&1 \
+    || kill_rc=$?
+  case "$kill_rc" in
+    0) ;;
+    1) return 1 ;;
+    3) printf 'expired tick owner pid %s did not die within the 1.0s confirmation bound; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
+    *) printf 'expired tick owner pid %s could not be signalled by exact generation; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
+  esac
+  again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
+  [ "$again" = "$holder" ] \
+    || { printf 'tick lock %s changed after expired owner pid %s died; replacement was retained\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
+  rm -f -- "$TICK_LOCK_PATH" \
+    || { printf 'expired tick owner pid %s died but lock %s could not be retired\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0; }
+  tick_lock_recovered "expired $format tick lock $TICK_LOCK_PATH held by pid $pid was terminated by exact generation and retired; no cooperative pass ran"
+  return 0
 }
 
 tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
   local holder="" again="" err="" read_rc=0 read_races=0
+  local pid="" token="" pgrp="" acquired="" extra="" age=0 now=0 mtime_ns=0
+  local format="" expired_rc=0
   tick_lock_paths_set || return 1
+  case "${GANG_TICK_DEADLINE_SECONDS:-}" in
+    ''|*[!0-9]*|0) printf 'tick worker has no readable deadline budget\n' >&2; return 1 ;;
+  esac
   lock_self_pid
-  TICK_LOCK_PID="$LOCK_SELF_PID"
+  tick_process_read "$LOCK_SELF_PID"
+  [ "$TICK_PROCESS_STATE" = live ] \
+    || { printf 'tick worker process identity is %s before lock acquisition\n' "$TICK_PROCESS_STATE" >&2; return 1; }
+  now="$(date +%s)"
+  TICK_LOCK_RECORD="v2:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now"
   while :; do
     err=""
-    if err="$(ln -s "$TICK_LOCK_PID" "$TICK_LOCK_PATH" 2>&1)"; then
+    if err="$(ln -s "$TICK_LOCK_RECORD" "$TICK_LOCK_PATH" 2>&1)"; then
       return 0
     fi
     [ -L "$TICK_LOCK_PATH" ] \
@@ -3820,20 +3924,65 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
         || { printf 'tick lock %s disappeared twice while Gangline was resolving contention\n' "$TICK_LOCK_PATH" >&2; return 1; }
       continue
     fi
+    format=legacy pid="" token="" pgrp="" acquired="" extra=""
     case "$holder" in
-      ''|*[!0-9]*) printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
+      v2:*) IFS=: read -r format pid token pgrp acquired extra <<<"$holder"
+            if [ "$format" != v2 ] || [ -n "$extra" ]; then
+              printf "tick lock %s has an unreadable owner '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2
+              return 1
+            fi
+            case "$pid" in ''|*[!0-9]*) format="" ;; esac
+            case "$token" in ''|*[!A-Za-z0-9]*) format="" ;; esac
+            case "$pgrp" in ''|*[!0-9]*) format="" ;; esac
+            case "$acquired" in ''|*[!0-9]*) format="" ;; esac
+            [ "$format" = v2 ] \
+              || { printf "tick lock %s has an unreadable owner '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1; } ;;
+      *[!0-9]*|'') printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
+      *) pid="$holder" ;;
     esac
-    if kill -0 "$holder" 2>/dev/null; then
+    tick_process_read "$pid"
+    if [ "$TICK_PROCESS_STATE" = unknown ]; then
+      printf 'tick lock %s held by pid %s has unreadable process identity; lock was retained\n' "$TICK_LOCK_PATH" "$pid" >&2
+      return 1
+    fi
+    if [ "$TICK_PROCESS_STATE" = dead ]; then
+      rm -f -- "$TICK_LOCK_PATH" \
+        || { printf 'cannot clear stale tick lock %s held by dead pid %s\n' "$TICK_LOCK_PATH" "$pid" >&2; return 1; }
+      continue
+    fi
+    now="$(date +%s)"
+    if [ "$format" = v2 ]; then
+      if [ "$TICK_PROCESS_TOKEN" != "$token" ] || [ "$TICK_PROCESS_PGRP" != "$pgrp" ]; then
+        rm -f -- "$TICK_LOCK_PATH" \
+          || { printf 'cannot clear stale tick lock %s held by replaced pid %s\n' "$TICK_LOCK_PATH" "$pid" >&2; return 1; }
+        continue
+      fi
+      [ "$now" -ge "$acquired" ] \
+        || { printf 'tick lock %s has future acquisition time %s\n' "$TICK_LOCK_PATH" "$acquired" >&2; return 1; }
+      age=$((now - acquired))
+    else
+      mtime_ns="$(tick_lock_mtime_ns "$TICK_LOCK_PATH" 2>/dev/null)" \
+        || { printf 'legacy tick lock %s has unreadable creation time\n' "$TICK_LOCK_PATH" >&2; return 1; }
+      age=$((now - mtime_ns / 1000000000))
+      [ "$age" -ge 0 ] \
+        || { printf 'legacy tick lock %s has a future creation time\n' "$TICK_LOCK_PATH" >&2; return 1; }
+      token="$TICK_PROCESS_TOKEN" pgrp="$TICK_PROCESS_PGRP"
+    fi
+    expired_rc=0
+    tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$age" "$format" "$mtime_ns" \
+      || expired_rc=$?
+    [ "$expired_rc" -eq 1 ] || return 1
+    if [ "$TICK_PROCESS_STATE" = live ]; then
       touch -- "$TICK_DIRTY_PATH" || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
       again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
-      if [ "$again" = "$holder" ] && kill -0 "$holder" 2>/dev/null; then
-        TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_PID=""
+      tick_process_read "$pid"
+      if [ "$again" = "$holder" ] && [ "$TICK_PROCESS_STATE" = live ] \
+         && { [ "$format" = legacy ] || { [ "$TICK_PROCESS_TOKEN" = "$token" ] && [ "$TICK_PROCESS_PGRP" = "$pgrp" ]; }; }; then
+        TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
         return 75
       fi
       continue
     fi
-    rm -f -- "$TICK_LOCK_PATH" \
-      || { printf 'cannot clear stale tick lock %s held by dead pid %s\n' "$TICK_LOCK_PATH" "$holder" >&2; return 1; }
   done
 }
 
