@@ -62,6 +62,22 @@ class StubServer(ThreadingHTTPServer):
         self.hold_lock = threading.Lock()
         self.held_once = False
 
+    def handle_error(self, request, client_address):
+        """A client that goes away is not this stub answering badly.
+
+        The lane fails the scenario on any traceback here, and that guard is
+        worth keeping: a stub that raises while answering has stopped being an
+        instrument. But the harness holds keep-alive connections open and drops
+        them when it is torn down, and the stdlib raises ConnectionResetError
+        or BrokenPipeError out of the read for the NEXT request line — after
+        the previous one was answered in full. That frame is the client
+        leaving, not the answer going wrong, so it is accounted for here and
+        every other exception still reaches the lane as a traceback.
+        """
+        if isinstance(sys.exc_info()[1], (ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
     def is_agent_turn(self, text):
         """Is this the agent's own turn, or one of the harness's side errands?
 
