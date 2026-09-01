@@ -153,9 +153,83 @@ guard_refuse_unreadable_server() {
   exit 3
 }
 
+# TMUX 3.2A'S QUIET WINDOW-OPTION READ DOES NOT EXPOSE ITS TARGET. Both an
+# unset option on a readable window and the same read against a missing window
+# exit zero with no output. `list-windows -t` does retain that observation, so
+# take it immediately before an explicitly targeted quiet read and carry its
+# nonzero status to the caller instead of spending absence as an unset option.
+option_read_window=""
+option_read_quiet=""
+option_read_target=""
+case "$seen_command" in
+  show-options)
+    option_read_command=""
+    option_read_prev=""
+    for word in "$@"; do
+      if [ -z "$option_read_command" ]; then
+        [ "$word" != "$seen_command" ] || option_read_command=1
+        continue
+      fi
+      if [ -n "$option_read_prev" ]; then
+        option_read_target=$word
+        option_read_prev=""
+        continue
+      fi
+      case "$word" in
+        -t) option_read_prev=-t ;;
+        -t*) option_read_target=${word#-t} ;;
+        -*) option_read_flags=${word#-}
+            case "$option_read_flags" in *w*) option_read_window=1 ;; esac
+            case "$option_read_flags" in *q*) option_read_quiet=1 ;; esac ;;
+      esac
+    done ;;
+esac
+
+observe_option_window() { # $1 explicit target; return tmux's availability status
+  if [ -n "$socket" ]; then
+    "$real_tmux" -S "$socket" list-windows -t "$1" \
+      -f 0 -F '#{window_id}' >/dev/null 2>&1
+  elif [ -n "$label" ]; then
+    "$real_tmux" -L "$label" list-windows -t "$1" \
+      -f 0 -F '#{window_id}' >/dev/null 2>&1
+  else
+    "$real_tmux" list-windows -t "$1" \
+      -f 0 -F '#{window_id}' >/dev/null 2>&1
+  fi
+}
+
+observe_option_server() { # return whether the selected tmux server answers
+  if [ -n "$socket" ]; then
+    "$real_tmux" -S "$socket" display-message \
+      -p '#{socket_path}' >/dev/null 2>&1
+  elif [ -n "$label" ]; then
+    "$real_tmux" -L "$label" display-message \
+      -p '#{socket_path}' >/dev/null 2>&1
+  else
+    "$real_tmux" display-message -p '#{socket_path}' >/dev/null 2>&1
+  fi
+}
+
 case "$seen_command" in
   kill-server|kill-session) ;;
   *) [ -z "$missing_tmpdir" ] || guard_refuse_missing_tmpdir "$@"
+     if [ -n "$option_read_window" ] && [ -n "$option_read_quiet" ] \
+        && [ -n "$option_read_target" ]; then
+       option_read_rc=0
+       observe_option_window "$option_read_target" || option_read_rc=$?
+       if [ "$option_read_rc" -ne 0 ]; then
+         if observe_option_server; then
+           note unavailable-window-option "$@"
+           printf 'gang tmux guard: window option target %s is unavailable; refusing to report an empty value because tmux cannot distinguish it from an unset option.\n' \
+             "$option_read_target" >&2
+           exit 1
+         fi
+         note unavailable-window-option-server "$@"
+         printf 'gang tmux guard: the tmux server for window option target %s is unavailable, so its option record could not be read.\n' \
+           "$option_read_target" >&2
+         exit 2
+       fi
+     fi
      run_real "$@" ;;
 esac
 

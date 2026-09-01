@@ -2110,6 +2110,7 @@ guard_ran="$guard_home/real-tmux-argv"
 guard_servers="$guard_home/agent-servers"
 guard_unreadable_servers="$guard_home/unreadable-servers"
 guard_unreachable_labels="$guard_home/unreachable-labels"
+guard_option_unavailable_servers="$guard_home/option-unavailable-servers"
 guard_agent_rows="$guard_home/agent-rows"
 guard_fake_uid="guard-test-$$"
 mkdir -p "$guard_bin" "$guard_state/teams"
@@ -2125,6 +2126,10 @@ elif [ "\${1:-}" = -L ]; then
   shift 2
 fi
 if [ "\${1:-}" = display-message ]; then
+  if [ -n "\$socket" ] \
+     && grep -Fqx "\$socket" "$guard_option_unavailable_servers"; then
+    exit 1
+  fi
   if [ -n "\$label" ] && grep -Fqx "\$label" "$guard_unreachable_labels"; then
     exit 1
   fi
@@ -2149,6 +2154,13 @@ if [ "\${1:-}" = list-windows ]; then
     esac
     shift
   done
+  if [ "\$target" = '@guard-option-missing' ]; then
+    exit 1
+  fi
+  if [ -n "\$socket" ] \
+     && grep -Fqx "\$socket" "$guard_option_unavailable_servers"; then
+    exit 1
+  fi
   if grep -Fqx "\$socket" "$guard_unreadable_servers"; then
     exit 1
   elif grep -Fqx "\$socket" "$guard_servers"; then
@@ -2172,6 +2184,7 @@ printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
 printf '%s\n' "$guard_team_socket" > "$guard_servers"
 : > "$guard_unreadable_servers"
 : > "$guard_unreachable_labels"
+: > "$guard_option_unavailable_servers"
 printf 'guardteam\tguard-agent\n' > "$guard_agent_rows"
 
 guard_session=guardteam
@@ -2196,6 +2209,49 @@ guard_run() { # $1 TMUX, $2 TMUX_TMPDIR, $3 GANG_TMUX_GUARD, rest = argv;
   printf '%s\n%s' "$rc" "$err"
 }
 guard_reached_tmux() { [ -f "$guard_ran" ]; }
+
+# QUIET WINDOW-OPTION READS COLLAPSE TWO STATES IN TMUX 3.2A. Both an unset
+# option on a readable window and the same option on a nonexistent window exit
+# zero with no output. The shim already fronts these reads for every hitched
+# agent, so it must expose the target record's availability in the status while
+# retaining tmux's empty successful result for the readable, unset control.
+guard_out="$(guard_run "$guard_team_socket,1,0" - - \
+  show-options -wqv -t @guard-option-readable @gl_probe)"
+equal "an unset option on a readable window remains a successful empty read" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+if guard_reached_tmux; then
+  pass "the readable option lookup reaches tmux"
+else
+  fail "the readable option lookup reaches tmux" "show-options never ran"
+fi
+guard_out="$(guard_run "$guard_team_socket,1,0" - - \
+  show-options -wqv -t @guard-option-missing @gl_probe)"
+equal "a quiet option lookup exposes an unavailable window record" \
+  1 "$(printf '%s' "$guard_out" | head -1)"
+contains "the unavailable option lookup names the record it could not read" \
+  "$guard_out" "window option target @guard-option-missing is unavailable"
+contains "the unavailable option lookup is recorded" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" \
+  "unavailable-window-option"
+if guard_reached_tmux; then
+  fail "an unavailable option lookup stops before its ambiguous read" \
+    "show-options ran and returned the same empty success as an unset option"
+else
+  pass "an unavailable option lookup stops before its ambiguous read"
+fi
+guard_option_unavailable_socket="$guard_home/option-unavailable-socket"
+printf '%s\n' "$guard_option_unavailable_socket" \
+  > "$guard_option_unavailable_servers"
+guard_out="$(guard_run - - - -S "$guard_option_unavailable_socket" \
+  show-options -wqv -t @guard-option-server-lost @gl_probe)"
+equal "a quiet option lookup distinguishes an unavailable tmux server" \
+  2 "$(printf '%s' "$guard_out" | head -1)"
+contains "the unavailable-server lookup names the record it could not read" \
+  "$guard_out" \
+  "tmux server for window option target @guard-option-server-lost is unavailable"
+contains "the unavailable-server lookup is recorded separately" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" \
+  "unavailable-window-option-server"
 
 # THE 2026-08-17 COMMAND, verbatim in shape: a sandbox TMUX_TMPDIR set, and
 # $TMUX quietly deciding otherwise. This is the assertion the guard exists for.
