@@ -1077,6 +1077,22 @@ contains "alarm rearm reports the foreground signal rather than child cleanup" \
   "$(<"$RUN_ROOT/wait-rearm-term.err")" \
   "before its boundary fired (status 143)"
 
+# AN EARLY ALARM DISPROVED BY THE CLOCK CANNOT TAINT A LATER RELEASE. Once the
+# supervisor rearms its deadline, a captured native success has the same
+# meaning as a run in which the early alarm never fired.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+if PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_TERM_DURING_REARM=1 \
+  GANG_TEST_WAIT_CHILD_SUCCESS=1 \
+  GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  > "$RUN_ROOT/wait-rearm-success-term.out" \
+  2> "$RUN_ROOT/wait-rearm-success-term.err"; then
+  pass "a disproved alarm does not taint a later native release"
+else
+  fail "a disproved alarm does not taint a later native release" \
+    "$(<"$RUN_ROOT/wait-rearm-success-term.err")"
+fi
+
 # THE ELAPSED VERDICT CANNOT PUT THE ALARM BACK OVER A FOREGROUND SIGNAL. The
 # same immediate ordering returns elapsed after injecting TERM; preserving 143
 # proves the deadline branch retained the more specific cancellation.
