@@ -472,6 +472,64 @@ wait "$tick_expired_owner" || tick_expired_owner_rc=$?
 equal "the expired worker owner reports the surfaced recovery failure" \
   1 "$tick_expired_owner_rc"
 "$GANG" tick >/dev/null
+
+# A CATCHABLE CONTROLLER DEATH MUST NOT ORPHAN ITS NEW-SESSION WORKER. The
+# worker publishes its production lock, then blocks reading a FIFO and writes
+# nothing to the controller pipes, so EPIPE cannot end it before controller
+# cleanup is observed. Resolve the whole relationship in completed reads before
+# signalling this exact controller.
+tick_controller_ready="$RUN_ROOT/tick-controller-ready"
+tick_controller_release="$RUN_ROOT/tick-controller-release"
+mkfifo "$tick_controller_ready" "$tick_controller_release"
+GANG_TEST_TICK_READY_FIFO="$tick_controller_ready" \
+GANG_TEST_TICK_RELEASE_FIFO="$tick_controller_release" \
+  "$GANG" tick > "$RUN_ROOT/tick-controller-owner.out" 2>&1 &
+tick_controller_owner=$!
+IFS= read -r -N 1 _ < "$tick_controller_ready"
+tick_controller_record="$(readlink "$tick_lock_path")"
+IFS=: read -r tick_controller_version tick_controller_worker \
+  _ tick_controller_pgrp _ <<<"$tick_controller_record"
+tick_controller_identity="$("$ROOT/libexec/gang-process-identity" \
+  --tick "$tick_controller_worker" "$GANG_SESSION")"
+IFS=$'\t' read -r _ _ _ tick_controller_session _ tick_controller_role _ \
+  <<<"$tick_controller_identity"
+tick_controller_pid="$(ps -o ppid= -p "$tick_controller_worker" | tr -d ' ')"
+tick_controller_command="$(ps -o command= -p "$tick_controller_pid")"
+equal "the controller-death fixture owns a generation-bearing lock" v2 \
+  "$tick_controller_version"
+equal "the controller-death fixture resolved its worker session leader" \
+  "$tick_controller_worker" "$tick_controller_pgrp"
+equal "the controller-death fixture resolved its worker session" \
+  "$tick_controller_worker" "$tick_controller_session"
+equal "the controller-death fixture resolved the tick-worker role" 1 \
+  "$tick_controller_role"
+contains "the resolved parent is this tree's deadline controller" \
+  "$tick_controller_command" "$ROOT/libexec/gang-tick-deadline"
+kill -TERM "$tick_controller_pid"
+tick_controller_owner_rc=0
+wait "$tick_controller_owner" || tick_controller_owner_rc=$?
+equal "controller TERM remains a surfaced tick failure" 1 \
+  "$tick_controller_owner_rc"
+tick_controller_worker_rc=0
+"$ROOT/libexec/gang-process-identity" \
+  --tick "$tick_controller_worker" "$GANG_SESSION" >/dev/null 2>&1 \
+  || tick_controller_worker_rc=$?
+equal "controller TERM leaves no live worker generation" 1 \
+  "$tick_controller_worker_rc"
+"$GANG" tick >/dev/null
+equal "the next tick reclaims the controller's dead worker lock" absent \
+  "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+
+# This branch is unreachable once controller cleanup terminates the worker. If
+# it remains alive, the exact generation and unchanged record observed above
+# identify the process this fixture owns; terminate it, then retire its lock.
+if [ "$tick_controller_worker_rc" -eq 0 ]; then
+  equal "the EPIPE negative control retained the same worker lock" \
+    "$tick_controller_record" "$(readlink "$tick_lock_path")"
+  kill -KILL "$tick_controller_worker" 2>/dev/null || true
+  "$GANG" tick >/dev/null
+fi
+
 tick_repaired_right="$(tmux show-options -qv -t "=$GANG_SESSION:" status-right)"
 excludes "a tick replaces a health segment owned by an obsolete snapshot" \
   "$tick_repaired_right" "/stale/snapshot"
@@ -484,7 +542,10 @@ contains "status repair installs the running tree's health reader" \
 contains "the deadline controller fixes the production budget at sixty seconds" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
 contains "deadline expiry kills the worker's whole process group" \
-  "$(<"$ROOT/libexec/gang-tick-deadline")" "os.killpg(worker.pid, signal.SIGKILL)"
+  "$(<"$ROOT/libexec/gang-tick-deadline")" "os.killpg(child.pid, signal.SIGKILL)"
+contains "deadline expiry reaches the shared pre-reap group cleanup" \
+  "$(<"$ROOT/libexec/gang-tick-deadline")" \
+  $'except subprocess.TimeoutExpired:\n        kill_worker_group()'
 
 # The synchronous test mode takes the same post-command epilogue without a
 # detached race. Its ledger is the evidence that an unrelated invocation, not

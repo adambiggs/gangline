@@ -9,12 +9,49 @@ import sys
 
 
 DEADLINE_SECONDS = 60
+worker = None
+received_signal = None
+
+
+def kill_worker_group() -> None:
+    child = worker
+    if child is None:
+        return
+    if child.poll() is not None:
+        return
+    try:
+        # poll returned None, so this direct child was not reaped at that
+        # observation. If it exits now, its zombie still prevents PID/PGID
+        # reuse until communicate() reaps it.
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def handle_signal(signum, _frame) -> None:
+    global received_signal
+    if received_signal is None:
+        received_signal = signum
+    kill_worker_group()
+
+
+def reraise(signum: int) -> int:
+    signal.signal(signum, signal.SIG_DFL)
+    os.kill(os.getpid(), signum)
+    return 128 + signum
 
 
 def main() -> int:
+    global worker
+
     if len(sys.argv) < 2:
         print("gang tick deadline: no worker command", file=sys.stderr)
         return 2
+
+    for caught in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
+        signal.signal(caught, handle_signal)
+    if received_signal is not None:
+        return reraise(received_signal)
 
     worker = subprocess.Popen(
         sys.argv[1:],
@@ -24,13 +61,19 @@ def main() -> int:
         start_new_session=True,
         env={**os.environ, "GANG_TICK_DEADLINE_SECONDS": str(DEADLINE_SECONDS)},
     )
+    child = worker
+    if received_signal is not None:
+        kill_worker_group()
     try:
-        stdout, stderr = worker.communicate(timeout=DEADLINE_SECONDS)
+        stdout, stderr = child.communicate(timeout=DEADLINE_SECONDS)
     except subprocess.TimeoutExpired:
-        os.killpg(worker.pid, signal.SIGKILL)
-        stdout, stderr = worker.communicate()
+        kill_worker_group()
+        stdout, stderr = child.communicate()
+        worker = None
         sys.stdout.buffer.write(stdout)
         sys.stderr.buffer.write(stderr)
+        if received_signal is not None:
+            return reraise(received_signal)
         print(
             f"gang tick: hard deadline of {DEADLINE_SECONDS}s expired; "
             "the one-shot worker process group was killed",
@@ -38,9 +81,12 @@ def main() -> int:
         )
         return 124
 
+    worker = None
     sys.stdout.buffer.write(stdout)
     sys.stderr.buffer.write(stderr)
-    return worker.returncode
+    if received_signal is not None:
+        return reraise(received_signal)
+    return child.returncode
 
 
 if __name__ == "__main__":

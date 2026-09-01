@@ -335,8 +335,10 @@ termination retain the lock and fail loudly. Recovery is cooperative, so it
 begins on the next Gangline invocation rather than in a resident watcher.
 
 The worker and its descendants are also killed by their owning deadline
-controller at 60 seconds. A detached failure cannot change the command that
-spawned it. It writes `health` and `tick.log` under
+controller at 60 seconds. HUP, INT, TERM, or ALRM caught by that controller
+kills and reaps its still-owned worker group before the controller re-raises the
+signal. A detached failure cannot change the command that spawned it. It writes
+`health` and `tick.log` under
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`; the next
 invocation, `status`, and `roster` report the last failure. An attached client
 also gets a silent-until-failed status-right segment, a display-message flash,
