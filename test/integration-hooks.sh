@@ -972,6 +972,10 @@ def run(argv, **options):
     if argv[1:] == ["now"]:
         return Result(0, "1\n")
     if len(argv) == 4 and argv[1] == "elapsed":
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_EXPIRY") == "1":
+            term_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+            return Result(0)
         if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
             term_sent = True
             os.kill(os.getpid(), signal.SIGTERM)
@@ -992,7 +996,8 @@ class Popen:
 
     def wait(self):
         global rearm_started
-        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1" or \
+           os.environ.get("GANG_TEST_WAIT_TERM_DURING_EXPIRY") == "1":
             if term_sent:
                 self.returncode = -signal.SIGKILL
                 return self.returncode
@@ -1008,7 +1013,8 @@ class Popen:
         return self.returncode
 
     def poll(self):
-        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1" or \
+           os.environ.get("GANG_TEST_WAIT_TERM_DURING_EXPIRY") == "1":
             return self.returncode
         if self.reaped_alarm:
             self.returncode = 0
@@ -1066,6 +1072,22 @@ equal "a cancellation during alarm rearm preserves its signal status" \
   1 "$wait_rearm_term_rc"
 contains "alarm rearm reports the foreground signal rather than child cleanup" \
   "$(<"$RUN_ROOT/wait-rearm-term.err")" \
+  "before its boundary fired (status 143)"
+
+# THE ELAPSED VERDICT CANNOT PUT THE ALARM BACK OVER A FOREGROUND SIGNAL. The
+# same immediate ordering returns elapsed after injecting TERM; preserving 143
+# proves the deadline branch retained the more specific cancellation.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_expiry_term_rc=0
+PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_TERM_DURING_EXPIRY=1 \
+  GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  > "$RUN_ROOT/wait-expiry-term.out" 2> "$RUN_ROOT/wait-expiry-term.err" \
+  || wait_expiry_term_rc=$?
+equal "a cancellation during deadline comparison preserves its signal status" \
+  1 "$wait_expiry_term_rc"
+contains "deadline comparison reports the foreground signal instead of expiry" \
+  "$(<"$RUN_ROOT/wait-expiry-term.err")" \
   "before its boundary fired (status 143)"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
