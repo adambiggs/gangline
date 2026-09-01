@@ -9997,7 +9997,7 @@ def stop(signum, _frame):
         if received[0] is None:
             received[0] = signum
         raise AlarmBoundary
-    if received[0] is None:
+    if received[0] is None or received[0] == signal.SIGALRM:
         received[0] = signum
     kill_child()
 
@@ -10045,7 +10045,8 @@ try:
                     (remaining_ns + nanoseconds_per_second - 1)
                     // nanoseconds_per_second,
                 )
-                received[0] = None
+                if received[0] == signal.SIGALRM:
+                    received[0] = None
                 signal.alarm(remaining_s)
             except ClockError:
                 clock_failed[0] = True
