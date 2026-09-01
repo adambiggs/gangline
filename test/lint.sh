@@ -34,7 +34,35 @@ fi
 # ONE NATIVE MONOTONIC READ SITE. Runtime code reaches the clock through the
 # shared executable, so deadline consumers cannot silently select another
 # monotonic domain or bypass the suite's clock seam.
-monotonic_readers="$(rg -l 'time[.]monotonic(_ns)?[(]' bin libexec 2>/dev/null || true)"
+monotonic_readers() { # directories -> matching runtime files, or nothing
+  grep -rlE 'time[.]monotonic(_ns)?[(]' "$@" 2>/dev/null || true
+}
+
+# The selector owns an exact one-reader contract, so prove its zero, one, and
+# cross-directory multiple-reader cases before asking it about this tree.
+clock_reader_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+mkdir -p "$clock_reader_cal/bin" "$clock_reader_cal/libexec"
+printf 'time.monotonic_ns()\n' > "$clock_reader_cal/libexec/gang-clock"
+clock_reader_one="$(cd "$clock_reader_cal" && monotonic_readers bin libexec)"
+rm -f -- "$clock_reader_cal/libexec/gang-clock"
+clock_reader_none="$(cd "$clock_reader_cal" && monotonic_readers bin libexec)"
+printf 'time.monotonic_ns()\n' > "$clock_reader_cal/bin/rogue"
+printf 'time.monotonic_ns()\n' > "$clock_reader_cal/libexec/gang-clock"
+clock_reader_multiple="$(cd "$clock_reader_cal" && monotonic_readers bin libexec)"
+rm -rf -- "$clock_reader_cal"
+clock_reader_multiple_expected="$(printf 'bin/rogue\nlibexec/gang-clock')"
+if [ "$clock_reader_one" != libexec/gang-clock ] \
+   || [ -n "$clock_reader_none" ] \
+   || [ "$clock_reader_multiple" != "$clock_reader_multiple_expected" ]; then
+  printf '%s\n' \
+    'lint: the monotonic reader selector does not hold its zero, one, and multiple-reader calibration.' \
+    "one: ${clock_reader_one:-<none>}" \
+    "none: ${clock_reader_none:-<none>}" \
+    "multiple: ${clock_reader_multiple:-<none>}" >&2
+  exit 1
+fi
+
+monotonic_readers="$(monotonic_readers bin libexec)"
 if [ "$monotonic_readers" != libexec/gang-clock ]; then
   printf '%s\n' \
     "lint: runtime monotonic reads must exist only in libexec/gang-clock; found:" \
