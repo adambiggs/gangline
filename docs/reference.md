@@ -325,14 +325,19 @@ than letting a restarted harness impersonate the old agent.
 One per-team generation lock admits a worker. A concurrent candidate touches a
 dirty marker and exits immediately; the owner consumes that marker with another
 pass. Dead, zombie, and replaced generations are reclaimed. A matching owner
-older than the hard 60-second worker deadline fails health instead of looking
-like clean contention. At twice that published budget, Linux may reclaim only
-an exact tick-worker leader: it sends one SIGKILL through a generation-bound
-pidfd, confirms exit for at most one second, and retires the unchanged lock.
-It never signals a bare PID or process-group number. A legacy pid-only lock is
-retired when process birth proves PID reuse; ambiguous identity and failed
-termination retain the lock and fail loudly. Recovery is cooperative, so it
-begins on the next Gangline invocation rather than in a resident watcher.
+at least the hard 60-second worker deadline fails health instead of looking
+like clean contention. The lock stamp uses the same monotonic clock domain as
+the controller deadline, so suspend and wall-clock adjustment do not spend
+that budget. At twice the published budget, Linux may reclaim only an exact
+tick-worker leader: it sends one SIGKILL through a generation-bound pidfd,
+confirms exit for at most one second, and retires the unchanged lock. It never
+signals a bare PID or process-group number. A legacy pid-only lock is retired
+when the live PID is positively not a tick worker for this team, but never
+authorizes termination because it has no generation or monotonic acquisition
+stamp. Ambiguous identity, a tick-shaped live legacy owner, and failed
+termination retain the lock and fail loudly. Recovery is
+cooperative, so it begins on the next Gangline invocation rather than in a
+resident watcher.
 
 The worker and its descendants are also killed by their owning deadline
 controller at 60 seconds. HUP, INT, TERM, or ALRM caught by that controller

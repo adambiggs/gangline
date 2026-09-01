@@ -637,12 +637,15 @@ The worker is ephemeral, not resident: no process outlives the pass it was born
 to finish. A per-team generation lock admits one worker; a contender marks it
 dirty and exits, and the owner consumes that edge with one more pass before
 release. Dead and replaced generations are reclaimed. A live owner beyond the
-published worker deadline fails health; after one more deadline interval, Linux
-may SIGKILL only the pidfd-bound leader generation, confirm its death, and
-retire the lock. Legacy pid-only locks are retained inside the first deadline,
-then migrated only where birth chronology or exact worker identity proves a
-safe action. Ambiguous identity always retains the lock loudly. The deadline
-controller separately bounds the whole worker process group. Tick failure never
+published worker deadline fails health; generation locks measure that budget
+in the deadline controller's monotonic clock domain, so suspend and wall-clock
+steps cannot spend it. After one more deadline interval, Linux may SIGKILL only
+the pidfd-bound leader generation, confirm its death, and retire the lock.
+Legacy pid-only locks migrate only where the live PID is positively not a tick
+worker for this team and never authorize termination because they carry no
+generation or monotonic acquisition stamp.
+Ambiguous identity always retains the lock loudly. The deadline controller
+separately bounds the whole worker process group. Tick failure never
 changes the spawning command's status. Catchable controller death first kills
 and reaps that owned group, then re-raises the controller signal, so the new
 session cannot turn controller loss into an unbounded worker. Failure is instead
