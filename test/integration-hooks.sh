@@ -271,6 +271,65 @@ codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
 equal "a live Codex helper inside CODEX_HOME is not held work" "1" "$codex_wait_rc"
 equal "an absent Codex waiting verdict prints no witness" "" "$codex_wait_output"
 
+# THE SHIPPED QUEUE READER, AGAINST THE QUEUE BLOCK'S OWN LAYOUT. The delivery
+# fixture in the compose part proves the substrate wiring with a permissive
+# stand-in parser; nothing there meets collars/codex.sh, whose whole job is to
+# read one particular harness's queue block. These two frames carry that
+# block's chrome and layout as codex-cli 0.151.0 renders them -- the header,
+# the row marker, the four-column continuation indent and the recall
+# advertisement -- around a fixture body standing in for a delivered one. The
+# second is the layout at the width where Codex breaks the advertisement across
+# lines, which is what an exact line match cannot read while the queue is on
+# screen.
+codex_queue_body='[gang:tester#3fe8fdba] NARROW_PARK
+ [/gang:tester#3fe8fdba]'
+cat > "$RUN_ROOT/codex-queue-frame" <<'FRAME'
+• Queued follow-up inputs
+  ↳ [gang:tester#3fe8fdba] NARROW_PARK
+     [/gang:tester#3fe8fdba]
+    shift + ← edit last queued message
+› Ask Codex to do anything
+FRAME
+cat > "$RUN_ROOT/codex-queue-frame-wrapped" <<'FRAME'
+• Queued follow-up inputs
+  ↳ [gang:tester#3fe8fdba]
+    NARROW_PARK
+     [/gang:tester#3fe8fdba]
+    shift + ←
+    edit last queued message
+› Ask Codex to do anything
+FRAME
+codex_queue_name="codex-queue-native-$$"
+tmux new-window -d -t "=$GANG_SESSION" -n "$codex_queue_name" -c /tmp \
+  'exec bash --noprofile --norc'
+codex_queue_id="$(tmux display-message -p -t "=$GANG_SESSION:$codex_queue_name" '#{window_id}')"
+codex_queue_pane="$(tmux list-panes -t "$codex_queue_id" -F '#{pane_id}')"
+codex_queue_read() { # $@ = extra collar_queued arguments -> "rc<TAB>output"
+  local out="" rc=0
+  out="$(bash -c '. "$1"; shift; collar_queued "$@"' fixture \
+    "$ROOT/collars/codex.sh" "$codex_queue_id" "$@")" || rc=$?
+  printf '%s\t%s' "$rc" "$out"
+}
+equal "an empty pane carries no Codex queue" "1	" "$(codex_queue_read)"
+equal "and a body cannot be confirmed parked in a queue that is not there" \
+  "2	the Codex follow-up queue is not on screen, so gang cannot confirm the body it composed is parked" \
+  "$(codex_queue_read "$codex_queue_body")"
+for codex_queue_frame in codex-queue-frame codex-queue-frame-wrapped; do
+  codex_queue_channel="gang-test-codex-queue-$codex_queue_frame-$$"
+  tmux send-keys -l -t "$codex_queue_pane" \
+    "clear; cat $RUN_ROOT/$codex_queue_frame; tmux wait-for -S $codex_queue_channel"
+  tmux send-keys -t "$codex_queue_pane" Enter
+  tmux wait-for "$codex_queue_channel"
+  equal "the $codex_queue_frame block reads as a parked queue" "0	" \
+    "$(codex_queue_read)"
+  equal "and the body in that frame is confirmed as the parked one" "0	" \
+    "$(codex_queue_read "$codex_queue_body")"
+  equal "while another body is unconfirmed rather than declared submitted" \
+    "2	the Codex follow-up queue is on screen but does not read back as the body gang composed" \
+    "$(codex_queue_read 'a body that was never parked here')"
+done
+tmux kill-window -t "$codex_queue_id"
+
 codex_wait_child="$codex_wait_home/child.jsonl"
 printf '%s\n' '{"type":"event_msg","payload":{"type":"task_started"}}' \
   > "$codex_wait_child"
