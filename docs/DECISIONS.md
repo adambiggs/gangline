@@ -1770,3 +1770,40 @@ nonzero observation instead of being reported as an unset option. A responding
 server with no target exits 1; a server that no longer answers exits 2, so a
 consumer never has to infer which record was unavailable from one overloaded
 status. Teardown classification remains on its separate fail-closed path.
+
+## A collar may answer for a queue its composer never shows
+
+Gangline matched its parked-queue evidence against the input box only, so that a
+delivered body quoting a harness's hint could never trip it. Codex parks a
+follow-up by returning its composer to the placeholder and drawing the queued
+bodies above it, which that reading cannot see at all: every parked delivery was
+reported to its sender as submitted. A collar may therefore declare
+`collar_queued` and answer from wherever its own harness draws the queue. Its
+unknown is carried into the delivery outcome rather than flattened, because
+"gang could not tell" reaching a sender as "submitted" is the failure this
+exists to remove. Asked with the body gang composed, the same function settles
+what the hint alone cannot — a queue drawn after Enter can describe the message
+just typed or a turn that raced it — and only a positive answer is taken.
+
+## An advisory dialog is reported, never dismissed
+
+A native surface can own the input box while the agent behind it keeps working
+and while the surface itself says no action is required. Gangline still refuses
+to type through it, but reporting it as occupancy of unknown authority sends a
+lead looking for a human decision that does not exist. A collar may declare
+`collar_advisory` and name the surface; the state stays `!occupied!` and only
+the words change. Gangline does not dismiss it: the keystroke would be a bare
+digit at something that clears itself, and a menu that closes between the
+reading and the keystroke takes that digit as message text.
+
+## A long Codex command needs no Gangline surface
+
+Issue #177 reported a command wrapper that self-terminates a long command part
+way through. codex-cli 0.151.0 has no command wrapper: a model-invoked command
+becomes a background terminal whose only bound is
+`background_terminal_max_timeout`, and a `!` local-shell escape is not wrapped
+at all. A command that outlives a wait slice therefore returns the slice rather
+than a signal, and the model waits again. Nothing is cut off, so there is
+nothing for a collar to survive and nothing for gang to surface; the error the
+harness makes easy is reading a slice return as a completion, which is a rule
+for the agent rather than a surface for the substrate.
