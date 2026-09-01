@@ -28,7 +28,7 @@ classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_comma
 # inclusive duration edge shared by those callers.
 clock_helper="$ROOT/libexec/gang-clock"
 clock_now=""
-if [ -x "$clock_helper" ] && clock_now="$($clock_helper now 2>/dev/null)" \
+if [ -x "$clock_helper" ] && clock_now="$("$clock_helper" now 2>/dev/null)" \
    && [[ "$clock_now" =~ ^[0-9]+$ ]]; then
   pass "the shared clock returns one monotonic nanosecond reading"
   clock_future_rc=0

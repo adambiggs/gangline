@@ -418,6 +418,24 @@ equal "recent pane chrome cannot settle a drafted composer" \
   "?unknown? (turn-bracket closed while the pane kept being written to)" \
   "$(GANG_ACTIVITY_WINDOW=100000 GANG_ACTIVITY_LIMIT=0 \
     "$GANG" status post-turn-chrome | sed -n '1p')"
+post_turn_clock_fail="$RUN_ROOT/post-turn-clock-fail"
+printf '#!/bin/sh\nexit 2\n' > "$post_turn_clock_fail"
+chmod +x "$post_turn_clock_fail"
+rm -f -- "$RUN_ROOT/post-turn-chrome.draft"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_turn \
+  "open $(( $(date +%s) - 400 ))"
+tmux set-option -w -t "$post_turn_chrome_id" @gl_activity_only_since "v2:1"
+post_turn_clock_rc=0
+GANG_TEST_CLOCK="$post_turn_clock_fail" GANG_ACTIVITY_WINDOW=100000 \
+  "$GANG" status post-turn-chrome > "$RUN_ROOT/post-turn-clock.out" \
+  2> "$RUN_ROOT/post-turn-clock.err" || post_turn_clock_rc=$?
+equal "an unreadable activity clock preserves the status command" \
+  0 "$post_turn_clock_rc"
+contains "an unreadable activity clock leaves the pane state unknown" \
+  "$(<"$RUN_ROOT/post-turn-clock.out")" "?unknown?"
+contains "an unreadable activity clock remains visible to the operator" \
+  "$(<"$RUN_ROOT/post-turn-clock.err")" \
+  "cannot compare the activity-only bound"
 "$GANG" drop post-turn-chrome >/dev/null
 
 # WHO CREATED THIS AGENT, RESOLVED RATHER THAN REMEMBERED. The stamp is the

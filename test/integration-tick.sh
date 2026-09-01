@@ -695,7 +695,8 @@ contains "the shell authorization gate emits its own refusal before the helper" 
   "cannot be reclaimed safely: exact leader generation, tick-worker role, or session leadership is unknown"
 tick_bystander_helper_rc=0
 "$ROOT/libexec/gang-process-identity" --kill "$tick_bystander" \
-  "$tick_bystander_token" "$GANG_SESSION" >/dev/null 2>&1 \
+  "$tick_bystander_token" "$GANG_SESSION" "$ROOT/libexec/gang-clock" \
+  >/dev/null 2>&1 \
   || tick_bystander_helper_rc=$?
 equal "the pidfd helper independently refuses a non-worker leader" \
   2 "$tick_bystander_helper_rc"
@@ -721,7 +722,8 @@ IFS=: read -r _ tick_token_worker tick_token_value _ _ \
   <<<"$tick_token_record"
 tick_wrong_token_rc=0
 "$ROOT/libexec/gang-process-identity" --kill "$tick_token_worker" \
-  "${tick_token_value}x" "$GANG_SESSION" >/dev/null 2>&1 \
+  "${tick_token_value}x" "$GANG_SESSION" "$ROOT/libexec/gang-clock" \
+  >/dev/null 2>&1 \
   || tick_wrong_token_rc=$?
 equal "the pidfd helper refuses a mismatched generation token" \
   1 "$tick_wrong_token_rc"
@@ -759,6 +761,8 @@ IFS=: read -r _ tick_clock_worker _ _ tick_clock_acquired \
 cat > "$tick_clock_helper" <<'SH'
 #!/bin/sh
 now="${GANG_TEST_CLOCK_NOW_NS:?}"
+[ -z "${GANG_TEST_CLOCK_WITNESS:-}" ] \
+  || printf '%s\n' "$now" >> "$GANG_TEST_CLOCK_WITNESS"
 case "${1:-}" in
   now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
   elapsed)
@@ -786,6 +790,7 @@ chmod +x "$tick_clock_bin/date"
 tick_clock_jump_rc=0
 GANG_TICK_INTERNAL=1 PATH="$tick_clock_bin:$PATH" \
   GANG_TEST_CLOCK="$tick_clock_helper" \
+  GANG_TEST_CLOCK_WITNESS="$RUN_ROOT/tick-clock-witness" \
   GANG_TEST_CLOCK_NOW_NS=$(( tick_clock_acquired + 30000000000 )) \
   "$GANG" __tick-worker > "$RUN_ROOT/tick-clock-jump.out" 2>&1 \
   || tick_clock_jump_rc=$?
@@ -798,6 +803,9 @@ equal "the in-budget worker survives the wall-clock step" 0 \
   "$tick_clock_worker_state"
 equal "the wall-clock step leaves the production owner record unchanged" \
   "$tick_clock_record" "$(readlink "$tick_lock_path" 2>/dev/null || true)"
+contains "the lock decision reads the suite-only monotonic seam" \
+  "$(<"$RUN_ROOT/tick-clock-witness")" \
+  "$(( tick_clock_acquired + 30000000000 ))"
 
 if [ "$tick_clock_worker_state" -eq 0 ]; then
   tick_clock_edge_rc=0
@@ -946,6 +954,102 @@ contains "status repair installs the running tree's health reader" \
   "$tick_repaired_right" "$ROOT/statusline/gang-tick-health.sh"
 contains "the deadline controller fixes the production budget at sixty seconds" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
+excludes "the deadline controller ignores an ambient clock executable" \
+  "$(<"$ROOT/libexec/gang-tick-deadline")" "GANGLINE_CLOCK_HELPER"
+excludes "the generation killer ignores an ambient clock executable" \
+  "$(<"$ROOT/libexec/gang-process-identity")" "GANGLINE_CLOCK_HELPER"
+
+tick_death_bound_probe="$(python3 - "$ROOT/libexec/gang-process-identity" \
+  "$ROOT/libexec/gang-clock" <<'PY'
+import runpy
+import sys
+
+scope = runpy.run_path(sys.argv[1], run_name="gang_process_identity_probe")
+kill_generation = scope["kill_generation"]
+runtime = kill_generation.__globals__
+poll_calls = []
+signals = []
+
+
+class OnePoll:
+    def register(self, _fd, _events):
+        pass
+
+    def poll(self, _milliseconds):
+        poll_calls.append(1)
+        if len(poll_calls) > 1:
+            raise AssertionError("death confirmation polled more than once")
+        return []
+
+
+runtime["os"].pidfd_open = lambda _pid: 99
+runtime["os"].close = lambda _fd: None
+runtime["signal"].pidfd_send_signal = lambda pidfd, signum: signals.append((pidfd, signum))
+runtime["select"].poll = OnePoll
+runtime["linux_record"] = lambda pid, session: ("python", "S", pid, pid, "token", 1, 1, 1)
+runtime["clock_now_ns"] = lambda _path: 1
+runtime["clock_elapsed"] = lambda _path, _started, _duration: False
+bounded = kill_generation(41, "token", "team", sys.argv[2])
+
+
+def broken_clock(_path, _started, _duration):
+    raise runtime["ClockError"]
+
+
+runtime["clock_elapsed"] = broken_clock
+clock_failed = kill_generation(41, "token", "team", sys.argv[2])
+print(f"{bounded}:{len(poll_calls)}:{clock_failed}:{len(signals)}")
+PY
+)"
+equal "death confirmation has one kernel fallback and names a post-signal clock fault" \
+  "3:1:4:2" "$tick_death_bound_probe"
+
+tick_deadline_bound_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" \
+  "$ROOT/libexec/gang-clock" 2>/dev/null <<'PY'
+import runpy
+import subprocess
+import sys
+
+scope = runpy.run_path(sys.argv[1], run_name="gang_tick_deadline_bound_probe")
+main = scope["main"]
+runtime = main.__globals__
+
+
+class Boundary(Exception):
+    pass
+
+
+setattr(runtime["subprocess"], "Time" + "outExpired", Boundary)
+
+
+class Worker:
+    pid = 424242
+    returncode = None
+    timed_calls = 0
+
+    def communicate(self, **options):
+        if options:
+            self.timed_calls += 1
+            if self.timed_calls > 1:
+                raise AssertionError("deadline wait was restarted")
+            raise Boundary
+        self.returncode = -9
+        return b"", b""
+
+
+child = Worker()
+runtime["subprocess"].Popen = lambda *_args, **_kwargs: child
+runtime["os"].killpg = lambda _pid, _signal: None
+runtime["clock_now_ns"] = lambda: 1
+runtime["clock_elapsed"] = lambda _started, _duration: False
+sys.argv = [sys.argv[1], "--clock-helper", sys.argv[2], "worker"]
+result = main()
+print(f"{result}:{child.timed_calls}")
+PY
+)"
+equal "the tick controller spends one independently bounded child wait" \
+  "124:1" "$tick_deadline_bound_probe"
+
 tick_deadline_reaped_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" <<'PY'
 import runpy
 import sys

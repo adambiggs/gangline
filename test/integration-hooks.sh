@@ -866,6 +866,47 @@ fi
 excludes "a bounded refusal removes its temporary native hook" \
   "$(tmux show-hooks -g pane-exited)" "$wait_deadline_channel"
 
+# AN EARLY ALARM RECHECKS OUTSIDE THE SIGNAL HANDLER. The unchanged clock
+# keeps the original native waiter armed, and the following Stop remains the
+# boundary that settles the command.
+wait_early_clock="$RUN_ROOT/wait-early-clock"
+cat > "$wait_early_clock" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  now) printf '%s\n' 1000000000 ;;
+  elapsed)
+    [ "${3:-}" != 9000000000 ] \
+      || printf x >> "${GANG_TEST_WAIT_CLOCK_WITNESS:?}"
+    exit 1
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$wait_early_clock"
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_early_arm="gang-test-wait-arm-$$-early"
+wait_early_pids="$RUN_ROOT/wait-early-pids"
+BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_early_arm" \
+  GANG_TEST_WAIT_PIDS="$wait_early_pids" GANG_TEST_WAIT_TRACE="$wait_trace" \
+  GANG_TEST_REFUSE_REWAIT=1 GANG_TEST_CLOCK="$wait_early_clock" \
+  GANG_TEST_WAIT_CLOCK_WITNESS="$RUN_ROOT/wait-early-clock-witness" \
+  "$GANG" wait waitable --until "done" --timeout 9 \
+  > "$RUN_ROOT/wait-early.out" 2> "$RUN_ROOT/wait-early.err" &
+wait_early_pid=$!
+tmux wait-for "$wait_early_arm"
+read -r wait_early_supervisor _ _ < "$wait_early_pids"
+kill -ALRM "$wait_early_supervisor"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
+if wait "$wait_early_pid"; then
+  pass "an early alarm leaves the native boundary authoritative"
+else
+  fail "an early alarm leaves the native boundary authoritative" \
+    "$(<"$RUN_ROOT/wait-early.err")"
+fi
+equal "an early alarm consults the shared elapsed predicate" x \
+  "$(<"$RUN_ROOT/wait-early-clock-witness")"
+
 # FOREGROUND CANCELLATION TAKES THE SAME OWNED PROCESS TREE. Inject TERM into
 # the wait-specific supervisor only; it must kill and reap the blocking group,
 # preserve the child's signal status for gang's loud generic failure, and let
@@ -1540,6 +1581,22 @@ equal "a heavyweight native reader is throttled between nearby hooks" "1" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @test_usage_calls)"
 contains "the provider-reader throttle uses the shared monotonic clock" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_checked)" "v2:"
+usage_clock_unknown="$RUN_ROOT/usage-clock-unknown"
+cat > "$usage_clock_unknown" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  now) printf '%s\n' 1000000000 ;;
+  elapsed) exit 2 ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$usage_clock_unknown"
+tmux set-option -w -t "$usage_lit_id" @gl_usage_checked "v2:1"
+usage_unknown="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  GANG_TEST_CLOCK="$usage_clock_unknown" TMUX_PANE="$usage_lit_pane" "$GANG" hook)"
+equal "an unknown throttle clock emits no provider result" "" "$usage_unknown"
+equal "an unknown throttle clock does not sample the provider" "1" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @test_usage_calls)"
 printf '%s\n' \
   "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
   "Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now" \
