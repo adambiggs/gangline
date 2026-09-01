@@ -955,6 +955,8 @@ import signal
 
 PIPE = -1
 DEVNULL = -2
+rearm_started = False
+term_sent = False
 
 
 class Result:
@@ -964,11 +966,16 @@ class Result:
 
 
 def run(argv, **options):
+    global term_sent
     if options.get("time" + "out") != 1.0:
         raise RuntimeError("clock process has no execution bound")
     if argv[1:] == ["now"]:
         return Result(0, "1\n")
     if len(argv) == 4 and argv[1] == "elapsed":
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
+            term_sent = True
+            os.kill(os.getpid(), signal.SIGTERM)
+            return Result(1)
         return Result(0)
     raise RuntimeError("unexpected clock command")
 
@@ -984,6 +991,14 @@ class Popen:
         self.returncode = None
 
     def wait(self):
+        global rearm_started
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
+            if term_sent:
+                self.returncode = -signal.SIGKILL
+                return self.returncode
+            if not rearm_started:
+                rearm_started = True
+                os.kill(os.getpid(), signal.SIGALRM)
         if os.environ.get("GANG_TEST_WAIT_REAPED_ALARM") == "1":
             self.reaped_alarm = True
             os.kill(os.getpid(), signal.SIGALRM)
@@ -993,6 +1008,8 @@ class Popen:
         return self.returncode
 
     def poll(self):
+        if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1":
+            return self.returncode
         if self.reaped_alarm:
             self.returncode = 0
             return self.returncode
@@ -1034,6 +1051,22 @@ else
     "$(<"$RUN_ROOT/wait-reaped-alarm.err")" \
     "no native boundary from 'waitable' within 5 seconds"
 fi
+
+# A FOREGROUND SIGNAL MAY ARRIVE WHILE AN EARLY ALARM IS BEING RECHECKED. The
+# double makes that ordering immediate and reports the owned child as killed;
+# retaining TERM is what makes the supervisor preserve 143 instead of 137.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_rearm_term_rc=0
+PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_TERM_DURING_REARM=1 \
+  GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  > "$RUN_ROOT/wait-rearm-term.out" 2> "$RUN_ROOT/wait-rearm-term.err" \
+  || wait_rearm_term_rc=$?
+equal "a cancellation during alarm rearm preserves its signal status" \
+  1 "$wait_rearm_term_rc"
+contains "alarm rearm reports the foreground signal rather than child cleanup" \
+  "$(<"$RUN_ROOT/wait-rearm-term.err")" \
+  "before its boundary fired (status 143)"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
 refuses "unknown state is refused before a barrier can hang" \
