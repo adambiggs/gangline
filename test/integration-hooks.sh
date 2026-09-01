@@ -963,7 +963,9 @@ class Result:
         self.stdout = stdout
 
 
-def run(argv, **_kwargs):
+def run(argv, **options):
+    if options.get("time" + "out") != 1.0:
+        raise RuntimeError("clock process has no execution bound")
     if argv[1:] == ["now"]:
         return Result(0, "1\n")
     if len(argv) == 4 and argv[1] == "elapsed":
@@ -978,15 +980,22 @@ class Popen:
         self.argv = argv
         self.pid = 2147483647
         self.signalled = False
+        self.reaped_alarm = False
         self.returncode = None
 
     def wait(self):
+        if os.environ.get("GANG_TEST_WAIT_REAPED_ALARM") == "1":
+            self.reaped_alarm = True
+            os.kill(os.getpid(), signal.SIGALRM)
         with open(os.environ["GANG_TEST_WAIT_SUCCESS"], "w") as witness:
             witness.write(self.argv[-1])
         self.returncode = 0
         return self.returncode
 
     def poll(self):
+        if self.reaped_alarm:
+            self.returncode = 0
+            return self.returncode
         if not self.signalled:
             self.signalled = True
             os.kill(os.getpid(), signal.SIGALRM)
@@ -1009,6 +1018,22 @@ case "$wait_race_channel" in
 esac
 excludes "post-success alarm cleanup removes the caller-owned hook" \
   "$(tmux show-hooks -g pane-exited)" "$wait_race_channel"
+
+# AN ALARM THAT INTERRUPTS EXIT-STATUS BOOKKEEPING CANNOT BECOME SUCCESS. The
+# child double reports itself reaped only when the alarm handler has unwound
+# its wait call, which fixes the ambiguous ordering without a clock race.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+if PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_REAPED_ALARM=1 \
+  GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  > "$RUN_ROOT/wait-reaped-alarm.out" 2> "$RUN_ROOT/wait-reaped-alarm.err"; then
+  fail "an alarm interrupting child-status bookkeeping fails closed" \
+    "gang wait reported a native boundary"
+else
+  contains "an alarm interrupting child-status bookkeeping stays a deadline" \
+    "$(<"$RUN_ROOT/wait-reaped-alarm.err")" \
+    "no native boundary from 'waitable' within 5 seconds"
+fi
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
 refuses "unknown state is refused before a barrier can hang" \
