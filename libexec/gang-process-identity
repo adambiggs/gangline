@@ -30,11 +30,11 @@ class UnknownProcess(Exception):
     pass
 
 
-def clock_helper(*arguments: str) -> subprocess.CompletedProcess:
-    path = os.environ.get(
-        "GANGLINE_CLOCK_HELPER",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock"),
-    )
+class ClockError(Exception):
+    pass
+
+
+def clock_helper(path: str, *arguments: str) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(
             [path, *arguments],
@@ -42,26 +42,27 @@ def clock_helper(*arguments: str) -> subprocess.CompletedProcess:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            timeout=DEATH_CONFIRM_SECONDS,
         )
-    except OSError as exc:
-        raise UnknownProcess from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ClockError from exc
 
 
-def clock_now_ns() -> int:
-    result = clock_helper("now")
+def clock_now_ns(path: str) -> int:
+    result = clock_helper(path, "now")
     value = result.stdout.strip()
     if result.returncode != 0 or not value.isascii() or not value.isdigit():
-        raise UnknownProcess
+        raise ClockError
     return int(value, 10)
 
 
-def clock_elapsed(started_ns: int, duration_ns: int) -> bool:
-    result = clock_helper("elapsed", str(started_ns), str(duration_ns))
+def clock_elapsed(path: str, started_ns: int, duration_ns: int) -> bool:
+    result = clock_helper(path, "elapsed", str(started_ns), str(duration_ns))
     if result.returncode == 0:
         return True
     if result.returncode == 1:
         return False
-    raise UnknownProcess
+    raise ClockError
 
 
 def linux_record(pid: int, expected_session=None):
@@ -224,7 +225,9 @@ def print_tick(pid: int, expected_session: str) -> int:
     return 0
 
 
-def kill_generation(pid: int, expected_token: str, expected_session: str) -> int:
+def kill_generation(
+    pid: int, expected_token: str, expected_session: str, clock_path: str
+) -> int:
     if sys.platform != "linux" or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         return 2
     try:
@@ -246,6 +249,10 @@ def kill_generation(pid: int, expected_token: str, expected_session: str) -> int
         if pgrp != pid or session != pid or role != 1 or safe != 1:
             return 2
         try:
+            started_ns = clock_now_ns(clock_path)
+        except ClockError:
+            return 2
+        try:
             signal.pidfd_send_signal(pidfd, RECLAIM_SIGNAL)
         except ProcessLookupError:
             return 1
@@ -254,20 +261,13 @@ def kill_generation(pid: int, expected_token: str, expected_session: str) -> int
         poller = select.poll()
         poller.register(pidfd, select.POLLIN)
         try:
-            started_ns = clock_now_ns()
             duration_ns = round(DEATH_CONFIRM_SECONDS * NANOSECONDS_PER_SECOND)
-            while True:
-                if clock_elapsed(started_ns, duration_ns):
-                    return 3
-                current_ns = clock_now_ns()
-                if current_ns < started_ns:
-                    raise UnknownProcess
-                remaining_ns = duration_ns - (current_ns - started_ns)
-                timeout_ms = max(1, (remaining_ns + 999_999) // 1_000_000)
-                if poller.poll(timeout_ms):
-                    break
-        except UnknownProcess:
-            return 2
+            if clock_elapsed(clock_path, started_ns, duration_ns):
+                return 3
+        except ClockError:
+            return 4
+        if not poller.poll(round(DEATH_CONFIRM_SECONDS * 1000)):
+            return 3
         # Readability is the kernel's death notification for this open pidfd.
         # It confirms exit of the bound generation without reopening /proc,
         # whose files can disappear piecemeal while the parent reaps it.
@@ -297,8 +297,11 @@ def main() -> int:
         return print_tick(int(sys.argv[2]), sys.argv[3])
     if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():
         return print_codex(int(sys.argv[2]))
-    if len(sys.argv) == 5 and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
-        return kill_generation(int(sys.argv[2]), sys.argv[3], sys.argv[4])
+    if len(sys.argv) == 6 and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
+        clock_path = sys.argv[5]
+        if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
+            return 2
+        return kill_generation(int(sys.argv[2]), sys.argv[3], sys.argv[4], clock_path)
     return 2
 
 

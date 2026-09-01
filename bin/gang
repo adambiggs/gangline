@@ -2190,7 +2190,7 @@ activity_stamp() { # $1 = window id; tmux's own clock of the last write to that 
 # positive evidence a decay requires.
 ACTIVITY_AT=""
 
-recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
+recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired, 3 = clock unknown
   ACTIVITY_AT=""
   if [ "${GANG_QUIET_AT_REST:-}" != 1 ]; then
     activity_hold_clear "$1"
@@ -2219,7 +2219,7 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
         clock_elapsed "$since_ns" $(( GANG_ACTIVITY_LIMIT * 1000000000 )) \
           || elapsed_rc=$?
         case "$elapsed_rc" in 0) return 2 ;; 1) return 0 ;;
-          *) die "cannot compare the activity-only bound for pane $1 — refusing an unbounded busy state" ;;
+          *) printf 'cannot compare the activity-only bound for pane %s — its state remains unknown\n' "$1" >&2; return 3 ;;
         esac
       fi
       ;;
@@ -2228,9 +2228,10 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   esac
   if [ -z "$since" ]; then
     now_ns="$(clock_now_ns)" \
-      || die "cannot read the activity-only bound clock for pane $1 — refusing an unbounded busy state"
+      || { printf 'cannot read the activity-only bound clock for pane %s — its state remains unknown\n' "$1" >&2; return 3; }
     case "$now_ns" in ''|*[!0-9]*)
-      die "cannot read the activity-only bound clock for pane $1 — refusing an unbounded busy state" ;;
+      printf 'cannot read the activity-only bound clock for pane %s — its state remains unknown\n' "$1" >&2
+      return 3 ;;
     esac
     tmux set-option -w -t "$1" @gl_activity_only_since "v2:$now_ns" 2>/dev/null \
       || die "cannot record the activity-only bound for pane $1 — refusing an unbounded busy state"
@@ -2238,7 +2239,7 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
     clock_elapsed "$now_ns" $(( GANG_ACTIVITY_LIMIT * 1000000000 )) \
       || elapsed_rc=$?
     case "$elapsed_rc" in 0) return 2 ;; 1) return 0 ;;
-      *) die "cannot compare the activity-only bound for pane $1 — refusing an unbounded busy state" ;;
+      *) printf 'cannot compare the activity-only bound for pane %s — its state remains unknown\n' "$1" >&2; return 3 ;;
     esac
   fi
   [ $(( now - since )) -lt "$GANG_ACTIVITY_LIMIT" ] && return 0
@@ -2562,6 +2563,7 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
     0) return 0 ;;
     1) ;;
     2) undetermined=1 ;;
+    3) undetermined=1 ;;
     *) die "internal: recently_active returned unknown verdict $activity_rc" ;;
   esac
   # Abandoned-turn decay needs every leg: the bracket readable, open, and past
@@ -4204,14 +4206,16 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
 
   # BLAST RADIUS: every ordinary gang command launches this contender and may
   # therefore terminate ONE process. The helper binds SIGKILL to the pidfd for
-  # this exact recorded leader generation and waits at most 1.0s for death. A
-  # PGID is a reusable bare number, so this path must never call killpg.
-  "$ROOT/libexec/gang-process-identity" --kill "$pid" "$token" "$SESSION" >/dev/null 2>&1 \
+  # this exact recorded leader generation; its kernel death wait is capped at
+  # 1.0s. A PGID is a reusable bare number, so this path must never call killpg.
+  "$ROOT/libexec/gang-process-identity" --kill "$pid" "$token" "$SESSION" \
+    "$GANGLINE_CLOCK_HELPER" >/dev/null 2>&1 \
     || kill_rc=$?
   case "$kill_rc" in
     0) ;;
     1) return 1 ;;
     3) printf 'expired tick owner pid %s did not die within the 1.0s confirmation bound; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
+    4) printf 'expired tick owner pid %s was signalled, but its death clock failed; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
     *) printf 'expired tick owner pid %s could not be signalled by exact generation; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
   esac
   kill_rc=0
@@ -4590,6 +4594,7 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
   [ $# -eq 0 ] || die "tick: takes no arguments"
   session_live || return 0
   out="$(GANG_TICK_INTERNAL=1 "$ROOT/libexec/gang-tick-deadline" \
+    --clock-helper "$GANGLINE_CLOCK_HELPER" \
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
   case "$rc" in
     0) tick_health_ok \
@@ -7347,7 +7352,7 @@ usage_light_note() { # $1 collar; sample provider use, then light and arm from i
         if [[ "$checked_ns" =~ ^[0-9]+$ ]]; then
           clock_elapsed "$checked_ns" $(( GANG_USAGE_LIGHT_INTERVAL * 1000000000 )) \
             || elapsed_rc=$?
-          case "$elapsed_rc" in 0) ;; 1) return 0 ;; esac
+          case "$elapsed_rc" in 0) ;; 1) return 0 ;; *) return 0 ;; esac
         fi
         ;;
       ''|*[!0-9]*) ;;
@@ -9918,13 +9923,21 @@ child = None
 received = [None]
 clock_failed = [False]
 nanoseconds_per_second = 1_000_000_000
-clock_path = os.environ["GANGLINE_CLOCK_HELPER"]
+clock_path = os.environ.get("GANGLINE_CLOCK_HELPER", "")
 started_ns = None
 duration_ns = seconds * nanoseconds_per_second
 
 
 class ClockError(Exception):
     pass
+
+
+class AlarmBoundary(Exception):
+    pass
+
+
+if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
+    sys.exit(125)
 
 
 def clock(*arguments):
@@ -9968,21 +9981,11 @@ def kill_child():
 
 def stop(signum, _frame):
     if signum == signal.SIGALRM:
-        try:
-            if started_ns is None:
-                raise ClockError
-            if not clock_elapsed(started_ns, duration_ns):
-                current_ns = clock_now_ns()
-                if current_ns < started_ns:
-                    raise ClockError
-                remaining_ns = duration_ns - (current_ns - started_ns)
-                remaining_s = max(
-                    1, (remaining_ns + nanoseconds_per_second - 1) // nanoseconds_per_second
-                )
-                signal.alarm(remaining_s)
-                return
-        except ClockError:
-            clock_failed[0] = True
+        if child is not None and child.returncode is not None:
+            if received[0] is None:
+                received[0] = signum
+            return
+        raise AlarmBoundary
     if received[0] is None:
         received[0] = signum
     kill_child()
@@ -10006,7 +10009,38 @@ try:
     )
     if received[0] is not None:
         kill_child()
-    status = child.wait()
+    while True:
+        try:
+            status = child.wait()
+            break
+        except AlarmBoundary:
+            if child.poll() is not None:
+                status = child.returncode
+                break
+            try:
+                if started_ns is None:
+                    raise ClockError
+                if clock_elapsed(started_ns, duration_ns):
+                    received[0] = signal.SIGALRM
+                    kill_child()
+                    status = child.wait()
+                    break
+                current_ns = clock_now_ns()
+                if current_ns < started_ns:
+                    raise ClockError
+                remaining_ns = duration_ns - (current_ns - started_ns)
+                remaining_s = max(
+                    1,
+                    (remaining_ns + nanoseconds_per_second - 1)
+                    // nanoseconds_per_second,
+                )
+                signal.alarm(remaining_s)
+            except ClockError:
+                clock_failed[0] = True
+                received[0] = signal.SIGALRM
+                kill_child()
+                status = child.wait()
+                break
 finally:
     signal.alarm(0)
     if child is not None and child.poll() is None:

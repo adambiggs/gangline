@@ -10,8 +10,10 @@ import sys
 
 DEADLINE_SECONDS = 60
 NANOSECONDS_PER_SECOND = 1_000_000_000
+CLOCK_HELPER_SECONDS = 1.0
 worker = None
 received_signal = None
+clock_path = None
 
 
 class ClockError(Exception):
@@ -19,19 +21,16 @@ class ClockError(Exception):
 
 
 def clock_helper(*arguments: str) -> subprocess.CompletedProcess:
-    path = os.environ.get(
-        "GANGLINE_CLOCK_HELPER",
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock"),
-    )
     try:
         return subprocess.run(
-            [path, *arguments],
+            [clock_path, *arguments],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            timeout=CLOCK_HELPER_SECONDS,
         )
-    except OSError as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
         raise ClockError from exc
 
 
@@ -86,10 +85,14 @@ def reraise(signum: int) -> int:
 
 
 def main() -> int:
-    global worker
+    global clock_path, worker
 
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 4 or sys.argv[1] != "--clock-helper":
         print("gang tick deadline: no worker command", file=sys.stderr)
+        return 2
+    clock_path = sys.argv[2]
+    if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
+        print("gang tick deadline: clock helper is not an executable absolute path", file=sys.stderr)
         return 2
 
     for caught in (signal.SIGHUP, signal.SIGINT, signal.SIGTERM, signal.SIGALRM):
@@ -104,7 +107,7 @@ def main() -> int:
         return 2
 
     worker = subprocess.Popen(
-        sys.argv[1:],
+        sys.argv[3:],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -117,19 +120,17 @@ def main() -> int:
     deadline_ns = DEADLINE_SECONDS * NANOSECONDS_PER_SECOND
     expired = False
     try:
-        while True:
-            if clock_elapsed(started_ns, deadline_ns):
-                expired = True
-                break
+        if clock_elapsed(started_ns, deadline_ns):
+            expired = True
+        else:
             current_ns = clock_now_ns()
             if current_ns < started_ns:
                 raise ClockError
             remaining = (deadline_ns - (current_ns - started_ns)) / NANOSECONDS_PER_SECOND
             try:
                 stdout, stderr = child.communicate(timeout=max(remaining, 0.001))
-                break
             except subprocess.TimeoutExpired:
-                continue
+                expired = True
     except ClockError:
         kill_worker_group()
         stdout, stderr = child.communicate()
