@@ -10032,7 +10032,6 @@ try:
                 if started_ns is None:
                     raise ClockError
                 if clock_elapsed(started_ns, duration_ns):
-                    received[0] = signal.SIGALRM
                     kill_child()
                     status = child.wait()
                     break
@@ -10050,7 +10049,6 @@ try:
                 signal.alarm(remaining_s)
             except ClockError:
                 clock_failed[0] = True
-                received[0] = signal.SIGALRM
                 kill_child()
                 status = child.wait()
                 break
