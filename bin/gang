@@ -9921,6 +9921,7 @@ seconds = int(sys.argv[1], 10)
 channel = sys.argv[2]
 child = None
 received = [None]
+alarm_fired = [False]
 clock_failed = [False]
 completed_before_alarm = [False]
 nanoseconds_per_second = 1_000_000_000
@@ -9984,6 +9985,7 @@ def kill_child():
 
 def stop(signum, _frame):
     if signum == signal.SIGALRM:
+        alarm_fired[0] = True
         if child is None:
             if received[0] is None:
                 received[0] = signum
@@ -10060,9 +10062,7 @@ finally:
 
 # Once wait() has captured a successful native release, a signal handled just
 # after that release cannot truthfully turn it into a missing boundary.
-if status == 0 and (
-    received[0] != signal.SIGALRM or completed_before_alarm[0]
-):
+if status == 0 and (not alarm_fired[0] or completed_before_alarm[0]):
     sys.exit(0)
 if clock_failed[0]:
     sys.exit(125)
