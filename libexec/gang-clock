@@ -1,0 +1,37 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Read Gangline's monotonic clock and decide elapsed duration edges."""
+
+import sys
+import time
+
+
+def now_ns() -> int:
+    return time.monotonic_ns()
+
+
+def whole_ns(value: str) -> int:
+    if not value.isascii() or not value.isdigit():
+        raise ValueError
+    return int(value, 10)
+
+
+def main() -> int:
+    if sys.argv[1:] == ["now"]:
+        print(now_ns())
+        return 0
+    if len(sys.argv) == 4 and sys.argv[1] == "elapsed":
+        try:
+            started = whole_ns(sys.argv[2])
+            duration = whole_ns(sys.argv[3])
+        except ValueError:
+            return 2
+        current = now_ns()
+        if current < started:
+            return 2
+        return 0 if current - started >= duration else 1
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

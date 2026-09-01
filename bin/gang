@@ -273,6 +273,23 @@ ROOT="$(gang_root "${BASH_SOURCE[0]}")"
 [ -d "$ROOT/collars" ] \
   || die "no collars/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
 
+GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
+if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
+  case "$GANG_TEST_CLOCK" in
+    /*) [ -x "$GANG_TEST_CLOCK" ] \
+          || die "GANG_TEST_CLOCK must name an executable absolute path" ;;
+    *) die "GANG_TEST_CLOCK must name an executable absolute path" ;;
+  esac
+  GANGLINE_CLOCK_HELPER="$GANG_TEST_CLOCK"
+fi
+export GANGLINE_CLOCK_HELPER
+
+clock_now_ns() { "$GANGLINE_CLOCK_HELPER" now; }
+
+clock_elapsed() { # $1 monotonic start ns, $2 duration ns
+  "$GANGLINE_CLOCK_HELPER" elapsed "$1" "$2"
+}
+
 binary_id() { # executable content witness, or an explicit unavailable value
   local output checksum size
   output="$(cksum "$ROOT/bin/gang" 2>/dev/null)" \
@@ -1922,15 +1939,31 @@ session_live() { # exit 0 if the team's session is running
   esac
 }
 
-CURFEW_AT=0 CURFEW_DECLARED=0
+CURFEW_AT=0 CURFEW_DECLARED=0 CURFEW_DEADLINE_NS=0 CURFEW_STARTED_NS=0
+CURFEW_FORMAT=""
 curfew_read() { # populate the team declaration; 1 = absent, 2 = unreadable
-  local raw
+  local raw extra
   raw="$(tmux show-options -qv -t "=$SESSION:" @gl_curfew 2>/dev/null)" || raw=""
-  CURFEW_AT=0 CURFEW_DECLARED=0
+  CURFEW_AT=0 CURFEW_DECLARED=0 CURFEW_DEADLINE_NS=0 CURFEW_STARTED_NS=0
+  CURFEW_FORMAT=""
   [ -n "$raw" ] || return 1
-  read -r CURFEW_AT CURFEW_DECLARED _ <<<"$raw"
-  [[ "$CURFEW_AT" =~ ^[0-9]+$ && "$CURFEW_DECLARED" =~ ^[0-9]+$ ]] \
-    && [ "$CURFEW_AT" -gt "$CURFEW_DECLARED" ] || return 2
+  case "$raw" in
+    v2:*)
+      IFS=: read -r CURFEW_FORMAT CURFEW_AT CURFEW_DECLARED \
+        CURFEW_DEADLINE_NS CURFEW_STARTED_NS extra <<<"$raw:__end"
+      [ "$CURFEW_FORMAT" = v2 ] && [ "$extra" = __end ] || return 2
+      [[ "$CURFEW_AT" =~ ^[0-9]+$ && "$CURFEW_DECLARED" =~ ^[0-9]+$ \
+        && "$CURFEW_DEADLINE_NS" =~ ^[0-9]+$ && "$CURFEW_STARTED_NS" =~ ^[0-9]+$ ]] \
+        && [ "$CURFEW_AT" -gt "$CURFEW_DECLARED" ] \
+        && [ "$CURFEW_DEADLINE_NS" -gt "$CURFEW_STARTED_NS" ] || return 2
+      ;;
+    *)
+      read -r CURFEW_AT CURFEW_DECLARED extra <<<"$raw"
+      [[ "$CURFEW_AT" =~ ^[0-9]+$ && "$CURFEW_DECLARED" =~ ^[0-9]+$ ]] \
+        && [ -z "$extra" ] && [ "$CURFEW_AT" -gt "$CURFEW_DECLARED" ] || return 2
+      CURFEW_FORMAT=legacy
+      ;;
+  esac
 }
 
 CURFEW_PARSED=0
@@ -1994,9 +2027,24 @@ human_seconds() { # $1 = non-negative seconds
   printf '%s' "$out"
 }
 
-curfew_summary() { # $1 = now
-  local left=$(( CURFEW_AT - $1 )) when
+curfew_summary() { # optional $1 = wall now for a legacy declaration
+  local now_ns=0 elapsed_rc=0 left=0 when duration_ns
   when="$(curfew_format_epoch "$CURFEW_AT")"
+  if [ "$CURFEW_FORMAT" = v2 ]; then
+    now_ns="$(clock_now_ns)" || return 1
+    case "$now_ns" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$now_ns" -ge "$CURFEW_STARTED_NS" ] || return 1
+    duration_ns=$((CURFEW_DEADLINE_NS - CURFEW_STARTED_NS))
+    clock_elapsed "$CURFEW_STARTED_NS" "$duration_ns" || elapsed_rc=$?
+    case "$elapsed_rc" in
+      0) left=$(( 0 - (now_ns - CURFEW_DEADLINE_NS) / 1000000000 )) ;;
+      1) left=$(( (CURFEW_DEADLINE_NS - now_ns) / 1000000000 )) ;;
+      *) return 1 ;;
+    esac
+  else
+    [ $# -ge 1 ] || return 1
+    left=$(( CURFEW_AT - $1 ))
+  fi
   if [ "$left" -ge 0 ]; then
     printf 'curfew %s — %s remaining' "$when" "$(human_seconds "$left")"
   else
@@ -2150,7 +2198,7 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   fi
   require_whole GANG_ACTIVITY_WINDOW "$GANG_ACTIVITY_WINDOW" seconds
   require_whole GANG_ACTIVITY_LIMIT "$GANG_ACTIVITY_LIMIT" seconds
-  local stamped now since
+  local stamped now since since_ns now_ns elapsed_rc=0
   stamped="$(activity_stamp "$1")"
   now="$(date +%s)"
   [ "$stamped" -le "$now" ] \
@@ -2164,35 +2212,70 @@ recently_active() { # $1 = window id; 0 = active, 1 = inactive, 2 = hold expired
   since="$(tmux show-options -wqv -t "$1" @gl_activity_only_since 2>/dev/null)" \
     || die "cannot read the activity-only bound for pane $1 — refusing to guess"
   case "$since" in
+    v2:*)
+      since_ns="${since#v2:}"
+      case "$since_ns" in ''|*[!0-9]*) since="" ;; esac
+      if [ -n "$since" ]; then
+        clock_elapsed "$since_ns" $(( GANG_ACTIVITY_LIMIT * 1000000000 )) \
+          || elapsed_rc=$?
+        case "$elapsed_rc" in 0) return 2 ;; 1) return 0 ;;
+          *) die "cannot compare the activity-only bound for pane $1 — refusing an unbounded busy state" ;;
+        esac
+      fi
+      ;;
     ''|*[!0-9]*) since="" ;;
     *) [ "$since" -le "$now" ] || since="" ;;
   esac
   if [ -z "$since" ]; then
-    tmux set-option -w -t "$1" @gl_activity_only_since "$now" 2>/dev/null \
+    now_ns="$(clock_now_ns)" \
+      || die "cannot read the activity-only bound clock for pane $1 — refusing an unbounded busy state"
+    case "$now_ns" in ''|*[!0-9]*)
+      die "cannot read the activity-only bound clock for pane $1 — refusing an unbounded busy state" ;;
+    esac
+    tmux set-option -w -t "$1" @gl_activity_only_since "v2:$now_ns" 2>/dev/null \
       || die "cannot record the activity-only bound for pane $1 — refusing an unbounded busy state"
-    since="$now"
+    elapsed_rc=0
+    clock_elapsed "$now_ns" $(( GANG_ACTIVITY_LIMIT * 1000000000 )) \
+      || elapsed_rc=$?
+    case "$elapsed_rc" in 0) return 2 ;; 1) return 0 ;;
+      *) die "cannot compare the activity-only bound for pane $1 — refusing an unbounded busy state" ;;
+    esac
   fi
   [ $(( now - since )) -lt "$GANG_ACTIVITY_LIMIT" ] && return 0
   return 2
 }
 
-TURN_STATE=""
+TURN_STATE="" TURN_FORMAT=""
 TURN_AT=0
 turn_state_read() { # $1 = window id; populate TURN_STATE/TURN_AT; 1 = absent, 2 = malformed
   local raw
   raw="$(tmux show-options -wqv -t "$1" @gl_turn 2>/dev/null)" || raw=""
-  TURN_STATE=""; TURN_AT=0
+  TURN_STATE=""; TURN_AT=0; TURN_FORMAT=""
   [ -n "$raw" ] || return 1
   read -r TURN_STATE TURN_AT _ <<<"$raw"
   case "$TURN_STATE" in
     open|closed) ;;
     *) TURN_STATE=""; return 2 ;;
   esac
+  case "$TURN_AT" in
+    v2:[0-9]*) TURN_AT="${TURN_AT#v2:}"; TURN_FORMAT=v2 ;;
+    *[!0-9]*|'') TURN_STATE=""; return 2 ;;
+    *) TURN_FORMAT=legacy ;;
+  esac
   [[ "$TURN_AT" =~ ^[0-9]+$ ]] || { TURN_STATE=""; return 2; }
 }
 
 turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
-  tmux set-option -w -t "$1" @gl_turn "$2 $(date +%s)" 2>/dev/null || true
+  local now_ns
+  now_ns="$(clock_now_ns)" || {
+    printf 'gang: cannot read the shared monotonic turn clock\n' >&2
+    return 1
+  }
+  case "$now_ns" in ''|*[!0-9]*)
+    printf 'gang: the shared monotonic turn clock is unreadable\n' >&2
+    return 1 ;;
+  esac
+  tmux set-option -w -t "$1" @gl_turn "$2 v2:$now_ns" 2>/dev/null || true
 }
 
 # Dropping the fact is a WRITER's edit, and `gang interrupt` is the only caller:
@@ -2211,7 +2294,16 @@ turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
 # drains the spool exactly as Stop does. Collars that wire nothing keep the
 # fallthrough behaviour and lose nothing.
 compaction_state_write() { # $1 = window id, $2 = open|closed
-  tmux set-option -w -t "$1" @gl_compaction "$2 $(date +%s)" 2>/dev/null || true
+  local now_ns
+  now_ns="$(clock_now_ns)" || {
+    printf 'gang: cannot read the shared monotonic compaction clock\n' >&2
+    return 1
+  }
+  case "$now_ns" in ''|*[!0-9]*)
+    printf 'gang: the shared monotonic compaction clock is unreadable\n' >&2
+    return 1 ;;
+  esac
+  tmux set-option -w -t "$1" @gl_compaction "$2 v2:$now_ns" 2>/dev/null || true
 }
 
 # A REFUSED COMPACTION RAISES PreCompact AND NEVER PostCompact, so the opening
@@ -2233,18 +2325,28 @@ compaction_state_settle() { # $1 = window id; a turn event proves nothing is com
 }
 
 compaction_witness() { # $1 = window id; 0 compacting, 1 not, 2 bracket unusable
-  local raw state at now
+  local raw state at now format=legacy elapsed_rc=0
   raw="$(tmux show-options -wqv -t "$1" @gl_compaction 2>/dev/null)" || raw=""
   [ -n "$raw" ] || return 1
   read -r state at _ <<<"$raw"
   [ "$state" = open ] || return 1
+  case "$at" in
+    v2:[0-9]*) at="${at#v2:}"; format=v2 ;;
+    *[!0-9]*|'') return 2 ;;
+  esac
   [[ "$at" =~ ^[0-9]+$ ]] || return 2
-  now="$(date +%s)"
   # An open bracket whose close never arrived must not wedge the agent busy
   # forever, so it ages out on the same bound a turn does and hands the verdict
   # back to the tiers below. Degrading to today's behaviour is the safe
   # direction; staying busy on a stale fact is not.
-  [ $(( now - at )) -lt "$GANG_TURN_LIMIT" ] || return 2
+  if [ "$format" = v2 ]; then
+    clock_elapsed "$at" $(( GANG_TURN_LIMIT * 1000000000 )) || elapsed_rc=$?
+    case "$elapsed_rc" in 0) return 2 ;; 1) ;; *) return 2 ;; esac
+  else
+    now="$(date +%s)"
+    [ "$at" -le "$now" ] || return 2
+    [ $(( now - at )) -lt "$GANG_TURN_LIMIT" ] || return 2
+  fi
   return 0
 }
 
@@ -2289,7 +2391,7 @@ turn_pane_still_writing() { # $1 = window id; 0 = the pty is being written to no
 TURN_ABANDONED=0
 
 turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no event tier
-  local rc=0 now
+  local rc=0 now elapsed_rc=0
   # Set only where a READABLE open bracket reached its bound: the one expiry
   # that says a turn began and its owner never spoke again. An unreadable
   # value, a future stamp, or a closed bracket under a written-to pane are all
@@ -2310,9 +2412,23 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
     *) die "internal: turn_state_read returned unknown verdict $rc" ;;
   esac
   require_whole GANG_TURN_LIMIT "$GANG_TURN_LIMIT" seconds
-  now="$(date +%s)"
+  if [ "$TURN_FORMAT" = v2 ]; then
+    clock_elapsed "$TURN_AT" $(( GANG_TURN_LIMIT * 1000000000 )) || elapsed_rc=$?
+    case "$elapsed_rc" in
+      0) ;;
+      1)
+        [ "$TURN_STATE" = open ] && return 0
+        return 1
+        ;;
+      *) BUSY_EXPIRED_WHAT="turn-bracket monotonic stamp unreadable"; return 2 ;;
+    esac
+  else
+    now="$(date +%s)"
+  fi
   if [ "$TURN_STATE" != open ]; then
-    [ $(( now - TURN_AT )) -ge "$GANG_TURN_LIMIT" ] || return 1
+    if [ "$TURN_FORMAT" = legacy ]; then
+      [ $(( now - TURN_AT )) -ge "$GANG_TURN_LIMIT" ] || return 1
+    fi
     turn_pane_still_writing "$1" || return 1
     # A CLOSED BRACKET SAYS THE TURN ENDED; an empty live composer says where
     # the keyboard is now. Once both agree, subsequent pty writes are ordinary
@@ -2323,11 +2439,12 @@ turn_witness() { # $1 = window id; 0 busy, 1 idle, 2 could-not-determine, 3 no e
     BUSY_EXPIRED_WHAT="turn-bracket closed while the pane kept being written to"
     return 2
   fi
-  [ "$TURN_AT" -le "$now" ] \
-    || { BUSY_EXPIRED_WHAT="turn-bracket stamped in the future"; return 2; }
-  [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] \
-    || { BUSY_EXPIRED_WHAT="turn-bracket bound reached"; TURN_ABANDONED=1; return 2; }
-  return 0
+  if [ "$TURN_FORMAT" = legacy ]; then
+    [ "$TURN_AT" -le "$now" ] \
+      || { BUSY_EXPIRED_WHAT="turn-bracket stamped in the future"; return 2; }
+    [ $(( now - TURN_AT )) -lt "$GANG_TURN_LIMIT" ] && return 0
+  fi
+  BUSY_EXPIRED_WHAT="turn-bracket bound reached"; TURN_ABANDONED=1; return 2
 }
 
 BUSY_EXPIRED_WHAT="pty activity bound reached"
@@ -3999,10 +4116,6 @@ tick_process_read() { # $1 pid; live/dead/unknown in TICK_PROCESS_STATE
   esac
 }
 
-tick_monotonic_ns() {
-  python3 -c 'import time; print(time.monotonic_ns())'
-}
-
 tick_lock_mtime_ns() { # $1 symlink
   python3 - "$1" <<'PY'
 import os
@@ -4021,9 +4134,10 @@ tick_lock_recovered() { # $1 diagnostic; lock already retired, no pass ran
   return 1
 }
 
-tick_lock_expired() { # holder pid token pgrp age_ns format [mtime_ns legacy_age]
-  local holder="$1" pid="$2" token="$3" pgrp="$4" age_ns="$5" format="$6"
-  local mtime_ns="${7:-}" legacy_age="${8:-}" again="" kill_rc=0
+tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns legacy_age]
+  local holder="$1" pid="$2" token="$3" pgrp="$4"
+  local acquired="$5" age_ns="$6" format="$7"
+  local mtime_ns="${8:-}" legacy_age="${9:-}" again="" kill_rc=0 elapsed_rc=0
   local budget_ns=$((GANG_TICK_DEADLINE_SECONDS * 1000000000))
   local reclaim=$((GANG_TICK_DEADLINE_SECONDS * 2)) reclaim_ns=$((budget_ns * 2)) age_s=0
 
@@ -4035,15 +4149,24 @@ tick_lock_expired() { # holder pid token pgrp age_ns format [mtime_ns legacy_age
       return 0
     fi
   else
-    [ "$age_ns" -ge 0 ] \
-      || { printf 'tick lock %s has a future monotonic acquisition time\n' "$TICK_LOCK_PATH" >&2; return 0; }
-    if [ "$age_ns" -lt "$budget_ns" ]; then return 1; fi
+    clock_elapsed "$acquired" 0 || elapsed_rc=$?
+    case "$elapsed_rc" in
+      0) ;;
+      2) printf 'tick lock %s has a future monotonic acquisition time\n' "$TICK_LOCK_PATH" >&2; return 0 ;;
+      *) printf 'tick lock %s cannot compare its monotonic acquisition time\n' "$TICK_LOCK_PATH" >&2; return 0 ;;
+    esac
+    elapsed_rc=0
+    clock_elapsed "$acquired" "$budget_ns" || elapsed_rc=$?
+    case "$elapsed_rc" in 0) ;; 1) return 1 ;; *) return 0 ;; esac
     age_s=$((age_ns / 1000000000))
-    if [ "$age_ns" -lt "$reclaim_ns" ]; then
+    elapsed_rc=0
+    clock_elapsed "$acquired" "$reclaim_ns" || elapsed_rc=$?
+    if [ "$elapsed_rc" -eq 1 ]; then
       printf 'tick lock %s is over its %ss worker budget: %s owner pid %s has held it for at least %ss; generation-verified reclaim starts at %ss\n' \
         "$TICK_LOCK_PATH" "$GANG_TICK_DEADLINE_SECONDS" "$format" "$pid" "$age_s" "$reclaim" >&2
       return 0
     fi
+    [ "$elapsed_rc" -eq 0 ] || return 0
   fi
 
   if [ "$format" = legacy ] && [ "$TICK_PROCESS_ROLE" != 1 ]; then
@@ -4120,7 +4243,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
   tick_process_read "$LOCK_SELF_PID"
   [ "$TICK_PROCESS_STATE" = live ] \
     || { printf 'tick worker process identity is %s before lock acquisition\n' "$TICK_PROCESS_STATE" >&2; return 1; }
-  now_ns="$(tick_monotonic_ns)" \
+  now_ns="$(clock_now_ns)" \
     || { printf 'tick worker cannot read the monotonic acquisition clock\n' >&2; return 1; }
   case "$now_ns" in ''|*[!0-9]*) printf 'tick worker has an unreadable monotonic acquisition clock\n' >&2; return 1 ;; esac
   TICK_LOCK_RECORD="v2:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now_ns"
@@ -4228,7 +4351,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
           || { printf 'cannot clear stale tick lock %s held by replaced pid %s\n' "$TICK_LOCK_PATH" "$pid" >&2; return 1; }
         continue
       fi
-      now_ns="$(tick_monotonic_ns)" \
+      now_ns="$(clock_now_ns)" \
         || { printf 'tick lock %s cannot read the monotonic contention clock\n' "$TICK_LOCK_PATH" >&2; return 1; }
       case "$now_ns" in ''|*[!0-9]*) printf 'tick lock %s has an unreadable monotonic contention clock\n' "$TICK_LOCK_PATH" >&2; return 1 ;; esac
       [ "$now_ns" -ge "$acquired" ] \
@@ -4245,7 +4368,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
     fi
     touch -- "$TICK_DIRTY_PATH" || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
     expired_rc=0
-    tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$age_ns" "$format" "$mtime_ns" "$legacy_age" \
+    tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$acquired" "$age_ns" "$format" "$mtime_ns" "$legacy_age" \
       || expired_rc=$?
     [ "$expired_rc" -eq 1 ] || return 1
     if [ "$TICK_PROCESS_STATE" = live ]; then
@@ -5993,24 +6116,46 @@ stall_note() { # $1 = raising pane/window target, $2 = kind; never fatal
 
 stall_note_claimed() { # the debounce decision and its delivery, under the claim
   local raising="$1" raising_win="$2" kind="$3" notify="$4" target="$5"
-  local recorded_kind="" recorded_epoch="" extra="" now rc=0 err="" raw=""
+  local recorded_kind="" recorded_at="" extra="" now now_ns elapsed_rc=0 rc=0 err="" raw=""
   local raising_name body
 
   raw="$(tmux show-options -wqv -t "$raising_win" @gl_stall 2>/dev/null)" || raw=""
-  read -r recorded_kind recorded_epoch extra <<<"$raw"
-  now="$(date +%s)"
-  if [ "$recorded_kind" = "$kind" ] && [ -z "$extra" ] \
-     && [[ "$recorded_epoch" =~ ^[0-9]+$ ]] \
-     && [ "$recorded_epoch" -le "$now" ] \
-     && [ $(( now - recorded_epoch )) -lt "$GANG_STALL_REPEAT" ]; then
+  read -r recorded_kind recorded_at extra <<<"$raw"
+  now_ns="$(clock_now_ns)" || {
+    stall_failed_write "$raising_win" "could not read the shared monotonic clock for the stall-note debounce"
     return 0
+  }
+  case "$now_ns" in ''|*[!0-9]*)
+    stall_failed_write "$raising_win" "could not read the shared monotonic clock for the stall-note debounce"
+    return 0 ;;
+  esac
+  if [ "$recorded_kind" = "$kind" ] && [ -z "$extra" ]; then
+    case "$recorded_at" in
+      v2:*)
+        recorded_at="${recorded_at#v2:}"
+        if [[ "$recorded_at" =~ ^[0-9]+$ ]]; then
+          clock_elapsed "$recorded_at" $(( GANG_STALL_REPEAT * 1000000000 )) \
+            || elapsed_rc=$?
+          case "$elapsed_rc" in 0) ;; 1) return 0 ;;
+            *) stall_failed_write "$raising_win" "could not compare the shared monotonic stall-note debounce"; return 0 ;;
+          esac
+        fi
+        ;;
+      *[!0-9]*|'') ;;
+      *)
+        now="$(date +%s)"
+        [ "$recorded_at" -le "$now" ] \
+          && [ $(( now - recorded_at )) -lt "$GANG_STALL_REPEAT" ] \
+          && return 0
+        ;;
+    esac
   fi
 
   raising_name="$(agent_name_of "$raising")"
   body="stall: $raising_name is awaiting input ($kind) — inspect with gang capture $raising_name"
   err="$(stall_deliver "$target" "$notify" "$raising_name" "$body" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then
-    tmux set-option -w -t "$raising_win" @gl_stall "$kind $now" 2>/dev/null || true
+    tmux set-option -w -t "$raising_win" @gl_stall "$kind v2:$now_ns" 2>/dev/null || true
     tmux set-option -uw -t "$raising_win" @gl_stall_failed 2>/dev/null || true
     return 0
   fi
@@ -7182,7 +7327,8 @@ auto_resume_arm() { # $1 window, $2 the sampled reset -> the turn's note
 }
 
 usage_light_note() { # $1 collar; sample provider use, then light and arm from it
-  local rc=0 state previous note cause agent now checked lights=0 arm=0 subject arm_note arm_rc=0
+  local rc=0 state previous note cause agent now now_ns checked checked_ns elapsed_rc=0
+  local lights=0 arm=0 subject arm_note arm_rc=0
   if usage_lights_for "$TMUX_PANE"; then lights=1; fi
   if auto_resume_for "$TMUX_PANE"; then arm=1; fi
   [ "$lights" -eq 1 ] || [ "$arm" -eq 1 ] || return 0
@@ -7191,16 +7337,28 @@ usage_light_note() { # $1 collar; sample provider use, then light and arm from i
   if [ "$lights" -eq 1 ]; then subject="Usage lights"; else subject="Auto-resume"; fi
   load_collar "$1"
   if [ "$GANG_USAGE_LIGHT_INTERVAL" -gt 0 ]; then
-    now="$(date +%s)"
+    now_ns="$(clock_now_ns)" || return 0
+    case "$now_ns" in ''|*[!0-9]*) return 0 ;; esac
     checked="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_usage_checked 2>/dev/null)" \
       || checked=""
     case "$checked" in
+      v2:*)
+        checked_ns="${checked#v2:}"
+        if [[ "$checked_ns" =~ ^[0-9]+$ ]]; then
+          clock_elapsed "$checked_ns" $(( GANG_USAGE_LIGHT_INTERVAL * 1000000000 )) \
+            || elapsed_rc=$?
+          case "$elapsed_rc" in 0) ;; 1) return 0 ;; esac
+        fi
+        ;;
       ''|*[!0-9]*) ;;
-      *) [ "$checked" -gt "$now" ] \
-           || [ $(( now - checked )) -ge "$GANG_USAGE_LIGHT_INTERVAL" ] \
-           || return 0 ;;
+      *)
+        now="$(date +%s)"
+        [ "$checked" -gt "$now" ] \
+          || [ $(( now - checked )) -ge "$GANG_USAGE_LIGHT_INTERVAL" ] \
+          || return 0
+        ;;
     esac
-    tmux set-option -w -t "$TMUX_PANE" @gl_usage_checked "$now" 2>/dev/null \
+    tmux set-option -w -t "$TMUX_PANE" @gl_usage_checked "v2:$now_ns" 2>/dev/null \
       || return 0
   fi
   usage_limits_read "$TMUX_PANE" || rc=$?
@@ -7264,7 +7422,7 @@ usage_light_note() { # $1 collar; sample provider use, then light and arm from i
 }
 
 time_light_note() { # append the team curfew edge, if any, to ADVISORY_NOTE
-  local rc=0 now span spent light previous key left note
+  local rc=0 now now_ns span span_ns spent light previous key left note elapsed_rc=0
   curfew_read || rc=$?
   [ "$rc" -ne 1 ] || return 0
   previous="$(tmux show-options -wqv -t "$TMUX_PANE" @gl_time_light 2>/dev/null)" \
@@ -7274,31 +7432,69 @@ time_light_note() { # append the team curfew edge, if any, to ADVISORY_NOTE
     [ "$previous" = "$key" ] && return 0
     note="Time lights unavailable: Gangline cannot read the team's curfew declaration. Run gang curfew clear and declare it again."
   else
-    now="$(date +%s)"
-    if [ "$now" -lt "$CURFEW_DECLARED" ]; then
-      key=unavailable
-      [ "$previous" = "$key" ] && return 0
-      note="Time lights unavailable: the team's curfew declaration is stamped in the future. Run gang curfew clear and declare it again."
-    else
-      span=$(( CURFEW_AT - CURFEW_DECLARED ))
-      spent=$(( now - CURFEW_DECLARED ))
-      if [ $(( spent * 5 )) -ge $(( span * 4 )) ]; then
-        light=red
-      elif [ $(( spent * 2 )) -ge "$span" ]; then
-        light=yellow
-      else
-        return 0
-      fi
-      key="$CURFEW_DECLARED:$CURFEW_AT:$light"
-      [ "$previous" = "$key" ] && return 0
-      left=$(( CURFEW_AT - now ))
-      if [ "$left" -ge 0 ]; then
-        case "$light" in
-          yellow) note="Yellow time light: half the team budget is spent; $(human_seconds "$left") remain." ;;
-          red) note="Red time light: four-fifths of the team budget is spent; $(human_seconds "$left") remain." ;;
+    if [ "$CURFEW_FORMAT" = v2 ]; then
+      now_ns="$(clock_now_ns)" || now_ns=""
+      case "$now_ns" in ''|*[!0-9]*) rc=2 ;; esac
+      [ "$rc" -eq 2 ] || [ "$now_ns" -ge "$CURFEW_STARTED_NS" ] || rc=2
+      if [ "$rc" -ne 2 ]; then
+        span_ns=$(( CURFEW_DEADLINE_NS - CURFEW_STARTED_NS ))
+        clock_elapsed "$CURFEW_STARTED_NS" $(( span_ns * 4 / 5 )) \
+          || elapsed_rc=$?
+        case "$elapsed_rc" in
+          0) light=red ;;
+          1)
+            elapsed_rc=0
+            clock_elapsed "$CURFEW_STARTED_NS" $(( span_ns / 2 )) \
+              || elapsed_rc=$?
+            case "$elapsed_rc" in 0) light=yellow ;; 1) return 0 ;; *) rc=2 ;; esac
+            ;;
+          *) rc=2 ;;
         esac
+      fi
+      if [ "$rc" -eq 2 ]; then
+        key=unavailable
+        [ "$previous" = "$key" ] && return 0
+        note="Time lights unavailable: Gangline cannot compare the team's monotonic curfew deadline. Run gang curfew clear and declare it again."
       else
-        note="Red time light: the team curfew passed $(human_seconds $(( 0 - left ))) ago."
+        key="$CURFEW_STARTED_NS:$CURFEW_DEADLINE_NS:$light"
+        [ "$previous" = "$key" ] && return 0
+        left=$(( (CURFEW_DEADLINE_NS - now_ns) / 1000000000 ))
+        if [ "$left" -ge 0 ]; then
+          case "$light" in
+            yellow) note="Yellow time light: half the team budget is spent; $(human_seconds "$left") remain." ;;
+            red) note="Red time light: four-fifths of the team budget is spent; $(human_seconds "$left") remain." ;;
+          esac
+        else
+          note="Red time light: the team curfew passed $(human_seconds $(( 0 - left ))) ago."
+        fi
+      fi
+    else
+      now="$(date +%s)"
+      if [ "$now" -lt "$CURFEW_DECLARED" ]; then
+        key=unavailable
+        [ "$previous" = "$key" ] && return 0
+        note="Time lights unavailable: the team's curfew declaration is stamped in the future. Run gang curfew clear and declare it again."
+      else
+        span=$(( CURFEW_AT - CURFEW_DECLARED ))
+        spent=$(( now - CURFEW_DECLARED ))
+        if [ $(( spent * 5 )) -ge $(( span * 4 )) ]; then
+          light=red
+        elif [ $(( spent * 2 )) -ge "$span" ]; then
+          light=yellow
+        else
+          return 0
+        fi
+        key="$CURFEW_DECLARED:$CURFEW_AT:$light"
+        [ "$previous" = "$key" ] && return 0
+        left=$(( CURFEW_AT - now ))
+        if [ "$left" -ge 0 ]; then
+          case "$light" in
+            yellow) note="Yellow time light: half the team budget is spent; $(human_seconds "$left") remain." ;;
+            red) note="Red time light: four-fifths of the team budget is spent; $(human_seconds "$left") remain." ;;
+          esac
+        else
+          note="Red time light: the team curfew passed $(human_seconds $(( 0 - left ))) ago."
+        fi
       fi
     fi
   fi
@@ -8928,13 +9124,19 @@ cmd_compact() {
 }
 
 cmd_curfew() { # declare, show, or clear one optional team curfew
-  local spec="${1:-}" now rc=0
+  local spec="${1:-}" now now_ns duration_ns deadline_ns rc=0
   [ $# -le 1 ] || die "curfew: unexpected argument '$2'; gang curfew takes one duration, HH:MM clock time, or clear"
   session_live || die "no team (session '$SESSION' not running)"
   if [ -z "$spec" ]; then
     curfew_read || rc=$?
     case "$rc" in
-      0) require_python3; curfew_summary "$(date +%s)"; printf '\n' ;;
+      0) require_python3
+         if [ "$CURFEW_FORMAT" = legacy ]; then
+           curfew_summary "$(date +%s)" || die "the stored curfew clock cannot be read"
+         else
+           curfew_summary || die "the stored curfew clock cannot be read"
+         fi
+         printf '\n' ;;
       1) printf 'no curfew declared\n' ;;
       2) die "the stored curfew is unreadable — gang curfew clear removes it" ;;
     esac
@@ -8947,13 +9149,20 @@ cmd_curfew() { # declare, show, or clear one optional team curfew
   fi
   require_python3
   now="$(date +%s)"
+  now_ns="$(clock_now_ns)" || die "curfew: cannot read the shared monotonic clock"
+  case "$now_ns" in ''|*[!0-9]*) die "curfew: the shared monotonic clock is unreadable" ;; esac
   curfew_parse "$spec" "$now" \
     || die "curfew: '$spec' is not a positive duration (90m, 2h, 1h30m) or 24-hour HH:MM clock time"
-  if ! tmux set-option -t "=$SESSION:" @gl_curfew "$CURFEW_PARSED $now"; then
+  duration_ns=$(( (CURFEW_PARSED - now) * 1000000000 ))
+  deadline_ns=$(( now_ns + duration_ns ))
+  if ! tmux set-option -t "=$SESSION:" @gl_curfew \
+      "v2:$CURFEW_PARSED:$now:$deadline_ns:$now_ns"; then
     die "curfew: could not store the declaration for session '$SESSION'"
   fi
   CURFEW_AT="$CURFEW_PARSED" CURFEW_DECLARED="$now"
-  curfew_summary "$now"; printf '\n'
+  CURFEW_DEADLINE_NS="$deadline_ns" CURFEW_STARTED_NS="$now_ns" CURFEW_FORMAT=v2
+  curfew_summary || die "curfew: cannot compare the shared monotonic deadline"
+  printf '\n'
 }
 
 cmd_notify() { # declare, show, or clear one optional stall-note target
@@ -9707,6 +9916,45 @@ seconds = int(sys.argv[1], 10)
 channel = sys.argv[2]
 child = None
 received = [None]
+clock_failed = [False]
+nanoseconds_per_second = 1_000_000_000
+clock_path = os.environ["GANGLINE_CLOCK_HELPER"]
+started_ns = None
+duration_ns = seconds * nanoseconds_per_second
+
+
+class ClockError(Exception):
+    pass
+
+
+def clock(*arguments):
+    try:
+        return subprocess.run(
+            [clock_path, *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as exc:
+        raise ClockError from exc
+
+
+def clock_now_ns():
+    result = clock("now")
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value.isascii() or not value.isdigit():
+        raise ClockError
+    return int(value, 10)
+
+
+def clock_elapsed(started_ns, duration_ns):
+    result = clock("elapsed", str(started_ns), str(duration_ns))
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise ClockError
 
 
 def kill_child():
@@ -9719,6 +9967,22 @@ def kill_child():
 
 
 def stop(signum, _frame):
+    if signum == signal.SIGALRM:
+        try:
+            if started_ns is None:
+                raise ClockError
+            if not clock_elapsed(started_ns, duration_ns):
+                current_ns = clock_now_ns()
+                if current_ns < started_ns:
+                    raise ClockError
+                remaining_ns = duration_ns - (current_ns - started_ns)
+                remaining_s = max(
+                    1, (remaining_ns + nanoseconds_per_second - 1) // nanoseconds_per_second
+                )
+                signal.alarm(remaining_s)
+                return
+        except ClockError:
+            clock_failed[0] = True
     if received[0] is None:
         received[0] = signum
     kill_child()
@@ -9729,6 +9993,10 @@ for caught in (signal.SIGALRM, signal.SIGHUP, signal.SIGINT, signal.SIGTERM):
 
 # Start the bound before process creation. If it fires in that small window,
 # stop records it and the post-spawn check kills the new group immediately.
+try:
+    started_ns = clock_now_ns()
+except ClockError:
+    sys.exit(125)
 signal.alarm(seconds)
 status = 1
 try:
@@ -9749,6 +10017,8 @@ finally:
 # after that release cannot truthfully turn it into a missing boundary.
 if status == 0:
     sys.exit(0)
+if clock_failed[0]:
+    sys.exit(125)
 if received[0] == signal.SIGALRM:
     sys.exit(124)
 if received[0] is not None:
@@ -9761,6 +10031,7 @@ PY
   case "$rc" in
     0) return 0 ;;
     124) die "wait: no native boundary from '$3' within $2 seconds — its turn may still be running, the target may have vanished outside gang drop/down, or its Stop hook may not be firing" ;;
+    125) die "wait: the shared monotonic deadline clock could not be read" ;;
     *) die "wait: tmux stopped waiting for '$3' before its boundary fired (status $rc)" ;;
   esac
 }

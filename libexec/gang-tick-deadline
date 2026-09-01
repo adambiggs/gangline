@@ -9,8 +9,47 @@ import sys
 
 
 DEADLINE_SECONDS = 60
+NANOSECONDS_PER_SECOND = 1_000_000_000
 worker = None
 received_signal = None
+
+
+class ClockError(Exception):
+    pass
+
+
+def clock_helper(*arguments: str) -> subprocess.CompletedProcess:
+    path = os.environ.get(
+        "GANGLINE_CLOCK_HELPER",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock"),
+    )
+    try:
+        return subprocess.run(
+            [path, *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as exc:
+        raise ClockError from exc
+
+
+def clock_now_ns() -> int:
+    result = clock_helper("now")
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value.isascii() or not value.isdigit():
+        raise ClockError
+    return int(value, 10)
+
+
+def clock_elapsed(started_ns: int, duration_ns: int) -> bool:
+    result = clock_helper("elapsed", str(started_ns), str(duration_ns))
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise ClockError
 
 
 def kill_worker_group() -> None:
@@ -58,6 +97,12 @@ def main() -> int:
     if received_signal is not None:
         return reraise(received_signal)
 
+    try:
+        started_ns = clock_now_ns()
+    except ClockError:
+        print("gang tick: cannot read the shared monotonic clock", file=sys.stderr)
+        return 2
+
     worker = subprocess.Popen(
         sys.argv[1:],
         stdin=subprocess.DEVNULL,
@@ -69,9 +114,34 @@ def main() -> int:
     child = worker
     if received_signal is not None:
         kill_worker_group()
+    deadline_ns = DEADLINE_SECONDS * NANOSECONDS_PER_SECOND
+    expired = False
     try:
-        stdout, stderr = child.communicate(timeout=DEADLINE_SECONDS)
-    except subprocess.TimeoutExpired:
+        while True:
+            if clock_elapsed(started_ns, deadline_ns):
+                expired = True
+                break
+            current_ns = clock_now_ns()
+            if current_ns < started_ns:
+                raise ClockError
+            remaining = (deadline_ns - (current_ns - started_ns)) / NANOSECONDS_PER_SECOND
+            try:
+                stdout, stderr = child.communicate(timeout=max(remaining, 0.001))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except ClockError:
+        kill_worker_group()
+        stdout, stderr = child.communicate()
+        worker = None
+        sys.stdout.buffer.write(stdout)
+        sys.stderr.buffer.write(stderr)
+        if received_signal is not None:
+            return reraise(received_signal)
+        print("gang tick: cannot compare the shared monotonic deadline", file=sys.stderr)
+        return 2
+
+    if expired:
         kill_worker_group()
         stdout, stderr = child.communicate()
         worker = None

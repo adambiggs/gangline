@@ -6,6 +6,7 @@ import fcntl
 import os
 import select
 import signal
+import subprocess
 import sys
 
 
@@ -15,6 +16,7 @@ import sys
 # a PGID is a bare reusable number and carries no process generation.
 RECLAIM_SIGNAL = signal.SIGKILL
 DEATH_CONFIRM_SECONDS = 1.0
+NANOSECONDS_PER_SECOND = 1_000_000_000
 # Measured 2026-08-31 on Linux 6.8.0: 40 owned paused Python leaders reached
 # dead/zombie 0.052-0.212ms after pidfd SIGKILL (median 0.084ms). This bound is
 # over 4,700x the measured maximum and is the fail-closed production budget.
@@ -26,6 +28,40 @@ class DeadProcess(Exception):
 
 class UnknownProcess(Exception):
     pass
+
+
+def clock_helper(*arguments: str) -> subprocess.CompletedProcess:
+    path = os.environ.get(
+        "GANGLINE_CLOCK_HELPER",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "gang-clock"),
+    )
+    try:
+        return subprocess.run(
+            [path, *arguments],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except OSError as exc:
+        raise UnknownProcess from exc
+
+
+def clock_now_ns() -> int:
+    result = clock_helper("now")
+    value = result.stdout.strip()
+    if result.returncode != 0 or not value.isascii() or not value.isdigit():
+        raise UnknownProcess
+    return int(value, 10)
+
+
+def clock_elapsed(started_ns: int, duration_ns: int) -> bool:
+    result = clock_helper("elapsed", str(started_ns), str(duration_ns))
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise UnknownProcess
 
 
 def linux_record(pid: int, expected_session=None):
@@ -217,8 +253,21 @@ def kill_generation(pid: int, expected_token: str, expected_session: str) -> int
             return 2
         poller = select.poll()
         poller.register(pidfd, select.POLLIN)
-        if not poller.poll(round(DEATH_CONFIRM_SECONDS * 1000)):
-            return 3
+        try:
+            started_ns = clock_now_ns()
+            duration_ns = round(DEATH_CONFIRM_SECONDS * NANOSECONDS_PER_SECOND)
+            while True:
+                if clock_elapsed(started_ns, duration_ns):
+                    return 3
+                current_ns = clock_now_ns()
+                if current_ns < started_ns:
+                    raise UnknownProcess
+                remaining_ns = duration_ns - (current_ns - started_ns)
+                timeout_ms = max(1, (remaining_ns + 999_999) // 1_000_000)
+                if poller.poll(timeout_ms):
+                    break
+        except UnknownProcess:
+            return 2
         # Readability is the kernel's death notification for this open pidfd.
         # It confirms exit of the bound generation without reopening /proc,
         # whose files can disappear piecemeal while the parent reaps it.
