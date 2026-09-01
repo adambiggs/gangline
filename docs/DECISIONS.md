@@ -1849,8 +1849,13 @@ side. It names a human as the author, so it may only be reached from reads that
 answered; let an unreadable record arrive there as an absence and the line
 invents exactly the provenance the classification exists to refuse to invent.
 
-The reads that deliberately collapse a failure into an absence are left as
-they are. They are a larger decision about how much of the roster should
-report unknown rather than absent, and the roster already has somewhere to put
-one: a row whose state cannot be read prints `?unknown?` and leaves the command
-nonzero, which is the shape the rest of those reads would have to take.
+The roster row is the same rule at summary length. It cannot spend a line on
+what it could not read, so it names the record and stops there — `staged-
+unreadable`, beside the `usage-unreadable` it already prints — and commits the
+note in neither direction, neither as waiting nor as absent.
+
+What is left are the readers that collapse a failure into an absence inside
+themselves rather than at a caller, so no status reaches a caller to keep. They
+are a larger decision about how much of a row should report unknown rather than
+absent, and closing them means changing what each reader returns, not how one
+caller reads it.

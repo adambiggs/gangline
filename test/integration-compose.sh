@@ -1578,6 +1578,12 @@ collar_last_action() {
   return 1
 }
 COLLAR
+cat > "$vanish_collars/vanishroster.sh" <<COLLAR
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+tmux kill-window -t "=\$GANG_SESSION:rostering" 2>/dev/null || true
+COLLAR
 cat > "$vanish_collars/vanishnow.sh" <<COLLAR
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1642,4 +1648,22 @@ excludes "a flush whose window vanishes before the recall does not exit clean" \
   "$vanish_flush" "--status 0"
 contains "and flush says the recall key was not pressed" \
   "$vanish_flush" "was NOT pressed and nothing was recovered for 'flushing'"
+# AN ABSENCE THE ROW NEVER OBSERVED IS THE SAME LIE ONE COMMAND LOWER. The
+# roster reads each window's staged record to decide whether to say undelivered
+# input is waiting there. Read that record through a window that has gone and
+# the reader says so; discard its status and the row prints the quiet row it
+# prints for a window with nothing waiting, which is a claim about a window it
+# could not ask. The record below is really set before the window really dies,
+# so the omission the row must not make is an omission of something that was
+# there.
+vanish_world rostering vanishroster
+TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_staged \
+  'a body gang recorded and never delivered'
+vanish_roster="$(vanish_run roster)"
+vanish_down
+contains "a roster row whose window goes names the record it could not read" \
+  "$vanish_roster" "staged-unreadable"
+excludes "and does not report that record as one it observed waiting" \
+  "$vanish_roster" "undelivered-input"
+
 rm -rf -- "$vanish_root" "$vanish_collars"

@@ -10330,7 +10330,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -10338,7 +10338,19 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     || { printf '%-16s %-12s %s\n' "$2" "$prof" "$(colour "$C_BAD" "collar not found")"; return; }
   load_collar "$prof"
   state="$(state_now "$1" snapshot)" || { state="?unknown?" unread=1; }
-  [ -z "$(staged_current "$1")" ] || detail=" undelivered-input"
+  # AN UNREADABLE RECORD IS NOT AN OBSERVED ABSENCE. The reader keeps the
+  # window's loss apart from an empty record, and a row that discards that
+  # distinction says "nothing is waiting here" about a window it could not ask.
+  # The row's answer is its own clause, in the same shape it already uses for a
+  # usage record it could not read: what could not be read is named, and the
+  # note it would have carried is not invented in either direction.
+  staged_rc=0
+  staged="$(staged_current "$1")" || staged_rc=$?
+  if [ "$staged_rc" -ne 0 ]; then
+    detail=" staged-unreadable"
+  elif [ -n "$staged" ]; then
+    detail=" undelivered-input"
+  fi
   # A BOOLEAN, never a count. The harness's hint says something is parked and
   # never how many, so a number here would be gang's invention rather than the
   # harness's answer. staged_current above has already re-read the box, so a
