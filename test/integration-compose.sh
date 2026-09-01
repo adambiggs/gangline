@@ -355,6 +355,95 @@ contains "the cooperative tick drains the parked-queue successor once the queue 
   "$(pane_all strand)" "MARK_SECOND"
 "$GANG" drop strand >/dev/null
 
+# A QUEUE THE COMPOSER NEVER SHOWS. Codex (0.151.0) returns its composer to the
+# placeholder when it parks a follow-up and draws the queued bodies above it, so
+# a collar answering with GANG_QUEUED_REGEX — matched against the box alone —
+# sees nothing and every parked delivery is reported submitted. A collar that
+# declares collar_queued answers from wherever its harness actually draws the
+# queue, and when it can find gang's exact body there the park stops being an
+# unknown outcome and becomes a delivery outcome of its own.
+#
+# The fixture parks the way a harness does: the shell swallows the submitted
+# line instead of running it and renders it under a queue header, so the pane
+# evidence is a consequence of the Enter rather than scenery placed beforehand.
+cat > "$RUN_ROOT/park-rc" <<'RC'
+set -f
+PS1='❯ '
+command_not_found_handle() {
+  if [ -e "$PARK_FILE" ]; then
+    printf '• Queued follow-up inputs\n  ↳ %s\n    recall hint\n' "$*"
+    return 0
+  fi
+  printf 'fixture: %s: not found\n' "$1"
+  return 127
+}
+RC
+cat > "$RUN_ROOT/collars/panequeue.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PARK_FILE=$RUN_ROOT/park-armed ENV=$RUN_ROOT/park-rc exec bash --posix' fixture"
+GANG_QUEUE_RECALL_KEY="Up"
+collar_queued() {
+  local pane want block
+  if [ -e "$RUN_ROOT/park-unreadable" ]; then
+    printf 'the fixture queue surface could not be read'
+    return 2
+  fi
+  pane="\$(tmux capture-pane -pJ -t "\$1" 2>/dev/null)" || {
+    printf 'the fixture pane could not be read'
+    return 2
+  }
+  case "\$pane" in
+    *'• Queued follow-up inputs'*) ;;
+    *) if [ \$# -ge 2 ]; then
+         printf 'the fixture queue is not on screen'
+         return 2
+       fi
+       return 1 ;;
+  esac
+  [ \$# -ge 2 ] || return 0
+  want="\$(printf '%s' "\$2" | tr -s '[:space:]' ' ')"
+  block="\$(printf '%s' "\$pane" | tr -s '[:space:]' ' ')"
+  case "\$block" in *"\$want"*) return 0 ;; esac
+  printf 'the fixture queue does not carry that body'
+  return 2
+}
+SH
+"$HITCH" panepark -c panequeue -d /tmp >/dev/null
+: > "$RUN_ROOT/park-armed"
+panepark_rc=0
+panepark_out="$(printf 'MARK_PANE_PARK' |
+  "$GANG" send --to panepark --from tester --stdin 2>&1)" || panepark_rc=$?
+equal "a body parked outside the composer is a delivery, not a failure" 0 "$panepark_rc"
+contains "and it is reported as parked rather than submitted" \
+  "$panepark_out" "parked in the harness's own follow-up queue"
+excludes "the parked outcome never claims the message was submitted" \
+  "$panepark_out" "submitted"
+panepark_id="$(window_id panepark)"
+equal "the exact parked body is retained for recovery" \
+  "1" "$(tmux show-options -wqv -t "$panepark_id" @gl_parked_body |
+         grep -c 'MARK_PANE_PARK')"
+equal "a park confirmed against gang's own body carries no unverified mark" "" \
+  "$(tmux show-options -wqv -t "$panepark_id" @gl_parked_unverified)"
+contains "status names the parked native input" \
+  "$("$GANG" status panepark)" "parked native input"
+# AN UNREADABLE QUEUE IS NOT AN EMPTY ONE. The one verdict that must never be
+# flattened into "submitted" is the one where gang could not tell, so a collar
+# that cannot answer stops the delivery before a key is pressed.
+: > "$RUN_ROOT/park-unreadable"
+panepark_unknown_rc=0
+panepark_unknown="$(printf 'MARK_PANE_UNKNOWN' |
+  "$GANG" send --to panepark --from tester --live-only --stdin 2>&1)" \
+  || panepark_unknown_rc=$?
+equal "an unreadable queue surface refuses before typing" 3 "$panepark_unknown_rc"
+contains "and the refusal carries the collar's own cause" \
+  "$panepark_unknown" "the fixture queue surface could not be read"
+excludes "nothing was typed into the pane it could not classify" \
+  "$(pane_all panepark)" "MARK_PANE_UNKNOWN"
+rm -f -- "$RUN_ROOT/park-unreadable"
+"$GANG" drop panepark >/dev/null
+
 # THE PARKED QUEUE, RECOVERED RATHER THAN DESCRIBED. The fixture's composer
 # reads as the queue hint while its strand file exists, and the body the
 # harness "parked" is held in a queue file the submission itself fills — so the

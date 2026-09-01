@@ -1444,7 +1444,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -3401,9 +3401,54 @@ pane_mode_free() { # $1 = window id; 0 only when tmux will route keys to the pty
 # the box itself reads as the queue hint — and the collar owns that spelling.
 # Matched against the BOX reading only, never the whole pane, so a delivered
 # body that merely quotes the hint can never trip it.
-box_queued() { # $1 = a landing-zone reading; 0 = the harness parked input in a queue
+#
+# WHERE THE QUEUE IS NOT DRAWN IN THE BOX AT ALL a regex over the composer
+# cannot see it. Codex (0.151.0) returns the composer to its placeholder and
+# draws the queued bodies above it, so its collar answers for its own harness
+# instead. That answer carries an unknown rather than flattening it: "gang
+# could not tell" is the one verdict that must never reach a sender as
+# "submitted".
+QUEUED_WHAT="parked-queue evidence unavailable"
+
+box_queued() { # $1 = a landing-zone reading, $2 = window id
+               # 0 = parked in a queue, 1 = not, 2 = could not tell
+  local output="" rc=0
+  QUEUED_WHAT="parked-queue evidence unavailable"
+  if declare -F collar_queued >/dev/null; then
+    output="$(collar_queued "$2")" || rc=$?
+    output="$(printf '%s' "$output" | config_sanitize)"
+    case "$rc" in
+      0) [ -z "$output" ] \
+           || die "collar_queued in $GANG_COLLAR_FILE printed a cause while reporting a parked queue"
+         return 0 ;;
+      1) [ -z "$output" ] \
+           || die "collar_queued in $GANG_COLLAR_FILE printed a cause while reporting no parked queue"
+         return 1 ;;
+      2) [ -n "$output" ] \
+           || die "collar_queued in $GANG_COLLAR_FILE reported unknown without a cause"
+         QUEUED_WHAT="$output"
+         return 2 ;;
+      *) die "collar_queued in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+    esac
+  fi
   [ -n "$GANG_QUEUED_REGEX" ] || return 1
   re_match GANG_QUEUED_REGEX "$1"
+}
+
+queue_evidence_declared() { # 0 when this collar can tell a parked queue at all
+  declare -F collar_queued >/dev/null || [ -n "$GANG_QUEUED_REGEX" ]
+}
+
+# THE HINT ALONE CANNOT SAY WHOSE BODY IT IS. A queue drawn after Enter can
+# describe the message just typed or a turn that raced it, which is why a
+# parked delivery is otherwise reported as an unknown outcome. A collar that
+# can find gang's exact composed body in its harness's queue settles that
+# question, and only a positive answer is taken: any other result leaves the
+# outcome unknown rather than claiming the message entered the session.
+queued_body_confirmed() { # $1 window id, $2 the body gang composed
+  declare -F collar_queued >/dev/null || return 1
+  [ -n "$2" ] || return 1
+  collar_queued "$1" "$2" >/dev/null 2>&1
 }
 
 LOCK_PATH=""
@@ -5948,7 +5993,14 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
     printf 'cleared: empty when gang looked again, so the obstruction has gone (gang status %s)' "$3"
     return
   fi
-  if box_queued "$2"; then
+  local class_queued_rc=0
+  box_queued "$2" "$1" || class_queued_rc=$?
+  if [ "$class_queued_rc" -eq 2 ]; then
+    printf 'queue-unknown: %s, so whether the harness has parked earlier input is unknown (gang capture %s)' \
+      "$QUEUED_WHAT" "$3"
+    return
+  fi
+  if [ "$class_queued_rc" -eq 0 ]; then
     if [ "$(tmux show-options -wqv -t "$1" @gl_parked_unverified 2>/dev/null)" = 1 ]; then
       printf 'queue-hint-unverified: first observed after Enter, so it may be a parked body or may have raced an entered turn; inspect the session before gang flush %s' "$3"
       return
@@ -6013,7 +6065,9 @@ parked_current() { # $1 = window id -> the parked body, freshness-checked at rea
   declare -F collar_input >/dev/null || return 0
   rec="$(tmux show-options -wqv -t "$1" @gl_parked 2>/dev/null)" || rec=""
   [ -n "$rec" ] || return 0
-  if box="$(landing_zone "$1")" && ! box_queued "$box"; then
+  local parked_queued_rc=0
+  if box="$(landing_zone "$1")" \
+     && { box_queued "$box" "$1" || parked_queued_rc=$?; [ "$parked_queued_rc" -eq 1 ]; }; then
     tmux set-option -uw -t "$1" @gl_parked 2>/dev/null || true
     tmux set-option -uw -t "$1" @gl_parked_body 2>/dev/null || true
     tmux set-option -uw -t "$1" @gl_parked_unverified 2>/dev/null || true
@@ -6146,9 +6200,13 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   # nothing pasted now can enter the session, and an earlier message is
   # already waiting. Named for what it is rather than left to the emptiness
   # guard below, which would blame a half-written draft.
-  local preflight
-  if preflight="$(landing_zone "$1")" && box_queued "$preflight"; then
-    refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered (gang flush $tname; or by hand: gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
+  local preflight preflight_queued_rc=0
+  if preflight="$(landing_zone "$1")"; then
+    box_queued "$preflight" "$1" || preflight_queued_rc=$?
+    [ "$preflight_queued_rc" -ne 2 ] \
+      || refuse "refusing to deliver '$frag': gang cannot tell whether the harness of $tname has parked earlier input in its own queue — $QUEUED_WHAT. A parked queue means its Enter is queueing rather than submitting, so gang will not type into a box whose queue state is unknown (gang capture $tname). Nothing was typed and the body is still the sender's"
+    [ "$preflight_queued_rc" -ne 0 ] \
+      || refuse "refusing to deliver '$frag': the harness of $tname has parked earlier input in its own queue — its Enter is queueing rather than submitting, so nothing gang sends can enter the session until the queue is recovered (gang flush $tname; or by hand: gang attach, press Up to load the parked message, then Enter; if even that re-queues, gang drop $tname and hitch --resume). Nothing was typed and the body is still the sender's"
   fi
   if ! input_clear "$1"; then
     local onlyhead="" seen seen_rc=0
@@ -6285,10 +6343,16 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
   # harness's own parked-input hint. A parked message renders in the
   # transcript exactly like a submitted one, so this composer reading is the
   # one place the two states differ.
-  if [ -n "$GANG_QUEUED_REGEX" ] && [ "${5:-}" != park_ok ]; then
-    local qlooks=0
+  if queue_evidence_declared && [ "${5:-}" != park_ok ]; then
+    local qlooks=0 posted_queued_rc=0
     while :; do
-      if box_queued "$posted"; then
+      posted_queued_rc=0
+      box_queued "$posted" "$1" || posted_queued_rc=$?
+      if [ "$posted_queued_rc" -eq 2 ]; then
+        stage_record "$1" "'$3' was $verb here and Enter sent, but gang could not tell an entered message from one parked in the harness's own queue — $QUEUED_WHAT" ""
+        unverified "submission unverifiable, and NOT ruled out: '$3' was $verb into the input box of $tname and Enter was pressed, and gang then could not tell an entered message from one parked in the harness's own queue — $QUEUED_WHAT. Gang will not send it again on a guess; read the screen with 'gang capture $tname', and if it is parked recover it with 'gang flush $tname'"
+      fi
+      if [ "$posted_queued_rc" -eq 0 ]; then
         case "${5:-}" in
           park_record)
             # Peer steering entered only from an attributed spool. Preserve
@@ -6297,7 +6361,15 @@ submit_verify() { # $1 window id, $2 the box the Enter goes against, $3 fragment
             stage_forget "$1"
             parked_record "$1" "$2" "${6:-}"
             return 0 ;;
-          '') submit_parked "$1" "$3" "$4" "$2" "${6:-}" ;;
+          '') if queued_body_confirmed "$1" "${6:-}"; then
+                # Parked, and provably THIS body. It enters the session at the
+                # next native boundary with nothing for the sender to do, so
+                # this is a delivery outcome rather than an unknown one.
+                stage_forget "$1"
+                parked_record "$1" "$2" "${6:-}"
+                return 0
+              fi
+              submit_parked "$1" "$3" "$4" "$2" "${6:-}" ;;
           *) die "internal: submit_verify received unknown park mode '$5'" ;;
         esac
       fi
@@ -7887,6 +7959,22 @@ cmd_talk() { # compose with the terminal editor, then hand the bytes to send
   return "$edit_rc"
 }
 
+send_outcome() { # $1 = target name; the parenthetical a verified delivery earned
+  local parked unverified_flag
+  parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_body 2>/dev/null)" \
+    || parked=""
+  unverified_flag="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_unverified 2>/dev/null)" \
+    || unverified_flag=""
+  # KEYED ON THE EXACT BODY, not on the presence of a record: a park recorded
+  # by an earlier send would otherwise relabel this one. A record that matches
+  # what this send composed, with no unverified mark on it, is this send's.
+  if [ -n "$parked" ] && [ "$parked" = "$ENVELOPE" ] && [ -z "$unverified_flag" ]; then
+    printf '%s' "(verified in pane, parked in the harness's own follow-up queue — it enters the session at the next native boundary, or sooner with gang flush $1)"
+  else
+    printf '%s' "(verified in pane, submitted)"
+  fi
+}
+
 send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
               # AGENT_ID and ENVELOPE set.
               # 3 = refused, nothing typed
@@ -8016,7 +8104,7 @@ cmd_send() {
   if [ "$live_only" -eq 1 ]; then
     send_live "$name" "" live-only
     report_send_accepted "$name"
-    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
     return 0
   fi
   # ONE CRITICAL SECTION. The pane lock is taken HERE rather than inside
@@ -8056,7 +8144,7 @@ cmd_send() {
        lock_release
        report_send_accepted "$name"
        [ -z "$err" ] || printf '%s\n' "$err" >&2
-       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "(verified in pane, submitted)")"
+       printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
        return 0 ;;
     3) ;;
     5) # KEYSTROKES LANDED AND THEIR OUTCOME IS UNKNOWN, so this send is neither
@@ -8422,7 +8510,7 @@ flush_stranded() { # $1 = target name
 # before this command. No record, no hint, or a readback that does not match,
 # and no Enter is pressed.
 cmd_flush() {
-  local name="${1:-}" parked body frag box loaded unverified_record
+  local name="${1:-}" parked body frag box loaded unverified_record flush_queued_rc=0
   [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -8432,8 +8520,8 @@ cmd_flush() {
     }
   fi
   resolve "$name"
-  [ -n "$GANG_QUEUED_REGEX" ] \
-    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
+  queue_evidence_declared \
+    || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX and no collar_queued, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
   [ -n "$GANG_QUEUE_RECALL_KEY" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
   parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
@@ -8480,8 +8568,12 @@ cmd_flush() {
     || refuse "flush: somebody is typing into '$name' right now — recovering its queue underneath a live draft would submit their line (try again in a moment)"
   box="$(landing_zone "$AGENT_ID")" \
     || die "flush: cannot read the input box of $name — the harness is not taking input (gang capture $name)"
-  box_queued "$box" \
-    || refuse "flush: the composer of '$name' shows none of the parked-queue evidence its collar declares, so there is nothing to recover and gang will not press $GANG_QUEUE_RECALL_KEY blindly (gang capture $name)"
+  flush_queued_rc=0
+  box_queued "$box" "$AGENT_ID" || flush_queued_rc=$?
+  [ "$flush_queued_rc" -ne 2 ] \
+    || die "flush: gang cannot tell whether '$name' has input parked in its harness's own queue — $QUEUED_WHAT — so $GANG_QUEUE_RECALL_KEY was NOT pressed (gang capture $name)"
+  [ "$flush_queued_rc" -eq 0 ] \
+    || refuse "flush: '$name' shows none of the parked-queue evidence its collar recognizes, so there is nothing to recover and gang will not press $GANG_QUEUE_RECALL_KEY blindly (gang capture $name)"
   pane_mode_free "$AGENT_ID" \
     || refuse "flush: tmux mode owns the pane of '$name', so $GANG_QUEUE_RECALL_KEY would act on operator-owned mode state instead of recalling the parked message; leave copy-mode, then retry"
   tmux send-keys -t "$AGENT_ID" "$GANG_QUEUE_RECALL_KEY"

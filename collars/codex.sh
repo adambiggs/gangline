@@ -338,6 +338,87 @@ GANG_MIDTURN_INPUT=1
 # Escape stops an active turn; the busy marker above is the harness's own
 # "esc to interrupt" footer.
 GANG_INTERRUPT_KEY="Escape"
+# On codex-cli 0.151.0 shift+Left loads the last queued follow-up
+# back into the composer without submitting it, and the queue block disappears
+# as it does. The harness advertises this key itself, and collar_queued below
+# refuses to call a queue recognized unless it is still advertising it.
+#
+# RECALL IS A RECOVERY, NOT THE ONLY ONE. Codex drains its own follow-up queue
+# as soon as the open turn closes, so a parked body is a delayed delivery
+# rather than a lost one and flush is worth reaching for only while a turn is
+# wedged open.
+#
+# AND IT REACHES ONE-LINE BODIES ONLY. The recalled composer indents its
+# continuation lines under `› `, and collar_input keeps the LAST line matching
+# `^›`, so a multi-line body reads back short. cmd_flush compares the whole
+# recalled reading against the whole recorded body, so for any envelope of more
+# than one line that comparison cannot succeed and flush refuses without
+# pressing Enter. The refusal is correct; the recovery is simply unavailable.
+# Widening collar_input to close that gap would change the reading every
+# delivery depends on, which is the trade this collar does not make.
+GANG_QUEUE_RECALL_KEY="S-Left"
+
+# CODEX PARKS INPUT WHERE GANG'S COMPOSER READING CANNOT SEE IT. Enter during a
+# running turn is accepted into a native follow-up queue: the composer goes
+# back to its placeholder, exactly as a submitted message leaves it, and the
+# queued bodies are drawn ABOVE the composer under a header. A collar that
+# answered this with GANG_QUEUED_REGEX would be matched against the composer
+# alone and would report every parked delivery as submitted, so the pane is
+# what gets read here.
+#
+# THE HEADER ALONE IS NOT ENOUGH. An agent can be handed text that quotes it,
+# so the recall advertisement has to be on screen too — and a header with no
+# advertisement is a native rendering this collar no longer understands, which
+# is an unknown rather than a queue gang could offer to flush.
+#
+# READ THE PANE PLAIN, NEVER THE DIM-STRIPPED READING. Codex draws both the
+# queue header and the recall advertisement inside ANSI dim runs, and the awk
+# in collar_input deletes a dim run wholesale — so the reading that serves the
+# composer would drop the advertisement entirely and leave this function
+# unable to tell a recognized queue from a rendering it no longer understands.
+# The capture below is therefore plain `-pJ`, with no `-e` and no stripping.
+collar_queued() { # $1 tmux target, $2 the body gang composed (optional).
+                  # Without a body: 0 the harness holds parked input, 1 it
+                  # does not, 2 unknown with a cause.
+                  # With a body: 0 that exact body is parked, 2 not confirmed.
+                  # The body form never returns 1: a body gang cannot find in
+                  # the queue block is a reading this collar could not make,
+                  # not proof the message entered the session.
+  local pane
+  pane="$(tmux capture-pane -pJ -t "$1" 2>/dev/null)" || {
+    printf 'the Codex pane could not be read for parked-queue evidence'
+    return 2
+  }
+  printf '%s\n' "$pane" | grep -qE '^• Queued follow-up inputs *$' || {
+    [ $# -lt 2 ] || {
+      printf 'the Codex follow-up queue is not on screen, so gang cannot confirm the body it composed is parked'
+      return 2
+    }
+    return 1
+  }
+  ! printf '%s\n' "$pane" | grep -qE '^ *shift \+ ← edit last queued message *$' || {
+    [ $# -ge 2 ] || return 0
+    printf '%s\n' "$pane" | python3 -c '
+import re
+import sys
+
+want = " ".join(sys.argv[1].split())
+lines = sys.stdin.read().split("\n")
+header = re.compile(r"^\u2022 Queued follow-up inputs *$")
+hint = re.compile(r"^ *shift \+ \u2190 edit last queued message *$")
+opened = [i for i, line in enumerate(lines) if header.match(line)]
+closed = [i for i, line in enumerate(lines) if hint.match(line)]
+if not want or not opened or not closed or closed[-1] <= opened[0]:
+    raise SystemExit(1)
+block = " ".join(lines[opened[0] + 1 : closed[-1]]).replace("\u21b3", " ")
+raise SystemExit(0 if want in " ".join(block.split()) else 1)
+' "$2" && return 0
+    printf 'the Codex follow-up queue is on screen but does not read back as the body gang composed'
+    return 2
+  }
+  printf 'the Codex follow-up queue is on screen but no longer advertises the shift+Left recall this collar sends'
+  return 2
+}
 # Verified on codex 0.145.0: the native hook set contains no Notification
 # event. legacy_notify / agent-turn-complete reports turn completion, which the
 # Stop hook above already delivers; it is not an awaiting-input witness and is
