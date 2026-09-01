@@ -107,6 +107,12 @@ contains() {
     *) fail "$1" "missing [$3]" ;;
   esac
 }
+excludes() {
+  case "$2" in
+    *"$3"*) fail "$1" "unexpected [$3]" ;;
+    *) pass "$1" ;;
+  esac
+}
 note() { printf '     %s\n' "$1"; }
 
 # BOUNDED, NOT PATIENT. Every wait in this lane either rides an event barrier
@@ -258,6 +264,7 @@ trap on_signal HUP INT TERM
 AGENT=dog
 HOLD_MARKER=GANGLINE-E2E-HOLD
 ERROR_MARKER=GANGLINE-E2E-ERROR
+BLOCK_MARKER=GANGLINE-E2E-BLOCK
 REPLY_PREFIX=E2E-STUB-REPLY
 # Fixed and obviously fake. The stub never reads it; the harness only needs one
 # it has been told to trust, and a stable value keeps that record reproducible.
@@ -708,8 +715,183 @@ scenario_midturn() {
 
 envelope_in_requests() { requests | grep -q -- "$1"; }
 
+# THE SAME WINDOW, READ THROUGH A COLLAR THAT DECLARES NO BLOCKED READER. Its
+# directory is written by the scenario that uses it, so this is a read of that
+# world and not a second world of its own.
+unread_state() {
+  GANG_COLLARS="$RUN_ROOT/collars-unread" "$GANG" roster --porcelain 2>/dev/null \
+    | awk -F'\t' -v n="$AGENT" '$1 == n { print $3 }'
+}
+
+# A READING, NEVER AN ABSENCE. `unread_state` prints nothing when the roster
+# row is missing or the read itself fails, and an empty answer would satisfy
+# "not busy" and then satisfy every check that reads the value afterwards. The
+# instrument failing must not look like the subject changing.
+unread_settled() {
+  case "$(unread_state)" in
+    busy | '') return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# THE VOCABULARY IS READ OUT OF THE SUBJECT, never spelled again here. A list
+# this lane kept for itself would go stale the first time gang renamed a word,
+# and the check above would then reject a reading gang really printed.
+roster_state_words() {
+  local words
+  words="$(sed -n '/^roster_state_word()/,/^}/p' "$GANG" \
+    | sed -n 's/.*printf \([a-z][a-z-]*\) ;;.*/\1/p')"
+  [ -n "$words" ] \
+    || { printf 'e2e: could not read the porcelain state words out of %s\n' \
+           "$GANG" >&2; exit 1; }
+  printf '%s\n' "$words"
+}
+
+# ---------------------------------------------------------------- scenario 5
+# A TURN THAT ENDED WITHOUT PRODUCING WORK, DRIVEN THROUGH A REAL HARNESS. This
+# is the one state whose whole danger is that the window looks well: the
+# composer is free, the pane is quiet, and every guard Gangline keeps is a
+# guard on the composer. A fixture can only assert that the reader agrees with
+# a record the fixture wrote, which is a claim about the reader and not about
+# the harness. So the record here is written by claude-code, about a request a
+# provider actually refused, and the counterfactual below is taken from the
+# same live pane.
+#
+# THE COUNTERFACTUAL IS THE PROOF, not the verdict. `!blocked!` on its own
+# would also be produced by a reader that fired on anything, so the scenario
+# reads the identical window a second time through a collar that is this
+# collar with `collar_blocked` removed. Whatever that read returns is what
+# every other rule Gangline has — the occupancy regex, the busy regex, the
+# composer, the turn bracket — makes of this pane; if it is `~idle~`, then the
+# transcript reader is carrying the whole state and the defect is reproduced
+# and closed in one pair of readings.
+scenario_blocked() {
+  world_up blocked
+  if ! booted blocked; then world_down; return; fi
+
+  say "$BLOCK_MARKER now" >/dev/null
+  settled "blocked classified" is_state blocked
+  local reading
+  reading="$(state)"
+  equal "blocked: a turn that produced no work reads blocked" blocked "$reading"
+  if [ "$reading" != blocked ]; then
+    note "RECORDED on $HARNESS_BUILD: it read '$reading' instead."
+    note "$("$GANG" explain "$AGENT" 2>&1 | tail -8)"
+  fi
+
+  # THE READER'S OWN SENTENCE, which no other verdict in this collar produces:
+  # the fatal branch says a broken response stream or an HTTP status, and the
+  # unreadable branches say so. Accepting the state word alone would survive a
+  # reader that reached the right verdict for the wrong record.
+  contains "blocked: the reason is a turn that ended on an API error" \
+    "$("$GANG" status "$AGENT" 2>&1)" "ended the latest turn on an API error"
+
+  # WHAT THE REST OF GANGLINE MAKES OF THE SAME PANE. A collar identical to the
+  # shipped one except that it declares no blocked reader leaves every other
+  # rule in place, so this reading is the state this window had before the
+  # reader existed — taken live, from the pane that is reading blocked right
+  # now, rather than reasoned about.
+  mkdir -p "$RUN_ROOT/collars-unread"
+  {
+    printf '# shellcheck shell=bash\n'
+    printf '. %s\n' "$(printf '%q' "$ROOT/collars/claude-code.sh")"
+    printf 'unset -f collar_blocked\n'
+  } > "$RUN_ROOT/collars-unread/claude-code.sh"
+  # WHAT THE READER-LESS COLLAR ACTUALLY SAYS, MEASURED RATHER THAN ASSUMED.
+  # Its first answer is `-busy-`: the harness writes no Stop for a turn that
+  # ends this way, so the turn bracket gang opened is still open and answers
+  # before the busy regex is ever reached. A lead reading that window is told a
+  # turn is running and a send is refused for a turn that already ended.
+  #
+  # WHAT HAPPENS NEXT IS NOT FIXED, and pinning it was this scenario's own bug.
+  # From the same starting point — the turn classified on the first read — one
+  # reading held that busy for the whole budget and another let go of it partway
+  # through and read idle, which is the reported symptom exactly and the worse
+  # of the two, because a send to a window reported idle is delivered into
+  # nothing. Elapsed time does not account for the difference, so asserting
+  # either value makes this scenario fail on the run that did the other. What is
+  # asserted is what both readings share: neither is `blocked`, and neither
+  # comes from anything that read the transcript. The second value is required
+  # to be a state gang prints, so a roster that failed to answer cannot pass for
+  # a subject that changed, and is then recorded with the build it came from
+  # rather than pinned.
+  local unread unread_first unread_explain unread_named word
+  unread_first="$(unread_state)"
+  equal "blocked: without the transcript reader the same window reads busy" \
+    busy "$unread_first"
+  # THE BRACKET, NOT THE PAINT, read at the first answer and before anything can
+  # decay. Naming which rule answered is the difference between a turn that
+  # never ended and a screen that still shows the last one.
+  unread_explain="$(GANG_COLLARS="$RUN_ROOT/collars-unread" "$GANG" explain "$AGENT" 2>&1)"
+  contains "blocked: that busy is an unclosed turn, not a screen the regex matched" \
+    "$unread_explain" "GANG_BUSY_REGEX: not evaluated"
+  contains "and that collar is the shipped one with only the reader removed" \
+    "$unread_explain" "collar_blocked: not declared"
+  # A BOUNDED LOOK FOR THE OTHER READING, whose absence is not a failure. The
+  # `turn` scenario measures how quickly an ordinary turn's bracket closes; this
+  # spends the same budget seeing which way this one goes, and says so.
+  settle "blocked: looking for a reader-less reading that is not busy" \
+    unread_settled || true
+  unread="$(unread_state)"
+  # THE SECOND READING IS A READING. Recording it is only worth anything if the
+  # roster actually answered, and the exclusion below is vacuous on an empty
+  # string, so the value is required to be one gang prints before it is used.
+  unread_named=""
+  for word in $(roster_state_words); do
+    [ "$word" != "$unread" ] || unread_named="$unread"
+  done
+  equal "blocked: and the reader-less window answered the second read too" \
+    "$unread" "$unread_named"
+  note "RECORDED on $HARNESS_BUILD: reader-less state '$unread_first' then '$unread', over at most $E2E_READS reads at ${E2E_NAP}s each."
+  excludes "blocked: and no rule but the transcript reader ever says blocked" \
+    "$unread_first$unread" "blocked"
+
+  # DELIVERY IS POSSIBLE HERE, WHICH IS WHY IT MUST BE REFUSED. The composer
+  # accepts keystrokes; nothing but the state read stands between a sender and
+  # a message reported as delivered into a window that will never act on it.
+  local send_rc=0 send_out
+  send_out="$(printf 'E2E-BLOCKED-BODY' | "$GANG" send --to "$AGENT" --from operator \
+    --live-only --stdin 2>&1)" || send_rc=$?
+  if [ "$send_rc" -eq 0 ]; then
+    fail "blocked: gang send should refuse a blocked window" "it reported delivered"
+  else
+    contains "blocked: the refusal names the blocking reason" "$send_out" "is blocked ("
+  fi
+  # NEITHER OF THE TWO WRONG ANSWERS. A guard that ran only inside inject would
+  # answer this window from whatever paint its finished turn left behind, and a
+  # free composer would otherwise be read as an ordinary idle target.
+  excludes "blocked: the refusal is not read off the screen the turn left" \
+    "$send_out" "is mid-turn"
+  excludes "blocked: nor is it the occupancy tier answering" \
+    "$send_out" "is occupied"
+  # THE BODY NEVER REACHED THE MODEL. The request log is the instrument that
+  # separates a refusal from a paste that merely looked refused.
+  local landed
+  landed="$(requests | grep -c -- 'E2E-BLOCKED-BODY' || true)"
+  equal "blocked: nothing the refusal covered reached the model" 0 "$landed"
+
+  # A BOUNDARY THAT IS NOT COMING CANNOT BE WAITED FOR. Returning satisfied
+  # here is the same lie as reading idle, one command further on.
+  local wait_rc=0
+  "$GANG" wait "$AGENT" --until idle --timeout 5 >"$RUN_ROOT/wait.out" 2>&1 || wait_rc=$?
+  if [ "$wait_rc" -eq 0 ]; then
+    fail "blocked: gang wait should refuse a blocked window" "it returned 0"
+  else
+    contains "blocked: gang wait refuses the boundary by name" \
+      "$(cat "$RUN_ROOT/wait.out")" "cannot reach the requested boundary"
+  fi
+
+  # A BLOCKED WINDOW IS NOT A BRICKED ONE. The repairs differ — a bricked
+  # session is re-hitched, this one is re-driven — so a reader that folded the
+  # two together would be visible here and nowhere else.
+  excludes "blocked: the fatal reader does not also claim this turn" \
+    "$("$GANG" explain "$AGENT" 2>&1)" "collar_bricked: matched"
+  stub_sound blocked
+  world_down
+}
+
 # ----------------------------------------------------------------------------
-SCENARIOS="boot turn bricked midturn"
+SCENARIOS="boot turn bricked blocked midturn"
 
 run() { # $1 scenario name, validated against the list above before it is called
   case " $SCENARIOS " in

@@ -38,6 +38,11 @@ HOLD_MARKER = "GANGLINE-E2E-HOLD"
 # A prompt carrying this marker is answered with a provider error instead of a
 # completion.
 ERROR_MARKER = "GANGLINE-E2E-ERROR"
+# A prompt carrying this marker is answered with a provider error the harness
+# records as a turn that ended without producing work, rather than one it
+# reports as a dead session. The two are different repairs and different
+# states, so the lane needs a provider that can produce each.
+BLOCK_MARKER = "GANGLINE-E2E-BLOCK"
 # Every ordinary completion contains this, so a test can tell a stub answer from
 # anything else on the screen.
 REPLY_PREFIX = "E2E-STUB-REPLY"
@@ -304,6 +309,25 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         seq = self.stub.recorder.record(entry)
+
+        if BLOCK_MARKER in text:
+            # A TURN THAT ENDS WITHOUT PRODUCING WORK AND LEAVES THE COMPOSER
+            # FREE. A provider rejecting the request itself answers 400
+            # invalid_request_error; the harness prints it, writes an assistant
+            # record marked isApiErrorMessage, and returns to an empty prompt.
+            # Nothing about that is retryable and nothing further is coming,
+            # which is the whole condition every composer guard reads as fine.
+            self.send_json(
+                400,
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "invalid_request_error",
+                        "message": "e2e stub refused this request outright",
+                    },
+                },
+            )
+            return
 
         if ERROR_MARKER in text:
             # THE ONE FATAL SHAPE THE CLAUDE-CODE COLLAR CLASSIFIES. A provider
