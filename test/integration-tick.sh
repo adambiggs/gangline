@@ -819,11 +819,29 @@ contains "status repair installs the running tree's health reader" \
   "$tick_repaired_right" "$ROOT/statusline/gang-tick-health.sh"
 contains "the deadline controller fixes the production budget at sixty seconds" \
   "$(<"$ROOT/libexec/gang-tick-deadline")" "DEADLINE_SECONDS = 60"
-contains "deadline expiry kills the worker's whole process group" \
-  "$(<"$ROOT/libexec/gang-tick-deadline")" "os.killpg(child.pid, signal.SIGKILL)"
-contains "deadline expiry reaches the shared pre-reap group cleanup" \
-  "$(<"$ROOT/libexec/gang-tick-deadline")" \
-  $'except subprocess.TimeoutExpired:\n        kill_worker_group()'
+tick_deadline_reaped_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" <<'PY'
+import runpy
+import sys
+
+scope = runpy.run_path(sys.argv[1], run_name="gang_tick_deadline_probe")
+called = []
+
+class ReapedLeader:
+    pid = 424242
+
+    @staticmethod
+    def poll():
+        return 0
+
+cleanup = scope["kill_worker_group"]
+cleanup.__globals__["worker"] = ReapedLeader()
+cleanup.__globals__["os"].killpg = lambda pid, signum: called.append((pid, signum))
+cleanup()
+print(f"{len(called)}:{called[0][0] if called else 0}")
+PY
+)"
+equal "deadline cleanup still signals the owned group after its leader exits" \
+  "1:424242" "$tick_deadline_reaped_probe"
 
 # The synchronous test mode takes the same post-command epilogue without a
 # detached race. Its ledger is the evidence that an unrelated invocation, not

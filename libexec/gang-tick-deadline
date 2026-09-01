@@ -17,12 +17,11 @@ def kill_worker_group() -> None:
     child = worker
     if child is None:
         return
-    if child.poll() is not None:
-        return
     try:
-        # poll returned None, so this direct child was not reaped at that
-        # observation. If it exits now, its zombie still prevents PID/PGID
-        # reuse until communicate() reaps it.
+        # Do not poll here. A direct child may already have exited while one of
+        # its descendants still owns the captured pipes. Until communicate()
+        # reaps that child, its zombie reserves this PID/PGID; kill the owned
+        # group first, then let communicate() reap it and drain the pipes.
         os.killpg(child.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
