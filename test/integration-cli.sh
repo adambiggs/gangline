@@ -2268,6 +2268,49 @@ fi
 contains "a refusal outlives the pane it was made in" \
   "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "refused"
 
+# ADVICE THAT NAMES A REFUSED COMMAND IS A TRAP. A refusal is only fail-closed
+# if the route it hands the reader is one that opens; a route this same guard
+# refuses leaves them with nothing but GANG_TMUX_GUARD=off, which is the
+# mechanism the guard exists to stand in front of. So the advised route is
+# driven here rather than read: the aimed kill-server is refused on a socket
+# carrying an agent window, and the SAME command must pass once the agents the
+# refusal is about are gone.
+guard_out="$(guard_run - - - -S "$guard_team_socket" kill-server)"
+equal "an explicitly aimed kill-server is refused while the socket carries an agent" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "so the refusal advises ending the agents, not aiming the same command again" \
+  "$guard_out" "gang drop"
+printf '' > "$guard_agent_rows"
+guard_out="$(guard_run - - - -S "$guard_team_socket" kill-server)"
+equal "and that advised route opens: the same kill-server passes once no agent is on it" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+if guard_reached_tmux; then
+  pass "the advised route reaches tmux rather than being refused a second time"
+else
+  fail "the advised route reaches tmux rather than being refused a second time" \
+    "kill-server never ran"
+fi
+printf 'guardteam\tguard-agent\n' > "$guard_agent_rows"
+
+# THE SAME TRAP ON THE OTHER TWO REFUSALS. kill-session refuses a target that
+# carries an agent window, so advice naming an aimed kill-session is a route
+# this guard closes; the route that opens is the same one, after the agents.
+guard_out="$(guard_run - - - -S "$guard_team_socket" kill-session -t guardteam)"
+equal "an aimed kill-session at a team session is refused" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "and it too advises ending the agents rather than aiming again" \
+  "$guard_out" "gang drop"
+guard_out="$(guard_run "$guard_team_socket,1,0" - - kill-session)"
+equal "an untargeted kill-session inside a pane is refused" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "and it advises the route that opens" "$guard_out" "gang drop"
+printf '' > "$guard_agent_rows"
+guard_out="$(guard_run - - - -S "$guard_team_socket" kill-session -t guardteam)"
+equal "and that route opens for kill-session once no agent is on the target" \
+  0 "$(printf '%s' "$guard_out" | head -1)"
+printf 'guardteam\tguard-agent\n' > "$guard_agent_rows"
+
+
 # THE RECURRING BYPASS. A test of Gangline legitimately replaces both values
 # that locate a team record with a fresh empty sandbox. The protected socket is
 # still the one $TMUX names, and its own registration must keep the guard shut.

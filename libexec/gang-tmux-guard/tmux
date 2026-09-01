@@ -336,7 +336,7 @@ if [ "$seen_command" = kill-server ]; then
   printf 'gang tmux guard: REFUSED — this kill-server would end %s, the tmux server holding team '\''%s'\'' and every agent in it.\n' \
     "$socket" "$team" >&2
   printf 'Inside a pane $TMUX names this server and outranks TMUX_TMPDIR, so a sandbox-looking command still lands here.\n' >&2
-  printf 'Aim it: tmux -S <socket> kill-server for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+  printf 'Aim it: naming this socket changes nothing — kill-server is refused for any socket carrying an agent window. It opens once none does, so end them first (gang drop <name> per agent window) and the same command passes. To end the whole team on purpose, run gang down %s from a shell without this guard on its PATH.\n' \
     "$team" >&2
   printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
   exit 3
@@ -371,7 +371,7 @@ if [ -z "$target" ]; then
   note refused "$@"
   printf 'gang tmux guard: REFUSED — this kill-session names no target, so it ends the session this pane is in: team '\''%s'\'' on %s.\n' \
     "$team" "$socket" >&2
-  printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+  printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.\n' \
     "$team" >&2
   printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
   exit 3
@@ -384,7 +384,7 @@ case "$guard_rc" in
      note refused "$@"
      printf 'gang tmux guard: REFUSED — this kill-session targets team '\''%s'\'' itself, on %s.\n' \
        "$team" "$socket" >&2
-     printf 'Aim it: tmux -S <socket> kill-session -t <name> for a private server, or from a shell outside tmux run gang down %s to end this team on purpose.\n' \
+     printf 'Aim it: kill-session opens on a target session that carries no agent window; naming this one changes nothing while it does. End its agents first (gang drop <name> per agent window), or run gang down %s from a shell without this guard on its PATH to end the whole team on purpose.\n' \
        "$team" >&2
      printf 'GANG_TMUX_GUARD=off runs it anyway, and that use is recorded too.\n' >&2
      exit 3 ;;
