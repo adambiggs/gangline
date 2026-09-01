@@ -71,6 +71,12 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # to drain, and what deferred self-compaction already relies on. Both are
       # declared here, beside the hooks that deliver them, so the hookless
       # launch above claims neither.
+      #
+      # TRUST IS KEYED TO THE INSTALL ROOT. Codex records hook trust against
+      # the command string, which carries the path of the checkout gang runs
+      # from, and keeps one entry per event. A gang installed at a second root
+      # therefore prompts again and replaces the stored entry rather than
+      # adding to it, so the first root's next Codex hitch prompts in turn.
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
       unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_hook_flags _gl_codex_event
