@@ -5416,6 +5416,21 @@ spool_orphan_report() { # one line naming what is under the spool root and unown
   # NAMED, NOT COUNTED. The whole defect this answers is that a person had to
   # list the spool root by hand to find held mail, so a number would reproduce
   # it: what is needed is the path to read.
+  #
+  # AND ONLY WHERE THERE IS SOMETHING TO READ. An orphan holding nothing is a
+  # spool identity whose window is gone, with no mail in it and nothing to
+  # lose; the next session opening sweeps it, and until then the only
+  # instruction this line can give is to ignore it. Repeated on every roster
+  # for as long as the team stays up, that is what teaches an operator to skim
+  # the whole class — including the line that names mail no other command can
+  # reach. So the split is by what is in the directory, not by how it came to
+  # be unowned: a warning is earned by content.
+  #
+  # REPORTING IS NOT REMOVING. Going quiet here is not permission to delete the
+  # directory: the token it names is a reservation, and this read covers one
+  # tmux server, so a window on another one may still be holding it. Only the
+  # sweep at a session opening removes, where the server being read is the one
+  # gang has just proved it can talk to.
   local root token entries n line
   root="$(spool_root_of)"
   spool_orphans || {
@@ -5428,8 +5443,8 @@ spool_orphan_report() { # one line naming what is under the spool root and unown
     for entries in "$root/$token"/* "$root/$token"/.[!.]* "$root/$token"/..?*; do
       { [ -e "$entries" ] || [ -L "$entries" ]; } && n=$((n + 1))
     done
-    line="orphaned spool $root/$token — no live window claims it"
-    [ "$n" -eq 0 ] || line="$line; $n child(ren) in it"
+    [ "$n" -gt 0 ] || continue
+    line="orphaned spool $root/$token — no live window claims it; $n child(ren) in it"
     printf '%s\n' "$(colour "$C_BAD" "$line")"
   done <<EOF
 $SPOOL_ORPHANS

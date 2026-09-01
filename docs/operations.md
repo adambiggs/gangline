@@ -825,6 +825,11 @@ naming them until someone acts:
   then remove it by hand;
 - a directory Gangline did not mint — it will not read, archive or remove one.
 
+Between sweeps `gang roster` names an orphan only when there is something in it,
+and says how many children it holds. An orphan holding nothing has no mail to
+reach, so its line could only ask to be ignored; the directory stays where it is
+as a reservation and the next session opening removes it.
+
 If the sweep reports that it could not read the tmux server's window list, it
 archived nothing: it cannot tell a dead session's spool from a live agent's, and
 guessing would move every live agent's mail. Read the spool root by hand.

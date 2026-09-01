@@ -1990,6 +1990,37 @@ excludes "porcelain rows stay a fixed per-agent shape" \
 GANG_SESSION="$sweep_session" "$GANG" down "$sweep_session" >/dev/null
 rm -rf -- "$GANG_LOCK_DIR/spool/cccc3333" "$GANG_LOCK_DIR/spool/notatoken"
 
+# AN ORPHAN WITH NOTHING IN IT IS NOT NEWS, AND A WARNING NOBODY CAN ACT ON
+# COSTS THE ONES THAT MATTER. The warning exists so held mail no command can
+# reach still has a reader; an empty directory is a spool identity nobody is
+# holding any more, with nothing in it to read and nothing to lose. It stays
+# under the root as a reservation until the next session opening sweeps it, and
+# for however long that is, roster repeats a line whose only instruction is to
+# ignore it — which is what teaches an operator to skim the whole class,
+# including the line that names real mail. So the population is split by what
+# is actually in the directory rather than by how it came to be unowned.
+mkdir -m 700 "$GANG_LOCK_DIR/spool/dddd4444"
+mkdir -m 700 "$GANG_LOCK_DIR/spool/eeee5555"
+printf 'ghost\nstranded fragment\n[gang:ghost#deadbeef] MARK_QUIET_ORPHAN\n' \
+  > "$GANG_LOCK_DIR/spool/eeee5555/00000000000000000001-dead1234"
+quiet_orphan_roster="$("$GANG" roster)"
+excludes "an orphaned spool holding nothing raises no roster warning" \
+  "$quiet_orphan_roster" "$GANG_LOCK_DIR/spool/dddd4444"
+contains "while an orphan still holding mail is named as before" \
+  "$quiet_orphan_roster" "orphaned spool $GANG_LOCK_DIR/spool/eeee5555"
+contains "and that warning still says how much is waiting in it" \
+  "$quiet_orphan_roster" "1 child(ren) in it"
+# ROSTER REPORTS AND REMOVES NOTHING. Going quiet about the empty directory is
+# not permission to delete it: the token it names is a reservation no live
+# window on this server claims, and a reservation another tmux server's window
+# may still be holding. Sweeping remains the job of a session opening, which is
+# the moment gang has just proved which server it is reading.
+[ -d "$GANG_LOCK_DIR/spool/dddd4444" ] \
+  && pass "and the quiet orphan is still on disk afterwards" \
+  || fail "and the quiet orphan is still on disk afterwards" \
+    "$GANG_LOCK_DIR/spool/dddd4444 was removed by a reporting command"
+rm -rf -- "$GANG_LOCK_DIR/spool/dddd4444" "$GANG_LOCK_DIR/spool/eeee5555"
+
 # RE-ADOPTION MUST NOT RE-MINT. An adopt that handed the window a fresh identity
 # would strand everything already parked under the old one in a directory no
 # command can resolve — including held entries, whose whole promise is that a
