@@ -626,8 +626,12 @@ def unknown(message):
 
 
 def proc_text(pid, leaf):
-    with open(f"/proc/{pid}/{leaf}", encoding="utf-8") as stream:
-        return stream.read().strip()
+    # DECODE WHAT A PROCESS NAMED ITSELF, NEVER REFUSE IT. /proc/PID/stat and
+    # /proc/PID/comm both carry the process's own name, which any program can
+    # set to arbitrary bytes, so strict UTF-8 turns one oddly named process
+    # anywhere on the host into an unreadable record here.
+    with open(f"/proc/{pid}/{leaf}", "rb") as stream:
+        return stream.read().decode("utf-8", "replace").strip()
 
 
 def own_ancestry():
@@ -683,14 +687,24 @@ def process_table():
             continue
         except (OSError, UnicodeError, IndexError, ValueError):
             # A PID THIS PROBE CANNOT READ IS NOT EVIDENCE ABOUT CODEX -- and
-            # it is not evidence of absence either. Reporting an unreadable
-            # Codex tree because an unrelated process was there would recreate
-            # the persistent unknown this reader exists to remove; dropping it
-            # silently would let a descendant that denies its own /proc record
-            # pass as an agent with nothing running. So it is skipped and
-            # counted, and the count decides whether "nothing held" is a
-            # finding or a gap.
-            opaque.append(pid)
+            # it is not evidence of absence either. Dropping it silently would
+            # let a descendant that denies its own /proc record pass as an
+            # agent with nothing running; counting every one of them would make
+            # an unrelated process anywhere on the host the reason a healthy
+            # idle window reports unknown, which is the symptom this reader
+            # exists to remove. Only a record that could be Codex's own is
+            # counted, and Codex's children run as this user.
+            #
+            # THE EXCEPTION IS RECORDED RATHER THAN CLOSED: a tool call that
+            # changes credentials leaves a descendant this test skips. This
+            # holds on a single-user host with a readable /proc, where the
+            # count is zero; the restricted-/proc case behind it is not covered
+            # here.
+            try:
+                if os.stat(f"/proc/{pid}").st_uid == os.getuid():
+                    opaque.append(pid)
+            except OSError:
+                pass
             continue
         table.setdefault(parent, []).append(pid)
     return table
@@ -774,7 +788,7 @@ def held_read(ancestors, own_tree):
                 return witness
     if unread:
         unknown(
-            "%d process record(s) on this host could not be read, so whether "
+            "%d process record(s) of this user could not be read, so whether "
             "Codex still holds background work is unknown" % len(unread)
         )
     return ""
@@ -796,8 +810,14 @@ try:
             break
         held = reading
     if not settled:
+        detail = ""
+        if OPAQUE:
+            detail = (
+                " and %d process record(s) of this user could not be read"
+                % len(OPAQUE)
+            )
         unknown(
-            f"the Codex child-process tree did not settle across {max_tree_reads} reads"
+            f"the Codex child-process tree did not settle across {max_tree_reads} reads{detail}"
         )
     if held:
         print(held)

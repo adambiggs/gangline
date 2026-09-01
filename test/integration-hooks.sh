@@ -271,6 +271,51 @@ codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
 equal "a live Codex helper inside CODEX_HOME is not held work" "1" "$codex_wait_rc"
 equal "an absent Codex waiting verdict prints no witness" "" "$codex_wait_output"
 
+# ONE ODDLY NAMED PROCESS ANYWHERE ON THE HOST IS NOT A GAP IN THIS READING.
+# The probe finds children by reading every process's recorded parent, and
+# /proc/PID/stat carries the process's own name, which any program may set to
+# bytes that are not text. A reader that refuses such a record counts it as one
+# it could not read, and one unrelated process then makes every idle Codex
+# window report unknown -- the exact symptom this probe exists to remove.
+# This process is a descendant of nothing under test; being on the host
+# at all is the whole of its contribution.
+cat > "$RUN_ROOT/odd-name.py" <<'ODDPY'
+import ctypes
+import sys
+
+ctypes.CDLL("libc.so.6", use_errno=True).prctl(
+    15, ctypes.c_char_p(b"od\xffname"), 0, 0, 0
+)
+open(sys.argv[1]).read()
+ODDPY
+mkfifo "$RUN_ROOT/odd-name.fifo"
+python3 "$RUN_ROOT/odd-name.py" "$RUN_ROOT/odd-name.fifo" &
+odd_name_pid=$!
+# Opening the other end returns only once that process has opened its own,
+# which it does after renaming itself: the state is observable before it is
+# asserted, and closing the descriptor is an immediate release.
+exec 9>"$RUN_ROOT/odd-name.fifo"
+equal "the stand-in host process really did record a name that is not text" "1" \
+  "$(python3 -c 'import sys
+try:
+    open("/proc/%s/stat" % sys.argv[1], "rb").read().decode("utf-8")
+except UnicodeDecodeError:
+    print(1)
+else:
+    print(0)' "$odd_name_pid")"
+codex_wait_rc=0
+codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
+  '. "$1"; collar_waiting "$2" "$3"' fixture \
+  "$ROOT/collars/codex.sh" "$codex_wait_id" \
+  '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
+  || codex_wait_rc=$?
+equal "an unreadable name elsewhere on the host does not make this window unknown" \
+  "1" "$codex_wait_rc"
+equal "and that verdict still prints no witness" "" "$codex_wait_output"
+exec 9>&-
+wait "$odd_name_pid" || true
+rm -f -- "$RUN_ROOT/odd-name.fifo"
+
 # THE SHIPPED QUEUE READER, AGAINST THE QUEUE BLOCK'S OWN LAYOUT. The delivery
 # fixture in the compose part proves the substrate wiring with a permissive
 # stand-in parser; nothing there meets collars/codex.sh, whose whole job is to
