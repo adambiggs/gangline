@@ -719,8 +719,14 @@ scenario_midturn() {
   sent="$(requests | grep -- "$token" || true)"
   contains "midturn: the envelope reached the model on the agent's own turn" \
     "$sent" "$token"
-  contains "midturn: that same turn carried its sender's attribution" \
-    "$sent" "gang:courier"
+  # THIS CALLER IS OUTSIDE THE TEAM'S TMUX SERVER. `--from courier` supplies a
+  # name Gangline cannot observe, so the honest envelope is deliberately
+  # `self-declared:courier`. Requiring an observed `courier` identity here
+  # would assert the opposite of the delivery contract; the scenario proves
+  # that the claimed sender survives the attributed spool without promoting
+  # that claim into an observation.
+  contains "midturn: that same turn carried its declared sender's attribution" \
+    "$sent" "gang:self-declared:courier"
   # THE ENVELOPE'S OWN TURN HAS TO FINISH TOO, and this is what catches a lane
   # that asserted on a request the harness was still blocked on: the request
   # log records a request when it ARRIVES, so a permanently held turn would
