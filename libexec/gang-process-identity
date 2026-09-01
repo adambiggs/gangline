@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Read one process generation, or terminate one exact Linux generation."""
 
+import fcntl
 import os
 import select
 import signal
@@ -226,7 +227,20 @@ def kill_generation(pid: int, expected_token: str, expected_session: str) -> int
         os.close(pidfd)
 
 
+def lock_fd(fd: int) -> int:
+    """Take a nonblocking flock inherited from the calling tick worker."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 75
+    except OSError:
+        return 2
+    return 0
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd" and sys.argv[2].isdigit():
+        return lock_fd(int(sys.argv[2]))
     if len(sys.argv) == 4 and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
         return print_tick(int(sys.argv[2]), sys.argv[3])
     if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():

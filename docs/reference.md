@@ -322,9 +322,15 @@ process currently holding the pane is the registered native session. A
 contradiction becomes `session-lost`, blocks delivery, and fails the pass rather
 than letting a restarted harness impersonate the old agent.
 
-One per-team generation lock admits a worker. A concurrent candidate touches a
-dirty marker and exits immediately; the owner consumes that marker with another
-pass. Dead, zombie, and replaced generations are reclaimed. A matching owner
+One per-team kernel flock admits a worker for its whole lifetime; the generation
+symlink carries diagnostic and recovery metadata rather than mutual exclusion.
+Owner death releases the flock in-kernel, and metadata retirement holds that
+same guard across its decision and unlink. The empty guard file remains under
+`GANG_LOCK_DIR` until the operator removes that lock root. A concurrent
+candidate touches a dirty marker and exits immediately; the owner consumes that
+marker with another pass. Dead, zombie, and replaced generations are reclaimed.
+The internal worker accepts only the controller's fixed production budget; a
+caller cannot feed shell arithmetic a different deadline. A matching owner
 at least the hard 60-second worker deadline fails health instead of looking
 like clean contention. The lock stamp uses the same monotonic clock domain as
 the controller deadline, so suspend and wall-clock adjustment do not spend

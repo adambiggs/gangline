@@ -3774,11 +3774,31 @@ tick_lock_paths_set() {
   lock_base "$base"
   TICK_LOCK_PATH="$base/$digest.lock"
   TICK_DIRTY_PATH="$base/$digest.dirty"
+  TICK_GUARD_PATH="$base/$digest.guard"
+  if [ -z "${TICK_GUARD_FD:-}" ]; then
+    exec {TICK_GUARD_FD}>"$TICK_GUARD_PATH" \
+      || { printf 'cannot open tick ownership guard %s\n' "$TICK_GUARD_PATH" >&2; return 1; }
+  fi
+}
+
+TICK_GUARD_PATH="" TICK_GUARD_FD="" TICK_GUARD_HELD=0
+tick_guard_try() { # 0 acquired/already held, 75 another worker, other = fault
+  local rc=0
+  [ "$TICK_GUARD_HELD" -ne 1 ] || return 0
+  "$ROOT/libexec/gang-process-identity" --lock-fd "$TICK_GUARD_FD" \
+    >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) TICK_GUARD_HELD=1; return 0 ;;
+    75) return 75 ;;
+    *) printf 'tick ownership guard %s cannot be acquired\n' "$TICK_GUARD_PATH" >&2; return 1 ;;
+  esac
 }
 
 tick_lock_release() {
   local holder=""
   [ -n "$TICK_LOCK_PATH" ] || return 0
+  [ "$TICK_GUARD_HELD" -eq 1 ] \
+    || { printf 'tick lock %s cannot be released without its ownership guard\n' "$TICK_LOCK_PATH" >&2; return 1; }
   holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
   # RECORDED AT ACQUISITION. Never re-derive the process identity here: an
   # unreadable owner at exit must neither leak this lock nor release another.
@@ -3797,11 +3817,10 @@ tick_process_read() { # $1 pid; live/dead/unknown in TICK_PROCESS_STATE
   out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" 2>/dev/null)" || rc=$?
   case "$rc" in
     0)
-      case "$out" in ''|*$'\t') return 0 ;; esac
       IFS=$'\t' read -r TICK_PROCESS_PID TICK_PROCESS_TOKEN TICK_PROCESS_PGRP \
         TICK_PROCESS_SESSION TICK_PROCESS_BORN_NS TICK_PROCESS_ROLE \
-        TICK_PROCESS_SIGNAL_SAFE extra <<<"$out"
-      if [ -z "$extra" ] && [ "$TICK_PROCESS_PID" = "$1" ]; then
+        TICK_PROCESS_SIGNAL_SAFE extra <<<"$out"$'\t__end'
+      if [ "$extra" = __end ] && [ "$TICK_PROCESS_PID" = "$1" ]; then
         case "$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$TICK_PROCESS_SESSION:$TICK_PROCESS_BORN_NS:$TICK_PROCESS_ROLE:$TICK_PROCESS_SIGNAL_SAFE" in
           *[!A-Za-z0-9:]*|*::*|:*) return 0 ;;
           *) TICK_PROCESS_STATE=live; return 0 ;;
@@ -3859,6 +3878,13 @@ tick_lock_expired() { # holder pid token pgrp age_ns format [mtime_ns legacy_age
   fi
 
   if [ "$format" = legacy ] && [ "$TICK_PROCESS_ROLE" != 1 ]; then
+    kill_rc=0
+    tick_guard_try || kill_rc=$?
+    case "$kill_rc" in
+      0) ;;
+      75) return 1 ;;
+      *) return 0 ;;
+    esac
     again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
     [ "$again" = "$holder" ] \
       || { printf 'tick lock %s changed while legacy pid %s was being classified\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
@@ -3896,6 +3922,13 @@ tick_lock_expired() { # holder pid token pgrp age_ns format [mtime_ns legacy_age
     3) printf 'expired tick owner pid %s did not die within the 1.0s confirmation bound; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
     *) printf 'expired tick owner pid %s could not be signalled by exact generation; lock %s was retained\n' "$pid" "$TICK_LOCK_PATH" >&2; return 0 ;;
   esac
+  kill_rc=0
+  tick_guard_try || kill_rc=$?
+  case "$kill_rc" in
+    0) ;;
+    75) printf 'expired tick owner pid %s died, but another contender acquired guard %s; lock was retained\n' "$pid" "$TICK_GUARD_PATH" >&2; return 0 ;;
+    *) return 0 ;;
+  esac
   again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
   [ "$again" = "$holder" ] \
     || { printf 'tick lock %s changed after expired owner pid %s died; replacement was retained\n' "$TICK_LOCK_PATH" "$pid" >&2; return 0; }
@@ -3906,12 +3939,13 @@ tick_lock_expired() { # holder pid token pgrp age_ns format [mtime_ns legacy_age
 }
 
 tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
-  local holder="" again="" err="" read_rc=0 read_races=0
+  local holder="" again="" err="" read_rc=0 read_races=0 guard_rc=0
   local pid="" token="" pgrp="" acquired="" extra="" age_ns=0 now_ns=0 mtime_ns=0 legacy_age=0 now=0
   local format="" expired_rc=0
   tick_lock_paths_set || return 1
   case "${GANG_TICK_DEADLINE_SECONDS:-}" in
-    ''|*[!0-9]*|0) printf 'tick worker has no readable deadline budget\n' >&2; return 1 ;;
+    60) ;;
+    *) printf 'tick worker has no production 60-second deadline budget\n' >&2; return 1 ;;
   esac
   lock_self_pid
   tick_process_read "$LOCK_SELF_PID"
@@ -3923,9 +3957,22 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
   TICK_LOCK_RECORD="v2:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now_ns"
   while :; do
     err=""
-    if err="$(ln -s "$TICK_LOCK_RECORD" "$TICK_LOCK_PATH" 2>&1)"; then
-      return 0
-    fi
+    guard_rc=0
+    tick_guard_try || guard_rc=$?
+    case "$guard_rc" in
+      0)
+        if err="$(ln -s "$TICK_LOCK_RECORD" "$TICK_LOCK_PATH" 2>&1)"; then
+          return 0
+        fi ;;
+      75)
+        if [ ! -L "$TICK_LOCK_PATH" ]; then
+          touch -- "$TICK_DIRTY_PATH" \
+            || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
+          TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+          return 75
+        fi ;;
+      *) return 1 ;;
+    esac
     [ -L "$TICK_LOCK_PATH" ] \
       || { printf 'tick lock %s cannot be created: %s\n' "$TICK_LOCK_PATH" "${err:-unknown error}" >&2; return 1; }
     # A valid owner may release between the -L observation and readlink. Its
@@ -3975,6 +4022,17 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
       return 1
     fi
     if [ "$TICK_PROCESS_STATE" = dead ]; then
+      guard_rc=0
+      tick_guard_try || guard_rc=$?
+      case "$guard_rc" in
+        0) ;;
+        75)
+          touch -- "$TICK_DIRTY_PATH" \
+            || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
+          TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+          return 75 ;;
+        *) return 1 ;;
+      esac
       again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
       [ "$again" = "$holder" ] || continue
       rm -f -- "$TICK_LOCK_PATH" \
@@ -3983,6 +4041,17 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
     fi
     if [ "$format" = v2 ]; then
       if [ "$TICK_PROCESS_TOKEN" != "$token" ] || [ "$TICK_PROCESS_PGRP" != "$pgrp" ]; then
+        guard_rc=0
+        tick_guard_try || guard_rc=$?
+        case "$guard_rc" in
+          0) ;;
+          75)
+            touch -- "$TICK_DIRTY_PATH" \
+              || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
+            TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+            return 75 ;;
+          *) return 1 ;;
+        esac
         again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
         [ "$again" = "$holder" ] || continue
         rm -f -- "$TICK_LOCK_PATH" \

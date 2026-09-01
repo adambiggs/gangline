@@ -17,6 +17,12 @@ def kill_worker_group() -> None:
     child = worker
     if child is None:
         return
+    # communicate() sets returncode only after it has reaped the direct child.
+    # Reading the attribute does not reap: while it is None, an exited zombie
+    # still reserves the worker's PID/PGID and the owned group is safe to name.
+    # Once it is set, that numeric PGID can be reused and must not be signalled.
+    if child.returncode is not None:
+        return
     try:
         # Do not poll here. A direct child may already have exited while one of
         # its descendants still owns the captured pipes. Until communicate()

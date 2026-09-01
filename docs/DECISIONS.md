@@ -634,9 +634,14 @@ longer leave accepted work dependent on that same recipient producing another
 event. Any later Gangline activity in the team supplies the retry.
 
 The worker is ephemeral, not resident: no process outlives the pass it was born
-to finish. A per-team generation lock admits one worker; a contender marks it
-dirty and exits, and the owner consumes that edge with one more pass before
-release. Dead and replaced generations are reclaimed. A live owner beyond the
+to finish. A per-team kernel flock admits one worker for its whole lifetime;
+the generation symlink is diagnostic and recovery metadata, not the mutex.
+This makes owner death release exclusion in-kernel and serializes every
+read-decide-unlink sequence without another stealable lock. The empty guard
+inode remains under `GANG_LOCK_DIR` until that operator-owned lock root is
+removed. A contender marks the owner dirty and exits, and the owner consumes
+that edge with one more pass before release. Dead and replaced generations are
+reclaimed. A live owner beyond the
 published worker deadline fails health; generation locks measure that budget
 in the deadline controller's monotonic clock domain, so suspend and wall-clock
 steps cannot spend it. After one more deadline interval, Linux may SIGKILL only
@@ -644,7 +649,9 @@ the pidfd-bound leader generation, confirm its death, and retire the lock.
 Legacy pid-only locks migrate only where the live PID is positively not a tick
 worker for this team and never authorize termination because they carry no
 generation or monotonic acquisition stamp.
-Ambiguous identity always retains the lock loudly. The deadline controller
+Ambiguous identity always retains the lock loudly. The worker accepts only the
+controller's fixed production budget, so noncanonical shell arithmetic cannot
+move a fresh lock onto the termination path. The deadline controller
 separately bounds the whole worker process group. Tick failure never
 changes the spawning command's status. Catchable controller death first kills
 and reaps that owned group, then re-raises the controller signal, so the new
