@@ -23,6 +23,27 @@ bare_error_commands="hitch adopt rename talk send at flush mail interrupt compac
 meaningful_bare_commands="up roster attach teams tick collars models roles config curfew notify upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
+# ONE MONOTONIC READER AND ONE ELAPSED-SINCE DECISION. Callers retain their
+# own operation and cleanup; this helper supplies only the clock domain and the
+# inclusive duration edge shared by those callers.
+clock_helper="$ROOT/libexec/gang-clock"
+clock_now=""
+if [ -x "$clock_helper" ] && clock_now="$($clock_helper now 2>/dev/null)" \
+   && [[ "$clock_now" =~ ^[0-9]+$ ]]; then
+  pass "the shared clock returns one monotonic nanosecond reading"
+  clock_future_rc=0
+  "$clock_helper" elapsed "$clock_now" 3600000000000 >/dev/null 2>&1 \
+    || clock_future_rc=$?
+  equal "a duration that has not elapsed returns the live not-yet verdict" \
+    1 "$clock_future_rc"
+  clock_elapsed_rc=0
+  "$clock_helper" elapsed 0 0 >/dev/null 2>&1 || clock_elapsed_rc=$?
+  equal "the elapsed-since edge is inclusive" 0 "$clock_elapsed_rc"
+else
+  fail "the shared clock returns one monotonic nanosecond reading" \
+    "$clock_helper is absent or returned an unreadable value"
+fi
+
 help_width_failure() { # stdin = help; prints every line wider than 48 chars
   python3 -c 'import sys
 for number, line in enumerate(sys.stdin.read().splitlines(), 1):

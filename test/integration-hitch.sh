@@ -1193,11 +1193,58 @@ contains "a local clock time declares its next occurrence" "$clock_curfew" "rema
 declared_curfew="$("$GANG" curfew 1h30m)"
 contains "a duration declares the team curfew" "$declared_curfew" "remaining"
 curfew_pair="$(tmux show-options -qv -t "=$GANG_SESSION:" @gl_curfew)"
-if [[ "$curfew_pair" =~ ^[0-9]+\ [0-9]+$ ]]; then
-  pass "the curfew stores one team declaration"
+if [[ "$curfew_pair" =~ ^v2:[0-9]+:[0-9]+:[0-9]+:[0-9]+$ ]]; then
+  pass "the curfew stores one wall label and one monotonic duration"
 else
-  fail "the curfew stores one team declaration" "got [$curfew_pair]"
+  fail "the curfew stores one wall label and one monotonic duration" \
+    "got [$curfew_pair]"
 fi
+
+# A WALL-CLOCK STEP CANNOT SPEND A MONOTONIC TEAM BUDGET. The wall target is
+# retained only as the local-time label; the declaration and deadline readings
+# decide the yellow edge in the shared elapsed domain.
+curfew_clock_shim="$RUN_ROOT/curfew-clock"
+curfew_date_bin="$RUN_ROOT/curfew-date-bin"
+mkdir -p "$curfew_date_bin"
+cat > "$curfew_clock_shim" <<'SH'
+#!/bin/sh
+now="${GANG_TEST_CLOCK_NOW_NS:?}"
+case "${1:-}" in
+  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
+  elapsed)
+    [ "$#" -eq 3 ] || exit 2
+    [ "$now" -ge "$2" ] || exit 2
+    [ $(( now - $2 )) -ge "$3" ]
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$curfew_clock_shim"
+{
+  printf '#!/bin/sh\n'
+  printf 'REAL=%q\n' "$(command -v date)"
+  cat <<'SH'
+if [ "${1:-}" = +%s ]; then
+  printf '%s\n' 9999999999
+  exit 0
+fi
+exec "$REAL" "$@"
+SH
+} > "$curfew_date_bin/date"
+chmod +x "$curfew_date_bin/date"
+curfew_wall_declared=1800000000
+curfew_wall_at=$((curfew_wall_declared + 100))
+curfew_mono_declared=40000000000
+curfew_mono_at=$((curfew_mono_declared + 100000000000))
+tmux set-option -t "=$GANG_SESSION:" @gl_curfew \
+  "v2:$curfew_wall_at:$curfew_wall_declared:$curfew_mono_at:$curfew_mono_declared"
+curfew_step_light="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
+  PATH="$curfew_date_bin:$PATH" GANG_TEST_CLOCK="$curfew_clock_shim" \
+  GANG_TEST_CLOCK_NOW_NS=100000000000 \
+  TMUX_PANE="$(tmux list-panes -t "$(window_id alpha)" -F '#{pane_id}')" \
+  "$GANG" hook)"
+contains "a wall-clock step cannot spend the monotonic curfew" \
+  "$curfew_step_light" "Yellow time light"
 
 curfew_now="$(date +%s)"
 tmux set-option -t "=$GANG_SESSION:" @gl_curfew "$(( curfew_now + 40 )) $(( curfew_now - 60 ))"

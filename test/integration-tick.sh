@@ -11,7 +11,7 @@ export GANG_SESSION="gangtick-test-$$"
 export GANG_TICK_DEADLINE_SECONDS=60
 
 tick_monotonic_ns() {
-  python3 -c 'import time; print(time.monotonic_ns())'
+  "$ROOT/libexec/gang-clock" now
 }
 
 tmux new-session -d -s "$GANG_SESSION" -n caller "PS1='❯ ' bash --norc"
@@ -745,6 +745,7 @@ rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
 tick_clock_ready="$RUN_ROOT/tick-clock-ready"
 tick_clock_release="$RUN_ROOT/tick-clock-release"
 tick_clock_bin="$RUN_ROOT/tick-clock-bin"
+tick_clock_helper="$RUN_ROOT/tick-monotonic-clock"
 mkdir -p "$tick_clock_bin"
 mkfifo "$tick_clock_ready" "$tick_clock_release"
 GANG_TEST_TICK_READY_FIFO="$tick_clock_ready" \
@@ -753,8 +754,22 @@ GANG_TEST_TICK_RELEASE_FIFO="$tick_clock_release" \
 tick_clock_owner=$!
 IFS= read -r -N 1 _ < "$tick_clock_ready"
 tick_clock_record="$(readlink "$tick_lock_path")"
-IFS=: read -r _ tick_clock_worker tick_clock_token tick_clock_pgrp _ \
+IFS=: read -r _ tick_clock_worker _ _ tick_clock_acquired \
   <<<"$tick_clock_record"
+cat > "$tick_clock_helper" <<'SH'
+#!/bin/sh
+now="${GANG_TEST_CLOCK_NOW_NS:?}"
+case "${1:-}" in
+  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
+  elapsed)
+    [ "$#" -eq 3 ] || exit 2
+    [ "$now" -ge "$2" ] || exit 2
+    [ $(( now - $2 )) -ge "$3" ]
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$tick_clock_helper"
 {
   printf '#!/bin/sh\n'
   printf 'REAL=%q\n' "$(command -v date)"
@@ -770,6 +785,8 @@ SH
 chmod +x "$tick_clock_bin/date"
 tick_clock_jump_rc=0
 GANG_TICK_INTERNAL=1 PATH="$tick_clock_bin:$PATH" \
+  GANG_TEST_CLOCK="$tick_clock_helper" \
+  GANG_TEST_CLOCK_NOW_NS=$(( tick_clock_acquired + 30000000000 )) \
   "$GANG" __tick-worker > "$RUN_ROOT/tick-clock-jump.out" 2>&1 \
   || tick_clock_jump_rc=$?
 tick_clock_worker_state=0
@@ -783,12 +800,10 @@ equal "the wall-clock step leaves the production owner record unchanged" \
   "$tick_clock_record" "$(readlink "$tick_lock_path" 2>/dev/null || true)"
 
 if [ "$tick_clock_worker_state" -eq 0 ]; then
-  tick_clock_edge=$(( $(tick_monotonic_ns) - 61000000000 ))
-  rm -f -- "$tick_lock_path"
-  ln -s "v2:$tick_clock_worker:$tick_clock_token:$tick_clock_pgrp:$tick_clock_edge" \
-    "$tick_lock_path"
   tick_clock_edge_rc=0
-  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+  GANG_TICK_INTERNAL=1 GANG_TEST_CLOCK="$tick_clock_helper" \
+    GANG_TEST_CLOCK_NOW_NS=$(( tick_clock_acquired + 61000000000 )) \
+    "$GANG" __tick-worker \
     > "$RUN_ROOT/tick-clock-edge.out" 2>&1 || tick_clock_edge_rc=$?
   equal "the 60s edge reports health without killing the live worker" \
     1 "$tick_clock_edge_rc"
@@ -802,8 +817,6 @@ if [ "$tick_clock_worker_state" -eq 0 ]; then
   equal "the 60s edge preserves the cooperative dirty request" present \
     "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
   if [ "$tick_clock_edge_worker_state" -eq 0 ]; then
-    rm -f -- "$tick_lock_path"
-    ln -s "$tick_clock_record" "$tick_lock_path"
     printf '\n' > "$tick_clock_release"
   fi
 fi

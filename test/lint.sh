@@ -31,6 +31,17 @@ if [ "$fast" -eq 0 ]; then
   test/source-guards-fixtures.sh
 fi
 
+# ONE NATIVE MONOTONIC READ SITE. Runtime code reaches the clock through the
+# shared executable, so deadline consumers cannot silently select another
+# monotonic domain or bypass the suite's clock seam.
+monotonic_readers="$(rg -l 'time[.]monotonic(_ns)?[(]' bin libexec 2>/dev/null || true)"
+if [ "$monotonic_readers" != libexec/gang-clock ]; then
+  printf '%s\n' \
+    "lint: runtime monotonic reads must exist only in libexec/gang-clock; found:" \
+    "${monotonic_readers:-<none>}" >&2
+  exit 1
+fi
+
 # THE E2E LANE IS THE ONE FILE ALLOWED TO SPEND WALL TIME, and this is the check
 # that keeps that exemption honest. It drives a real claude-code TUI, so it
 # cannot be written against a fake clock — but the rule below was never about

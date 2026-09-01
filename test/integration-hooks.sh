@@ -10,12 +10,12 @@ alpha_tmux_pane="$(tmux list-panes -t "$alpha_id" -F '#{pane_id}')"
 printf '%s' '{"hook_event_name":"UserPromptSubmit"}' |
   TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null
 turn_open="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
-contains "a native prompt hook opens the turn record" "$turn_open" "open"
+contains "a native prompt hook opens the monotonic turn record" "$turn_open" "open v2:"
 
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$alpha_tmux_pane" "$GANG" hook >/dev/null
 turn_closed="$(tmux show-options -wqv -t "$alpha_id" @gl_turn)"
-contains "a native stop hook closes the turn record" "$turn_closed" "closed"
+contains "a native stop hook closes the monotonic turn record" "$turn_closed" "closed v2:"
 
 # WAIT IS AN OPT-IN EVENT BARRIER. The test observes successful hook arming
 # through another latched tmux channel, so no sleep or polling stands between
@@ -818,12 +818,23 @@ shift
 exec "\$@"
 SH
 chmod +x "$wait_timeout_bin/timeout"
+wait_clock="$RUN_ROOT/wait-clock"
+cat > "$wait_clock" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' 1000000000 ;;
+  elapsed) [ "$#" -eq 3 ] || exit 2; exit 0 ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$wait_clock"
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 wait_deadline_arm="gang-test-wait-arm-$$-deadline"
 wait_deadline_pids="$RUN_ROOT/wait-deadline-pids"
 BASH_ENV="$RUN_ROOT/wait-arm-env" GANG_TEST_WAIT_ARM="$wait_deadline_arm" \
   GANG_TEST_WAIT_PIDS="$wait_deadline_pids" \
   GANG_TEST_WAIT_TRACE="$wait_trace" GANG_TEST_REFUSE_REWAIT=1 \
+  GANG_TEST_CLOCK="$wait_clock" \
   PATH="$wait_timeout_bin:$PATH" \
   "$GANG" wait waitable --until "done" --timeout 9 \
   >"$RUN_ROOT/wait-deadline.out" 2>"$RUN_ROOT/wait-deadline.err" &
@@ -901,6 +912,23 @@ cat > "$wait_race_python/subprocess.py" <<'PY'
 import os
 import signal
 
+PIPE = -1
+DEVNULL = -2
+
+
+class Result:
+    def __init__(self, returncode, stdout=""):
+        self.returncode = returncode
+        self.stdout = stdout
+
+
+def run(argv, **_kwargs):
+    if argv[1:] == ["now"]:
+        return Result(0, "1\n")
+    if len(argv) == 4 and argv[1] == "elapsed":
+        return Result(0)
+    raise RuntimeError("unexpected clock command")
+
 
 class Popen:
     def __init__(self, argv, start_new_session=False):
@@ -909,17 +937,19 @@ class Popen:
         self.argv = argv
         self.pid = 2147483647
         self.signalled = False
+        self.returncode = None
 
     def wait(self):
         with open(os.environ["GANG_TEST_WAIT_SUCCESS"], "w") as witness:
             witness.write(self.argv[-1])
-        return 0
+        self.returncode = 0
+        return self.returncode
 
     def poll(self):
         if not self.signalled:
             self.signalled = True
             os.kill(os.getpid(), signal.SIGALRM)
-        return 0
+        return self.returncode
 PY
 tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
 if PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
@@ -1187,6 +1217,8 @@ contains "a refused stall note is accepted into a drainable target's spool" \
   "$("$GANG" status stall-target)" "spooled: 1"
 contains "parking a stall note records the debounce" \
   "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)" "agent_needs_input"
+contains "the stall-note debounce uses the shared monotonic clock" \
+  "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)" "v2:"
 printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
 contains "a parked stall note is debounced without a duplicate" \
@@ -1506,6 +1538,8 @@ usage_repeat="$(printf '%s' '{"hook_event_name":"PostToolUse"}' |
 equal "a provider-usage edge is emitted once per usage epoch" "" "$usage_repeat"
 equal "a heavyweight native reader is throttled between nearby hooks" "1" \
   "$(tmux show-options -wqv -t "$usage_lit_id" @test_usage_calls)"
+contains "the provider-reader throttle uses the shared monotonic clock" \
+  "$(tmux show-options -wqv -t "$usage_lit_id" @gl_usage_checked)" "v2:"
 printf '%s\n' \
   "Current session"$'\t'"95"$'\t'"$(( usage_now + 600 ))"$'\t'"$usage_now" \
   "Current week"$'\t'"85"$'\t'"$(( usage_now + 86400 ))"$'\t'"$usage_now" \
@@ -1608,9 +1642,24 @@ usage_timer_args="$RUN_ROOT/usage-timer.args"
 usage_timer_arms="$RUN_ROOT/usage-timer.arms"
 usage_timer_stops="$RUN_ROOT/usage-timer.stops"
 usage_timer_predecl="$RUN_ROOT/usage-timer.predecl"
+usage_fire_clock="$RUN_ROOT/usage-fire-clock"
 usage_real_date="$(command -v date)"
 usage_real_tmux="$(command -v tmux)"
 mkdir -p "$usage_timer_bin"
+cat > "$usage_fire_clock" <<'SH'
+#!/bin/sh
+now="${GANG_TEST_CLOCK_NOW_NS:?}"
+case "${1:-}" in
+  now) [ "$#" -eq 1 ] || exit 2; printf '%s\n' "$now" ;;
+  elapsed)
+    [ "$#" -eq 3 ] || exit 2
+    [ "$now" -ge "$2" ] || exit 2
+    [ $(( now - $2 )) -ge "$3" ]
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$usage_fire_clock"
 # A TMUX THAT FAILS ONE NAMED WRITE. The rollback for a declaration that cannot
 # be stored is otherwise unreachable: every set-option in this suite succeeds,
 # and a path with no way to fail is a path with no evidence behind it.
@@ -2048,7 +2097,18 @@ equal "and the fresh declaration names the new reset" "$auto_reset_next" \
 # so that nothing but auto-resume can satisfy it.
 auto_fire_record="$(tmux show-options -wqv -t "$auto_id" @gl_usage_wake)"
 IFS=$'\t' read -r auto_fire_reset auto_fire_unit _ <<<"$auto_fire_record"
-GANG_TEST_NOW="$auto_fire_reset" PATH="$usage_timer_bin:$PATH" \
+auto_fire_turn="$(tmux show-options -wqv -t "$auto_id" @gl_turn)"
+auto_fire_started="${auto_fire_turn#open v2:}"
+case "$auto_fire_started" in ''|*[!0-9]*)
+  fail "the auto-resume reset advances an established monotonic turn" \
+    "unreadable turn record [$auto_fire_turn]" ;;
+  *) pass "the auto-resume reset advances an established monotonic turn" ;;
+esac
+auto_fire_turn_limit=300
+GANG_TURN_LIMIT="$auto_fire_turn_limit" \
+  GANG_TEST_NOW="$auto_fire_reset" GANG_TEST_CLOCK="$usage_fire_clock" \
+  GANG_TEST_CLOCK_NOW_NS=$(( auto_fire_started + (auto_fire_turn_limit + 1) * 1000000000 )) \
+  PATH="$usage_timer_bin:$PATH" \
   "$GANG" wait-limit auto-res --fire "$auto_fire_reset" \
   --unit "$auto_fire_unit" >/dev/null
 # source-guard: producer@8d3690d819ed: the needle is the default wake body, which only a fired wake types, and the emptied declaration asserted immediately below is the independent witness that this fire consumed that record rather than that unrelated text is on the screen
