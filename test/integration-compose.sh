@@ -1537,3 +1537,109 @@ for unstopping_collar in opencode pi; do
   equal "the $unstopping_collar collar declares no interrupt key until one is verified" \
     "" "$unstopping_key"
 done
+
+# A WINDOW THAT GOES BETWEEN TWO READS IS NOT AN OPTION THAT WAS NEVER SET.
+# Tmux answers a quiet option read on a window that no longer exists exactly as
+# it answers an option nobody ever set: status 0, empty line. Gangline's tmux
+# guard is what separates them, and these are the two commands that read without
+# consuming a status, so before this the guard's nonzero ended the command on a
+# bare shell status — a part-written report and the guard's own line, with
+# nothing from gang about what it did and did not read. The window is really
+# killed, on a real server, through the real guard.
+#
+# A SECOND EXPLICITLY NAMED DISPOSABLE SERVER, because the death takes its
+# server with it — measured: the keeper window below survives the kill-window
+# itself and the server is gone by the very next read — and this proof must not
+# take the suite's substrate with it. Which of the guard's two nonzero causes
+# fires is therefore not pinned; what is asserted is the clause that belongs to
+# gang, which is the same either way.
+#
+# THE TWO COMMANDS NEED THE DEATH AT DIFFERENT MOMENTS, and each is placed at
+# the earliest point that is still the read under test. `resolve` loads the
+# collar last, so a collar that ends its own window puts the death between
+# resolve and the command's own reads: that is where flush reads. Status passes
+# the pane-activity bookkeeping first, which WRITES to the window and refuses
+# loudly on its own when it cannot — a real refusal, but not this one — so its
+# window dies at the last-action hook instead, which runs after that write and
+# before the first read under test.
+vanish_root="$RUN_ROOT/window-vanish"
+vanish_session="gangtest-window-vanish-$$"
+vanish_socket="$vanish_root/tmux-$(id -u)/default"
+vanish_collars="$RUN_ROOT/vanish-collars"
+mkdir -p "$vanish_collars"
+cat > "$vanish_collars/vanishmid.sh" <<COLLAR
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_QUEUED_REGEX='parked'
+GANG_QUEUE_RECALL_KEY='Up'
+collar_last_action() {
+  tmux kill-window -t "\${1:-}" 2>/dev/null || true
+  return 1
+}
+COLLAR
+cat > "$vanish_collars/vanishnow.sh" <<COLLAR
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_QUEUED_REGEX='parked'
+GANG_QUEUE_RECALL_KEY='Up'
+tmux kill-window -t "\$AGENT_ID" 2>/dev/null || true
+COLLAR
+
+vanish_world() { # $1 = agent name, $2 = collar; a private server and a keeper
+  rm -rf -- "$vanish_root"
+  mkdir -p "$vanish_root"
+  TMUX_TMPDIR="$vanish_root" tmux new-session -d \
+    -s "$vanish_session" -n keeper 'exec bash --noprofile --norc'
+  TMUX_TMPDIR="$vanish_root" tmux new-window -d \
+    -t "=$vanish_session" -n "$1" 'exec bash --noprofile --norc'
+  vanish_id="$(TMUX_TMPDIR="$vanish_root" tmux display-message -p \
+    -t "=$vanish_session:$1" '#{window_id}')"
+  TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_agent "$1"
+  TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_collar "$2"
+}
+
+vanish_down() { # the private server must be gone BEFORE its root is removed,
+                # and must say so itself rather than be assumed
+  local said="" rc=0 alive=""
+  if tmux -S "$vanish_socket" list-sessions >/dev/null 2>&1; then
+    said="$(tmux -S "$vanish_socket" kill-server 2>&1)" || rc=$?
+  fi
+  ! tmux -S "$vanish_socket" list-sessions >/dev/null 2>&1 \
+    || alive="kill-server exited $rc and said: ${said:-nothing}"
+  equal "the vanish world's private server is gone before its root is removed" \
+    "" "$alive"
+}
+
+vanish_run() { # $1.. = gang argv; its output and its status, on stdout
+  local rc=0
+  PATH="$ROOT/libexec/gang-tmux-guard:$PATH" \
+    TMUX_TMPDIR="$vanish_root" GANG_SESSION="$vanish_session" \
+    GANG_COLLARS="$vanish_collars" GANG_TEST_COLLARS='' \
+    "$GANG" "$@" 2>&1 || rc=$?
+  printf '%s\n' "--status $rc"
+}
+
+vanish_world vanishing vanishmid
+vanish_status="$(vanish_run status vanishing)"
+vanish_down
+excludes "a status whose window vanishes mid-report does not exit clean" \
+  "$vanish_status" "--status 0"
+contains "and status says in its own words that the rest is unknown" \
+  "$vanish_status" "the rest of the report for 'vanishing' is unknown"
+contains "naming the option whose value it will not report as unset" \
+  "$vanish_status" "UNVERIFIED rather than unset"
+excludes "and it is not the pane-activity refusal answering instead" \
+  "$vanish_status" "activity-only bound"
+
+vanish_world flushing vanishnow
+TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked 'a body'
+TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked_body 'a body'
+vanish_flush="$(vanish_run flush flushing)"
+vanish_down
+excludes "a flush whose window vanishes before the recall does not exit clean" \
+  "$vanish_flush" "--status 0"
+contains "and flush says the recall key was not pressed" \
+  "$vanish_flush" "was NOT pressed and nothing was recovered for 'flushing'"
+rm -rf -- "$vanish_root" "$vanish_collars"

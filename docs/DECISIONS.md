@@ -1825,3 +1825,32 @@ Reporting is not removing. The token an empty orphan names is a reservation, and
 removing on a read would hand that identity to a later mint and enrol two windows
 on one spool. Removal stays with the sweep at a session opening, where the server
 being read is the one gang has just proved it can talk to.
+
+## An unreadable window option is a third answer, not an absent one
+
+The guard can now separate a live window's unset option from a window that is
+gone, and a consumer that discards that status puts the distinction straight
+back: an empty value is reported as an absence nobody observed, and a bare
+strict-mode read ends its command on a shell status that says nothing about
+what the command did or did not do. `gang status` printed part of a report and
+exited on the guard's line with no account of its own; `gang flush` exited
+before the recall key without saying the key was never pressed.
+
+Reads that make a surface lie or die therefore go through one reader that keeps
+all three answers — read, target gone, server silent — and each caller supplies
+the clause only it can write: what this costs, in its own terms. Status stops at
+the first unreadable read, because every field below it is unknown rather than
+absent and a cascade of unreadable lines is not more information. `stage_clear`
+does the opposite and clears nothing: a record that cannot be read is not a
+record that is gone.
+
+The leftover branch of the box classification is that rule seen from the other
+side. It names a human as the author, so it may only be reached from reads that
+answered; let an unreadable record arrive there as an absence and the line
+invents exactly the provenance the classification exists to refuse to invent.
+
+The reads that deliberately collapse a failure into an absence are left as
+they are. They are a larger decision about how much of the roster should
+report unknown rather than absent, and the roster already has somewhere to put
+one: a row whose state cannot be read prints `?unknown?` and leaves the command
+nonzero, which is the shape the rest of those reads would have to take.

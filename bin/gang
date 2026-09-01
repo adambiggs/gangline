@@ -3322,9 +3322,56 @@ stamp_binary_id() { # $1 = window id, optional $2 = agent name being hitched
   die "could not stamp Gangline binary identity on window $1${refusal:+ — $refusal}"
 }
 
+# TMUX ANSWERS A WINDOW THAT IS GONE EXACTLY AS IT ANSWERS AN OPTION THAT WAS
+# NEVER SET: status 0 and an empty line. Nothing in the answer says which it
+# was, so a consumer that reads the value alone reports an absence it never
+# observed. Gangline's tmux guard is what tells the two apart — it witnesses the
+# target before the read and refuses to hand back an empty value it cannot vouch
+# for — and this is the consumer side of it, keeping the three answers apart so
+# a caller can say "unset", "gone", and "the server stopped answering" as the
+# different things they are. Without the guard on PATH every read is status 0
+# and the distinction does not exist; that is the ambiguity this reads through,
+# not a fault in it.
+window_option() { # $1 window, $2 option; print the value.
+                  # 0 read, 1 target unavailable, 2 the server did not answer
+  local value rc=0
+  value="$(tmux show-options -wqv -t "$1" "$2" 2>/dev/null)" || rc=$?
+  case "$rc" in
+    0) printf '%s' "$value" ;;
+    2) return 2 ;;
+    *) return 1 ;;
+  esac
+}
+
+# A COMMAND THAT CANNOT READ ITS TARGET SAYS SO IN ITS OWN WORDS. The bare reads
+# this replaces ended their command on a shell status, which reaches an operator
+# as the guard's line and a nonzero exit with nothing from gang about what was
+# and was not done. The caller supplies that clause because only it knows what
+# it had already printed or was about to press.
+option_unreadable() { # $1 = window_option status, $2 option, $3 the caller's
+                      # clause; never returns
+  case "$1" in
+    2) die "$3 — the tmux server stopped answering at the read of $2, so its value is UNVERIFIED rather than unset" ;;
+    *) die "$3 — the window is gone as of the read of $2, so its value is UNVERIFIED rather than unset" ;;
+  esac
+}
+
+OPTION_VALUE=""
+window_option_or_die() { # $1 window, $2 option, $3 what this costs the caller
+  local rc=0
+  OPTION_VALUE="$(window_option "$1" "$2")" || rc=$?
+  [ "$rc" -eq 0 ] || option_unreadable "$rc" "$2" "$3"
+}
+
 binary_skew_note() { # $1 = window, $2 = current id; print an identity warning
-  local stamped current="$2"
-  stamped="$(tmux show-options -wqv -t "$1" @gl_binary_id)"
+  local stamped current="$2" stamped_rc=0
+  stamped="$(window_option "$1" @gl_binary_id)" || stamped_rc=$?
+  if [ "$stamped_rc" -ne 0 ]; then
+    # The stamp is how skew is detected, so an unreadable stamp is a warning of
+    # its own rather than a window that agrees with this binary.
+    printf 'binary-identity UNVERIFIED (the window could not be read; current %s)' "$current"
+    return 0
+  fi
   if [ "$current" = unavailable ] || [ "$stamped" = unavailable ]; then
     printf 'binary-identity unavailable (window %s; current %s)' \
       "${stamped:-unstamped}" "$current"
@@ -6063,8 +6110,12 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
     printf 'parked: the harness queued earlier input (gang flush %s)' "$3"
     return
   fi
-  local want
-  want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
+  local want want_rc=0
+  want="$(window_option "$1" @gl_staged_box)" || want_rc=$?
+  if [ "$want_rc" -ne 0 ]; then
+    printf 'unreadable: the window could not be read, so gang cannot say whose text is in its box (gang roster)'
+    return
+  fi
   if [ -n "$want" ] && [ "$want" = "$2" ]; then
     printf "staged: gang's own undelivered body (gang composer %s)" "$3"
     return
@@ -6076,20 +6127,32 @@ box_class() { # $1 = window id, $2 = the reading refused on, $3 = target name,
   # cannot match is gang's own text as plausibly as anybody's, and naming it a
   # human draft is the invented-provenance mistake this whole classification
   # exists to stop making. The note says what gang put there; status prints it.
-  if [ -n "$(tmux show-options -wqv -t "$1" @gl_staged)" ]; then
+  local staged staged_rc=0
+  staged="$(window_option "$1" @gl_staged)" || staged_rc=$?
+  if [ "$staged_rc" -ne 0 ]; then
+    printf 'unreadable: the window could not be read, so gang cannot say whose text is in its box (gang roster)'
+    return
+  fi
+  if [ -n "$staged" ]; then
     printf 'unattributed: gang recorded an undelivered paste here and cannot match it to this box (gang status %s)' "$3"
     return
   fi
+  # THE LEFTOVER CASE NAMES A HUMAN, so it may only be reached from reads that
+  # answered. An unreadable record above would arrive here as an absence and
+  # make this line invent the very provenance it exists to refuse to invent.
   printf 'draft: a human line gang did not write (gang composer %s)' "$3"
 }
 
-staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste there
-  tmux show-options -wqv -t "$1" @gl_staged
+staged_note() { # $1 = window id -> what gang knows about an unsubmitted paste
+                # there; 2 when the record could not be read at all
+  window_option "$1" @gl_staged
 }
 
-staged_current() { # $1 = window id -> the record, freshness-checked at read time
-  local note box
-  note="$(staged_note "$1")"
+staged_current() { # $1 = window id -> the record, freshness-checked at read
+                   # time; the reader's own 1 or 2 when it could not be read
+  local note box note_rc=0
+  note="$(staged_note "$1")" || note_rc=$?
+  [ "$note_rc" -eq 0 ] || return "$note_rc"
   [ -n "$note" ] || return 0
   # The record is state; the box is fresher evidence. Staged input can flush
   # outside gang's sight — an operator's Enter, a queue draining at a turn
@@ -6185,8 +6248,12 @@ clear_box() { # $1 = window id, $2 = the box its caller just read (optional seco
 }
 
 stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours and reachable
-  local note box want
-  note="$(staged_note "$1")"
+  local note box want note_rc=0
+  # A RECORD THAT CANNOT BE READ IS NOT A RECORD THAT IS GONE. Clearing is the
+  # one thing this must not do on an unreadable window: the note stands until
+  # something can read it.
+  note="$(staged_note "$1")" || note_rc=$?
+  [ "$note_rc" -eq 0 ] || return 0
   [ -n "$note" ] || return 0
   if occupied "$1"; then return 0; fi       # a keystroke here would act on the UI
   composer_settled "$1" || return 0         # somebody is typing: not gang's box to touch
@@ -6194,7 +6261,7 @@ stage_clear() { # $1 = window id; drop a recorded paste once it is provably ours
   if ! grep -q '[^[:space:]]' <<<"$box"; then
     stage_forget "$1"; return 0             # empty box: whoever cleared it, it is gone
   fi
-  want="$(tmux show-options -wqv -t "$1" @gl_staged_box)"
+  want="$(window_option "$1" @gl_staged_box)" || return 0
   [ -n "$want" ] && [ "$box" = "$want" ] || return 0
   clear_box "$1" "$box" || return 0
   stage_forget "$1"
@@ -8570,7 +8637,7 @@ flush_stranded() { # $1 = target name
 # before this command. No record, no hint, or a readback that does not match,
 # and no Enter is pressed.
 cmd_flush() {
-  local name="${1:-}" parked body frag box loaded unverified_record flush_queued_rc=0
+  local name="${1:-}" parked body frag box loaded unverified_record flush_cost flush_queued_rc=0
   [ $# -le 1 ] || die "flush: unexpected argument '$2'"
   if [ -z "$name" ]; then
     name="$(self_name)" || {
@@ -8584,13 +8651,22 @@ cmd_flush() {
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUED_REGEX and no collar_queued, so gang cannot tell a parked queue from an ordinary composer and has nothing here it could verify (gang attach)"
   [ -n "$GANG_QUEUE_RECALL_KEY" ] \
     || die "flush: collar '$AGENT_COLLAR' declares no GANG_QUEUE_RECALL_KEY, so gang does not know the keystroke that loads this harness's parked message (gang attach)"
-  parked="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked)"
+  # WHAT AN UNREADABLE RECORD COSTS HERE, said in flush's own terms: this
+  # command exists to press one key against a composer, and every refusal it
+  # has says whether that key was pressed. A window that goes while the record
+  # is being read is no different and must not end the command on a shell
+  # status that says nothing about the keystroke.
+  flush_cost="flush: $GANG_QUEUE_RECALL_KEY was NOT pressed and nothing was recovered for '$name'"
+  window_option_or_die "$AGENT_ID" @gl_parked "$flush_cost"
+  parked="$OPTION_VALUE"
   if [ -z "$parked" ]; then
-    [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_drained)" ] \
+    window_option_or_die "$AGENT_ID" @gl_parked_drained "$flush_cost"
+    [ -z "$OPTION_VALUE" ] \
       || refuse "flush: the queue hint Gangline recorded in '$name' is gone — its composer came back empty, so the body may have entered at a boundary or been submitted by hand. There is nothing left here to recover, and this is not the same as never having had a record: look for it in the transcript before sending it again (gang capture $name)"
     refuse "flush: gang has no body recorded alongside a queue hint in '$name'. It recovers only a recorded body, because that is what the loaded composer gets read back against — without it, $GANG_QUEUE_RECALL_KEY would submit whatever happened to be there (gang attach)"
   fi
-  unverified_record="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_unverified)"
+  window_option_or_die "$AGENT_ID" @gl_parked_unverified "$flush_cost"
+  unverified_record="$OPTION_VALUE"
   [ "$unverified_record" != 1 ] \
     || printf "flush: warning: Gangline first saw this queue hint after Enter, so it is not proof the body is parked. Continue only if the recipient's transcript or current context confirms that; otherwise this recovery can submit it twice.\n" >&2
   # THE BODY IS THE RECORD THAT MATTERS, and a park recorded without one is a
@@ -8598,7 +8674,8 @@ cmd_flush() {
   # gang that recorded only the rendering. Saying so is the whole answer here:
   # falling back to the rendering is what this fix removed, and guessing which
   # of the two a composer should match is how a recovery submits a substitution.
-  body="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_body)"
+  window_option_or_die "$AGENT_ID" @gl_parked_body "$flush_cost"
+  body="$OPTION_VALUE"
   [ -n "$body" ] \
     || die "flush: gang recorded a parked message in '$name' but not the body it parked, so there is nothing authoritative to read the recalled composer back against and $GANG_QUEUE_RECALL_KEY was NOT pressed. A record from before gang kept the body cannot be verified; recover it by hand (gang attach, press Up to load the parked message, then Enter)"
   frag="${body%%$'\n'*}"
@@ -9859,7 +9936,7 @@ usage_wake_status_report() { # $1 window
 
 cmd_status() {
   local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current
-  local timed_line hitched hitched_rc
+  local timed_line hitched hitched_rc status_cost staged_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
   if [ -z "$name" ]; then
@@ -9870,6 +9947,12 @@ cmd_status() {
     }
   fi
   resolve "$name"
+  # A STATUS IS ASSEMBLED FROM MANY READS AND THE WINDOW CAN GO BETWEEN ANY TWO
+  # OF THEM. Every field below the one that could not be read is then unknown
+  # rather than absent, and printing the rest would be a report of a window
+  # nobody could see. It stops at the first unreadable read and says so, once:
+  # a cascade of unreadable lines is not more information.
+  status_cost="status: the rest of the report for '$name' is unknown, and gang will not print an absence it did not observe (gang roster)"
   state="$(state_now "$AGENT_ID")"
   printf '%s\n' "$(paint_state "$state")"
   # PROVENANCE, RESOLVED RATHER THAN REMEMBERED. The stamp is a spool identity,
@@ -9896,13 +9979,19 @@ cmd_status() {
       *) printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")" ;;
     esac
   fi
-  self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_requested)"
-  [ -n "$self_pending" ] \
-    || self_pending="$(tmux show-options -wqv -t "$AGENT_ID" @gl_self_compact_dispatching)"
+  window_option_or_die "$AGENT_ID" @gl_self_compact_requested "$status_cost"
+  self_pending="$OPTION_VALUE"
+  [ -n "$self_pending" ] || {
+    window_option_or_die "$AGENT_ID" @gl_self_compact_dispatching "$status_cost"
+    self_pending="$OPTION_VALUE"
+  }
   [ -z "$self_pending" ] \
     || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
-  staged="$(staged_current "$AGENT_ID")"
-  park_unverified="$(tmux show-options -wqv -t "$AGENT_ID" @gl_parked_unverified 2>/dev/null)"
+  staged_rc=0
+  staged="$(staged_current "$AGENT_ID")" || staged_rc=$?
+  [ "$staged_rc" -eq 0 ] || option_unreadable "$staged_rc" @gl_staged "$status_cost"
+  window_option_or_die "$AGENT_ID" @gl_parked_unverified "$status_cost"
+  park_unverified="$OPTION_VALUE"
   # "on record", not "in the input box": the body may sit in the box, in the
   # harness's own queue, or in a state gang could not read — the note carries
   # what is actually known, and its later clearing means the obstruction is
@@ -9951,16 +10040,20 @@ cmd_status() {
     done
     printf '%s\n' "$(colour "$C_BAD" "spool: $held message(s) gang has stopped acting on; it will not send them again; read them under $held_dir")"
   fi
-  spool_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool_failed)"
+  window_option_or_die "$AGENT_ID" @gl_spool_failed "$status_cost"
+  spool_failed="$OPTION_VALUE"
   [ -z "$spool_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "spool drain NOT verified: $spool_failed")"
-  stall_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_stall_failed)"
+  window_option_or_die "$AGENT_ID" @gl_stall_failed "$status_cost"
+  stall_failed="$OPTION_VALUE"
   [ -z "$stall_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "stall note NOT accepted: $stall_failed")"
-  auto_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_auto_resume_failed)"
+  window_option_or_die "$AGENT_ID" @gl_auto_resume_failed "$status_cost"
+  auto_failed="$OPTION_VALUE"
   [ -z "$auto_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "automatic resume refused: $auto_failed")"
-  hook_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_hook_failed)"
+  window_option_or_die "$AGENT_ID" @gl_hook_failed "$status_cost"
+  hook_failed="$OPTION_VALUE"
   [ -z "$hook_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "native event NOT interpreted: $hook_failed")"
   usage_limit_status_report "$AGENT_ID"
