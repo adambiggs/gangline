@@ -1392,6 +1392,74 @@ for dialog_case in known trust; do
   "$GANG" drop "dialog-$dialog_case" >/dev/null
 done
 
+# NOT EVERY OWNED INPUT BOX IS WAITING FOR A PERSON. The provider-latency menu
+# above says in its own last line that no action is required and that it closes
+# by itself, while the agent behind it keeps working, and every delivery behind
+# it waits while gang reports only occupancy of unknown authority. The
+# state does not change — a numbered chooser still eats a paste — but a collar
+# that recognises the surface gets to say what it is, and gang sends no key to
+# dismiss it, because a menu that clears itself between the reading and the
+# keystroke takes that digit as message text.
+#
+# THE SHIPPED READER MEETS THE FRAME IT MUST READ. The menu painted here
+# carries codex-cli 0.151.0's own wording rather than a paraphrase, so
+# collars/codex.sh answers the text it answers in production, and the
+# directory-trust menu is the negative case that keeps the match from being
+# satisfied by any occupied screen at all.
+cat > "$RUN_ROOT/collars/dialog-advisory.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/dialog.sh"
+collar_advisory() { # answers exactly as the shipped Codex reader does
+  local pane
+  pane="\$(tmux capture-pane -pJ -t "\$1" 2>/dev/null)" || return 1
+  printf '%s\n' "\$pane" | grep -qF \
+    'No action is required. Codex will keep waiting, and this menu will close when the response is ready.' \
+    || return 1
+  printf 'the fixture menu says it closes by itself'
+}
+SH
+dialog_start dialog-advisory known dialog-advisory
+dialog_await dialog-advisory ready
+advisory_rc=0
+advisory_out="$(bash -c '. "$1"; collar_advisory "$2"' fixture \
+  "$ROOT/collars/codex.sh" "$(window_id dialog-advisory)")" || advisory_rc=$?
+equal "the shipped Codex reader recognises its own advisory menu" 0 "$advisory_rc"
+contains "and says why nobody has to answer it" \
+  "$advisory_out" "closes by itself when the response is ready"
+contains "the advisory state keeps the occupied verdict" \
+  "$("$GANG" status dialog-advisory | sed -n '1p')" "!occupied! (advisory:"
+contains "and the state line carries the collar's explanation" \
+  "$("$GANG" status dialog-advisory | sed -n '1p')" "closes by itself"
+advisory_send_rc=0
+advisory_send="$(printf 'ADVISORY_BODY' | "$GANG" send \
+  --to dialog-advisory --from tester --live-only --stdin 2>&1)" \
+  || advisory_send_rc=$?
+equal "delivery is still refused at an advisory surface" 3 "$advisory_send_rc"
+contains "and the refusal explains the surface instead of demanding an answer" \
+  "$advisory_send" "occupied by an advisory surface"
+contains "and says delivery resumes without anyone acting" \
+  "$advisory_send" "delivery resumes when it closes"
+equal "no key was sent to dismiss the advisory menu" "" \
+  "$(<"$RUN_ROOT/dialog-advisory.keys")"
+"$GANG" drop dialog-advisory >/dev/null
+
+# A MENU THAT SAYS NOTHING OF THE KIND. The directory-trust prompt is occupancy
+# that genuinely needs a person, painted by the same fixture and read by the
+# same collar — so the advisory wording above is a recognition rather than a
+# relabelling of every screen that owns the box.
+dialog_start dialog-plain trust dialog-advisory
+dialog_await dialog-plain ready
+advisory_neg_rc=0
+bash -c '. "$1"; collar_advisory "$2"' fixture \
+  "$ROOT/collars/codex.sh" "$(window_id dialog-plain)" >/dev/null 2>&1 \
+  || advisory_neg_rc=$?
+equal "the shipped Codex reader declines a menu that needs a person" 1 "$advisory_neg_rc"
+equal "and that occupancy is still authority unknown" \
+  "!occupied! (authority unknown)" \
+  "$("$GANG" status dialog-plain | sed -n '1p')"
+"$GANG" drop dialog-plain >/dev/null
+
 # The shipped Claude collar's occupancy regex is bound to a frame the harness
 # printed, through the collar itself: the fixture overrides only the launch, so
 # GANG_OCCUPIED_REGEX is the one collars/claude-code.sh ships.

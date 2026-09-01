@@ -370,7 +370,24 @@ GANG_QUEUE_RECALL_KEY="S-Left"
 # so the recall advertisement has to be on screen too — and a header with no
 # advertisement is a native rendering this collar no longer understands, which
 # is an unknown rather than a queue gang could offer to flush.
+# CODEX SAYS SO ITSELF. Its provider-latency menu owns the input box while the
+# agent behind it keeps working, and the menu's own last line states that no
+# action is required and that it closes when the response is ready. That
+# sentence is the evidence: it is Codex declaring the surface advisory, so it
+# is what gets matched rather than any particular menu's wording above it.
 #
+# A MISS COSTS NOTHING. Where this does not match, gang reports the occupancy
+# it always reported; nothing here decides whether to type, and no key is ever
+# sent at the menu.
+collar_advisory() { # $1 = tmux target; 0 + what it is, 1 = not an advisory surface
+  local pane
+  pane="$(tmux capture-pane -pJ -t "$1" 2>/dev/null)" || return 1
+  printf '%s\n' "$pane" | grep -qF \
+    'No action is required. Codex will keep waiting, and this menu will close when the response is ready.' \
+    || return 1
+  printf 'Codex is waiting on its provider and says the menu closes by itself when the response is ready'
+}
+
 # READ THE PANE PLAIN, NEVER THE DIM-STRIPPED READING. Codex draws both the
 # queue header and the recall advertisement inside ANSI dim runs, and the awk
 # in collar_input deletes a dim run wholesale — so the reading that serves the

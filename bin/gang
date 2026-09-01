@@ -1444,7 +1444,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   # A name missing here is one a previously loaded collar keeps answering for
   # the next, and `declare -F` is how each of them is asked whether it exists.
   unset -f collar_context collar_context_lights collar_input collar_overlay \
-    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued \
+    collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory \
     collar_last_action collar_usage_limits collar_usage_limits_error \
     collar_auto_resume_record collar_auto_resume_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
@@ -2890,6 +2890,46 @@ overlay_title() { # $1 = window id, collar loaded; print an overlay dialog's
     1|3) return 1 ;;
     *) die "collar_overlay in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
   esac
+}
+
+# NOT EVERY UI THAT OWNS THE BOX IS WAITING FOR A PERSON. Codex draws a
+# provider-latency menu that says in its own words that no action is required
+# and that it will close when the response is ready, while the agent behind it
+# keeps working. Gang still refuses to type through it — a numbered chooser
+# would eat the paste — but "occupied (authority unknown)" sends a lead looking
+# for a human decision that does not exist, while every delivery behind it
+# waits with nothing in the report to say the wait needs no one.
+#
+# THE STATE DOES NOT CHANGE, ONLY THE EXPLANATION. Dismissing the menu would
+# mean sending a bare digit at a surface that clears itself: if it goes between
+# the reading and the keystroke, that digit lands in the composer as message
+# text. Gang reports what is there and leaves the key unspent.
+OCCUPIED_ADVISORY=""
+occupied_advisory() { # $1 = window id, collar loaded; 0 = self-clearing surface
+  local output="" rc=0
+  OCCUPIED_ADVISORY=""
+  declare -F collar_advisory >/dev/null || return 1
+  output="$(collar_advisory "$1")" || rc=$?
+  output="$(printf '%s' "$output" | config_sanitize)"
+  case "$rc" in
+    0) [ -n "$output" ] \
+         || die "collar_advisory in $GANG_COLLAR_FILE reported an advisory surface without saying what it is"
+       OCCUPIED_ADVISORY="$output"
+       return 0 ;;
+    1) [ -z "$output" ] \
+         || die "collar_advisory in $GANG_COLLAR_FILE described a surface while reporting none"
+       return 1 ;;
+    *) die "collar_advisory in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
+  esac
+}
+
+occupancy_note() { # $1 = window id, collar loaded -> the clause a sender needs
+  if occupied_advisory "$1"; then
+    printf " That surface is advisory: %s. Nobody has to answer it and gang will not, because a menu that clears itself between the reading and the keystroke takes that key as message text instead; delivery resumes on its own when it closes." \
+      "$OCCUPIED_ADVISORY"
+    return 0
+  fi
+  overlay_note "$1"
 }
 
 overlay_note() { # $1 = window id, collar loaded -> a clause naming the dialog, or nothing
@@ -6170,7 +6210,10 @@ inject() { # $1 window, $2 text, $3 head, $4 locked,
   if occupied "$1"; then
     [ "$OCCUPIED_SURFACE" != background-sessions ] \
       || refuse "refusing to deliver '$frag': $tname is showing the background-sessions view, whose composer creates a new session instead of reaching this agent. Nothing was typed and the body is still the sender's — return to the agent conversation, then try again"
-    refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach).$(overlay_note "$1")"
+    if occupied_advisory "$1"; then
+      refuse "refusing to deliver '$frag': $tname is occupied by an advisory surface — $OCCUPIED_ADVISORY — and a UI owning the input box still eats a paste, so nothing was typed and the body is still the sender's.$(occupancy_note "$1")"
+    fi
+    refuse "refusing to deliver '$frag': $tname is occupied (authority unknown) — a UI owns its input box, so the paste would act on that UI instead of landing (gang attach).$(occupancy_note "$1")"
   fi
   # REFUSING BEATS A FALSE DELIVERED. Every other guard here asks about the
   # input box, and a blocked window's box is genuinely free: the paste would
@@ -7996,6 +8039,8 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
   if occupied "$AGENT_ID"; then
     [ "$OCCUPIED_SURFACE" != background-sessions ] \
       || refuse "'$1' is showing the background-sessions view, whose composer creates a new session instead of reaching this agent; nothing was typed — return to the agent conversation, then try again"
+    ! occupied_advisory "$AGENT_ID" \
+      || refuse "'$1' is occupied by an advisory surface — $OCCUPIED_ADVISORY — and a UI owning the input box still eats a paste; nothing was typed, and delivery resumes when it closes"
     refuse "'$1' is occupied (authority unknown) — a UI owns its input box; inspect it with gang attach"
   fi
   [ -z "$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_lost 2>/dev/null)" ] \
@@ -9253,7 +9298,11 @@ state_now() { # $1 = window id, collar loaded -> the state, in words
   fi
   if occupied "$1"; then
     activity_hold_clear "$1"
-    state="!occupied! (authority unknown)"
+    if occupied_advisory "$1"; then
+      state="!occupied! (advisory: $OCCUPIED_ADVISORY)"
+    else
+      state="!occupied! (authority unknown)"
+    fi
     glyph_write "$1" "$state"
     STATE_NOW_RESULT="$state"
     printf '%s\n' "$state"
