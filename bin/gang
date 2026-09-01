@@ -10048,6 +10048,7 @@ try:
                 )
                 if received[0] == signal.SIGALRM:
                     received[0] = None
+                alarm_fired[0] = False
                 signal.alarm(remaining_s)
             except ClockError:
                 clock_failed[0] = True
