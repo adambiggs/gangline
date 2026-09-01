@@ -999,7 +999,10 @@ class Popen:
         if os.environ.get("GANG_TEST_WAIT_TERM_DURING_REARM") == "1" or \
            os.environ.get("GANG_TEST_WAIT_TERM_DURING_EXPIRY") == "1":
             if term_sent:
-                self.returncode = -signal.SIGKILL
+                if os.environ.get("GANG_TEST_WAIT_CHILD_SUCCESS") == "1":
+                    self.returncode = 0
+                else:
+                    self.returncode = -signal.SIGKILL
                 return self.returncode
             if not rearm_started:
                 rearm_started = True
@@ -1088,6 +1091,24 @@ equal "a cancellation during deadline comparison preserves its signal status" \
   1 "$wait_expiry_term_rc"
 contains "deadline comparison reports the foreground signal instead of expiry" \
   "$(<"$RUN_ROOT/wait-expiry-term.err")" \
+  "before its boundary fired (status 143)"
+
+# A FOREGROUND SIGNAL CANNOT TURN AN ALREADY-FIRED ALARM INTO SUCCESS. The
+# child reports a native release after the alarm without having completed
+# before it; the supervisor must retain the cancellation rather than accept 0.
+tmux set-option -w -t "$waitable_id" @gl_turn "open $(date +%s)"
+wait_expiry_success_term_rc=0
+PYTHONPATH="$wait_race_python" GANG_TEST_WAIT_TERM_DURING_EXPIRY=1 \
+  GANG_TEST_WAIT_CHILD_SUCCESS=1 \
+  GANG_TEST_WAIT_SUCCESS="$wait_race_witness" \
+  "$GANG" wait waitable --until "done" --timeout 5 \
+  > "$RUN_ROOT/wait-expiry-success-term.out" \
+  2> "$RUN_ROOT/wait-expiry-success-term.err" \
+  || wait_expiry_success_term_rc=$?
+equal "an elapsed alarm cannot become success after cancellation" \
+  1 "$wait_expiry_success_term_rc"
+contains "an elapsed alarm preserves the foreground signal over late success" \
+  "$(<"$RUN_ROOT/wait-expiry-success-term.err")" \
   "before its boundary fired (status 143)"
 
 tmux set-option -w -t "$waitable_id" @gl_turn malformed
