@@ -3353,6 +3353,9 @@ hitch_up_abort() { # detach only the external client this invocation created
 on_exit() {
   local rc=$?
   set +e
+  # A tick transaction must never lend its kernel guard to unrelated exit
+  # cleanup. An owning worker reacquires it below when retiring its metadata.
+  tick_guard_drop
   spool_retire_abort
   lock_release
   tick_lock_release
@@ -3775,16 +3778,16 @@ tick_lock_paths_set() {
   TICK_LOCK_PATH="$base/$digest.lock"
   TICK_DIRTY_PATH="$base/$digest.dirty"
   TICK_GUARD_PATH="$base/$digest.guard"
-  if [ -z "${TICK_GUARD_FD:-}" ]; then
-    exec {TICK_GUARD_FD}>"$TICK_GUARD_PATH" \
-      || { printf 'cannot open tick ownership guard %s\n' "$TICK_GUARD_PATH" >&2; return 1; }
-  fi
 }
 
 TICK_GUARD_PATH="" TICK_GUARD_FD="" TICK_GUARD_HELD=0
 tick_guard_try() { # 0 acquired/already held, 75 another worker, other = fault
   local rc=0
   [ "$TICK_GUARD_HELD" -ne 1 ] || return 0
+  if [ -z "$TICK_GUARD_FD" ]; then
+    exec {TICK_GUARD_FD}>"$TICK_GUARD_PATH" \
+      || { printf 'cannot open tick ownership guard %s\n' "$TICK_GUARD_PATH" >&2; return 1; }
+  fi
   "$ROOT/libexec/gang-process-identity" --lock-fd "$TICK_GUARD_FD" \
     >/dev/null 2>&1 || rc=$?
   case "$rc" in
@@ -3794,16 +3797,42 @@ tick_guard_try() { # 0 acquired/already held, 75 another worker, other = fault
   esac
 }
 
+tick_guard_wait() { # block on the short metadata transaction, never a pass
+  local rc=0
+  [ "$TICK_GUARD_HELD" -ne 1 ] || return 0
+  if [ -z "$TICK_GUARD_FD" ]; then
+    exec {TICK_GUARD_FD}>"$TICK_GUARD_PATH" \
+      || { printf 'cannot open tick ownership guard %s\n' "$TICK_GUARD_PATH" >&2; return 1; }
+  fi
+  "$ROOT/libexec/gang-process-identity" --lock-fd-wait "$TICK_GUARD_FD" \
+    >/dev/null 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    TICK_GUARD_HELD=1
+    return 0
+  fi
+  printf 'tick ownership guard %s cannot be acquired for release\n' \
+    "$TICK_GUARD_PATH" >&2
+  return 1
+}
+
+tick_guard_drop() {
+  if [ -n "${TICK_GUARD_FD:-}" ]; then
+    exec {TICK_GUARD_FD}>&-
+    TICK_GUARD_FD=""
+  fi
+  TICK_GUARD_HELD=0
+}
+
 tick_lock_release() {
   local holder=""
   [ -n "$TICK_LOCK_PATH" ] || return 0
-  [ "$TICK_GUARD_HELD" -eq 1 ] \
-    || { printf 'tick lock %s cannot be released without its ownership guard\n' "$TICK_LOCK_PATH" >&2; return 1; }
+  tick_guard_wait || return 1
   holder="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || holder=""
   # RECORDED AT ACQUISITION. Never re-derive the process identity here: an
   # unreadable owner at exit must neither leak this lock nor release another.
   [ "$holder" != "$TICK_LOCK_RECORD" ] || rm -f -- "$TICK_LOCK_PATH"
   TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+  tick_guard_drop
 }
 
 TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
@@ -3849,6 +3878,7 @@ PY
 tick_lock_recovered() { # $1 diagnostic; lock already retired, no pass ran
   printf '%s\n' "$1" >&2
   TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
+  tick_guard_drop
   return 1
 }
 
@@ -3962,6 +3992,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
     case "$guard_rc" in
       0)
         if err="$(ln -s "$TICK_LOCK_RECORD" "$TICK_LOCK_PATH" 2>&1)"; then
+          tick_guard_drop
           return 0
         fi ;;
       75)

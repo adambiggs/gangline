@@ -225,6 +225,45 @@ equal "the singleton consumes the dirty edge with exactly one rerun" "1 2 " \
 equal "the completed singleton leaves no lock or dirty residue" 0 \
   "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
 
+# The ownership guard protects only lock-metadata transactions. It must be
+# closed before the worker enters its cooperative pass, or any subprocess that
+# outlives the worker can inherit the flock and wedge every later contender.
+# The first pass command opens the same guard independently; status zero means
+# no inherited open description still owns it.
+tick_guard_probe_bin="$RUN_ROOT/tick-guard-probe-bin"
+tick_guard_probe="$RUN_ROOT/tick-guard-probe"
+tick_guard_path="${tick_lock_path%.lock}.guard"
+tick_dirty_path="${tick_lock_path%.lock}.dirty"
+mkdir -p "$tick_guard_probe_bin"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v rm)"
+  printf 'HELPER=%q\n' "$ROOT/libexec/gang-process-identity"
+  printf 'GUARD=%q\n' "$tick_guard_path"
+  printf 'DIRTY=%q\n' "$tick_dirty_path"
+  printf 'PROBE=%q\n' "$tick_guard_probe"
+  cat <<'SH'
+if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ] \
+   && [ ! -e "$PROBE" ]; then
+  exec 9>"$GUARD"
+  rc=0
+  "$HELPER" --lock-fd 9 >/dev/null 2>&1 || rc=$?
+  printf '%s\n' "$rc" > "$PROBE"
+  exec 9>&-
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_guard_probe_bin/rm"
+chmod +x "$tick_guard_probe_bin/rm"
+tick_guard_probe_rc=0
+GANG_TICK_INTERNAL=1 PATH="$tick_guard_probe_bin:$PATH" \
+  "$GANG" __tick-worker > "$RUN_ROOT/tick-guard-probe.out" 2>&1 \
+  || tick_guard_probe_rc=$?
+equal "the guard probe worker completes its cooperative pass" 0 \
+  "$tick_guard_probe_rc"
+equal "a cooperative-pass subprocess inherits no tick ownership guard" 0 \
+  "$(<"$tick_guard_probe")"
+
 # A LIVE TICK OWNER MAY RELEASE AFTER -L BUT BEFORE READLINK. The shim is the
 # exact seam: tick_lock_acquire made its own failed ln and successful -L
 # observation before invoking this external readlink. The internal worker

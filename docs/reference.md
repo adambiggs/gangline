@@ -322,10 +322,11 @@ process currently holding the pane is the registered native session. A
 contradiction becomes `session-lost`, blocks delivery, and fails the pass rather
 than letting a restarted harness impersonate the old agent.
 
-One per-team kernel flock admits a worker for its whole lifetime; the generation
-symlink carries diagnostic and recovery metadata rather than mutual exclusion.
-Owner death releases the flock in-kernel, and metadata retirement holds that
-same guard across its decision and unlink. The empty guard file remains under
+One per-team kernel flock serializes generation-lock metadata transactions; the
+generation symlink records worker ownership between them. The guard descriptor
+is closed before the cooperative pass and reopened for final owner release, so
+pass subprocesses cannot inherit exclusion. Metadata retirement holds the same
+guard across its decision and unlink. The empty guard file remains under
 `GANG_LOCK_DIR` until the operator removes that lock root. A concurrent
 candidate touches a dirty marker and exits immediately; the owner consumes that
 marker with another pass. Dead, zombie, and replaced generations are reclaimed.

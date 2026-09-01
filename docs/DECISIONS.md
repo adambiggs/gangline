@@ -634,12 +634,13 @@ longer leave accepted work dependent on that same recipient producing another
 event. Any later Gangline activity in the team supplies the retry.
 
 The worker is ephemeral, not resident: no process outlives the pass it was born
-to finish. A per-team kernel flock admits one worker for its whole lifetime;
-the generation symlink is diagnostic and recovery metadata, not the mutex.
-This makes owner death release exclusion in-kernel and serializes every
-read-decide-unlink sequence without another stealable lock. The empty guard
-inode remains under `GANG_LOCK_DIR` until that operator-owned lock root is
-removed. A contender marks the owner dirty and exits, and the owner consumes
+to finish. A per-team kernel flock serializes lock-metadata transactions; the
+generation symlink remains the worker ownership record between them. The guard
+descriptor is opened only for a transaction and closed before the cooperative
+pass, so a subprocess cannot inherit exclusion beyond the worker's lifetime.
+Every read-decide-unlink sequence and final owner release holds that guard. The
+empty guard inode remains under `GANG_LOCK_DIR` until that operator-owned lock
+root is removed. A contender marks the owner dirty and exits, and the owner consumes
 that edge with one more pass before release. Dead and replaced generations are
 reclaimed. A live owner beyond the
 published worker deadline fails health; generation locks measure that budget

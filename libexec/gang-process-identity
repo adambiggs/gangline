@@ -227,10 +227,11 @@ def kill_generation(pid: int, expected_token: str, expected_session: str) -> int
         os.close(pidfd)
 
 
-def lock_fd(fd: int) -> int:
-    """Take a nonblocking flock inherited from the calling tick worker."""
+def lock_fd(fd: int, wait: bool = False) -> int:
+    """Take a flock inherited for one calling tick metadata transaction."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        operation = fcntl.LOCK_EX if wait else fcntl.LOCK_EX | fcntl.LOCK_NB
+        fcntl.flock(fd, operation)
     except BlockingIOError:
         return 75
     except OSError:
@@ -241,6 +242,8 @@ def lock_fd(fd: int) -> int:
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd" and sys.argv[2].isdigit():
         return lock_fd(int(sys.argv[2]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd-wait" and sys.argv[2].isdigit():
+        return lock_fd(int(sys.argv[2]), wait=True)
     if len(sys.argv) == 4 and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
         return print_tick(int(sys.argv[2]), sys.argv[3])
     if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():
