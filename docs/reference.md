@@ -1246,7 +1246,7 @@ Exactly these keys are settable:
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
-| `GANG_TMUX_GUARD` | `on` | `on` to put a `tmux` shim at the front of every hitched agent's `PATH`; it refuses destructive commands when the resolved server has live `@gl_agent` registrations, or `off` to launch agents with an untouched `PATH` |
+| `GANG_TMUX_GUARD` | `on` | `on` to put a `tmux` shim at the front of every hitched agent's `PATH`; it refuses commands that could be retargeted by an absent `TMUX_TMPDIR`, and refuses destructive commands when the server tmux resolves has live or unreadable `@gl_agent` registrations, or `off` to launch agents with an untouched `PATH` |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |

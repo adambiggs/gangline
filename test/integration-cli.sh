@@ -2109,15 +2109,35 @@ guard_state="$guard_home/state"
 guard_ran="$guard_home/real-tmux-argv"
 guard_servers="$guard_home/agent-servers"
 guard_unreadable_servers="$guard_home/unreadable-servers"
+guard_unreachable_labels="$guard_home/unreachable-labels"
 guard_agent_rows="$guard_home/agent-rows"
 guard_fake_uid="guard-test-$$"
 mkdir -p "$guard_bin" "$guard_state/teams"
 cat > "$guard_bin/tmux" <<SH
 #!/bin/sh
 socket=""
+label=""
 if [ "\${1:-}" = -S ]; then
   socket="\${2:-}"
   shift 2
+elif [ "\${1:-}" = -L ]; then
+  label="\${2:-}"
+  shift 2
+fi
+if [ "\${1:-}" = display-message ]; then
+  if [ -n "\$label" ] && grep -Fqx "\$label" "$guard_unreachable_labels"; then
+    exit 1
+  fi
+  if [ -n "\$socket" ]; then
+    printf '%s\\n' "\$socket"
+  elif [ -n "\$label" ]; then
+    printf '%s\\n' "\${TMUX_TMPDIR:-/tmp}/tmux-$guard_fake_uid/\$label"
+  elif [ -n "\${TMUX:-}" ]; then
+    printf '%s\\n' "\${TMUX%%,*}"
+  else
+    printf '%s\\n' "\${TMUX_TMPDIR:-/tmp}/tmux-$guard_fake_uid/default"
+  fi
+  exit 0
 fi
 if [ "\${1:-}" = list-windows ]; then
   target=""
@@ -2139,6 +2159,10 @@ if [ "\${1:-}" = list-windows ]; then
   exit 0
 fi
 printf '%s\n' "\$*" > "$guard_ran"
+if [ -n "\$label" ] && grep -Fqx "\$label" "$guard_unreachable_labels"; then
+  printf 'error connecting to unreachable label %s\n' "\$label" >&2
+  exit 1
+fi
 exit 0
 SH
 printf '%s\n' '#!/bin/sh' "printf '%s\\n' '$guard_fake_uid'" > "$guard_bin/id"
@@ -2147,6 +2171,7 @@ guard_team_socket="$guard_home/team-socket"
 printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
 printf '%s\n' "$guard_team_socket" > "$guard_servers"
 : > "$guard_unreadable_servers"
+: > "$guard_unreachable_labels"
 printf 'guardteam\tguard-agent\n' > "$guard_agent_rows"
 
 guard_session=guardteam
@@ -2239,6 +2264,90 @@ fi
 contains "the original team root receives the sandbox refusal" \
   "$(cat "$guard_team_log/tmux-guard.log" 2>/dev/null)" "refused"
 
+# TMUX ITSELF SETTLES THE TARGET. tmux 3.2a silently ignores a TMUX_TMPDIR
+# whose directory is absent and falls back to its ordinary socket root. The
+# guard used to build the missing path itself, fail to read it, and then pass
+# the teardown to a tmux that reached somewhere else. This fixture uses the
+# real tmux and a unique label: the fallback can destroy only this disposable
+# server, and the EXIT trap owns that exact label until the explicit cleanup.
+# The parent exists while the child deliberately does not, so absence is the
+# input under test rather than a failed fixture setup.
+guard_fallback_home="$guard_home/fallback"
+guard_missing_tmpdir="$guard_fallback_home/missing-tmux-root"
+guard_fallback_label="gangline-guard-fallback-$$"
+guard_fallback_session="guard-fallback-$$"
+mkdir -p "$guard_fallback_home"
+if [ ! -e "$guard_missing_tmpdir" ]; then
+  pass "the retargeting probe starts with its TMUX_TMPDIR absent"
+else
+  fail "the retargeting probe starts with its TMUX_TMPDIR absent" \
+    "$guard_missing_tmpdir exists"
+fi
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_fallback_label" new-session -d \
+    -s "$guard_fallback_session" -n agent 'exec cat'
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_fallback_label" set-option -w \
+    -t "=$guard_fallback_session:agent" @gl_agent fallback-agent
+guard_fallback_socket="$(env -u TMUX -u TMUX_PANE \
+  TMUX_TMPDIR="$guard_missing_tmpdir" \
+  "$REAL_TMUX" -L "$guard_fallback_label" display-message -p '#{socket_path}')"
+equal "real tmux answers with a socket outside the missing TMUX_TMPDIR" \
+  "$(env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+    "$REAL_TMUX" -L "$guard_fallback_label" display-message -p '#{socket_path}')" \
+  "$guard_fallback_socket"
+guard_rc=0
+guard_out="$(env -u TMUX -u TMUX_PANE \
+  PATH="$ROOT/libexec/gang-tmux-guard:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  TMUX_TMPDIR="$guard_missing_tmpdir" \
+  "$guard_shim" -L "$guard_fallback_label" kill-server 2>&1 >/dev/null)" \
+  || guard_rc=$?
+equal "a kill-server under an absent TMUX_TMPDIR fails closed" 3 "$guard_rc"
+contains "the retargeted refusal names tmux's actual socket" \
+  "$guard_out" "$guard_fallback_socket"
+if env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_fallback_label" has-session \
+    -t "=$guard_fallback_session" >/dev/null 2>&1; then
+  pass "the absent-TMUX_TMPDIR refusal leaves its disposable server alive"
+else
+  fail "the absent-TMUX_TMPDIR refusal leaves its disposable server alive" \
+    "the guard allowed kill-server to end $guard_fallback_session"
+fi
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_fallback_label" kill-server >/dev/null 2>&1 || true
+guard_fallback_label=""
+
+# THE SAME FALLBACK PRECEDES TEARDOWN. Before a fixture reaches kill-server,
+# ordinary new-session, hitch, send-keys, and kill-pane traffic is already on
+# the wrong server. Reject the bad root for every tmux command, proven here by
+# a synchronous creation that must leave no server behind. A second unique
+# label contains the pre-fix failure and is owned by the EXIT trap.
+guard_ordinary_label="gangline-guard-ordinary-$$"
+guard_ordinary_session="guard-ordinary-$$"
+guard_rc=0
+guard_out="$(env -u TMUX -u TMUX_PANE \
+  PATH="$ROOT/libexec/gang-tmux-guard:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  TMUX_TMPDIR="$guard_missing_tmpdir" \
+  "$guard_shim" -L "$guard_ordinary_label" new-session -d \
+    -s "$guard_ordinary_session" -n fixture 'exec cat' 2>&1 >/dev/null)" \
+  || guard_rc=$?
+equal "ordinary tmux traffic under an absent TMUX_TMPDIR fails closed" 3 "$guard_rc"
+contains "and says the fixture root does not exist" \
+  "$guard_out" "$guard_missing_tmpdir"
+if env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_ordinary_label" has-session \
+    -t "=$guard_ordinary_session" >/dev/null 2>&1; then
+  fail "the refused ordinary command creates no fallback server" \
+    "$guard_ordinary_session exists on the default socket root"
+else
+  pass "the refused ordinary command creates no fallback server"
+fi
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  "$REAL_TMUX" -L "$guard_ordinary_label" kill-server >/dev/null 2>&1 || true
+guard_ordinary_label=""
+
 # AIMED COMMANDS ARE THE POINT OF THE RULE, so they have to keep working — a
 # guard that refused these would only teach agents to bypass it.
 guard_out="$(guard_run "$guard_team_socket,1,0" - - -S "$guard_home/private-socket" kill-server)"
@@ -2248,6 +2357,13 @@ if guard_reached_tmux; then
 else
   fail "and reaches the real tmux with its own socket" "the real tmux never ran"
 fi
+mkdir -p "$guard_home/sandbox"
+if [ -d "$guard_home/sandbox" ]; then
+  pass "the private TMUX_TMPDIR control has an existing root"
+else
+  fail "the private TMUX_TMPDIR control has an existing root" \
+    "$guard_home/sandbox is not a directory"
+fi
 guard_out="$(guard_run - "$guard_home/sandbox" - kill-server)"
 equal "a kill-server with TMUX unset and a private TMUX_TMPDIR runs" \
   0 "$(printf '%s' "$guard_out" | head -1)"
@@ -2256,10 +2372,19 @@ contains "an unprotected teardown fall-open is recorded" \
 guard_unreadable_socket="$guard_home/unreadable-socket"
 printf '%s\n' "$guard_unreadable_socket" > "$guard_unreadable_servers"
 guard_out="$(guard_run - - - -S "$guard_unreadable_socket" kill-server)"
-equal "an unreadable explicit private socket still reaches tmux" \
-  0 "$(printf '%s' "$guard_out" | head -1)"
-contains "the unreadable private socket fall-open is recorded" \
-  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "fall-open-unreachable-socket"
+# TMUX JUST ANSWERED THE SOCKET-RESOLUTION PROBE, so this is a live server whose
+# registrations cannot be classified, not an already-gone aimed socket. The old
+# expectation let it fall open merely because the caller was outside a pane;
+# that absence says nothing about whether the live server carries a team.
+equal "a live server with unreadable registrations fails closed" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "the unreadable live-server refusal is recorded" \
+  "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "refused-unreadable-server"
+if guard_reached_tmux; then
+  fail "the unreadable live server is not torn down" "the teardown reached tmux"
+else
+  pass "the unreadable live server is not torn down"
+fi
 guard_out="$(guard_run "$guard_team_socket,1,0" - - list-sessions)"
 equal "a command that is not a teardown runs untouched" \
   0 "$(printf '%s' "$guard_out" | head -1)"
@@ -2277,6 +2402,26 @@ guard_out="$(guard_run - "$guard_label_home" - -L team kill-server)"
 equal "a -L label resolving to the team's socket is refused" \
   3 "$(printf '%s' "$guard_out" | head -1)"
 printf '%s\n' "$guard_team_socket" > "$guard_state/teams/guardteam"
+
+# A FAILED -L PROBE DOES NOT MEAN THE PANE SOCKET. The selector overrides
+# $TMUX, so substituting this pane's socket after the probe fails both names the
+# wrong server and refuses an aimed command that tmux itself would reject as
+# unreachable. The fake's final invocation supplies that ordinary error and is
+# also the execution witness: a guard refusal never creates guard_ran.
+guard_unreachable_label="unreachable-label-$$"
+printf '%s\n' "$guard_unreachable_label" > "$guard_unreachable_labels"
+guard_out="$(guard_run "$guard_team_socket,1,0" - - \
+  -L "$guard_unreachable_label" kill-server)"
+equal "an unreachable -L inside a pane reaches tmux for its ordinary error" \
+  1 "$(printf '%s' "$guard_out" | head -1)"
+contains "the unreachable -L error names the selected label" \
+  "$guard_out" "$guard_unreachable_label"
+if guard_reached_tmux; then
+  pass "the unreachable -L reaches real tmux rather than the pane server"
+else
+  fail "the unreachable -L reaches real tmux rather than the pane server" \
+    "the final -L invocation never reached tmux"
+fi
 
 # KILL-SESSION IS DECIDED BY WHICH SESSION IT LANDS ON. No target is the pane's
 # own session, which is the team; another name on the same server is aimed

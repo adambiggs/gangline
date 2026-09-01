@@ -363,6 +363,12 @@ cleanup() {
   fi
   [ -z "${guard_live_socket:-}" ] \
     || "$REAL_TMUX" -S "$guard_live_socket" kill-server 2>/dev/null || true
+  [ -z "${guard_fallback_label:-}" ] \
+    || env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+      "$REAL_TMUX" -L "$guard_fallback_label" kill-server 2>/dev/null || true
+  [ -z "${guard_ordinary_label:-}" ] \
+    || env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+      "$REAL_TMUX" -L "$guard_ordinary_label" kill-server 2>/dev/null || true
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
   rm -rf -- "$RUN_ROOT"
 }

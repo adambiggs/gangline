@@ -845,15 +845,23 @@ the live server. Every sandbox-aimed tmux command must therefore carry
 (`env -u TMUX tmux ...`, or `unset TMUX TMUX_PANE` at the top of a script).
 
 With `GANG_TMUX_GUARD=on`, the default, `hitch` puts a `tmux` shim at the front
-of every agent's `PATH`. It resolves the socket the command would reach, then
+of every agent's `PATH`. For teardown it asks tmux for `#{socket_path}`, then
 asks that server for its live `@gl_agent` window registrations. A `kill-server`
 is refused when any registration is present; a `kill-session` is refused when
-it names a registered session or names no session. A team record can corroborate
-the displayed name, but is not protective authority: a Gangline test may
+it names a registered session or names no session. A server that answers the
+socket probe but whose registrations cannot be read refuses too: unknown team
+state is not permission to tear it down. A team record can corroborate the
+displayed name, but is not protective authority: a Gangline test may
 legitimately replace `GANG_SESSION` and `GANG_LOCK_DIR` with a fresh sandbox.
 An aimed private session with no registration runs, loudly when it shares a
-server with one. An unreadable socket that is this pane's server refuses; an
-unreachable explicit private socket reaches real tmux for its ordinary error.
+server with one. An unreachable explicit private socket reaches real tmux for
+its ordinary error.
+
+tmux 3.2a silently ignores a `TMUX_TMPDIR` whose directory is absent and uses
+its normal socket root instead. The guard therefore refuses every command that
+would resolve through such a root, before fixture traffic can reach another
+server. An explicit `-S` remains aimed, and an unqualified command inside a pane
+still follows `$TMUX`; neither depends on `TMUX_TMPDIR`.
 
 It is a guardrail, not a boundary: `GANG_TMUX_GUARD=off` in front of one command
 runs it anyway. Every teardown verdict — refusal, override, or fall-open — is

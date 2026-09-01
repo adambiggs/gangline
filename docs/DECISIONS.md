@@ -1524,13 +1524,18 @@ wording, and leaves every status-bearing `server_error` nonfatal.
 
 Inside a pane `$TMUX` outranks `TMUX_TMPDIR`, so the command that ended a live
 team read as aimed at a sandbox. A guard that matched shapes would have passed
-it. The shim gang puts on an agent's PATH resolves the socket the invocation
-would actually reach — `-S`, then `-L` under `TMUX_TMPDIR`, then `$TMUX`, then
-the default — and asks that server for live `@gl_agent` registrations. A caller
+it. The shim gang puts on an agent's PATH asks tmux which socket the invocation
+would actually reach, then asks that server for live `@gl_agent` registrations.
+Reproducing tmux's path rules in the guard diverged when tmux 3.2a silently
+ignored a `TMUX_TMPDIR` whose directory was absent and retargeted its default
+socket. Such a root now refuses every unaimed tmux command, not only teardown,
+because ordinary fixture traffic was redirected by the same fallback. A caller
 testing Gangline legitimately replaces `GANG_SESSION` and `GANG_LOCK_DIR`, so
 the team record can corroborate a name but cannot authorize a teardown. An
-unreadable socket that is this pane's own server refuses; an unreachable explicit
-private socket reaches real tmux for its normal error.
+answering server whose registrations cannot be read refuses regardless of
+whether the caller is in a pane: unreadable state is not evidence that teardown
+is safe. An unreachable explicit private socket reaches real tmux for its normal
+error.
 
 It is a guardrail rather than a boundary, and says so: one variable runs the
 command anyway. Every teardown verdict, including a fall-open, is written under
