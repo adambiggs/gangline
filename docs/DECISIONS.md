@@ -1854,8 +1854,17 @@ what it could not read, so it names the record and stops there — `staged-
 unreadable`, beside the `usage-unreadable` it already prints — and commits the
 note in neither direction, neither as waiting nor as absent.
 
-What is left are the readers that collapse a failure into an absence inside
-themselves rather than at a caller, so no status reaches a caller to keep. They
-are a larger decision about how much of a row should report unknown rather than
-absent, and closing them means changing what each reader returns, not how one
-caller reads it.
+The other two records the row reads were the same defect wearing a different
+face: their readers collapsed the failure inside themselves, so no status
+reached a caller to keep. Closing those meant changing what each reader
+returns rather than how one caller reads it, and it is worth naming what that
+reached. A self-compaction failure is only current while its request still
+stands, so an unreadable request was retiring a failure that was still
+standing — a record cleared on the strength of a read that never happened. And
+a caller reading such a function through a pipe keeps grep's status, not the
+reader's, so an unreadable record left a tick pass silent and green.
+
+Closing one of the three would have made that one look like a special case.
+The rule is the record, not the caller: a read that failed is reported as a
+read that failed, wherever it is made, and the note it would have carried is
+invented in neither direction.

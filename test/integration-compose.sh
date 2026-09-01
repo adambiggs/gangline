@@ -1656,16 +1656,18 @@ contains "and flush says the recall key was not pressed" \
 # could not ask. The record below is really set before the window really dies,
 # so the omission the row must not make is an omission of something that was
 # there.
-# THE SAME DEFECT, ONE RECORD ALONG. The staged read was thrown away at its
-# caller; this one is thrown away inside the reader, which is a different
-# change and the same lie. Both records are really set below before the window
-# really goes, so each omission the row must not make is an omission of
-# something that was there.
+# ONE DEFECT, ONE FACE PER RECORD. The row reads three records to decide what
+# to say about this window, and each was read by something that turned a failure
+# into an absence — one at the caller, two inside the reader itself. All three
+# are really set below before the window really goes, so every omission the row
+# must not make is an omission of something that was there.
 vanish_world rostering vanishroster
 TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_staged \
   'a body gang recorded and never delivered'
 TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_parked \
   'a body the harness parked'
+TMUX_TMPDIR="$vanish_root" tmux set-option -w -t "$vanish_id" @gl_self_compact_failed \
+  'self-compaction was not submitted'
 vanish_roster="$(vanish_run roster)"
 vanish_down
 contains "a roster row whose window goes names the staged record it could not read" \
@@ -1674,11 +1676,17 @@ excludes "and does not report that record as one it observed waiting" \
   "$vanish_roster" "undelivered-input"
 contains "it names the parked record it could not read" \
   "$vanish_roster" "parked-unreadable"
+contains "and the self-compaction record it could not read" \
+  "$vanish_roster" "self-compact-unreadable"
 # `parked` and `self-compact-failed` are the notes those two records would have
 # carried had they been read. Neither may appear: gang saw no record, so it may
 # not report one, and the unreadable clauses above are not a licence to also
 # guess what was in them.
 excludes "and reports neither of those records as one it observed" \
-  "$(printf '%s' "$vanish_roster" | sed -e 's/parked-unreadable//g')" "parked"
+  "$(printf '%s' "$vanish_roster" | sed -e 's/parked-unreadable//g' \
+      -e 's/self-compact-unreadable//g')" "parked"
+excludes "nor the self-compaction failure it never read" \
+  "$(printf '%s' "$vanish_roster" | sed -e 's/self-compact-unreadable//g')" \
+  "self-compact-failed"
 
 rm -rf -- "$vanish_root" "$vanish_collars"

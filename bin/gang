@@ -2580,19 +2580,26 @@ self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
     "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
 }
 
-self_compact_failed_read() { # $1 window -> only a failure current for its state
-  local failed token pending
-  failed="$(tmux show-options -wqv -t "$1" @gl_self_compact_failed 2>/dev/null)" \
-    || failed=""
+self_compact_failed_read() { # $1 window -> only a failure current for its state;
+                             # the reader's own 1 or 2 when it could not be read
+  local failed token pending rc=0
+  failed="$(window_option "$1" @gl_self_compact_failed)" || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
   case "$failed" in
     '[request:'*'] '*"$SELF_COMPACT_STANDING")
       token="${failed#\[request:}"
       token="${token%%]*}"
       case "$token" in ''|*[!A-Za-z0-9._:-]*) printf '%s' "$failed"; return ;; esac
-      pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_requested 2>/dev/null)" \
-        || pending=""
-      [ -n "$pending" ] \
-        || pending="$(tmux show-options -wqv -t "$1" @gl_self_compact_dispatching 2>/dev/null)"
+      # THE FAILURE IS ONLY CURRENT WHILE ITS REQUEST STILL STANDS, so a
+      # request that cannot be read cannot retire it either. Returning 0 with
+      # nothing here would report the failure as cleared on the strength of a
+      # read that never happened.
+      pending="$(window_option "$1" @gl_self_compact_requested)" || rc=$?
+      [ "$rc" -eq 0 ] || return "$rc"
+      if [ -z "$pending" ]; then
+        pending="$(window_option "$1" @gl_self_compact_dispatching)" || rc=$?
+        [ "$rc" -eq 0 ] || return "$rc"
+      fi
       [ "$pending" = "$token" ] || return 0 ;;
   esac
   printf '%s' "$failed"
@@ -4339,6 +4346,7 @@ tick_delivery_release() { # $1 window; clear only this worker's marker
 
 tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
+  local compact_note="" compact_rc=0
   local TICK_PASS=1
   tick_ui_ensure || { printf 'tick could not install the status-right health segment\n' >&2; rc=1; }
   wins="$(tmux list-windows -t "=$SESSION" \
@@ -4400,9 +4408,22 @@ tick_full_pass_once() {
       if [ "$busy_rc" -eq 1 ]; then
         self_compact_dispatch "$id" "$collar" sync
         pending="$(tmux show-options -wqv -t "$id" @gl_self_compact_requested 2>/dev/null)" || pending=""
-        if [ -z "$pending" ] && self_compact_failed_read "$id" | grep -q .; then
-          printf 'tick self-compaction issue for %s: %s\n' "$agent" "$(self_compact_failed_read "$id")" >&2
-          rc=1
+        # A RECORD THIS PASS COULD NOT READ IS NOT A DISPATCH THAT WENT WELL.
+        # Read through a pipe the reader's status is grep's, so an unreadable
+        # record left the pass silent and green; it now says which of the two
+        # it saw. The read also happens once, because the second call could
+        # answer differently from the one the branch was chosen on.
+        if [ -z "$pending" ]; then
+          compact_rc=0
+          compact_note="$(self_compact_failed_read "$id")" || compact_rc=$?
+          if [ "$compact_rc" -ne 0 ]; then
+            printf 'tick could not read the self-compaction record for %s, so whether its dispatch failed is unknown\n' \
+              "$agent" >&2
+            rc=1
+          elif [ -n "$compact_note" ]; then
+            printf 'tick self-compaction issue for %s: %s\n' "$agent" "$compact_note" >&2
+            rc=1
+          fi
         fi
       fi
     fi
@@ -9937,7 +9958,7 @@ usage_wake_status_report() { # $1 window
 }
 
 cmd_status() {
-  local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current parked_rc
+  local state self_failed self_pending state_note_failed staged staged_box staged_box_rc parked park_unverified spooled age held held_dir spool_failed stall_failed auto_failed hook_failed mismatch probe_failed skew="" current self_failed_rc parked_rc
   local timed_line hitched hitched_rc status_cost staged_rc
   local name="${1:-}"
   [ $# -le 1 ] || die "status: unexpected argument '$2'"
@@ -9973,7 +9994,10 @@ cmd_status() {
   [ -z "$state_note_failed" ] \
     || printf '%s\n' "$(colour "$C_BAD" "$state_note_failed")"
   idle_notice_failed_status_report "$AGENT_ID"
-  self_failed="$(self_compact_failed_read "$AGENT_ID")"
+  self_failed_rc=0
+  self_failed="$(self_compact_failed_read "$AGENT_ID")" || self_failed_rc=$?
+  [ "$self_failed_rc" -eq 0 ] \
+    || option_unreadable "$self_failed_rc" @gl_self_compact_failed "$status_cost"
   if [ -n "$self_failed" ]; then
     case "$self_failed" in
       'submission outcome unknown:'*)
@@ -10334,7 +10358,7 @@ roster_row_porcelain() { # name, collar, state, spooled, age seconds, session id
 
 roster_row() { # $1 window, $2 name, $3 current binary id;
                # exit 4 = the row printed with a state it could not read
-  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0
+  local prof state detail="" spooled timed age held skew="" mismatch probe_failed idle_notice usage_record usage_rc=0 usage_state usage_observed wake_record wake_rc=0 wake_reset now unread=0 staged staged_rc=0 parked_note parked_rc=0 compact_note compact_rc=0
   prof="$(collar_read "$1")" || exit 1
   [ -n "$prof" ] \
     || { printf '%-16s %-12s %s\n' "$2" "-" "$(colour "$C_DIM" "unadopted")"; return; }
@@ -10369,8 +10393,13 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
   elif [ -n "$parked_note" ]; then
     detail="$detail parked"
   fi
-  [ -z "$(self_compact_failed_read "$1")" ] \
-    || detail="$detail self-compact-failed"
+  compact_rc=0
+  compact_note="$(self_compact_failed_read "$1")" || compact_rc=$?
+  if [ "$compact_rc" -ne 0 ]; then
+    detail="$detail self-compact-unreadable"
+  elif [ -n "$compact_note" ]; then
+    detail="$detail self-compact-failed"
+  fi
   detail="$detail $(action_detail "$1")"
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
