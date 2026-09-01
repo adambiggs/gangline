@@ -229,11 +229,6 @@ config_load() {
   config_env_origins
 }
 
-config_load
-
-DEFAULT_SESSION=gangline
-SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
-
 require_whole() { # $1 = name to blame, $2 = value, $3 = the unit for the message
   case "$2" in
     ''|*[!0-9]*) die "$1 must be a whole number of $3, got '$2'$(config_origin_note "$1")" ;;
@@ -272,6 +267,21 @@ gang_root() { # $1 = path to this script; the install tree it lives in
 ROOT="$(gang_root "${BASH_SOURCE[0]}")"
 [ -d "$ROOT/collars" ] \
   || die "no collars/ beside $ROOT — this is not a gangline tree. Reinstall, or run bin/gang from a checkout."
+
+if [ "${1:-}" = --version ]; then
+  [ "$#" -eq 1 ] || die "--version takes no arguments"
+  [ -r "$ROOT/version.txt" ] \
+    || die "cannot read the release version at $ROOT/version.txt"
+  version="$(<"$ROOT/version.txt")"
+  [ -n "$version" ] || die "the release version at $ROOT/version.txt is empty"
+  printf 'gang %s\n' "$version"
+  exit 0
+fi
+
+config_load
+
+DEFAULT_SESSION=gangline
+SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
 
 GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
 if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
@@ -463,6 +473,7 @@ settings and discovery
   config    show effective configuration
 
 installation
+  --version print the release version
   upgrade   install or check the latest release
 
 gang <command> --help is the whole page for

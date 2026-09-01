@@ -72,6 +72,18 @@ equal "the welcome page fits the phone-SSH width" "" \
   "$(printf '%s\n' "$welcome" | help_width_failure)"
 contains "the welcome page carries the send one-liner" \
   "$welcome" "gang send --to NAME --stdin"
+source_version="$(<"$ROOT/version.txt")"
+equal "source gang reports the release-owned version" \
+  "gang $source_version" "$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" "$GANG" --version)"
+version_install="$RUN_ROOT/version-install"
+mkdir -p "$version_install/bin" "$version_install/collars"
+cp "$GANG" "$version_install/bin/gang"
+cp "$ROOT/collars/bash.sh" "$version_install/collars/bash.sh"
+printf '%s\n' 9.8.7 > "$version_install/version.txt"
+installed_version="$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
+  "$version_install/bin/gang" --version)"
+equal "an installed gang reports its adjacent release version" \
+  "gang 9.8.7" "$installed_version"
 contains "it warns that reading your own mail consumes it" \
   "$welcome" "consumes it"
 contains "it says what a refusal means" "$welcome" "did NOT happen"

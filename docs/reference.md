@@ -28,6 +28,11 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `hitch`, `adopt`, `rename`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
 | `up`, `roster`, `attach`, `teams`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
+`gang --version` prints the release version from the adjacent `version.txt`
+and exits successfully. It needs no Gangline configuration, repository, or
+tmux server. The value is maintained by Release Please; the npm and PyPI
+metadata are propagated from the same source.
+
 Resolving self is not a promise that the command proceeds. `gang compact`
 self-targets and is then refused, or deferred, on that same agent's own turn
 evidence. Who the target is and what its state allows are separate answers.
