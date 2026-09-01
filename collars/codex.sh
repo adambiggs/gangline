@@ -496,7 +496,21 @@ codex_home = sys.argv[3]
 max_processes = 128
 max_children = 64
 tail_bytes = 262144
-shells = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
+# BOUNDED CONVERGENCE, NOT A POLL. A tree read while Codex is starting or
+# reaping a tool call can differ between two adjacent reads, and a single
+# unlucky read is cached as the whole idle period's answer. The walk is
+# therefore repeated until two consecutive readings agree, with no delay
+# between them, and a tree that never settles says exactly that -- which is a
+# different fact from a tree that settled on an answer.
+max_tree_reads = 4
+
+
+class TreeGone(Exception):
+    """The Codex harness process itself is no longer there."""
+
+
+class TreeRaced(Exception):
+    """This probe could not read its own place in the tree."""
 
 
 def unknown(message):
@@ -509,43 +523,134 @@ def proc_text(pid, leaf):
         return stream.read().strip()
 
 
-try:
-    ancestors = set()
-    cursor = os.getpid()
-    while cursor > 1 and cursor not in ancestors:
-        ancestors.add(cursor)
-        fields = proc_text(cursor, "stat").rsplit(") ", 1)[1].split()
-        cursor = int(fields[1])
+def own_ancestry():
+    """Every process between this probe and init.
+
+    At a Stop boundary the probe runs under Codex, so its own branch of the
+    tree is Gangline's work rather than work Codex is holding. An ancestor
+    that exits mid-climb truncates the chain and would readmit that branch as
+    held work, so a truncated climb is repeated rather than accepted short.
+    """
+    for _ in range(max_tree_reads):
+        chain = set()
+        cursor = os.getpid()
+        try:
+            while cursor > 1 and cursor not in chain:
+                chain.add(cursor)
+                cursor = int(proc_text(cursor, "stat").rsplit(") ", 1)[1].split()[1])
+        except FileNotFoundError:
+            continue
+        return chain
+    raise TreeRaced
+
+
+def process_table():
+    """Parent to children, from one pass over /proc.
+
+    Read the parent recorded by each process rather than
+    /proc/PID/task/*/children. The per-thread children files list only the
+    children of the thread that forked them, and Codex is multithreaded and
+    forks its tool calls from worker threads, so the main thread's file is
+    empty for a harness that is running a command right now. A thread that
+    has since exited takes its file with it while its child keeps running,
+    which no reading of those files can recover.
+    """
+    if not os.path.isdir(f"/proc/{root_pid}"):
+        raise TreeGone
+    table = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        pid = int(entry)
+        try:
+            parent = int(proc_text(pid, "stat").rsplit(") ", 1)[1].split()[1])
+        except (FileNotFoundError, IndexError, ValueError):
+            continue
+        table.setdefault(parent, []).append(pid)
+    return table
+
+
+def printable(value):
+    return "".join(char if " " <= char < "\x7f" else "?" for char in value)[:32]
+
+
+def held_witness(pid, own_tree):
+    """Name pid when it is work Codex is holding, else None.
+
+    Codex's own session-lifetime helpers run its shipped binaries out of
+    CODEX_HOME; a tool call runs a program from outside it, and often not a
+    shell -- an uncontained command is exec'd directly and a sandboxed one
+    runs under a container helper. A Codex-owned process is therefore walked
+    through rather than skipped, because the command sits beneath it.
+    """
+    try:
+        state = proc_text(pid, "stat").rsplit(") ", 1)[1].split()[0]
+    except (FileNotFoundError, IndexError):
+        return None
+    if state == "Z":
+        return None
+    try:
+        exe = os.readlink(f"/proc/{pid}/exe")
+    except FileNotFoundError:
+        return None
+    except PermissionError:
+        exe = ""
+    if exe.endswith(" (deleted)"):
+        exe = exe[: -len(" (deleted)")]
+    if exe and os.path.realpath(exe).startswith(own_tree):
+        return None
+    try:
+        command = proc_text(pid, "comm")
+    except FileNotFoundError:
+        return None
+    return f"a live Codex child process ({printable(command)})"
+
+
+def held_read(ancestors, own_tree):
+    table = process_table()
     queue = [root_pid]
     seen = {root_pid}
     while queue:
         parent = queue.pop(0)
-        try:
-            child_text = proc_text(parent, f"task/{parent}/children")
-        except FileNotFoundError:
-            if parent == root_pid:
-                raise
-            continue
-        for word in child_text.split():
-            child = int(word)
+        for child in table.get(parent, ()):
             if child in seen:
                 continue
             seen.add(child)
             if len(seen) > max_processes:
-                unknown("the Codex child-process probe exceeded its 128-process bound")
+                unknown(
+                    f"the Codex child-process probe exceeded its {max_processes}-process bound"
+                )
             if child in ancestors:
                 continue
             queue.append(child)
-            try:
-                stat = proc_text(child, "stat").rsplit(") ", 1)[1].split()
-                command = proc_text(child, "comm")
-            except FileNotFoundError:
-                continue
-            if stat and stat[0] != "Z" and command in shells:
-                print("a live Codex child shell")
-                raise SystemExit(0)
-except FileNotFoundError:
-    unknown("the Codex child-process tree changed while it was being read")
+            witness = held_witness(child, own_tree)
+            if witness is not None:
+                return witness
+    return ""
+
+
+try:
+    own_tree = os.path.realpath(codex_home) + os.sep
+    ancestors = own_ancestry()
+    held = ""
+    settled = False
+    for attempt in range(max_tree_reads):
+        reading = held_read(ancestors, own_tree)
+        if attempt and reading == held:
+            settled = True
+            break
+        held = reading
+    if not settled:
+        unknown(
+            f"the Codex child-process tree did not settle across {max_tree_reads} reads"
+        )
+    if held:
+        print(held)
+        raise SystemExit(0)
+except TreeGone:
+    unknown("the Codex harness process is no longer running")
+except TreeRaced:
+    unknown("the Codex probe could not read its own place in the process tree")
 except (OSError, UnicodeError, ValueError):
     unknown("the Codex child-process tree is unreadable")
 

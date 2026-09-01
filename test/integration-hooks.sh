@@ -180,36 +180,86 @@ rm -f -- "$RUN_ROOT/waiting-evidence"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$waitable_pane" "$GANG" hook >/dev/null
 
-# THE SHIPPED CODEX PROBE WITNESSES A PROCESS, NOT A TRANSCRIPT SENTENCE. A
-# foreground child shell signals after it exists and blocks on a native tmux
-# channel. Releasing that channel lets the pane signal the second barrier only
-# after the child has exited, so both verdicts use immediate process evidence.
+# THE SHIPPED CODEX PROBE WITNESSES A PROCESS, NOT A TRANSCRIPT SENTENCE, AND
+# THE PROCESS IT MUST SEE IS NOT THE ONE THE PANE ROOT FORKED. Codex is
+# multithreaded and forks a tool call from a worker thread, and it keeps one
+# session-lifetime helper of its own running out of CODEX_HOME at every idle.
+# The stand-in root here reproduces both: a Python process whose worker thread
+# forks the children, one helper inside CODEX_HOME and one command outside it.
+# A reader that consults only the main thread's children, or that holds on any
+# live child, fails one of the two verdicts below.
+#
+# Each child is a `cat` blocked on a FIFO. Opening the other end returns only
+# once that child has opened its own end, so the child is observably exec'd
+# before any verdict is read; closing it is an immediate release with no
+# timing budget anywhere in the exchange.
 codex_wait_home="$RUN_ROOT/codex-wait-home"
-mkdir -p "$codex_wait_home"
-codex_wait_name="codex-wait-native-$$"
-tmux new-window -d -t "=$GANG_SESSION" -n "$codex_wait_name" -c /tmp \
-  'exec bash --noprofile --norc'
-codex_wait_id="$(tmux display-message -p -t "=$GANG_SESSION:$codex_wait_name" '#{window_id}')"
-codex_wait_pane="$(tmux list-panes -t "$codex_wait_id" -F '#{pane_id}')"
-tmux set-option -w -t "$codex_wait_id" @gl_session_id fixture-codex-wait
+mkdir -p "$codex_wait_home/bin"
+codex_wait_cat="$(command -v cat)"
+cp -- "$codex_wait_cat" "$codex_wait_home/bin/codex-wait-helper"
 codex_wait_ready="gang-test-codex-wait-ready-$$"
 codex_wait_release="gang-test-codex-wait-release-$$"
 codex_wait_done="gang-test-codex-wait-done-$$"
-printf -v codex_wait_command \
-  "bash -c 'tmux wait-for -S %q; tmux wait-for %q; :'; tmux wait-for -S %q" \
+cat > "$RUN_ROOT/codex-wait-root.py" <<'PY'
+import subprocess
+import sys
+import threading
+
+helper, command, helper_fifo, child_fifo, tmux, ready, release, done = sys.argv[1:9]
+
+
+def worker():
+    helper_process = subprocess.Popen([helper, helper_fifo])
+    child_process = subprocess.Popen([command, child_fifo])
+    helper_writer = open(helper_fifo, "w")
+    child_writer = open(child_fifo, "w")
+    subprocess.run([tmux, "wait-for", "-S", ready], check=True)
+    subprocess.run([tmux, "wait-for", release], check=True)
+    child_writer.close()
+    child_process.wait()
+    subprocess.run([tmux, "wait-for", "-S", done], check=True)
+    # The helper outlives the released command on purpose: the verdict after
+    # this barrier is read against a root that still has one live child, and
+    # that child is the one the reader must not hold on.  It ends when this
+    # process does, which is when the window is killed.
+    helper_process.wait()
+
+
+thread = threading.Thread(target=worker)
+thread.start()
+thread.join()
+PY
+mkfifo "$RUN_ROOT/codex-wait-helper.fifo" "$RUN_ROOT/codex-wait-child.fifo"
+codex_wait_name="codex-wait-native-$$"
+printf -v codex_wait_command 'exec python3 %q %q %q %q %q %q %q %q %q' \
+  "$RUN_ROOT/codex-wait-root.py" "$codex_wait_home/bin/codex-wait-helper" \
+  "$codex_wait_cat" "$RUN_ROOT/codex-wait-helper.fifo" \
+  "$RUN_ROOT/codex-wait-child.fifo" "$(command -v tmux)" \
   "$codex_wait_ready" "$codex_wait_release" "$codex_wait_done"
-tmux send-keys -l -t "$codex_wait_pane" "$codex_wait_command"
-tmux send-keys -t "$codex_wait_pane" Enter
+tmux new-window -d -t "=$GANG_SESSION" -n "$codex_wait_name" -c /tmp \
+  "$codex_wait_command"
+codex_wait_id="$(tmux display-message -p -t "=$GANG_SESSION:$codex_wait_name" '#{window_id}')"
+tmux set-option -w -t "$codex_wait_id" @gl_session_id fixture-codex-wait
 tmux wait-for "$codex_wait_ready"
+# THE FIXTURE HAS TO KEEP REPRODUCING THE DEFECT. If a later Python or a later
+# change to the stand-in ever forks from the main thread, both verdicts below
+# would pass against a reader that never looks past it, and this suite would
+# stop testing the thing it was written for.
+codex_wait_root="$(tmux display-message -p -t "$codex_wait_id" '#{pane_pid}')"
+equal "the stand-in Codex root forked nothing from its main thread" "" \
+  "$(cat "/proc/$codex_wait_root/task/$codex_wait_root/children")"
 codex_wait_rc=0
 codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
   '. "$1"; collar_waiting "$2" "$3"' fixture \
   "$ROOT/collars/codex.sh" "$codex_wait_id" \
   '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
   || codex_wait_rc=$?
-equal "the Codex probe reports a live child shell as held work" "0" "$codex_wait_rc"
+equal "the Codex probe reports a worker-thread child as held work" "0" "$codex_wait_rc"
+# THE WITNESS NAMES A PROCESS, NOT A SHELL. codex-cli 0.151.0 execs an
+# uncontained command directly and runs a sandboxed one under its sandbox
+# helper, so the held work is `sleep` or `bwrap` as often as a shell.
 equal "the Codex process witness names what is held" \
-  "a live Codex child shell" "$codex_wait_output"
+  "a live Codex child process (cat)" "$codex_wait_output"
 tmux wait-for -S "$codex_wait_release"
 tmux wait-for "$codex_wait_done"
 codex_wait_rc=0
@@ -218,7 +268,7 @@ codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
   "$ROOT/collars/codex.sh" "$codex_wait_id" \
   '{"hook_event_name":"Stop","session_id":"fixture-codex-wait"}')" \
   || codex_wait_rc=$?
-equal "the Codex probe distinguishes an exited child from held work" "1" "$codex_wait_rc"
+equal "a live Codex helper inside CODEX_HOME is not held work" "1" "$codex_wait_rc"
 equal "an absent Codex waiting verdict prints no witness" "" "$codex_wait_output"
 
 codex_wait_child="$codex_wait_home/child.jsonl"
