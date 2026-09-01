@@ -1,5 +1,64 @@
 # Changelog
 
+## [2.7.0](https://github.com/adambiggs/gangline/compare/gangline-v2.6.0...gangline-v2.7.0) (2026-09-01)
+
+
+### Features
+
+* **claude-code:** price 1M-window context lights by cost, not room ([d85bb14](https://github.com/adambiggs/gangline/commit/d85bb149fdb9fd37f85fc08b1c06606b3a1130c3))
+* **codex:** enforce report before idle ([c3fd6a8](https://github.com/adambiggs/gangline/commit/c3fd6a8a40348c4b839de206099b043eb148cc23))
+* **codex:** read pane-root process identity ([3f5f041](https://github.com/adambiggs/gangline/commit/3f5f0414b926acf7a64ad89f5cf3f773f8a7ba24))
+* **codex:** report a codex turn that ended without producing work ([62d25b3](https://github.com/adambiggs/gangline/commit/62d25b3b8b6cf68f2c1079ab5966a84ac8ceb161))
+* **gang:** let a collar answer for a queue its composer never shows ([0608c89](https://github.com/adambiggs/gangline/commit/0608c89fc24ef56754abfb5ac8c5d6973c1bc9af))
+* **gang:** report an advisory dialog as the surface it is ([49f4fef](https://github.com/adambiggs/gangline/commit/49f4fef369c722197dec87d7d13d3aa2cec675ce))
+* **hitch:** record which context created an agent ([b4287bf](https://github.com/adambiggs/gangline/commit/b4287bfe27ac4f565aeebfaa5843b769bef4e1b6)), closes [#159](https://github.com/adambiggs/gangline/issues/159)
+* **notify:** deliver unusable-state alerts ([e6c332b](https://github.com/adambiggs/gangline/commit/e6c332bb3e6a0967759032a76c6fc35111fbb65b))
+* **notify:** surface failed idle notices ([f01d816](https://github.com/adambiggs/gangline/commit/f01d81651db514e19d88f25386cc99e36aea3389))
+* **roles:** give the lead brief the decisions between arcs ([a0a8d25](https://github.com/adambiggs/gangline/commit/a0a8d25b8489ae5b8b9b7f7b37130e75740b0372))
+* **state:** report a window whose turn ended without producing work ([75d96f1](https://github.com/adambiggs/gangline/commit/75d96f1d730177ee59e63f9f181349b476e4770b))
+* **tools:** rebase clean worktrees ([5198121](https://github.com/adambiggs/gangline/commit/5198121e02565cd4b6162aec4dc37931f22ef1ba))
+
+
+### Bug Fixes
+
+* **claude-code:** refuse background session composer ([ac17d00](https://github.com/adambiggs/gangline/commit/ac17d005560bef88b590c1370246667958325812)), closes [#154](https://github.com/adambiggs/gangline/issues/154)
+* **codex:** do not let one oddly named process hide a Codex tree ([36bd994](https://github.com/adambiggs/gangline/commit/36bd9945a0bb81be17aee2b232455f2dbb5b5086))
+* **codex:** keep an unreadable process record out of an idle verdict ([21e2914](https://github.com/adambiggs/gangline/commit/21e2914e3537e104b2edb616fd6bad6657a031ba))
+* **codex:** keep an unrelated process out of the Codex tree verdict ([cd1b524](https://github.com/adambiggs/gangline/commit/cd1b5247656d92f5ecd7920ed96a12dee256a068))
+* **codex:** read held background work from the whole process tree ([b2ea470](https://github.com/adambiggs/gangline/commit/b2ea470b926e047dbcf67fbb5627ce1f7c635857))
+* **codex:** read the pane surfaces across Codex's own wrapping ([c21bdcd](https://github.com/adambiggs/gangline/commit/c21bdcdc3086083b8d9bf167c5d031ad0ebe1b1f))
+* **delivery:** confirm transient tmux mode state ([b22d3a8](https://github.com/adambiggs/gangline/commit/b22d3a89f53c172146406e5fb18c433db6b7d184)), closes [#170](https://github.com/adambiggs/gangline/issues/170)
+* **delivery:** preserve unknown submit outcomes ([1f5c005](https://github.com/adambiggs/gangline/commit/1f5c0054d115d7877c3f0561fa0883ffb2cc9fb9)), closes [#171](https://github.com/adambiggs/gangline/issues/171)
+* **guard:** advise a route the guard does not refuse ([fe4b063](https://github.com/adambiggs/gangline/commit/fe4b063a63334df74f1f57440ebe104a387f529e))
+* **models:** skip a catalog row gang cannot use ([85a0465](https://github.com/adambiggs/gangline/commit/85a04651f2975d2e24241b78fbe1938eafef3c21)), closes [#169](https://github.com/adambiggs/gangline/issues/169)
+* **roster:** name a parked record the row could not read ([bbbdf79](https://github.com/adambiggs/gangline/commit/bbbdf7992194cdaa8b2763349f39bc48ef9767b6))
+* **roster:** name a self-compaction record the row could not read ([445d50f](https://github.com/adambiggs/gangline/commit/445d50f5315a0c814c658a831b3eec9be62713de))
+* **roster:** name a staged record the row could not read ([e13bfe5](https://github.com/adambiggs/gangline/commit/e13bfe5f79e6e07db92f9490b432c8b5ec3803ad)), closes [#183](https://github.com/adambiggs/gangline/issues/183)
+* **roster:** warn only about orphaned spools that hold something ([cf5684f](https://github.com/adambiggs/gangline/commit/cf5684fbac2a48ed76e5d738e0b6f4a2ade8a614)), closes [#185](https://github.com/adambiggs/gangline/issues/185)
+* **state:** preserve unknown collar input statuses ([b573438](https://github.com/adambiggs/gangline/commit/b573438e245a1b50012c4469c3fad95bdf6a43f9))
+* **state:** report windows with no live panes ([03d8c4d](https://github.com/adambiggs/gangline/commit/03d8c4dcfa29e6a5a2547bc287b9543aea7aedec))
+* **state:** settle closed turns through ready composers ([4bf7e69](https://github.com/adambiggs/gangline/commit/4bf7e69e7246c96f8042f42e67633e156dcb0a61))
+* **status:** report an unreadable window option as unverified, not unset ([b6b2950](https://github.com/adambiggs/gangline/commit/b6b29505a84b081162c3dfd51183d84fff908239)), closes [#183](https://github.com/adambiggs/gangline/issues/183)
+* **test:** declare focused fragment prerequisites ([20558db](https://github.com/adambiggs/gangline/commit/20558db9177099b2fae08660ba4342f3c058583b))
+* **test:** do not read a client disconnect as a stub failure ([4a3329f](https://github.com/adambiggs/gangline/commit/4a3329f5af368bc137d81d856582aee17f3c3292))
+* **test:** end every gate run on its verdict ([a8769b1](https://github.com/adambiggs/gangline/commit/a8769b192ba6b1df579613b55e1e0ad96ab27d4e))
+* **test:** end the e2e agent before asking for its server ([899e2eb](https://github.com/adambiggs/gangline/commit/899e2ebd5fb93e667564ca15664d8f281caf0fa3))
+* **test:** make mandatory integration coverage explicit ([69039ba](https://github.com/adambiggs/gangline/commit/69039ba00dbb8d255120e2684e2c58989e52b6a7))
+* **test:** preserve interrupted gate output ([e77d998](https://github.com/adambiggs/gangline/commit/e77d99808e5218340331c0bb7cf70f8e01fd97b4))
+* **test:** stop a signalled gate at the signal ([2955b4b](https://github.com/adambiggs/gangline/commit/2955b4b996976569be4220ef0c3c1de96efaec08))
+* **test:** stop a signalled integration run at the signal ([c27ddb2](https://github.com/adambiggs/gangline/commit/c27ddb2333f45f1a9945b94c377692c7ad00a326))
+* **tick:** close guard outside metadata transactions ([a2a437c](https://github.com/adambiggs/gangline/commit/a2a437cb7addb1a27c257779317d02274bf0bfdf))
+* **tick:** keep success out of alerts ([84fa97d](https://github.com/adambiggs/gangline/commit/84fa97d8febae6e267542fa5f7320ca5f0dde524))
+* **tick:** kill the owned group before reaping ([4d4ff02](https://github.com/adambiggs/gangline/commit/4d4ff022f0e091687e3456f9e14aaee092cc4baf))
+* **tick:** preserve lock ownership during reclaim ([a881d14](https://github.com/adambiggs/gangline/commit/a881d14790bd00466e9a2650fe9a36a5817c96bc))
+* **tick:** reclaim expired owner generations ([56183a6](https://github.com/adambiggs/gangline/commit/56183a6c69c12e98f6cded99f552c8bc64749c47))
+* **tick:** retry vanished lock owners ([b2b2ab2](https://github.com/adambiggs/gangline/commit/b2b2ab25f5ff906adc5285860847c72655c8f73b))
+* **tick:** serialize stale lock retirement ([83830bc](https://github.com/adambiggs/gangline/commit/83830bcd0f00067efaa89cfb5acaa48890aee856))
+* **tick:** terminate workers with the deadline controller ([d516a81](https://github.com/adambiggs/gangline/commit/d516a81552d6fb8b6b31007b3c5e242af9ba40ec))
+* **tmux:** expose unavailable option targets ([b0523a8](https://github.com/adambiggs/gangline/commit/b0523a8f8f7efd7bec9d0eb67d3dbd302c81e016)), closes [#183](https://github.com/adambiggs/gangline/issues/183)
+* **tmux:** fail closed on retargeted sockets ([f4cef1c](https://github.com/adambiggs/gangline/commit/f4cef1c7a5fd948703be0a196da8cc1699c75a28)), closes [#187](https://github.com/adambiggs/gangline/issues/187)
+* **tmux:** resolve past every guard shim on PATH ([b85128c](https://github.com/adambiggs/gangline/commit/b85128c4a64113c3977c1f8de2313087a42f59c9)), closes [#167](https://github.com/adambiggs/gangline/issues/167)
+
 ## [2.6.0](https://github.com/adambiggs/gangline/compare/gangline-v2.5.1...gangline-v2.6.0) (2026-08-30)
 
 
