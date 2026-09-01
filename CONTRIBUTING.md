@@ -198,16 +198,17 @@ When multiple contributors share a checkout:
 
 The local pre-push hook delegates to the operator's installed Snubline gate,
 which is the only PII scan Gangline runs — there is no CI backstop, so a clone
-without Snubline pushes unscanned. Issue and pull request bodies reach no hook at
-all, so scan them, and anything else you are about to publish, with the installed
-Snubline scanner first:
+without Snubline pushes unscanned. That gate runs the operator-installed
+`~/.config/snubline/pii-scan`, never a copy from this repository. Issue and pull
+request bodies reach no hook at all, so scan them, and anything else you are
+about to publish, with that configured scanner first:
 
 ```sh
-scanner="$(git config --global --get snubline.piiScanner)" || {
+scanner="$(git config --global --path --get snubline.scanner.pii.path)" || {
   echo "Snubline scanner is not configured" >&2
   exit 1
 }
-bash "$scanner" --stdin < body.txt
+"$scanner" --stdin < body.txt
 ```
 
 ### A closing comment on an already-closed issue is silently dropped
