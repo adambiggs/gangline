@@ -380,11 +380,17 @@ GANG_QUEUE_RECALL_KEY="S-Left"
 # it always reported; nothing here decides whether to type, and no key is ever
 # sent at the menu.
 collar_advisory() { # $1 = tmux target; 0 + what it is, 1 = not an advisory surface
-  local pane
-  pane="$(tmux capture-pane -pJ -t "$1" 2>/dev/null)" || return 1
-  printf '%s\n' "$pane" | grep -qF \
-    'No action is required. Codex will keep waiting, and this menu will close when the response is ready.' \
+  local flat
+  # READ IT ACROSS THE WRAP. Codex breaks its own prose to the pane width, and
+  # those are hard line breaks rather than the soft wrap `capture-pane -J`
+  # rejoins, so the sentence arrives in as many pieces as the pane is narrow.
+  # Collapsing whitespace is what makes the reading independent of width.
+  flat="$(tmux capture-pane -pJ -t "$1" 2>/dev/null | tr -s '[:space:]' ' ')" \
     || return 1
+  case "$flat" in
+    *'No action is required. Codex will keep waiting, and this menu will close when the response is ready.'*) ;;
+    *) return 1 ;;
+  esac
   printf 'Codex is waiting on its provider and says the menu closes by itself when the response is ready'
 }
 
@@ -406,14 +412,15 @@ collar_queued() { # $1 tmux target, $2 the body gang composed (optional).
     printf 'the Codex pane could not be read for parked-queue evidence'
     return 2
   }
-  printf '%s\n' "$pane" | grep -qE '^• Queued follow-up inputs *$' || {
+  printf '%s\n' "$pane" | grep -qE '^• Queued follow-up inputs' || {
     [ $# -lt 2 ] || {
       printf 'the Codex follow-up queue is not on screen, so gang cannot confirm the body it composed is parked'
       return 2
     }
     return 1
   }
-  ! printf '%s\n' "$pane" | grep -qE '^ *shift \+ ← edit last queued message *$' || {
+  ! printf '%s' "$pane" | tr -s '[:space:]' ' ' \
+    | grep -qF 'shift + ← edit last queued message' || {
     [ $# -ge 2 ] || return 0
     printf '%s\n' "$pane" | python3 -c '
 import re
@@ -421,8 +428,10 @@ import sys
 
 want = " ".join(sys.argv[1].split())
 lines = sys.stdin.read().split("\n")
-header = re.compile(r"^\u2022 Queued follow-up inputs *$")
-hint = re.compile(r"^ *shift \+ \u2190 edit last queued message *$")
+header = re.compile(r"^\u2022 Queued follow-up inputs")
+# The advertisement can wrap; its opening words cannot, and they are what
+# closes the block.
+hint = re.compile(r"^ *shift \+ \u2190")
 opened = [i for i, line in enumerate(lines) if header.match(line)]
 closed = [i for i, line in enumerate(lines) if hint.match(line)]
 if not want or not opened or not closed or closed[-1] <= opened[0]:
