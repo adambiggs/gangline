@@ -493,6 +493,31 @@ Gangline wraps the body in a nonce-bound envelope,
 serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
+An envelope from a sender Gangline observed carries message-scoped reply
+provenance. The target records a candidate before Enter and arms a reply
+obligation only when both the ordinary positive delivery check and an exact
+native prompt-submission witness match that envelope. Those proofs may arrive
+in either order. A partial record and a malformed record remain unknown and
+make the native Stop helper fail closed; they are never repaired into absence.
+
+The next verified outbound message to a peer with outstanding requests is
+correlated to all of that peer's outstanding message nonces. Its envelope
+carries the correlation, successful delivery clears only those records, and
+the recipient classifies it as a reply rather than opening reciprocal debt.
+Gangline does not parse the reply body: any genuine concise acknowledgement is
+enough, including one that says background work is still running and a fuller
+report will follow. Requests from different peers retain independent records.
+
+Unenveloped session-keyboard input and `self-declared:` envelopes create no
+peer obligation. They also do not clear, supersede, or mask one. Tool events,
+background-work notices, native steering, Stop recursion, compaction, and later
+turn boundaries likewise leave the per-message window options intact. `status`
+names each outstanding or ambiguous record and `roster` carries `reply-owed` or
+`reply-unknown`; the shared native Stop adapter permits idle only when its
+private `reply-obligations` query proves the set clear. Dropping the recipient
+window retires the tmux-owned records with the rest of that agent's ephemeral
+state.
+
 Gangline refuses a missing or occupied composer, a human draft, tmux copy-mode,
 unknown state, and unsafe mid-turn input. Copy-mode is operator-owned: Gangline
 does not cancel it, and checks `#{pane_in_mode}` before every paste, submit,
@@ -1465,7 +1490,7 @@ there, never in a harness-name branch in the core script.
 | `collar_live_session_id target` | optional independent probe of the native session currently holding the pane; print its exact id, or return nonzero when no safe reading is available. The cooperative tick compares it with the registered id and treats a contradiction as session loss |
 | `collar_harness_identity target` | optional positive root-process witness; print `pid<TAB>kernel-start-stamp` and return 0 only when the collar can demonstrate the pane root is its live harness, return 1 when no identity is recorded, or return 2 with a cause when unreadable. Gangline records it only at hitch/adopt and tick treats a later missing or changed witness as `!harness-lost!` |
 | `collar_auto_resume_record target notification-kind` | optional native failed-turn discriminator; print one stable error-record identity, return 1 for an ordinary idle turn, or return 2 when the native record cannot be read |
-| `collar_auto_resume_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can prove whether its marked continuation owns that turn |
+| `collar_submitted_prompt target payload` | print the exact native prompt from a prompt-submission event so Gangline can correlate verified peer envelopes and prove whether its marked automatic continuation owns that turn |
 
 The shipped Codex live-id probe asks tmux to run in the server's host namespace,
 then inspects the active pane process's open descriptors through `/proc`. It

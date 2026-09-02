@@ -24,9 +24,10 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
     *)
       _gl_codex_hook="[{ hooks = [{ type = \"command\", command = \"\\\"$ROOT/bin/gang\\\" hook\" }] }]"
       # Codex runs this Stop handler instead of the generic gang hook. It
-      # blocks only the first objectively proved unreported turn; every allowed
-      # boundary delegates back to `gang hook` so ordinary turn bookkeeping,
-      # spool delivery, and deferred compaction retain their existing owner.
+      # blocks while verified peer reply debt or ambiguous provenance remains;
+      # every proved-clear boundary delegates back to `gang hook` so ordinary
+      # turn bookkeeping, spool delivery, and deferred compaction retain their
+      # existing owner.
       # CODEX TRUSTS THIS EVENT/COMMAND STRING, NOT THE CONTENTS OF THE
       # EXECUTABLE IT NAMES.  An in-place edit to codex-stop-hook.py therefore
       # runs on later turns without a new native trust prompt; changing this
@@ -35,9 +36,10 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # add a changing version token here: it would impose a re-trust dialog on
       # every helper edit.  A Gangline-side content check has no consumer yet;
       # build one only if this boundary must become an enforced control.
-      # The native bound is the outer fuse for the helper.  Its three Gangline
-      # subprocesses each have their own smaller bound, so neither a wedged
-      # lock nor a failed recovery can hold Codex at Stop indefinitely.
+      # The native bound is the outer fuse for the helper. Its query and
+      # clear-boundary Gangline subprocesses each have their own smaller bound,
+      # so neither a wedged lock nor failed bookkeeping can hold Codex at Stop
+      # indefinitely.
       _gl_codex_stop_hook="[{ hooks = [{ type = \"command\", command = \"python3 \\\"$_gl_codex_dir/plugins/codex-stop-hook.py\\\" \\\"$ROOT/bin/gang\\\"\", timeout = 15 }] }]"
       _gl_codex_hook_flags=""
       # PreCompact/PostCompact are wired for the same reason claude-code wires
@@ -263,6 +265,19 @@ GANG_COMPACT_CMD="/compact"
 # current enough to drive a light or arm a reset wake. The next API turn
 # refreshes it. Local file reads need no hook throttle.
 GANG_USAGE_LIMIT_MAX_AGE=300
+
+# Codex carries the exact submitted composer body in UserPromptSubmit. Gangline
+# compares it with delivery evidence recorded before Enter; prompt text without
+# that independent candidate never creates peer reply debt.
+collar_submitted_prompt() { # $1 target unused, $2 UserPromptSubmit payload
+  printf '%s' "$2" | python3 -c '
+import json, sys
+value = json.load(sys.stdin).get("prompt")
+if not isinstance(value, str) or not value:
+    raise SystemExit(2)
+print(value, end="")
+'
+}
 
 # Provider-limit decisions read the exact target session's latest native
 # rate_limits event, never the interactive usage transcript above. The event is

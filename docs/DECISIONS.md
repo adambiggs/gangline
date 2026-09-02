@@ -62,6 +62,18 @@ Require a sender, wrap each message in a nonce-bound envelope, and confirm that
 the target composer accepted and submitted it. Gangline is single-tenant and
 does not claim authentication, but it never reports unverified delivery.
 
+## Peer reply obligations follow verified messages
+
+Arm one durable obligation per verified message from an observed peer, not per
+hitch relationship or visually latest prompt. Clear it only when Gangline
+positively delivers an outbound message correlated to that peer request; the
+reply body is prose and is never parsed for an acknowledgement phrase. Mark the
+correlated envelope as a reply so its recipient does not acquire reciprocal
+debt. Operator and self-declared input changes none of this state, while partial
+or malformed provenance blocks Stop as unknown. Message-scoped records preserve
+crossed turns and multiple senders without adding a coordinator or a protocol
+outside the existing verified transport.
+
 ## An observed sender and a claimed one are marked apart
 
 Gangline reads the sender off the calling window where it can see one and

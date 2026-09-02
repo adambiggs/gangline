@@ -1,10 +1,9 @@
 # Codex Stop hook report-before-idle — implementation record
 
-> Status: In progress for issue #176 on 2026-08-31. The paired
-> `bin/gang reported-to-hitcher` query and collar/helper are one landing unit.
-> The direct-command guard is required for enforcement; without it, a fake
-> query fixture cannot establish that the shipped command exists. Current
-> behavior is defined by the code and tests, not this historical note.
+> Status: Superseded on 2026-09-01 by verified, message-scoped peer reply
+> obligations shared by the Codex and Claude Code collars. The body below is
+> historical and intentionally unchanged; current behavior is defined by the
+> code, contract, reference, and tests.
 
 The paired query has one wire rule: every answered verdict exits zero and
 prints exactly `status<TAB>destination<TAB>cause<LF>`. A nonzero exit is no

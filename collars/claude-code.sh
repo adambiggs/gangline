@@ -31,15 +31,20 @@ collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
 }
 GANG_LAUNCH="claude"
 GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
+_gl_cc_dir="${BASH_SOURCE[0]%/*}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
-  case "$ROOT" in
+  case "$ROOT$_gl_cc_dir" in
     *[\'\"\\]*|*[[:cntrl:]]*) ;;
     *)
       _gl_cc_cmd="{\"type\":\"command\",\"command\":\"$ROOT/bin/gang\",\"args\":[\"hook\"]}"
+      # Stop is the policy boundary for verified peer reply obligations. The
+      # shared adapter blocks while Gangline reports debt or ambiguous
+      # provenance, and delegates a clear boundary back to the generic hook.
+      _gl_cc_stop_cmd="{\"type\":\"command\",\"command\":\"python3\",\"args\":[\"$_gl_cc_dir/plugins/codex-stop-hook.py\",\"$ROOT/bin/gang\"],\"timeout\":15}"
       _gl_cc_esc="${ROOT//\$/\\\\\$}"; _gl_cc_esc="${_gl_cc_esc//\`/\\\\\`}"
       _gl_cc_json="{\"hooks\":{\"UserPromptSubmit\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PostToolUse\":[{\"matcher\":\"*\",\"hooks\":[$_gl_cc_cmd]}]"
-      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_cmd]}]"
+      _gl_cc_json="$_gl_cc_json,\"Stop\":[{\"hooks\":[$_gl_cc_stop_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PermissionRequest\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"Notification\":[{\"hooks\":[$_gl_cc_cmd]}]"
       _gl_cc_json="$_gl_cc_json,\"PreCompact\":[{\"hooks\":[$_gl_cc_cmd]}]"
@@ -70,10 +75,11 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       GANG_RESUME_LAUNCH="claude --resume {{session_id}} --settings '$_gl_cc_json'"
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
-      unset _gl_cc_cmd _gl_cc_esc _gl_cc_json _gl_cc_light
+      unset _gl_cc_cmd _gl_cc_stop_cmd _gl_cc_esc _gl_cc_json _gl_cc_light
       ;;
   esac
 fi
+unset _gl_cc_dir
 GANG_MODEL_OPT="--model"
 # Claude exposes no complete model catalog. These are the aliases its own
 # --help documents; a full name can still be recognized by the native checker
@@ -471,7 +477,7 @@ collar_auto_resume_record() { # $1 target, $2 Notification kind -> failed-turn U
   claude_record_read "$file" auto
 }
 
-collar_auto_resume_prompt() { # $1 target unused, $2 UserPromptSubmit payload
+collar_submitted_prompt() { # $1 target unused, $2 UserPromptSubmit payload
   printf '%s' "$2" | python3 -c '
 import json, sys
 value = json.load(sys.stdin).get("prompt")
