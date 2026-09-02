@@ -20,10 +20,12 @@ harness so the hitch fails at once instead, saying what is wrong and how to
 fix it.
 
 CODEX ANSWERS THIS ABOUT ITSELF. The app-server's `hooks/list` returns every
-configured hook with the `trustStatus` the TUI acts on, under the same `-c`
-overrides the launch will use, so nothing here reproduces Codex's hash
-algorithm or reads `[hooks.state]` behind its back. Observed on codex-cli
-0.149.1.
+configured hook with the presence, enablement and `trustStatus` the TUI acts
+on, under the same configuration layers the launch will use, so nothing here
+reproduces Codex's hash algorithm or reads `[hooks.state]` behind its back.
+Codex-cli 0.151.0 does not allow a profile-v2 `-p` layer on app-server at all,
+so those launches are refused as unprobeable instead of being checked under a
+different layer stack.
 
 NOTHING HERE GRANTS TRUST. Trust is a decision about what may run outside the
 sandbox, so it stays the operator's: this reads the state and refuses, and the
@@ -37,6 +39,7 @@ to remove.
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -46,10 +49,37 @@ from typing import NoReturn
 PROBE_TIMEOUT_SEC = 25
 EXIT_REFUSED = 78  # EX_CONFIG
 TRUSTED = ("trusted", "managed")
+GANGLINE_EVENTS = {
+    "userpromptsubmit", "posttooluse", "permissionrequest",
+    "precompact", "postcompact", "stop",
+}
+VALUE_LAYER_FLAGS = ("-c", "--config", "--enable", "--disable")
+LONG_VALUE_LAYER_FLAGS = ("--config=", "--enable=", "--disable=")
+HOOK_VALUE = re.compile(
+    r'^\[\{ hooks = \[\{ type = "command", command = '
+    r'("(?:\\.|[^"\\])*")(?:, timeout = [0-9]+)? \}\] \}\]$'
+)
 
 
 class Unreadable(Exception):
     """Codex's hook-trust state could not be read at all."""
+
+
+def profile_layer(command):
+    """Name the first profile-v2 layer app-server cannot accept, if any."""
+    i = 1
+    while i < len(command):
+        word = command[i]
+        if word == "--":
+            break
+        if word in ("-p", "--profile"):
+            if i + 1 >= len(command):
+                return word + " <missing value>"
+            return "%s %s" % (word, command[i + 1])
+        if word.startswith("--profile=") or (word.startswith("-p") and len(word) > 2):
+            return word
+        i += 1
+    return None
 
 
 def hold_corpse():
@@ -86,22 +116,79 @@ def refuse(detail, last_line) -> NoReturn:
     sys.exit(EXIT_REFUSED)
 
 
-def config_overrides(command):
-    """The `-c key=value` pairs of the launch, and nothing else.
-
-    `hooks/list` has to be asked under the same configuration the launch will
-    run under, and the hook definitions themselves arrive as `-c` overrides.
-    Every other word is a codex flag the app-server does not take.
-    """
+def config_layers(command):
+    """Project the launch's configuration-affecting layers onto app-server."""
     out = []
     i = 1
     while i < len(command):
-        if command[i] in ("-c", "--config") and i + 1 < len(command):
+        word = command[i]
+        if word == "--":
+            break
+        if word in VALUE_LAYER_FLAGS:
+            if i + 1 >= len(command):
+                raise Unreadable("%s has no value in the codex launch" % word)
             out += [command[i], command[i + 1]]
             i += 2
+        elif word == "--strict-config" or word.startswith(LONG_VALUE_LAYER_FLAGS):
+            out.append(word)
+            i += 1
         else:
             i += 1
     return out
+
+
+def config_values(command):
+    """Yield only config override values from a launch, in precedence order."""
+    layers = config_layers(command)
+    i = 0
+    while i < len(layers):
+        if layers[i] in ("-c", "--config"):
+            yield layers[i + 1]
+            i += 2
+        elif layers[i].startswith("--config="):
+            yield layers[i].split("=", 1)[1]
+            i += 1
+        elif layers[i] in VALUE_LAYER_FLAGS:
+            i += 2
+        else:
+            i += 1
+
+
+def expected_hooks(command):
+    """Read the six collar-owned event/command pairs from its inline layers."""
+    candidates = {}
+    for option in config_values(command):
+        key, separator, value = option.partition("=")
+        if not separator or not key.startswith("hooks."):
+            continue
+        event = key[6:].lower()
+        if event not in GANGLINE_EVENTS:
+            continue
+        match = HOOK_VALUE.fullmatch(value)
+        if match is None:
+            raise Unreadable("the Gangline %s hook override has an unknown shape" % event)
+        try:
+            command_text = json.loads(match.group(1))
+        except (TypeError, ValueError):
+            raise Unreadable("the Gangline %s hook command is not readable" % event)
+        candidates.setdefault(event, set()).add(command_text)
+    missing = sorted(GANGLINE_EVENTS - set(candidates))
+    ambiguous = sorted(event for event, commands in candidates.items()
+                       if len(commands) != 1)
+    if missing:
+        raise Unreadable("the codex launch carries no Gangline hook override for %s"
+                         % ", ".join(missing))
+    if ambiguous:
+        raise Unreadable("the codex launch carries conflicting Gangline hooks for %s"
+                         % ", ".join(ambiguous))
+    return {event: next(iter(commands)) for event, commands in candidates.items()}
+
+
+def diagnostic_text(item):
+    """Keep native config diagnostics visible without assuming their schema."""
+    if isinstance(item, str):
+        return item
+    return json.dumps(item, sort_keys=True)[:500]
 
 
 def read_entries(message):
@@ -109,26 +196,39 @@ def read_entries(message):
         raise Unreadable("codex refused 'hooks/list' (%s)"
                          % json.dumps(message["error"])[:200])
     data = (message.get("result") or {}).get("data")
-    if not isinstance(data, list):
+    if not isinstance(data, list) or not data:
         raise Unreadable("the 'hooks/list' result carries no data array")
     hooks = []
+    warnings = []
     for entry in data:
         if not isinstance(entry, dict) or not isinstance(entry.get("hooks"), list):
             raise Unreadable("a 'hooks/list' entry carries no hooks array")
+        if not isinstance(entry.get("errors"), list):
+            raise Unreadable("a 'hooks/list' entry carries no errors array")
+        if not isinstance(entry.get("warnings"), list):
+            raise Unreadable("a 'hooks/list' entry carries no warnings array")
+        if entry["errors"]:
+            raise Unreadable("codex reported hook configuration errors: %s"
+                             % "; ".join(diagnostic_text(item)
+                                        for item in entry["errors"]))
+        warnings.extend(diagnostic_text(item) for item in entry["warnings"])
         for hook in entry["hooks"]:
             if not isinstance(hook, dict):
                 raise Unreadable("a 'hooks/list' hook is not an object")
             if not isinstance(hook.get("trustStatus"), str) \
-                    or not isinstance(hook.get("eventName"), str):
+                    or not isinstance(hook.get("eventName"), str) \
+                    or not isinstance(hook.get("command"), str) \
+                    or not isinstance(hook.get("enabled"), bool):
                 raise Unreadable(
-                    "a 'hooks/list' hook carries no readable trustStatus and eventName")
+                    "a 'hooks/list' hook carries no readable event, command, enabled, "
+                    "and trust fields")
             hooks.append(hook)
-    return hooks
+    return hooks, warnings
 
 
 def hooks_list(command, cwd):
     """Every configured hook codex reports for `cwd`, with its trust status."""
-    argv = [command[0], "app-server"] + config_overrides(command)
+    argv = [command[0]] + config_layers(command) + ["app-server"]
     try:
         probe = subprocess.Popen(
             argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -187,8 +287,23 @@ def main():
         print("codex-hooks-preflight: no codex command to launch", file=sys.stderr)
         sys.exit(2)
     cwd = os.getcwd()
+    profile = profile_layer(command)
+    if profile is not None:
+        refuse(
+            ["gang: this codex launch selects a -p/--profile configuration layer,",
+             "but codex-cli 0.151.0 does not permit --profile on `codex app-server`.",
+             "Without that same native layer, hooks/list cannot prove the hooks the",
+             "TUI will load; flattening it into -c would change layer precedence and",
+             "hook source identity, including the trust keys. Gangline will not",
+             "launch blind.",
+             "",
+             "Remove -p/--profile from this collar, or start Codex here by hand."],
+            "gang: codex hook-trust PROFILE UNPROBEABLE (%s) — codex-cli 0.151.0 "
+            "app-server cannot inspect a -p/--profile launch; remove that layer or "
+            "start codex here by hand." % profile)
     try:
-        hooks = hooks_list(command, cwd)
+        expected = expected_hooks(command)
+        hooks, warnings = hooks_list(command, cwd)
     except Unreadable as exc:
         refuse(
             ["gang: codex's own hook-trust state could not be read, so whether this",
@@ -203,6 +318,46 @@ def main():
             "gang: codex hook-trust UNREADABLE (%s) — re-verify the collar preflight "
             "against this codex build, or start codex here by hand to see what it "
             "asks." % exc)
+    for warning in warnings:
+        print("gang: codex hook warning: %s" % warning, file=sys.stderr)
+
+    missing = []
+    disabled = []
+    mismatched = []
+    for event, expected_command in sorted(expected.items()):
+        same_event = [hook for hook in hooks
+                      if hook["eventName"].lower() == event]
+        exact = [hook for hook in same_event
+                 if hook["command"] == expected_command]
+        if not same_event:
+            missing.append(event)
+        elif not exact:
+            mismatched.append(event)
+        elif not any(hook["enabled"] for hook in exact):
+            disabled.append(event)
+    if missing or disabled or mismatched:
+        detail = [
+            "gang: codex did not report the six enabled Gangline hooks this launch",
+            "requires, so its declared native turn boundaries are unavailable:",
+            "",
+        ]
+        if missing:
+            detail.append("  missing: %s" % ", ".join(missing))
+        if disabled:
+            detail.append("  disabled: %s" % ", ".join(disabled))
+        if mismatched:
+            detail.append("  command does not match: %s" % ", ".join(mismatched))
+        detail += [
+            "",
+            "Do not disable hooks for a Gangline Codex launch. Remove a",
+            "`--disable hooks` layer or set `features.hooks=true` in the layer that",
+            "disabled them, then re-hitch.",
+        ]
+        refuse(
+            detail,
+            "gang: required codex hooks are missing, disabled, or changed — set "
+            "features.hooks=true and restore the Gangline hook overrides before "
+            "re-hitching.")
     pending = [h for h in hooks if h["trustStatus"] not in TRUSTED]
     if not pending:
         os.execvp(command[0], command)

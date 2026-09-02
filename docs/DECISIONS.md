@@ -1755,9 +1755,11 @@ state whose composer answers for itself. An unknown reading is deliberately not
 refused: the state surface already reports it, and one corrupt transcript line
 must not strand delivery to a window whose composer read back clean.
 
-Codex binds a rollout and records a native turn bracket, but no turn-ending
-error class appears in any rollout inspected, so it declares no reader rather
-than a guessed one.
+Codex binds a rollout and records a native turn bracket, but its reader does not
+guess an error vocabulary the rollout lacks. It declares a blocked window only
+when the newest completed turn has no reply, no first token, and no work beyond
+the input and known bookkeeping. An unclosed turn is absent and an unclassified
+payload is unknown, so new rollout shapes cannot silently become blocked.
 
 ## A shipped role brief carries only what its reader alone can see
 

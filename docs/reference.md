@@ -181,7 +181,10 @@ and the attach recovery above does not apply to it.
   still-existing window registered to the same agent carries `@gl_session_id`.
   A missing id refuses with `gang whoami` and the explicit-id remedy; there is
   no latest/continue fallback. Collars without an explicit-id resume template
-  refuse either form.
+  refuse either form. The Codex resume template sets `tui.resume_cwd="current"`
+  only for that launch, so a session saved in another directory resumes in the
+  workspace selected by `hitch -d` without opening Codex's directory-choice
+  modal. Fresh Codex launches do not receive that override.
 
 Names use letters, digits, dot, dash, and underscore, may not begin with dot or
 dash, and must be unique in the team. `hitch` is reserved as the startup-envelope
@@ -1550,6 +1553,23 @@ pre-hitch provisioning command: the held refusal is the once-per-machine,
 operator-visible recovery path. An edit that changes the configured command or
 path can therefore cause every later Codex hitch on that machine to refuse
 until a person completes those steps.
+
+The preflight asks `hooks/list` under the launch's `-c`/`--config`, `--enable`,
+`--disable`, and `--strict-config` layers in their original order. It requires
+the exact six Gangline event/command pairs to be present, enabled, and trusted
+or managed. A native configuration error, a missing or disabled pair, or a
+changed command refuses the launch; warnings are printed but remain nonfatal.
+If an operator layer disables hooks, remove that layer or set
+`features.hooks=true` there rather than having Gangline override the choice
+silently.
+
+Codex-cli 0.151.0 does not accept `-p`/`--profile` on `codex app-server`, even
+though the TUI and resume commands accept it. Gangline therefore refuses such a
+launch as `PROFILE UNPROBEABLE`: omitting the profile would inspect a different
+hook set, while flattening its file into `-c` overrides would change both layer
+precedence and the source identity used by native hook-trust keys. Remove the
+profile layer from the collar, or start Codex there by hand; Gangline will not
+claim hook evidence that the installed native interface cannot produce.
 
 A pane reading Gangline could not take is unknown, and unknown is neither an
 absent composer nor a settled one. Reporting it is the collar's obligation:

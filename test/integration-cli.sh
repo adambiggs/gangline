@@ -618,23 +618,149 @@ mkdir -p "$CODEX_STUB/bin"
 # than before removes the race the other order carries: a stub that exits first
 # closes the pipe under the caller's write, and the preflight would report a
 # hook state it could not read instead of launching.
-cat > "$CODEX_STUB/bin/codex" <<'SH'
-#!/bin/sh
-if [ "${1:-}" = "app-server" ]; then
-  while IFS= read -r line; do
-    case "$line" in *'"hooks/list"'*) break ;; esac
-  done
-  printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"data":[]}}'
-  exit 0
-fi
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -c) printf '%s\n' "$2" >> "$CODEX_OPTIONS"; shift 2 ;;
-    *) shift ;;
-  esac
-done
-SH
+cat > "$CODEX_STUB/bin/codex" <<'PY'
+#!/usr/bin/env python3
+import json
+import os
+import re
+import sys
+
+args = sys.argv[1:]
+configs = []
+profiles = []
+disabled = []
+i = 0
+while i < len(args):
+    if args[i] in ("-c", "--config") and i + 1 < len(args):
+        configs.append(args[i + 1])
+        i += 2
+    elif args[i] in ("-p", "--profile") and i + 1 < len(args):
+        profiles.append(args[i + 1])
+        i += 2
+    elif args[i] == "--disable" and i + 1 < len(args):
+        disabled.append(args[i + 1])
+        i += 2
+    else:
+        i += 1
+
+if "app-server" in args:
+    if profiles:
+        print("Error: --profile only applies to runtime commands and `codex mcp`; "
+              "app-server does not accept it", file=sys.stderr)
+        raise SystemExit(1)
+    probe_args = os.environ.get("CODEX_PROBE_ARGS")
+    if probe_args:
+        with open(probe_args, "w", encoding="utf-8") as stream:
+            stream.write("\n".join(args) + "\n")
+    hooks = []
+    for option in configs:
+        match = re.fullmatch(
+            r'hooks\.([A-Za-z]+)=\[\{ hooks = \[\{ type = "command", '
+            r'command = ("(?:\\.|[^"\\])*")(?:, time' r'out = [0-9]+)? \}\] \}\]',
+            option,
+        )
+        if match is None:
+            continue
+        event = match.group(1).lower()
+        command = json.loads(match.group(2))
+        if os.environ.get("CODEX_COMMAND_MISMATCH", "").lower() == event:
+            command += " --changed"
+        hooks.append({
+            "key": "/<session-flags>/config.toml:%s:0:0" % event,
+            "eventName": event,
+            "command": command,
+            "enabled": os.environ.get("CODEX_DISABLE_EVENT", "").lower() != event,
+            "trustStatus": "trusted",
+        })
+    drop = os.environ.get("CODEX_DROP_EVENT", "").lower()
+    hooks = [hook for hook in hooks if hook["eventName"] != drop]
+    if "hooks" in disabled:
+        hooks = []
+    warnings = ([os.environ["CODEX_HOOK_WARNING"]]
+                if os.environ.get("CODEX_HOOK_WARNING") else [])
+    errors = ([os.environ["CODEX_HOOK_ERROR"]]
+              if os.environ.get("CODEX_HOOK_ERROR") else [])
+    for line in sys.stdin:
+        if '"hooks/list"' in line:
+            break
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {"data": [{
+            "cwd": os.getcwd(),
+            "hooks": hooks,
+            "warnings": warnings,
+            "errors": errors,
+        }]},
+    }))
+    raise SystemExit(0)
+
+options = os.environ.get("CODEX_OPTIONS")
+if options:
+    with open(options, "a", encoding="utf-8") as stream:
+        for option in configs:
+            stream.write(option + "\n")
+launched = os.environ.get("CODEX_LAUNCHED")
+if launched:
+    with open(launched, "w", encoding="utf-8") as stream:
+        stream.write("launched\n")
+PY
 chmod +x "$CODEX_STUB/bin/codex"
+
+codex_preflight="$ROOT/collars/plugins/codex-hooks-preflight.py"
+codex_expected_hook_args=()
+for event in UserPromptSubmit PostToolUse PermissionRequest PreCompact PostCompact Stop; do
+  codex_expected_hook_args+=(
+    -c "hooks.$event=[{ hooks = [{ type = \"command\", command = \"/bin/true\" }] }]"
+  )
+done
+codex_probe_args="$RUN_ROOT/codex-probe.args"
+env PATH="$CODEX_STUB/bin:$PATH" CODEX_PROBE_ARGS="$codex_probe_args" \
+  python3 "$codex_preflight" codex --enable harmless \
+    --strict-config "${codex_expected_hook_args[@]}" --version
+codex_probe_layers="$(<"$codex_probe_args")"
+contains "the hook probe carries a launch feature enablement" \
+  "$codex_probe_layers" $'--enable\nharmless'
+contains "the hook probe carries strict config parsing" \
+  "$codex_probe_layers" '--strict-config'
+equal "configuration layers stay global to the hook probe subcommand" \
+  "app-server" "$(tail -n 1 "$codex_probe_args")"
+refuses "Codex hooks disabled in the launch layer cannot pass the preflight" \
+  'features.hooks=true' \
+  env PATH="$CODEX_STUB/bin:$PATH" python3 "$codex_preflight" codex \
+    --disable hooks "${codex_expected_hook_args[@]}" --version
+refuses "a profile layer is refused before the unsupported app-server probe" \
+  'PROFILE UNPROBEABLE (--profile risk-layer)' \
+  env PATH="$CODEX_STUB/bin:$PATH" python3 "$codex_preflight" codex \
+    --profile risk-layer "${codex_expected_hook_args[@]}" --version
+refuses "an attached short profile layer is also refused before probing" \
+  'PROFILE UNPROBEABLE (-p=risk-layer)' \
+  env PATH="$CODEX_STUB/bin:$PATH" python3 "$codex_preflight" codex \
+    -p=risk-layer "${codex_expected_hook_args[@]}" --version
+refuses "a missing Gangline hook cannot pass the preflight" \
+  'missing' \
+  env PATH="$CODEX_STUB/bin:$PATH" CODEX_DROP_EVENT=PostCompact \
+    python3 "$codex_preflight" codex "${codex_expected_hook_args[@]}" --version
+refuses "a disabled Gangline hook cannot pass the preflight" \
+  'disabled' \
+  env PATH="$CODEX_STUB/bin:$PATH" CODEX_DISABLE_EVENT=Stop \
+    python3 "$codex_preflight" codex "${codex_expected_hook_args[@]}" --version
+refuses "a trusted hook under the right event must still match its command" \
+  'does not match' \
+  env PATH="$CODEX_STUB/bin:$PATH" CODEX_COMMAND_MISMATCH=UserPromptSubmit \
+    python3 "$codex_preflight" codex "${codex_expected_hook_args[@]}" --version
+refuses "a hook configuration error cannot pass the preflight" \
+  'broken hook layer' \
+  env PATH="$CODEX_STUB/bin:$PATH" CODEX_HOOK_ERROR='broken hook layer' \
+    python3 "$codex_preflight" codex "${codex_expected_hook_args[@]}" --version
+codex_warning_launch="$RUN_ROOT/codex-warning-launched"
+codex_warning_output="$(env PATH="$CODEX_STUB/bin:$PATH" \
+  CODEX_HOOK_WARNING='deprecated hook field' CODEX_LAUNCHED="$codex_warning_launch" \
+  python3 "$codex_preflight" codex "${codex_expected_hook_args[@]}" --version 2>&1)"
+contains "a nonfatal hook warning is shown" \
+  "$codex_warning_output" 'deprecated hook field'
+equal "a hook warning does not prevent the proved launch" \
+  "launched" "$(<"$codex_warning_launch")"
 
 codex_launch() { # $1 fake install root, $2 GANG_LAUNCH|GANG_RESUME_LAUNCH
   local fake_root="$1" launch_name="$2" collar_file="$ROOT/collars/codex.sh"
@@ -715,6 +841,10 @@ codex_resume="$(codex_launch "$ROOT" GANG_RESUME_LAUNCH)"
 contains "Codex resume declares an explicit native session slot" \
   "$codex_resume" "codex resume {{session_id}}"
 excludes "Codex resume never resolves by recency" "$codex_resume" "--last"
+contains "Codex resume keeps a cross-directory hitch in its selected workspace" \
+  "$codex_resume" '-c '\''tui.resume_cwd="current"'\'''
+excludes "a fresh Codex launch does not set resume-only cwd policy" \
+  "$(codex_launch "$ROOT" GANG_LAUNCH)" "tui.resume_cwd"
 
 # A QUOTE IN THE ROOT IS NOT ESCAPABLE HERE. The hook TOML is carried inside a
 # single-quoted -c word, so one quote in the install path closes that word and

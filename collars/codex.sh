@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 [ -z "${name:-}" ] || export OTEL_RESOURCE_ATTRIBUTES="gang.agent=$name${OTEL_RESOURCE_ATTRIBUTES:+,$OTEL_RESOURCE_ATTRIBUTES}"
 GANG_LAUNCH="codex -c check_for_update_on_startup=false"
-GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false"
+GANG_RESUME_LAUNCH="codex resume {{session_id}} -c check_for_update_on_startup=false -c 'tui.resume_cwd=\"current\"'"
 # A HOSTILE ROOT IS DECLINED, NOT ESCAPED. The hook TOML rides inside a
 # single-quoted -c word, so one quote in the install path closes that word and
 # the remainder of the path is shell code the new window runs under the
@@ -472,22 +472,12 @@ raise SystemExit(0 if want in " ".join(block.split()) else 1)
   printf 'the Codex follow-up queue is on screen but no longer advertises the shift+Left recall this collar sends'
   return 2
 }
-# Verified on codex 0.145.0: the native hook set contains no Notification
-# event. legacy_notify / agent-turn-complete reports turn completion, which the
-# Stop hook above already delivers; it is not an awaiting-input witness and is
-# deliberately not wired. PermissionRequest is this collar's only stall source.
-# UNVERIFIABLE BY ENUMERATION on 0.146.0, which is a stronger statement than
-# unverified. There is no enumeration surface to find: `codex debug` exposes
-# models, app-server and prompt-input, and none lists an event. Reading the
-# names out of the binary is not a substitute — that method was tested against
-# events known to be real, returned zero for every one of them, and so reports
-# absence it cannot see. Its silence is not evidence.
-#
-# The only route left is probing event names one at a time and proving a
-# negative from the misses. Recorded this way so nobody goes looking for a menu
-# that does not exist: claude-code has one and this harness does not, which is
-# a difference between the harnesses rather than a gap in what we bothered to
-# check.
+# ENUMERATED ON CODEX 0.151.0. The exact generated app-server schema's
+# HookEventName enum and the public hook documentation list the native hook
+# events; neither contains Notification. legacy_notify / agent-turn-complete
+# reports turn completion, which the Stop hook above already delivers; it is
+# not an awaiting-input witness and is deliberately not wired.
+# PermissionRequest is this collar's only stall source.
 
 # HOOKS ARE TRUSTED, NOT MERELY INSTALLED (observed on codex 0.146.0). Trust is
 # persisted in config.toml's [hooks.state] table. The KEY is a fixed sentinel,
