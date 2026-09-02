@@ -1489,6 +1489,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     || die "unknown collar '$1' (have: $(list_collars | tr '\n' ' '))"
   GANG_LAUNCH="" GANG_RESUME_LAUNCH="" GANG_BUSY_REGEX=""
   GANG_OCCUPIED_REGEX="" GANG_QUEUED_REGEX="" GANG_COMPACT_CMD="" GANG_SELF_COMPACT=""
+  GANG_SELF_COMPACT_WITNESS=""
   GANG_MIDTURN_INPUT="" GANG_QUEUE_RECALL_KEY=""
   GANG_INTERRUPT_KEY="" GANG_STOP_HOOK=""
   GANG_STALL_TYPES=""
@@ -1530,6 +1531,12 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
     ''|deferred) ;;
     *) die "collar '$1' sets unknown GANG_SELF_COMPACT '$GANG_SELF_COMPACT' (expected deferred or unset)" ;;
   esac
+  case "$GANG_SELF_COMPACT_WITNESS" in
+    ''|unavailable) ;;
+    *) die "collar '$1' sets unknown GANG_SELF_COMPACT_WITNESS '$GANG_SELF_COMPACT_WITNESS' (expected unavailable or unset)" ;;
+  esac
+  [ -z "$GANG_SELF_COMPACT_WITNESS" ] || [ "$GANG_SELF_COMPACT" = deferred ] \
+    || die "collar '$1' declares a self-compaction witness state without deferred self-compaction"
   case "$GANG_STOP_HOOK" in
     ''|1) ;;
     *) die "collar '$1' sets unknown GANG_STOP_HOOK '$GANG_STOP_HOOK' (expected 1 or unset)" ;;
@@ -2740,6 +2747,17 @@ self_compact_failed_pending_write() { # $1 window, $2 token, $3 reason
     "[request:$2] $3 $SELF_COMPACT_STANDING" 2>/dev/null || true
 }
 
+# A NATIVE STOP IS NOT NATIVE IDLE. Some harnesses run Stop hooks before their
+# task object is released, and can persist a terminal turn record before that
+# release too. A collar which has no later positive boundary declares that fact
+# instead of letting the composer stand in for it. The exact request stays on
+# record so a later collar with a real witness may retry it; no Enter has been
+# sent, so that retry is not ambiguous and ordinary peer mail remains unrelated.
+self_compact_witness_unavailable_record() { # $1 window, $2 request token
+  self_compact_failed_pending_write "$1" "$2" \
+    "collar declares no positive post-Stop native-idle witness; a visible composer or terminal turn record is insufficient. No compaction command or recovery continuation was submitted."
+}
+
 self_compact_failed_read() { # $1 window -> only a failure current for its state;
                              # the reader's own 1 or 2 when it could not be read
   local failed token pending rc=0
@@ -2912,11 +2930,42 @@ self_compact_run() ( # $1 window, $2 collar, $3 exact request token
 )
 
 self_compact_dispatch() { # $1 window, $2 collar, optional $3 = sync
-  local win="$1" request
+  local win="$1" request witness="" witness_token="" witness_state="" extra=""
   [ -n "$win" ] || return 0
   request="$(tmux show-options -wqv -t "$win" @gl_self_compact_requested 2>/dev/null)" \
     || request=""
   [ -n "$request" ] || return 0
+  # DO THIS BEFORE A WORKER EXISTS. The Codex Stop race was caused by launching
+  # a detached dispatcher from inside the callback and asking its first pane
+  # frame to certify a state the native task had not left. An unavailable
+  # witness is a terminal verdict for this boundary, not work to race later.
+  witness="$(tmux show-options -wqv -t "$win" @gl_self_compact_witness 2>/dev/null)" \
+    || witness=""
+  if [ -n "$witness" ]; then
+    IFS=$'\t' read -r witness_token witness_state extra <<<"$witness"$'\t__end'
+    if [ "$extra" != __end ] || [ "$witness_token" != "$request" ] \
+       || [ "$witness_state" != unavailable ]; then
+      self_compact_failed_pending_write "$win" "$request" \
+        "the request's stored native-idle witness verdict is malformed or belongs to another request. No compaction command or recovery continuation was submitted."
+      tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+      return 0
+    fi
+  else
+    # Compatibility for a request recorded before witness state travelled with
+    # its token. Only a readable current collar may authorize the legacy path:
+    # disappearance is unavailable evidence, never permission to spend a
+    # request whose submission has not been witnessed.
+    witness_state="$( ( load_collar "$2"; printf '%s' "$GANG_SELF_COMPACT_WITNESS" ) 2>/dev/null)" \
+      || { self_compact_failed_pending_write "$win" "$request" \
+             "the collar could not be loaded, so its native-idle witness is unavailable. No compaction command or recovery continuation was submitted."
+           tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+           return 0; }
+  fi
+  if [ "$witness_state" = unavailable ]; then
+    self_compact_witness_unavailable_record "$win" "$request"
+    tmux wait-for -S "gang-self-compact-$request" 2>/dev/null || true
+    return 0
+  fi
   if [ "${3:-}" = sync ]; then
     self_compact_run "$win" "$2" "$request" </dev/null >/dev/null 2>&1
     return 0
@@ -2938,6 +2987,14 @@ self_compact_request() { # $1 window id -> request token
   tmux set-option -uw -t "$1" @gl_self_compact_noted 2>/dev/null || true
   tmux set-option -w -t "$1" @gl_self_compact_requested "$token" \
     || die "could not record the self-compaction request"
+  if [ -n "$GANG_SELF_COMPACT_WITNESS" ]; then
+    tmux set-option -w -t "$1" @gl_self_compact_witness \
+      "$token"$'\t'"$GANG_SELF_COMPACT_WITNESS" \
+      || { tmux set-option -uw -t "$1" @gl_self_compact_requested 2>/dev/null || true
+           die "could not bind the native-idle witness verdict to the self-compaction request"; }
+  else
+    tmux set-option -uw -t "$1" @gl_self_compact_witness 2>/dev/null || true
+  fi
   printf '%s' "$token"
 }
 
@@ -9592,7 +9649,7 @@ cmd_interrupt() {
 }
 
 cmd_compact() {
-  local name="" self="" mine=0 busy_rc=0 resume=""
+  local name="" self="" mine=0 busy_rc=0 resume="" self_request=""
   while [ $# -gt 0 ]; do case "$1" in
     --resume) [ $# -ge 2 ] || die "compact: --resume needs the turn to take after the compaction"
               [ -z "$resume" ] || die "compact: --resume may be passed only once"
@@ -9627,13 +9684,18 @@ cmd_compact() {
     # happened. A refused boundary now puts its request back and retries at a
     # later one, so a standing request is an ordinary state and a second
     # compact an ordinary thing to try.
-    self_compact_request "$AGENT_ID" >/dev/null
+    self_request="$(self_compact_request "$AGENT_ID")"
     if [ -n "$resume" ]; then
       tmux set-option -w -t "$AGENT_ID" @gl_self_compact_resume "$resume" \
         || { tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_requested 2>/dev/null || true
+             tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_witness 2>/dev/null || true
              die "could not record the continuation for this compaction"; }
     else
       tmux set-option -uw -t "$AGENT_ID" @gl_self_compact_resume 2>/dev/null || true
+    fi
+    if [ "$GANG_SELF_COMPACT_WITNESS" = unavailable ]; then
+      self_compact_witness_unavailable_record "$AGENT_ID" "$self_request"
+      die "self-compaction was recorded but NOT submitted: collar '$AGENT_COLLAR' has no positive post-Stop native-idle witness; a visible composer or terminal turn record is insufficient. No recovery continuation will be injected. The request remains pending for diagnosis or a future collar with a real witness"
     fi
     printf '%s\n' "$(colour "$C_OK" "self-compaction scheduled for the end of this turn") $(colour "$C_DIM" "(finish this turn now; a continuation turn follows the compaction)")"
     return 0
@@ -10845,6 +10907,8 @@ cmd_status() {
     || option_unreadable "$self_failed_rc" @gl_self_compact_failed "$status_cost"
   if [ -n "$self_failed" ]; then
     case "$self_failed" in
+      *'no positive post-Stop native-idle witness'*)
+        printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted: $self_failed")" ;;
       'submission outcome unknown:'*)
         printf '%s\n' "$(colour "$C_BAD" "self-compaction outcome unknown after Stop: $self_failed")" ;;
       *) printf '%s\n' "$(colour "$C_BAD" "self-compaction NOT submitted after Stop: $self_failed")" ;;
@@ -10856,8 +10920,13 @@ cmd_status() {
     window_option_or_die "$AGENT_ID" @gl_self_compact_dispatching "$status_cost"
     self_pending="$OPTION_VALUE"
   }
-  [ -z "$self_pending" ] \
-    || printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")"
+  if [ -n "$self_pending" ]; then
+    case "$self_failed" in
+      *'no positive post-Stop native-idle witness'*)
+        printf '%s\n' "$(colour "$C_BAD" "self-compaction request preserved; blocked because this collar has no positive native-idle witness")" ;;
+      *) printf '%s\n' "$(colour "$C_WORK" "self-compaction requested; waiting for the turn boundary")" ;;
+    esac
+  fi
   staged_rc=0
   staged="$(staged_current "$AGENT_ID")" || staged_rc=$?
   [ "$staged_rc" -eq 0 ] || option_unreadable "$staged_rc" @gl_staged "$status_cost"

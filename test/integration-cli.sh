@@ -703,10 +703,10 @@ excludes "a quote-bearing resumed root gets no Codex hooks either" \
   "$(codex_launch "$codex_hostile_root" GANG_RESUME_LAUNCH)" "hooks."
 codex_hostile_collar="$ROOT/collars/codex.sh"
 codex_hostile_declarations="$(GANG_TEST_COLLARS='' ROOT="$codex_hostile_root" bash -c \
-  'unset GANG_STOP_HOOK GANG_SELF_COMPACT; . "$1"; printf "%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}"' \
+  'unset GANG_STOP_HOOK GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS; . "$1"; printf "%s|%s|%s" "${GANG_STOP_HOOK:-}" "${GANG_SELF_COMPACT:-}" "${GANG_SELF_COMPACT_WITNESS:-}"' \
   fixture "$codex_hostile_collar")"
-equal "an unhooked Codex launch claims neither Stop nor deferred compaction" \
-  "|" "$codex_hostile_declarations"
+equal "an unhooked Codex launch claims neither Stop, deferred compaction, nor a witness verdict" \
+  "||" "$codex_hostile_declarations"
 
 claude_collar="$ROOT/collars/claude-code.sh"
 claude_role_prompt_opt="$(ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
@@ -1781,6 +1781,10 @@ codex_self_compact="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT"' fixture "$codex_collar")"
 equal "the Codex collar defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
+codex_self_witness="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; printf "%s" "$GANG_SELF_COMPACT_WITNESS"' fixture "$codex_collar")"
+equal "the Codex collar refuses self-compaction without a post-task witness" \
+  "unavailable" "$codex_self_witness"
 codex_stall_types="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   'unset GANG_STALL_TYPES; . "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' \
   fixture "$codex_collar")"

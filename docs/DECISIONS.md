@@ -102,10 +102,10 @@ until it drains, so a turn witnesses a harness that is not compacting whether or
 not the compaction it followed ever finished. Settling only ever closes a bracket
 that is already open; a turn on a window that never had one writes nothing.
 
-## A compaction is followed by a continuation turn
+## A submitted compaction is followed by a continuation turn
 
-Gang types a continuation behind every compaction command, so an agent lands with
-a turn to take instead of an empty composer. It rides the composer, not the
+Gang types a continuation behind every compaction command it elects to submit,
+so an agent lands with a turn to take instead of an empty composer. It rides the composer, not the
 PreCompact/PostCompact pair: a refused compaction raises PreCompact and never
 PostCompact, so a continuation keyed on the bracket is lost exactly when the agent
 still holds its full context. A compacting harness parks the continuation and
@@ -127,6 +127,15 @@ Agents request their harness's native compaction at natural checkpoints. Keep
 this beside the verified tty substrate it needs rather than creating a second
 product or a duplicate injection path; defer the command to Stop when a harness
 cannot submit it during its own turn.
+
+Deferral still needs a positive post-Stop native-idle boundary. Codex runs Stop
+inside its active task, persists its terminal turn record before clearing that
+task, and gives compact hooks no command correlation. Composer paint and those
+events therefore cannot authorize Enter. Its collar declares the witness
+unavailable and binds that verdict to the request token: Gangline preserves the
+request and a diagnostic, starts no dispatcher, and creates no recovery
+continuation. This is intentionally less
+automatic than mistaking a later manual or automatic compaction for success.
 
 ## Queued is not delivered
 

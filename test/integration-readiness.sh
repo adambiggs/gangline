@@ -844,6 +844,198 @@ else
 fi
 "$GANG" drop selfable >/dev/null 2>&1 || :
 
+# CODEX HAS NO POST-TASK HOOK. Its Stop callback runs before active_turn is
+# released, and task_complete is persisted before that release too. This
+# fixture makes the historical false-positive discriminating: its compact
+# command emits the exact native rejection and leaves an artifact if Gangline
+# submits it. The unavailable witness must stop before a worker, Enter, request
+# consumption, or continuation -- both while Stop is running and on every
+# later apparently-idle boundary.
+codex_race_executed="$RUN_ROOT/codex-stop-race-executed"
+codex_race_busy="$RUN_ROOT/codex-stop-race-busy"
+codex_race_draft="$RUN_ROOT/codex-stop-race-draft"
+cat > "$RUN_ROOT/collars/codex-stop-race.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf \"'/compact' is disabled while a task is in progress.\\n\"; : > $codex_race_executed"
+GANG_SELF_COMPACT=deferred
+GANG_SELF_COMPACT_WITNESS=unavailable
+GANG_STOP_HOOK=1
+GANG_BUSY_REGEX='BUSY_CODEX_STOP'
+_gl_codex_race_input="\$(declare -f collar_input)"
+eval "codex_race_real_input \${_gl_codex_race_input#collar_input}"
+collar_input() {
+  [ ! -e "$codex_race_busy" ] || { printf ''; return; }
+  [ ! -e "$codex_race_draft" ] || { printf 'OPERATOR_DRAFT'; return; }
+  codex_race_real_input "\$1"
+}
+SH
+"$HITCH" codex-stop-race -c codex-stop-race -d /tmp >/dev/null
+codex_race_id="$(window_id codex-stop-race)"
+codex_race_pane="$(tmux list-panes -t "$codex_race_id" -F '#{pane_id}')"
+codex_race_requested="test-codex-race-requested-$$"
+codex_race_release="test-codex-race-release-$$"
+codex_race_released="test-codex-race-released-$$"
+printf -v codex_race_command ': > %q; printf BUSY_CODEX_STOP; GANG_SESSION=%q GANG_COLLARS=%q %q compact; printf " CODEX_COMPACT_RC_%%s" "$?"; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+  "$codex_race_busy" "$GANG_SESSION" "$GANG_COLLARS" "$GANG" \
+  "$codex_race_requested" "$codex_race_release" "$codex_race_busy" \
+  "$codex_race_released"
+tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
+tmux send-keys -t "$codex_race_id" Enter
+tmux wait-for "$codex_race_requested"
+codex_race_token="$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "the unavailable verdict is bound to the exact request token" \
+  "$codex_race_token"$'\t'unavailable \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_witness)"
+# source-guard: producer@e8bba860b45a: the target command names only gang compact; this diagnostic is emitted only by the fail-closed branch
+contains "Codex self-compaction fails closed during its active turn" \
+  "$(pane codex-stop-race)" "self-compaction was recorded but NOT submitted"
+# source-guard: producer@20debf6ef4e4: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_1 marker
+contains "the fail-closed command returns nonzero" \
+  "$(pane codex-stop-race)" "CODEX_COMPACT_RC_1"
+equal "the active-turn path never invokes the rejecting compact command" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+excludes "the active-turn path never paints the native task-in-progress rejection" \
+  "$(pane codex-stop-race)" "'/compact' is disabled while a task is in progress."
+excludes "the active-turn path injects no false recovery continuation" \
+  "$(pane codex-stop-race)" "Your context was just compacted"
+tmux wait-for -S "$codex_race_release"
+tmux wait-for "$codex_race_released"
+
+if [ -n "$codex_race_token" ]; then
+  tmux wait-for "gang-self-compact-$codex_race_token" &
+  codex_race_waiter=$!
+  mv "$RUN_ROOT/collars/codex-stop-race.sh" \
+    "$RUN_ROOT/collars/codex-stop-race.sh.away"
+  printf '%s' '{"hook_event_name":"Stop"}' |
+    TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+  wait "$codex_race_waiter"
+  mv "$RUN_ROOT/collars/codex-stop-race.sh.away" \
+    "$RUN_ROOT/collars/codex-stop-race.sh"
+  pass "the still-running Stop hook reaches a no-submission barrier after its collar disappears"
+else
+  fail "the fail-closed Codex request remains diagnosable" \
+    "@gl_self_compact_requested is empty"
+fi
+equal "Stop preserves the exact fail-closed request" "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+contains "Stop records why no native command can be sent" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "no positive post-Stop native-idle witness"
+codex_race_status="$("$GANG" status codex-stop-race)"
+contains "status names the pre-submission refusal" \
+  "$codex_race_status" "self-compaction NOT submitted:"
+contains "status names the unavailable native-idle boundary" \
+  "$codex_race_status" "request preserved; blocked because this collar has no positive native-idle witness"
+contains "roster exposes the pending failed request" \
+  "$("$GANG" roster)" "self-compact-failed"
+
+# Upgrade compatibility has no request-bound witness yet. A collar which has
+# disappeared is unavailable evidence, not permission to fall through to the
+# legacy composer dispatcher and spend that older request.
+tmux set-option -uw -t "$codex_race_id" @gl_self_compact_witness
+mv "$RUN_ROOT/collars/codex-stop-race.sh" \
+  "$RUN_ROOT/collars/codex-stop-race.sh.away"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+equal "a pre-upgrade request survives a missing collar" "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+contains "a missing collar is an unavailable witness, not a legacy authorization" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "the collar could not be loaded"
+equal "a missing collar cannot submit the pre-upgrade request" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+mv "$RUN_ROOT/collars/codex-stop-race.sh.away" \
+  "$RUN_ROOT/collars/codex-stop-race.sh"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
+  "different-request"$'\t'unavailable
+"$GANG" tick >/dev/null
+equal "a mismatched stored verdict fails closed with the request intact" \
+  "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+contains "the mismatched verdict is explicit rather than treated as legacy" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "malformed or belongs to another request"
+equal "a mismatched stored verdict submits no native command" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
+  "$codex_race_token"$'\t'unavailable
+
+# Later idle-looking ticks, duplicate Stops, and unrelated manual or automatic
+# native compactions are not a command-to-hook correlation mechanism. None may
+# spend the request or synthesize a continuation.
+"$GANG" tick >/dev/null
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+tmux set-option -w -t "$codex_race_id" @gl_session_id replacement-session
+"$GANG" tick >/dev/null
+printf '%s' '{"hook_event_name":"PreCompact","trigger":"auto"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"PostCompact","trigger":"auto"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"PreCompact","trigger":"manual"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+printf '%s' '{"hook_event_name":"PostCompact","trigger":"manual"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+equal "idle tick, duplicate Stop, changed session, and unrelated compact hooks preserve the request" \
+  "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "no later boundary invokes the rejecting compact command" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+excludes "no later boundary creates a false recovery continuation" \
+  "$(pane codex-stop-race)" "Your context was just compacted"
+
+# A pending diagnostic state owns no composer and no spool. Draft/copy-mode
+# observations stay intact, and ordinary peer mail drains once its own native
+# boundary is safe while the self request remains pending.
+: > "$codex_race_draft"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+equal "a pending fail-closed request preserves an operator draft" \
+  "OPERATOR_DRAFT" "$("$GANG" composer codex-stop-race)"
+tmux copy-mode -t "$codex_race_pane"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+equal "a pending fail-closed request preserves copy-mode" 1 \
+  "$(tmux display-message -p -t "$codex_race_pane" '#{pane_in_mode}')"
+tmux send-keys -t "$codex_race_pane" -X cancel
+printf 'MARK_MAIL_PAST_FAILED_COMPACT' |
+  "$GANG" send --to codex-stop-race --from tester --stdin >/dev/null
+contains "the operator draft parks ordinary mail, not the self-compaction state" \
+  "$("$GANG" status codex-stop-race)" "spooled: 1"
+rm -f -- "$codex_race_draft"
+tmux wait-for "gang-spool-drain-$codex_race_id" &
+codex_race_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+wait "$codex_race_drain_waiter"
+# source-guard: producer@354cf37b16a4: the marker enters only as the external sender's body, so its target-pane appearance witnesses spool delivery
+contains "ordinary mail drains past the fail-closed diagnostic state" \
+  "$(pane codex-stop-race)" "MARK_MAIL_PAST_FAILED_COMPACT"
+equal "mail delivery does not consume the self-compaction request" \
+  "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+codex_race_drop_rc=0
+codex_race_drop_output="$("$GANG" drop codex-stop-race 2>&1)" \
+  || codex_race_drop_rc=$?
+if [ "$codex_race_drop_rc" -eq 0 ]; then
+  pass "the disposable native-disappearance fixture drops cleanly"
+else
+  fail "the disposable native-disappearance fixture drops cleanly" \
+    "$codex_race_drop_output"
+fi
+# `tmux display-message -t @gone` exits zero with an empty expansion, so its
+# status cannot witness disappearance. The server's exact ID inventory can.
+if tmux list-windows -a -F '#{window_id}' | grep -Fxq -- "$codex_race_id"; then
+  fail "native disappearance leaves no window where a stale dispatcher can act" \
+    "the dropped disposable window still resolves"
+else
+  pass "native disappearance leaves no window where a stale dispatcher can act"
+fi
+equal "native disappearance still cannot invoke the rejected command" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+
 # A COMPACTION COMMAND CAN RUN BEFORE ITS COMPOSER PAINTS THE QUEUE HINT.
 # This collar creates an execution artifact from the compact command, then
 # answers every verification look with the declared hint. The old dispatcher
