@@ -1252,7 +1252,10 @@ printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"
 stall_first="$(pane_all stall-target)"
 contains "a native awaiting-input witness reaches the declared target" \
   "$stall_first" "stall: stall-raise is awaiting input (idle_prompt)"
-contains "the stall note keeps the raising window's attribution" \
+# source-guard: whole-surface@2ab9e960b128: the Gangline envelope marker is generated only by the accepted stall delivery and is absent from the target fixture's static prompt
+contains "the system-authored stall note is attributed to Gangline" \
+  "$stall_first" "[gang:gangline#"
+excludes "a system-authored stall note does not impersonate the raising peer" \
   "$stall_first" "[gang:stall-raise#"
 stall_first_count="$(printf '%s\n' "$stall_first" | grep -oF 'awaiting input (idle_prompt)' | wc -l | tr -d ' ')"
 printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"}' |

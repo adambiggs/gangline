@@ -11,7 +11,6 @@
 03805986c369a9a77f1a	1	source-collision migration review: a sender in a glyphed window is attributed by its bare name
 166f2345ed90845a5b30	1	source-collision migration review: AC20 doctrine still reaches role-less hitch
 c12cef1d51673c7c8cc9	1	source-collision migration review: and that delivery landed
-3e93761b9164fac82104	1	source-collision migration review: the stall note keeps the raising window's attribution
 d7d633b48ed2fa4f89e5	1	source-collision migration review: a collar without a declared stall source raises no empty-kind note
 d163257bc1f78b0259e4	1	source-collision migration review: a multiline doctrine delivers its last line
 25cc78676a072c2264dc	1	source-collision migration review: AC18 message attribution is sanitized

@@ -1511,7 +1511,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   unset -f collar_context collar_context_lights collar_input collar_overlay \
     collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory \
     collar_last_action collar_usage_limits collar_usage_limits_error \
-    collar_auto_resume_record collar_submitted_prompt 2>/dev/null || true
+    collar_auto_resume_record collar_submitted_prompt collar_hitch_check 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
@@ -3681,7 +3681,6 @@ on_exit() {
   # A tick transaction must never lend its kernel guard to unrelated exit
   # cleanup. An owning worker reacquires it below when retiring its metadata.
   tick_guard_drop
-  reply_candidates_abort
   spool_retire_abort
   lock_release
   tick_lock_release
@@ -5283,16 +5282,24 @@ EOF
 # REPLY OBLIGATIONS ARE MESSAGE PROVENANCE, NOT LIFECYCLE PROVENANCE. Hitch and
 # adopt ancestry above remains useful for observation, but never opens or
 # settles a debt. Each observed peer message gets its own option, so crossed
-# prompts and multiple senders cannot overwrite a last-message slot. The value
-# alphabet is terminal-safe and colon-separated:
+# prompts and multiple senders cannot overwrite a last-message slot. Metadata
+# is immutable and every fact gets a separate monotonic proof option:
 #
-#   state:sender-token:witnessed-name:request|reply:sha256:reply-nonces-or--
+#   @gl_reply_NONCE    message:sender-token:witness:mode:sha256:reply-nonces
+#   @gl_rprompt_NONCE  sha256
+#   @gl_rdelivery_NONCE sha256
+#   @gl_rsettled_NONCE sha256
 #
-# `candidate` exists before Enter. `prompt` means a native UserPromptSubmit saw
-# the exact envelope; `verified` means Gangline positively verified delivery.
-# A request becomes `owed` only when both facts exist, in either order. Any
-# intermediate state is ambiguous provenance and Stop fails closed on it.
+# This is deliberately not one mutable state word. Native prompt observation
+# and transport verification can finish concurrently; independent facts cannot
+# overwrite each other. A request is owed only with both prompt and delivery
+# proof. A correlated reply adds settlement proof to the original request, and
+# the immutable record remains as its audit trail until the window goes away.
+# Any missing, malformed, or orphaned evidence fails closed.
 REPLY_STATE_PREFIX='@gl_reply_'
+REPLY_PROMPT_PREFIX='@gl_rprompt_'
+REPLY_DELIVERY_PREFIX='@gl_rdelivery_'
+REPLY_SETTLED_PREFIX='@gl_rsettled_'
 REPLY_STATUS="" REPLY_TOKEN="" REPLY_WITNESS="" REPLY_MODE=""
 REPLY_DIGEST="" REPLY_TO="" REPLY_NONCE=""
 
@@ -5318,19 +5325,46 @@ reply_state_parse() { # $1 option name, $2 value; 0 valid, 1 malformed
   case "$REPLY_NONCE" in *[!a-f0-9]*) return 1 ;; esac
   IFS=: read -r REPLY_STATUS REPLY_TOKEN REPLY_WITNESS REPLY_MODE REPLY_DIGEST REPLY_TO extra <<<"$2"
   [ -z "$extra" ] || return 1
-  case "$REPLY_STATUS" in candidate|prompt|verified|owed) ;; *) return 1 ;; esac
+  [ "$REPLY_STATUS" = message ] || return 1
   [ "${#REPLY_TOKEN}" -eq 8 ] || return 1
   case "$REPLY_TOKEN" in *[!a-f0-9]*) return 1 ;; esac
   valid_name "$REPLY_WITNESS" || return 1
-  case "$REPLY_MODE" in request|reply) ;; *) return 1 ;; esac
+  case "$REPLY_MODE" in request|reply|legacy) ;; *) return 1 ;; esac
   [ "${#REPLY_DIGEST}" -eq 64 ] || return 1
   case "$REPLY_DIGEST" in *[!a-f0-9]*) return 1 ;; esac
   reply_nonce_list_valid "$REPLY_TO"
 }
 
+reply_nonce_valid() { # $1 nonce
+  [ "${#1}" -eq 16 ] || return 1
+  case "$1" in *[!a-f0-9]*) return 1 ;; esac
+}
+
+REPLY_PROOF_PRESENT=0
+reply_proof_lookup() { # captured options, exact key, expected digest
+  local rows="$1" wanted="$2" expected="$3" line key value
+  REPLY_PROOF_PRESENT=0
+  while IFS= read -r line; do
+    key="${line%% *}"
+    [ "$key" = "$wanted" ] || continue
+    value="${line#* }"
+    [ "$value" = "$expected" ] || return 2
+    REPLY_PROOF_PRESENT=1
+    return 0
+  done <<<"$rows"
+}
+
+reply_metadata_present() { # captured options, nonce
+  local rows="$1" wanted="$REPLY_STATE_PREFIX$2" line
+  while IFS= read -r line; do
+    [ "${line%% *}" = "$wanted" ] && return 0
+  done <<<"$rows"
+  return 1
+}
+
 REPLY_ROWS_ERROR=""
-reply_state_rows() { # $1 window -> nonce state token witness mode digest reply-to
-  local rows line key value
+reply_state_rows() { # $1 window -> nonce derived-state token witness mode digest reply-to
+  local rows line key value prompt delivery settled proof_nonce proof_rc
   REPLY_ROWS_ERROR=""
   rows="$(tmux show-options -w -t "$1" 2>/dev/null)" \
     || {
@@ -5347,10 +5381,80 @@ reply_state_rows() { # $1 window -> nonce state token witness mode digest reply-
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
     }
+    proof_rc=0
+    reply_proof_lookup "$rows" "$REPLY_PROMPT_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
+    [ "$proof_rc" -eq 0 ] || {
+      REPLY_ROWS_ERROR="reply-obligation prompt proof for $REPLY_NONCE is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+    prompt=$REPLY_PROOF_PRESENT
+    proof_rc=0
+    reply_proof_lookup "$rows" "$REPLY_DELIVERY_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
+    [ "$proof_rc" -eq 0 ] || {
+      REPLY_ROWS_ERROR="reply-obligation delivery proof for $REPLY_NONCE is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+    delivery=$REPLY_PROOF_PRESENT
+    proof_rc=0
+    reply_proof_lookup "$rows" "$REPLY_SETTLED_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
+    [ "$proof_rc" -eq 0 ] || {
+      REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+    settled=$REPLY_PROOF_PRESENT
+    if [ "$settled" -eq 1 ]; then
+      [ "$REPLY_MODE" = request ] || {
+        REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE has no request"
+        printf '! %s\n' "$REPLY_ROWS_ERROR"
+        return 3
+      }
+      REPLY_STATUS=settled
+    elif [ "$REPLY_MODE" = legacy ]; then
+      REPLY_STATUS=legacy
+    elif [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
+      if [ "$REPLY_MODE" = request ]; then REPLY_STATUS=owed; else REPLY_STATUS=complete; fi
+    elif [ "$prompt" -eq 1 ]; then
+      REPLY_STATUS=prompt
+    elif [ "$delivery" -eq 1 ]; then
+      REPLY_STATUS=verified
+    else
+      REPLY_STATUS=candidate
+    fi
     printf '%s %s %s %s %s %s %s\n' \
       "$REPLY_NONCE" "$REPLY_STATUS" "$REPLY_TOKEN" "$REPLY_WITNESS" \
       "$REPLY_MODE" "$REPLY_DIGEST" "$REPLY_TO"
   done <<<"$rows"
+  # A proof without immutable metadata cannot be correlated. Do not silently
+  # discard it: an interrupted or malformed lifecycle is exactly where Stop
+  # must preserve the evidence and fail closed.
+  while IFS= read -r line; do
+    key="${line%% *}"
+    case "$key" in
+      "$REPLY_PROMPT_PREFIX"*) proof_nonce="${key#"$REPLY_PROMPT_PREFIX"}" ;;
+      "$REPLY_DELIVERY_PREFIX"*) proof_nonce="${key#"$REPLY_DELIVERY_PREFIX"}" ;;
+      "$REPLY_SETTLED_PREFIX"*) proof_nonce="${key#"$REPLY_SETTLED_PREFIX"}" ;;
+      *) continue ;;
+    esac
+    value="${line#* }"
+    if ! reply_nonce_valid "$proof_nonce" || ! reply_nonce_valid_digest "$value"; then
+      REPLY_ROWS_ERROR="reply-obligation proof option $key is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    fi
+    reply_metadata_present "$rows" "$proof_nonce" || {
+      REPLY_ROWS_ERROR="reply-obligation proof option $key is orphaned"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+  done <<<"$rows"
+}
+
+reply_nonce_valid_digest() { # $1 sha256
+  [ "${#1}" -eq 64 ] || return 1
+  case "$1" in *[!a-f0-9]*) return 1 ;; esac
 }
 
 reply_rows_error() { # captured reply_state_rows stdout -> its terminal error
@@ -5361,12 +5465,16 @@ reply_rows_error() { # captured reply_state_rows stdout -> its terminal error
   esac
 }
 
-reply_state_write() { # window nonce state token name mode digest replies
+reply_state_write() { # window nonce token name mode digest replies
   tmux set-option -w -t "$1" "$REPLY_STATE_PREFIX$2" \
-    "$3:$4:$5:$6:$7:$8" 2>/dev/null
+    "message:$3:$4:$5:$6:$7" 2>/dev/null
 }
 
 reply_state_unset() { tmux set-option -uw -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null; }
+
+reply_proof_write() { # window prefix nonce digest
+  tmux set-option -w -t "$1" "$2$3" "$4" 2>/dev/null
+}
 
 STABLE_AGENT_NAME="" STABLE_AGENT_WINDOW=""
 stable_agent_resolve() { # $1 spool token; 0 exactly one live agent, 3 gone, 4 unreadable
@@ -5429,18 +5537,21 @@ reply_candidate_prepare() { # target nonce sender-token name mode replies envelo
   prior="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || prior=""
   [ -z "$prior" ] || return 1
   digest="$(reply_digest "$7")" || return 1
-  reply_state_write "$1" "$2" candidate "$3" "$4" "$5" "$digest" "$6" || return 1
+  reply_state_write "$1" "$2" "$3" "$4" "$5" "$digest" "$6" || return 1
   REPLY_PREPARED="${REPLY_PREPARED:+$REPLY_PREPARED$'\n'}$1 $2"
 }
 
-reply_candidates_abort() { # retire only candidates with no native prompt witness
-  local window nonce value
+reply_candidates_abort() { # only after positive proof that no key was typed
+  local window nonce rows="" state_nonce state token witness mode digest replies rc=0
   [ -n "$REPLY_PREPARED" ] || return 0
   while read -r window nonce; do
     [ -n "$window" ] && [ -n "$nonce" ] || continue
-    value="$(tmux show-options -wqv -t "$window" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
-    reply_state_parse "$REPLY_STATE_PREFIX$nonce" "$value" || continue
-    [ "$REPLY_STATUS" != candidate ] || reply_state_unset "$window" "$nonce" || true
+    rows="$(reply_state_rows "$window")" || rc=$?
+    [ "$rc" -eq 0 ] || continue
+    while read -r state_nonce state token witness mode digest replies; do
+      [ "$state_nonce" = "$nonce" ] || continue
+      [ "$state" != candidate ] || reply_state_unset "$window" "$nonce" || true
+    done <<<"$rows"
   done <<<"$REPLY_PREPARED"
   REPLY_PREPARED=""
 }
@@ -5455,9 +5566,8 @@ reply_settle_by_token() { # sending-agent token, target token, comma-separated o
     value="$(tmux show-options -wqv -t "$STABLE_AGENT_WINDOW" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
     if [ -n "$value" ] && reply_state_parse "$REPLY_STATE_PREFIX$nonce" "$value"; then
       if [ "$REPLY_MODE" = request ] && [ "$REPLY_TOKEN" = "$target_token" ]; then
-        case "$REPLY_STATUS" in
-          prompt|verified|owed) reply_state_unset "$STABLE_AGENT_WINDOW" "$nonce" || true ;;
-        esac
+        reply_proof_write "$STABLE_AGENT_WINDOW" "$REPLY_SETTLED_PREFIX" \
+          "$nonce" "$REPLY_DIGEST" || true
       fi
     fi
     [ "$list" != "$nonce" ] || break
@@ -5465,22 +5575,18 @@ reply_settle_by_token() { # sending-agent token, target token, comma-separated o
   done
 }
 
-reply_delivery_verified() { # target window, nonce; second proof may arm debt
-  local value status token witness mode digest replies target_token
+reply_delivery_verified() { # target window, nonce; independent delivery proof
+  local value token mode digest replies target_token after
   value="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || value=""
   [ -n "$value" ] || return 0 # control/self-declared messages made no candidate
   reply_state_parse "$REPLY_STATE_PREFIX$2" "$value" || return 1
-  status="$REPLY_STATUS"; token="$REPLY_TOKEN"; witness="$REPLY_WITNESS"
-  mode="$REPLY_MODE"; digest="$REPLY_DIGEST"; replies="$REPLY_TO"
+  token="$REPLY_TOKEN"; mode="$REPLY_MODE"; digest="$REPLY_DIGEST"; replies="$REPLY_TO"
   target_token="$(tmux show-options -wqv -t "$1" @gl_spool 2>/dev/null)" || target_token=""
   case "$target_token" in ''|*[!a-f0-9]*) return 1 ;; esac
+  reply_proof_write "$1" "$REPLY_DELIVERY_PREFIX" "$2" "$digest" || return 1
+  after="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$2" 2>/dev/null)" || after=""
+  [ "$after" = "$value" ] || return 1
   reply_settle_by_token "$token" "$target_token" "$replies"
-  case "$status:$mode" in
-    candidate:*) reply_state_write "$1" "$2" verified "$token" "$witness" "$mode" "$digest" "$replies" ;;
-    prompt:request) reply_state_write "$1" "$2" owed "$token" "$witness" "$mode" "$digest" "$replies" ;;
-    prompt:reply) reply_state_unset "$1" "$2" ;;
-    *) return 1 ;;
-  esac
 }
 
 reply_candidates_verified() { # finish every candidate this delivery prepared
@@ -5511,7 +5617,7 @@ print(hashlib.sha256(wire.encode()).hexdigest())
 }
 
 reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
-  local rows="" rc=0 prompt="" nonce state token witness mode digest replies seen
+  local rows="" rc=0 prompt="" nonce state token witness mode digest replies seen value
   rows="$(reply_state_rows "$1")" || return 0
   [ -n "$rows" ] || return 0
   load_collar "$2"
@@ -5522,11 +5628,9 @@ reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
     case "$state" in candidate|verified) ;; *) continue ;; esac
     seen="$(reply_prompt_envelope_digest "$prompt" "$witness" "$nonce" 2>/dev/null)" || seen=""
     [ -n "$seen" ] && [ "$seen" = "$digest" ] || continue
-    case "$state:$mode" in
-      candidate:*) reply_state_write "$1" "$nonce" prompt "$token" "$witness" "$mode" "$digest" "$replies" || true ;;
-      verified:request) reply_state_write "$1" "$nonce" owed "$token" "$witness" "$mode" "$digest" "$replies" || true ;;
-      verified:reply) reply_state_unset "$1" "$nonce" || true ;;
-    esac
+    reply_proof_write "$1" "$REPLY_PROMPT_PREFIX" "$nonce" "$digest" || continue
+    value="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
+    [ -n "$value" ] || tmux set-option -uw -t "$1" "$REPLY_PROMPT_PREFIX$nonce" 2>/dev/null || true
   done <<<"$rows"
 }
 
@@ -5539,6 +5643,7 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
   fi
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
+    case "$state" in settled|complete) continue ;; esac
     any=1
     if [ "$state" != owed ] || [ "$mode" != request ]; then
       printf 'unknown\t%s\t%s\t%s\n' "$nonce" "$witness" "provenance-$state-$mode"
@@ -5935,7 +6040,24 @@ spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
         || { SPOOL_READ_ERROR="the spooled message $1 has a malformed message nonce"; return 1; }
       case "$SPOOL_NONCE" in *[!a-f0-9]*) SPOOL_READ_ERROR="the spooled message $1 has a malformed message nonce"; return 1 ;; esac
       ;;
-    *) SPOOL_SENDER="$first" ;; # legacy three-line entry: deliver, but arm no unprovable peer debt
+    *)
+      SPOOL_SENDER="$first"
+      # Old three-line entries carry no stable sender token, message nonce, or
+      # reply correlation. Known Gangline control authors remain control mail.
+      # Anything shaped like a peer is delivered but recorded as legacy
+      # ambiguity so an upgrade cannot silently erase a reply obligation.
+      case "$SPOOL_SENDER" in
+        gangline|hitch|auto-resume|self-declared:*) ;;
+        *)
+          valid_name "$SPOOL_SENDER" \
+            || { SPOOL_READ_ERROR="the legacy spooled message $1 has an invalid sender and no verifiable provenance"; return 1; }
+          SPOOL_SENDER_TOKEN=00000000
+          SPOOL_REPLY_MODE=legacy
+          SPOOL_NONCE="$(mint_message_nonce)" \
+            || { SPOOL_READ_ERROR="the legacy spooled message $1 could not be assigned a local evidence nonce"; return 1; }
+          ;;
+      esac
+      ;;
   esac
   if [ -z "$SPOOL_BODY" ]; then
     SPOOL_READ_ERROR="the spooled message $1 has no body — refusing to send an envelope gang cannot reconstruct"
@@ -6581,7 +6703,7 @@ EOF
          "$n" "${err##*$'\n'}" >&2
        [ "$keep_lock" -eq 1 ] || lock_release
        return 3 ;;
-    5) reply_candidates_abort
+    5)
        # TYPED, AND THE OUTCOME UNREADABLE — which is not the arm below. There
        # gang watched and saw nothing enter the session; here it watched the
        # keys go in and then lost the screen, so the bundle may already be in
@@ -6600,7 +6722,7 @@ EOF
          "$n" "$SPOOL_DIR" "$frags" "${err##*$'\n'}" >&2
        [ "$keep_lock" -eq 1 ] || lock_release
        return 5 ;;
-    *) reply_candidates_abort
+    *)
        # Unverified: the bundle may or may not have landed, so every entry in it
        # is held where a person can read it rather than sent again.
        while IFS= read -r claim; do
@@ -6704,14 +6826,17 @@ stall_deliver() { # $1 target id, $2 target name, $3 raising name, $4 body
   [ -n "$AGENT_COLLAR" ] \
     || die "window '$2' exists but is not a gang agent (gang adopt $2 -c <collar>)"
   load_collar "$AGENT_COLLAR"
-  envelope "$3" "$4"
+  # This observation is authored by Gangline, not by the raising agent. Giving
+  # an automatic alert the peer's verified envelope would manufacture a reply
+  # obligation that peer never sent and has no correlated delivery record for.
+  envelope gangline "$4"
   err="$(send_live "$2" 2>&1)" || rc=$?
   case "$rc" in
     0) return 0 ;;
     3) if spool_available "$AGENT_ID" "$2"; then
          frag="${4%%$'\n'*}"
          [ "${#frag}" -le 40 ] || frag="${frag:0:40}…"
-         spool_write "$AGENT_ID" "$3" "$ENVELOPE" "$frag"
+         spool_write "$AGENT_ID" gangline "$ENVELOPE" "$frag"
          return 0
        fi
        [ -z "$err" ] || printf '%s\n' "$err" >&2
@@ -8674,6 +8799,12 @@ cmd_hitch() {
   # shellcheck disable=SC2034  # read by the collar sourced on the next line
   GANG_MODEL="$model"
   load_collar "$prof"
+  if declare -F collar_hitch_check >/dev/null; then
+    local collar_check="" collar_check_rc=0
+    collar_check="$(collar_hitch_check 2>&1)" || collar_check_rc=$?
+    [ "$collar_check_rc" -eq 0 ] \
+      || die "hitch: collar '$prof' cannot uphold its native lifecycle prerequisite${collar_check:+ — $collar_check}. No window was opened"
+  fi
   ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
     valid_role_name "$role" \
@@ -9241,11 +9372,19 @@ cmd_send() {
     reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
       "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
       || die "send: reply provenance could not be recorded before delivery; nothing was typed"
-    send_live "$name" "" live-only
-    reply_candidates_verified \
-      || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
-    printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
-    return 0
+    err="$(send_live "$name" "" live-only 2>&1)" || rc=$?
+    case "$rc" in
+      0) reply_candidates_verified \
+           || printf '%s\n' "gang: delivered to $name, but its reply provenance stayed ambiguous and Stop will fail closed" >&2
+         [ -z "$err" ] || printf '%s\n' "$err" >&2
+         printf '%s\n' "$(colour "$C_OK" "delivered to $name as [gang:$SEND_WIRE]") $(colour "$C_DIM" "$(send_outcome "$name")")"
+         return 0 ;;
+      3) reply_candidates_abort
+         [ -z "$err" ] || printf '%s\n' "$err" >&2
+         exit 3 ;;
+      *) [ -z "$err" ] || printf '%s\n' "$err" >&2
+         exit "$rc" ;;
+    esac
   fi
   # ONE CRITICAL SECTION. The pane lock is taken HERE rather than inside
   # send_live, because everything from here to the end of this send is one
@@ -9297,7 +9436,6 @@ cmd_send() {
        # invite the sender to do the same thing by hand. The predecessors a
        # --supersede set aside go back, because the replacement that was to
        # stand in for them cannot be said to have arrived.
-       reply_candidates_abort
        [ "$supersede" -eq 0 ] || spool_retire_rollback \
          || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
        lock_release
@@ -9311,7 +9449,6 @@ cmd_send() {
        # cannot report what this arm swallows: discarding its diagnostic would
        # leave the sender's older mail under .retiring-, undeliverable and unnamed,
        # on a path that already knows something went wrong.
-       reply_candidates_abort
        [ "$supersede" -eq 0 ] || spool_retire_rollback \
          || printf '%s\n' "gang: $SPOOL_ROLLBACK_ERROR" >&2
        lock_release
@@ -9855,7 +9992,7 @@ cmd_interrupt() {
       || die "interrupt: reply provenance could not be recorded before the reason was delivered; nothing was typed"
     err="$(inject "$AGENT_ID" "$ENVELOPE" "" locked 2>&1)" || rc=$?
     if [ "$rc" -ne 0 ]; then
-      reply_candidates_abort
+      [ "$rc" -ne 3 ] || reply_candidates_abort
       printf '%s\n' "$reason" >&2
       [ -z "$err" ] || printf '%s\n' "$err" >&2
       exit "$rc"
@@ -11857,6 +11994,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   ! test_only_collar "$collar" \
     || die "adopt: '$collar' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
   load_collar "$collar"
+  [ "$GANG_STOP_HOOK" != 1 ] \
+    || die "adopt: collar '$collar' promises a native Stop hook installed by its launch command, but an existing window gives Gangline no proof that exact hook is present. Re-hitch it under Gangline control; no window option was changed"
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
   launch_dead "$id" \
     && die "adopt: nothing is running in window '$name', so there is no harness to adopt. Restart the harness there and retry, or if tmux is holding the dead window remove it with: tmux kill-window -t '$id'"

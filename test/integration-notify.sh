@@ -51,8 +51,10 @@ printf '%s' '{"hook_event_name":"Notification","notification_type":"idle_prompt"
 # source-guard: whole-surface@cf1c726b28e0: the blocked transition body is unique to the state-notification producer and the target pane can only receive it through attributed delivery
 contains "a qualified idle wake forwards a blocked transition to the lead" \
   "$(pane_all state-lead)" "state-raise is blocked"
-# source-guard: whole-surface@b6796ad33c7c: Gangline's envelope attribution is rendered only after the state-transition delivery reaches this target pane
-contains "the blocked transition retains the raising agent attribution" \
+# source-guard: whole-surface@fc823991b6c2: Gangline's envelope attribution is rendered only after the state-transition delivery reaches this target pane
+contains "the automatic blocked transition is attributed to Gangline" \
+  "$(pane_all state-lead)" "[gang:gangline#"
+excludes "an automatic transition does not impersonate its raising peer" \
   "$(pane_all state-lead)" "[gang:state-raise#"
 contains "an accepted blocked transition records its exact notified state" \
   "$(tmux show-options -wqv -t "$state_raise_id" @gl_state_note_noted)" "blocked"

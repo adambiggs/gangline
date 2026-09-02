@@ -264,6 +264,11 @@ startup text or retroactively add launch-time native hooks. A collar whose
 context source requires hitch-time identity may therefore report context
 unavailable.
 
+A collar declaring `GANG_STOP_HOOK=1` cannot be adopted. That declaration is a
+promise about the exact launch command installing the native boundary, and an
+existing pane supplies no positive evidence that it started with that command.
+Re-hitch it under Gangline control; the refusal changes no window option.
+
 Both hitch and adopt also stamp provenance: `@gl_hitched_by` holds the `@gl_spool`
 token of the agent window the command ran in, or `operator` when it did not run in
 one, and `@gl_hitched_by_name` holds the hitcher's name as witnessed at that moment.
@@ -494,15 +499,17 @@ serializes writers per pane, verifies the paste changed the target composer,
 submits it, and reports success only after verification.
 
 An envelope from a sender Gangline observed carries message-scoped reply
-provenance. The target records a candidate before Enter and arms a reply
-obligation only when both the ordinary positive delivery check and an exact
-native prompt-submission witness match that envelope. Those proofs may arrive
-in either order. A partial record and a malformed record remain unknown and
-make the native Stop helper fail closed; they are never repaired into absence.
+provenance. The target records immutable metadata before Enter; exact native
+prompt submission, positive delivery, and later reply settlement each write a
+separate monotonic proof option. Independent writers therefore cannot overwrite
+one another. A reply obligation arms only when prompt and delivery proof both
+match that envelope, in either order. A partial, orphaned, or malformed record
+remains unknown and makes the native Stop helper fail closed; it is never
+repaired into absence.
 
 The next verified outbound message to a peer with outstanding requests is
 correlated to all of that peer's outstanding message nonces. Its envelope
-carries the correlation, successful delivery clears only those records, and
+carries the correlation, successful delivery marks only those records settled, and
 the recipient classifies it as a reply rather than opening reciprocal debt.
 Gangline does not parse the reply body: any genuine concise acknowledgement is
 enough, including one that says background work is still running and a fuller
@@ -517,6 +524,11 @@ names each outstanding or ambiguous record and `roster` carries `reply-owed` or
 private `reply-obligations` query proves the set clear. Dropping the recipient
 window retires the tmux-owned records with the rest of that agent's ephemeral
 state.
+
+An upgraded three-line spool entry has no stable sender token, nonce, or reply
+correlation. Known Gangline control authors remain control mail. A peer-shaped
+legacy entry is delivered but retained as `reply-unknown`; Gangline will not
+invent correlation evidence to clear it.
 
 Gangline refuses a missing or occupied composer, a human draft, tmux copy-mode,
 unknown state, and unsafe mid-turn input. Copy-mode is operator-owned: Gangline
@@ -831,7 +843,8 @@ declared, and no target is inferred. `gang notify clear` removes the declaration
 sooner, and ending the tmux session deletes it with the rest of the team state.
 
 When a collar's native hook witnesses an awaiting-input event, Gangline sends
-one ordinary attributed message:
+one ordinary message attributed to the reserved `gangline` sender; the raising
+agent remains named in its body rather than impersonated as the author:
 `stall: <agent> is awaiting input (<kind>) — inspect with gang capture <agent>`.
 Repeated events of the same kind within 600 seconds are one note. A native
 prompt, tool, or Stop event clears that debounce because it proves movement; an
@@ -1450,6 +1463,7 @@ there, never in a harness-name branch in the core script.
 |---|---|
 | `GANG_LAUNCH` | required native launch command |
 | `GANG_RESUME_LAUNCH` | optional explicit native resume template containing exactly one `{{session_id}}` slot |
+| `collar_hitch_check` | optional preflight run after collar loading and before any tmux mutation; return nonzero with one actionable reason when the launch cannot uphold a native lifecycle prerequisite |
 | `GANG_MODEL_OPT` | optional native model flag |
 | `GANG_MODEL_ALIASES` | optional newline-separated documented aliases when the harness has no complete catalog; discovery labels them as incomplete |
 | `collar_models` | print the complete native catalog as `model-id[<TAB>comma-separated-efforts]`; nonzero, empty, duplicate, or malformed output is unknown and refused |
@@ -1469,7 +1483,7 @@ there, never in a harness-name branch in the core script.
 | `collar_advisory target` | optional; return 0 and print what the surface is when the UI owning the input box says it needs no answer and will close by itself, or return 1 with no output. It changes only the words `status`, `explain` and a delivery refusal use — the window stays `!occupied!`, gang types nothing at the surface, and no key is sent to dismiss it |
 | `GANG_QUEUE_RECALL_KEY` | tmux key name that loads the parked message back into the composer, used by `flush` |
 | `GANG_INTERRUPT_KEY` | tmux key name that stops an active turn, used by `interrupt` |
-| `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness supplies an immediate native turn boundary; cooperative ticks retry spools independently |
+| `GANG_STOP_HOOK=1` | the launch command installs a native Stop hook reaching `gang hook`, so this harness supplies an immediate native turn boundary; cooperative ticks retry spools independently. Such a collar cannot be adopted because an existing pane does not prove the launch-installed hook |
 | `GANG_STALL_TYPES` | space-separated native `Notification` kinds that mean the harness is awaiting a person |
 | `GANG_QUIET_AT_REST=1` | harness terminal becomes quiet when idle |
 | `GANG_MIDTURN_INPUT=1` | ordinary text may safely enter during a turn |

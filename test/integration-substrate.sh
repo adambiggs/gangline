@@ -531,8 +531,21 @@ clipped_agent_rule="$(printf '─%.0s' $(seq 40))"
 } > "$RUN_ROOT/clipped-agent-frame"
 tmux new-window -d -t "=$GANG_SESSION" -n clipped-agent \
   "cat '$RUN_ROOT/clipped-agent-frame'; cat" >/dev/null
-"$GANG" adopt clipped-agent -c claude-code >/dev/null
-clipped_agent_read="$("$GANG" composer clipped-agent 2>&1 || true)"
+refuses "adopt cannot promise a launch-installed Stop hook it did not observe" \
+  "existing window gives Gangline no proof that exact hook is present" \
+  "$GANG" adopt clipped-agent -c claude-code
+clipped_collar_dir="$RUN_ROOT/clipped-collars"
+mkdir -p "$clipped_collar_dir"
+cat > "$clipped_collar_dir/clipped-claude.sh" <<SH
+# shellcheck shell=bash
+. "$ROOT/collars/claude-code.sh"
+GANG_STOP_HOOK=""
+unset -f collar_hitch_check
+SH
+GANG_COLLARS="$clipped_collar_dir" \
+  "$GANG" adopt clipped-agent -c clipped-claude >/dev/null
+clipped_agent_read="$(GANG_COLLARS="$clipped_collar_dir" \
+  "$GANG" composer clipped-agent 2>&1 || true)"
 contains "gang composer names a box its pane was too short to show" \
   "$clipped_agent_read" "taller than its pane"
 excludes "gang composer does not blame the harness for a box it did draw" \
@@ -1322,6 +1335,7 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog-claude"
 GANG_RESUME_LAUNCH=""
 GANG_STOP_HOOK=""
 GANG_SELF_COMPACT=""
+unset -f collar_hitch_check
 GANG_DIALOGS='external-import-trust|^❯ [0-9]+\. |Yes, allow external imports||Enter'
 GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
 Yes, allow external imports

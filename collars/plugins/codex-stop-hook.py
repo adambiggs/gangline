@@ -128,7 +128,7 @@ def settle_stop(gang: str, payload: str) -> None:
     result = gang_run(gang, ["hook"], payload)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
-        stderr("ordinary Stop bookkeeping failed: " + detail)
+        raise ValueError("ordinary Stop bookkeeping failed: " + detail)
 
 
 def read_payload(raw: str) -> None:

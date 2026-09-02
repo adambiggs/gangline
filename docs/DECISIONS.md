@@ -74,6 +74,13 @@ or malformed provenance blocks Stop as unknown. Message-scoped records preserve
 crossed turns and multiple senders without adding a coordinator or a protocol
 outside the existing verified transport.
 
+Keep message metadata immutable and put prompt, delivery, and settlement facts
+in separate monotonic options, so concurrent native and transport writers
+cannot lose one another's proof. Legacy peer spool entries lacking correlation
+stay unknown. A launch-installed Stop promise cannot be adopted, and a Claude
+hitch refuses unless the operator explicitly disables its finite native
+consecutive-block cap.
+
 ## An observed sender and a claimed one are marked apart
 
 Gangline reads the sender off the calling window where it can see one and

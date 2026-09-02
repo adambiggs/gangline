@@ -29,8 +29,14 @@ collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
     *) printf '20%%,40%%\n' ;;
   esac
 }
-GANG_LAUNCH="claude"
-GANG_RESUME_LAUNCH="claude --resume {{session_id}}"
+GANG_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude"
+GANG_RESUME_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude --resume {{session_id}}"
+collar_hitch_check() {
+  [ "${CLAUDE_CODE_STOP_HOOK_BLOCK_CAP:-}" = 0 ] || {
+    printf '%s' 'Claude Code ends a turn after its finite consecutive Stop-block cap, which would let an outstanding peer reply obligation go idle. Set CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 explicitly for this hitch to disable that native cap'
+    return 1
+  }
+}
 _gl_cc_dir="${BASH_SOURCE[0]%/*}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   case "$ROOT$_gl_cc_dir" in
@@ -71,8 +77,8 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
         0) _gl_cc_json="$_gl_cc_json}" ;;
         *) _gl_cc_json="$_gl_cc_json,\"statusLine\":{\"type\":\"command\",\"command\":\"\\\"$_gl_cc_esc/statusline/claude-code-context.sh\\\"\"}}" ;;
       esac
-      GANG_LAUNCH="claude --settings '$_gl_cc_json'"
-      GANG_RESUME_LAUNCH="claude --resume {{session_id}} --settings '$_gl_cc_json'"
+      GANG_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude --settings '$_gl_cc_json'"
+      GANG_RESUME_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude --resume {{session_id}} --settings '$_gl_cc_json'"
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
       unset _gl_cc_cmd _gl_cc_stop_cmd _gl_cc_esc _gl_cc_json _gl_cc_light

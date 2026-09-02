@@ -335,6 +335,20 @@ statusline side therefore reaches running harnesses at the next repaint, while
 a change to hook wiring reaches only processes started after it — re-hitch to
 pick it up.
 
+Claude Code also has a finite native cap on consecutive Stop-hook blocks. A
+finite cap cannot uphold an outstanding peer-reply obligation, so every Claude
+hitch must make the operator choice explicit:
+
+```sh
+CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 gang hitch worker -c claude-code ...
+```
+
+The collar refuses before opening a window when the value is absent or not
+zero, and prefixes the final launch so the chosen value reaches the pane even
+when the tmux server has an older environment. `adopt` refuses every collar
+declaring `GANG_STOP_HOOK=1`: it cannot prove that an existing harness installed
+the exact native hook its collar promises.
+
 ## Optional provider-usage lights
 
 Provider-usage lights are disabled unless the operator supplies used-percentage

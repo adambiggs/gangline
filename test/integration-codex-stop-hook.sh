@@ -43,13 +43,25 @@ reply_stop_run() { # $1 pane, optional $2 payload; sets reply_stop_output
 }
 
 reply_nonce_from() { # $1 window, $2 witnessed sender -> its one nonce
-  local key value
+  local key value nonce marker _token witness mode _digest _replies extra
   while read -r key value; do
-    case "$key:$value" in
-      @gl_reply_*:*:"$2":*) printf '%s' "${key#@gl_reply_}"; return 0 ;;
+    case "$key" in @gl_reply_*) ;; *) continue ;; esac
+    nonce="${key#@gl_reply_}"
+    IFS=: read -r marker _token witness mode _digest _replies extra <<<"$value"
+    [ "$marker" = message ] && [ "$witness" = "$2" ] && [ -z "$extra" ] || continue
+    case "$mode" in
+      request) [ -z "$(tmux show-options -wqv -t "$1" "@gl_rsettled_$nonce")" ] || continue ;;
+      reply) [ -z "$(tmux show-options -wqv -t "$1" "@gl_rprompt_$nonce")" ] || continue ;;
+      *) continue ;;
     esac
+    printf '%s' "$nonce"
+    return 0
   done <<<"$(tmux show-options -w -t "$1")"
   return 1
+}
+
+reply_nonce_from_output() { # gang send stdout -> message nonce
+  sed -n 's/.*\[gang:[^#]*#\([a-f0-9]\{16\}\)\].*/\1/p' <<<"$1"
 }
 
 reply_request_envelope() { # sender nonce body
@@ -61,21 +73,16 @@ reply_response_envelope() { # sender nonce reply-to body
     "$1" "$2" "$3" "$4" "$1" "$2"
 }
 
-reply_new_window() { # name -> id TAB pane
-  local id pane_id
-  id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
-    -n "$1" "PS1='❯ ' bash --norc")"
-  pane_id="$(tmux list-panes -t "$id" -F '#{pane_id}')"
-  printf '%s\t%s\n' "$id" "$pane_id"
-}
-
-IFS=$'\t' read -r reply_a_id reply_a_pane <<<"$(reply_new_window reply-a)"
-"$GANG" adopt reply-a -c replyable >/dev/null
-IFS=$'\t' read -r reply_b_id reply_b_pane <<<"$(reply_new_window reply-b)"
-# An agent adopts B, deliberately: lifecycle ancestry must not create debt.
-TMUX_PANE="$reply_a_pane" "$GANG" adopt reply-b -c replyable >/dev/null
-IFS=$'\t' read -r reply_c_id reply_c_pane <<<"$(reply_new_window reply-c)"
-"$GANG" adopt reply-c -c replyable >/dev/null
+"$HITCH" reply-a -c replyable -d /tmp >/dev/null
+reply_a_id="$(window_id reply-a)"
+reply_a_pane="$(tmux list-panes -t "$reply_a_id" -F '#{pane_id}')"
+# An agent hitches B, deliberately: lifecycle ancestry must not create debt.
+TMUX_PANE="$reply_a_pane" "$HITCH" reply-b -c replyable -d /tmp >/dev/null
+reply_b_id="$(window_id reply-b)"
+reply_b_pane="$(tmux list-panes -t "$reply_b_id" -F '#{pane_id}')"
+"$HITCH" reply-c -c replyable -d /tmp >/dev/null
+reply_c_id="$(window_id reply-c)"
+reply_c_pane="$(tmux list-panes -t "$reply_c_id" -F '#{pane_id}')"
 
 equal "an agent-created window starts with no peer reply debt" \
   $'clear\t-\t-\t-' \
@@ -89,6 +96,41 @@ equal "operator-only work is allowed to become idle" "{}" "$reply_stop_output"
 printf '%s' OPERATOR_ENVELOPE \
   | "$GANG" send --to reply-b --from operator --stdin >/dev/null
 equal "a verified self-declared operator envelope creates no peer debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+
+# Force native prompt proof to land while transport verification is paused
+# after reading the same immutable record. The suite tmux shim supplies the
+# event barrier; there is no polling or timing claim in this race proof.
+reply_race_gate="reply-proof-race-$$"
+reply_race_state="$RUN_ROOT/reply-proof-race-state"
+reply_race_out="$RUN_ROOT/reply-proof-race.out"
+reply_race_err="$RUN_ROOT/reply-proof-race.err"
+# source-guard: producer@ba9ac1b15e66: the ready barrier is emitted only after this background send has written immutable metadata and paused its delivery-proof write, independently binding the concurrent prompt observation to this producer
+GANG_TEST_REPLY_PROOF_GATE="$reply_race_gate" \
+GANG_TEST_REPLY_GATE_STATE="$reply_race_state" \
+TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin \
+  >"$reply_race_out" 2>"$reply_race_err" <<<'REQ_PROMPT_FIRST' &
+reply_race_pid=$!
+tmux wait-for "$reply_race_gate-ready"
+reply_race_nonce="$(reply_nonce_from "$reply_b_id" reply-a)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_race_nonce" REQ_PROMPT_FIRST)"
+equal "prompt-first concurrent evidence is preserved while delivery is in flight" \
+  $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-prompt-request' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+tmux wait-for -S "$reply_race_gate-release"
+wait "$reply_race_pid"
+equal "concurrent prompt and delivery proofs converge on one obligation" \
+  $'owed\t'"$reply_race_nonce"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_race_ack_out="$(printf '%s' ACK_PROMPT_FIRST \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)"
+reply_race_ack_nonce="$(reply_nonce_from_output "$reply_race_ack_out")"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_response_envelope reply-b "$reply_race_ack_nonce" \
+    "$reply_race_nonce" ACK_PROMPT_FIRST)"
+equal "the raced obligation settles without reciprocal debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
@@ -189,6 +231,66 @@ reply_stop_run "$reply_a_pane"
 reply_stop_run "$reply_b_pane"
 equal "a reply to durable mail restores an idle-safe clear state" "{}" "$reply_stop_output"
 
+# Upgrade compatibility cannot invent the stable identity and nonce absent
+# from the old three-line spool shape. Deliver the body, but retain a loud
+# legacy ambiguity instead of silently treating peer mail as control traffic.
+tmux set-option -w -t "$reply_b_id" @gl_turn "open $(date +%s)"
+reply_legacy_entry="$reply_b_spool/00000000000000000001-legacy"
+printf '%s\n%s\n%s\n' reply-a legacy-peer \
+  '[gang:reply-a] LEGACY_PEER_REQUEST [/gang:reply-a]' > "$reply_legacy_entry"
+tmux wait-for "$reply_drain_channel" &
+reply_legacy_waiter=$!
+printf '%s' "$reply_stop_payload" \
+  | TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null
+wait "$reply_legacy_waiter"
+reply_legacy_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+contains "legacy peer mail fails closed instead of losing its obligation" \
+  "$reply_legacy_query" $'unknown\t'
+contains "legacy ambiguity retains the witnessed peer name" \
+  "$reply_legacy_query" $'\treply-a\tprovenance-legacy-legacy'
+reply_stop_run "$reply_b_pane"
+contains "legacy peer provenance refuses idle" "$reply_stop_output" '"decision": "block"'
+reply_legacy_nonce="$(cut -f2 <<<"$reply_legacy_query")"
+# Fixture retirement only: production intentionally has no guessed correlation
+# capable of clearing an upgraded legacy record.
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_legacy_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_rdelivery_$reply_legacy_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_legacy_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_legacy_nonce"
+
+# One peer may have more than one message outstanding. The acknowledgement's
+# correlated reply list settles all of that peer's proved requests at once;
+# no last-writer slot may hide either record.
+reply_same_one_out="$(printf '%s' REQ_SAME_ONE \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin)"
+reply_same_one="$(reply_nonce_from_output "$reply_same_one_out")"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_same_one" REQ_SAME_ONE)"
+reply_same_two_out="$(printf '%s' REQ_SAME_TWO \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin)"
+reply_same_two="$(reply_nonce_from_output "$reply_same_two_out")"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_same_two" REQ_SAME_TWO)"
+reply_same_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+contains "two messages from one peer retain the first obligation" "$reply_same_query" \
+  $'owed\t'"$reply_same_one"$'\treply-a\tlive'
+contains "two messages from one peer retain the second obligation" "$reply_same_query" \
+  $'owed\t'"$reply_same_two"$'\treply-a\tlive'
+reply_same_ack_out="$(printf '%s' ACK_BOTH_FROM_A \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)"
+reply_same_ack="$(reply_nonce_from_output "$reply_same_ack_out")"
+reply_same_ack_meta="$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_same_ack")"
+IFS=: read -r _ _ _ _ _ reply_same_correlations <<<"$reply_same_ack_meta"
+equal "one correlated acknowledgement settles both messages from its peer" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_response_envelope reply-b "$reply_same_ack" \
+    "$reply_same_correlations" ACK_BOTH_FROM_A)"
+equal "the multi-correlation reply remains acknowledgement-loop free" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+
 # Two peers arm two independent records. A response to one cannot overwrite or
 # settle the other, and each correlated response remains reply-only at target.
 printf '%s' REQ_MULTI_A \
@@ -239,6 +341,16 @@ reply_stop_run "$reply_b_pane"
 contains "malformed provenance fails closed at Stop" "$reply_stop_output" '"decision": "block"'
 tmux set-option -uw -t "$reply_b_id" @gl_reply_bad
 
+reply_orphan_nonce=deadbeefdeadbeef
+reply_orphan_digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+tmux set-option -w -t "$reply_b_id" "@gl_rprompt_$reply_orphan_nonce" "$reply_orphan_digest"
+contains "orphaned proof is not mistaken for absent provenance" \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)" \
+  "reply-obligation proof option @gl_rprompt_$reply_orphan_nonce is orphaned"
+reply_stop_run "$reply_b_pane"
+contains "orphaned proof fails closed at Stop" "$reply_stop_output" '"decision": "block"'
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_orphan_nonce"
+
 printf '%s' REQ_GONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_gone_nonce="$(reply_nonce_from "$reply_b_id" reply-a)"
@@ -259,7 +371,7 @@ cat > "$reply_fake_root/gang" <<'SH'
 #!/bin/sh
 case "$1" in
   reply-obligations) printf '%b' "$FAKE_REPLY_QUERY"; exit "${FAKE_REPLY_RC:-0}" ;;
-  hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null ;;
+  hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null; exit "${FAKE_HOOK_RC:-0}" ;;
   *) exit 99 ;;
 esac
 SH
@@ -281,6 +393,13 @@ equal "the adapter allows only a proved clear query" "{}" "$reply_fake_out"
 # source-guard: whole-surface@606d1f11d4cc: the complete fake hook log records the only delegated boundary, so any producer is valid evidence
 equal "a proved clear query delegates ordinary Stop bookkeeping" "hook" \
   "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+contains "failed Stop bookkeeping fails closed" "$reply_fake_out" '"decision": "block"'
+excludes "failed Stop bookkeeping never emits an allow verdict" "$reply_fake_out" '{}'
+equal "the failed boundary was attempted exactly once" "hook" "$(cat "$reply_fake_log")"
 
 codex_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/codex.sh")"
@@ -292,10 +411,11 @@ claude_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/claude-code.sh")"
 contains "the Claude collar installs the same peer-reply Stop enforcement" \
   "$claude_reply_launch" "codex-stop-hook.py"
+contains "the Claude launch carries the explicitly selected unlimited Stop-block lifecycle" \
+  "$claude_reply_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0"
 
-# The final gone-sender record is impossible to satisfy by design; remove only
-# this fixture option before deleting its disposable receiver.
-tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_gone_nonce"
+# The final gone-sender record is impossible to satisfy by design. Dropping the
+# disposable window retires its complete option-scoped audit trail together.
 "$GANG" drop reply-b >/dev/null
 "$GANG" drop reply-c >/dev/null
 if [ -n "$reply_original_collars" ]; then

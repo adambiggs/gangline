@@ -134,6 +134,16 @@ collar_input() { # once per armed drain, report what the spool and the lock look
   spool_real_input "\$1"
 }
 SH
+# Adoption cannot prove that a launch-installed native Stop hook is present in
+# an existing window.  The spool substrate worlds below need the same composer
+# instrumentation without claiming that hook, so give them an explicit
+# adoption-safe collar instead of weakening the production refusal.
+cat > "$RUN_ROOT/collars/spoolable-adopt.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$RUN_ROOT/collars/spoolable.sh"
+GANG_STOP_HOOK=
+SH
 "$HITCH" parker -c spoolable -d /tmp >/dev/null
 parker_id="$(window_id parker)"
 parker_pane_id="$(tmux list-panes -t "$parker_id" -F '#{pane_id}')"
@@ -804,7 +814,7 @@ impostor_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n impostor "PS1='❯ ' bash --norc")"
 tmux set-option -w -t "$impostor_id" @gl_spool "$reserving_token"
 impostor_before="$(tmux show-options -wv -t "$impostor_id")"
-if impostor_out="$("$GANG" adopt impostor -c spoolable 2>&1)"; then
+if impostor_out="$("$GANG" adopt impostor -c spoolable-adopt 2>&1)"; then
   fail "adopting a window carrying another agent's spool identity is refused" \
     "adopt reported success"
 else
@@ -822,7 +832,7 @@ equal "and the agent that holds it keeps it" "$reserving_token" \
     "$GANG_LOCK_DIR/spool/$reserving_token is gone"
 tmux set-option -w -t "$impostor_id" @gl_spool '../escaped'
 impostor_before="$(tmux show-options -wv -t "$impostor_id")"
-if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
+if "$GANG" adopt impostor -c spoolable-adopt >/dev/null 2>&1; then
   fail "a spool identity that is not one gang minted is refused before it is a path" \
     "adopt reported success"
 else
@@ -843,7 +853,7 @@ equal "an invalid spool refusal leaves the window unadopted" \
 ln -s "$RUN_ROOT" "$GANG_LOCK_DIR/spool/deadbeef"
 tmux set-option -w -t "$impostor_id" @gl_spool deadbeef
 impostor_before="$(tmux show-options -wv -t "$impostor_id")"
-if "$GANG" adopt impostor -c spoolable >/dev/null 2>&1; then
+if "$GANG" adopt impostor -c spoolable-adopt >/dev/null 2>&1; then
   fail "a spool identity whose path is a link is not a reservation" \
     "adopt reported success"
 else
@@ -1772,7 +1782,7 @@ equal "and the refusal mints nothing on its way out" "" \
 # a refused send fail to park for a target the operator had just enrolled.
 tmux new-window -d -t "=$GANG_SESSION" -n taken -c /tmp \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-"$GANG" adopt taken -c spoolable >/dev/null
+"$GANG" adopt taken -c spoolable-adopt >/dev/null
 taken_id="$(window_id taken)"
 taken_token="$(tmux show-options -wqv -t "$taken_id" @gl_spool)"
 if [ -n "$taken_token" ]; then
@@ -2027,13 +2037,13 @@ rm -rf -- "$GANG_LOCK_DIR/spool/dddd4444" "$GANG_LOCK_DIR/spool/eeee5555"
 # person can still read them.
 tmux new-window -d -t "=$GANG_SESSION" -n carried -c /tmp \
   "sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
-"$GANG" adopt carried -c spoolable >/dev/null
+"$GANG" adopt carried -c spoolable-adopt >/dev/null
 carried_id="$(window_id carried)"
 carried_token="$(tmux show-options -wqv -t "$carried_id" @gl_spool)"
 tmux send-keys -l -t "$carried_id" 'HUMAN_DRAFT'
 printf 'MARK_CARRIED' |
   "$GANG" send --to carried --from tester --stdin >/dev/null 2>&1 || true
-"$GANG" adopt carried -c spoolable >/dev/null
+"$GANG" adopt carried -c spoolable-adopt >/dev/null
 equal "re-adopting a window keeps the spool identity it already had" \
   "$carried_token" "$(tmux show-options -wqv -t "$carried_id" @gl_spool)"
 contains "so what was parked before it is still waiting afterwards" \

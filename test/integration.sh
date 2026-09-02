@@ -214,6 +214,29 @@ if [ "$verb" = wait-for ]; then
     break
   done
 fi
+
+# A TEST-SCOPED TWO-WRITER BARRIER. A peer send prepares immutable metadata,
+# then delivery verification writes its independent proof. When one reply test
+# opts in, stop the second write after the sender has already read its source
+# record. The native prompt observer can then write first. Against the former
+# one-slot state machine, releasing this write overwrote prompt with verified;
+# against independent proofs, both facts survive. The ordinary wait shim below
+# gives the release wait the suite's existing hard ceiling.
+if [ "$verb" = set-option ] && [ -n "${GANG_TEST_REPLY_PROOF_GATE:-}" ]; then
+  for word in "$@"; do
+    case "$word" in
+      @gl_reply_*|@gl_rdelivery_*)
+        if [ -e "${GANG_TEST_REPLY_GATE_STATE:?}" ]; then
+          "$real" wait-for -S "$GANG_TEST_REPLY_PROOF_GATE-ready"
+          GANG_TEST_REPLY_PROOF_GATE= GANG_TEST_REPLY_GATE_STATE= \
+            tmux wait-for "$GANG_TEST_REPLY_PROOF_GATE-release"
+        else
+          : > "$GANG_TEST_REPLY_GATE_STATE"
+        fi
+        break ;;
+    esac
+  done
+fi
 [ "$verb" = wait-for ] && [ "$next" != -S ] || exec "$real" "$@"
 
 ceiling=${GANG_TEST_WAIT_CEILING:-120}
