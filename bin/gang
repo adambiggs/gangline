@@ -5341,30 +5341,23 @@ reply_nonce_valid() { # $1 nonce
 }
 
 REPLY_PROOF_PRESENT=0
-reply_proof_lookup() { # captured options, exact key, expected digest
-  local rows="$1" wanted="$2" expected="$3" line key value
-  REPLY_PROOF_PRESENT=0
-  while IFS= read -r line; do
-    key="${line%% *}"
-    [ "$key" = "$wanted" ] || continue
-    value="${line#* }"
-    [ "$value" = "$expected" ] || return 2
-    REPLY_PROOF_PRESENT=1
-    return 0
-  done <<<"$rows"
+reply_joined_proof() { # encoded proof or '-', expected digest
+  case "$1" in
+    -) REPLY_PROOF_PRESENT=0 ;;
+    =*) [ "${1#=}" = "$2" ] || return 1
+        REPLY_PROOF_PRESENT=1 ;;
+    *) return 1 ;;
+  esac
 }
 
-reply_metadata_present() { # captured options, nonce
-  local rows="$1" wanted="$REPLY_STATE_PREFIX$2" line
-  while IFS= read -r line; do
-    [ "${line%% *}" = "$wanted" ] && return 0
-  done <<<"$rows"
-  return 1
+reply_nonce_valid_digest() { # $1 sha256
+  [ "${#1}" -eq 64 ] || return 1
+  case "$1" in *[!a-f0-9]*) return 1 ;; esac
 }
 
 REPLY_ROWS_ERROR=""
 reply_state_rows() { # $1 window -> nonce derived-state token witness mode digest reply-to
-  local rows line key value prompt delivery settled proof_nonce proof_rc
+  local rows joined kind key value prompt delivery settled proof_nonce extra
   REPLY_ROWS_ERROR=""
   rows="$(tmux show-options -w -t "$1" 2>/dev/null)" \
     || {
@@ -5372,34 +5365,96 @@ reply_state_rows() { # $1 window -> nonce derived-state token witness mode diges
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 2
     }
-  while IFS= read -r line; do
-    key="${line%% *}"
-    case "$key" in "$REPLY_STATE_PREFIX"*) ;; *) continue ;; esac
-    value="${line#* }"
+  # JOIN ONCE. Long-lived agents retain completed audit records, so scanning
+  # the complete option set once per proof and per message makes every Stop
+  # query quadratic. awk's associative join produces one metadata row with its
+  # three proofs plus one row for every orphan. Values are prefixed with '=' so
+  # an empty malformed value remains a field rather than collapsing under the
+  # shell's whitespace IFS; '-' can then mean absence unambiguously.
+  joined="$(printf '%s\n' "$rows" | awk \
+    -v metadata="$REPLY_STATE_PREFIX" \
+    -v prompt="$REPLY_PROMPT_PREFIX" \
+    -v delivery="$REPLY_DELIVERY_PREFIX" \
+    -v settled="$REPLY_SETTLED_PREFIX" '
+function suffix(key, prefix) { return substr(key, length(prefix) + 1) }
+function encoded(present, value) { return present ? "=" value : "-" }
+{
+  key = $1
+  sub(/^[^ ]* /, "", $0)
+  value = $0
+  if (index(key, metadata) == 1) {
+    nonce = suffix(key, metadata); m[nonce] = value; mk[nonce] = key; next
+  }
+  if (index(key, prompt) == 1) {
+    nonce = suffix(key, prompt); p[nonce] = value; pp[nonce] = 1; pk[nonce] = key; next
+  }
+  if (index(key, delivery) == 1) {
+    nonce = suffix(key, delivery); d[nonce] = value; dp[nonce] = 1; dk[nonce] = key; next
+  }
+  if (index(key, settled) == 1) {
+    nonce = suffix(key, settled); s[nonce] = value; sp[nonce] = 1; sk[nonce] = key
+  }
+}
+END {
+  for (nonce in m)
+    printf "M\t%s\t=%s\t%s\t%s\t%s\n", mk[nonce], m[nonce],
+      encoded(pp[nonce], p[nonce]), encoded(dp[nonce], d[nonce]),
+      encoded(sp[nonce], s[nonce])
+  for (nonce in p) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", pk[nonce], p[nonce]
+  for (nonce in d) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", dk[nonce], d[nonce]
+  for (nonce in s) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", sk[nonce], s[nonce]
+}
+')" || {
+    REPLY_ROWS_ERROR="reply-obligation evidence could not be joined"
+    printf '! %s\n' "$REPLY_ROWS_ERROR"
+    return 3
+  }
+  while IFS=$'\t' read -r kind key value prompt delivery settled extra; do
+    [ -n "$kind" ] || continue
+    [ -z "$extra" ] && [ "${value#=}" != "$value" ] || {
+      REPLY_ROWS_ERROR="reply-obligation option $key is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+    value="${value#=}"
+    if [ "$kind" = O ]; then
+      case "$key" in
+        "$REPLY_PROMPT_PREFIX"*) proof_nonce="${key#"$REPLY_PROMPT_PREFIX"}" ;;
+        "$REPLY_DELIVERY_PREFIX"*) proof_nonce="${key#"$REPLY_DELIVERY_PREFIX"}" ;;
+        "$REPLY_SETTLED_PREFIX"*) proof_nonce="${key#"$REPLY_SETTLED_PREFIX"}" ;;
+        *) proof_nonce="" ;;
+      esac
+      if ! reply_nonce_valid "$proof_nonce" || ! reply_nonce_valid_digest "$value"; then
+        REPLY_ROWS_ERROR="reply-obligation proof option $key is malformed"
+      else
+        REPLY_ROWS_ERROR="reply-obligation proof option $key is orphaned"
+      fi
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    fi
+    [ "$kind" = M ] || {
+      REPLY_ROWS_ERROR="reply-obligation evidence row is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
     reply_state_parse "$key" "$value" || {
       REPLY_ROWS_ERROR="reply-obligation option $key is malformed"
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
     }
-    proof_rc=0
-    reply_proof_lookup "$rows" "$REPLY_PROMPT_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
-    [ "$proof_rc" -eq 0 ] || {
+    reply_joined_proof "$prompt" "$REPLY_DIGEST" || {
       REPLY_ROWS_ERROR="reply-obligation prompt proof for $REPLY_NONCE is malformed"
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
     }
     prompt=$REPLY_PROOF_PRESENT
-    proof_rc=0
-    reply_proof_lookup "$rows" "$REPLY_DELIVERY_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
-    [ "$proof_rc" -eq 0 ] || {
+    reply_joined_proof "$delivery" "$REPLY_DIGEST" || {
       REPLY_ROWS_ERROR="reply-obligation delivery proof for $REPLY_NONCE is malformed"
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
     }
     delivery=$REPLY_PROOF_PRESENT
-    proof_rc=0
-    reply_proof_lookup "$rows" "$REPLY_SETTLED_PREFIX$REPLY_NONCE" "$REPLY_DIGEST" || proof_rc=$?
-    [ "$proof_rc" -eq 0 ] || {
+    reply_joined_proof "$settled" "$REPLY_DIGEST" || {
       REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE is malformed"
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
@@ -5411,7 +5466,11 @@ reply_state_rows() { # $1 window -> nonce derived-state token witness mode diges
         printf '! %s\n' "$REPLY_ROWS_ERROR"
         return 3
       }
-      REPLY_STATUS=settled
+      if [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
+        REPLY_STATUS=settled
+      else
+        REPLY_STATUS=settlement
+      fi
     elif [ "$REPLY_MODE" = legacy ]; then
       REPLY_STATUS=legacy
     elif [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
@@ -5426,35 +5485,7 @@ reply_state_rows() { # $1 window -> nonce derived-state token witness mode diges
     printf '%s %s %s %s %s %s %s\n' \
       "$REPLY_NONCE" "$REPLY_STATUS" "$REPLY_TOKEN" "$REPLY_WITNESS" \
       "$REPLY_MODE" "$REPLY_DIGEST" "$REPLY_TO"
-  done <<<"$rows"
-  # A proof without immutable metadata cannot be correlated. Do not silently
-  # discard it: an interrupted or malformed lifecycle is exactly where Stop
-  # must preserve the evidence and fail closed.
-  while IFS= read -r line; do
-    key="${line%% *}"
-    case "$key" in
-      "$REPLY_PROMPT_PREFIX"*) proof_nonce="${key#"$REPLY_PROMPT_PREFIX"}" ;;
-      "$REPLY_DELIVERY_PREFIX"*) proof_nonce="${key#"$REPLY_DELIVERY_PREFIX"}" ;;
-      "$REPLY_SETTLED_PREFIX"*) proof_nonce="${key#"$REPLY_SETTLED_PREFIX"}" ;;
-      *) continue ;;
-    esac
-    value="${line#* }"
-    if ! reply_nonce_valid "$proof_nonce" || ! reply_nonce_valid_digest "$value"; then
-      REPLY_ROWS_ERROR="reply-obligation proof option $key is malformed"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    fi
-    reply_metadata_present "$rows" "$proof_nonce" || {
-      REPLY_ROWS_ERROR="reply-obligation proof option $key is orphaned"
-      printf '! %s\n' "$REPLY_ROWS_ERROR"
-      return 3
-    }
-  done <<<"$rows"
-}
-
-reply_nonce_valid_digest() { # $1 sha256
-  [ "${#1}" -eq 64 ] || return 1
-  case "$1" in *[!a-f0-9]*) return 1 ;; esac
+  done <<<"$joined"
 }
 
 reply_rows_error() { # captured reply_state_rows stdout -> its terminal error
@@ -5625,7 +5656,11 @@ reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
   prompt="$(collar_submitted_prompt "$1" "$3")" || rc=$?
   [ "$rc" -eq 0 ] && [ -n "$prompt" ] || return 0
   while read -r nonce state token witness mode digest replies; do
-    case "$state" in candidate|verified) ;; *) continue ;; esac
+    # A correlated acknowledgement may settle a delivery-only record before
+    # the native prompt event arrives. Settlement is still incomplete there,
+    # so accept the missing monotonic prompt proof and let the full conjunction
+    # derive clear.
+    case "$state" in candidate|verified|settlement) ;; *) continue ;; esac
     seen="$(reply_prompt_envelope_digest "$prompt" "$witness" "$nonce" 2>/dev/null)" || seen=""
     [ -n "$seen" ] && [ "$seen" = "$digest" ] || continue
     reply_proof_write "$1" "$REPLY_PROMPT_PREFIX" "$nonce" "$digest" || continue
@@ -6047,7 +6082,7 @@ spool_read_try() { # $1 = entry path; 0 loaded, 1 with SPOOL_READ_ERROR
       # Anything shaped like a peer is delivered but recorded as legacy
       # ambiguity so an upgrade cannot silently erase a reply obligation.
       case "$SPOOL_SENDER" in
-        gangline|hitch|auto-resume|self-declared:*) ;;
+        gangline|hitch|self-declared:*) ;;
         *)
           valid_name "$SPOOL_SENDER" \
             || { SPOOL_READ_ERROR="the legacy spooled message $1 has an invalid sender and no verifiable provenance"; return 1; }

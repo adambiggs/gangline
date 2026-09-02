@@ -511,6 +511,9 @@ The next verified outbound message to a peer with outstanding requests is
 correlated to all of that peer's outstanding message nonces. Its envelope
 carries the correlation, successful delivery marks only those records settled, and
 the recipient classifies it as a reply rather than opening reciprocal debt.
+Early settlement proof cannot clear partial request provenance: the original
+matching prompt and delivery proofs must both arrive before the settled record
+derives clear.
 Gangline does not parse the reply body: any genuine concise acknowledgement is
 enough, including one that says background work is still running and a fuller
 report will follow. Requests from different peers retain independent records.

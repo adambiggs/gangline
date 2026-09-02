@@ -60,8 +60,25 @@ reply_nonce_from() { # $1 window, $2 witnessed sender -> its one nonce
   return 1
 }
 
-reply_nonce_from_output() { # gang send stdout -> message nonce
-  sed -n 's/.*\[gang:[^#]*#\([a-f0-9]\{16\}\)\].*/\1/p' <<<"$1"
+reply_nonce_for_body() { # target window, sender, mode, body -> correlated nonce
+  local key value nonce marker _token witness mode digest replies extra wire seen
+  while read -r key value; do
+    case "$key" in @gl_reply_*) ;; *) continue ;; esac
+    nonce="${key#@gl_reply_}"
+    IFS=: read -r marker _token witness mode digest replies extra <<<"$value"
+    [ "$marker" = message ] && [ "$witness" = "$2" ] \
+      && [ "$mode" = "$3" ] && [ -z "$extra" ] || continue
+    if [ "$mode" = request ]; then
+      wire="$(reply_request_envelope "$witness" "$nonce" "$4")"
+    else
+      wire="$(reply_response_envelope "$witness" "$nonce" "$replies" "$4")"
+    fi
+    seen="$(printf '%s' "$wire" | sha256sum)"
+    [ "${seen%% *}" = "$digest" ] || continue
+    printf '%s' "$nonce"
+    return 0
+  done <<<"$(tmux show-options -w -t "$1")"
+  return 1
 }
 
 reply_request_envelope() { # sender nonce body
@@ -83,6 +100,10 @@ reply_b_pane="$(tmux list-panes -t "$reply_b_id" -F '#{pane_id}')"
 "$HITCH" reply-c -c replyable -d /tmp >/dev/null
 reply_c_id="$(window_id reply-c)"
 reply_c_pane="$(tmux list-panes -t "$reply_c_id" -F '#{pane_id}')"
+# This remains a valid peer name even though older internal mail used the same
+# author string. Legacy parsing must not let that namespace collision erase a
+# possible peer obligation.
+"$HITCH" auto-resume -c replyable -d /tmp >/dev/null
 
 equal "an agent-created window starts with no peer reply debt" \
   $'clear\t-\t-\t-' \
@@ -106,7 +127,7 @@ reply_race_gate="reply-proof-race-$$"
 reply_race_state="$RUN_ROOT/reply-proof-race-state"
 reply_race_out="$RUN_ROOT/reply-proof-race.out"
 reply_race_err="$RUN_ROOT/reply-proof-race.err"
-# source-guard: producer@ba9ac1b15e66: the ready barrier is emitted only after this background send has written immutable metadata and paused its delivery-proof write, independently binding the concurrent prompt observation to this producer
+# source-guard: producer@2a62e992bfa2: the later reply_fake_log is truncated immediately before the one failed-boundary adapter invocation whose hook arm is its only writer; this background compound is joined by its explicit wait before reaching that assertion
 GANG_TEST_REPLY_PROOF_GATE="$reply_race_gate" \
 GANG_TEST_REPLY_GATE_STATE="$reply_race_state" \
 TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin \
@@ -119,32 +140,54 @@ reply_prompt_event "$reply_b_pane" \
 equal "prompt-first concurrent evidence is preserved while delivery is in flight" \
   $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-prompt-request' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
-tmux wait-for -S "$reply_race_gate-release"
-wait "$reply_race_pid"
-equal "concurrent prompt and delivery proofs converge on one obligation" \
-  $'owed\t'"$reply_race_nonce"$'\treply-a\tlive' \
-  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
-reply_race_ack_out="$(printf '%s' ACK_PROMPT_FIRST \
-  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)"
-reply_race_ack_nonce="$(reply_nonce_from_output "$reply_race_ack_out")"
+printf '%s' ACK_PROMPT_FIRST \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_race_ack_nonce="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b reply ACK_PROMPT_FIRST)"
 reply_prompt_event "$reply_a_pane" \
   "$(reply_response_envelope reply-b "$reply_race_ack_nonce" \
     "$reply_race_nonce" ACK_PROMPT_FIRST)"
-equal "the raced obligation settles without reciprocal debt" \
+equal "settlement cannot clear prompt-only provenance" \
+  $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-settlement-request' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+tmux wait-for -S "$reply_race_gate-release"
+wait "$reply_race_pid"
+equal "the missing delivery proof completes the already correlated settlement" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
 # Direct verified request. Delivery verification and the native prompt witness
 # are independent facts and may arrive in either order.
+printf '%s' REQ_DELIVERY_ONLY \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_delivery_only="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a request REQ_DELIVERY_ONLY)"
+reply_delivery_only_wire="$(reply_request_envelope reply-a \
+  "$reply_delivery_only" REQ_DELIVERY_ONLY)"
+equal "delivery without its native prompt witness fails closed as ambiguous" \
+  $'unknown\t'"$reply_delivery_only"$'\treply-a\tprovenance-verified-request' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+contains "ambiguous peer provenance refuses idle" "$reply_stop_output" '"decision": "block"'
+printf '%s' ACK_DELIVERY_ONLY \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_delivery_ack_nonce="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b reply ACK_DELIVERY_ONLY)"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_response_envelope reply-b "$reply_delivery_ack_nonce" \
+    "$reply_delivery_only" ACK_DELIVERY_ONLY)"
+equal "settlement cannot clear delivery-only provenance" \
+  $'unknown\t'"$reply_delivery_only"$'\treply-a\tprovenance-settlement-request' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_b_pane" "$reply_delivery_only_wire"
+equal "the missing prompt proof completes the already correlated settlement" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+
 printf '%s' REQ_A_ONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_a_one="$(reply_nonce_from "$reply_b_id" reply-a)"
 reply_a_one_wire="$(reply_request_envelope reply-a "$reply_a_one" REQ_A_ONE)"
-equal "delivery without its native prompt witness fails closed as ambiguous" \
-  $'unknown\t'"$reply_a_one"$'\treply-a\tprovenance-verified-request' \
-  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
-reply_stop_run "$reply_b_pane"
-contains "ambiguous peer provenance refuses idle" "$reply_stop_output" '"decision": "block"'
 reply_prompt_event "$reply_b_pane" "$reply_a_one_wire"
 equal "a verified peer request arms an obligation to its observed sender" \
   $'owed\t'"$reply_a_one"$'\treply-a\tlive' \
@@ -258,17 +301,40 @@ tmux set-option -uw -t "$reply_b_id" "@gl_rdelivery_$reply_legacy_nonce" 2>/dev/
 tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_legacy_nonce" 2>/dev/null || true
 tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_legacy_nonce"
 
+# `auto-resume` is also a valid live agent name. A pre-upgrade entry cannot
+# distinguish that peer from the historical internal author string, so the
+# only safe interpretation is the same legacy ambiguity.
+reply_legacy_auto_entry="$reply_b_spool/00000000000000000002-legacy-auto"
+printf '%s\n%s\n%s\n' auto-resume legacy-auto-peer \
+  '[gang:auto-resume] LEGACY_AUTO_RESUME_REQUEST [/gang:auto-resume]' \
+  > "$reply_legacy_auto_entry"
+tmux wait-for "$reply_drain_channel" &
+reply_legacy_auto_waiter=$!
+printf '%s' "$reply_stop_payload" \
+  | TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null
+wait "$reply_legacy_auto_waiter"
+reply_legacy_auto_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+contains "legacy control-name collision stays fail-closed for a valid peer" \
+  "$reply_legacy_auto_query" $'\tauto-resume\tprovenance-legacy-legacy'
+reply_legacy_auto_nonce="$(cut -f2 <<<"$reply_legacy_auto_query")"
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_legacy_auto_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_rdelivery_$reply_legacy_auto_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_legacy_auto_nonce" 2>/dev/null || true
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_legacy_auto_nonce"
+
 # One peer may have more than one message outstanding. The acknowledgement's
 # correlated reply list settles all of that peer's proved requests at once;
 # no last-writer slot may hide either record.
-reply_same_one_out="$(printf '%s' REQ_SAME_ONE \
-  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin)"
-reply_same_one="$(reply_nonce_from_output "$reply_same_one_out")"
+printf '%s' REQ_SAME_ONE \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_same_one="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a request REQ_SAME_ONE)"
 reply_prompt_event "$reply_b_pane" \
   "$(reply_request_envelope reply-a "$reply_same_one" REQ_SAME_ONE)"
-reply_same_two_out="$(printf '%s' REQ_SAME_TWO \
-  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin)"
-reply_same_two="$(reply_nonce_from_output "$reply_same_two_out")"
+printf '%s' REQ_SAME_TWO \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_same_two="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a request REQ_SAME_TWO)"
 reply_prompt_event "$reply_b_pane" \
   "$(reply_request_envelope reply-a "$reply_same_two" REQ_SAME_TWO)"
 reply_same_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
@@ -276,9 +342,10 @@ contains "two messages from one peer retain the first obligation" "$reply_same_q
   $'owed\t'"$reply_same_one"$'\treply-a\tlive'
 contains "two messages from one peer retain the second obligation" "$reply_same_query" \
   $'owed\t'"$reply_same_two"$'\treply-a\tlive'
-reply_same_ack_out="$(printf '%s' ACK_BOTH_FROM_A \
-  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)"
-reply_same_ack="$(reply_nonce_from_output "$reply_same_ack_out")"
+printf '%s' ACK_BOTH_FROM_A \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_same_ack="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b reply ACK_BOTH_FROM_A)"
 reply_same_ack_meta="$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_same_ack")"
 IFS=: read -r _ _ _ _ _ reply_same_correlations <<<"$reply_same_ack_meta"
 equal "one correlated acknowledgement settles both messages from its peer" \
@@ -328,6 +395,31 @@ equal "one acknowledgement per peer clears multiple-sender debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
+
+# Completed metadata is retained as an audit trail. Build a substantial history
+# through one tmux source transaction and prove its semantics stay clear; the
+# production reader joins this set in one pass instead of rescanning it once per
+# proof. This is an accumulation check, not a timing assertion.
+reply_history_config="$RUN_ROOT/reply-history.conf"
+reply_history_digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+reply_history_token="$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+reply_history_index=1
+while [ "$reply_history_index" -le 256 ]; do
+  reply_history_nonce="$(printf 'feedfeed%08x' "$reply_history_index")"
+  printf 'set-option -w -t %s @gl_reply_%s message:%s:reply-a:request:%s:-\n' \
+    "$reply_b_id" "$reply_history_nonce" "$reply_history_token" "$reply_history_digest"
+  printf 'set-option -w -t %s @gl_rprompt_%s %s\n' \
+    "$reply_b_id" "$reply_history_nonce" "$reply_history_digest"
+  printf 'set-option -w -t %s @gl_rdelivery_%s %s\n' \
+    "$reply_b_id" "$reply_history_nonce" "$reply_history_digest"
+  printf 'set-option -w -t %s @gl_rsettled_%s %s\n' \
+    "$reply_b_id" "$reply_history_nonce" "$reply_history_digest"
+  reply_history_index=$((reply_history_index + 1))
+done > "$reply_history_config"
+tmux source-file "$reply_history_config"
+equal "retained settled history remains semantically clear" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
 # Corrupt evidence is never repaired into absence. A vanished sender remains a
 # named debt rather than being redirected to the hitcher or team lead.
@@ -418,6 +510,7 @@ contains "the Claude launch carries the explicitly selected unlimited Stop-block
 # disposable window retires its complete option-scoped audit trail together.
 "$GANG" drop reply-b >/dev/null
 "$GANG" drop reply-c >/dev/null
+"$GANG" drop auto-resume >/dev/null
 if [ -n "$reply_original_collars" ]; then
   export GANG_COLLARS="$reply_original_collars"
 else

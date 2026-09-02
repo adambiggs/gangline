@@ -79,7 +79,10 @@ in separate monotonic options, so concurrent native and transport writers
 cannot lose one another's proof. Legacy peer spool entries lacking correlation
 stay unknown. A launch-installed Stop promise cannot be adopted, and a Claude
 hitch refuses unless the operator explicitly disables its finite native
-consecutive-block cap.
+consecutive-block cap. Settlement proof does not outrank a missing prompt or
+delivery proof: the original conjunction must still be complete before the
+record derives clear. Join retained metadata and proofs in one linear pass so
+the audit trail does not make Stop queries quadratic.
 
 ## An observed sender and a claimed one are marked apart
 
