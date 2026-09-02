@@ -715,18 +715,14 @@ scenario_midturn() {
   # could arrive stripped of its sender while both checks passed. The pair is
   # the claim: a completed turn of the agent's own that carried the envelope
   # with its attribution intact.
-  local sent
-  sent="$(requests | grep -- "$token" || true)"
+  local sent_log
+  sent_log="$(requests | grep -- "$token" || true)"
+  # source-guard: producer@7423509e937e: the unique courier token is composed by this scenario's single send, and requests retains only completed agent turns, so the matching line witnesses that delivery
   contains "midturn: the envelope reached the model on the agent's own turn" \
-    "$sent" "$token"
-  # THIS CALLER IS OUTSIDE THE TEAM'S TMUX SERVER. `--from courier` supplies a
-  # name Gangline cannot observe, so the honest envelope is deliberately
-  # `self-declared:courier`. Requiring an observed `courier` identity here
-  # would assert the opposite of the delivery contract; the scenario proves
-  # that the claimed sender survives the attributed spool without promoting
-  # that claim into an observation.
-  contains "midturn: that same turn carried its declared sender's attribution" \
-    "$sent" "gang:self-declared:courier"
+    "$sent_log" "$token"
+  # source-guard: producer@138278c64bc5: the same token-filtered completed agent turn can carry this courier attribution only from the single send above; title and token-count errands are excluded by requests
+  contains "midturn: that same turn carried its sender's attribution" \
+    "$sent_log" "gang:self-declared:courier"
   # THE ENVELOPE'S OWN TURN HAS TO FINISH TOO, and this is what catches a lane
   # that asserted on a request the harness was still blocked on: the request
   # log records a request when it ARRIVES, so a permanently held turn would
