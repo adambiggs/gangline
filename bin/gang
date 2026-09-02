@@ -3906,7 +3906,7 @@ cmd_teams() { # every team gang wrote down, and whether its server still answers
 # exits immediately; the holder consumes that marker with another complete
 # pass before it releases the lock. There is no resident process: the deadline
 # controller and its worker exist only to finish this invocation's bounded pass.
-TICK_DIR="" TICK_HEALTH="" TICK_LOG=""
+TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET=""
 TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""
 
 tick_state_root() {
@@ -3919,7 +3919,7 @@ tick_session_live() { # cleanup/epilogue probe: no diagnostic may replace caller
 
 tick_paths_set() { # resolve the current team to its health/log directory
   local socket digest
-  TICK_DIR="" TICK_HEALTH="" TICK_LOG=""
+  TICK_DIR="" TICK_HEALTH="" TICK_LOG="" TICK_TICKET=""
   socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
     || return 1
   [ -n "$socket" ] || return 1
@@ -3928,6 +3928,7 @@ tick_paths_set() { # resolve the current team to its health/log directory
   TICK_DIR="$(tick_state_root)/$digest"
   TICK_HEALTH="$TICK_DIR/health"
   TICK_LOG="$TICK_DIR/tick.log"
+  TICK_TICKET="$TICK_DIR/ticket"
 }
 
 tick_state_prepare() {
@@ -3938,14 +3939,27 @@ tick_state_prepare() {
 }
 
 tick_health_file_read() { # $1 file: print state, epoch, message
-  local file="$1" line state at note extra
+  local file="$1" line state at note ticket extra
   [ -f "$file" ] && [ -r "$file" ] || return 1
   IFS= read -r line < "$file" || return 1
-  IFS=$'\t' read -r state at note extra <<<"$line"
+  IFS=$'\t' read -r state at note ticket extra <<<"$line"
   case "$state" in ok|failed) ;; *) return 1 ;; esac
   case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  case "$ticket" in ''|*[!0-9]*) [ -z "$ticket" ] || return 1 ;; esac
   [ -z "$extra" ] || return 1
   printf '%s\t%s\t%s' "$state" "$at" "$note"
+}
+
+tick_health_ticket_read() { # $1 file: print a valid ordered-writer ticket
+  local file="$1" line state at note ticket extra
+  [ -f "$file" ] && [ -r "$file" ] || return 1
+  IFS= read -r line < "$file" || return 1
+  IFS=$'\t' read -r state at note ticket extra <<<"$line"
+  case "$state" in ok|failed) ;; *) return 1 ;; esac
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  case "$ticket" in ''|*[!0-9]*) return 1 ;; esac
+  [ -z "$extra" ] || return 1
+  printf '%s' "$ticket"
 }
 
 tick_health_read() { # print state, epoch, message; 1 absent or unreadable
@@ -3965,15 +3979,16 @@ alert_health_read() { # 0 record, 1 no record yet, 2 unreadable/malformed
   tick_health_file_read "$file" || return 2
 }
 
-tick_health_store() { # $1 ok|failed, $2 message, optional $3 recorded epoch
-  local state="$1" note="$2" at="${3:-}" tmp
+tick_health_store() { # guard held; $1 state, $2 message, optional $3 epoch
+  local state="$1" note="$2" at="${3:-}" tmp ticket="${GANG_TICK_TICKET:-}"
   tick_paths_set || return 1
   tick_state_prepare
   note="$(printf '%s' "$note" | config_sanitize)"
   [ -n "$at" ] || at="$(date +%s)"
   case "$at" in ''|*[!0-9]*) return 1 ;; esac
+  case "$ticket" in ''|*[!0-9]*) return 1 ;; esac
   tmp="$TICK_HEALTH.new.${BASHPID:-$$}"
-  printf '%s\t%s\t%s\n' "$state" "$at" "$note" > "$tmp" \
+  printf '%s\t%s\t%s\t%s\n' "$state" "$at" "$note" "$ticket" > "$tmp" \
     || return 1
   mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
 }
@@ -3985,13 +4000,58 @@ tick_log_store() { # $1 ok|FAILED, $2 single-line detail; paths already prepared
   mv -f -- "$tmp" "$TICK_LOG" || { rm -f -- "$tmp"; return 1; }
 }
 
-tick_health_ok() {
-  local rc=0
+tick_ticket_mint() { # allocate a total order before the deadline worker starts
+  local current=0 health_ticket=0 next=0 tmp rc=0
   tick_paths_set || return 1
   tick_state_prepare
-  tick_log_store ok "tick completed for $SESSION" || return 1
-  tick_health_store ok "" || return 1
-  alert_state_refresh || rc=$?
+  tick_lock_paths_set || return 1
+  tick_guard_wait || return 1
+  if [ -e "$TICK_TICKET" ] || [ -L "$TICK_TICKET" ]; then
+    IFS= read -r current < "$TICK_TICKET" || rc=1
+    case "$current" in ''|*[!0-9]*) rc=1 ;; esac
+  fi
+  health_ticket="$(tick_health_ticket_read "$TICK_HEALTH" 2>/dev/null)" \
+    || health_ticket=0
+  [ "$health_ticket" -le "$current" ] || current="$health_ticket"
+  if [ "$rc" -eq 0 ]; then
+    next=$((current + 1))
+    [ "$next" -gt "$current" ] || rc=1
+  fi
+  if [ "$rc" -eq 0 ]; then
+    tmp="$TICK_TICKET.new.${BASHPID:-$$}"
+    printf '%s\n' "$next" > "$tmp" \
+      && mv -f -- "$tmp" "$TICK_TICKET" \
+      || { rm -f -- "$tmp"; rc=1; }
+  fi
+  tick_guard_drop
+  [ "$rc" -eq 0 ] || { printf 'tick result ticket could not be allocated\n' >&2; return 1; }
+  printf '%s' "$next"
+}
+
+tick_result_claim() { # hold the result guard unless a newer ticket committed
+  local ticket="${GANG_TICK_TICKET:-}" committed=0
+  case "$ticket" in ''|*[!0-9]*) return 1 ;; esac
+  tick_paths_set || return 1
+  tick_state_prepare
+  tick_lock_paths_set || return 1
+  tick_guard_wait || return 1
+  committed="$(tick_health_ticket_read "$TICK_HEALTH" 2>/dev/null)" \
+    || committed=0
+  if [ "$committed" -gt "$ticket" ]; then
+    tick_guard_drop
+    return 75
+  fi
+}
+
+tick_result_release() { tick_guard_drop; }
+
+tick_health_ok() {
+  local rc=0
+  tick_result_claim || return $?
+  tick_log_store ok "tick completed for $SESSION" || rc=$?
+  [ "$rc" -ne 0 ] || tick_health_store ok "" || rc=$?
+  [ "$rc" -ne 0 ] || alert_state_refresh || rc=$?
+  tick_result_release
   return "$rc"
 }
 
@@ -4091,56 +4151,42 @@ alert_binding_line() {
   tmux list-keys -T prefix A 2>/dev/null
 }
 
-ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
+ALERT_BINDING_FD=""
 
 alert_binding_claim() { # serialize the server-global binding decision
-  local base path socket digest holder="" err=""
-  ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
-  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}/alert-binding"
-  lock_base "$base" || return 1
+  local path socket rc=0
+  ALERT_BINDING_FD=""
   socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
     || return 1
-  digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:24])' "$socket")" \
-    || return 1
-  lock_self_pid
-  path="$base/$digest.claim"
-  ALERT_BINDING_RECORD="$LOCK_SELF_PID"
-  if err="$(ln -s "$ALERT_BINDING_RECORD" "$path" 2>&1)"; then
-    ALERT_BINDING_CLAIM="$path"
-    return 0
-  fi
-  if [ ! -L "$path" ]; then
-    printf 'alert binding claim %s cannot be created: %s\n' \
-      "$path" "${err:-unknown error}" >&2
-    return 1
-  fi
-  holder="$(readlink "$path" 2>/dev/null)" || holder=""
-  case "$holder" in
-    ''|*[!0-9]*) printf "alert binding claim %s has unreadable holder '%s'\n" \
-                    "$path" "$holder" >&2
-                  return 1 ;;
+  path="$socket.gangline-alert-binding.guard"
+  exec {ALERT_BINDING_FD}>"$path" \
+    || { printf 'cannot open alert binding guard %s\n' "$path" >&2; return 1; }
+  "$ROOT/libexec/gang-process-identity" --lock-fd "$ALERT_BINDING_FD" \
+    >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0)
+       if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+          && [ -n "${GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO:-}" ] \
+          && [ -n "${GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO:-}" ]; then
+         printf x > "$GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO"
+         IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO" || true
+         GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO=""
+         GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO=""
+       fi
+       return 0 ;;
+    75) printf 'another alert binding update is in flight on this tmux server\n' >&2 ;;
+    *) printf 'alert binding guard %s cannot be acquired\n' "$path" >&2 ;;
   esac
-  if kill -0 "$holder" 2>/dev/null; then
-    printf 'another alert binding update is in flight on this tmux server\n' >&2
-    return 75
-  fi
-  rm -f -- "$path" || return 1
-  if err="$(ln -s "$ALERT_BINDING_RECORD" "$path" 2>&1)"; then
-    ALERT_BINDING_CLAIM="$path"
-    return 0
-  fi
-  printf 'alert binding claim %s could not replace its stale owner: %s\n' \
-    "$path" "${err:-unknown error}" >&2
-  return 1
+  exec {ALERT_BINDING_FD}>&-
+  ALERT_BINDING_FD=""
+  return "$rc"
 }
 
 alert_binding_claim_release() {
-  local holder=""
-  [ -n "${ALERT_BINDING_CLAIM:-}" ] || return 0
-  holder="$(readlink "$ALERT_BINDING_CLAIM" 2>/dev/null)" || holder=""
-  [ "$holder" != "$ALERT_BINDING_RECORD" ] \
-    || rm -f -- "$ALERT_BINDING_CLAIM" 2>/dev/null || true
-  ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
+  if [ -n "${ALERT_BINDING_FD:-}" ]; then
+    exec {ALERT_BINDING_FD}>&-
+  fi
+  ALERT_BINDING_FD=""
 }
 
 alert_binding_ensure() { # install Prefix+A only while its exact key is unclaimed
@@ -4173,12 +4219,15 @@ alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
   command="GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR") $(shell_quote "$ROOT/bin/gang")"
   alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
   alert_binding_claim || claim_rc=$?
-  [ "$claim_rc" -eq 0 ] || return 1
-  alert_option_set @gl_alert_command "$command" || rc=$?
-  [ "$rc" -ne 0 ] || alert_binding_ensure || rc=$?
-  alert_binding_claim_release
-  [ "$rc" -eq 0 ] || return "$rc"
-  alert_state_refresh
+  if [ "$claim_rc" -eq 0 ]; then
+    alert_option_set @gl_alert_command "$command" || rc=$?
+    [ "$rc" -ne 0 ] || alert_binding_ensure || rc=$?
+    alert_binding_claim_release
+  else
+    rc=1
+  fi
+  alert_state_refresh || rc=$?
+  return "$rc"
 }
 
 alert_status_remove() { # remove only the segment recorded as Gangline-owned
@@ -4220,16 +4269,18 @@ alert_binding_release() { # called under claim: unbind only our exact last-team 
 
 alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
   local claim_rc=0 rc=0
-  alert_status_remove || return 1
-  tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
-  tmux set-option -u -t "=$SESSION:" @gl_alert_unseen 2>/dev/null || true
-  tmux set-option -u -t "=$SESSION:" @gl_alert_widget 2>/dev/null || true
-  tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
-  tmux set-option -u -t "=$SESSION:" @gl_alert_health 2>/dev/null || true
-  tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
   alert_binding_claim || claim_rc=$?
   [ "$claim_rc" -eq 0 ] || return 1
-  alert_binding_release || rc=$?
+  alert_status_remove || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
+    tmux set-option -u -t "=$SESSION:" @gl_alert_unseen 2>/dev/null || true
+    tmux set-option -u -t "=$SESSION:" @gl_alert_widget 2>/dev/null || true
+    tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
+    tmux set-option -u -t "=$SESSION:" @gl_alert_health 2>/dev/null || true
+    tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
+    alert_binding_release || rc=$?
+  fi
   if [ "$rc" -eq 0 ]; then
     tmux set-option -u -t "=$SESSION:" @gl_alert_command 2>/dev/null || rc=$?
   fi
@@ -4247,24 +4298,28 @@ tick_failure_surface() { # $1 sanitized summary, $2 transition 0|1; never fatal
 
 tick_health_fail() { # $1 complete worker diagnostic
   local note="$1" previous="" previous_state="" previous_at=""
-  local transition=1
+  local transition=1 rc=0
   [ -n "$note" ] || note="the tick worker failed without a diagnostic"
   note="${note##*$'\n'}"
-  previous="$(tick_health_read 2>/dev/null)" || previous=""
+  tick_result_claim || return $?
+  previous="$(tick_health_file_read "$TICK_HEALTH" 2>/dev/null)" || previous=""
   if [ -n "$previous" ]; then
     IFS=$'\t' read -r previous_state previous_at _ <<<"$previous"
     [ "$previous_state" != failed ] || transition=0
   fi
-  tick_paths_set || return 1
-  tick_state_prepare
-  tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || return 1
+  tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || rc=$?
   if [ "$transition" -eq 0 ]; then
-    tick_health_store failed "$note" "$previous_at" || return 1
+    [ "$rc" -ne 0 ] || tick_health_store failed "$note" "$previous_at" || rc=$?
   else
-    tick_health_store failed "$note" || return 1
-    tmux set-option -t "=$SESSION:" @gl_alert_seen 0 2>/dev/null || true
+    [ "$rc" -ne 0 ] || tick_health_store failed "$note" || rc=$?
+    [ "$rc" -ne 0 ] \
+      || tmux set-option -t "=$SESSION:" @gl_alert_seen 0 2>/dev/null || true
   fi
-  tick_failure_surface "$(printf '%s' "$note" | config_sanitize)" "$transition"
+  [ "$rc" -ne 0 ] \
+    || tick_failure_surface "$(printf '%s' "$note" | config_sanitize)" "$transition" \
+    || rc=$?
+  tick_result_release
+  return "$rc"
 }
 
 tick_health_warn() { # the next invocation carries the last failure on stderr
@@ -4286,7 +4341,7 @@ tick_health_report() {
 
 tick_state_forget() { # health is team-scoped and dies with that team
   tick_paths_set || return 0
-  rm -f -- "$TICK_HEALTH" "$TICK_LOG" 2>/dev/null || true
+  rm -f -- "$TICK_HEALTH" "$TICK_LOG" "$TICK_TICKET" 2>/dev/null || true
   rmdir -- "$TICK_DIR" 2>/dev/null || true
 }
 
@@ -4828,6 +4883,9 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
   local dirty_path=""
   [ $# -eq 0 ] || die "internal tick worker takes no arguments"
   session_live || return 0
+  if [ -z "${GANG_TICK_TICKET:-}" ]; then
+    GANG_TICK_TICKET="$(tick_ticket_mint)" || return 1
+  fi
   tick_lock_acquire || lock_rc=$?
   [ "$lock_rc" -eq 0 ] || return "$lock_rc"
   while :; do
@@ -4889,10 +4947,12 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
 }
 
 cmd_tick() { # public synchronous seam; its worker is always self-deadlined
-  local out="" rc=0
+  local out="" rc=0 GANG_TICK_TICKET=""
   [ $# -eq 0 ] || die "tick: takes no arguments"
   session_live || return 0
-  out="$(GANG_TICK_INTERNAL=1 "$ROOT/libexec/gang-tick-deadline" \
+  GANG_TICK_TICKET="$(tick_ticket_mint)" || return 1
+  out="$(GANG_TICK_INTERNAL=1 GANG_TICK_TICKET="$GANG_TICK_TICKET" \
+    "$ROOT/libexec/gang-tick-deadline" \
     --clock-helper "$GANGLINE_CLOCK_HELPER" \
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
   case "$rc" in
@@ -4901,6 +4961,12 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
     76) [ -z "$out" ] || printf '%s\n' "$out" >&2
         return 1 ;;
     *) [ -z "$out" ] || printf '%s\n' "$out" >&2
+       if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+          && [ -n "${GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO:-}" ] \
+          && [ -n "${GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO:-}" ]; then
+         printf x > "$GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO"
+         IFS= read -r _ < "$GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO" || true
+       fi
        tick_health_fail "$out" || true
        return 1 ;;
   esac

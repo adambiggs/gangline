@@ -23,7 +23,7 @@ alert_ui_gang_for() {
   local session="$1"
   shift
   TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$session" \
-    GANG_LOCK_DIR="$RUN_ROOT/alert-ui-locks" \
+    GANG_LOCK_DIR="${ALERT_UI_LOCK_DIR:-$RUN_ROOT/alert-ui-locks}" \
     GANG_ARCHIVE_DIR="$RUN_ROOT/alert-ui-archive" \
     XDG_STATE_HOME="$RUN_ROOT/alert-ui-state" "$GANG" "$@"
 }
@@ -285,6 +285,42 @@ equal "the newer recovery is the final alert state" '0 0' \
 contains "the newer recovery is the final health record" \
   "$(<"$alert_ui_health")" $'ok\t'
 
+# Deadline/controller failures return after their worker is gone. Hold the
+# older parent at its failure commit, let a later clean invocation commit, then
+# release the old parent: its lower result ticket must not overwrite recovery.
+alert_ui_bad_clock="$RUN_ROOT/alert-ui-bad-clock"
+cat > "$alert_ui_bad_clock" <<'SH'
+#!/bin/sh
+case "${1:-}" in
+  now) printf '1\n'; exit 0 ;;
+  elapsed) exit 2 ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$alert_ui_bad_clock"
+alert_ui_parent_ready="$RUN_ROOT/alert-ui-parent-ready"
+alert_ui_parent_release="$RUN_ROOT/alert-ui-parent-release"
+mkfifo "$alert_ui_parent_ready" "$alert_ui_parent_release"
+GANG_TEST_CLOCK="$alert_ui_bad_clock" \
+GANG_TEST_TICK_PARENT_COMMIT_READY_FIFO="$alert_ui_parent_ready" \
+GANG_TEST_TICK_PARENT_COMMIT_RELEASE_FIFO="$alert_ui_parent_release" \
+  alert_ui_gang tick > "$RUN_ROOT/alert-ui-parent-failure.out" 2>&1 &
+alert_ui_parent_owner=$!
+IFS= read -r -N 1 _ < "$alert_ui_parent_ready"
+alert_ui_gang tick >/dev/null
+printf '\n' > "$alert_ui_parent_release"
+alert_ui_parent_rc=0
+wait "$alert_ui_parent_owner" || alert_ui_parent_rc=$?
+equal "the older controller failure still returns its own failure" \
+  1 "$alert_ui_parent_rc"
+contains "the older controller failure retains its diagnostic" \
+  "$(<"$RUN_ROOT/alert-ui-parent-failure.out")" \
+  "cannot compare the shared monotonic deadline"
+equal "an older controller failure cannot overwrite newer alert recovery" '0 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+contains "an older controller failure cannot overwrite newer health" \
+  "$(<"$alert_ui_health")" $'ok\t'
+
 # The binding table is server-global. Hold the first team's last-team snapshot
 # while a second team tries to configure itself; the binding claim must keep
 # that second team unconfigured until the first teardown finishes, after which
@@ -300,12 +336,18 @@ GANG_TEST_ALERT_BINDING_RELEASE_FIFO="$alert_ui_binding_release" \
 alert_ui_down_owner=$!
 IFS= read -r -N 1 _ < "$alert_ui_binding_ready"
 alert_ui_cross_binding_rc=0
-alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null 2>&1 \
+ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-other-locks" \
+  alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null 2>&1 \
   || alert_ui_cross_binding_rc=$?
 equal "a team cannot configure across another team's binding teardown" \
   1 "$alert_ui_cross_binding_rc"
 equal "the losing team publishes no command behind the teardown snapshot" "" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
+equal "binding contention still surfaces its committed active alert" '1 1' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_unseen)"
+contains "binding contention keeps the static status widget visible" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" status-right)" \
+  '#{E:@gl_alert_widget}'
 printf '\n' > "$alert_ui_binding_release"
 alert_ui_down_rc=0
 wait "$alert_ui_down_owner" || alert_ui_down_rc=$?
@@ -317,6 +359,49 @@ contains "the surviving team installs the popup after the teardown seam" \
 contains "the surviving team records the command that binding resolves" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
   "$ROOT/bin/gang"
+
+# A teardown that loses the same server-global claim must mutate nothing. Hold
+# a harmless tick inside the claim, attempt `down` from a different team lock
+# root, and compare every alert-center surface before allowing the tick out.
+alert_ui_claim_ready="$RUN_ROOT/alert-ui-claim-ready"
+alert_ui_claim_release="$RUN_ROOT/alert-ui-claim-release"
+mkfifo "$alert_ui_claim_ready" "$alert_ui_claim_release"
+alert_ui_survivor_right="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_survivor:" status-right)"
+alert_ui_survivor_counts="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_survivor:" @gl_alert_unseen)"
+alert_ui_survivor_command="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_survivor:" @gl_alert_command)"
+GANG_TEST_ALERT_BINDING_CLAIM_READY_FIFO="$alert_ui_claim_ready" \
+GANG_TEST_ALERT_BINDING_CLAIM_RELEASE_FIFO="$alert_ui_claim_release" \
+  alert_ui_gang_for "$alert_ui_survivor" tick \
+  > "$RUN_ROOT/alert-ui-claim-owner.out" 2>&1 &
+alert_ui_claim_owner=$!
+IFS= read -r -N 1 _ < "$alert_ui_claim_ready"
+alert_ui_losing_down_rc=0
+ALERT_UI_LOCK_DIR="$RUN_ROOT/alert-ui-third-locks" \
+  alert_ui_gang_for "$alert_ui_survivor" down "$alert_ui_survivor" \
+  > "$RUN_ROOT/alert-ui-losing-down.out" 2>&1 \
+  || alert_ui_losing_down_rc=$?
+equal "down refuses while another binding transaction owns the server" \
+  1 "$alert_ui_losing_down_rc"
+equal "a claim-refused down leaves its team live" present \
+  "$(if alert_ui_tmux has-session -t "=$alert_ui_survivor" 2>/dev/null; then printf present; else printf absent; fi)"
+equal "a claim-refused down preserves status-right byte-for-byte" \
+  "$alert_ui_survivor_right" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" status-right)"
+equal "a claim-refused down preserves active and unseen state" \
+  "$alert_ui_survivor_counts" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_unseen)"
+equal "a claim-refused down preserves its popup command" \
+  "$alert_ui_survivor_command" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
+printf '\n' > "$alert_ui_claim_release"
+alert_ui_claim_owner_rc=0
+wait "$alert_ui_claim_owner" || alert_ui_claim_owner_rc=$?
+equal "the winning binding transaction completes after refused down" \
+  0 "$alert_ui_claim_owner_rc"
 
 # `down` is the alert-center uninstall path. The inert observer keeps the
 # server alive so both exact binding removal and unrelated-session survival are
