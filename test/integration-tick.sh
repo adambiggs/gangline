@@ -75,8 +75,12 @@ alert_ui_gang tick >/dev/null
 alert_ui_tmux unbind-key -T prefix A
 alert_ui_gang tick >/dev/null
 alert_ui_binding="$(alert_ui_tmux list-keys -T prefix A)"
+# tmux 3.4 quotes percent-bearing arguments when list-keys renders them, while
+# 3.2a prints the same popup dimensions bare. This display-only normalization
+# leaves the raw command below to prove the session-scoped invocation.
+alert_ui_binding_shape="${alert_ui_binding//\"/}"
 contains "the free Prefix+A key opens a tmux-native popup" \
-  "$alert_ui_binding" "display-popup -E -h 70% -w 80%"
+  "$alert_ui_binding_shape" "display-popup -E -h 70% -w 80%"
 contains "the popup invokes the alert center for its current client session" \
   "$alert_ui_binding" "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
 alert_ui_installed_command="$(alert_ui_tmux show-options -qv \
