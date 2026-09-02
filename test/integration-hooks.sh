@@ -1326,7 +1326,10 @@ contains "an unadopted notify target fails inside the delivery attempt" \
 equal "an unaccepted note leaves the debounce stamp unchanged" \
   "$stall_unaccepted_before" \
   "$(tmux show-options -wqv -t "$stall_raise_id" @gl_stall)"
-"$GANG" adopt stall-unadopted -c stallable >/dev/null
+# The existing pane is a plain Bash shell; adoption cannot claim the native
+# Stop hook that only stallable's launch would have installed. This target only
+# receives the retry, so the hookless Bash collar is the truthful contract.
+"$GANG" adopt stall-unadopted -c bash >/dev/null
 printf '%s' '{"hook_event_name":"Notification","notification_type":"agent_needs_input"}' |
   TMUX_PANE="$stall_raise_pane" "$GANG" hook >/dev/null
 contains "adoption lets the unaccepted note retry without advancing time" \
