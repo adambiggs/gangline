@@ -584,6 +584,14 @@ GANG_STOP_HOOK=1
 GANG_SELF_COMPACT=deferred
 GANG_COMPACT_CMD="printf TICK_COMPACT; : > '$tick_compacted'"
 SH
+cat > "$RUN_ROOT/collars/tick-codex-adopt.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/codex.sh"
+# These stand-in processes exercise Codex's native identity reader, but none
+# was launched with Codex's Stop hook. Keep that unavailable capability honest.
+GANG_STOP_HOOK=
+SH
 
 tick_false_probe="$RUN_ROOT/tick-false-occupied"
 cat > "$RUN_ROOT/collars/tick-false-occupied.sh" <<SH
@@ -1646,7 +1654,7 @@ tick_restart_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n tick-restart \
   "exec python3 '$RUN_ROOT/tick-codex-process.py' '$tick_codex_lock' '$tick_codex_rollout' '$tick_codex_ready'")"
 IFS= read -r -N 1 _ < "$tick_codex_ready"
-"$GANG" adopt tick-restart -c codex >/dev/null
+"$GANG" adopt tick-restart -c tick-codex-adopt >/dev/null
 tmux set-option -w -t "$tick_restart_id" @gl_session_id registered-session-111
 printf 'TICK_MUST_NOT_REACH_RESTART' \
   | "$GANG" send --to tick-restart --from tester --stdin >/dev/null
@@ -1747,7 +1755,7 @@ tick_fresh_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n tick-fresh \
   "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_fresh_ready' '$tick_fresh_lock'")"
 IFS= read -r -N 1 _ < "$tick_fresh_ready"
-"$GANG" adopt tick-fresh -c codex >/dev/null
+"$GANG" adopt tick-fresh -c tick-codex-adopt >/dev/null
 tmux set-option -w -t "$tick_fresh_id" @gl_session_id fresh-session-333
 "$GANG" tick >/dev/null
 equal "a Codex session that has taken no turn yet is still identified by its lock" \
@@ -1773,7 +1781,7 @@ tick_wrong_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n tick-wrong \
   "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_wrong_ready' '$tick_wrong_lock' '$tick_wrong_rollout'")"
 IFS= read -r -N 1 _ < "$tick_wrong_ready"
-"$GANG" adopt tick-wrong -c codex >/dev/null
+"$GANG" adopt tick-wrong -c tick-codex-adopt >/dev/null
 "$GANG" tick >/dev/null
 equal "a rollout naming another thread refuses rather than trusting the lock" "" \
   "$(tmux show-options -wqv -t "$tick_wrong_id" @gl_session_live_id)"
@@ -1796,7 +1804,7 @@ tick_bare_id="$(tmux new-window -d -P -F '#{window_id}' \
   -t "=$GANG_SESSION" -n tick-bare \
   "exec python3 '$RUN_ROOT/tick-codex-holder.py' '$tick_bare_ready'")"
 IFS= read -r -N 1 _ < "$tick_bare_ready"
-"$GANG" adopt tick-bare -c codex >/dev/null
+"$GANG" adopt tick-bare -c tick-codex-adopt >/dev/null
 
 # CALIBRATE THE INSTRUMENT ON THE FAULT IT MUST CATCH. A pane that is never
 # hijacked and a reader that cannot see a hijack look identical from the

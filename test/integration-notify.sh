@@ -27,6 +27,14 @@ collar_blocked() {
   esac
 }
 SH
+cat > "$RUN_ROOT/collars/state-codex-adopt.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/codex.sh"
+# The stand-in process below needs Codex's identity reader, but it was not
+# launched with Codex's native Stop hook and cannot truthfully claim one.
+GANG_STOP_HOOK=
+SH
 
 "$HITCH" state-raise -c state-notify -d /tmp >/dev/null
 "$HITCH" state-lead -c bash -d /tmp >/dev/null
@@ -202,7 +210,7 @@ fi
 ln -s /bin/sleep "$RUN_ROOT/codex"
 state_codex_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n state-codex "exec '$RUN_ROOT/codex' 600")"
-"$GANG" adopt state-codex -c codex >/dev/null
+"$GANG" adopt state-codex -c state-codex-adopt >/dev/null
 state_codex_rollout="$RUN_ROOT/state-codex-rollout.jsonl"
 printf '%s\n%s\n' \
   '{"type":"event_msg","payload":{"type":"task_started","turn_id":"fixture-open"}}' \
