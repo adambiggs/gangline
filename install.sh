@@ -35,7 +35,8 @@ for line in sys.stdin:
     if len(fields) != 2:
         raise SystemExit(2)
     ref = fields[1]
-    match = re.fullmatch(r"refs/tags/(gangline-v(\d+)\.(\d+)\.(\d+))", ref)
+    number = r"(0|[1-9]\d*)"
+    match = re.fullmatch(rf"refs/tags/(gangline-v{number}\.{number}\.{number})", ref)
     if match:
         releases.append(((int(match[2]), int(match[3]), int(match[4])), match[1]))
 if not releases:
@@ -48,9 +49,30 @@ print(max(releases)[1])
 installed_release_version() {
   [ -r "$HOME_DIR/version.txt" ] \
     || die "installed version is unknown: cannot read $HOME_DIR/version.txt"
-  current="$(sed -n '1p' "$HOME_DIR/version.txt")"
-  [ -n "$current" ] \
-    || die "installed version is unknown: $HOME_DIR/version.txt is empty"
+  current_rc=0
+  current="$(python3 - "$HOME_DIR/version.txt" <<'PY'
+import re
+import sys
+
+try:
+    raw = open(sys.argv[1], "rb").read()
+except OSError:
+    raise SystemExit(4)
+if not raw:
+    raise SystemExit(3)
+if raw.endswith(b"\n"):
+    raw = raw[:-1]
+if not re.fullmatch(rb"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", raw):
+    raise SystemExit(2)
+sys.stdout.write(raw.decode("ascii"))
+PY
+  )" || current_rc=$?
+  case "$current_rc" in
+    0) ;;
+    2) die "installed version is malformed: $HOME_DIR/version.txt must contain exactly one MAJOR.MINOR.PATCH value" ;;
+    3) die "installed version is unknown: $HOME_DIR/version.txt is empty" ;;
+    *) die "installed version is unknown: cannot read $HOME_DIR/version.txt" ;;
+  esac
   printf '%s\n' "$current"
 }
 
@@ -60,7 +82,7 @@ import re
 import sys
 
 def version(value):
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", value)
+    match = re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", value)
     if not match:
         raise SystemExit(1)
     return tuple(map(int, match.groups()))

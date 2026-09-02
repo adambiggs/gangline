@@ -3155,7 +3155,41 @@ malformed_version_out="$(GANGLINE_REPO="$installer_src" \
   "$malformed_home/bin/gang" upgrade --check 2>&1)" || malformed_version_rc=$?
 equal "gang upgrade --check refuses a malformed installed version without mutation" \
   "refused malformed not-a-version $malformed_version_head_before" \
-  "$([ "$malformed_version_rc" -ne 0 ] && printf refused || printf checked) $([[ "$malformed_version_out" = *"installed version 'not-a-version' is malformed"* ]] && printf malformed || printf unnamed) $(cat "$malformed_home/version.txt") $(git -C "$malformed_home" rev-parse HEAD)"
+  "$([ "$malformed_version_rc" -ne 0 ] && printf refused || printf checked) $([[ "$malformed_version_out" = *'installed version is malformed:'*'must contain exactly one MAJOR.MINOR.PATCH value'* ]] && printf malformed || printf unnamed) $(cat "$malformed_home/version.txt") $(git -C "$malformed_home" rev-parse HEAD)"
+
+multiline_version_home="$installer_root/multiline-version-home"
+git clone -q "$installer_src" "$multiline_version_home"
+git -C "$multiline_version_home" checkout --detach -q gangline-v1.2.0
+git -C "$multiline_version_home" config user.name 'Gangline installer test'
+git -C "$multiline_version_home" config user.email 'installer@fixture.invalid'
+printf '1.2.0\ntrailing-content\n' > "$multiline_version_home/version.txt"
+git -C "$multiline_version_home" commit -qam 'test: install multiline version witness'
+multiline_version_head_before="$(git -C "$multiline_version_home" rev-parse HEAD)"
+multiline_version_blob_before="$(git -C "$multiline_version_home" hash-object version.txt)"
+multiline_version_rc=0
+multiline_version_out="$(GANGLINE_REPO="$installer_src" \
+  "$multiline_version_home/bin/gang" upgrade --check 2>&1)" \
+  || multiline_version_rc=$?
+equal "gang upgrade --check rejects a valid first line plus trailing content without mutation" \
+  "refused malformed $multiline_version_head_before $multiline_version_blob_before clean" \
+  "$([ "$multiline_version_rc" -ne 0 ] && printf refused || printf checked) $([[ "$multiline_version_out" = *'installed version is malformed:'*'exactly one MAJOR.MINOR.PATCH value'* ]] && printf malformed || printf unnamed) $(git -C "$multiline_version_home" rev-parse HEAD) $(git -C "$multiline_version_home" hash-object version.txt) $([ -z "$(git -C "$multiline_version_home" status --porcelain --untracked-files=all)" ] && printf clean || printf changed)"
+
+whitespace_version_home="$installer_root/whitespace-version-home"
+git clone -q "$installer_src" "$whitespace_version_home"
+git -C "$whitespace_version_home" checkout --detach -q gangline-v1.2.0
+git -C "$whitespace_version_home" config user.name 'Gangline installer test'
+git -C "$whitespace_version_home" config user.email 'installer@fixture.invalid'
+printf ' 1.2.0\n' > "$whitespace_version_home/version.txt"
+git -C "$whitespace_version_home" commit -qam 'test: install whitespace version witness'
+whitespace_version_head_before="$(git -C "$whitespace_version_home" rev-parse HEAD)"
+whitespace_version_blob_before="$(git -C "$whitespace_version_home" hash-object version.txt)"
+whitespace_version_rc=0
+whitespace_version_out="$(GANGLINE_REPO="$installer_src" \
+  "$whitespace_version_home/bin/gang" upgrade --check 2>&1)" \
+  || whitespace_version_rc=$?
+equal "gang upgrade --check rejects surrounding whitespace without mutation" \
+  "refused malformed $whitespace_version_head_before $whitespace_version_blob_before clean" \
+  "$([ "$whitespace_version_rc" -ne 0 ] && printf refused || printf checked) $([[ "$whitespace_version_out" = *'installed version is malformed:'*'exactly one MAJOR.MINOR.PATCH value'* ]] && printf malformed || printf unnamed) $(git -C "$whitespace_version_home" rev-parse HEAD) $(git -C "$whitespace_version_home" hash-object version.txt) $([ -z "$(git -C "$whitespace_version_home" status --porcelain --untracked-files=all)" ] && printf clean || printf changed)"
 
 newer_home="$installer_root/newer-home"
 git clone -q "$installer_src" "$newer_home"

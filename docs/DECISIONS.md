@@ -1893,3 +1893,8 @@ server-global, so Gangline takes Prefix+A only when it is free, records the
 exact binding it installed, and removes it only while that ownership witness
 still matches. Operator status content and bindings are never inferred to be
 Gangline's from their appearance.
+
+Binding changes serialize on an open descriptor for the tmux socket's existing
+directory. The kernel releases that claim with the descriptor or process, so
+the server-global decision needs no Gangline-created lock artifact or cleanup
+protocol.

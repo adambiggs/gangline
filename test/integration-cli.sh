@@ -76,14 +76,38 @@ source_version="$(<"$ROOT/version.txt")"
 equal "source gang reports the release-owned version" \
   "gang $source_version" "$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" "$GANG" --version)"
 version_install="$RUN_ROOT/version-install"
-mkdir -p "$version_install/bin" "$version_install/collars"
+version_install_bin="$RUN_ROOT/version-install-bin"
+mkdir -p "$version_install/bin" "$version_install/collars" "$version_install_bin"
 cp "$GANG" "$version_install/bin/gang"
 cp "$ROOT/collars/bash.sh" "$version_install/collars/bash.sh"
 printf '%s\n' 9.8.7 > "$version_install/version.txt"
+ln -s "$version_install/bin/gang" "$version_install_bin/gang"
 installed_version="$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
-  "$version_install/bin/gang" --version)"
+  "$version_install_bin/gang" --version)"
 equal "an installed gang reports its adjacent release version" \
   "gang 9.8.7" "$installed_version"
+version_malformed_source="$RUN_ROOT/version-malformed-source"
+version_malformed_bin="$RUN_ROOT/version-malformed-bin"
+mkdir -p "$version_malformed_source/bin" "$version_malformed_source/collars" \
+  "$version_malformed_bin"
+cp "$GANG" "$version_malformed_source/bin/gang"
+cp "$ROOT/collars/bash.sh" "$version_malformed_source/collars/bash.sh"
+ln -s "$version_malformed_source/bin/gang" "$version_malformed_bin/gang"
+printf '9.8.7\njunk\n' > "$version_malformed_source/version.txt"
+refuses "source-layout gang --version rejects a valid first line plus trailing content" \
+  "expected exactly one MAJOR.MINOR.PATCH value" \
+  env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
+    "$version_malformed_source/bin/gang" --version
+printf ' 9.8.7\n' > "$version_malformed_source/version.txt"
+refuses "an installed gang --version rejects surrounding whitespace" \
+  "expected exactly one MAJOR.MINOR.PATCH value" \
+  env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
+    "$version_malformed_bin/gang" --version
+printf 'not-a-version\n' > "$version_malformed_source/version.txt"
+refuses "an installed gang --version rejects a non-version value" \
+  "expected exactly one MAJOR.MINOR.PATCH value" \
+  env GANG_CONFIG_DIR="$RUN_ROOT/no-config" \
+    "$version_malformed_bin/gang" --version
 contains "it warns that reading your own mail consumes it" \
   "$welcome" "consumes it"
 contains "it says what a refusal means" "$welcome" "did NOT happen"
@@ -491,6 +515,16 @@ contains "a collar declaration is refused under its own name" \
   "$collar_decl_out" "GANG_LAUNCH is a collar declaration, not operator configuration"
 contains "the collar-declaration refusal points at the supported escape hatch" \
   "$collar_decl_out" "point GANG_COLLARS at its directory"
+
+mkdir -p "$CONFIG_CASES/self-compact-witness-declaration"
+printf '%s\n' 'GANG_SELF_COMPACT_WITNESS=unavailable' \
+  > "$CONFIG_CASES/self-compact-witness-declaration/config"
+self_compact_witness_decl_out="$(env \
+  GANG_CONFIG_DIR="$CONFIG_CASES/self-compact-witness-declaration" \
+  "$GANG" collars 2>&1 || true)"
+contains "the self-compaction witness is classified as a collar declaration" \
+  "$self_compact_witness_decl_out" \
+  "GANG_SELF_COMPACT_WITNESS is a collar declaration, not operator configuration"
 
 mkdir -p "$CONFIG_CASES/test-switch"
 printf '%s\n' 'GANG_TEST_COLLARS=1' > "$CONFIG_CASES/test-switch/config"

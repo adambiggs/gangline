@@ -415,9 +415,12 @@ the lock root through an environment override. If Prefix+A already has any other
 binding, Gangline leaves it unchanged and `gang alerts` reports the conflict;
 the command remains available for an operator-chosen binding. Binding install
 and removal share one short per-server claim, so a team cannot appear between a
-last-team decision and its unbind. `down` removes the binding only when the last
-configured Gangline team is leaving and the key still byte-matches the binding
-Gangline recorded. A user rebind and other tmux configuration are never removed.
+last-team decision and its unbind. The claim locks an open descriptor for the
+existing tmux socket directory: closing the descriptor or losing the process
+releases it, and Gangline creates no guard file or directory. `down` removes the
+binding only when the last configured Gangline team is leaving and the key still
+byte-matches the binding Gangline recorded. A user rebind and other tmux
+configuration are never removed.
 
 An upgrade pass removes only windows marked `@gl_tick_alerts=1`, the ownership
 witness used by the former `gangline-alerts` normal-window UI, and migrates its
@@ -425,8 +428,10 @@ owned status command. It creates no replacement window, selects nothing, and
 raises no activity or bell monitor. Retained failed health becomes an unseen
 active alert rather than a new transition. Alert-center tmux state dies with
 the team; `down` removes the per-team files and the exact shared binding as
-described above. Stall notes remain attributed messages to the declared notify
-target and are not silently reclassified as alert lifecycle state.
+described above, while the transient binding claim dies at the end of each
+command without leaving filesystem state. Stall notes remain attributed
+messages to the declared notify target and are not silently reclassified as
+alert lifecycle state.
 
 ### `gang drop <name>`
 

@@ -54,37 +54,19 @@ contains "the preserved key conflict remains inspectable" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" \
     @gl_alert_binding_conflict)" "left it unchanged"
 
-# The binding claim lives beside the exact server socket so callers with
-# different Gangline lock roots still agree, but its contents are inside a
-# private validated directory. A planted guard link must be refused without
-# following it or truncating its target.
+# The binding claim locks the existing socket directory descriptor so callers
+# with different Gangline lock roots still agree. The former guard-file checks
+# protected against following a planted link; absence is the stronger contract
+# now that the claim creates no path at all. The crossed claim fixtures below
+# retain the evidence that this artifact-free lock still serializes callers.
 alert_ui_socket="$(alert_ui_tmux display-message -p \
   -t "=$alert_ui_session" '#{socket_path}')"
 alert_ui_binding_root="$alert_ui_socket.gangline-locks"
-alert_ui_binding_guard="$alert_ui_binding_root/alert-binding.guard"
-equal "the server-global binding guard uses a private real directory" real \
-  "$([ -d "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
-      && printf real || printf unsafe)"
-equal "the obsolete socket-sibling guard is not created" absent \
-  "$([ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
+equal "the server-global binding claim creates no filesystem artifact" absent \
+  "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
+      && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
       && [ ! -L "$alert_ui_socket.gangline-alert-binding.guard" ] \
       && printf absent || printf present)"
-alert_ui_guard_saved="$RUN_ROOT/alert-ui-binding-guard-saved"
-alert_ui_guard_target="$RUN_ROOT/alert-ui-binding-guard-target"
-mv -- "$alert_ui_binding_guard" "$alert_ui_guard_saved"
-printf 'unrelated-content\n' > "$alert_ui_guard_target"
-ln -s "$alert_ui_guard_target" "$alert_ui_binding_guard"
-alert_ui_guard_rc=0
-alert_ui_gang tick > "$RUN_ROOT/alert-ui-binding-guard.out" 2>&1 \
-  || alert_ui_guard_rc=$?
-equal "a symlinked server binding guard fails the health pass loudly" \
-  1 "$alert_ui_guard_rc"
-contains "the symlinked binding guard is refused by name" \
-  "$(<"$RUN_ROOT/alert-ui-binding-guard.out")" "is a symlink"
-equal "a refused binding guard does not truncate its target" \
-  unrelated-content "$(<"$alert_ui_guard_target")"
-rm -f -- "$alert_ui_binding_guard"
-mv -- "$alert_ui_guard_saved" "$alert_ui_binding_guard"
 alert_ui_gang tick >/dev/null
 
 # Once the operator frees the proposal, the next ordinary pass owns it. A
@@ -542,6 +524,11 @@ equal "alert-center uninstall leaves the unrelated tmux session live" present \
   "$(if alert_ui_tmux has-session -t "=$alert_ui_observer" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "the last Gangline team removes only its owned Prefix+A binding" absent \
   "$(if alert_ui_tmux list-keys -T prefix A >/dev/null 2>&1; then printf present; else printf absent; fi)"
+equal "alert-center teardown leaves no binding-guard filesystem state" absent \
+  "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
+      && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
+      && [ ! -L "$alert_ui_socket.gangline-alert-binding.guard" ] \
+      && printf absent || printf present)"
 alert_ui_tmux kill-session -t "=$alert_ui_observer"
 unset -f alert_ui_tmux alert_ui_gang alert_ui_gang_for
 

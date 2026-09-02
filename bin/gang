@@ -77,7 +77,7 @@ fail() { # $1 = exit status, rest = message
 }
 
 GANG_CONFIG_KEYS='GANG_COLLAR GANG_SESSION GANG_COLLARS GANG_LOCK_DIR GANG_ARCHIVE_DIR GANG_CONTEXT_LIGHTS GANG_USAGE_LIGHTS GANG_AUTO_RESUME GANG_SCOPE GANG_TMUX_GUARD GANG_BOOT_TIMEOUT GANG_GATE_LOOKS GANG_CHURN_WAIT GANG_ACTIVITY_WINDOW GANG_TURN_LIMIT'
-GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
+GANG_COLLAR_KEYS='GANG_LAUNCH GANG_RESUME_LAUNCH GANG_MODEL_OPT GANG_MODEL_ALIASES GANG_EFFORT_OPT GANG_EFFORT_CMD GANG_ROLE_PROMPT_OPT GANG_HARNESS_PROMPT GANG_BUSY_REGEX GANG_OCCUPIED_REGEX GANG_QUEUED_REGEX GANG_QUEUE_RECALL_KEY GANG_INTERRUPT_KEY GANG_STOP_HOOK GANG_STALL_TYPES GANG_QUIET_AT_REST GANG_MIDTURN_INPUT GANG_COMPACT_CMD GANG_SELF_COMPACT GANG_SELF_COMPACT_WITNESS GANG_USAGE_LIGHT_INTERVAL GANG_USAGE_LIMIT_MAX_AGE'
 CONFIG_DIR="" CONFIG_FILE="" CONFIG_ORIGINS="" CONFIG_SEEN=""
 
 config_record() { # $1 key, $2 env|config, optional $3 config line
@@ -274,6 +274,11 @@ if [ "${1:-}" = --version ]; then
     || die "cannot read the release version at $ROOT/version.txt"
   version="$(<"$ROOT/version.txt")"
   [ -n "$version" ] || die "the release version at $ROOT/version.txt is empty"
+  if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] \
+     || { ! printf '%s\n' "$version" | cmp -s - "$ROOT/version.txt" \
+          && ! printf '%s' "$version" | cmp -s - "$ROOT/version.txt"; }; then
+    die "the release version at $ROOT/version.txt is malformed; expected exactly one MAJOR.MINOR.PATCH value"
+  fi
   printf 'gang %s\n' "$version"
   exit 0
 fi
@@ -4245,26 +4250,14 @@ alert_binding_line() {
 ALERT_BINDING_FD=""
 
 alert_binding_claim() { # serialize the server-global binding decision
-  local path root socket rc=0
+  local root socket rc=0
   ALERT_BINDING_FD=""
   socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
     || return 1
-  root="$socket.gangline-locks"
-  lock_base "$root"
-  path="$root/alert-binding.guard"
-  if [ -e "$path" ] || [ -L "$path" ]; then
-    [ ! -L "$path" ] \
-      || { printf 'alert binding guard %s is a symlink; refusing to lock through it\n' "$path" >&2; return 1; }
-    [ -f "$path" ] && [ -O "$path" ] \
-      || { printf 'alert binding guard %s is not a regular file owned by uid %s\n' "$path" "$(id -u)" >&2; return 1; }
-  fi
-  exec {ALERT_BINDING_FD}>>"$path" \
-    || { printf 'cannot open alert binding guard %s\n' "$path" >&2; return 1; }
-  chmod 600 "$path" \
-    || { printf 'cannot restrict alert binding guard %s\n' "$path" >&2
-         exec {ALERT_BINDING_FD}>&-
-         ALERT_BINDING_FD=""
-         return 1; }
+  root="$(cd -P "$(dirname "$socket")" 2>/dev/null && pwd)" \
+    || { printf 'cannot resolve the tmux socket directory for alert binding updates\n' >&2; return 1; }
+  exec {ALERT_BINDING_FD}<"$root" \
+    || { printf 'cannot open tmux socket directory %s for alert binding updates\n' "$root" >&2; return 1; }
   "$ROOT/libexec/gang-process-identity" --lock-fd "$ALERT_BINDING_FD" \
     >/dev/null 2>&1 || rc=$?
   case "$rc" in
@@ -4279,7 +4272,7 @@ alert_binding_claim() { # serialize the server-global binding decision
        fi
        return 0 ;;
     75) printf 'another alert binding update is in flight on this tmux server\n' >&2 ;;
-    *) printf 'alert binding guard %s cannot be acquired\n' "$path" >&2 ;;
+    *) printf 'the tmux socket directory lock at %s cannot be acquired for alert binding updates\n' "$root" >&2 ;;
   esac
   exec {ALERT_BINDING_FD}>&-
   ALERT_BINDING_FD=""
