@@ -45,17 +45,17 @@ print(max(releases)[1])
   printf '%s\n' "$tag"
 }
 
-case "${1:-}" in
-  '') ;;
-  --check)
-    [ "$#" -eq 1 ] || die "--check takes no other arguments"
-    tag="$(latest_release_tag)"
-    latest="${tag#gangline-v}"
-    [ -r "$HOME_DIR/version.txt" ] \
-      || die "cannot read the installed version at $HOME_DIR/version.txt"
-    current="$(sed -n '1p' "$HOME_DIR/version.txt")"
-    [ -n "$current" ] || die "installed version is empty in $HOME_DIR/version.txt"
-    relation="$(python3 -c '
+installed_release_version() {
+  [ -r "$HOME_DIR/version.txt" ] \
+    || die "installed version is unknown: cannot read $HOME_DIR/version.txt"
+  current="$(sed -n '1p' "$HOME_DIR/version.txt")"
+  [ -n "$current" ] \
+    || die "installed version is unknown: $HOME_DIR/version.txt is empty"
+  printf '%s\n' "$current"
+}
+
+release_relation() { # current latest -> relation and the changed semver component
+  python3 -c '
 import re
 import sys
 
@@ -67,32 +67,83 @@ def version(value):
 
 current = version(sys.argv[1])
 latest = version(sys.argv[2])
-print((current > latest) - (current < latest))
-' "$current" "$latest")" \
-      || die "cannot compare installed version '$current' with release '$latest'"
-    case "$relation" in
-      0) echo "gangline $current is the latest release" ;;
-      -1) echo "gangline upgrade available: $current -> $latest" ;;
-      1) echo "gangline $current is newer than the latest release $latest" ;;
-      *) die "could not compare installed version '$current' with release '$latest'" ;;
-    esac
-    exit 0
+relation = (current > latest) - (current < latest)
+if relation == 0:
+    distance = "current"
+elif current[0] != latest[0]:
+    distance = "major"
+elif current[1] != latest[1]:
+    distance = "minor"
+else:
+    distance = "patch"
+print(relation, distance)
+' "$1" "$2"
+}
+
+mode=""
+case "${1:-}" in
+  '') ;;
+  --check)
+    [ "$#" -eq 1 ] || die "--check takes no other arguments"
+    mode=check
     ;;
   *) die "unknown argument '$1'" ;;
 esac
 
 case "${GANGLINE_UPGRADE:-0}" in 0|1) ;; *) die "GANGLINE_UPGRADE is internal and must be 0 or 1" ;; esac
 if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ]; then
-  [ -d "$HOME_DIR/.git" ] \
+  [ -e "$HOME_DIR/.git" ] \
     || die "gang upgrade requires an installer-managed release at $HOME_DIR"
   git -C "$HOME_DIR" rev-parse --verify HEAD >/dev/null 2>&1 \
     || die "gang upgrade cannot verify the installed release at $HOME_DIR"
   branch="$(git -C "$HOME_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null)" || branch=""
   [ -z "$branch" ] \
-    || die "gang upgrade refuses branch checkout '$branch' at $HOME_DIR; update it with: git -C '$HOME_DIR' pull --ff-only"
+    || die "gang upgrade refuses source checkout branch '$branch' at $HOME_DIR; update it with: git -C '$HOME_DIR' pull --ff-only"
+  if [ "$mode" != check ]; then
+    state="$(git -C "$HOME_DIR" status --porcelain)" \
+      || die "could not inspect the existing install at $HOME_DIR"
+    [ -z "$state" ] || die "$HOME_DIR has local changes; move them aside before upgrading"
+  fi
+fi
+
+if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ] || [ "$mode" = check ]; then
+  current="$(installed_release_version)"
 fi
 
 tag="$(latest_release_tag)"
+latest="${tag#gangline-v}"
+
+if [ "${GANGLINE_UPGRADE:-0}" -eq 1 ] || [ "$mode" = check ]; then
+  comparison="$(release_relation "$current" "$latest")" \
+    || die "installed version '$current' is malformed; expected MAJOR.MINOR.PATCH"
+  relation="${comparison%% *}"
+  distance="${comparison#* }"
+  case "$mode:$relation" in
+    check:0)
+      echo "gang is current: v$current -> v$latest (already at latest release)"
+      exit 0
+      ;;
+    check:-1)
+      echo "upgrade available: v$current -> v$latest ($distance update)"
+      exit 0
+      ;;
+    check:1)
+      echo "installed version is newer than latest: v$current -> v$latest; no changes made"
+      exit 0
+      ;;
+    :0)
+      echo "gang is current: v$current -> v$latest (already at latest release); no changes made"
+      exit 0
+      ;;
+    :-1)
+      echo "upgrading from v$current -> v$latest"
+      ;;
+    :1)
+      die "refusing downgrade from installed v$current -> selected v$latest; no changes made"
+      ;;
+    *) die "could not compare installed version '$current' with release '$latest'" ;;
+  esac
+fi
 
 need tmux
 

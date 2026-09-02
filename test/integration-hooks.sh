@@ -3090,18 +3090,92 @@ equal "gang upgrade refuses a developer branch without detaching or shallowing i
   "refused $developer_branch_before $developer_shallow_before $developer_history_before named" \
   "$([ "$developer_upgrade_rc" -ne 0 ] && printf refused || printf upgraded) $(git -C "$installer_src" symbolic-ref --short HEAD) $(git -C "$installer_src" rev-parse --is-shallow-repository) $(git -C "$installer_src" rev-list --count HEAD) $([[ "$developer_upgrade_out" = *'git -C'*'pull --ff-only'* ]] && printf named || printf unnamed)"
 
+developer_check_rc=0
+developer_check_out="$(GANGLINE_REPO="$installer_src" \
+  "$installer_src/bin/gang" upgrade --check 2>&1)" || developer_check_rc=$?
+equal "gang upgrade --check refuses a source checkout explicitly" \
+  "refused named $developer_branch_before" \
+  "$([ "$developer_check_rc" -ne 0 ] && printf refused || printf checked) $([[ "$developer_check_out" = *"source checkout branch '$developer_branch_before'"* ]] && printf named || printf unnamed) $(git -C "$installer_src" symbolic-ref --short HEAD)"
+
+installed_home="$installer_root/home"
+current_check_head_before="$(git -C "$installed_home" rev-parse HEAD)"
+current_check_state_before="$(git -C "$installed_home" status --porcelain --untracked-files=all)"
+current_check_version_before="$(cat "$installed_home/version.txt")"
 current_release_check="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade --check)"
-contains "gang upgrade --check reports a current release" \
-  "$current_release_check" "1.1.0 is the latest release"
+equal "gang upgrade --check reports both sides of a current release" \
+  "gang is current: v1.1.0 -> v1.1.0 (already at latest release)" \
+  "$current_release_check"
+equal "gang upgrade --check leaves a current installed release untouched" \
+  "$current_check_head_before|$current_check_state_before|$current_check_version_before" \
+  "$(git -C "$installed_home" rev-parse HEAD)|$(git -C "$installed_home" status --porcelain --untracked-files=all)|$(cat "$installed_home/version.txt")"
 
 git -C "$installer_src" tag gangline-v1.2.0
+available_check_head_before="$(git -C "$installed_home" rev-parse HEAD)"
+available_check_state_before="$(git -C "$installed_home" status --porcelain --untracked-files=all)"
+available_check_version_before="$(cat "$installed_home/version.txt")"
 available_release_check="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade --check)"
-contains "gang upgrade --check reports the available release" \
-  "$available_release_check" "1.1.0 -> 1.2.0"
-GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade >/dev/null
+equal "gang upgrade --check reports a minor update without inventing a release count" \
+  "upgrade available: v1.1.0 -> v1.2.0 (minor update)" \
+  "$available_release_check"
+equal "gang upgrade --check leaves an older installed release untouched" \
+  "$available_check_head_before|$available_check_state_before|$available_check_version_before" \
+  "$(git -C "$installed_home" rev-parse HEAD)|$(git -C "$installed_home" status --porcelain --untracked-files=all)|$(cat "$installed_home/version.txt")"
+available_upgrade_out="$(GANGLINE_REPO="$installer_src" "$installer_bin/gang" upgrade)"
+contains "gang upgrade reports its installed and selected releases before replacing files" \
+  "$available_upgrade_out" "upgrading from v1.1.0 -> v1.2.0"
 equal "gang upgrade installs the available release over the current install" \
   "1.2.0 tagged" \
   "$(cat "$installer_root/home/version.txt") $([ "$(git -C "$installer_root/home" rev-parse HEAD)" = "$(git -C "$installer_src" rev-list -n 1 gangline-v1.2.0)" ] && printf tagged || printf other)"
+
+unknown_home="$installer_root/unknown-home"
+git clone -q "$installer_src" "$unknown_home"
+git -C "$unknown_home" checkout --detach -q gangline-v1.2.0
+git -C "$unknown_home" config user.name 'Gangline installer test'
+git -C "$unknown_home" config user.email 'installer@fixture.invalid'
+git -C "$unknown_home" rm -q version.txt
+git -C "$unknown_home" commit -qm 'test: remove installed version witness'
+unknown_head_before="$(git -C "$unknown_home" rev-parse HEAD)"
+unknown_rc=0
+unknown_out="$(GANGLINE_REPO="$installer_src" \
+  "$unknown_home/bin/gang" upgrade --check 2>&1)" || unknown_rc=$?
+equal "gang upgrade --check refuses an unknown installed version without mutation" \
+  "refused unknown absent $unknown_head_before" \
+  "$([ "$unknown_rc" -ne 0 ] && printf refused || printf checked) $([[ "$unknown_out" = *'installed version is unknown'* ]] && printf unknown || printf unnamed) $([ -e "$unknown_home/version.txt" ] && printf restored || printf absent) $(git -C "$unknown_home" rev-parse HEAD)"
+
+malformed_home="$installer_root/malformed-home"
+git clone -q "$installer_src" "$malformed_home"
+git -C "$malformed_home" checkout --detach -q gangline-v1.2.0
+git -C "$malformed_home" config user.name 'Gangline installer test'
+git -C "$malformed_home" config user.email 'installer@fixture.invalid'
+printf '%s\n' not-a-version > "$malformed_home/version.txt"
+git -C "$malformed_home" commit -qam 'test: install malformed version witness'
+malformed_version_head_before="$(git -C "$malformed_home" rev-parse HEAD)"
+malformed_version_rc=0
+malformed_version_out="$(GANGLINE_REPO="$installer_src" \
+  "$malformed_home/bin/gang" upgrade --check 2>&1)" || malformed_version_rc=$?
+equal "gang upgrade --check refuses a malformed installed version without mutation" \
+  "refused malformed not-a-version $malformed_version_head_before" \
+  "$([ "$malformed_version_rc" -ne 0 ] && printf refused || printf checked) $([[ "$malformed_version_out" = *"installed version 'not-a-version' is malformed"* ]] && printf malformed || printf unnamed) $(cat "$malformed_home/version.txt") $(git -C "$malformed_home" rev-parse HEAD)"
+
+newer_home="$installer_root/newer-home"
+git clone -q "$installer_src" "$newer_home"
+git -C "$newer_home" checkout --detach -q gangline-v1.2.0
+git -C "$newer_home" config user.name 'Gangline installer test'
+git -C "$newer_home" config user.email 'installer@fixture.invalid'
+printf '%s\n' 9.0.0 > "$newer_home/version.txt"
+git -C "$newer_home" commit -qam 'test: install newer version witness'
+newer_head_before="$(git -C "$newer_home" rev-parse HEAD)"
+newer_release_check="$(GANGLINE_REPO="$installer_src" \
+  "$newer_home/bin/gang" upgrade --check)"
+equal "gang upgrade --check names a current-newer installation without downgrading" \
+  "installed version is newer than latest: v9.0.0 -> v1.2.0; no changes made" \
+  "$newer_release_check"
+newer_upgrade_rc=0
+newer_upgrade_out="$(GANGLINE_REPO="$installer_src" \
+  "$newer_home/bin/gang" upgrade 2>&1)" || newer_upgrade_rc=$?
+equal "gang upgrade refuses to replace a current-newer installation" \
+  "refused named 9.0.0 $newer_head_before" \
+  "$([ "$newer_upgrade_rc" -ne 0 ] && printf refused || printf downgraded) $([[ "$newer_upgrade_out" = *'refusing downgrade from installed v9.0.0 -> selected v1.2.0'* ]] && printf named || printf unnamed) $(cat "$newer_home/version.txt") $(git -C "$newer_home" rev-parse HEAD)"
 
 unstable_src="$installer_root/unstable-src"
 git init -q "$unstable_src"

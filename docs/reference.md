@@ -53,14 +53,22 @@ installer resolves the newest stable `gangline-vMAJOR.MINOR.PATCH` tag and puts
 that release in the install tree. An existing install is moved directly from
 its current release to that tag; local changes in the install tree are refused.
 
-`gang upgrade --check` contacts the same repository and compares the installed
-`version.txt` with its latest stable release. `gang upgrade` installs that
-release over the tree and command link currently running. Both are explicit
-network operations. Gangline performs no automatic release check during other
-commands. `GANGLINE_REPO` continues to select a different tagged source for a
-custom install. `gang upgrade` refuses a branch checkout and points to
+`gang upgrade --check` contacts the same repository and reports the installed
+and latest stable versions as an arrow. When an update is available it says
+whether the semantic-version difference is major, minor, or patch; this is not
+a count of skipped releases. An equal pair is reported as current, while an
+installed version newer than the selected release is named without being
+downgraded. The check changes no installed files.
+
+`gang upgrade` makes the same comparison, prints `upgrading from vCURRENT ->
+vTARGET` before replacing files, and installs that release over the tree and
+command link currently running. Equal versions are a successful no-op. A
+newer, unknown, or malformed installed version is not replaced. Both forms are
+explicit network operations. Gangline performs no automatic release check
+during other commands. `GANGLINE_REPO` continues to select a different tagged
+source for a custom install. Both forms refuse a source branch and point to
 `git pull --ff-only`; only the detached release tree produced by the installer
-is replaced.
+is eligible for replacement.
 
 ## Lifecycle
 

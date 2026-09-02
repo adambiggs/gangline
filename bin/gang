@@ -1341,14 +1341,22 @@ gang upgrade
   Ordinary gang commands make no update check
   and no network call.
 
-  --check  report whether a newer release is
-           available without changing files.
+  Before replacing files, upgrade prints the
+  installed and selected versions. If they are
+  equal it reports that gang is current and
+  changes nothing; it never downgrades a newer
+  installation.
+
+  --check  compare installed -> latest, name a
+           major, minor, or patch update when
+           one is available, and change nothing.
 
   A custom install keeps using GANGLINE_REPO
   when that variable is present. The install
   directory and command link are derived from
   this running command, so the release lands
-  over the current install.
+  over the current install. Source checkouts
+  are updated with git pull, not this command.
 EOF
       ;;
     *) die "no help for unknown command '$1'" ;;
