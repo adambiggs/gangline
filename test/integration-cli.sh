@@ -306,15 +306,23 @@ done
 # rather than inheriting whichever session started the shared server.
 GANG_SESSION=stale-session tmux new-session -d -s environment-seed
 
-# Public collar surface: the bash fixture remains test-only.
-collars="$(GANG_TEST_COLLARS='' "$GANG" collars | cut -f1 | tr '\n' ' ')"
+# Shipped public collar surface: operator collars legitimately extend the
+# inventory, so an ambient GANG_COLLARS cannot answer this shipped-set guard.
+shipped_collar_override="$RUN_ROOT/no-operator-collars"
+[ ! -e "$shipped_collar_override" ] \
+  && pass "the shipped-collar inventory excludes operator additions" \
+  || fail "the shipped-collar inventory excludes operator additions" \
+    "$shipped_collar_override exists"
+collars="$(GANG_TEST_COLLARS='' GANG_COLLARS="$shipped_collar_override" \
+  "$GANG" collars | cut -f1 | tr '\n' ' ')"
 equal "the public collar list is the supported harness set" \
   "claude-code codex opencode pi " "$collars"
 # WHICH COLLARS CAN BE RESUMED, said where -c is chosen. Both halves are needed:
 # a launch line with a session slot and a collar that witnesses the id to put in
 # it. Asserted per collar rather than as one blob, so a collar losing the
 # capability names itself.
-collar_caps="$(GANG_TEST_COLLARS='' "$GANG" collars)"
+collar_caps="$(GANG_TEST_COLLARS='' GANG_COLLARS="$shipped_collar_override" \
+  "$GANG" collars)"
 for collar_cap_row in "claude-code resume" "codex resume" \
                       "opencode resume" "pi no-resume"; do
   equal "gang collars marks ${collar_cap_row% *} ${collar_cap_row#* }" \
