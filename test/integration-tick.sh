@@ -227,10 +227,16 @@ contains "porcelain carries the failure summary" \
 # serialized, rather than a timing guess about a background process.
 alert_ui_open_ready="$RUN_ROOT/alert-ui-open-ready"
 alert_ui_open_release="$RUN_ROOT/alert-ui-open-release"
+alert_ui_open_wrong_locks="$RUN_ROOT/alert-ui-open-wrong-locks"
+alert_ui_open_command="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_session:" @gl_alert_command)"
 mkfifo "$alert_ui_open_ready" "$alert_ui_open_release"
+TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$alert_ui_session" \
+GANG_LOCK_DIR="$alert_ui_open_wrong_locks" \
 GANG_TEST_ALERT_OPEN_READY_FIFO="$alert_ui_open_ready" \
 GANG_TEST_ALERT_OPEN_RELEASE_FIFO="$alert_ui_open_release" \
-  alert_ui_gang alerts --open > "$RUN_ROOT/alert-ui-open.out" &
+  sh -c "$alert_ui_open_command alerts --open" \
+  > "$RUN_ROOT/alert-ui-open.out" &
 alert_ui_open_pid=$!
 IFS= read -r -N 1 _ < "$alert_ui_open_ready"
 alert_ui_result_guard="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.result.guard"
@@ -241,6 +247,11 @@ alert_ui_result_probe_rc=0
 equal "opening owns the result transition guard before marking seen" \
   75 "$alert_ui_result_probe_rc"
 exec {alert_ui_result_probe_fd}>&-
+equal "the installed popup command overrides an unrelated ambient lock root" \
+  absent \
+  "$([ ! -e "$alert_ui_open_wrong_locks/tick/$alert_ui_digest.result.guard" ] \
+      && [ ! -L "$alert_ui_open_wrong_locks/tick/$alert_ui_digest.result.guard" ] \
+      && printf absent || printf present)"
 equal "an in-flight open has not resolved or prematurely hidden the alert" '1 1' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 printf '\n' > "$alert_ui_open_release"
@@ -307,6 +318,14 @@ equal "trailing health records cannot hide behind a clean prefix" \
   1 "$alert_ui_multiline_health_rc"
 contains "a trailing health record is named as malformed health" \
   "$(<"$RUN_ROOT/alert-ui-multiline-health.out")" "unreadable or malformed"
+printf 'ok\t123\t\t999\0\n' > "$alert_ui_health"
+alert_ui_nul_health_rc=0
+alert_ui_gang alerts > "$RUN_ROOT/alert-ui-nul-health.out" 2>&1 \
+  || alert_ui_nul_health_rc=$?
+equal "a NUL-corrupted clean record cannot manufacture recovery" \
+  1 "$alert_ui_nul_health_rc"
+contains "NUL-corrupted health is named as malformed" \
+  "$(<"$RUN_ROOT/alert-ui-nul-health.out")" "unreadable or malformed"
 
 # Corruption does not erase the last trustworthy active lifecycle. A failing
 # producer repairs its record, but must neither reopen the seen transition nor

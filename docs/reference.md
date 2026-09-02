@@ -406,7 +406,10 @@ When Prefix+A is free, Gangline binds it to a per-client
 `display-popup -E -w 80% -h 70%` that runs `gang alerts --open` for the client's
 current session. Tmux key tables are server-global, so the one binding resolves
 the session-local Gangline command at use time; tmux shell-quotes that session
-format before the popup shell receives it. If Prefix+A already has any other
+format before the popup shell receives it. That recorded command pins both the
+resolved configuration directory and effective `GANG_LOCK_DIR`, so a popup
+spawned by tmux shares the team's result ordering even when the operator chose
+the lock root through an environment override. If Prefix+A already has any other
 binding, Gangline leaves it unchanged and `gang alerts` reports the conflict;
 the command remains available for an operator-chosen binding. Binding install
 and removal share one short per-server claim, so a team cannot appear between a
