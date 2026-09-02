@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.8.0](https://github.com/adambiggs/gangline/compare/gangline-v2.7.0...gangline-v2.8.0) (2026-09-02)
+
+
+### Features
+
+* **alerts:** add tmux-native alert center ([87075eb](https://github.com/adambiggs/gangline/commit/87075eb307116bd0e6437e1614ac844f995ef75c))
+* **cli:** add gang version command ([a5e4e8b](https://github.com/adambiggs/gangline/commit/a5e4e8b747afe99d261458e0211b9d4cb164e4d0))
+* **upgrade:** report installed and target versions ([0e6e8be](https://github.com/adambiggs/gangline/commit/0e6e8be326c21805532e79254616de3337626d82))
+
+
+### Bug Fixes
+
+* **alerts:** harden lifecycle state ([cc4d736](https://github.com/adambiggs/gangline/commit/cc4d73679d75507336c8aa59aa7cdc1b6da1d16a))
+* **alerts:** order every health commit ([a6a2ad3](https://github.com/adambiggs/gangline/commit/a6a2ad306d845f42258aefb7662ab7421cb61cea))
+* **alerts:** pin popup result scope ([119c68e](https://github.com/adambiggs/gangline/commit/119c68eda516a4ace8a4d44b623805aa62c61521))
+* **alerts:** preserve ordered health fields ([25f7aed](https://github.com/adambiggs/gangline/commit/25f7aedb9eb78bec95a27ac0d22b9cb92e5f5f80))
+* **alerts:** scope popup execution ([bbb9b14](https://github.com/adambiggs/gangline/commit/bbb9b14d3bf6a3e42825096fced6b1c35433560e))
+* **alerts:** separate result ordering lock ([020b1d5](https://github.com/adambiggs/gangline/commit/020b1d5871d7cf1a5c7ae177ff7161071d3cd13c))
+* **alerts:** serialize tmux state transitions ([81c6c30](https://github.com/adambiggs/gangline/commit/81c6c3099f5cde3d806849b12c77ba0d42607618))
+* **codex:** fail closed without compact idle witness ([6196b50](https://github.com/adambiggs/gangline/commit/6196b504488b28cc53c38e1140ce2f1ad38ba2cc))
+* **lint:** use portable monotonic reader guard ([5d0f9cf](https://github.com/adambiggs/gangline/commit/5d0f9cf3197d51d06684db47de917d1d0be9a2c0))
+* **runtime:** validate versions and keep alert locking ephemeral ([f3ed474](https://github.com/adambiggs/gangline/commit/f3ed4748caff949258670fb967f43a4b4b52a99e))
+
 ## [2.7.0](https://github.com/adambiggs/gangline/compare/gangline-v2.6.0...gangline-v2.7.0) (2026-09-01)
 
 
