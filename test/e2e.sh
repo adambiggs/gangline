@@ -154,6 +154,7 @@ settled() {
 RUN_ROOT=""
 STUB_PID=""
 WORLD_NAME=""
+EXTRA_AGENTS=""
 leaked=0
 artifact_failed=0
 
@@ -175,9 +176,18 @@ preserve_world() {
     "$WORLD_NAME" "$HARNESS_BUILD" "$(tmux -V)" "$geometry" \
     >"$dest/environment.txt" || return 1
 
-  for file in requests.jsonl stub.out stub.err hitch.out wait.out send.out; do
+  for file in requests.jsonl stub.out stub.err hitch.out wait.out send.out \
+      peer-hitch.out peer-request.out reply-send.out reply-before.tsv \
+      reply-after.tsv; do
     [ ! -f "$RUN_ROOT/$file" ] || cp -- "$RUN_ROOT/$file" "$dest/$file" \
       || return 1
+  done
+  for extra in $EXTRA_AGENTS; do
+    if ! timeout -k 2 10 "$GANG" capture "$extra" 200 \
+        >"$dest/$extra-pane.txt" 2>&1; then
+      printf 'e2e: optional peer capture was unavailable at teardown\n' \
+        >>"$dest/$extra-pane.txt" || return 1
+    fi
   done
   if [ -d "$RUN_ROOT/claude/projects" ]; then
     cp -R -- "$RUN_ROOT/claude/projects" "$dest/transcripts" || return 1
@@ -210,6 +220,9 @@ teardown() {
     # close it — and keep what that command said, because when the socket then
     # disagrees its message is the only account of why.
     local kill_said="" kill_rc=0
+    for extra in $EXTRA_AGENTS; do
+      "$GANG" drop "$extra" >/dev/null 2>&1 || true
+    done
     "$GANG" drop "$AGENT" >/dev/null 2>&1 || true
     if ! server_gone; then
       kill_said="$(tmux -S "$TMUX_SOCKET" kill-server 2>&1)" || kill_rc=$?
@@ -237,6 +250,7 @@ teardown() {
   RUN_ROOT=""
   STUB_PID=""
   WORLD_NAME=""
+  EXTRA_AGENTS=""
 }
 
 not_running() { ! kill -0 "$1" 2>/dev/null; }
@@ -294,6 +308,7 @@ STUB_API_KEY=sk-ant-e2e-stub-0000000000000000
 # its own evidence.
 world_up() { # $1 scenario name, used only to label optional diagnostics
   WORLD_NAME="$1"
+  EXTRA_AGENTS=""
   RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-e2e.XXXXXX")"
   REQ_LOG="$RUN_ROOT/requests.jsonl"
   GATE="$RUN_ROOT/gate"
@@ -445,8 +460,9 @@ for line in open(sys.argv[1], encoding="utf-8"):
 # at all would have.
 E2E_HITCH_LIMIT="${GANG_E2E_HITCH_LIMIT:-120}"
 hitch_agent() {
-  timeout -k 10 "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
-    -m "${GANG_E2E_MODEL:-claude-sonnet-4-5}" -e "${GANG_E2E_EFFORT:-low}"
+  CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 \
+    timeout -k 10 "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
+      -m "${GANG_E2E_MODEL:-claude-sonnet-4-5}" -e "${GANG_E2E_EFFORT:-low}"
 }
 
 # Each scenario begins the same way and none of them can continue without it.
@@ -623,6 +639,128 @@ wait_armed() { # the caller's channel is stored in a tmux pane-exited hook
 }
 
 # ---------------------------------------------------------------- scenario 3
+# A VERIFIED PEER REQUEST BLOCKS CLAUDE'S NATIVE Stop UNTIL A CORRELATED REPLY.
+# The request is held at the stub so its provenance can be inspected before
+# Stop. Releasing it makes Claude run Stop; a later request carrying the hook's
+# reason can exist only when that boundary blocked. The reply is then sent
+# under the observed Claude pane identity, and the next native Stop must allow
+# the real TUI to become idle.
+scenario_reply() {
+  world_up reply
+  if ! booted reply; then world_down; return; fi
+
+  local peer=fox peer_window agent_window peer_pane agent_pane request_seq block_seq rc=0
+  local request_body="$HOLD_MARKER peer request awaiting acknowledgement"
+  local reply_body="Waiting on background work; I will report later."
+  EXTRA_AGENTS="$peer"
+  GANG_TEST_COLLARS=1 "$GANG" hitch "$peer" -c bash -d "$WORK" \
+    >"$RUN_ROOT/peer-hitch.out" 2>&1 || rc=$?
+  equal "reply: the verified peer fixture hitched" 0 "$rc"
+  if [ "$rc" -ne 0 ]; then
+    note "$(tail -3 "$RUN_ROOT/peer-hitch.out")"
+    world_down
+    return
+  fi
+  peer_window="$(tmux list-windows -a -F '#{window_id} #{@gl_agent}' \
+    | awk -v name="$peer" '$2 == name { print $1 }')"
+  agent_window="$(tmux list-windows -a -F '#{window_id} #{@gl_agent}' \
+    | awk -v name="$AGENT" '$2 == name { print $1 }')"
+  peer_pane=""; agent_pane=""
+  if [ -n "$peer_window" ]; then
+    peer_pane="$(tmux list-panes -t "$peer_window" -F '#{pane_id}' 2>/dev/null || :)"
+  fi
+  if [ -n "$agent_window" ]; then
+    agent_pane="$(tmux list-panes -t "$agent_window" -F '#{pane_id}' 2>/dev/null || :)"
+  fi
+  if [ -z "$peer_window" ] || [ -z "$agent_window" ] \
+      || [ -z "$peer_pane" ] || [ -z "$agent_pane" ]; then
+    fail "reply: both registered panes resolve by stable agent identity" \
+      "peer [$peer_window/$peer_pane], Claude [$agent_window/$agent_pane]"
+    world_down
+    return
+  fi
+  pass "reply: both registered panes resolve by stable agent identity"
+
+  rc=0
+  printf '%s' "$request_body" \
+    | TMUX_PANE="$peer_pane" "$GANG" send --to "$AGENT" --stdin \
+      >"$RUN_ROOT/peer-request.out" 2>&1 || rc=$?
+  equal "reply: the peer request was delivered through observed attribution" 0 "$rc"
+  [ "$rc" -eq 0 ] || note "$(tail -3 "$RUN_ROOT/peer-request.out")"
+  if ! await_held; then world_down; return; fi
+  request_seq="$HELD_SEQ"
+
+  TMUX_PANE="$agent_pane" "$GANG" reply-obligations \
+    >"$RUN_ROOT/reply-before.tsv"
+  contains "reply: native prompt and delivery proofs arm the peer debt" \
+    "$(cat "$RUN_ROOT/reply-before.tsv")" $'owed\t'
+  contains "reply: the debt belongs to the observed sender" \
+    "$(cat "$RUN_ROOT/reply-before.tsv")" $'\tfox\tlive'
+
+  release_held
+  settled "reply native Stop block" reply_block_seen
+  block_seq="$(python3 -c '
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    entry = json.loads(line)
+    if entry.get("phase") == "request" and "you may not go idle: reply to fox" in entry.get("text", ""):
+        print(entry["seq"])
+        break
+' "$REQ_LOG")"
+  if [ "$block_seq" -gt "$request_seq" ]; then
+    pass "reply: Claude made a continuation request after its native Stop"
+  else
+    fail "reply: Claude made a continuation request after its native Stop" \
+      "the held request sequence did not advance ($request_seq then $block_seq)"
+  fi
+  local block_request
+  block_request="$(python3 -c '
+import json, sys
+seq = int(sys.argv[2])
+for line in open(sys.argv[1], encoding="utf-8"):
+    entry = json.loads(line)
+    if entry.get("phase") == "request" and entry.get("seq") == seq:
+        print(entry.get("text", ""), end="")
+        break
+' "$REQ_LOG" "$block_seq")"
+  contains "reply: that continuation carries the native Stop block reason" \
+    "$block_request" "you may not go idle: reply to $peer"
+  equal "reply: the real TUI remains busy while its reply is owed" busy "$(state)"
+
+  rc=0
+  printf '%s' "$reply_body" \
+    | TMUX_PANE="$agent_pane" "$GANG" send --to "$peer" --stdin \
+      >"$RUN_ROOT/reply-send.out" 2>&1 || rc=$?
+  equal "reply: an arbitrary correlated acknowledgement is delivered" 0 "$rc"
+  [ "$rc" -eq 0 ] || note "$(tail -3 "$RUN_ROOT/reply-send.out")"
+  TMUX_PANE="$agent_pane" "$GANG" reply-obligations \
+    >"$RUN_ROOT/reply-after.tsv"
+  equal "reply: positive reply correlation clears the obligation" \
+    $'clear\t-\t-\t-' "$(cat "$RUN_ROOT/reply-after.tsv")"
+
+  settled "reply idle after acknowledgement" is_state idle
+  equal "reply: the next native Stop releases Claude after the acknowledgement" \
+    idle "$(state)"
+  local sent
+  sent="$(requests)"
+  contains "reply: the verified peer request reached Claude's model turn" \
+    "$sent" "$request_body"
+  stub_sound reply
+  world_down
+}
+
+reply_block_seen() {
+  python3 -c '
+import json, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    entry = json.loads(line)
+    if entry.get("phase") == "request" and "you may not go idle: reply to fox" in entry.get("text", ""):
+        raise SystemExit(0)
+raise SystemExit(1)
+' "$REQ_LOG"
+}
+
+# ---------------------------------------------------------------- scenario 4
 # A FATAL TURN IS SEEN AS FATAL. collar_bricked reads the harness's own
 # transcript for a synthetic assistant record carrying error=model_not_found,
 # and matches its message against an exact sentence. Both halves of that
@@ -673,7 +811,7 @@ scenario_bricked() {
   world_down
 }
 
-# ---------------------------------------------------------------- scenario 4
+# ---------------------------------------------------------------- scenario 5
 # MID-TURN ATTRIBUTED DELIVERY REACHES THE MODEL. The collar declares
 # GANG_MIDTURN_INPUT=steer, so an envelope arriving while a turn is live is
 # committed to the attributed spool and then typed into the composer. Screen
@@ -767,7 +905,7 @@ roster_state_words() {
   printf '%s\n' "$words"
 }
 
-# ---------------------------------------------------------------- scenario 5
+# ---------------------------------------------------------------- scenario 6
 # A TURN THAT ENDED WITHOUT PRODUCING WORK, DRIVEN THROUGH A REAL HARNESS. This
 # is the one state whose whole danger is that the window looks well: the
 # composer is free, the pane is quiet, and every guard Gangline keeps is a
@@ -911,7 +1049,7 @@ scenario_blocked() {
 }
 
 # ----------------------------------------------------------------------------
-SCENARIOS="boot turn bricked blocked midturn"
+SCENARIOS="boot turn reply bricked blocked midturn"
 
 run() { # $1 scenario name, validated against the list above before it is called
   case " $SCENARIOS " in
