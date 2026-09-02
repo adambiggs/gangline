@@ -96,7 +96,30 @@ alert_ui_binding="$(alert_ui_tmux list-keys -T prefix A)"
 contains "the free Prefix+A key opens a tmux-native popup" \
   "$alert_ui_binding" "display-popup -E -h 70% -w 80%"
 contains "the popup invokes the alert center for its current client session" \
-  "$alert_ui_binding" "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open"
+  "$alert_ui_binding" "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
+alert_ui_installed_command="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_session:" @gl_alert_command)"
+contains "the session-local popup command contains the complete invocation" \
+  "$alert_ui_installed_command" "alerts --open"
+
+# This key table is shared with ordinary tmux sessions. Their empty session
+# option must expand to an assignment-only no-op, never a PATH lookup for an
+# unrelated executable named alerts.
+alert_ui_unrelated_bin="$RUN_ROOT/alert-ui-unrelated-bin"
+alert_ui_unrelated_ledger="$RUN_ROOT/alert-ui-unrelated-alerts-ran"
+mkdir -p "$alert_ui_unrelated_bin"
+cat > "$alert_ui_unrelated_bin/alerts" <<SH
+#!/bin/sh
+printf called > '$alert_ui_unrelated_ledger'
+SH
+chmod +x "$alert_ui_unrelated_bin/alerts"
+alert_ui_observer_popup="$(alert_ui_tmux display-message -p \
+  -t "=$alert_ui_observer:" \
+  'GANG_SESSION=#{q:session_name} #{@gl_alert_command}')"
+(cd "$RUN_ROOT" && PATH="$alert_ui_unrelated_bin:$PATH" \
+  sh -c "$alert_ui_observer_popup")
+equal "Prefix+A in an unrelated session executes no PATH fallback" absent \
+  "$([ ! -e "$alert_ui_unrelated_ledger" ] && printf absent || printf present)"
 
 # Tmux session names may contain shell syntax. The binding's q modifier is
 # expanded by tmux before the popup shell reads it; execute that exact expansion
@@ -235,7 +258,7 @@ TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$alert_ui_session" \
 GANG_LOCK_DIR="$alert_ui_open_wrong_locks" \
 GANG_TEST_ALERT_OPEN_READY_FIFO="$alert_ui_open_ready" \
 GANG_TEST_ALERT_OPEN_RELEASE_FIFO="$alert_ui_open_release" \
-  sh -c "$alert_ui_open_command alerts --open" \
+  sh -c "$alert_ui_open_command" \
   > "$RUN_ROOT/alert-ui-open.out" &
 alert_ui_open_pid=$!
 IFS= read -r -N 1 _ < "$alert_ui_open_ready"

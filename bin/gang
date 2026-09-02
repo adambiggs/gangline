@@ -4250,7 +4250,7 @@ alert_binding_ensure() { # install Prefix+A only while its exact key is unclaime
     return 0
   fi
   tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
-    "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open" \
+    "GANG_SESSION=#{q:session_name} #{@gl_alert_command}" \
     >/dev/null || return 1
   installed="$(alert_binding_line)" || return 1
   [ -n "$installed" ] || return 1
@@ -4263,7 +4263,7 @@ alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
   tick_paths_set || return 1
   alert_legacy_windows_remove || return 1
   alert_status_ensure || return 1
-  command="GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(shell_quote "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}") $(shell_quote "$ROOT/bin/gang")"
+  command="GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR") GANG_LOCK_DIR=$(shell_quote "${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}") $(shell_quote "$ROOT/bin/gang") alerts --open"
   alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
   alert_binding_claim || claim_rc=$?
   if [ "$claim_rc" -eq 0 ]; then
