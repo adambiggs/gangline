@@ -3941,7 +3941,7 @@ tick_state_prepare() {
 tick_health_record_split() { # $1 line: preserve an empty message field
   local line="$1" rest=""
   TICK_HEALTH_STATE="" TICK_HEALTH_AT="" TICK_HEALTH_NOTE=""
-  TICK_HEALTH_RECORD_TICKET=""
+  TICK_HEALTH_RECORD_TICKET="" TICK_HEALTH_HAS_TICKET=0
   [[ "$line" == *$'\t'* ]] || return 1
   TICK_HEALTH_STATE="${line%%$'\t'*}"
   rest="${line#*$'\t'}"
@@ -3949,6 +3949,7 @@ tick_health_record_split() { # $1 line: preserve an empty message field
   TICK_HEALTH_AT="${rest%%$'\t'*}"
   rest="${rest#*$'\t'}"
   if [[ "$rest" == *$'\t'* ]]; then
+    TICK_HEALTH_HAS_TICKET=1
     TICK_HEALTH_NOTE="${rest%%$'\t'*}"
     TICK_HEALTH_RECORD_TICKET="${rest#*$'\t'}"
     [[ "$TICK_HEALTH_RECORD_TICKET" != *$'\t'* ]] || return 1
@@ -3958,28 +3959,37 @@ tick_health_record_split() { # $1 line: preserve an empty message field
 }
 
 TICK_HEALTH_STATE="" TICK_HEALTH_AT="" TICK_HEALTH_NOTE=""
-TICK_HEALTH_RECORD_TICKET=""
+TICK_HEALTH_RECORD_TICKET="" TICK_HEALTH_HAS_TICKET=0
 tick_health_file_read() { # $1 file: print state, epoch, message
-  local file="$1" line
+  local file="$1" line extra=""
   [ -f "$file" ] && [ -r "$file" ] || return 1
-  IFS= read -r line < "$file" || return 1
+  {
+    IFS= read -r line || return 1
+    if IFS= read -r extra; then return 1; fi
+    [ -z "$extra" ] || return 1
+  } < "$file"
   tick_health_record_split "$line" || return 1
   case "$TICK_HEALTH_STATE" in ok|failed) ;; *) return 1 ;; esac
   case "$TICK_HEALTH_AT" in ''|*[!0-9]*) return 1 ;; esac
-  case "$TICK_HEALTH_RECORD_TICKET" in
-    ''|*[!0-9]*) [ -z "$TICK_HEALTH_RECORD_TICKET" ] || return 1 ;;
-  esac
+  if [ "$TICK_HEALTH_HAS_TICKET" -eq 1 ]; then
+    case "$TICK_HEALTH_RECORD_TICKET" in ''|*[!0-9]*) return 1 ;; esac
+  fi
   printf '%s\t%s\t%s' \
     "$TICK_HEALTH_STATE" "$TICK_HEALTH_AT" "$TICK_HEALTH_NOTE"
 }
 
 tick_health_ticket_read() { # $1 file: print a valid ordered-writer ticket
-  local file="$1" line
+  local file="$1" line extra=""
   [ -f "$file" ] && [ -r "$file" ] || return 1
-  IFS= read -r line < "$file" || return 1
+  {
+    IFS= read -r line || return 1
+    if IFS= read -r extra; then return 1; fi
+    [ -z "$extra" ] || return 1
+  } < "$file"
   tick_health_record_split "$line" || return 1
   case "$TICK_HEALTH_STATE" in ok|failed) ;; *) return 1 ;; esac
   case "$TICK_HEALTH_AT" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$TICK_HEALTH_HAS_TICKET" -eq 1 ] || return 1
   case "$TICK_HEALTH_RECORD_TICKET" in ''|*[!0-9]*) return 1 ;; esac
   printf '%s' "$TICK_HEALTH_RECORD_TICKET"
 }
@@ -4176,13 +4186,26 @@ alert_binding_line() {
 ALERT_BINDING_FD=""
 
 alert_binding_claim() { # serialize the server-global binding decision
-  local path socket rc=0
+  local path root socket rc=0
   ALERT_BINDING_FD=""
   socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
     || return 1
-  path="$socket.gangline-alert-binding.guard"
-  exec {ALERT_BINDING_FD}>"$path" \
+  root="$socket.gangline-locks"
+  lock_base "$root"
+  path="$root/alert-binding.guard"
+  if [ -e "$path" ] || [ -L "$path" ]; then
+    [ ! -L "$path" ] \
+      || { printf 'alert binding guard %s is a symlink; refusing to lock through it\n' "$path" >&2; return 1; }
+    [ -f "$path" ] && [ -O "$path" ] \
+      || { printf 'alert binding guard %s is not a regular file owned by uid %s\n' "$path" "$(id -u)" >&2; return 1; }
+  fi
+  exec {ALERT_BINDING_FD}>>"$path" \
     || { printf 'cannot open alert binding guard %s\n' "$path" >&2; return 1; }
+  chmod 600 "$path" \
+    || { printf 'cannot restrict alert binding guard %s\n' "$path" >&2
+         exec {ALERT_BINDING_FD}>&-
+         ALERT_BINDING_FD=""
+         return 1; }
   "$ROOT/libexec/gang-process-identity" --lock-fd "$ALERT_BINDING_FD" \
     >/dev/null 2>&1 || rc=$?
   case "$rc" in
@@ -4320,7 +4343,7 @@ tick_failure_surface() { # $1 sanitized summary, $2 transition 0|1; never fatal
 
 tick_health_fail() { # $1 complete worker diagnostic
   local note="$1" previous="" previous_state="" previous_at=""
-  local transition=1 rc=0
+  local transition=1 rc=0 latched=""
   [ -n "$note" ] || note="the tick worker failed without a diagnostic"
   note="${note##*$'\n'}"
   tick_result_claim || return $?
@@ -4328,6 +4351,10 @@ tick_health_fail() { # $1 complete worker diagnostic
   if [ -n "$previous" ]; then
     IFS=$'\t' read -r previous_state previous_at _ <<<"$previous"
     [ "$previous_state" != failed ] || transition=0
+  else
+    latched="$(tmux show-options -qv -t "=$SESSION:" \
+      @gl_alert_active 2>/dev/null)" || latched=""
+    [ "$latched" != 1 ] || transition=0
   fi
   tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || rc=$?
   if [ "$transition" -eq 0 ]; then
@@ -5026,7 +5053,7 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
 
 cmd_alerts() { # read active conditions; --open changes only their seen state
   local mode=read record="" state="" at="" note="" seen="" visibility=""
-  local conflict="" read_rc=0 latched=""
+  local conflict="" read_rc=0 latched="" open_guard=0
   case "$#:${1:-}" in
     0:) ;;
     1:--porcelain) mode=porcelain ;;
@@ -5037,6 +5064,19 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
     [ "$mode" = porcelain ] \
       || printf "no active alerts (session '%s' is not running)\n" "$SESSION"
     return 0
+  fi
+  if [ "$mode" = open ]; then
+    tick_paths_set || die "alerts: could not resolve alert state"
+    tick_state_prepare
+    tick_lock_paths_set || die "alerts: could not resolve the alert result guard"
+    tick_result_guard_wait || die "alerts: could not serialize the seen transition"
+    open_guard=1
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+       && [ -n "${GANG_TEST_ALERT_OPEN_READY_FIFO:-}" ] \
+       && [ -n "${GANG_TEST_ALERT_OPEN_RELEASE_FIFO:-}" ]; then
+      printf x > "$GANG_TEST_ALERT_OPEN_READY_FIFO"
+      IFS= read -r _ < "$GANG_TEST_ALERT_OPEN_RELEASE_FIFO" || true
+    fi
   fi
   record="$(alert_health_read 2>/dev/null)" || read_rc=$?
   case "$read_rc" in
@@ -5058,6 +5098,10 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
         || die "alerts: marked the alert seen but could not refresh its tmux status"
       seen=1
     fi
+    if [ "$open_guard" -eq 1 ]; then
+      tick_result_guard_drop
+      open_guard=0
+    fi
     if [ "$seen" = 1 ]; then visibility=seen; else visibility=unseen; fi
     if [ "$mode" = porcelain ]; then
       printf 'tick\tactive\t%s\t%s\t%s\n' "$visibility" "$at" "$note"
@@ -5066,8 +5110,12 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
       printf '[%s] cooperative tick failed at %s\n%s\n' \
         "$visibility" "$at" "$note"
     fi
-  elif [ "$mode" != porcelain ]; then
-    printf "no active alerts for '%s'\n" "$SESSION"
+  else
+    if [ "$open_guard" -eq 1 ]; then
+      tick_result_guard_drop
+      open_guard=0
+    fi
+    [ "$mode" = porcelain ] || printf "no active alerts for '%s'\n" "$SESSION"
   fi
   if [ "$mode" != porcelain ]; then
     conflict="$(tmux show-options -qv -t "=$SESSION:" \

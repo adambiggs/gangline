@@ -54,6 +54,39 @@ contains "the preserved key conflict remains inspectable" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" \
     @gl_alert_binding_conflict)" "left it unchanged"
 
+# The binding claim lives beside the exact server socket so callers with
+# different Gangline lock roots still agree, but its contents are inside a
+# private validated directory. A planted guard link must be refused without
+# following it or truncating its target.
+alert_ui_socket="$(alert_ui_tmux display-message -p \
+  -t "=$alert_ui_session" '#{socket_path}')"
+alert_ui_binding_root="$alert_ui_socket.gangline-locks"
+alert_ui_binding_guard="$alert_ui_binding_root/alert-binding.guard"
+equal "the server-global binding guard uses a private real directory" real \
+  "$([ -d "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
+      && printf real || printf unsafe)"
+equal "the obsolete socket-sibling guard is not created" absent \
+  "$([ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
+      && [ ! -L "$alert_ui_socket.gangline-alert-binding.guard" ] \
+      && printf absent || printf present)"
+alert_ui_guard_saved="$RUN_ROOT/alert-ui-binding-guard-saved"
+alert_ui_guard_target="$RUN_ROOT/alert-ui-binding-guard-target"
+mv -- "$alert_ui_binding_guard" "$alert_ui_guard_saved"
+printf 'unrelated-content\n' > "$alert_ui_guard_target"
+ln -s "$alert_ui_guard_target" "$alert_ui_binding_guard"
+alert_ui_guard_rc=0
+alert_ui_gang tick > "$RUN_ROOT/alert-ui-binding-guard.out" 2>&1 \
+  || alert_ui_guard_rc=$?
+equal "a symlinked server binding guard fails the health pass loudly" \
+  1 "$alert_ui_guard_rc"
+contains "the symlinked binding guard is refused by name" \
+  "$(<"$RUN_ROOT/alert-ui-binding-guard.out")" "is a symlink"
+equal "a refused binding guard does not truncate its target" \
+  unrelated-content "$(<"$alert_ui_guard_target")"
+rm -f -- "$alert_ui_binding_guard"
+mv -- "$alert_ui_guard_saved" "$alert_ui_binding_guard"
+alert_ui_gang tick >/dev/null
+
 # Once the operator frees the proposal, the next ordinary pass owns it. A
 # second pass is the upgrade/idempotence check: neither status-right nor the
 # binding may accumulate another copy.
@@ -98,8 +131,6 @@ excludes "the status widget spawns no command on tmux repaints" \
 # Simulate an upgrade from the old UI with both its owned status command and
 # its marked window still present. A retained failed health record is the old
 # active condition; migration must not manufacture a new transition from it.
-alert_ui_socket="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_session" '#{socket_path}')"
 alert_ui_digest="$(python3 -c \
   'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
   "$alert_ui_socket" "$alert_ui_session")"
@@ -191,7 +222,31 @@ equal "porcelain carries the alert transition epoch" valid "$alert_ui_epoch"
 contains "porcelain carries the failure summary" \
   "$alert_ui_summary" "missing-alert-collar"
 
-alert_ui_gang alerts --open >/dev/null
+# Opening holds the same short result guard as recovery/new-failure commits.
+# The nonblocking kernel probe is immediate evidence that the seen mutation is
+# serialized, rather than a timing guess about a background process.
+alert_ui_open_ready="$RUN_ROOT/alert-ui-open-ready"
+alert_ui_open_release="$RUN_ROOT/alert-ui-open-release"
+mkfifo "$alert_ui_open_ready" "$alert_ui_open_release"
+GANG_TEST_ALERT_OPEN_READY_FIFO="$alert_ui_open_ready" \
+GANG_TEST_ALERT_OPEN_RELEASE_FIFO="$alert_ui_open_release" \
+  alert_ui_gang alerts --open > "$RUN_ROOT/alert-ui-open.out" &
+alert_ui_open_pid=$!
+IFS= read -r -N 1 _ < "$alert_ui_open_ready"
+alert_ui_result_guard="$RUN_ROOT/alert-ui-locks/tick/$alert_ui_digest.result.guard"
+exec {alert_ui_result_probe_fd}>>"$alert_ui_result_guard"
+alert_ui_result_probe_rc=0
+"$ROOT/libexec/gang-process-identity" --lock-fd \
+  "$alert_ui_result_probe_fd" >/dev/null 2>&1 || alert_ui_result_probe_rc=$?
+equal "opening owns the result transition guard before marking seen" \
+  75 "$alert_ui_result_probe_rc"
+exec {alert_ui_result_probe_fd}>&-
+equal "an in-flight open has not resolved or prematurely hidden the alert" '1 1' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+printf '\n' > "$alert_ui_open_release"
+alert_ui_open_rc=0
+wait "$alert_ui_open_pid" || alert_ui_open_rc=$?
+equal "the serialized alert open completes" 0 "$alert_ui_open_rc"
 equal "opening marks the alert seen without resolving it" '1 0' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
 contains "opening leaves the failed health condition standing" \
@@ -236,7 +291,38 @@ contains "malformed health is named as unreadable state" \
   "$(<"$RUN_ROOT/alert-ui-malformed.out")" "unreadable or malformed"
 equal "malformed health preserves the last active and seen counts" '1 0' \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
-mv -f -- "$alert_ui_health_saved" "$alert_ui_health"
+printf 'ok\t123\t\t\n' > "$alert_ui_health"
+alert_ui_empty_ticket_rc=0
+alert_ui_gang alerts > "$RUN_ROOT/alert-ui-empty-ticket.out" 2>&1 \
+  || alert_ui_empty_ticket_rc=$?
+equal "an explicitly empty ordered ticket cannot manufacture recovery" \
+  1 "$alert_ui_empty_ticket_rc"
+contains "an empty ordered ticket is named as malformed health" \
+  "$(<"$RUN_ROOT/alert-ui-empty-ticket.out")" "unreadable or malformed"
+printf 'ok\t123\t\t999\njunk\n' > "$alert_ui_health"
+alert_ui_multiline_health_rc=0
+alert_ui_gang alerts > "$RUN_ROOT/alert-ui-multiline-health.out" 2>&1 \
+  || alert_ui_multiline_health_rc=$?
+equal "trailing health records cannot hide behind a clean prefix" \
+  1 "$alert_ui_multiline_health_rc"
+contains "a trailing health record is named as malformed health" \
+  "$(<"$RUN_ROOT/alert-ui-multiline-health.out")" "unreadable or malformed"
+
+# Corruption does not erase the last trustworthy active lifecycle. A failing
+# producer repairs its record, but must neither reopen the seen transition nor
+# emit a duplicate new-alert message.
+alert_ui_corrupt_repeat_rc=0
+PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
+  || alert_ui_corrupt_repeat_rc=$?
+equal "a failed tick repairs corrupt active health as a failure" \
+  1 "$alert_ui_corrupt_repeat_rc"
+equal "repairing corrupt active health preserves its seen lifecycle" '1 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+equal "repairing corrupt active health emits no duplicate transition" 1 \
+  "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
+contains "the corrupt active record is repaired to inspectable failure" \
+  "$(<"$alert_ui_health")" $'failed\t'
+rm -f -- "$alert_ui_health_saved"
 
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
 alert_ui_gang tick >/dev/null
