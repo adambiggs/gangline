@@ -382,6 +382,12 @@ and, when it owns a terminal, waits for one key before closing. Seen and
 resolved are independent: opening the center never changes failed health, and
 there is no command that clears a live condition.
 
+Missing health is treated as no alert only before any active condition has been
+recorded. If active state is already latched, a missing, unreadable, or
+malformed health record is unknown and `gang alerts` fails loudly; the status
+options retain their last active rendering. Only a valid clean tick record may
+resolve the condition.
+
 `--porcelain` prints one uncoloured TSV row per active condition with `kind`,
 `state`, `visibility`, `epoch`, and `summary` columns. The current kind is
 `tick`, its state is `active`, and visibility is `unseen` or `seen`. With no
@@ -399,12 +405,14 @@ unrelated status content.
 When Prefix+A is free, Gangline binds it to a per-client
 `display-popup -E -w 80% -h 70%` that runs `gang alerts --open` for the client's
 current session. Tmux key tables are server-global, so the one binding resolves
-the session-local Gangline command at use time. If Prefix+A already has any
-other binding, Gangline leaves it unchanged and `gang alerts` reports the
-conflict; the command remains available for an operator-chosen binding. `down`
-removes the binding only when the last configured Gangline team is leaving and
-the key still byte-matches the binding Gangline recorded. A user rebind and
-other tmux configuration are never removed.
+the session-local Gangline command at use time; tmux shell-quotes that session
+format before the popup shell receives it. If Prefix+A already has any other
+binding, Gangline leaves it unchanged and `gang alerts` reports the conflict;
+the command remains available for an operator-chosen binding. Binding install
+and removal share one short per-server claim, so a team cannot appear between a
+last-team decision and its unbind. `down` removes the binding only when the last
+configured Gangline team is leaving and the key still byte-matches the binding
+Gangline recorded. A user rebind and other tmux configuration are never removed.
 
 An upgrade pass removes only windows marked `@gl_tick_alerts=1`, the ownership
 witness used by the former `gangline-alerts` normal-window UI, and migrates its

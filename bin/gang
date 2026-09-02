@@ -3613,6 +3613,7 @@ on_exit() {
   spool_retire_abort
   lock_release
   tick_lock_release
+  alert_binding_claim_release
   hitch_up_abort
   wait_hook_cleanup
   tick_launch
@@ -3952,15 +3953,16 @@ tick_health_read() { # print state, epoch, message; 1 absent or unreadable
   tick_health_file_read "$TICK_HEALTH"
 }
 
-alert_health_read() { # use the exact path installed for this tmux session
+alert_health_read() { # 0 record, 1 no record yet, 2 unreadable/malformed
   local file=""
   file="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_health 2>/dev/null)" \
-    || file=""
-  if [ -n "$file" ]; then
-    tick_health_file_read "$file"
-  else
-    tick_health_read
+    || return 2
+  if [ -z "$file" ]; then
+    tick_paths_set || return 2
+    file="$TICK_HEALTH"
   fi
+  [ -e "$file" ] || [ -L "$file" ] || return 1
+  tick_health_file_read "$file" || return 2
 }
 
 tick_health_store() { # $1 ok|failed, $2 message, optional $3 recorded epoch
@@ -4003,10 +4005,20 @@ alert_option_set() { # set one session option only when its value changes
 
 alert_state_refresh() { # derive the status widget from current health and seen state
   local record="" state="" at="" note="" seen="" active=0 unseen=0 widget=""
-  record="$(alert_health_read 2>/dev/null)" || record=""
-  if [ -n "$record" ]; then
-    IFS=$'\t' read -r state at note <<<"$record"
-  fi
+  local read_rc=0 latched=""
+  record="$(alert_health_read 2>/dev/null)" || read_rc=$?
+  case "$read_rc" in
+    0) IFS=$'\t' read -r state at note <<<"$record" ;;
+    1) latched="$(tmux show-options -qv -t "=$SESSION:" \
+         @gl_alert_active 2>/dev/null)" || latched=""
+       if [ "$latched" = 1 ]; then
+         printf 'active alert health is missing; refusing to resolve it without a recovery record\n' >&2
+         return 1
+       fi ;;
+    2) printf 'alert health is unreadable or malformed; refusing to change active alert state\n' >&2
+       return 1 ;;
+    *) return 1 ;;
+  esac
   if [ "$state" = failed ]; then
     active=1
     seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
@@ -4079,6 +4091,58 @@ alert_binding_line() {
   tmux list-keys -T prefix A 2>/dev/null
 }
 
+ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
+
+alert_binding_claim() { # serialize the server-global binding decision
+  local base path socket digest holder="" err=""
+  ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
+  base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}/alert-binding"
+  lock_base "$base" || return 1
+  socket="$(tmux display-message -p -t "=$SESSION" '#{socket_path}' 2>/dev/null)" \
+    || return 1
+  digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest()[:24])' "$socket")" \
+    || return 1
+  lock_self_pid
+  path="$base/$digest.claim"
+  ALERT_BINDING_RECORD="$LOCK_SELF_PID"
+  if err="$(ln -s "$ALERT_BINDING_RECORD" "$path" 2>&1)"; then
+    ALERT_BINDING_CLAIM="$path"
+    return 0
+  fi
+  if [ ! -L "$path" ]; then
+    printf 'alert binding claim %s cannot be created: %s\n' \
+      "$path" "${err:-unknown error}" >&2
+    return 1
+  fi
+  holder="$(readlink "$path" 2>/dev/null)" || holder=""
+  case "$holder" in
+    ''|*[!0-9]*) printf "alert binding claim %s has unreadable holder '%s'\n" \
+                    "$path" "$holder" >&2
+                  return 1 ;;
+  esac
+  if kill -0 "$holder" 2>/dev/null; then
+    printf 'another alert binding update is in flight on this tmux server\n' >&2
+    return 75
+  fi
+  rm -f -- "$path" || return 1
+  if err="$(ln -s "$ALERT_BINDING_RECORD" "$path" 2>&1)"; then
+    ALERT_BINDING_CLAIM="$path"
+    return 0
+  fi
+  printf 'alert binding claim %s could not replace its stale owner: %s\n' \
+    "$path" "${err:-unknown error}" >&2
+  return 1
+}
+
+alert_binding_claim_release() {
+  local holder=""
+  [ -n "${ALERT_BINDING_CLAIM:-}" ] || return 0
+  holder="$(readlink "$ALERT_BINDING_CLAIM" 2>/dev/null)" || holder=""
+  [ "$holder" != "$ALERT_BINDING_RECORD" ] \
+    || rm -f -- "$ALERT_BINDING_CLAIM" 2>/dev/null || true
+  ALERT_BINDING_CLAIM="" ALERT_BINDING_RECORD=""
+}
+
 alert_binding_ensure() { # install Prefix+A only while its exact key is unclaimed
   local actual="" owned="" installed=""
   actual="$(alert_binding_line)" || actual=""
@@ -4093,7 +4157,7 @@ alert_binding_ensure() { # install Prefix+A only while its exact key is unclaime
     return 0
   fi
   tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
-    "GANG_SESSION='#{session_name}' #{@gl_alert_command} alerts --open" \
+    "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open" \
     >/dev/null || return 1
   installed="$(alert_binding_line)" || return 1
   [ -n "$installed" ] || return 1
@@ -4102,14 +4166,18 @@ alert_binding_ensure() { # install Prefix+A only while its exact key is unclaime
 }
 
 alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
-  local command
+  local command claim_rc=0 rc=0
   tick_paths_set || return 1
   alert_legacy_windows_remove || return 1
   alert_status_ensure || return 1
   command="GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR") $(shell_quote "$ROOT/bin/gang")"
-  alert_option_set @gl_alert_command "$command" || return 1
   alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
-  alert_binding_ensure || return 1
+  alert_binding_claim || claim_rc=$?
+  [ "$claim_rc" -eq 0 ] || return 1
+  alert_option_set @gl_alert_command "$command" || rc=$?
+  [ "$rc" -ne 0 ] || alert_binding_ensure || rc=$?
+  alert_binding_claim_release
+  [ "$rc" -eq 0 ] || return "$rc"
   alert_state_refresh
 }
 
@@ -4129,13 +4197,19 @@ alert_status_remove() { # remove only the segment recorded as Gangline-owned
   tmux set-option -u -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null || true
 }
 
-alert_binding_release() { # unbind only our exact key, and only for the last team
+alert_binding_release() { # called under claim: unbind only our exact last-team key
   local name="" command="" actual="" owned=""
   while IFS=$'\t' read -r name command; do
     [ "$name" = "$SESSION" ] && continue
     [ -z "$command" ] || return 0
   done <<<"$(tmux list-sessions \
     -F $'#{session_name}\t#{@gl_alert_command}' 2>/dev/null || :)"
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+     && [ -n "${GANG_TEST_ALERT_BINDING_READY_FIFO:-}" ] \
+     && [ -n "${GANG_TEST_ALERT_BINDING_RELEASE_FIFO:-}" ]; then
+    printf x > "$GANG_TEST_ALERT_BINDING_READY_FIFO"
+    IFS= read -r _ < "$GANG_TEST_ALERT_BINDING_RELEASE_FIFO" || true
+  fi
   actual="$(alert_binding_line)" || actual=""
   owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
   if [ -n "$owned" ] && [ "$actual" = "$owned" ]; then
@@ -4145,6 +4219,7 @@ alert_binding_release() { # unbind only our exact key, and only for the last tea
 }
 
 alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
+  local claim_rc=0 rc=0
   alert_status_remove || return 1
   tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
   tmux set-option -u -t "=$SESSION:" @gl_alert_unseen 2>/dev/null || true
@@ -4152,8 +4227,14 @@ alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
   tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
   tmux set-option -u -t "=$SESSION:" @gl_alert_health 2>/dev/null || true
   tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
-  alert_binding_release || return 1
-  tmux set-option -u -t "=$SESSION:" @gl_alert_command 2>/dev/null || true
+  alert_binding_claim || claim_rc=$?
+  [ "$claim_rc" -eq 0 ] || return 1
+  alert_binding_release || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    tmux set-option -u -t "=$SESSION:" @gl_alert_command 2>/dev/null || rc=$?
+  fi
+  alert_binding_claim_release
+  return "$rc"
 }
 
 tick_failure_surface() { # $1 sanitized summary, $2 transition 0|1; never fatal
@@ -4742,8 +4823,9 @@ tick_full_pass_once() {
   return "$rc"
 }
 
-cmd_tick_worker() { # internal lock/dirty owner; status 75 means another owns it
-  local rc=0 lock_rc=0 pass=0
+cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
+  local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0
+  local dirty_path=""
   [ $# -eq 0 ] || die "internal tick worker takes no arguments"
   session_live || return 0
   tick_lock_acquire || lock_rc=$?
@@ -4760,15 +4842,48 @@ cmd_tick_worker() { # internal lock/dirty owner; status 75 means another owns it
       printf x > "$GANG_TEST_TICK_READY_FIFO"
       IFS= read -r _ < "$GANG_TEST_TICK_RELEASE_FIFO" || true
     fi
-    rc=0
-    tick_full_pass_once || rc=$?
+    rc=0 pass_output=""
+    pass_output="$(tick_full_pass_once 2>&1)" || rc=$?
+    if [ -n "$pass_output" ]; then
+      output="${output:+$output$'\n'}$pass_output"
+    fi
     [ -e "$TICK_DIRTY_PATH" ] && continue
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+       && [ -n "${GANG_TEST_TICK_COMMIT_READY_FIFO:-}" ] \
+       && [ -n "${GANG_TEST_TICK_COMMIT_RELEASE_FIFO:-}" ]; then
+      printf x > "$GANG_TEST_TICK_COMMIT_READY_FIFO"
+      IFS= read -r _ < "$GANG_TEST_TICK_COMMIT_RELEASE_FIFO" || true
+      GANG_TEST_TICK_COMMIT_READY_FIFO=""
+      GANG_TEST_TICK_COMMIT_RELEASE_FIFO=""
+    fi
+    committed=0
+    if [ "$rc" -eq 0 ]; then
+      if tick_health_ok; then
+        committed=1
+      else
+        output="${output:+$output$'\n'}the tick completed but its health or alert state could not be written"
+        rc=1
+        tick_health_fail "$output" && committed=1
+      fi
+    elif tick_health_fail "$output"; then
+      committed=1
+    else
+      output="${output:+$output$'\n'}the failed tick result could not be committed to health state"
+    fi
+    dirty_path="$TICK_DIRTY_PATH"
     tick_lock_release
-    if [ -e "$TICK_DIRTY_PATH" ]; then
+    if [ -e "$dirty_path" ]; then
       lock_rc=0
       tick_lock_acquire || lock_rc=$?
-      case "$lock_rc" in 0) continue ;; 75) return 75 ;; *) return "$lock_rc" ;; esac
+      case "$lock_rc" in
+        0) output=""; continue ;;
+        75) return 75 ;;
+        *) return "$lock_rc" ;;
+      esac
     fi
+    if [ "$rc" -eq 0 ]; then return 0; fi
+    [ -z "$output" ] || printf '%s\n' "$output" >&2
+    [ "$committed" -eq 1 ] && return 76
     return "$rc"
   done
 }
@@ -4781,9 +4896,10 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
     --clock-helper "$GANGLINE_CLOCK_HELPER" \
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
   case "$rc" in
-    0) tick_health_ok \
-         || { tick_health_fail "the tick completed but its health or alert state could not be written" || true; return 1; } ;;
+    0) return 0 ;;
     75) return 0 ;;
+    76) [ -z "$out" ] || printf '%s\n' "$out" >&2
+        return 1 ;;
     *) [ -z "$out" ] || printf '%s\n' "$out" >&2
        tick_health_fail "$out" || true
        return 1 ;;
@@ -4792,7 +4908,7 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
 
 cmd_alerts() { # read active conditions; --open changes only their seen state
   local mode=read record="" state="" at="" note="" seen="" visibility=""
-  local conflict=""
+  local conflict="" read_rc=0 latched=""
   case "$#:${1:-}" in
     0:) ;;
     1:--porcelain) mode=porcelain ;;
@@ -4804,10 +4920,16 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
       || printf "no active alerts (session '%s' is not running)\n" "$SESSION"
     return 0
   fi
-  record="$(alert_health_read 2>/dev/null)" || record=""
-  if [ -n "$record" ]; then
-    IFS=$'\t' read -r state at note <<<"$record"
-  fi
+  record="$(alert_health_read 2>/dev/null)" || read_rc=$?
+  case "$read_rc" in
+    0) IFS=$'\t' read -r state at note <<<"$record" ;;
+    1) latched="$(tmux show-options -qv -t "=$SESSION:" \
+         @gl_alert_active 2>/dev/null)" || latched=""
+       [ "$latched" != 1 ] \
+         || die "alerts: active alert health is missing; refusing to report recovery without a clean tick record" ;;
+    2) die "alerts: alert health is unreadable or malformed; refusing to report no active alerts" ;;
+    *) die "alerts: alert health could not be read" ;;
+  esac
   if [ "$state" = failed ]; then
     seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
       || seen=""

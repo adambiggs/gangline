@@ -16,18 +16,24 @@ tick_original_collars="${GANG_COLLARS:-}"
 alert_ui_root="$RUN_ROOT/alert-ui-server"
 alert_ui_session="gang-alert-ui-$$"
 alert_ui_survivor="gang-alert-ui-survivor-$$"
+alert_ui_observer="gang-alert-ui-observer-$$"
 mkdir -p "$alert_ui_root"
 alert_ui_tmux() { TMUX_TMPDIR="$alert_ui_root" tmux "$@"; }
-alert_ui_gang() {
-  TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$alert_ui_session" \
+alert_ui_gang_for() {
+  local session="$1"
+  shift
+  TMUX_TMPDIR="$alert_ui_root" GANG_SESSION="$session" \
     GANG_LOCK_DIR="$RUN_ROOT/alert-ui-locks" \
     GANG_ARCHIVE_DIR="$RUN_ROOT/alert-ui-archive" \
     XDG_STATE_HOME="$RUN_ROOT/alert-ui-state" "$GANG" "$@"
 }
+alert_ui_gang() { alert_ui_gang_for "$alert_ui_session" "$@"; }
 
 alert_ui_tmux new-session -d -s "$alert_ui_session" -n caller \
   "PS1='❯ ' exec bash --norc"
 alert_ui_tmux new-session -d -s "$alert_ui_survivor" -n survivor \
+  "PS1='❯ ' exec bash --norc"
+alert_ui_tmux new-session -d -s "$alert_ui_observer" -n observer \
   "PS1='❯ ' exec bash --norc"
 alert_ui_gang adopt caller -c bash >/dev/null
 alert_ui_caller_id="$(alert_ui_tmux list-windows -t "=$alert_ui_session" \
@@ -57,7 +63,24 @@ alert_ui_binding="$(alert_ui_tmux list-keys -T prefix A)"
 contains "the free Prefix+A key opens a tmux-native popup" \
   "$alert_ui_binding" "display-popup -E -h 70% -w 80%"
 contains "the popup invokes the alert center for its current client session" \
-  "$alert_ui_binding" "GANG_SESSION='#{session_name}' #{@gl_alert_command} alerts --open"
+  "$alert_ui_binding" "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open"
+
+# Tmux session names may contain shell syntax. The binding's q modifier is
+# expanded by tmux before the popup shell reads it; execute that exact expansion
+# and require both the original value and absence of the injected side effect.
+alert_ui_injected="$RUN_ROOT/alert-ui-session-name-injected"
+alert_ui_hostile="quote'\$(touch alert-ui-session-name-injected)'"
+alert_ui_tmux new-session -d -s "$alert_ui_hostile" -n hostile \
+  "PS1='❯ ' exec bash --norc"
+alert_ui_hostile_q="$(alert_ui_tmux display-message -p \
+  -t "=$alert_ui_hostile:" '#{q:session_name}')"
+alert_ui_hostile_read="$(cd "$RUN_ROOT" && sh -c \
+  "GANG_SESSION=$alert_ui_hostile_q; printf '%s' \"\$GANG_SESSION\"")"
+equal "the popup session expansion preserves a shell-hostile tmux name" \
+  "$alert_ui_hostile" "$alert_ui_hostile_read"
+equal "the popup session expansion executes none of that name" absent \
+  "$([ ! -e "$alert_ui_injected" ] && printf absent || printf present)"
+alert_ui_tmux kill-session -t "=$alert_ui_hostile"
 alert_ui_right_once="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_session:" status-right)"
 alert_ui_gang tick >/dev/null
@@ -187,6 +210,34 @@ equal "a repeat does not make a seen active alert unseen again" '1 0' \
 equal "a repeat failure emits no additional tmux message" 1 \
   "$(wc -l < "$alert_ui_message_ledger" | tr -d ' ')"
 
+# Missing or malformed producer state is unknown, never recovery. Preserve the
+# last tmux counts and require the inspectable command to fail loudly until the
+# producer writes a valid record again.
+alert_ui_health_saved="$RUN_ROOT/alert-ui-health-saved"
+mv -- "$alert_ui_health" "$alert_ui_health_saved"
+alert_ui_missing_rc=0
+alert_ui_gang alerts > "$RUN_ROOT/alert-ui-missing.out" 2>&1 \
+  || alert_ui_missing_rc=$?
+equal "missing health cannot manufacture alert recovery" 1 \
+  "$alert_ui_missing_rc"
+contains "missing active health names the refused false recovery" \
+  "$(<"$RUN_ROOT/alert-ui-missing.out")" "refusing to report recovery"
+equal "missing health preserves the last active and seen counts" '1 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+mv -- "$alert_ui_health_saved" "$alert_ui_health"
+cp -- "$alert_ui_health" "$alert_ui_health_saved"
+printf 'not-a-health-record\n' > "$alert_ui_health"
+alert_ui_malformed_rc=0
+alert_ui_gang alerts > "$RUN_ROOT/alert-ui-malformed.out" 2>&1 \
+  || alert_ui_malformed_rc=$?
+equal "malformed health cannot manufacture alert recovery" 1 \
+  "$alert_ui_malformed_rc"
+contains "malformed health is named as unreadable state" \
+  "$(<"$RUN_ROOT/alert-ui-malformed.out")" "unreadable or malformed"
+equal "malformed health preserves the last active and seen counts" '1 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+mv -f -- "$alert_ui_health_saved" "$alert_ui_health"
+
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
 alert_ui_gang tick >/dev/null
 equal "a clean pass resolves the active alert" '0 0' \
@@ -203,16 +254,80 @@ equal "the post-recovery transition emits exactly one new message" 2 \
 alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
 alert_ui_gang tick >/dev/null
 
-# `down` is the alert-center uninstall path. With an unrelated session keeping
-# the server alive, both absence of Gangline's exact binding and survival of the
-# user's server can be observed immediately.
-alert_ui_gang down "$alert_ui_session" >/dev/null
+# A pass owns the tick lock through its health commit. Hold a failing pass at
+# that exact seam, request another pass after repairing the condition, and
+# require the same owner to consume the dirty edge before its result returns.
+alert_ui_commit_ready="$RUN_ROOT/alert-ui-commit-ready"
+alert_ui_commit_release="$RUN_ROOT/alert-ui-commit-release"
+alert_ui_commit_ledger="$RUN_ROOT/alert-ui-commit-ledger"
+mkfifo "$alert_ui_commit_ready" "$alert_ui_commit_release"
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar missing-alert-collar
+GANG_TEST_TICK_COMMIT_READY_FIFO="$alert_ui_commit_ready" \
+GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$alert_ui_commit_release" \
+GANG_TEST_TICK_LEDGER="$alert_ui_commit_ledger" \
+  alert_ui_gang tick > "$RUN_ROOT/alert-ui-commit-owner.out" 2>&1 &
+alert_ui_commit_owner=$!
+IFS= read -r -N 1 _ < "$alert_ui_commit_ready"
+alert_ui_tmux set-option -w -t "$alert_ui_caller_id" @gl_collar bash
+alert_ui_cross_rc=0
+alert_ui_gang tick >/dev/null 2>&1 || alert_ui_cross_rc=$?
+equal "a contender cannot pass while the older health result is uncommitted" \
+  0 "$alert_ui_cross_rc"
+printf '\n' > "$alert_ui_commit_release"
+alert_ui_commit_owner_rc=0
+wait "$alert_ui_commit_owner" || alert_ui_commit_owner_rc=$?
+equal "the committing owner reruns the crossed recovery before returning" \
+  0 "$alert_ui_commit_owner_rc"
+equal "the serialized health owner consumes one dirty rerun" '1 2 ' \
+  "$(tr '\n' ' ' < "$alert_ui_commit_ledger")"
+equal "the newer recovery is the final alert state" '0 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+contains "the newer recovery is the final health record" \
+  "$(<"$alert_ui_health")" $'ok\t'
+
+# The binding table is server-global. Hold the first team's last-team snapshot
+# while a second team tries to configure itself; the binding claim must keep
+# that second team unconfigured until the first teardown finishes, after which
+# one retry installs a live binding rather than leaving a configured orphan.
+alert_ui_gang_for "$alert_ui_survivor" adopt survivor -c bash >/dev/null
+alert_ui_binding_ready="$RUN_ROOT/alert-ui-binding-ready"
+alert_ui_binding_release="$RUN_ROOT/alert-ui-binding-release"
+mkfifo "$alert_ui_binding_ready" "$alert_ui_binding_release"
+GANG_TEST_ALERT_BINDING_READY_FIFO="$alert_ui_binding_ready" \
+GANG_TEST_ALERT_BINDING_RELEASE_FIFO="$alert_ui_binding_release" \
+  alert_ui_gang down "$alert_ui_session" \
+  > "$RUN_ROOT/alert-ui-down.out" 2>&1 &
+alert_ui_down_owner=$!
+IFS= read -r -N 1 _ < "$alert_ui_binding_ready"
+alert_ui_cross_binding_rc=0
+alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null 2>&1 \
+  || alert_ui_cross_binding_rc=$?
+equal "a team cannot configure across another team's binding teardown" \
+  1 "$alert_ui_cross_binding_rc"
+equal "the losing team publishes no command behind the teardown snapshot" "" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)"
+printf '\n' > "$alert_ui_binding_release"
+alert_ui_down_rc=0
+wait "$alert_ui_down_owner" || alert_ui_down_rc=$?
+equal "the serialized first-team teardown completes" 0 "$alert_ui_down_rc"
+alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null
+contains "the surviving team installs the popup after the teardown seam" \
+  "$(alert_ui_tmux list-keys -T prefix A)" \
+  "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open"
+contains "the surviving team records the command that binding resolves" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
+  "$ROOT/bin/gang"
+
+# `down` is the alert-center uninstall path. The inert observer keeps the
+# server alive so both exact binding removal and unrelated-session survival are
+# immediate evidence after the last configured team leaves.
+alert_ui_gang_for "$alert_ui_survivor" down "$alert_ui_survivor" >/dev/null
 equal "alert-center uninstall leaves the unrelated tmux session live" present \
-  "$(if alert_ui_tmux has-session -t "=$alert_ui_survivor" 2>/dev/null; then printf present; else printf absent; fi)"
+  "$(if alert_ui_tmux has-session -t "=$alert_ui_observer" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "the last Gangline team removes only its owned Prefix+A binding" absent \
   "$(if alert_ui_tmux list-keys -T prefix A >/dev/null 2>&1; then printf present; else printf absent; fi)"
-alert_ui_tmux kill-session -t "=$alert_ui_survivor"
-unset -f alert_ui_tmux alert_ui_gang
+alert_ui_tmux kill-session -t "=$alert_ui_observer"
+unset -f alert_ui_tmux alert_ui_gang alert_ui_gang_for
 
 export GANG_SESSION="gangtick-test-$$"
 export GANG_TICK_DEADLINE_SECONDS=60

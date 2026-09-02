@@ -514,6 +514,10 @@ free at installation to open it in a per-client popup. Opening marks the alert
 seen but does not clear it. Repair the named condition and run `gang tick` for
 one synchronous retry. A clean pass records `ok`, removes the warning, and
 resolves the active alert; do not delete the health file to manufacture green.
+If that file is missing or malformed while an alert is active, `gang alerts`
+fails loudly and the last active widget remains latched. Repair the producer or
+run a genuine clean tick; replacing state with an empty or malformed file is
+not recovery.
 
 If `gang alerts` says Prefix+A is unavailable, an existing tmux binding owns
 the key and Gangline deliberately left it unchanged. Invoke the command
