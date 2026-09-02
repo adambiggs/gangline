@@ -127,11 +127,11 @@ reply_race_gate="reply-proof-race-$$"
 reply_race_state="$RUN_ROOT/reply-proof-race-state"
 reply_race_out="$RUN_ROOT/reply-proof-race.out"
 reply_race_err="$RUN_ROOT/reply-proof-race.err"
-# source-guard: producer@2a62e992bfa2: the later reply_fake_log is truncated immediately before the one failed-boundary adapter invocation whose hook arm is its only writer; this background compound is joined by its explicit wait before reaching that assertion
-GANG_TEST_REPLY_PROOF_GATE="$reply_race_gate" \
-GANG_TEST_REPLY_GATE_STATE="$reply_race_state" \
-TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin \
-  >"$reply_race_out" 2>"$reply_race_err" <<<'REQ_PROMPT_FIRST' &
+printf '%s' REQ_PROMPT_FIRST \
+  | GANG_TEST_REPLY_PROOF_GATE="$reply_race_gate" \
+    GANG_TEST_REPLY_GATE_STATE="$reply_race_state" \
+    TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin \
+      >"$reply_race_out" 2>"$reply_race_err" &
 reply_race_pid=$!
 tmux wait-for "$reply_race_gate-ready"
 reply_race_nonce="$(reply_nonce_from "$reply_b_id" reply-a)"
@@ -489,8 +489,10 @@ equal "a proved clear query delegates ordinary Stop bookkeeping" "hook" \
 reply_fake_out="$(printf '%s' "$reply_stop_payload" \
   | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
     FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@5185de53a929: the complete fake-adapter stdout is the failed-boundary verdict, so any visible producer is valid evidence
 contains "failed Stop bookkeeping fails closed" "$reply_fake_out" '"decision": "block"'
 excludes "failed Stop bookkeeping never emits an allow verdict" "$reply_fake_out" '{}'
+# source-guard: whole-surface@aa46cab9286d: the complete fake hook log records the only delegated boundary attempted by this invocation, so any visible producer is valid evidence
 equal "the failed boundary was attempted exactly once" "hook" "$(cat "$reply_fake_log")"
 
 codex_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
