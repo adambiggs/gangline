@@ -507,11 +507,20 @@ parking, so its caller still owns that body.
 The spawning command already completed with its own result; tick failure is
 isolated. Read `gang status <name>` or `gang roster` for the surfaced reason,
 then inspect the per-team `tick.log` under
-`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/`. The attached client also
-flashes the failure, shows `tick!` in status-right, and raises activity/bell in
-the `gangline-alerts` window. Repair the named condition and run `gang tick` for
-one synchronous retry. A clean pass records `ok` and removes the warning; do not
-delete the health file to manufacture green.
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/`. The first failed
+transition emits one short tmux message and the status line shows one unseen
+alert. Run `gang alerts` for the inspectable list, or Prefix+A when that key was
+free at installation to open it in a per-client popup. Opening marks the alert
+seen but does not clear it. Repair the named condition and run `gang tick` for
+one synchronous retry. A clean pass records `ok`, removes the warning, and
+resolves the active alert; do not delete the health file to manufacture green.
+
+If `gang alerts` says Prefix+A is unavailable, an existing tmux binding owns
+the key and Gangline deliberately left it unchanged. Invoke the command
+directly or bind it to another key in the operator's tmux configuration. If an
+upgrade left a `gangline-alerts` window marked by Gangline, the next cooperative
+pass removes that exact legacy window and installs the static widget. An
+unmarked operator window with the same name is unrelated and remains intact.
 
 For a tick-lock failure, the named age controls the response. Contention inside
 the 60-second worker budget is folded normally. Beyond it, Gangline records

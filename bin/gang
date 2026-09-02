@@ -452,6 +452,7 @@ talk to agents
 watch agents
   roster    list the team and its state
   status    inspect one agent's state
+  alerts    inspect active team alerts
   tick      run one cooperative retry pass
   explain   show why a state was classified
   wait      wait for an agent boundary
@@ -1034,8 +1035,9 @@ gang tick
   Run one synchronous cooperative retry pass
   across every hitched agent in the team.
 
-  Ordinary gang commands launch this same pass
-  detached after their own result is settled.
+  Other operational commands launch this pass
+  detached after their own result is settled;
+  alert inspection does not.
   Use the explicit command for deterministic
   diagnostics and tests. It takes no arguments.
 
@@ -1045,6 +1047,26 @@ gang tick
   folds concurrent candidates into one dirty
   rerun, and a hard deadline kills the one-shot
   worker rather than leaving a resident process.
+EOF
+      ;;
+    alerts) cat <<'EOF'
+gang alerts
+  Inspect the team's active alert conditions.
+
+  gang alerts [--porcelain]
+  gang alerts --open
+
+  The ordinary and porcelain reads do not
+  change alert state. --open is the alert-center
+  action used by Prefix+A: it marks current
+  alerts seen, prints the same list, and waits
+  for one key when it owns a terminal.
+
+  Seen is not resolved. Only recovery of the
+  condition clears an active alert. Porcelain
+  output is tab-separated:
+
+    kind  state  visibility  epoch  summary
 EOF
       ;;
     explain) cat <<'EOF'
@@ -3914,11 +3936,10 @@ tick_state_prepare() {
   lock_base "$TICK_DIR"
 }
 
-tick_health_read() { # print state, epoch, message; 1 absent or unreadable
-  local line state at note extra
-  tick_paths_set || return 1
-  [ -f "$TICK_HEALTH" ] && [ -r "$TICK_HEALTH" ] || return 1
-  IFS= read -r line < "$TICK_HEALTH" || return 1
+tick_health_file_read() { # $1 file: print state, epoch, message
+  local file="$1" line state at note extra
+  [ -f "$file" ] && [ -r "$file" ] || return 1
+  IFS= read -r line < "$file" || return 1
   IFS=$'\t' read -r state at note extra <<<"$line"
   case "$state" in ok|failed) ;; *) return 1 ;; esac
   case "$at" in ''|*[!0-9]*) return 1 ;; esac
@@ -3926,13 +3947,31 @@ tick_health_read() { # print state, epoch, message; 1 absent or unreadable
   printf '%s\t%s\t%s' "$state" "$at" "$note"
 }
 
-tick_health_store() { # $1 ok|failed, $2 message
-  local state="$1" note="$2" tmp
+tick_health_read() { # print state, epoch, message; 1 absent or unreadable
+  tick_paths_set || return 1
+  tick_health_file_read "$TICK_HEALTH"
+}
+
+alert_health_read() { # use the exact path installed for this tmux session
+  local file=""
+  file="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_health 2>/dev/null)" \
+    || file=""
+  if [ -n "$file" ]; then
+    tick_health_file_read "$file"
+  else
+    tick_health_read
+  fi
+}
+
+tick_health_store() { # $1 ok|failed, $2 message, optional $3 recorded epoch
+  local state="$1" note="$2" at="${3:-}" tmp
   tick_paths_set || return 1
   tick_state_prepare
   note="$(printf '%s' "$note" | config_sanitize)"
+  [ -n "$at" ] || at="$(date +%s)"
+  case "$at" in ''|*[!0-9]*) return 1 ;; esac
   tmp="$TICK_HEALTH.new.${BASHPID:-$$}"
-  printf '%s\t%s\t%s\n' "$state" "$(date +%s)" "$note" > "$tmp" \
+  printf '%s\t%s\t%s\n' "$state" "$at" "$note" > "$tmp" \
     || return 1
   mv -f -- "$tmp" "$TICK_HEALTH" || { rm -f -- "$tmp"; return 1; }
 }
@@ -3945,50 +3984,206 @@ tick_log_store() { # $1 ok|FAILED, $2 single-line detail; paths already prepared
 }
 
 tick_health_ok() {
+  local rc=0
   tick_paths_set || return 1
   tick_state_prepare
   tick_log_store ok "tick completed for $SESSION" || return 1
-  tick_health_store ok ""
+  tick_health_store ok "" || return 1
+  alert_state_refresh || rc=$?
+  return "$rc"
 }
 
-tick_alert_window() { # refresh the non-resident alerts window from TICK_LOG
-  local id="" marked name command channel
+alert_option_set() { # set one session option only when its value changes
+  local option="$1" value="$2" current=""
+  current="$(tmux show-options -qv -t "=$SESSION:" "$option" 2>/dev/null)" \
+    || current=""
+  [ "$current" = "$value" ] \
+    || tmux set-option -t "=$SESSION:" "$option" "$value" >/dev/null
+}
+
+alert_state_refresh() { # derive the status widget from current health and seen state
+  local record="" state="" at="" note="" seen="" active=0 unseen=0 widget=""
+  record="$(alert_health_read 2>/dev/null)" || record=""
+  if [ -n "$record" ]; then
+    IFS=$'\t' read -r state at note <<<"$record"
+  fi
+  if [ "$state" = failed ]; then
+    active=1
+    seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
+      || seen=""
+    if [ "$seen" = 1 ]; then
+      widget='#[fg=yellow]alerts 1#[default]'
+    else
+      unseen=1
+      widget='#[fg=red,bold]alerts 1!#[default]'
+    fi
+  else
+    tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
+  fi
+  alert_option_set @gl_alert_active "$active" || return 1
+  alert_option_set @gl_alert_unseen "$unseen" || return 1
+  alert_option_set @gl_alert_widget "$widget"
+}
+
+alert_legacy_windows_remove() { # retire only windows marked by the old alert UI
+  local id="" marked=""
   while read -r id marked; do
-    [ "$marked" = 1 ] && break
-    id=""
-  done <<<"$(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}' 2>/dev/null || :)"
-  command="$(shell_quote "$ROOT/statusline/gang-tick-alert.sh") $(shell_quote "$TICK_LOG")"
-  if [ -n "$id" ]; then
-    tmux respawn-pane -k -t "$id" "$command" 2>/dev/null || true
+    [ -n "$id" ] || continue
+    [ "$marked" = 1 ] || continue
+    tmux kill-window -t "$id" >/dev/null \
+      || { printf 'could not remove legacy alert window %s\n' "$id" >&2; return 1; }
+  done <<<"$(tmux list-windows -t "=$SESSION" \
+    -F '#{window_id} #{@gl_tick_alerts}' 2>/dev/null || :)"
+}
+
+alert_status_ensure() { # preserve status-right and replace only Gangline's segment
+  local right segment previous="" legacy_owned="" legacy=""
+  local legacy_re='#\([^)]*gang-tick-health\.sh[^)]*\)'
+  segment='#{E:@gl_alert_widget}'
+  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" \
+    || return 1
+  previous="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null)" \
+    || previous=""
+  legacy_owned="$(tmux show-options -qv -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null)" \
+    || legacy_owned=""
+  if [ "$previous" = "$segment" ] && [[ "$right" == *"$segment"* ]] \
+     && [ -z "$legacy_owned" ]; then
     return 0
   fi
-  channel="gang-tick-alert-$(mint_nonce)"
-  name=gangline-alerts
-  command="$(shell_quote "$(command -v tmux)") wait-for $(shell_quote "$channel"); exec $command"
-  id="$(tmux new-window -d -P -F '#{window_id}' -t "=$SESSION" -n "$name" "$command" 2>/dev/null)" \
-    || return 0
-  tmux set-option -w -t "$id" @gl_tick_alerts 1 2>/dev/null || true
-  tmux set-option -w -t "$id" remain-on-exit on 2>/dev/null || true
-  tmux set-option -w -t "$id" monitor-activity on 2>/dev/null || true
-  tmux set-option -w -t "$id" monitor-bell on 2>/dev/null || true
-  tmux wait-for -S "$channel" 2>/dev/null || true
+  if [ -n "$previous" ]; then
+    while [[ "$right" == *"$previous"* ]]; do
+      right="${right%%"$previous"*}${right#*"$previous"}"
+    done
+  fi
+  if [ -n "$legacy_owned" ]; then
+    while [[ "$right" == *"$legacy_owned"* ]]; do
+      right="${right%%"$legacy_owned"*}${right#*"$legacy_owned"}"
+    done
+  else
+    # Early cooperative-tick builds recorded no owning option. Remove only the
+    # command-shaped legacy segment; unrelated operator text remains byte-for-byte.
+    while [[ "$right" =~ $legacy_re ]]; do
+      legacy="${BASH_REMATCH[0]}"
+      right="${right%%"$legacy"*}${right#*"$legacy"}"
+    done
+  fi
+  right="${right% }"
+  right="${right:+$right }$segment"
+  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
+  tmux set-option -t "=$SESSION:" @gl_alert_status_segment "$segment" >/dev/null \
+    || return 1
+  tmux set-option -u -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null || true
 }
 
-tick_failure_surface() { # $1 sanitized failure summary; never affects a caller
-  local note="$1"
-  tmux display-message -t "=$SESSION:" "gang: last tick failed: $note" 2>/dev/null || true
-  tick_alert_window || true
+alert_binding_line() {
+  tmux list-keys -T prefix A 2>/dev/null
+}
+
+alert_binding_ensure() { # install Prefix+A only while its exact key is unclaimed
+  local actual="" owned="" installed=""
+  actual="$(alert_binding_line)" || actual=""
+  owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
+  if [ -n "$owned" ] && [ "$actual" = "$owned" ]; then
+    tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
+    return 0
+  fi
+  if [ -n "$actual" ]; then
+    tmux set-option -t "=$SESSION:" @gl_alert_binding_conflict \
+      'Prefix+A is already bound; Gangline left it unchanged' >/dev/null
+    return 0
+  fi
+  tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
+    "GANG_SESSION='#{session_name}' #{@gl_alert_command} alerts --open" \
+    >/dev/null || return 1
+  installed="$(alert_binding_line)" || return 1
+  [ -n "$installed" ] || return 1
+  tmux set-option -g @gl_alert_binding "$installed" >/dev/null || return 1
+  tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
+}
+
+alert_ui_ensure() { # migrate and install the non-stealing tmux alert center
+  local command
+  tick_paths_set || return 1
+  alert_legacy_windows_remove || return 1
+  alert_status_ensure || return 1
+  command="GANG_CONFIG_DIR=$(shell_quote "$CONFIG_DIR") $(shell_quote "$ROOT/bin/gang")"
+  alert_option_set @gl_alert_command "$command" || return 1
+  alert_option_set @gl_alert_health "$TICK_HEALTH" || return 1
+  alert_binding_ensure || return 1
+  alert_state_refresh
+}
+
+alert_status_remove() { # remove only the segment recorded as Gangline-owned
+  local right="" segment=""
+  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" \
+    || return 1
+  segment="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null)" \
+    || segment=""
+  if [ -n "$segment" ]; then
+    while [[ "$right" == *"$segment"* ]]; do
+      right="${right%%"$segment"*}${right#*"$segment"}"
+    done
+    right="${right% }"
+    tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
+  fi
+  tmux set-option -u -t "=$SESSION:" @gl_alert_status_segment 2>/dev/null || true
+}
+
+alert_binding_release() { # unbind only our exact key, and only for the last team
+  local name="" command="" actual="" owned=""
+  while IFS=$'\t' read -r name command; do
+    [ "$name" = "$SESSION" ] && continue
+    [ -z "$command" ] || return 0
+  done <<<"$(tmux list-sessions \
+    -F $'#{session_name}\t#{@gl_alert_command}' 2>/dev/null || :)"
+  actual="$(alert_binding_line)" || actual=""
+  owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
+  if [ -n "$owned" ] && [ "$actual" = "$owned" ]; then
+    tmux unbind-key -T prefix A >/dev/null || return 1
+  fi
+  tmux set-option -gu @gl_alert_binding 2>/dev/null || true
+}
+
+alert_ui_remove() { # inverse of alert_ui_ensure; safe to repeat
+  alert_status_remove || return 1
+  tmux set-option -u -t "=$SESSION:" @gl_alert_active 2>/dev/null || true
+  tmux set-option -u -t "=$SESSION:" @gl_alert_unseen 2>/dev/null || true
+  tmux set-option -u -t "=$SESSION:" @gl_alert_widget 2>/dev/null || true
+  tmux set-option -u -t "=$SESSION:" @gl_alert_seen 2>/dev/null || true
+  tmux set-option -u -t "=$SESSION:" @gl_alert_health 2>/dev/null || true
+  tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
+  alert_binding_release || return 1
+  tmux set-option -u -t "=$SESSION:" @gl_alert_command 2>/dev/null || true
+}
+
+tick_failure_surface() { # $1 sanitized summary, $2 transition 0|1; never fatal
+  local note="$1" transition="$2"
+  alert_ui_ensure 2>/dev/null || true
+  [ "$transition" -eq 1 ] || return 0
+  tmux display-message -t "=$SESSION:" "gang: new alert: tick failed: $note" \
+    2>/dev/null || true
 }
 
 tick_health_fail() { # $1 complete worker diagnostic
-  local note="$1"
+  local note="$1" previous="" previous_state="" previous_at=""
+  local transition=1
   [ -n "$note" ] || note="the tick worker failed without a diagnostic"
   note="${note##*$'\n'}"
+  previous="$(tick_health_read 2>/dev/null)" || previous=""
+  if [ -n "$previous" ]; then
+    IFS=$'\t' read -r previous_state previous_at _ <<<"$previous"
+    [ "$previous_state" != failed ] || transition=0
+  fi
   tick_paths_set || return 1
   tick_state_prepare
   tick_log_store FAILED "$(printf '%s' "$1" | config_sanitize)" || return 1
-  tick_health_store failed "$note" || return 1
-  tick_failure_surface "$(printf '%s' "$note" | config_sanitize)"
+  if [ "$transition" -eq 0 ]; then
+    tick_health_store failed "$note" "$previous_at" || return 1
+  else
+    tick_health_store failed "$note" || return 1
+    tmux set-option -t "=$SESSION:" @gl_alert_seen 0 2>/dev/null || true
+  fi
+  tick_failure_surface "$(printf '%s' "$note" | config_sanitize)" "$transition"
 }
 
 tick_health_warn() { # the next invocation carries the last failure on stderr
@@ -4012,36 +4207,6 @@ tick_state_forget() { # health is team-scoped and dies with that team
   tick_paths_set || return 0
   rm -f -- "$TICK_HEALTH" "$TICK_LOG" 2>/dev/null || true
   rmdir -- "$TICK_DIR" 2>/dev/null || true
-}
-
-tick_ui_ensure() { # install the silent-until-failed status-right segment
-  local right segment previous="" legacy=""
-  local legacy_re='#\([^)]*gang-tick-health\.sh[^)]*\)'
-  tick_paths_set || return 1
-  right="$(tmux show-options -qv -t "=$SESSION:" status-right 2>/dev/null)" || return 1
-  segment="#($(shell_quote "$ROOT/statusline/gang-tick-health.sh") $(shell_quote "$TICK_HEALTH"))"
-  previous="$(tmux show-options -qv -t "=$SESSION:" @gl_tick_health_segment 2>/dev/null)" \
-    || previous=""
-  if [ "$previous" = "$segment" ]; then
-    case "$right" in *"$segment"*) return 0 ;; esac
-  fi
-  if [ -n "$previous" ]; then
-    while [[ "$right" == *"$previous"* ]]; do
-      right="${right%%"$previous"*}${right#*"$previous"}"
-    done
-  else
-    # Early cooperative-tick builds recorded no owning option. Replace that
-    # one legacy command instead of accepting an upgrade/snapshot path that no
-    # longer exists, while preserving every unrelated operator segment.
-    while [[ "$right" =~ $legacy_re ]]; do
-      legacy="${BASH_REMATCH[0]}"
-      right="${right%%"$legacy"*}${right#*"$legacy"}"
-    done
-  fi
-  right="${right% }"
-  right="${right:+$right }$segment"
-  tmux set-option -t "=$SESSION:" status-right "$right" >/dev/null || return 1
-  tmux set-option -t "=$SESSION:" @gl_tick_health_segment "$segment" >/dev/null
 }
 
 tick_lock_paths_set() {
@@ -4494,7 +4659,7 @@ tick_full_pass_once() {
   local id agent collar special wins rc=0 pass_rc=0 err="" pending="" busy_rc=0
   local compact_note="" compact_rc=0
   local TICK_PASS=1
-  tick_ui_ensure || { printf 'tick could not install the status-right health segment\n' >&2; rc=1; }
+  alert_ui_ensure || { printf 'tick could not install the tmux alert center\n' >&2; rc=1; }
   wins="$(tmux list-windows -t "=$SESSION" \
     -F '#{window_id} #{@gl_agent} #{@gl_collar} #{@gl_tick_alerts}')" \
     || { printf "tick could not list windows in session '%s'\n" "$SESSION" >&2; return 1; }
@@ -4617,7 +4782,7 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
     "$ROOT/bin/gang" __tick-worker 2>&1)" || rc=$?
   case "$rc" in
     0) tick_health_ok \
-         || { tick_health_fail "the tick completed but its health file could not be written" || true; return 1; } ;;
+         || { tick_health_fail "the tick completed but its health or alert state could not be written" || true; return 1; } ;;
     75) return 0 ;;
     *) [ -z "$out" ] || printf '%s\n' "$out" >&2
        tick_health_fail "$out" || true
@@ -4625,9 +4790,63 @@ cmd_tick() { # public synchronous seam; its worker is always self-deadlined
   esac
 }
 
+cmd_alerts() { # read active conditions; --open changes only their seen state
+  local mode=read record="" state="" at="" note="" seen="" visibility=""
+  local conflict=""
+  case "$#:${1:-}" in
+    0:) ;;
+    1:--porcelain) mode=porcelain ;;
+    1:--open) mode=open ;;
+    *) die "alerts: expected no arguments, --porcelain, or --open" ;;
+  esac
+  if ! session_live; then
+    [ "$mode" = porcelain ] \
+      || printf "no active alerts (session '%s' is not running)\n" "$SESSION"
+    return 0
+  fi
+  record="$(alert_health_read 2>/dev/null)" || record=""
+  if [ -n "$record" ]; then
+    IFS=$'\t' read -r state at note <<<"$record"
+  fi
+  if [ "$state" = failed ]; then
+    seen="$(tmux show-options -qv -t "=$SESSION:" @gl_alert_seen 2>/dev/null)" \
+      || seen=""
+    if [ "$mode" = open ] && [ "$seen" != 1 ]; then
+      tmux set-option -t "=$SESSION:" @gl_alert_seen 1 >/dev/null \
+        || die "alerts: could not mark the active alert seen"
+      alert_state_refresh \
+        || die "alerts: marked the alert seen but could not refresh its tmux status"
+      seen=1
+    fi
+    if [ "$seen" = 1 ]; then visibility=seen; else visibility=unseen; fi
+    if [ "$mode" = porcelain ]; then
+      printf 'tick\tactive\t%s\t%s\t%s\n' "$visibility" "$at" "$note"
+    else
+      printf '1 active alert (%s)\n\n' "$visibility"
+      printf '[%s] cooperative tick failed at %s\n%s\n' \
+        "$visibility" "$at" "$note"
+    fi
+  elif [ "$mode" != porcelain ]; then
+    printf "no active alerts for '%s'\n" "$SESSION"
+  fi
+  if [ "$mode" != porcelain ]; then
+    conflict="$(tmux show-options -qv -t "=$SESSION:" \
+      @gl_alert_binding_conflict 2>/dev/null)" || conflict=""
+    if [ -n "$conflict" ]; then
+      printf '\nopen key unavailable: %s\n' "$conflict"
+    elif [ "$mode" != open ]; then
+      printf '\nopen in tmux: Prefix+A\n'
+    fi
+  fi
+  if [ "$mode" = open ] && [ -t 0 ] && [ -t 1 ]; then
+    printf '\nPress any key to close.\n'
+    IFS= read -r -n 1 _ || true
+  fi
+}
+
 tick_launch() { # isolate a post-command candidate from the command's own result
   [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
-  case "${cmd:-}" in tick|__tick-worker) return 0 ;; esac
+  case "${cmd:-}" in alerts|tick|__tick-worker) return 0 ;; esac
   tick_session_live || return 0
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
@@ -11234,6 +11453,8 @@ cmd_down() { # inverse of up: end the whole team's session
     idle_notice_archive_preflight "$id"
     spool_archive_preflight "$id"
   done <<<"$ids"
+  alert_ui_remove \
+    || die "down: could not remove Gangline's tmux alert-center configuration; the team remains live"
   echo "$(colour "$C_OK" "ending '$SESSION':") $(colour "$C_DIM" "$names")"
   while read -r id; do
     [ -n "$id" ] || continue
@@ -11467,7 +11688,7 @@ cmd_upgrade() {
 
 cmd="${1:-}"
 trap 'on_exit' EXIT
-[ -n "${GANG_TICK_INTERNAL:-}" ] || tick_health_warn
+[ -n "${GANG_TICK_INTERNAL:-}" ] || [ "$cmd" = alerts ] || tick_health_warn
 [ "$cmd" = hook ] || dirty_execution_warn
 # NO ARGUMENTS IS NOT A MISTAKE. An agent told to "run gang" is asking where it
 # is, and answering with the inventory on stderr at exit 1 tells it that asking
@@ -11522,6 +11743,7 @@ case "$cmd" in
   roster)   cmd_roster "$@" ;;
   attach)   cmd_attach "$@" ;;
   teams)    cmd_teams "$@" ;;
+  alerts)   cmd_alerts "$@" ;;
   tick)     cmd_tick "$@" ;;
   __tick-worker)
             [ "${GANG_TICK_INTERNAL:-}" = 1 ] \

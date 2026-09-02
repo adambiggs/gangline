@@ -26,7 +26,7 @@ Self is resolved from the calling tmux pane in the same way as a message sender.
 | `status`, `capture`, `composer`, `compact`, `context`, `mail`, `limits`, `wait-limit`, `interrupt`, `flush` | Target the calling agent. |
 | `drop` | Print help; destructive commands never target by omission. |
 | `hitch`, `adopt`, `rename`, `send`, `wait`, `explain`, `down` | Print help; the missing name is not a self target. |
-| `up`, `roster`, `attach`, `teams`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
+| `up`, `roster`, `attach`, `teams`, `alerts`, `tick`, `collars`, `models`, `roles`, `config`, `curfew`, `notify`, `upgrade` | Keep their ordinary bare meaning. |
 
 `gang --version` prints the release version from the adjacent `version.txt`
 and exits successfully. It needs no Gangline configuration, repository, or
@@ -322,9 +322,11 @@ that environment and look exactly like a team that has gone.
 
 ### `gang tick`
 
-Runs one cooperative full pass synchronously. Every other invocation that can
-address the live team launches the same pass detached after its main work and
-preserves its own exit status. `tick` exists as the deterministic operator and
+Runs one cooperative full pass synchronously. Other operational invocations
+that can address the live team launch the same pass detached after their main
+work and preserve their own exit status. `gang alerts` is the deliberate
+exception: inspecting or opening an alert changes at most its seen state and
+does not also attempt recovery. `tick` exists as the deterministic operator and
 test entry point; ordinary use does not need to call it explicitly.
 
 One pass visits every hitched window, retries every waiting spool through the
@@ -365,10 +367,53 @@ kills and reaps its still-owned worker group before the controller re-raises the
 signal. A detached failure cannot change the command that spawned it. It writes
 `health` and `tick.log` under
 `${XDG_STATE_HOME:-$HOME/.local/state}/gangline/tick/<team-key>/`; the next
-invocation, `status`, and `roster` report the last failure. An attached client
-also gets a silent-until-failed status-right segment, a display-message flash,
-and a `gangline-alerts` window with activity and bell monitoring. A later clean
-pass replaces failed health with `ok`; `down` removes that team's health files.
+invocation, `status`, and `roster` report the last failure. The first failed
+transition also updates the alert center and emits one short `display-message`;
+repeated failed passes emit neither another message nor another surface. A later
+clean pass replaces failed health with `ok` and resolves the active alert;
+`down` removes that team's health files.
+
+### `gang alerts [--porcelain|--open]`
+
+Lists the team's currently active alert conditions. A cooperative-tick failure
+is active until a clean pass recovers it. Reading the ordinary list or
+`--porcelain` changes nothing. `--open` marks the current list seen, prints it,
+and, when it owns a terminal, waits for one key before closing. Seen and
+resolved are independent: opening the center never changes failed health, and
+there is no command that clears a live condition.
+
+`--porcelain` prints one uncoloured TSV row per active condition with `kind`,
+`state`, `visibility`, `epoch`, and `summary` columns. The current kind is
+`tick`, its state is `active`, and visibility is `unseen` or `seen`. With no
+live team the human form says the session is not running and the porcelain form
+prints no rows, so the inspection surface remains coherent outside tmux.
+
+Each cooperative pass installs one static `#{E:@gl_alert_widget}` reference at
+the end of that session's existing `status-right`. Transition-driven tmux user
+options hold its rendered value: unseen active alerts are red and bold with an
+exclamation mark, seen active alerts are yellow, and no active alert renders
+nothing. Status repaint runs no command. Gangline records the exact segment it
+owns, replaces obsolete copies from an older install, and preserves all
+unrelated status content.
+
+When Prefix+A is free, Gangline binds it to a per-client
+`display-popup -E -w 80% -h 70%` that runs `gang alerts --open` for the client's
+current session. Tmux key tables are server-global, so the one binding resolves
+the session-local Gangline command at use time. If Prefix+A already has any
+other binding, Gangline leaves it unchanged and `gang alerts` reports the
+conflict; the command remains available for an operator-chosen binding. `down`
+removes the binding only when the last configured Gangline team is leaving and
+the key still byte-matches the binding Gangline recorded. A user rebind and
+other tmux configuration are never removed.
+
+An upgrade pass removes only windows marked `@gl_tick_alerts=1`, the ownership
+witness used by the former `gangline-alerts` normal-window UI, and migrates its
+owned status command. It creates no replacement window, selects nothing, and
+raises no activity or bell monitor. Retained failed health becomes an unseen
+active alert rather than a new transition. Alert-center tmux state dies with
+the team; `down` removes the per-team files and the exact shared binding as
+described above. Stall notes remain attributed messages to the declared notify
+target and are not silently reclassified as alert lifecycle state.
 
 ### `gang drop <name>`
 

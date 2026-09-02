@@ -109,6 +109,7 @@ Observe and control the team without replacing the harness interface:
 ```sh
 gang roster
 gang status worker
+gang alerts
 gang explain worker
 gang wait worker --until idle
 gang capture worker
@@ -122,7 +123,11 @@ gang down gangline
 `gang interrupt` sends the keystroke the harness's collar declares for stopping
 a turn. `gang flush` recovers a message a harness parked in its own input queue,
 reading the reloaded composer back against what Gangline recorded before
-submitting it.
+submitting it. Cooperative-tick failures appear as a compact active count in
+the existing tmux status line. Unseen alerts are visually distinct; Prefix+A
+opens the full list in an on-demand popup when that key was free, without
+creating or selecting another tmux window. Reading the list never resolves a
+condition—recovery does.
 
 ## Gangline and native subagents
 

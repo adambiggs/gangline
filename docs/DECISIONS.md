@@ -1868,3 +1868,19 @@ Closing one of the three would have made that one look like a special case.
 The rule is the record, not the caller: a read that failed is reported as a
 read that failed, wherever it is made, and the note it would have carried is
 invented in neither direction.
+
+## Alerts are tmux state, not a tmux destination
+
+An alert asks for awareness, not navigation. Creating a normal window for one
+gave tmux activity and bell policy permission to select it, made a persistent
+pseudo-agent part of the team layout, and required a process solely to paint
+text already held in health state. The alert center therefore writes active and
+unseen counts to session options, renders them through one static status format,
+and opens detail only through a client-requested `display-popup`.
+
+Seen and resolved remain separate facts. Opening detail changes only the former;
+the producer's recovery transition changes the latter. The key table is
+server-global, so Gangline takes Prefix+A only when it is free, records the
+exact binding it installed, and removes it only while that ownership witness
+still matches. Operator status content and bindings are never inferred to be
+Gangline's from their appearance.
