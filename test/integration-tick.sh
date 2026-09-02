@@ -483,10 +483,13 @@ equal "the serialized first-team teardown completes" 0 "$alert_ui_down_rc"
 alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null
 contains "the surviving team installs the popup after the teardown seam" \
   "$(alert_ui_tmux list-keys -T prefix A)" \
-  "GANG_SESSION=#{q:session_name} #{@gl_alert_command} alerts --open"
+  "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
 contains "the surviving team records the command that binding resolves" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
   "$ROOT/bin/gang"
+contains "the surviving team's command includes the complete alert invocation" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
+  "alerts --open"
 
 # A teardown that loses the same server-global claim must mutate nothing. Hold
 # a harmless tick inside the claim, attempt `down` from a different team lock
