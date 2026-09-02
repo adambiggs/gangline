@@ -147,6 +147,9 @@ reply_race_ack_nonce="$(reply_nonce_for_body \
 reply_prompt_event "$reply_a_pane" \
   "$(reply_response_envelope reply-b "$reply_race_ack_nonce" \
     "$reply_race_nonce" ACK_PROMPT_FIRST)"
+reply_stop_run "$reply_a_pane"
+equal "the prompt-first reply recipient may idle without reciprocal debt" \
+  "{}" "$reply_stop_output"
 equal "settlement cannot clear prompt-only provenance" \
   $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-settlement-request' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
@@ -155,6 +158,9 @@ wait "$reply_race_pid"
 equal "the missing delivery proof completes the already correlated settlement" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the prompt-first sender may idle after both proofs complete" \
+  "{}" "$reply_stop_output"
 
 # Direct verified request. Delivery verification and the native prompt witness
 # are independent facts and may arrive in either order.
@@ -176,6 +182,9 @@ reply_delivery_ack_nonce="$(reply_nonce_for_body \
 reply_prompt_event "$reply_a_pane" \
   "$(reply_response_envelope reply-b "$reply_delivery_ack_nonce" \
     "$reply_delivery_only" ACK_DELIVERY_ONLY)"
+reply_stop_run "$reply_a_pane"
+equal "the delivery-first reply recipient may idle without reciprocal debt" \
+  "{}" "$reply_stop_output"
 equal "settlement cannot clear delivery-only provenance" \
   $'unknown\t'"$reply_delivery_only"$'\treply-a\tprovenance-settlement-request' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
@@ -183,6 +192,9 @@ reply_prompt_event "$reply_b_pane" "$reply_delivery_only_wire"
 equal "the missing prompt proof completes the already correlated settlement" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the delivery-first sender may idle after both proofs complete" \
+  "{}" "$reply_stop_output"
 
 printf '%s' REQ_A_ONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
@@ -329,14 +341,16 @@ printf '%s' REQ_SAME_ONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_same_one="$(reply_nonce_for_body \
   "$reply_b_id" reply-a request REQ_SAME_ONE)"
-reply_prompt_event "$reply_b_pane" \
-  "$(reply_request_envelope reply-a "$reply_same_one" REQ_SAME_ONE)"
+reply_same_one_wire="$(reply_request_envelope \
+  reply-a "$reply_same_one" REQ_SAME_ONE)"
 printf '%s' REQ_SAME_TWO \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_same_two="$(reply_nonce_for_body \
   "$reply_b_id" reply-a request REQ_SAME_TWO)"
+reply_same_two_wire="$(reply_request_envelope \
+  reply-a "$reply_same_two" REQ_SAME_TWO)"
 reply_prompt_event "$reply_b_pane" \
-  "$(reply_request_envelope reply-a "$reply_same_two" REQ_SAME_TWO)"
+  "$reply_same_one_wire"$'\n'"$reply_same_two_wire"
 reply_same_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 contains "two messages from one peer retain the first obligation" "$reply_same_query" \
   $'owed\t'"$reply_same_one"$'\treply-a\tlive'
@@ -357,20 +371,29 @@ reply_prompt_event "$reply_a_pane" \
 equal "the multi-correlation reply remains acknowledgement-loop free" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_a_pane"
+equal "the multi-correlation recipient may idle without reciprocal debt" \
+  "{}" "$reply_stop_output"
+reply_stop_run "$reply_b_pane"
+equal "the multiple-message sender may idle after its acknowledgement" \
+  "{}" "$reply_stop_output"
 
 # Two peers arm two independent records. A response to one cannot overwrite or
 # settle the other, and each correlated response remains reply-only at target.
 printf '%s' REQ_MULTI_A \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
-reply_multi_a="$(reply_nonce_from "$reply_b_id" reply-a)"
-reply_prompt_event "$reply_b_pane" \
-  "$(reply_request_envelope reply-a "$reply_multi_a" REQ_MULTI_A)"
-printf '%s' "$reply_stop_payload" | TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null
+reply_multi_a="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a request REQ_MULTI_A)"
+reply_multi_a_wire="$(reply_request_envelope \
+  reply-a "$reply_multi_a" REQ_MULTI_A)"
 printf '%s' REQ_MULTI_C \
   | TMUX_PANE="$reply_c_pane" "$GANG" send --to reply-b --stdin >/dev/null
-reply_multi_c="$(reply_nonce_from "$reply_b_id" reply-c)"
+reply_multi_c="$(reply_nonce_for_body \
+  "$reply_b_id" reply-c request REQ_MULTI_C)"
+reply_multi_c_wire="$(reply_request_envelope \
+  reply-c "$reply_multi_c" REQ_MULTI_C)"
 reply_prompt_event "$reply_b_pane" \
-  "$(reply_request_envelope reply-c "$reply_multi_c" REQ_MULTI_C)"
+  "$reply_multi_a_wire"$'\n'"$reply_multi_c_wire"
 reply_multi_query="$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 contains "multiple peer senders retain A's obligation" "$reply_multi_query" \
   $'owed\t'"$reply_multi_a"$'\treply-a\tlive'
