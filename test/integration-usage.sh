@@ -139,9 +139,11 @@ usage_arity_out="$(XDG_DATA_HOME="$usage_data" "$GANG" usage --all extra 2>&1)" 
 if [ "$usage_absent_proven" -eq 1 ]; then
   usage_absent_out="$(PATH="$usage_absent" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
     || fail "gang usage succeeds without ccusage" "status $?: [$usage_absent_out]"
+  # task is the optional final column. Alpha has one; beta and gamma do not,
+  # so status is respectively the penultimate or final nonblank table field.
   equal "without ccusage every live row is marked absent" \
-    "absent absent absent" \
-    "$(printf '%s\n' "$usage_absent_out" | awk '$1 ~ /^usage-(alpha|beta|gamma)$/ { print $NF }' | tr '\n' ' ' | sed 's/ $//')"
+  "absent absent absent" \
+    "$(printf '%s\n' "$usage_absent_out" | awk '$1 ~ /^usage-(alpha|beta|gamma)$/ { print $1 == "usage-alpha" ? $(NF - 1) : $NF }' | tr '\n' ' ' | sed 's/ $//')"
   contains "without ccusage the uncovered list says why" \
     "$usage_absent_out" "ccusage absent: no ccusage executable on PATH"
 else
@@ -155,13 +157,13 @@ usage_failing_out="$(PATH="$usage_failing" XDG_DATA_HOME="$usage_data" "$GANG" u
 contains "a failing ccusage is named with its status and first error line" \
   "$usage_failing_out" "ccusage failed: ccusage exited 3: fixture: no transcripts here"
 equal "a failing ccusage leaves the matched rows unfilled" \
-  "failed" "$(printf '%s\n' "$usage_failing_out" | awk '$1 == "usage-alpha" { print $NF }')"
+  "failed" "$(printf '%s\n' "$usage_failing_out" | awk '$1 == "usage-alpha" { print $(NF - 1) }')"
 usage_garbage_out="$(PATH="$usage_garbage" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds when ccusage prints a count that is not a number" "status $?: [$usage_garbage_out]"
 contains "a token count that is not a whole number is refused by name" \
   "$usage_garbage_out" "ccusage malformed: session row 1 inputTokens is not a whole number: 'lots'"
 equal "a malformed report fills no row, matched id or not" \
-  "malformed" "$(printf '%s\n' "$usage_garbage_out" | awk '$1 == "usage-alpha" { print $NF }')"
+  "malformed" "$(printf '%s\n' "$usage_garbage_out" | awk '$1 == "usage-alpha" { print $(NF - 1) }')"
 usage_unjson_out="$(PATH="$usage_unjson" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds when ccusage prints prose" "status $?: [$usage_unjson_out]"
 contains "prose from ccusage is refused as not JSON" \
@@ -251,7 +253,7 @@ printf '%s\n' '{"v":1,"agent":"elsewhere","collar":"codex","team":"another-team"
   "{\"v\":1,\"agent\":\"reborn\",\"collar\":\"bash\",\"team\":\"$GANG_SESSION\",\"team_created\":1,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"usage_status\":\"unmatched\"}" \
   'this line is not a record' \
   "{\"v\":1,\"agent\":\"forged\",\"team\":\"$GANG_SESSION\",\"team_created\":$usage_team_created,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"duration_s\":\"not-a-duration\",\"usage_status\":\"\\u001b[2J\"}" \
-  '{"v":1,"agent":"c1-forged","team":"another-team","ended_at":1,"ended_by":"down","usage_status":"unmatched","usage_note":"\u009b2J"}' \
+  '{"v":1,"agent":"c1-control","team":"another-team","ended_at":1,"ended_by":"down","usage_status":"unmatched","usage_note":"\u009b2J"}' \
   >> "$usage_events"
 usage_scoped_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds beside foreign record lines" "status $?: [$usage_scoped_out]"
