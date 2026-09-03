@@ -14,7 +14,8 @@ tick_original_collars="${GANG_COLLARS:-}"
 # Gangline team and one inert survivor that keeps the server readable after
 # `down`, allowing the uninstall result itself to be observed.
 alert_ui_root="$RUN_ROOT/alert-ui-server"
-alert_ui_session="gang-alert-ui-$$"
+alert_ui_injected="/var/tmp/gangline-alert-injected-$$"
+alert_ui_session="quote'\$(touch $alert_ui_injected)'"
 alert_ui_survivor="gang-alert-ui-survivor-$$"
 alert_ui_observer="gang-alert-ui-observer-$$"
 mkdir -p "$alert_ui_root"
@@ -69,60 +70,44 @@ equal "the server-global binding claim creates no filesystem artifact" absent \
       && printf absent || printf present)"
 alert_ui_gang tick >/dev/null
 
-# Once the operator frees the proposal, the next ordinary pass owns it. A
-# second pass is the upgrade/idempotence check: neither status-right nor the
-# binding may accumulate another copy.
+# Once the operator frees the proposal, the next ordinary pass owns it.
 alert_ui_tmux unbind-key -T prefix A
 alert_ui_gang tick >/dev/null
+equal "the installed popup records its current binding version" 2 \
+  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
+
+# A released server already records the broken 2.8.0 key as Gangline-owned.
+# Recreate that exact upgrade state: a cooperative pass must replace its own
+# obsolete key while the existing foreign-binding guard above remains intact.
+alert_ui_tmux bind-key -T prefix A display-popup -E -w 80% -h 70% \
+  "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
+alert_ui_legacy_binding="$(alert_ui_tmux list-keys -T prefix A)"
+alert_ui_tmux set-option -g @gl_alert_binding "$alert_ui_legacy_binding"
+alert_ui_tmux set-option -gu @gl_alert_binding_version
+alert_ui_gang tick >/dev/null
 alert_ui_binding="$(alert_ui_tmux list-keys -T prefix A)"
+excludes "an upgrade replaces the exact still-owned 2.8.0 popup" \
+  "$alert_ui_binding" '#{q:session_name}'
+equal "the upgraded popup records its current binding version" 2 \
+  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
 # tmux 3.4 quotes percent-bearing arguments when list-keys renders them, while
 # 3.2a prints the same popup dimensions bare. This display-only normalization
 # leaves the raw command below to prove the session-scoped invocation.
 alert_ui_binding_shape="${alert_ui_binding//\"/}"
 contains "the free Prefix+A key opens a tmux-native popup" \
   "$alert_ui_binding_shape" "display-popup -E -h 70% -w 80%"
-contains "the popup invokes the alert center for its current client session" \
-  "$alert_ui_binding" "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
+contains "the popup resolves its client session's recorded alert command" \
+  "$alert_ui_binding" '@gl_alert_command'
+contains "the popup executes only the resolved session command" \
+  "$alert_ui_binding" 'sh -c'
+excludes "the popup command is independent of tmux format expansion" \
+  "$alert_ui_binding" '#{'
 alert_ui_installed_command="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_session:" @gl_alert_command)"
 contains "the session-local popup command contains the complete invocation" \
   "$alert_ui_installed_command" "alerts --open"
-
-# This key table is shared with ordinary tmux sessions. Their empty session
-# option must expand to an assignment-only no-op, never a PATH lookup for an
-# unrelated executable named alerts.
-alert_ui_unrelated_bin="$RUN_ROOT/alert-ui-unrelated-bin"
-alert_ui_unrelated_ledger="$RUN_ROOT/alert-ui-unrelated-alerts-ran"
-mkdir -p "$alert_ui_unrelated_bin"
-cat > "$alert_ui_unrelated_bin/alerts" <<SH
-#!/bin/sh
-printf called > '$alert_ui_unrelated_ledger'
-SH
-chmod +x "$alert_ui_unrelated_bin/alerts"
-alert_ui_observer_popup="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_observer:" \
-  'GANG_SESSION=#{q:session_name} #{@gl_alert_command}')"
-(cd "$RUN_ROOT" && PATH="$alert_ui_unrelated_bin:$PATH" \
-  sh -c "$alert_ui_observer_popup")
-equal "Prefix+A in an unrelated session executes no PATH fallback" absent \
-  "$([ ! -e "$alert_ui_unrelated_ledger" ] && printf absent || printf present)"
-
-# Tmux session names may contain shell syntax. The binding's q modifier is
-# expanded by tmux before the popup shell reads it; execute that exact expansion
-# and require both the original value and absence of the injected side effect.
-alert_ui_injected="$RUN_ROOT/alert-ui-session-name-injected"
-alert_ui_hostile="quote'\$(touch alert-ui-session-name-injected)'"
-alert_ui_tmux new-session -d -s "$alert_ui_hostile" -n hostile \
-  "PS1='❯ ' exec bash --norc"
-alert_ui_hostile_q="$(alert_ui_tmux display-message -p \
-  -t "=$alert_ui_hostile:" '#{q:session_name}')"
-alert_ui_hostile_read="$(cd "$RUN_ROOT" && sh -c \
-  "GANG_SESSION=$alert_ui_hostile_q; printf '%s' \"\$GANG_SESSION\"")"
-equal "the popup session expansion preserves a shell-hostile tmux name" \
-  "$alert_ui_hostile" "$alert_ui_hostile_read"
-equal "the popup session expansion executes none of that name" absent \
-  "$([ ! -e "$alert_ui_injected" ] && printf absent || printf present)"
-alert_ui_tmux kill-session -t "=$alert_ui_hostile"
+contains "the session-local command pins its shell-quoted session" \
+  "$alert_ui_installed_command" "GANG_SESSION="
 alert_ui_right_once="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_session:" status-right)"
 alert_ui_gang tick >/dev/null
@@ -275,6 +260,186 @@ alert_ui_seen_row="$(alert_ui_gang alerts --porcelain)"
 IFS=$'\t' read -r _ _ alert_ui_seen_visibility _ _ <<<"$alert_ui_seen_row"
 equal "the structured list reports an opened alert as seen" \
   seen "$alert_ui_seen_visibility"
+
+# The installed key has to cross tmux's client command queue, its popup pty,
+# and a second shell before the alert command can run. Executing the recorded
+# command directly above does not cover that path: tmux 3.2a passes a popup's
+# shell-command literally, so a format token in that argument becomes a shell
+# comment and produces an empty popup that exits zero.
+#
+# script supplies a real attached client. Its input is a pipe kept open by this
+# shell. Every synchronization point is a tmux event: client-attached proves the
+# pty reached the server, the instrumented session option reports that the
+# installed binding resolved it, and its final event fires only after the alert
+# command returns. No delay, pane scrape, or polling stands in for completion.
+alert_ui_tmux set-option -u -t "=$alert_ui_session:" @gl_alert_seen
+alert_ui_attached_reset_rc=0
+PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
+  || alert_ui_attached_reset_rc=$?
+equal "the attached-client proof starts from an unresolved unseen alert" \
+  '1 1 1' \
+  "$alert_ui_attached_reset_rc $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+
+alert_ui_client_input="$RUN_ROOT/alert-ui-client-input"
+alert_ui_client_output="$RUN_ROOT/alert-ui-client-output"
+alert_ui_client_status="$RUN_ROOT/alert-ui-client-status"
+alert_ui_client_attached="alert-ui-client-attached-$$"
+alert_ui_popup_ready="alert-ui-popup-ready-$$"
+alert_ui_popup_release="alert-ui-popup-release-$$"
+alert_ui_client_done="alert-ui-client-done-$$"
+alert_ui_client_exited="alert-ui-client-exited-$$"
+alert_ui_wrong_session_ledger="$RUN_ROOT/alert-ui-wrong-session-ran"
+alert_ui_client_path=":$PATH:"
+alert_ui_client_path="${alert_ui_client_path//":$RUN_ROOT/bin:"/:}"
+alert_ui_client_path="${alert_ui_client_path#:}"
+alert_ui_client_path="${alert_ui_client_path%:}"
+printf -v alert_ui_client_target '%q' "=$alert_ui_session"
+equal "the attached client excludes the suite's fake instant commands" absent \
+  "$([[ ":$alert_ui_client_path:" == *":$RUN_ROOT/bin:"* ]] \
+      && printf present || printf absent)"
+mkfifo "$alert_ui_client_input"
+exec 8<>"$alert_ui_client_input"
+alert_ui_tmux set-hook -g client-attached \
+  "wait-for -S $alert_ui_client_attached"
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_attached" &
+alert_ui_client_attached_waiter=$!
+(
+  alert_ui_client_rc=0
+  TERM=xterm PATH="$alert_ui_client_path" script -qefc \
+    "stty rows 24 cols 80; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_client_target" \
+    /dev/null < "$alert_ui_client_input" > "$alert_ui_client_output" 2>&1 \
+    || alert_ui_client_rc=$?
+  printf '%s\n' "$alert_ui_client_rc" > "$alert_ui_client_status"
+  TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_client_exited"
+  exit "$alert_ui_client_rc"
+) &
+alert_ui_client_pid=$!
+wait "$alert_ui_client_attached_waiter"
+alert_ui_tmux set-hook -gu client-attached
+alert_ui_client_rows="$(alert_ui_tmux list-clients \
+  -F '#{session_name} #{@gl_agent} #{client_flags} #{client_width}x#{client_height}')"
+contains "the popup proof uses a real attached client with its own terminal" \
+  "$alert_ui_client_rows" "$alert_ui_session caller attached"
+
+# Bracket the session-local command that the product binding resolves with tmux
+# events. The server-global key remains byte-for-byte installed code: ready
+# proves its popup shell is alive before input is sent, and done can fire only
+# after alerts --open has rendered and returned. The tmux server inherited the
+# suite's bounded wait-for shim, so missing events fail loudly at its ceiling.
+alert_ui_tmux set-option -t "=$alert_ui_observer:" @gl_alert_command \
+  "printf wrong-session > '$alert_ui_wrong_session_ledger'; tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; tmux wait-for -S $alert_ui_client_done"
+alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
+  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
+alert_ui_popup_ready_waiter=$!
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
+alert_ui_client_done_waiter=$!
+printf '\002A' >&8
+alert_ui_popup_ready_rc=0
+wait "$alert_ui_popup_ready_waiter" || alert_ui_popup_ready_rc=$?
+equal "Prefix+A starts the installed popup shell on the attached client" \
+  0 "$alert_ui_popup_ready_rc"
+alert_ui_tmux wait-for -S "$alert_ui_popup_release"
+printf 'x' >&8
+alert_ui_client_done_rc=0
+wait "$alert_ui_client_done_waiter" || alert_ui_client_done_rc=$?
+alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
+  "$alert_ui_installed_command"
+alert_ui_tmux set-option -u -t "=$alert_ui_observer:" @gl_alert_command
+equal "the attached popup runs its session-local alert command to completion" \
+  0 "$alert_ui_client_done_rc"
+equal "the attached popup does not resolve another session's command" absent \
+  "$([ ! -e "$alert_ui_wrong_session_ledger" ] \
+      && printf absent || printf present)"
+equal "Prefix+A on the attached client marks the active alert seen" '1 0' \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_active) $(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_unseen)"
+
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_exited" &
+alert_ui_client_exited_waiter=$!
+printf '\002d' >&8
+wait "$alert_ui_client_exited_waiter"
+alert_ui_client_rc="$(<"$alert_ui_client_status")"
+wait "$alert_ui_client_pid" || true
+exec 8>&-
+equal "the attached popup client detaches cleanly" 0 "$alert_ui_client_rc"
+contains "the attached client renders the active alert inside the popup" \
+  "$(<"$alert_ui_client_output")" "1 active alert (seen)"
+contains "the attached popup stays open for its documented close key" \
+  "$(<"$alert_ui_client_output")" "Press any key to close."
+equal "the real popup executes none of the hostile session name" absent \
+  "$([ ! -e "$alert_ui_injected" ] && printf absent || printf present)"
+rm -f -- "$alert_ui_injected"
+
+# An unrelated session has no recorded command. Drive the installed popup from
+# a second real client and append only an inside-the-popup completion event to
+# its already asserted shell command. Even with an executable named alerts
+# on the server's PATH, the empty option must remain a no-op.
+alert_ui_unrelated_ledger="$RUN_ROOT/alert-ui-unrelated-alerts-ran"
+cat > "$RUN_ROOT/bin/alerts" <<SH
+#!/bin/sh
+printf called > '$alert_ui_unrelated_ledger'
+SH
+chmod +x "$RUN_ROOT/bin/alerts"
+alert_ui_unrelated_input="$RUN_ROOT/alert-ui-unrelated-client-input"
+alert_ui_unrelated_output="$RUN_ROOT/alert-ui-unrelated-client-output"
+alert_ui_unrelated_status="$RUN_ROOT/alert-ui-unrelated-client-status"
+alert_ui_unrelated_attached="alert-ui-unrelated-attached-$$"
+alert_ui_unrelated_done="alert-ui-unrelated-done-$$"
+alert_ui_unrelated_exited="alert-ui-unrelated-exited-$$"
+alert_ui_unrelated_binding_file="$RUN_ROOT/alert-ui-unrelated-binding.tmux"
+printf -v alert_ui_unrelated_target '%q' "=$alert_ui_observer"
+mkfifo "$alert_ui_unrelated_input"
+exec 9<>"$alert_ui_unrelated_input"
+alert_ui_tmux set-hook -g client-attached \
+  "wait-for -S $alert_ui_unrelated_attached"
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_attached" &
+alert_ui_unrelated_attached_waiter=$!
+(
+  alert_ui_unrelated_rc=0
+  TERM=xterm PATH="$alert_ui_client_path" script -qefc \
+    "stty rows 24 cols 80; TMUX_TMPDIR='$alert_ui_root' tmux attach-session -t $alert_ui_unrelated_target" \
+    /dev/null < "$alert_ui_unrelated_input" \
+    > "$alert_ui_unrelated_output" 2>&1 \
+    || alert_ui_unrelated_rc=$?
+  printf '%s\n' "$alert_ui_unrelated_rc" > "$alert_ui_unrelated_status"
+  TMUX_TMPDIR="$alert_ui_root" tmux wait-for -S "$alert_ui_unrelated_exited"
+  exit "$alert_ui_unrelated_rc"
+) &
+alert_ui_unrelated_pid=$!
+wait "$alert_ui_unrelated_attached_waiter"
+alert_ui_tmux set-hook -gu client-attached
+# list-keys emits tmux source syntax. Append the completion event inside its
+# final popup shell argument, then let tmux parse that syntax itself so the
+# product command's $(...) remains literal until the popup runs it.
+equal "the unrelated popup binding has one quoted shell-command" '"' \
+  "${alert_ui_binding: -1}"
+alert_ui_unrelated_binding="${alert_ui_binding%\"}; tmux wait-for -S $alert_ui_unrelated_done\""
+printf '%s\n' "$alert_ui_unrelated_binding" \
+  > "$alert_ui_unrelated_binding_file"
+alert_ui_tmux source-file "$alert_ui_unrelated_binding_file"
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_done" &
+alert_ui_unrelated_done_waiter=$!
+printf '\002A' >&9
+wait "$alert_ui_unrelated_done_waiter"
+printf '%s\n' "$alert_ui_binding" > "$alert_ui_unrelated_binding_file"
+alert_ui_tmux source-file "$alert_ui_unrelated_binding_file"
+alert_ui_restored_binding="$(alert_ui_tmux list-keys -T prefix A)"
+equal "temporary popup instrumentation restores the exact owned binding" \
+  "$alert_ui_binding" "$alert_ui_restored_binding"
+TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_exited" &
+alert_ui_unrelated_exited_waiter=$!
+printf '\002d' >&9
+wait "$alert_ui_unrelated_exited_waiter"
+alert_ui_unrelated_rc="$(<"$alert_ui_unrelated_status")"
+wait "$alert_ui_unrelated_pid" || true
+exec 9>&-
+rm -f -- "$RUN_ROOT/bin/alerts"
+equal "the unrelated popup client detaches cleanly" 0 \
+  "$alert_ui_unrelated_rc"
+equal "the installed popup executes no PATH fallback in an unrelated session" \
+  absent \
+  "$([ ! -e "$alert_ui_unrelated_ledger" ] \
+      && printf absent || printf present)"
 
 alert_ui_repeat_rc=0
 PATH="$alert_ui_tmux_bin:$PATH" alert_ui_gang tick >/dev/null 2>&1 \
@@ -467,9 +632,10 @@ alert_ui_down_rc=0
 wait "$alert_ui_down_owner" || alert_ui_down_rc=$?
 equal "the serialized first-team teardown completes" 0 "$alert_ui_down_rc"
 alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null
+alert_ui_survivor_binding="$(alert_ui_tmux list-keys -T prefix A)"
 contains "the surviving team installs the popup after the teardown seam" \
-  "$(alert_ui_tmux list-keys -T prefix A)" \
-  "GANG_SESSION=#{q:session_name} #{@gl_alert_command}"
+  "${alert_ui_survivor_binding//\"/}" \
+  "display-popup -E -h 70% -w 80%"
 contains "the surviving team records the command that binding resolves" \
   "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
   "$ROOT/bin/gang"
@@ -528,6 +694,8 @@ equal "alert-center uninstall leaves the unrelated tmux session live" present \
   "$(if alert_ui_tmux has-session -t "=$alert_ui_observer" 2>/dev/null; then printf present; else printf absent; fi)"
 equal "the last Gangline team removes only its owned Prefix+A binding" absent \
   "$(if alert_ui_tmux list-keys -T prefix A >/dev/null 2>&1; then printf present; else printf absent; fi)"
+equal "the last Gangline team removes its binding version marker" "" \
+  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
 equal "alert-center teardown leaves no binding-guard filesystem state" absent \
   "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
       && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
