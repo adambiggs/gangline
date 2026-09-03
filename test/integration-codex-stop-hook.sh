@@ -603,6 +603,44 @@ excludes "roster does not carry a blocking alarm for retired history" \
 reply_stop_run "$reply_b_pane"
 equal "a vanished sender cannot wedge its debtor at Stop" "{}" "$reply_stop_output"
 
+# THE QUERY CLOSES ITS OWN PIPE. Every gang command launches a detached
+# cooperative tick on its way out, and the adapter reads the query through a
+# pipe it waits on until EOF. A detached descendant that inherits the write end
+# holds a complete verdict hostage until the tick finishes: the query has
+# answered and the adapter still times out (#195). Hold the tick at its first
+# pass and list the pipe's holders once the query itself has exited: only the
+# reader may remain. The tick is then walked to its commit so its one pass has
+# finished before anything later reads the team.
+reply_tick_ready="$RUN_ROOT/reply-tick-ready"
+reply_tick_release="$RUN_ROOT/reply-tick-release"
+reply_tick_commit_ready="$RUN_ROOT/reply-tick-commit-ready"
+reply_tick_commit_release="$RUN_ROOT/reply-tick-commit-release"
+reply_tick_pipe="$RUN_ROOT/reply-tick-pipe"
+mkfifo "$reply_tick_ready" "$reply_tick_release" "$reply_tick_pipe" \
+  "$reply_tick_commit_ready" "$reply_tick_commit_release"
+cat "$reply_tick_pipe" > "$RUN_ROOT/reply-tick-query.out" &
+reply_tick_reader=$!
+GANG_TEST_TICK_MODE= \
+GANG_TEST_TICK_READY_FIFO="$reply_tick_ready" \
+GANG_TEST_TICK_RELEASE_FIFO="$reply_tick_release" \
+GANG_TEST_TICK_COMMIT_READY_FIFO="$reply_tick_commit_ready" \
+GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$reply_tick_commit_release" \
+TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations > "$reply_tick_pipe" || true
+IFS= read -r -N 1 _ < "$reply_tick_ready"
+# find reports the fd tables it may not read on the way past; the holders it
+# could read are the whole answer, and the reader itself is one of them.
+reply_tick_holders="$({ find /proc/[0-9]*/fd -maxdepth 1 -lname "$reply_tick_pipe" 2>/dev/null || true; } \
+  | awk -F/ -v reader="$reply_tick_reader" '$3 != reader')"
+equal "a detached tick inherits no descriptor of the query it followed" \
+  "" "$reply_tick_holders"
+printf '\n' > "$reply_tick_release"
+IFS= read -r -N 1 _ < "$reply_tick_commit_ready"
+printf '\n' > "$reply_tick_commit_release"
+wait "$reply_tick_reader"
+equal "the query's verdict reached its reader without waiting on the tick" \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)" \
+  "$(<"$RUN_ROOT/reply-tick-query.out")"
+
 # Adapter failures are ambiguity, never permission. Its one clear arm delegates
 # generic Stop bookkeeping; malformed or failed query paths do not.
 reply_fake_root="$RUN_ROOT/reply-fake"

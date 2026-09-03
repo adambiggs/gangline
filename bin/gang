@@ -5213,7 +5213,7 @@ tick_launch() { # isolate a post-command candidate from the command's own result
           fi ;;
   esac
   ( trap - EXIT HUP INT TERM
-    GANG_TICK_INTERNAL=1 "$ROOT/bin/gang" tick </dev/null >/dev/null 2>&1 ) &
+    GANG_TICK_INTERNAL=1 "$ROOT/bin/gang" tick ) </dev/null >/dev/null 2>&1 &
   disown
   return 0
 }
