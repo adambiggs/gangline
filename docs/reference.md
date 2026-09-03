@@ -508,12 +508,16 @@ An envelope from a sender Gangline observed carries message-scoped reply
 provenance. The target records immutable metadata before Enter; exact native
 prompt submission, positive delivery, and later reply settlement each write a
 separate monotonic proof option. Independent writers therefore cannot overwrite
-one another. A reply obligation arms only when prompt and delivery proof both
-match that envelope, in either order. A partial request record whose sender is
-live, and any orphaned or malformed record, remains unknown and makes the native
-Stop helper fail closed; it is never repaired into absence. A record the sender
-stamped as a reply is audit rather than debt at every stage of its arrival
-evidence, so it never blocks.
+one another. A reply obligation arms when the exact native prompt proof matches
+that envelope: the prompt is the harness's own witness that the request entered
+the debtor's context, and it needs no second witness. The delivery proof is
+audit. A request record carrying only that proof, or no proof yet, is a message
+still in flight (the metadata lands before the paste, and a harness that queues
+typed input mid-turn submits it at a later boundary); it neither blocks Stop
+nor is repaired into absence. An orphaned or malformed record remains unknown
+and makes the native Stop helper fail closed. A record the sender stamped as a
+reply is audit rather than debt at every stage of its arrival evidence, so it
+never blocks.
 
 The next verified outbound message to a peer with outstanding requests is
 correlated to all of that peer's outstanding message nonces. Its envelope
@@ -530,10 +534,10 @@ Gangline does not parse the reply body: any genuine concise acknowledgement is
 enough, including one that says background work is still running and a fuller
 report will follow. Requests from different peers retain independent records.
 
-Every request record resolves its original stable sender token, whether or not
-its arrival evidence is complete: a live sender keeps a partial record unknown
-and names the peer whose reply would settle it, and an unreadable identity stays
-unknown. When the complete team-window inventory proves that token no longer
+Every prompt-witnessed request record resolves its original stable sender
+token, whether or not its delivery proof has landed: a live sender keeps it
+owed and names the peer whose reply settles it, and an unreadable identity
+stays unknown. When the complete team-window inventory proves that token no longer
 exists, the record retires without inventing reply proof. The first conclusive query writes a monotonic retirement proof;
 later queries emit a `retired` audit row naming `sender-gone` without resolving
 the dead token again. The private Stop query, `status`, and `roster` share

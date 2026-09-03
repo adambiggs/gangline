@@ -65,13 +65,21 @@ does not claim authentication, but it never reports unverified delivery.
 ## Peer reply obligations follow verified messages
 
 Arm one durable obligation per verified message from an observed peer, not per
-hitch relationship or visually latest prompt. Clear it only when Gangline
-positively delivers an outbound message correlated to that peer request; the
+hitch relationship or visually latest prompt, and arm it on the native prompt
+proof alone. Delivery proof means the harness accepted the paste; a harness
+that queues typed input mid-turn submits it only at a later boundary, and the
+record's metadata lands before the paste at all, so a request with delivery
+proof or none is a message in flight. Demanding a reply to it blocked the
+debtor for a message it had not read, and escalated a record that read as owed
+seconds later. The prompt proof is the harness's own witness that the request
+entered context and needs no second witness. Clear the obligation only when
+Gangline positively delivers an outbound message correlated to that peer
+request; the
 reply body is prose and is never parsed for an acknowledgement phrase. Mark the
 correlated envelope as a reply so its recipient does not acquire reciprocal
 debt, at every stage of that record's arrival evidence: the mode is stamped in
 the same immutable metadata as the rest, so a partial reply record is as much a
-non-obligation as a complete one and blocking on one named no action. Operator and self-declared input changes none of this state, while partial
+non-obligation as a complete one and blocking on one named no action. Operator and self-declared input changes none of this state, while orphaned
 or malformed provenance blocks Stop as unknown. Message-scoped records preserve
 crossed turns and multiple senders without adding a coordinator or a protocol
 outside the existing verified transport.
@@ -91,9 +99,9 @@ the audit trail does not make Stop queries quadratic.
 
 Retire a reply obligation, complete or partial, when a complete stable-identity
 inventory proves its sender token no longer exists. Resolve that token for every
-request record rather than only for an armed one: incomplete arrival evidence
-asks the same question about who could still be answered, and a record whose
-sender is gone names an action no debtor can take. Write a separate monotonic
+prompt-witnessed request record, whether or not its delivery proof landed: the
+missing proof asks the same question about who could still be answered, and a
+record whose sender is gone names an action no debtor can take. Write a separate monotonic
 retirement proof beside the immutable message evidence, then report the record
 as retired without resolving that dead token again; retained history therefore
 preserves the reply query's linear pass. The audit verdict and status name

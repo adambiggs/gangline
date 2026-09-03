@@ -5766,6 +5766,12 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     # one. Failing closed on one named no action, because no message its
     # holder can send settles a record that was never a request.
     [ "$mode" != reply ] || continue
+    # DEBT BEGINS WITH THE NATIVE PROMPT PROOF. A request the harness has not
+    # yet submitted into the debtor's context is not one the debtor can answer:
+    # the metadata lands before the paste and the delivery proof lands before
+    # the harness queue drains, so a record with neither or only the delivery
+    # witness is audit of a message in flight, never a demand.
+    case "$state" in candidate|verified) continue ;; esac
     any=1
     if [ "$state" = retired ]; then
       printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
@@ -5775,17 +5781,15 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
       printf 'unknown\t%s\t%s\t%s\n' "$nonce" "$witness" "provenance-$state-$mode"
       continue
     fi
-    # A PARTIAL REQUEST IS RESOLVED LIKE A COMPLETE ONE. Its arrival evidence is
-    # incomplete, but who could ever answer it is the same question, and only
-    # the answer decides whether the block names an action the debtor can take.
+    # The prompt proof alone proves the debtor read the request, so it is owed
+    # whether or not the sender's delivery proof has landed yet.
     live_rc=0; stable_agent_resolve "$token" || live_rc=$?
     case "$live_rc" in
-      0) if [ "$state" = owed ]; then
-           printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME"
-         else
-           printf 'unknown\t%s\t%s\tprovenance-%s-request\n' \
-             "$nonce" "$STABLE_AGENT_NAME" "$state"
-         fi ;;
+      0) case "$state" in
+           owed|prompt) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
+           *) printf 'unknown\t%s\t%s\tprovenance-%s-request\n' \
+                "$nonce" "$STABLE_AGENT_NAME" "$state" ;;
+         esac ;;
       3) if reply_proof_write "$1" "$REPLY_RETIRED_PREFIX" "$nonce" "$digest"; then
            printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
          else

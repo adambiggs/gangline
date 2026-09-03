@@ -137,11 +137,11 @@ tmux wait-for "$reply_race_gate-ready"
 reply_race_nonce="$(reply_nonce_from "$reply_b_id" reply-a)"
 reply_prompt_event "$reply_b_pane" \
   "$(reply_request_envelope reply-a "$reply_race_nonce" REQ_PROMPT_FIRST)"
-equal "prompt-first concurrent evidence is preserved while delivery is in flight" \
-  $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-prompt-request' \
+equal "the native prompt proof alone arms the debt while delivery is in flight" \
+  $'owed\t'"$reply_race_nonce"$'\treply-a\tlive' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
-contains "an answerable ambiguity asks for the reply that clears it" \
+contains "a prompt-witnessed request asks for the reply that clears it" \
   "$reply_stop_output" "reply to reply-a"
 printf '%s' ACK_PROMPT_FIRST \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
@@ -183,11 +183,15 @@ reply_delivery_only="$(reply_nonce_for_body \
   "$reply_b_id" reply-a request REQ_DELIVERY_ONLY)"
 reply_delivery_only_wire="$(reply_request_envelope reply-a \
   "$reply_delivery_only" REQ_DELIVERY_ONLY)"
-equal "delivery without its native prompt witness fails closed as ambiguous" \
-  $'unknown\t'"$reply_delivery_only"$'\treply-a\tprovenance-verified-request' \
+# Delivery proof means the harness accepted the paste, not that the request
+# reached the agent: a harness that queues typed input mid-turn submits it only
+# at a later boundary. Demanding the reply here blocked the debtor, boundary
+# after boundary, for a message its pane still listed as queued.
+equal "delivery without its native prompt witness is audit, not debt" \
+  $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
-contains "ambiguous peer provenance refuses idle" "$reply_stop_output" '"decision": "block"'
+equal "a request the debtor has not yet seen permits idle" "{}" "$reply_stop_output"
 printf '%s' ACK_DELIVERY_ONLY \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
 reply_delivery_ack_nonce="$(reply_nonce_for_body \
@@ -281,6 +285,22 @@ equal "an unanswerable partial request cannot wedge its debtor" \
 tmux set-option -uw -t "$reply_b_id" "@gl_rretired_$reply_gone_partial"
 tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_gone_partial"
 tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_gone_partial"
+
+# Metadata lands before the paste, so a boundary can observe a request record
+# with no proof at all while its send is in flight. That record is a message
+# not yet in the debtor's context: it is not debt, and it is not an ambiguity
+# to escalate; the same record read as owed once the paste and prompt landed.
+reply_bare_candidate=3c4d5e6f70819a2b
+reply_bare_candidate_digest=456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123
+reply_bare_candidate_token="$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_bare_candidate" \
+  "message:$reply_bare_candidate_token:reply-a:request:$reply_bare_candidate_digest:-"
+equal "a request record with no arrival proof is a message in flight, not debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "a boundary that sees only in-flight metadata permits idle" "{}" "$reply_stop_output"
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_bare_candidate"
 
 printf '%s' REQ_A_ONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
@@ -403,9 +423,12 @@ reply_drain_waiter=$!
 printf '%s' "$reply_stop_payload" \
   | TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null
 wait "$reply_drain_waiter"
-equal "a later turn boundary verifies the spooled peer request without losing its nonce" \
-  $'unknown\t'"$reply_spool_nonce"$'\treply-a\tprovenance-verified-request' \
+equal "a drained spool entry is not debt before its native prompt witness" \
+  $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "the drained request keeps its nonce for the prompt witness to complete" \
+  request \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_spool_nonce" | cut -d: -f4)"
 reply_prompt_event "$reply_b_pane" "$reply_spool_wire"
 equal "the native witness completes the durable request obligation" \
   $'owed\t'"$reply_spool_nonce"$'\treply-a\tlive' \
@@ -750,25 +773,6 @@ contains "an unreachable ambiguity fails closed" \
 contains "an unreachable ambiguity names the evidence it cannot read" \
   "$reply_fake_out" "sender-identity-unreadable"
 excludes "an unreachable ambiguity demands no reply" "$reply_fake_out" "reply to"
-reply_fake_out="$(printf '%s' "$reply_stop_payload" \
-  | FAKE_REPLY_QUERY='unknown\t4444444444444444\tanswerable-peer\tprovenance-prompt-request\n' \
-    FAKE_REPLY_LOG="$reply_fake_log" \
-    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
-# source-guard: whole-surface@1d9038b9a1d5: the complete fake-adapter stdout is the answerable-ambiguity decision, so any producer is valid evidence
-contains "an answerable ambiguity still refuses idle" \
-  "$reply_fake_out" '"decision": "block"'
-# source-guard: whole-surface@70a0bbcdfc2d: the complete fake-adapter stdout is the answerable-ambiguity reason, so any producer is valid evidence
-contains "an answerable ambiguity names the peer to answer" \
-  "$reply_fake_out" "reply to answerable-peer"
-reply_fake_out="$(printf '%s' "$reply_stop_payload" \
-  | FAKE_REPLY_QUERY='unknown\t4444444444444444\tanswerable-peer\tprovenance-prompt-request\nunknown\t5555555555555555\tstuck-peer\tsender-identity-unreadable\n' \
-    FAKE_REPLY_LOG="$reply_fake_log" \
-    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
-# source-guard: whole-surface@083823472772: the complete fake-adapter stdout is the mixed-ambiguity reason, so any producer is valid evidence
-contains "a mixed ambiguity reports the record no reply reaches" \
-  "$reply_fake_out" "sender-identity-unreadable"
-excludes "a mixed ambiguity does not reduce to its answerable half" \
-  "$reply_fake_out" "reply to answerable-peer"
 reply_fake_out="$(printf '%s' 'not-a-native-stop-payload' \
   | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
     python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"

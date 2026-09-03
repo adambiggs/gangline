@@ -165,24 +165,8 @@ def query(gang: str) -> list[Verdict]:
     return verdicts
 
 
-# An ambiguous record whose request half is complete enough for Gangline to
-# correlate a reply against it is cleared by replying; every other ambiguity
-# names evidence no message of the blocked agent can change.
-ANSWERABLE = ("provenance-prompt-request", "provenance-verified-request")
-
-
-def answerable(verdict: Verdict) -> bool:
-    if verdict.status == "owed":
-        return True
-    return (
-        verdict.status == "unknown"
-        and verdict.detail in ANSWERABLE
-        and bool(AGENT.fullmatch(verdict.peer))
-    )
-
-
 def block_reason(verdicts: list[Verdict]) -> str:
-    stuck = [v for v in verdicts if not answerable(v)]
+    stuck = [v for v in verdicts if v.status != "owed"]
     if stuck:
         details = ", ".join(dict.fromkeys(v.detail for v in stuck))
         return (
