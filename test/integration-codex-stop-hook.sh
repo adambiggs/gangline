@@ -620,7 +620,7 @@ mkfifo "$reply_tick_ready" "$reply_tick_release" "$reply_tick_pipe" \
   "$reply_tick_commit_ready" "$reply_tick_commit_release"
 cat "$reply_tick_pipe" > "$RUN_ROOT/reply-tick-query.out" &
 reply_tick_reader=$!
-GANG_TEST_TICK_MODE= \
+GANG_TEST_TICK_MODE='' \
 GANG_TEST_TICK_READY_FIFO="$reply_tick_ready" \
 GANG_TEST_TICK_RELEASE_FIFO="$reply_tick_release" \
 GANG_TEST_TICK_COMMIT_READY_FIFO="$reply_tick_commit_ready" \
