@@ -10671,9 +10671,20 @@ launch_record_check() { # $1 = task label; refuse what a record line cannot carr
 
 usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }
 
-usage_agent_stream() { # $1 window id -> one NUL-separated launch record for the helper
+usage_team_created() { # print the live session's creation epoch, or nothing
+  # READ THROUGH THE SESSION'S WINDOWS, not display-message: tmux 3.2a's
+  # server exits on `display-message -p -t =session` from a client with no
+  # pane, and every window of a session carries the same creation time. The
+  # name plus this epoch is the team's identity in the usage record; a later
+  # team reusing the name is a different team.
+  local created
+  created="$(tmux list-windows -t "=$SESSION" -F '#{session_created}' 2>/dev/null | head -n 1)" || created=""
+  [[ "$created" =~ ^[0-9]+$ ]] && printf '%s' "$created"
+}
+
+usage_agent_stream() { # $1 window id, $2 team creation epoch -> one NUL-separated launch record
   local key value
-  printf 'team=%s\0' "$SESSION"
+  printf 'team=%s\0team_created=%s\0' "$SESSION" "$2"
   for key in agent collar model effort dir task session_id hitched_at; do
     value="$(tmux show-options -wqv -t "$1" "@gl_$key" 2>/dev/null)" || value=""
     printf '%s=%s\0' "$key" "$value"
@@ -10682,13 +10693,15 @@ usage_agent_stream() { # $1 window id -> one NUL-separated launch record for the
 }
 
 usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
-  local how="$1" id out rc=0; shift
+  local how="$1" id out created rc=0; shift
   # THE MAIL IS ALREADY ARCHIVED WHEN THIS RUNS, and a record that could not be
   # written is one stderr line rather than a refusal: holding a half-ended team
   # over a usage line costs more than the line. The helper runs ccusage once
-  # for every window it is given and bounds it itself.
+  # for every window it is given and bounds it itself, so a teardown of many
+  # windows hands them over in one call.
+  created="$(usage_team_created)"
   out="$(
-    for id in "$@"; do usage_agent_stream "$id"; done \
+    for id in "$@"; do usage_agent_stream "$id" "$created"; done \
       | "$GANGLINE_USAGE_HELPER" record --events "$(usage_events_path)" --ended-by "$how" 2>&1
   )" || rc=$?
   if [ "$rc" -eq 0 ]; then
@@ -10699,19 +10712,15 @@ usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teard
 }
 
 cmd_usage() { # token consumption per agent, joined from ccusage by native session id
-  local since=0 id special ids="" scope=()
+  local created=0 id special ids="" scope=()
   case "${1:-}" in
     '') ;;
     --all) scope=(--all); [ $# -eq 1 ] || die "usage: unexpected argument '$2'" ;;
     *) die "usage: unexpected argument '$1'" ;;
   esac
   if session_live; then
-    # READ THROUGH THE SESSION'S WINDOWS, not display-message: tmux 3.2a's
-    # server exits on `display-message -p -t =session` from a client with no
-    # pane, and every window of a session carries the same creation time.
-    since="$(tmux list-windows -t "=$SESSION" -F '#{session_created}' 2>/dev/null | head -n 1)"
-    [[ "$since" =~ ^[0-9]+$ ]] \
-      || die "usage: could not read when session '$SESSION' was created (read [$since])"
+    created="$(usage_team_created)"
+    [ -n "$created" ] || die "usage: could not read when session '$SESSION' was created"
     while read -r id special; do
       [ -n "$id" ] || continue
       [ "$special" != 1 ] || continue
@@ -10721,9 +10730,9 @@ cmd_usage() { # token consumption per agent, joined from ccusage by native sessi
     printf '%s\n' "$(colour "$C_DIM" "no live team (session '$SESSION' not running); showing what was recorded for that name")"
   fi
   # shellcheck disable=SC2086  # ids are tmux window ids, never blank-bearing
-  { for id in $ids; do usage_agent_stream "$id"; done; } \
+  { for id in $ids; do usage_agent_stream "$id" "$created"; done; } \
     | "$GANGLINE_USAGE_HELPER" report --events "$(usage_events_path)" \
-        --team "$SESSION" --since "$since" ${scope[@]+"${scope[@]}"} \
+        --team "$SESSION" --team-created "$created" ${scope[@]+"${scope[@]}"} \
     || die "usage: the report helper failed (status $?)"
 }
 
@@ -12743,8 +12752,11 @@ cmd_down() { # inverse of up: end the whole team's session
     spool_archive "$id"
     idle_notice_archive "$id"
     spool_forget "$id"
-    usage_events_record down "$id"
   done <<<"$ids"
+  # ONE READING FOR THE WHOLE TEAM: every window ended here gets the same
+  # ccusage snapshot, and the teardown pays ccusage's bound once, not per window.
+  # shellcheck disable=SC2086  # ids are tmux window ids, never blank-bearing
+  usage_events_record down $wait_ids
   tick_state_forget
   tmux kill-session -t "=$SESSION"
   team_socket_forget "$SESSION"

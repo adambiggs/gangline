@@ -2008,10 +2008,11 @@ session cost. ccusage knows the cost: it parses each harness's local transcript
 format and follows that format as it churns. Gangline therefore never reads a
 transcript for tokens. `gang usage` runs `ccusage session --json --no-cost
 --offline` when a `ccusage` executable is on `PATH` and joins its rows to the
-team's hitch records by native session id — exactly for Claude Code, and by
-the id suffix of the rollout-shaped period ccusage prints for Codex. Nothing
-else in Gangline changes when ccusage is absent: the same table prints without
-token columns and says why.
+team's hitch records by native session id: exactly, or, for a row ccusage
+itself attributes to Codex, by the id suffix of its rollout-shaped period, so
+one harness's tokens can never land on another's agent through a stray
+period. Nothing else in Gangline changes when ccusage is absent: the same
+table prints without token columns and says why.
 
 The join needs the launch choices, so `hitch` and `adopt` register the model,
 effort, directory, an optional opaque task label, and a wall-clock start on the
@@ -2021,7 +2022,9 @@ never reads them to decide anything.
 
 `drop` and `down` append one normalized line per agent to
 `${XDG_DATA_HOME:-~/.local/share}/gangline/usage/events.jsonl`, carrying the
-launch record, the end time, and ccusage's reading at that moment with a status
+launch record, the team's identity (its name and the epoch its session was
+created, since a name is reused), the end time, and ccusage's reading at that
+moment, read once for every window a `down` ends, with a status
 that says whether it was matched, unmatched, unstamped, absent, failed, or
 malformed. The ccusage call is bounded and its failure is one stderr line: an
 unwritable record must not hold a teardown that has already archived the

@@ -17,12 +17,15 @@ mkdir -p "$usage_bin/present" "$usage_bin/failing" "$usage_bin/garbage" "$usage_
 cat > "$usage_bin/present/ccusage" <<'SH'
 #!/usr/bin/env bash
 # The session shape ccusage 20 prints: one Claude Code row whose period is the
-# session id, and one Codex row whose period is a rollout stem ending in it.
-printf '%s\n' "$*" > "${USAGE_FIXTURE_ARGV:-/dev/null}"
+# session id, one Codex row whose period is a rollout stem ending in it, and
+# one Claude row keyed by a rollout-shaped stem, which only a Codex row may
+# join by. Every call appends its argv, so a count of calls is a real count.
+printf '%s\n' "$*" >> "${USAGE_FIXTURE_ARGV:-/dev/null}"
 cat <<'JSON'
 {"session":[
  {"agent":"claude","period":"11111111-aaaa-4bbb-8ccc-000000000001","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40,"totalTokens":370,"modelsUsed":["claude-opus-5"],"modelBreakdowns":[{"modelName":"claude-opus-5","inputTokens":10,"outputTokens":20,"cacheReadTokens":300,"cacheCreationTokens":40}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}},
- {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-22222222-bbbb-4ccc-8ddd-000000000002","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0,"totalTokens":18,"modelsUsed":["gpt-5.6"],"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z","reasoningOutputTokens":3}}
+ {"agent":"codex","period":"2026/09/02/rollout-2026-09-02T00-00-00-22222222-bbbb-4ccc-8ddd-000000000002","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0,"totalTokens":18,"modelsUsed":["gpt-5.6"],"modelBreakdowns":[{"modelName":"gpt-5.6","inputTokens":5,"outputTokens":6,"cacheReadTokens":7,"cacheCreationTokens":0}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z","reasoningOutputTokens":3}},
+ {"agent":"claude","period":"rollout-33333333-cccc-4ddd-8eee-000000000003","inputTokens":1000,"outputTokens":1000,"cacheReadTokens":1000,"cacheCreationTokens":1000,"totalTokens":4000,"modelsUsed":["claude-opus-5"],"modelBreakdowns":[{"modelName":"claude-opus-5","inputTokens":1000,"outputTokens":1000,"cacheReadTokens":1000,"cacheCreationTokens":1000}],"metadata":{"lastActivity":"2026-09-02T10:00:00.000Z"}}
 ],"totals":{"inputTokens":15,"outputTokens":26,"cacheReadTokens":307,"cacheCreationTokens":40,"totalTokens":388}}
 JSON
 SH
@@ -54,6 +57,8 @@ command -v ccusage >/dev/null 2>&1 && usage_absent_proven=0
 
 usage_claude_id="11111111-aaaa-4bbb-8ccc-000000000001"
 usage_codex_id="22222222-bbbb-4ccc-8ddd-000000000002"
+usage_stray_id="33333333-cccc-4ddd-8eee-000000000003"
+usage_team_created="$(tmux list-windows -t "=$GANG_SESSION" -F '#{session_created}' | head -n 1)"
 
 # --- The launch record hitch registers -------------------------------------
 "$HITCH" usage-alpha -c bash -d /tmp -t 'github:gangline#421' >/dev/null
@@ -86,9 +91,11 @@ excludes "a refused task label leaves no window behind" \
 # --- gang usage with the documented shape on PATH --------------------------
 "$HITCH" usage-beta -c bash -d /tmp >/dev/null
 "$HITCH" usage-gamma -c bash -d /tmp >/dev/null
+"$HITCH" usage-delta -c bash -d /tmp >/dev/null
 usage_beta_id="$(window_id usage-beta)"
 tmux set-option -w -t "$usage_alpha_id" @gl_session_id "$usage_claude_id"
 tmux set-option -w -t "$usage_beta_id" @gl_session_id "$usage_codex_id"
+tmux set-option -w -t "$(window_id usage-delta)" @gl_session_id "$usage_stray_id"
 usage_argv="$RUN_ROOT/usage-argv"
 usage_out="$(USAGE_FIXTURE_ARGV="$usage_argv" PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds with ccusage present" "status $?: [$usage_out]"
@@ -96,10 +103,15 @@ equal "gang usage asks ccusage for the offline costless session report" \
   "session --json --no-cost --offline" "$(<"$usage_argv")"
 usage_alpha_row="$(printf '%s\n' "$usage_out" | awk '$1 == "usage-alpha"')"
 # Columns for a bash-collar agent with no model or effort: agent, harness,
-# state, duration, input, output, cache-r, cache-w, usage.
+# state, duration, input, output, cache-r, cache-w, usage, task.
 equal "a Claude-shaped id joins by exact period" \
   "bash live 10 20 300 40 matched" \
   "$(printf '%s\n' "$usage_alpha_row" | awk '{ print $2, $3, $5, $6, $7, $8, $9 }')"
+equal "the task label is a column of the report" \
+  "github:gangline#421" "$(printf '%s\n' "$usage_alpha_row" | awk '{ print $10 }')"
+equal "a Claude row keyed by a rollout-shaped stem joins by suffix for nobody" \
+  "bash live unmatched" \
+  "$(printf '%s\n' "$usage_out" | awk '$1 == "usage-delta" { print $2, $3, $5 }')"
 equal "a Codex-shaped id joins by the rollout period's trailing id" \
   "5 6 7 0 matched" \
   "$(printf '%s\n' "$usage_out" | awk '$1 == "usage-beta" { print $5, $6, $7, $8, $9 }')"
@@ -165,7 +177,7 @@ contains "drop reports the join it recorded" \
   "$usage_drop_out" "usage: usage-alpha matched"
 contains "drop names the record it appended to" \
   "$usage_drop_out" "usage: recorded in $usage_events"
-usage_record_check="$(python3 - "$usage_events" "$usage_alpha_hitched" "$usage_claude_id" <<'PY'
+usage_record_check="$(python3 - "$usage_events" "$usage_alpha_hitched" "$usage_claude_id" "$usage_team_created" <<'PY'
 import json, socket, sys
 path, hitched, session = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 rows = [json.loads(line) for line in open(path, encoding="utf-8") if line.strip()]
@@ -176,6 +188,7 @@ expected = {
     "v": 1, "agent": "usage-alpha", "collar": "bash", "model": None, "effort": None,
     "dir": "/tmp", "task": "github:gangline#421", "session_id": session,
     "hitched_at": hitched, "ended_by": "drop", "usage_status": "matched",
+    "team_created": int(sys.argv[4]),
     "usage_note": None, "usage_agent": "claude", "input": 10, "output": 20,
     "cache_read": 300, "cache_write": 40, "last_activity": "2026-09-02T10:00:00.000Z",
     "models": [{"model": "claude-opus-5", "input": 10, "output": 20,
@@ -228,19 +241,36 @@ excludes "the drop with an unwritable record still ended the agent" \
   "$(window_names)" "usage-gamma"
 
 # --- --all reads every record; an unreadable line is counted -----------------
+# Four foreign lines: another team's record; a record from an earlier team of
+# this name, ended after this one began; a line that is not JSON; and a JSON
+# line of the right version whose duration is text and whose status is an
+# escape sequence. The last is somebody else's write, and it must neither
+# crash the arithmetic nor reach the terminal.
 printf '%s\n' '{"v":1,"agent":"elsewhere","collar":"codex","team":"another-team","ended_at":1,"ended_by":"down","usage_status":"unmatched","model":"gpt-5.6"}' \
-  'this line is not a record' >> "$usage_events"
-usage_scoped_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)"
+  "{\"v\":1,\"agent\":\"reborn\",\"collar\":\"bash\",\"team\":\"$GANG_SESSION\",\"team_created\":1,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"usage_status\":\"unmatched\"}" \
+  'this line is not a record' \
+  "{\"v\":1,\"agent\":\"forged\",\"team\":\"$GANG_SESSION\",\"team_created\":$usage_team_created,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"duration_s\":\"not-a-duration\",\"usage_status\":\"\\u001b[2J\"}" \
+  >> "$usage_events"
+usage_scoped_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
+  || fail "gang usage succeeds beside foreign record lines" "status $?: [$usage_scoped_out]"
 excludes "a record from another team stays out of the team view" \
   "$usage_scoped_out" "elsewhere"
+excludes "a record from an earlier team of the same name stays out of the team view" \
+  "$usage_scoped_out" "reborn"
 usage_all_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage --all 2>&1)" \
   || fail "gang usage --all succeeds" "status $?: [$usage_all_out]"
 contains "--all shows a record from another team" \
   "$usage_all_out" "elsewhere"
+contains "--all shows the earlier team's record under the same name" \
+  "$usage_all_out" "reborn"
 contains "--all names the Codex note when a codex collar is shown" \
   "$usage_all_out" "ccusage documents as experimental"
-contains "an unreadable record line is counted, not skipped silently" \
-  "$usage_all_out" "1 line(s) in $usage_events could not be read"
+contains "unreadable record lines are counted, not skipped silently" \
+  "$usage_all_out" "2 line(s) in $usage_events could not be read"
+excludes "a forged record's status never reaches the terminal" \
+  "$usage_all_out" "forged"
+excludes "a forged record's escape byte never reaches the terminal" \
+  "$usage_all_out" $'\033'
 
 # --- down records every window from one ccusage read -----------------------
 usage_down_session="usage-down-$$"

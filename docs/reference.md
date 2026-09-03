@@ -1193,15 +1193,18 @@ sampling again; it dies with the agent window.
 ### `gang usage [--all]`
 
 Prints token consumption per agent and per model. Gangline supplies the agent,
-harness, model, effort, state, and duration from its own launch record; the
-token columns come from `ccusage session --json --no-cost --offline`, run under
-a 30-second bound when a `ccusage` executable is on `PATH`, and joined by
-native session id — the stamped id exactly for Claude Code, and as the
-trailing id of the rollout-shaped period ccusage prints for Codex. Gangline
-never parses a transcript for tokens.
+harness, model, effort, state, duration, and task label from its own launch
+record; the token columns come from `ccusage session --json --no-cost
+--offline`, run under a 30-second bound on its whole process group when a
+`ccusage` executable is on `PATH`, and joined by native session id: a row
+joins when its period is the stamped id exactly, or, for a row ccusage itself
+attributes to Codex, when its period is rollout-shaped and ends in that id.
+Gangline never parses a transcript for tokens.
 
 The per-agent table shows live agents of this team and, below them, agents
-recorded as ended in this team since its session was created. The per-model
+recorded as ended in this team. A team is its name plus the epoch its tmux
+session was created, so a record left by an earlier or concurrent team of the
+same name is not this team's and stays out of the view. The per-model
 roll-up sums ccusage's per-model breakdowns across those rows. A `not covered`
 section names every row the join could not fill and why: `absent` when no
 ccusage is on `PATH`, `failed` with the exit status and first error line,
@@ -1217,14 +1220,14 @@ live team the command says so and prints the records for that team name.
 
 Records live in `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`,
 one JSON object per line, appended by `drop` and `down`. Each carries `v` (1),
-`host`, `team`, `agent`, `collar`, `model`, `effort`, `dir`, `task`,
-`session_id`, `hitched_at`, `ended_at`, `ended_by`, `duration_s`, the join
+`host`, `team`, `team_created`, `agent`, `collar`, `model`, `effort`, `dir`,
+`task`, `session_id`, `hitched_at`, `ended_at`, `ended_by`, `duration_s`, the join
 `usage_status` and `usage_note`, and where matched ccusage's `usage_agent`,
 `models` (per-model breakdown), `input`, `output`, `cache_read`,
 `cache_write`, and `last_activity`. Fields Gangline did not have are `null`.
 The file is never rewritten or pruned by Gangline; `gang usage` prints its
-path, a line it cannot read is counted in `not covered`, and removing it is
-`rm`. Provider percent-used windows are `gang limits`, not this command.
+path, a line it cannot read as a version 1 record is counted in `not covered`
+and nothing of it is printed, and removing it is `rm`. Provider percent-used windows are `gang limits`, not this command.
 
 ### `gang wait-limit [name] [--resume <turn>]` / `gang wait-limit [name] --clear`
 

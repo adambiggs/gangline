@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -27,9 +28,11 @@ TOKEN_KEYS = (
     ("cacheCreationTokens", "cache_write"),
 )
 AGENT_KEYS = (
-    "team", "agent", "collar", "model", "effort", "dir", "task",
+    "team", "team_created", "agent", "collar", "model", "effort", "dir", "task",
     "session_id", "hitched_at",
 )
+STATUSES = ("matched", "unmatched", "ambiguous", "unstamped",
+            "absent", "failed", "malformed")
 
 
 class Malformed(Exception):
@@ -107,8 +110,22 @@ def load_ccusage(raw: bytes) -> list:
 
 
 def match(rows: list, session_id: str) -> list:
-    return [r for r in rows if r["period"] == session_id
-            or r["period"].endswith("-" + session_id)]
+    """Rows whose period is this id.
+
+    ccusage keys a Claude Code session by its id and a Codex session by the
+    rollout file's stem, which ends in the thread id. Only a row ccusage
+    itself attributes to Codex may join by that suffix, and only when the
+    stem is rollout-shaped; every other row must carry the id exactly, so a
+    stray or corrupt period never assigns one harness's tokens to another."""
+    found = []
+    for row in rows:
+        period = row["period"]
+        if period == session_id:
+            found.append(row)
+        elif row["agent"] == "codex" and period.endswith("-" + session_id) \
+                and period.rsplit("/", 1)[-1].startswith("rollout-"):
+            found.append(row)
+    return found
 
 
 def join(agent: dict, source: tuple) -> dict:
@@ -159,20 +176,32 @@ def read_source() -> tuple:
     exe = shutil.which("ccusage")
     if not exe:
         return ("absent", "no ccusage executable on PATH")
+    # THE BOUND COVERS THE WHOLE PROCESS GROUP. ccusage on PATH is usually a
+    # wrapper that starts node and waits; killing the wrapper alone leaves the
+    # child holding the captured pipes, and the read would then wait for EOF
+    # without any bound at all. A new session makes the group ours to kill.
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             [exe, "session", "--json", "--no-cost", "--offline"],
-            capture_output=True, timeout=CCUSAGE_BOUND_SECONDS, check=False)
-    except subprocess.TimeoutExpired:
-        return ("failed", f"ccusage did not finish within {CCUSAGE_BOUND_SECONDS}s")
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, start_new_session=True)
     except OSError as err:
         return ("failed", f"could not run {exe}: {err}")
+    try:
+        stdout, stderr = proc.communicate(timeout=CCUSAGE_BOUND_SECONDS)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        return ("failed", f"ccusage did not finish within {CCUSAGE_BOUND_SECONDS}s")
     if proc.returncode != 0:
-        first = proc.stderr.decode("utf-8", "replace").strip().splitlines()[:1]
+        first = stderr.decode("utf-8", "replace").strip().splitlines()[:1]
         return ("failed", f"ccusage exited {proc.returncode}"
                 + (f": {first[0]}" if first else " and printed no error"))
     try:
-        return ("read", load_ccusage(proc.stdout))
+        return ("read", load_ccusage(stdout))
     except Malformed as err:
         return ("malformed", str(err))
 
@@ -191,6 +220,7 @@ def record(args) -> int:
         line.update({
             "v": 1,
             "host": host,
+            "team_created": epoch_or_none(agent.get("team_created")),
             "hitched_at": hitched_at,
             "ended_at": ended_at,
             "ended_by": args.ended_by,
@@ -213,8 +243,58 @@ def record(args) -> int:
     return 0
 
 
-def read_events(path: str, team: str, since, everything: bool) -> tuple:
-    """(rows to show, count of unreadable lines); absent file is no rows."""
+EVENT_TEXT_KEYS = ("host", "team", "agent", "collar", "model", "effort", "dir",
+                   "task", "session_id", "usage_note", "usage_agent", "last_activity")
+EVENT_COUNT_KEYS = ("team_created", "hitched_at", "duration_s",
+                    "input", "output", "cache_read", "cache_write")
+
+
+def load_event(raw: str) -> dict:
+    """One version-1 event line, or Malformed. Every field the report prints
+    or adds is checked here, so a line somebody else wrote can neither crash
+    the arithmetic nor carry bytes past the table."""
+    try:
+        row = json.loads(raw)
+    except ValueError as err:
+        raise Malformed(f"not JSON: {err}")
+    if not isinstance(row, dict) or row.get("v") != 1:
+        raise Malformed("not a version 1 record")
+    for key in EVENT_TEXT_KEYS:
+        value = row.get(key)
+        if value is not None and not isinstance(value, str):
+            raise Malformed(f"{key} is not text")
+    for key in ("team", "agent"):
+        if not row.get(key):
+            raise Malformed(f"{key} is missing")
+    for key in EVENT_COUNT_KEYS:
+        value = row.get(key)
+        if value is not None and epoch_or_none(value) != value:
+            raise Malformed(f"{key} is not a whole number")
+    if epoch_or_none(row.get("ended_at")) != row.get("ended_at"):
+        raise Malformed("ended_at is not a whole number")
+    if row.get("ended_by") not in ("drop", "down"):
+        raise Malformed("ended_by is neither drop nor down")
+    if row.get("usage_status") not in STATUSES:
+        raise Malformed("usage_status is not one Gangline writes")
+    models = row.get("models")
+    if models is not None:
+        if not isinstance(models, list):
+            raise Malformed("models is not a list")
+        for part in models:
+            if not isinstance(part, dict) or not isinstance(part.get("model"), str) \
+                    or not part["model"]:
+                raise Malformed("a models entry names no model")
+            for _, ours in TOKEN_KEYS:
+                whole(part.get(ours), f"models {ours}")
+    return row
+
+
+def read_events(path: str, team: str, team_created: int, everything: bool) -> tuple:
+    """(rows to show, count of unreadable lines); absent file is no rows.
+
+    A team is its name plus the epoch its tmux session was created, so a
+    record from an earlier or concurrent team of the same name stays out of
+    the view; zero means the name alone, which is all a dead team has."""
     rows, unreadable = [], 0
     try:
         handle = open(path, "r", encoding="utf-8")
@@ -225,19 +305,14 @@ def read_events(path: str, team: str, since, everything: bool) -> tuple:
             if not raw.strip():
                 continue
             try:
-                row = json.loads(raw)
-            except ValueError:
-                unreadable += 1
-                continue
-            if not isinstance(row, dict) or row.get("v") != 1 \
-                    or not isinstance(row.get("agent"), str):
+                row = load_event(raw)
+            except Malformed:
                 unreadable += 1
                 continue
             if everything:
                 rows.append(row)
-                continue
-            ended = epoch_or_none(row.get("ended_at"))
-            if row.get("team") == team and ended is not None and ended >= since:
+            elif row["team"] == team and (
+                    team_created == 0 or row.get("team_created") == team_created):
                 rows.append(row)
     return rows, unreadable
 
@@ -298,14 +373,14 @@ def report(args) -> int:
                              if hitched_at is not None and now >= hitched_at else None)
         row.update(join(agent, source))
         shown.append(row)
-    ended, unreadable = read_events(args.events, args.team, args.since, args.all)
+    ended, unreadable = read_events(args.events, args.team, args.team_created, args.all)
     for row in ended:
         row = dict(row)
         row["state"] = "ended"
         shown.append(row)
 
     headers = ["agent", "harness", "model", "effort", "state", "duration",
-               "input", "output", "cache-r", "cache-w", "usage"]
+               "input", "output", "cache-r", "cache-w", "usage", "task"]
     body = []
     for row in shown:
         body.append([
@@ -314,7 +389,7 @@ def report(args) -> int:
             duration_text(row.get("duration_s")),
             count_text(row.get("input")), count_text(row.get("output")),
             count_text(row.get("cache_read")), count_text(row.get("cache_write")),
-            row.get("usage_status") or "",
+            visible(row.get("usage_status")), visible(row.get("task")),
         ])
     out = []
     if body:
@@ -369,7 +444,7 @@ def main() -> int:
     sub.choices["record"].add_argument("--ended-by", required=True, choices=["drop", "down"])
     sub.choices["record"].add_argument("--host")
     sub.choices["report"].add_argument("--team", required=True)
-    sub.choices["report"].add_argument("--since", type=int, default=0)
+    sub.choices["report"].add_argument("--team-created", type=int, default=0)
     sub.choices["report"].add_argument("--all", action="store_true")
     args = parser.parse_args()
     try:
