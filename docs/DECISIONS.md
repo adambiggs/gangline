@@ -2000,3 +2000,36 @@ refuses again. A query that cannot answer inside the adapter's deadline is its
 own named state under the same rule. Provenance still fails closed for a
 boundary; nothing fails forever.
 
+## Token consumption is ccusage's reading, joined by Gangline
+
+Gangline knows which agent ran, on which harness and model, in which directory,
+for how long, and under which native session id; it does not know what that
+session cost. ccusage knows the cost: it parses each harness's local transcript
+format and follows that format as it churns. Gangline therefore never reads a
+transcript for tokens. `gang usage` runs `ccusage session --json --no-cost
+--offline` when a `ccusage` executable is on `PATH` and joins its rows to the
+team's hitch records by native session id — exactly for Claude Code, and by
+the id suffix of the rollout-shaped period ccusage prints for Codex. Nothing
+else in Gangline changes when ccusage is absent: the same table prints without
+token columns and says why.
+
+The join needs the launch choices, so `hitch` and `adopt` register the model,
+effort, directory, an optional opaque task label, and a wall-clock start on the
+window beside the collar and session id already there. They are records of what
+was asked for, written once at launch and re-written by a resume; Gangline
+never reads them to decide anything.
+
+`drop` and `down` append one normalized line per agent to
+`${XDG_DATA_HOME:-~/.local/share}/gangline/usage/events.jsonl`, carrying the
+launch record, the end time, and ccusage's reading at that moment with a status
+that says whether it was matched, unmatched, unstamped, absent, failed, or
+malformed. The ccusage call is bounded and its failure is one stderr line: an
+unwritable record must not hold a teardown that has already archived the
+agent's mail, so the line is the deletion path's loudness, not a refusal. The
+file is the operator's; `gang usage` prints its path, `--all` reads all of it,
+and removing it is `rm`.
+
+Quota percentages stay with `gang limits`, cross-host aggregation stays with
+whatever carries the file between hosts, and no success column exists because
+Gangline records no outcome. `docs/records/usage-spec.md` holds those
+follow-ups.
