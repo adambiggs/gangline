@@ -115,6 +115,8 @@ alert_ui_right_twice="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_session:" status-right)"
 equal "reinstalling the alert center is status-right idempotent" \
   "$alert_ui_right_once" "$alert_ui_right_twice"
+equal "a repeat pass records no conflict on its own key" "" \
+  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_session:" @gl_alert_binding_conflict)"
 equal "the installed status line contains one owned widget reference" 1 \
   "$([[ "$alert_ui_right_twice" == *'#{E:@gl_alert_widget}'* \
        && "$alert_ui_right_twice" != *'#{E:@gl_alert_widget}'*'#{E:@gl_alert_widget}'* ]] \
