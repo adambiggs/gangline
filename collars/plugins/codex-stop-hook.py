@@ -163,32 +163,62 @@ def read_payload(raw: str) -> None:
         raise ValueError("stdin is not a native Stop payload")
 
 
+def refuse(exc: BaseException, failure: str, remedy: str) -> None:
+    stderr(str(exc))
+    block("you may not go idle: %s (%s); %s" % (failure, exc, remedy))
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         stderr("expected exactly one Gangline executable argument")
         block("you may not go idle: the peer-reply query helper is misconfigured")
         return 0
     gang = argv[1]
-    raw = sys.stdin.read()
+    # EACH STAGE FAILS UNDER ITS OWN NAME. One handler over all three read the
+    # same sentence out for an unreadable Stop payload, an unreadable query and
+    # a failed boundary, so the agent was sent to repair a query path that had
+    # already answered. Reading stdin belongs inside the payload stage: bytes
+    # that are not UTF-8 raise before any handler otherwise, and the hook then
+    # prints no verdict at all.
+    raw = ""
     try:
+        raw = sys.stdin.read()
         read_payload(raw)
-        verdicts = query(gang)
-        blocking = [
-            verdict
-            for verdict in verdicts
-            if verdict.status not in ("clear", "retired")
-        ]
-        if blocking:
-            block(block_reason(blocking))
-            return 0
-        settle_stop(gang, raw)
-        allow()
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        stderr(str(exc))
-        block(
-            "you may not go idle: Gangline could not read verified peer-reply "
-            "provenance; preserve the current state and repair the query path"
+    except (OSError, ValueError) as exc:
+        refuse(
+            exc,
+            "the native Stop payload could not be read",
+            "preserve the current state and repair the collar's hook wiring",
         )
+        return 0
+    try:
+        verdicts = query(gang)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        refuse(
+            exc,
+            "Gangline could not read verified peer-reply provenance",
+            "preserve the current state and repair the query path",
+        )
+        return 0
+    blocking = [
+        verdict
+        for verdict in verdicts
+        if verdict.status not in ("clear", "retired")
+    ]
+    if blocking:
+        block(block_reason(blocking))
+        return 0
+    try:
+        settle_stop(gang, raw)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        refuse(
+            exc,
+            "peer-reply provenance is clear, but the native Stop boundary "
+            "could not be closed",
+            "preserve the current state and repair the Gangline hook path",
+        )
+        return 0
+    allow()
     return 0
 
 

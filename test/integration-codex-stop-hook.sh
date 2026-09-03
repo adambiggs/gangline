@@ -663,12 +663,39 @@ contains "a mixed ambiguity reports the record no reply reaches" \
   "$reply_fake_out" "sender-identity-unreadable"
 excludes "a mixed ambiguity does not reduce to its answerable half" \
   "$reply_fake_out" "reply to answerable-peer"
+reply_fake_out="$(printf '%s' 'not-a-native-stop-payload' \
+  | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@59580f6f1db8: the complete fake-adapter stdout is the unreadable-payload verdict, so any producer is valid evidence
+contains "an unreadable Stop payload fails closed under its own name" \
+  "$reply_fake_out" "native Stop payload could not be read"
+excludes "an unreadable payload is not reported as an unreadable query" \
+  "$reply_fake_out" "repair the query path"
+# source-guard: whole-surface@e6bef153582c: the complete fake hook log must stay empty when no payload parsed, so any producer is valid evidence
+equal "an unreadable payload closes no native boundary" "" "$(cat "$reply_fake_log")"
+reply_fake_out="$(printf '\377\376' \
+  | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@dd969a4ce663: the complete fake-adapter stdout is the undecodable-payload verdict, so any producer is valid evidence
+contains "a Stop payload that is not text still answers with a verdict" \
+  "$reply_fake_out" '"decision": "block"'
+# source-guard: whole-surface@541f537de224: the complete fake-adapter stdout is the undecodable-payload reason, so any producer is valid evidence
+contains "undecodable payload bytes fail closed under the payload name" \
+  "$reply_fake_out" "native Stop payload could not be read"
+# source-guard: whole-surface@f4b4fd06657d: the complete fake hook log must stay empty when no payload decoded, so any producer is valid evidence
+equal "a payload that never decoded closes no native boundary" "" \
+  "$(cat "$reply_fake_log")"
 reply_fake_out="$(printf '%s' "$reply_stop_payload" \
   | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
     FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
 # source-guard: whole-surface@5185de53a929: the complete fake-adapter stdout is the failed-boundary verdict, so any visible producer is valid evidence
 contains "failed Stop bookkeeping fails closed" "$reply_fake_out" '"decision": "block"'
 excludes "failed Stop bookkeeping never emits an allow verdict" "$reply_fake_out" '{}'
+# source-guard: whole-surface@e2d8f5f84857: the complete fake-adapter stdout is the failed-boundary reason, so any producer is valid evidence
+contains "a failed boundary is reported as bookkeeping, not as an unread query" \
+  "$reply_fake_out" "ordinary Stop bookkeeping failed"
+excludes "a failed boundary does not send the agent to the query path" \
+  "$reply_fake_out" "repair the query path"
 # source-guard: whole-surface@aa46cab9286d: the complete fake hook log records the only delegated boundary attempted by this invocation, so any visible producer is valid evidence
 equal "the failed boundary was attempted exactly once" "hook" "$(cat "$reply_fake_log")"
 
