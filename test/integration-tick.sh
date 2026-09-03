@@ -386,7 +386,6 @@ alert_ui_unrelated_status="$RUN_ROOT/alert-ui-unrelated-client-status"
 alert_ui_unrelated_attached="alert-ui-unrelated-attached-$$"
 alert_ui_unrelated_done="alert-ui-unrelated-done-$$"
 alert_ui_unrelated_exited="alert-ui-unrelated-exited-$$"
-alert_ui_unrelated_binding_file="$RUN_ROOT/alert-ui-unrelated-binding.tmux"
 printf -v alert_ui_unrelated_target '%q' "=$alert_ui_observer"
 mkfifo "$alert_ui_unrelated_input"
 exec 9<>"$alert_ui_unrelated_input"
@@ -408,21 +407,27 @@ alert_ui_unrelated_attached_waiter=$!
 alert_ui_unrelated_pid=$!
 wait "$alert_ui_unrelated_attached_waiter"
 alert_ui_tmux set-hook -gu client-attached
-# list-keys emits tmux source syntax. Append the completion event inside its
-# final popup shell argument, then let tmux parse that syntax itself so the
-# product command's $(...) remains literal until the popup runs it.
-equal "the unrelated popup binding has one quoted shell-command" '"' \
-  "${alert_ui_binding: -1}"
-alert_ui_unrelated_binding="${alert_ui_binding%\"}; tmux wait-for -S $alert_ui_unrelated_done\""
-printf '%s\n' "$alert_ui_unrelated_binding" \
-  > "$alert_ui_unrelated_binding_file"
-alert_ui_tmux source-file "$alert_ui_unrelated_binding_file"
+# The completion event rides inside the popup's own shell argument, and that
+# argument cannot be recovered from list-keys: tmux 3.4 renders the product's
+# $command as \\$command, which its parser reads back as one backslash and an
+# expansion of the empty variable, so re-sourcing that rendering installs a
+# popup that never evaluates the option. This fixture carries its own copy of
+# the popup shell and binds it through argv, which no tmux version expands.
+# Binding the copy unchanged first proves it byte-for-byte against the
+# installed product key on whichever tmux runs the suite.
+alert_ui_popup_shell='command="$(tmux show-options -qv -t "" @gl_alert_command 2>/dev/null)" || command=; [ -z "$command" ] || sh -c "$command"'
+alert_ui_popup_bind() {
+  alert_ui_tmux bind-key -T prefix A display-popup -E -w 80% -h 70% "$1"
+}
+alert_ui_popup_bind "$alert_ui_popup_shell"
+equal "the fixture's popup shell is the installed product binding" \
+  "$alert_ui_binding" "$(alert_ui_tmux list-keys -T prefix A)"
+alert_ui_popup_bind "$alert_ui_popup_shell; tmux wait-for -S $alert_ui_unrelated_done"
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_unrelated_done" &
 alert_ui_unrelated_done_waiter=$!
 printf '\002A' >&9
 wait "$alert_ui_unrelated_done_waiter"
-printf '%s\n' "$alert_ui_binding" > "$alert_ui_unrelated_binding_file"
-alert_ui_tmux source-file "$alert_ui_unrelated_binding_file"
+alert_ui_popup_bind "$alert_ui_popup_shell"
 alert_ui_restored_binding="$(alert_ui_tmux list-keys -T prefix A)"
 equal "temporary popup instrumentation restores the exact owned binding" \
   "$alert_ui_binding" "$alert_ui_restored_binding"
