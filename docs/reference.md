@@ -353,6 +353,18 @@ guard across its decision and unlink. The empty guard file remains under
 `GANG_LOCK_DIR` until the operator removes that lock root. A concurrent
 candidate touches a dirty marker and exits immediately; the owner consumes that
 marker with another pass. Dead, zombie, and replaced generations are reclaimed.
+The record names the owner's pid namespace as well as its pid: a worker inside
+a sandbox with its own pid table records the number it sees there, and on the
+host that number belongs to an unrelated process. A contender in the initial
+namespace resolves the owner through `/proc`, so one that died with its
+sandbox is reclaimed and a live one is ordinary contention. Absence counts as
+death only where `/proc` is procfs for the contender's own table and no
+hidepid mode filters this user's entries; a contender in a namespace that
+cannot see the owner, or reading a narrower view, retains the lock and names
+what it cannot see. A record without a namespace is resolved by pid
+and start token among the namespaces the contender can see. A recorded pid
+whose process now belongs to another user cannot be a tick worker for this
+team and is retired as a reused number.
 The internal worker accepts only the controller's fixed production budget; a
 caller cannot feed shell arithmetic a different deadline. A matching owner
 at least the hard 60-second worker deadline fails health instead of looking

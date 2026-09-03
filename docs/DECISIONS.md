@@ -725,6 +725,19 @@ the pidfd-bound leader generation, confirm its death, and retire the lock.
 Legacy pid-only locks migrate only where the live PID is positively not a tick
 worker for this team and never authorize termination because they carry no
 generation or monotonic acquisition stamp.
+A pid names a process only inside one pid namespace, and a harness sandbox
+with its own pid table shares the lock directory with the host, so the record
+also carries the owner's namespace. A contender in the initial namespace
+resolves that owner through `/proc` and reclaims one whose namespace holds no
+such process, but only where that `/proc` is procfs for its own table with no
+hidepid mode that filters this user's entries: absence read through any
+narrower view proves nothing. A contender that cannot see the namespace
+retains the lock and names it. A record that predates the namespace
+field is resolved by pid and start token among the visible namespaces, since
+its writer may have been in a sandbox. A recorded pid whose process belongs to
+another user is retired as a reused number: every tick worker runs as this user
+and proved its own identity readable at acquisition, so unreadable means not
+ours, never alive.
 Ambiguous identity always retains the lock loudly. The worker accepts only the
 controller's fixed production budget, so noncanonical shell arithmetic cannot
 move a fresh lock onto the termination path. The deadline controller

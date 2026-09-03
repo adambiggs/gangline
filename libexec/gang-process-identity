@@ -30,6 +30,21 @@ class UnknownProcess(Exception):
     pass
 
 
+class ForeignProcess(Exception):
+    """A process exists at that address but can never be this user's tick."""
+
+
+class UnresolvableProcess(Exception):
+    """The record names a process this reader's namespace cannot see."""
+
+
+# The initial pid namespace has a fixed nsfs inode (PROC_PID_INIT_INO). A
+# reader there sees every process on the host, so its failure to find a
+# recorded owner in a descendant namespace is death; anywhere else it is only
+# a namespace this reader cannot see.
+INIT_PID_NAMESPACE = 0xEFFFFFFC
+
+
 class ClockError(Exception):
     pass
 
@@ -65,14 +80,211 @@ def clock_elapsed(path: str, started_ns: int, duration_ns: int) -> bool:
     raise ClockError
 
 
-def linux_record(pid: int, expected_session=None):
+def pid_namespace(pid) -> int:
+    """The nsfs inode of a process's own pid namespace; OSError if unreadable."""
+    link = os.readlink(f"/proc/{pid}/ns/pid")
+    if not link.startswith("pid:[") or not link.endswith("]"):
+        raise UnknownProcess
+    digits = link[len("pid:[") : -1]
+    if not digits.isascii() or not digits.isdigit():
+        raise UnknownProcess
+    return int(digits, 10)
+
+
+def status_fields(path: str) -> dict:
+    fields = {}
+    with open(path, encoding="utf-8") as stream:
+        for line in stream:
+            key, separator, value = line.partition(":")
+            if separator:
+                fields[key] = value.split()
+    return fields
+
+
+def start_token(proc_pid) -> str:
+    """The kernel start tick of a process in this reader's /proc, as recorded."""
+    with open(f"/proc/{proc_pid}/stat", encoding="utf-8") as stream:
+        stat = stream.read().strip()
+    _before, delimiter, after = stat.rpartition(")")
+    fields = after.split()
+    if not delimiter or len(fields) < 20:
+        raise UnknownProcess
+    return fields[19]
+
+
+def namespace_locate(namespace, pid: int, token=None):
+    """Find, in this reader's /proc, the process in a descendant pid namespace
+    whose pid there is `pid` and whose namespace is `namespace`, or, when the
+    record carries no namespace, whose start token is `token`. None when no
+    visible process matches. A pid in a descendant namespace is only meaningful
+    together with its namespace: the same number names an unrelated process in
+    every other table, including this one; the start token is namespace-free
+    and stands in for the namespace a v2 record never wrote."""
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            nspid = status_fields(f"/proc/{entry}/status").get("NSpid", [])
+            if len(nspid) < 2 or nspid[-1] != str(pid):
+                continue
+            if namespace is not None:
+                if pid_namespace(entry) != namespace:
+                    continue
+            elif token is None or start_token(entry) != token:
+                continue
+        except (OSError, UnicodeError, UnknownProcess):
+            continue
+        return int(entry, 10)
+    return None
+
+
+def own_pid_namespace() -> int:
+    """This reader's pid namespace, from a /proc mounted for its own table: a
+    procfs mounted for another namespace would show a different pid for self,
+    and every conclusion drawn from it about absence would be about the wrong
+    table. This proves which table /proc shows, not that it lists all of it;
+    proc_view_complete answers that."""
     try:
-        with open(f"/proc/{pid}/comm", encoding="utf-8") as stream:
+        nspid = status_fields("/proc/self/status").get("NSpid", [])
+        if not nspid or nspid[-1] != str(os.getpid()):
+            raise UnknownProcess
+        return pid_namespace("self")
+    except (OSError, UnicodeError) as exc:
+        raise UnknownProcess from exc
+
+
+# hidepid modes under which procfs still lists every process of the reader's
+# own uid. ptraceable (4) drops same-uid processes the reader cannot ptrace,
+# so absence there proves nothing.
+COMPLETE_HIDEPID = {"0", "off", "1", "noaccess", "2", "invisible"}
+
+
+def proc_view_complete(mountinfo: str = "/proc/self/mountinfo") -> bool:
+    """Whether the /proc this reader enumerates lists every process of its own
+    uid in its table. Only procfs itself enumerates a pid table, and only
+    without a hidepid mode that filters this user's own entries; anything
+    else at /proc, or no mount there, makes an absent owner unprovable."""
+    try:
+        with open(mountinfo, encoding="utf-8") as stream:
+            lines = stream.read().splitlines()
+    except (OSError, UnicodeError):
+        return False
+    top = None
+    for line in lines:
+        fields = line.split()
+        if len(fields) >= 6 and fields[4] == "/proc":
+            top = fields  # later lines are mounted over earlier ones
+    if top is None or "-" not in top:
+        return False
+    separator = top.index("-")
+    if len(top) < separator + 4 or top[separator + 1] != "proc":
+        return False
+    options = top[5].split(",") + top[separator + 3].split(",")
+    for option in options:
+        key, _, value = option.partition("=")
+        if key == "hidepid" and value not in COMPLETE_HIDEPID:
+            return False
+    return True
+
+
+def linux_locate(pid: int, expected_namespace=None, expected_token=None):
+    """Resolve a recorded owner to the pid this reader can open in its own
+    /proc. Returns (proc_pid, namespace, nested). Without a recorded namespace
+    the pid is read in this table; a process there that cannot be the owner
+    (another user's, or another generation) is searched for once more among
+    descendant namespaces by pid and start token, because an older writer in
+    a sandbox recorded the pid it saw there. Absence is death only for a
+    reader in the initial namespace whose /proc lists every process of this
+    uid; any other reader cannot see every table, so for it such a record
+    stays unresolvable rather than dead."""
+    own_namespace = own_pid_namespace()
+    at_root = own_namespace == INIT_PID_NAMESPACE and proc_view_complete()
+    if expected_namespace is None:
+        same_table = None
+        try:
+            euid = int(status_fields(f"/proc/{pid}/status")["Uid"][1])
+            if euid != os.geteuid():
+                same_table = ForeignProcess()
+            elif expected_token is not None and start_token(pid) != expected_token:
+                same_table = "replaced"
+        except FileNotFoundError:
+            same_table = DeadProcess()
+        except PermissionError:
+            same_table = ForeignProcess()
+        except (OSError, UnicodeError, KeyError, IndexError, ValueError) as exc:
+            raise UnknownProcess from exc
+        if same_table is None:
+            return pid, own_namespace, False
+        if expected_token is not None:
+            located = namespace_locate(None, pid, expected_token)
+            if located is not None:
+                return located, pid_namespace(located), True
+        if not at_root:
+            raise UnresolvableProcess
+        if same_table == "replaced":
+            return pid, own_namespace, False
+        raise same_table
+    if expected_namespace == own_namespace:
+        # Same pid table. A process another user owns is visible here yet can
+        # never be one of this user's tick workers, whose /proc entries are
+        # always readable to it: every recorded owner proved that of itself at
+        # acquisition. Unreadable therefore means not ours, never "alive". The
+        # credential comes from the status file, which maps the process's uid
+        # into this reader's user namespace exactly as geteuid maps its own;
+        # the /proc directory's owner does not, inside a sandbox.
+        try:
+            euid = int(status_fields(f"/proc/{pid}/status")["Uid"][1])
+        except FileNotFoundError as exc:
+            raise DeadProcess from exc
+        except PermissionError as exc:
+            raise ForeignProcess from exc
+        except (OSError, UnicodeError, KeyError, IndexError, ValueError) as exc:
+            raise UnknownProcess from exc
+        if euid != os.geteuid():
+            raise ForeignProcess
+        return pid, own_namespace, False
+    located = namespace_locate(expected_namespace, pid)
+    if located is None:
+        if at_root:
+            raise DeadProcess
+        raise UnresolvableProcess
+    return located, expected_namespace, True
+
+
+def linux_record(
+    pid: int,
+    expected_session=None,
+    expected_namespace=None,
+    expected_token=None,
+    proc_pid=None,
+):
+    """Read one generation. With proc_pid given, the caller already holds a
+    pidfd on exactly that process and no second lookup may substitute another:
+    the record is read from that pid and must still name the recorded owner."""
+    if proc_pid is None:
+        proc_pid, namespace, nested = linux_locate(pid, expected_namespace, expected_token)
+    else:
+        own_namespace = own_pid_namespace()
+        nested = expected_namespace is not None and expected_namespace != own_namespace
+        namespace = expected_namespace if nested else own_namespace
+        try:
+            if nested:
+                if pid_namespace(proc_pid) != expected_namespace:
+                    raise DeadProcess
+            elif proc_pid != pid:
+                raise DeadProcess
+        except FileNotFoundError as exc:
+            raise DeadProcess from exc
+        except OSError as exc:
+            raise UnknownProcess from exc
+    try:
+        with open(f"/proc/{proc_pid}/comm", encoding="utf-8") as stream:
             command = stream.read().strip()
-        with open(f"/proc/{pid}/stat", encoding="utf-8") as stream:
+        with open(f"/proc/{proc_pid}/stat", encoding="utf-8") as stream:
             stat = stream.read().strip()
         with open("/proc/stat", encoding="utf-8") as stream:
             boot_line = next((line for line in stream if line.startswith("btime ")), "")
+        status = status_fields(f"/proc/{proc_pid}/status") if nested else {}
     except FileNotFoundError as exc:
         raise DeadProcess from exc
     except (OSError, UnicodeError) as exc:
@@ -81,15 +293,24 @@ def linux_record(pid: int, expected_session=None):
     before, delimiter, after = stat.rpartition(")")
     fields = after.split()
     try:
-        if not delimiter or not before.startswith(str(pid) + " ("):
+        if not delimiter or not before.startswith(str(proc_pid) + " ("):
             raise ValueError
         state = fields[0]
-        pgrp = int(fields[2])
-        session = int(fields[3])
+        if nested:
+            # The kernel reports pgrp and session in the reader's namespace;
+            # the record holds the owner's own view, which NSpgid and NSsid
+            # give as their last column. The start tick is namespace-free.
+            pgrp = int(status["NSpgid"][-1])
+            session = int(status["NSsid"][-1])
+            if status["NSpid"][-1] != str(pid):
+                raise ValueError
+        else:
+            pgrp = int(fields[2])
+            session = int(fields[3])
         start_ticks = int(fields[19])
         boot_seconds = int(boot_line.split()[1])
         ticks_per_second = int(os.sysconf("SC_CLK_TCK"))
-    except (IndexError, TypeError, ValueError) as exc:
+    except (IndexError, KeyError, TypeError, ValueError) as exc:
         raise UnknownProcess from exc
     if state == "Z":
         raise DeadProcess
@@ -102,9 +323,9 @@ def linux_record(pid: int, expected_session=None):
     role = 0
     if expected_session is not None:
         try:
-            with open(f"/proc/{pid}/cmdline", "rb") as stream:
+            with open(f"/proc/{proc_pid}/cmdline", "rb") as stream:
                 argv = [part.decode("utf-8") for part in stream.read().split(b"\0") if part]
-            with open(f"/proc/{pid}/environ", "rb") as stream:
+            with open(f"/proc/{proc_pid}/environ", "rb") as stream:
                 environment = {}
                 for part in stream.read().split(b"\0"):
                     if b"=" in part:
@@ -120,7 +341,7 @@ def linux_record(pid: int, expected_session=None):
             and environment.get("GANG_TICK_INTERNAL") == "1"
             and environment.get("GANG_SESSION") == expected_session
         )
-    return command, state, pgrp, session, str(start_ticks), born_ns, role, 1
+    return command, state, pgrp, session, str(start_ticks), born_ns, role, 1, namespace
 
 
 def darwin_record(pid: int, expected_session=None):
@@ -186,13 +407,16 @@ def darwin_record(pid: int, expected_session=None):
     born_ns = info.start_seconds * 1_000_000_000 + info.start_microseconds * 1000
     # libproc supplies exact subsecond generation identity, but role evidence
     # remains unavailable here, so Darwin can detect replacement but not kill.
-    return "", str(info.status), pgrp, session, token, born_ns, 0, 0
+    # Darwin has no pid namespaces; 0 is the one namespace every reader shares.
+    return "", str(info.status), pgrp, session, token, born_ns, 0, 0, 0
 
 
-def record(pid: int, expected_session=None):
+def record(pid: int, expected_session=None, expected_namespace=None, expected_token=None):
     if sys.platform == "linux":
-        return linux_record(pid, expected_session)
+        return linux_record(pid, expected_session, expected_namespace, expected_token)
     if sys.platform == "darwin":
+        if expected_namespace not in (None, 0):
+            raise UnknownProcess
         return darwin_record(pid, expected_session)
     raise UnknownProcess
 
@@ -201,10 +425,10 @@ def print_codex(pid: int) -> int:
     if sys.platform != "linux":
         return 1
     try:
-        command, _state, _pgrp, _session, token, _born, _role, _safe = record(pid)
-    except DeadProcess:
+        command, _state, _pgrp, _session, token, _born, _role, _safe, _ns = record(pid)
+    except (DeadProcess, ForeignProcess):
         return 1
-    except UnknownProcess:
+    except (UnknownProcess, UnresolvableProcess):
         return 2
     if command != "codex":
         return 1
@@ -212,38 +436,62 @@ def print_codex(pid: int) -> int:
     return 0
 
 
-def print_tick(pid: int, expected_session: str) -> int:
+def print_tick(pid: int, expected_session: str, expected_namespace=None, expected_token=None) -> int:
+    # 0 live, 1 dead, 2 unknown, 3 foreign (exists, can never be ours),
+    # 4 unresolvable from this reader's namespace.
     try:
-        _command, _state, pgrp, session, token, born_ns, role, safe = record(
-            pid, expected_session
+        _command, _state, pgrp, session, token, born_ns, role, safe, namespace = record(
+            pid, expected_session, expected_namespace, expected_token
         )
     except DeadProcess:
         return 1
     except UnknownProcess:
         return 2
-    print(pid, token, pgrp, session, born_ns, role, safe, sep="\t")
+    except ForeignProcess:
+        return 3
+    except UnresolvableProcess:
+        return 4
+    print(pid, token, pgrp, session, born_ns, role, safe, namespace, sep="\t")
     return 0
 
 
 def kill_generation(
-    pid: int, expected_token: str, expected_session: str, clock_path: str
+    pid: int,
+    expected_token: str,
+    expected_session: str,
+    clock_path: str,
+    expected_namespace=None,
 ) -> int:
     if sys.platform != "linux" or not hasattr(os, "pidfd_open") or not hasattr(signal, "pidfd_send_signal"):
         return 2
     try:
-        pidfd = os.pidfd_open(pid)
+        proc_pid, namespace, _nested = linux_locate(pid, expected_namespace, expected_token)
+    except DeadProcess:
+        return 1
+    except (UnknownProcess, ForeignProcess, UnresolvableProcess):
+        return 2
+    try:
+        pidfd = os.pidfd_open(proc_pid)
     except ProcessLookupError:
         return 1
     except OSError:
         return 2
     try:
+        # THE PIDFD IS THE IDENTITY FROM HERE ON. The record is re-read from the
+        # very pid the descriptor was opened on, never located a second time:
+        # a second lookup could land on a different process while the
+        # descriptor stays bound to the first, and the signal would follow the
+        # descriptor. The namespace is the one the owner was located in: a
+        # record without one may name a pid in a table the token identified.
         try:
-            current = linux_record(pid, expected_session)
+            current = linux_record(
+                pid, expected_session, namespace, expected_token, proc_pid=proc_pid
+            )
         except DeadProcess:
             return 1
-        except UnknownProcess:
+        except (UnknownProcess, ForeignProcess, UnresolvableProcess):
             return 2
-        _command, _state, pgrp, session, token, _born, role, safe = current
+        _command, _state, pgrp, session, token, _born, role, safe, _namespace = current
         if token != expected_token:
             return 1
         if pgrp != pid or session != pid or role != 1 or safe != 1:
@@ -288,20 +536,42 @@ def lock_fd(fd: int, wait: bool = False) -> int:
     return 0
 
 
+def namespace_argument(value: str):
+    """The recorded owner namespace: absent or empty means the reader's own."""
+    if value == "":
+        return None
+    if not value.isascii() or not value.isdigit():
+        raise ValueError
+    return int(value, 10)
+
+
 def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd" and sys.argv[2].isdigit():
         return lock_fd(int(sys.argv[2]))
     if len(sys.argv) == 3 and sys.argv[1] == "--lock-fd-wait" and sys.argv[2].isdigit():
         return lock_fd(int(sys.argv[2]), wait=True)
-    if len(sys.argv) == 4 and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
-        return print_tick(int(sys.argv[2]), sys.argv[3])
+    if len(sys.argv) in (4, 5, 6) and sys.argv[1] == "--tick" and sys.argv[2].isdigit():
+        try:
+            namespace = namespace_argument(sys.argv[4] if len(sys.argv) >= 5 else "")
+        except ValueError:
+            return 2
+        token = sys.argv[5] if len(sys.argv) == 6 and sys.argv[5] != "" else None
+        if token is not None and not (token.isascii() and token.isalnum()):
+            return 2
+        return print_tick(int(sys.argv[2]), sys.argv[3], namespace, token)
     if len(sys.argv) == 3 and sys.argv[1] == "--codex" and sys.argv[2].isdigit():
         return print_codex(int(sys.argv[2]))
-    if len(sys.argv) == 6 and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
+    if len(sys.argv) in (6, 7) and sys.argv[1] == "--kill" and sys.argv[2].isdigit():
         clock_path = sys.argv[5]
         if not os.path.isabs(clock_path) or not os.access(clock_path, os.X_OK):
             return 2
-        return kill_generation(int(sys.argv[2]), sys.argv[3], sys.argv[4], clock_path)
+        try:
+            namespace = namespace_argument(sys.argv[6] if len(sys.argv) == 7 else "")
+        except ValueError:
+            return 2
+        return kill_generation(
+            int(sys.argv[2]), sys.argv[3], sys.argv[4], clock_path, namespace
+        )
     return 2
 
 

@@ -4665,26 +4665,36 @@ tick_lock_release() {
 
 TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
 TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
-TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_STATE=""
-tick_process_read() { # $1 pid; live/dead/unknown in TICK_PROCESS_STATE
+TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_NAMESPACE="" TICK_PROCESS_STATE=""
+tick_process_read() { # $1 pid, $2 its pid namespace ('' = unrecorded), $3 its
+  # recorded start token ('' = none); live/dead/foreign/unresolvable/unknown in
+  # TICK_PROCESS_STATE. A pid names a process only inside one pid namespace: a
+  # worker in a sandbox records the number it sees, and the same number is an
+  # unrelated process on the host. The helper resolves a recorded namespace
+  # through the reader's own /proc, and a record without one by pid and start
+  # token among the namespaces it can see. Foreign is a process that exists
+  # here but belongs to another user, so it can never be one of this team's
+  # tick workers; unresolvable is an owner this reader's namespace cannot see.
   local out="" rc=0 extra=""
   TICK_PROCESS_PID="" TICK_PROCESS_TOKEN="" TICK_PROCESS_PGRP=""
   TICK_PROCESS_SESSION="" TICK_PROCESS_BORN_NS="" TICK_PROCESS_ROLE=""
-  TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_STATE=unknown
-  out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" 2>/dev/null)" || rc=$?
+  TICK_PROCESS_SIGNAL_SAFE="" TICK_PROCESS_NAMESPACE="" TICK_PROCESS_STATE=unknown
+  out="$("$ROOT/libexec/gang-process-identity" --tick "$1" "$SESSION" "${2:-}" "${3:-}" 2>/dev/null)" || rc=$?
   case "$rc" in
     0)
       IFS=$'\t' read -r TICK_PROCESS_PID TICK_PROCESS_TOKEN TICK_PROCESS_PGRP \
         TICK_PROCESS_SESSION TICK_PROCESS_BORN_NS TICK_PROCESS_ROLE \
-        TICK_PROCESS_SIGNAL_SAFE extra <<<"$out"$'\t__end'
+        TICK_PROCESS_SIGNAL_SAFE TICK_PROCESS_NAMESPACE extra <<<"$out"$'\t__end'
       if [ "$extra" = __end ] && [ "$TICK_PROCESS_PID" = "$1" ]; then
-        case "$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$TICK_PROCESS_SESSION:$TICK_PROCESS_BORN_NS:$TICK_PROCESS_ROLE:$TICK_PROCESS_SIGNAL_SAFE" in
-          *[!A-Za-z0-9:]*|*::*|:*) return 0 ;;
+        case "$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$TICK_PROCESS_SESSION:$TICK_PROCESS_BORN_NS:$TICK_PROCESS_ROLE:$TICK_PROCESS_SIGNAL_SAFE:$TICK_PROCESS_NAMESPACE" in
+          *[!A-Za-z0-9:]*|*::*|:*|*:) return 0 ;;
           *) TICK_PROCESS_STATE=live; return 0 ;;
         esac
       fi ;;
     1) TICK_PROCESS_STATE=dead; return 0 ;;
     2) return 0 ;;
+    3) TICK_PROCESS_STATE=foreign; return 0 ;;
+    4) TICK_PROCESS_STATE=unresolvable; return 0 ;;
   esac
 }
 
@@ -4706,10 +4716,11 @@ tick_lock_recovered() { # $1 diagnostic; lock already retired, no pass ran
   return 1
 }
 
-tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns legacy_age]
+tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns legacy_age namespace]
   local holder="$1" pid="$2" token="$3" pgrp="$4"
   local acquired="$5" age_ns="$6" format="$7"
-  local mtime_ns="${8:-}" legacy_age="${9:-}" again="" kill_rc=0 elapsed_rc=0
+  local mtime_ns="${8:-}" legacy_age="${9:-}" namespace="${10:-}"
+  local again="" kill_rc=0 elapsed_rc=0
   local budget_ns=$((GANG_TICK_DEADLINE_SECONDS * 1000000000))
   local reclaim=$((GANG_TICK_DEADLINE_SECONDS * 2)) reclaim_ns=$((budget_ns * 2)) age_s=0
 
@@ -4779,7 +4790,7 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
   # this exact recorded leader generation; its kernel death wait is capped at
   # 1.0s. A PGID is a reusable bare number, so this path must never call killpg.
   "$ROOT/libexec/gang-process-identity" --kill "$pid" "$token" "$SESSION" \
-    "$GANGLINE_CLOCK_HELPER" >/dev/null 2>&1 \
+    "$GANGLINE_CLOCK_HELPER" "$namespace" >/dev/null 2>&1 \
     || kill_rc=$?
   case "$kill_rc" in
     0) ;;
@@ -4806,8 +4817,8 @@ tick_lock_expired() { # holder pid token pgrp acquired age_ns format [mtime_ns l
 
 tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
   local holder="" again="" err="" read_rc=0 read_races=0 guard_rc=0
-  local pid="" token="" pgrp="" acquired="" extra="" age_ns=0 now_ns=0 mtime_ns=0 legacy_age=0 now=0
-  local format="" expired_rc=0
+  local pid="" token="" pgrp="" acquired="" namespace="" extra="" age_ns=0 now_ns=0 mtime_ns=0 legacy_age=0 now=0
+  local format="" expired_rc=0 self_namespace=""
   tick_lock_paths_set || return 1
   case "${GANG_TICK_DEADLINE_SECONDS:-}" in
     60) ;;
@@ -4817,10 +4828,13 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
   tick_process_read "$LOCK_SELF_PID"
   [ "$TICK_PROCESS_STATE" = live ] \
     || { printf 'tick worker process identity is %s before lock acquisition\n' "$TICK_PROCESS_STATE" >&2; return 1; }
+  self_namespace="$TICK_PROCESS_NAMESPACE"
   now_ns="$(clock_now_ns)" \
     || { printf 'tick worker cannot read the monotonic acquisition clock\n' >&2; return 1; }
   case "$now_ns" in ''|*[!0-9]*) printf 'tick worker has an unreadable monotonic acquisition clock\n' >&2; return 1 ;; esac
-  TICK_LOCK_RECORD="v2:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now_ns"
+  # The pid namespace travels with the pid: without it a contender in another
+  # namespace reads the number against the wrong table.
+  TICK_LOCK_RECORD="v3:$LOCK_SELF_PID:$TICK_PROCESS_TOKEN:$TICK_PROCESS_PGRP:$now_ns:$self_namespace"
   while :; do
     err=""
     guard_rc=0
@@ -4866,29 +4880,59 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
         || { printf 'tick lock %s disappeared twice while Gangline was resolving contention\n' "$TICK_LOCK_PATH" >&2; return 1; }
       continue
     fi
-    format=legacy pid="" token="" pgrp="" acquired="" extra=""
+    format=legacy pid="" token="" pgrp="" acquired="" namespace="" extra=""
     age_ns=0 legacy_age=0 mtime_ns=0
+    # A line read stops at the first newline; the record must be one line.
     case "$holder" in
-      v2:*) IFS=: read -r format pid token pgrp acquired extra <<<"$holder:__end"
-            if [ "$format" != v2 ] || [ "$extra" != __end ]; then
-              printf "tick lock %s has an unreadable owner '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2
-              return 1
-            fi
+      *$'\n'*|*$'\r'*)
+        printf "tick lock %s has an unreadable owner '%s'\n" "$TICK_LOCK_PATH" "${holder%%[$'\n\r']*}" >&2
+        return 1 ;;
+    esac
+    case "$holder" in
+      v2:*|v3:*)
+            # v2 has no namespace field: its writer may have been in another
+            # pid table, so it is resolved by pid and start token instead.
+            # v3 names the owner's namespace.
+            IFS=: read -r format pid token pgrp acquired namespace extra <<<"$holder:__end"
+            case "$format" in
+              v2) [ "$namespace" = __end ] && [ -z "$extra" ] || format=""
+                  namespace="" ;;
+              v3) [ "$extra" = __end ] || format=""
+                  case "$namespace" in ''|*[!0-9]*) format="" ;; esac ;;
+              *) format="" ;;
+            esac
             case "$pid" in ''|*[!0-9]*) format="" ;; esac
             case "$token" in ''|*[!A-Za-z0-9]*) format="" ;; esac
             case "$pgrp" in ''|*[!0-9]*) format="" ;; esac
             case "$acquired" in ''|*[!0-9]*) format="" ;; esac
-            [ "$format" = v2 ] \
+            [ -n "$format" ] \
               || { printf "tick lock %s has an unreadable owner '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1; } ;;
       *[!0-9]*|'') printf "tick lock %s has an unreadable pid '%s'\n" "$TICK_LOCK_PATH" "$holder" >&2; return 1 ;;
       *) pid="$holder" ;;
     esac
-    tick_process_read "$pid"
+    tick_process_read "$pid" "$namespace" "$token"
+    if [ "$TICK_PROCESS_STATE" = unresolvable ]; then
+      if [ -n "$namespace" ]; then
+        printf 'tick lock %s is held by pid %s in pid namespace %s, which this process cannot see; lock was retained\n' \
+          "$TICK_LOCK_PATH" "$pid" "$namespace" >&2
+      else
+        printf 'tick lock %s names pid %s without a pid namespace, and this process cannot see every namespace; lock was retained\n' \
+          "$TICK_LOCK_PATH" "$pid" >&2
+      fi
+      return 1
+    fi
     if [ "$TICK_PROCESS_STATE" = unknown ]; then
       printf 'tick lock %s held by pid %s has unreadable process identity; lock was retained\n' "$TICK_LOCK_PATH" "$pid" >&2
       return 1
     fi
-    if [ "$TICK_PROCESS_STATE" = dead ]; then
+    if [ "$TICK_PROCESS_STATE" = foreign ]; then
+      # Exists, but belongs to another user: a recycled number, never a tick
+      # worker of this team, whose workers always run as this user. Retired
+      # the same way a dead owner is; the line is for a reader of the worker.
+      printf 'tick lock %s names pid %s, which belongs to another user and cannot be a tick worker for this team; the stale lock was retired\n' \
+        "$TICK_LOCK_PATH" "$pid" >&2
+    fi
+    if [ "$TICK_PROCESS_STATE" = dead ] || [ "$TICK_PROCESS_STATE" = foreign ]; then
       guard_rc=0
       tick_guard_try || guard_rc=$?
       case "$guard_rc" in
@@ -4906,7 +4950,7 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
         || { printf 'cannot clear stale tick lock %s held by dead pid %s\n' "$TICK_LOCK_PATH" "$pid" >&2; return 1; }
       continue
     fi
-    if [ "$format" = v2 ]; then
+    if [ "$format" != legacy ]; then
       if [ "$TICK_PROCESS_TOKEN" != "$token" ] || [ "$TICK_PROCESS_PGRP" != "$pgrp" ]; then
         guard_rc=0
         tick_guard_try || guard_rc=$?
@@ -4942,12 +4986,12 @@ tick_lock_acquire() { # 0 owner, 75 live owner was marked dirty, other = fault
     fi
     touch -- "$TICK_DIRTY_PATH" || { printf 'cannot mark the running tick dirty at %s\n' "$TICK_DIRTY_PATH" >&2; return 1; }
     expired_rc=0
-    tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$acquired" "$age_ns" "$format" "$mtime_ns" "$legacy_age" \
+    tick_lock_expired "$holder" "$pid" "$token" "$pgrp" "$acquired" "$age_ns" "$format" "$mtime_ns" "$legacy_age" "$namespace" \
       || expired_rc=$?
     [ "$expired_rc" -eq 1 ] || return 1
     if [ "$TICK_PROCESS_STATE" = live ]; then
       again="$(readlink "$TICK_LOCK_PATH" 2>/dev/null)" || again=""
-      tick_process_read "$pid"
+      tick_process_read "$pid" "$namespace" "$token"
       if [ "$again" = "$holder" ] && [ "$TICK_PROCESS_STATE" = live ] \
          && { [ "$format" = legacy ] || { [ "$TICK_PROCESS_TOKEN" = "$token" ] && [ "$TICK_PROCESS_PGRP" = "$pgrp" ]; }; }; then
         TICK_LOCK_PATH="" TICK_DIRTY_PATH="" TICK_LOCK_RECORD=""

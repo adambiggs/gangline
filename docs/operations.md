@@ -563,6 +563,14 @@ owner cannot be killed and confirmed within the one-second bound, or no later
 Gangline command runs, the lock remains fail-closed. Inspect the named process
 and lock rather than deleting health state; manual lock removal remains an
 operator decision when exact identity cannot be established.
+A lock `held by pid N in pid namespace X, which this process cannot see` was
+taken by a worker in another pid table, typically a harness sandbox. Run `gang
+tick` from outside that sandbox, where the owner is visible; it then resolves a
+live owner as contention and reclaims one that died with its sandbox. The same
+line from a contender already on the host means its `/proc` is not a complete
+view of the pid table (a `hidepid=ptraceable` mount, or something other than
+procfs mounted there): absence cannot be proven through it, so remove such a
+lock only by hand, after confirming the namespace holds no worker.
 
 ### An agent reads `session-lost`
 

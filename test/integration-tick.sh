@@ -1174,6 +1174,267 @@ ln -s "v2:$$:0:$tick_shell_pgrp:$(date +%s)" "$tick_lock_path"
 equal "a generation mismatch is reclaimed without signalling the reused pid" absent \
   "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
 
+# A RECORD IS ONE LINE. A line-oriented read would take a valid first line and
+# never see what followed it; the whole target is judged, not its prefix.
+tick_multiline_record="$(printf 'v3:%s:%s:%s:%s:%s\nreplacement' \
+  "$$" "$tick_shell_token" "$tick_shell_pgrp" "$(tick_monotonic_ns)" "$(cut -f 8 <<<"$tick_shell_identity")")"
+ln -s "$tick_multiline_record" "$tick_lock_path"
+tick_multiline_rc=0
+GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+  > "$RUN_ROOT/tick-multiline.out" 2>&1 || tick_multiline_rc=$?
+equal "a lock record with a second line is a loud lock fault" 1 "$tick_multiline_rc"
+contains "the multi-line record is named as an unreadable owner" \
+  "$(<"$RUN_ROOT/tick-multiline.out")" "has an unreadable owner"
+equal "the multi-line record is retained unchanged" "$tick_multiline_record" \
+  "$(readlink "$tick_lock_path")"
+rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+
+# A PID ANOTHER USER OWNS IS NOT AN UNKNOWN OWNER. Every tick worker runs as
+# this user and proved its own /proc readable when it acquired, so a recorded
+# pid whose /proc now belongs to someone else was reused and cannot be a live
+# owner. Such a lock is retired, and the worker says why: it is not the
+# fail-closed "unreadable process identity" verdict, which stays for evidence
+# that genuinely cannot be read.
+tick_foreign_pid=""
+for tick_candidate in /proc/1 /proc/2 /proc/[0-9]*; do
+  tick_candidate="${tick_candidate#/proc/}"
+  tick_candidate_uid="$(awk '/^Uid:/ { print $2 }' "/proc/$tick_candidate/status" 2>/dev/null)"
+  [ -n "$tick_candidate_uid" ] || continue
+  [ "$tick_candidate_uid" != "$(id -u)" ] || continue
+  tick_foreign_pid="$tick_candidate"
+  break
+done
+if [ -z "$tick_foreign_pid" ]; then
+  unknown "a lock naming another user's pid is retired rather than retained" \
+    "every process visible here belongs to this user, so no foreign pid exists to plant"
+else
+  tick_foreign_helper_rc=0
+  "$ROOT/libexec/gang-process-identity" --tick "$tick_foreign_pid" "$GANG_SESSION" \
+    >/dev/null 2>&1 || tick_foreign_helper_rc=$?
+  equal "the identity helper classes another user's pid as foreign, not unknown" \
+    3 "$tick_foreign_helper_rc"
+  ln -s "$tick_foreign_pid" "$tick_lock_path"
+  tick_foreign_legacy_rc=0
+  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+    > "$RUN_ROOT/tick-foreign-legacy.out" 2>&1 || tick_foreign_legacy_rc=$?
+  equal "a legacy lock naming another user's pid is retired and the pass runs" \
+    0 "$tick_foreign_legacy_rc"
+  contains "the retired owner is named as another user's process" \
+    "$(<"$RUN_ROOT/tick-foreign-legacy.out")" \
+    "belongs to another user and cannot be a tick worker for this team; the stale lock was retired"
+  excludes "another user's pid is not reported as unreadable identity" \
+    "$(<"$RUN_ROOT/tick-foreign-legacy.out")" "unreadable process identity"
+  equal "the legacy foreign-owner lock is gone after the pass" absent \
+    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+  tick_foreign_token="$(sed 's/^.*) //' "/proc/$tick_foreign_pid/stat" | awk '{ print $20 }')"
+  ln -s "v2:$tick_foreign_pid:$tick_foreign_token:$tick_foreign_pid:1" "$tick_lock_path"
+  tick_foreign_v2_rc=0
+  "$GANG" tick >/dev/null 2>&1 || tick_foreign_v2_rc=$?
+  equal "a v2 lock naming another user's live generation is reclaimed" 0 "$tick_foreign_v2_rc"
+  equal "the v2 foreign-owner lock is gone after the pass" absent \
+    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+fi
+
+# A PID IS ONLY A NAME INSIDE ITS PID NAMESPACE. A worker in a sandbox with its
+# own pid table records the number it sees; on the host that number belongs to
+# an unrelated process. The record carries the owner's namespace, and a
+# contender in the initial namespace resolves it through /proc: a live owner is
+# ordinary contention, an owner that died with its sandbox is reclaimed because
+# no process in that namespace remains, and a contender inside a namespace that
+# cannot see the owner retains the lock and names the namespace it cannot see.
+tick_host_namespace="$(cut -f 8 <<<"$tick_shell_identity")"
+tick_namespace_run() { # a fresh pid table under this same uid, as a harness sandbox is
+  unshare --kill-child=SIGKILL -U --map-user="$(id -u)" --map-group="$(id -g)" \
+    -pf --mount-proc "$@"
+}
+tick_namespace_host_pid() { # $1 namespace inode, $2 pid inside it -> the host pid, or nothing
+  local status="" inner="" candidate=""
+  for status in /proc/[0-9]*/status; do
+    inner="$(awk '/^NSpid:/ { if (NF > 2) print $NF }' "$status" 2>/dev/null)" || continue
+    [ "$inner" = "$2" ] || continue
+    candidate="${status%/status}"
+    [ "$(readlink "$candidate/ns/pid" 2>/dev/null)" = "pid:[$1]" ] || continue
+    printf '%s' "${candidate#/proc/}"
+    return 0
+  done
+  return 1
+}
+if ! tick_namespace_run true 2>/dev/null; then
+  unknown "a tick owner in a child pid namespace is resolved by namespace" \
+    "unprivileged pid namespaces are unavailable here (unshare -U --map-user -pf --mount-proc)"
+else
+  tick_ns_ready="$RUN_ROOT/tick-ns-ready"
+  mkfifo "$tick_ns_ready"
+  # The stand-in owner becomes a session leader before publishing the identity
+  # it sees of itself, so every field the record carries is settled. It wears
+  # the tick-worker role (argv tail and environment) so the reclaim path can
+  # be driven to its signal against it.
+  tick_namespace_run env GANG_TICK_INTERNAL=1 python3 - "$ROOT/libexec/gang-process-identity" \
+    "$GANG_SESSION" "$tick_ns_ready" __tick-worker <<'PY' &
+import os
+import signal
+import subprocess
+import sys
+
+os.setsid()
+with open(sys.argv[3], "w", encoding="utf-8") as ready:
+    subprocess.run(
+        [sys.argv[1], "--tick", str(os.getpid()), sys.argv[2]],
+        stdout=ready,
+        check=True,
+    )
+signal.pause()
+PY
+  tick_ns_launcher=$!
+  IFS=$'\t' read -r tick_ns_inner tick_ns_token tick_ns_pgrp _ _ tick_ns_role _ tick_ns_namespace \
+    < "$tick_ns_ready"
+  # Located through the host's own view rather than the job's process tree,
+  # which differs between an exec'd and a forked background launcher.
+  tick_ns_owner="$(tick_namespace_host_pid "$tick_ns_namespace" "$tick_ns_inner")" || tick_ns_owner=""
+  equal "the host finds exactly the stand-in owner behind the recorded namespace pid" python3 \
+    "$(cat "/proc/${tick_ns_owner:-0}/comm" 2>/dev/null)"
+  equal "the stand-in owner presents as a tick worker of this team" 1 "$tick_ns_role"
+  equal "the stand-in owner sees itself in a namespace other than the host's" different \
+    "$([ -n "$tick_ns_namespace" ] && [ "$tick_ns_namespace" != "$tick_host_namespace" ] && printf different || printf same)"
+  equal "the host resolves the namespaced owner to the identity it sees of itself" \
+    "$tick_ns_inner	$tick_ns_token	$tick_ns_pgrp" \
+    "$("$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
+        "$tick_ns_namespace" 2>/dev/null | cut -f 1-3)"
+  ln -s "v3:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns):$tick_ns_namespace" \
+    "$tick_lock_path"
+  tick_ns_live_rc=0
+  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+    > "$RUN_ROOT/tick-ns-live.out" 2>&1 || tick_ns_live_rc=$?
+  equal "a live owner in a child pid namespace is contention, not a steal" 75 "$tick_ns_live_rc"
+  equal "the live namespaced owner keeps its lock" present \
+    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+  equal "the live namespaced owner is marked dirty like any live owner" present \
+    "$([ -e "${tick_lock_path%.lock}.dirty" ] && printf present || printf absent)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+  # An older worker inside the same kind of namespace wrote v2 records with no
+  # namespace at all. Read against the host table its pid is another user's
+  # process, or another generation; the start token still identifies it among
+  # the namespaces the host can see, so a live owner is contention, not a
+  # retired stale lock.
+  ln -s "v2:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns)" \
+    "$tick_lock_path"
+  tick_ns_v2_rc=0
+  GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+    > "$RUN_ROOT/tick-ns-v2.out" 2>&1 || tick_ns_v2_rc=$?
+  equal "a live v2 owner recorded from inside a child pid namespace is contention" \
+    75 "$tick_ns_v2_rc"
+  equal "the live namespaced v2 owner keeps its lock" present \
+    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+  # Past the reclaim edge the same v2 owner must be killable: the pidfd is
+  # opened on the host pid the token resolved, and the record re-read from
+  # that pid must be judged in the owner's namespace, not the host's, or the
+  # expired worker is reported dead while it lives on unkillable.
+  tick_ns_kill_rc=0
+  "$ROOT/libexec/gang-process-identity" --kill "$tick_ns_inner" "$tick_ns_token" \
+    "$GANG_SESSION" "$ROOT/libexec/gang-clock" >/dev/null 2>&1 || tick_ns_kill_rc=$?
+  equal "an expired v2 owner located through a child namespace is signalled and confirmed dead" \
+    0 "$tick_ns_kill_rc"
+  equal "the signalled namespaced owner is gone from the host table" absent \
+    "$([ -d "/proc/${tick_ns_owner:-0}" ] && printf present || printf absent)"
+  ln -s "v3:$tick_ns_inner:$tick_ns_token:$tick_ns_pgrp:$(tick_monotonic_ns):$tick_ns_namespace" \
+    "$tick_lock_path"
+  # The observed production shape: the sandbox dies and takes its worker with
+  # it, leaving the namespace pid in the shared lock. Prove the exact
+  # generation gone the way the contender will, then reclaim.
+  kill -KILL "$tick_ns_owner" "$tick_ns_launcher" 2>/dev/null || true
+  wait "$tick_ns_launcher" 2>/dev/null || true
+  tick_ns_dead_rc=0
+  "$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
+    "$tick_ns_namespace" >/dev/null 2>&1 || tick_ns_dead_rc=$?
+  equal "no process remains in the dead namespace, which the host reads as death" \
+    1 "$tick_ns_dead_rc"
+  tick_ns_reclaim_rc=0
+  "$GANG" tick >/dev/null 2>&1 || tick_ns_reclaim_rc=$?
+  equal "an owner that died with its pid namespace is reclaimed by a host contender" \
+    0 "$tick_ns_reclaim_rc"
+  equal "the dead namespaced owner's lock is gone after the pass" absent \
+    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+
+  # The other direction: a contender inside a fresh pid table sees none of the
+  # host's processes, so a host-owned lock must be retained, not read as dead.
+  ln -s "v3:$$:$tick_shell_token:$tick_shell_pgrp:$(tick_monotonic_ns):$tick_host_namespace" \
+    "$tick_lock_path"
+  tick_ns_blind_rc=0
+  tick_namespace_run env GANG_TICK_INTERNAL=1 "$GANG" __tick-worker \
+    > "$RUN_ROOT/tick-ns-blind.out" 2>&1 || tick_ns_blind_rc=$?
+  equal "a contender that cannot see the owner's namespace fails closed" 1 "$tick_ns_blind_rc"
+  contains "the blind contender names the namespace it cannot see" \
+    "$(<"$RUN_ROOT/tick-ns-blind.out")" \
+    "in pid namespace $tick_host_namespace, which this process cannot see; lock was retained"
+  equal "the host-owned lock survives a blind contender" present \
+    "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+  rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
+fi
+
+# ABSENCE IS DEATH ONLY FROM A COMPLETE /proc. Self showing its own pid proves
+# which table procfs presents, not that every process of this uid is listed:
+# hidepid=ptraceable filters same-uid entries, and something other than procfs
+# at /proc enumerates nothing. Read through such a view, a namespace with no
+# visible process stays unresolvable rather than reclaimed.
+tick_proc_view_root="$RUN_ROOT/tick-proc-view"
+mkdir -p "$tick_proc_view_root"
+printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw\n' \
+  > "$tick_proc_view_root/plain"
+printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw,hidepid=invisible\n' \
+  > "$tick_proc_view_root/invisible"
+printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime,hidepid=2 shared:13 - proc proc rw\n' \
+  > "$tick_proc_view_root/invisible-mount"
+printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw,hidepid=4\n' \
+  > "$tick_proc_view_root/ptraceable"
+printf '26 31 0:24 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw\n80 26 0:50 / /proc rw,relatime - tmpfs none rw\n' \
+  > "$tick_proc_view_root/overmounted"
+printf '26 31 0:24 / /sys rw,nosuid,nodev,noexec,relatime shared:13 - sysfs sysfs rw\n' \
+  > "$tick_proc_view_root/missing"
+tick_proc_view_probe="$(python3 - "$ROOT/libexec/gang-process-identity" \
+  "$tick_proc_view_root" 2>/dev/null <<'PY'
+import os
+import runpy
+import sys
+
+scope = runpy.run_path(sys.argv[1], run_name="gang_tick_proc_view_probe")
+runtime = scope["main"].__globals__
+complete = runtime["proc_view_complete"]
+verdicts = [
+    name
+    for name in ("plain", "invisible", "invisible-mount", "ptraceable", "overmounted", "missing")
+    if complete(os.path.join(sys.argv[2], name))
+]
+verdicts.append("absent" if not complete(os.path.join(sys.argv[2], "no-such-file")) else "read")
+
+# A reader at the initial namespace whose view is incomplete: a namespace
+# holding no visible process must not read as dead.
+runtime["proc_view_complete"] = lambda mountinfo="": False
+runtime["own_pid_namespace"] = lambda: runtime["INIT_PID_NAMESPACE"]
+try:
+    runtime["linux_locate"](os.getpid(), expected_namespace=1)
+    verdicts.append("resolved")
+except runtime["UnresolvableProcess"]:
+    verdicts.append("unresolvable")
+except runtime["DeadProcess"]:
+    verdicts.append("dead")
+runtime["proc_view_complete"] = lambda mountinfo="": True
+try:
+    runtime["linux_locate"](os.getpid(), expected_namespace=1)
+    verdicts.append("resolved")
+except runtime["UnresolvableProcess"]:
+    verdicts.append("unresolvable")
+except runtime["DeadProcess"]:
+    verdicts.append("dead")
+print(",".join(verdicts))
+PY
+)"
+equal "only procfs without a same-uid hidepid filter counts as a complete view, and an unreadable mount table does not" \
+  "plain,invisible,invisible-mount,absent,unresolvable,dead" "$tick_proc_view_probe"
+
 # THE KERNEL GUARD SERIALIZES RETIREMENT. The interpreter shim blocks one
 # contender after it holds the per-team flock and has read the stale record.
 # A second real worker must return contention without claiming or deleting the
@@ -1277,7 +1538,8 @@ exec "$REAL" "$@"'
 tick_identity_shape_probe missing-helper-field '
 if [ "${1:-}" = "$HELPER" ] && [ "${2:-}" = --tick ] && [ "${3:-}" = "$TARGET" ]; then
   out="$("$REAL" "$@")" || exit $?
-  printf "%s\n" "${out%??}"
+  TAB="$(printf "\t")"
+  printf "%s\n" "${out%"$TAB"*}"
   exit 0
 fi
 exec "$REAL" "$@"'
@@ -1381,7 +1643,7 @@ IFS= read -r -N 1 _ < "$tick_bystander_ready"
 tick_bystander_identity="$("$ROOT/libexec/gang-process-identity" \
   --tick "$tick_bystander" "$GANG_SESSION")"
 IFS=$'\t' read -r _ tick_bystander_token tick_bystander_pgrp \
-  tick_bystander_session _ tick_bystander_role tick_bystander_safe \
+  tick_bystander_session _ tick_bystander_role tick_bystander_safe _ \
   <<<"$tick_bystander_identity"
 equal "the kill-authorization bystander is its own process-group leader" \
   "$tick_bystander" "$tick_bystander_pgrp"
@@ -1468,7 +1730,7 @@ GANG_TEST_TICK_RELEASE_FIFO="$tick_clock_release" \
 tick_clock_owner=$!
 IFS= read -r -N 1 _ < "$tick_clock_ready"
 tick_clock_record="$(readlink "$tick_lock_path")"
-IFS=: read -r _ tick_clock_worker _ _ tick_clock_acquired \
+IFS=: read -r _ tick_clock_worker _ _ tick_clock_acquired _ \
   <<<"$tick_clock_record"
 cat > "$tick_clock_helper" <<'SH'
 #!/bin/sh
@@ -1559,7 +1821,7 @@ IFS= read -r -N 1 _ < "$tick_expired_ready"
 tick_expired_record="$(readlink "$tick_lock_path")"
 IFS=: read -r tick_expired_version tick_expired_pid tick_expired_token \
   tick_expired_pgrp _ <<<"$tick_expired_record"
-equal "the expiry fixture owns a generation-bearing production lock" v2 \
+equal "the expiry fixture owns a generation-bearing production lock" v3 \
   "$tick_expired_version"
 equal "the expiry fixture worker is its own process-group leader" \
   "$tick_expired_pid" "$tick_expired_pgrp"
@@ -1620,7 +1882,7 @@ IFS=$'\t' read -r _ _ _ tick_controller_session _ tick_controller_role _ \
   <<<"$tick_controller_identity"
 tick_controller_pid="$(ps -o ppid= -p "$tick_controller_worker" | tr -d ' ')"
 tick_controller_command="$(ps -o command= -p "$tick_controller_pid")"
-equal "the controller-death fixture owns a generation-bearing lock" v2 \
+equal "the controller-death fixture owns a generation-bearing lock" v3 \
   "$tick_controller_version"
 equal "the controller-death fixture resolved its worker session leader" \
   "$tick_controller_worker" "$tick_controller_pgrp"
@@ -1696,11 +1958,28 @@ class OnePoll:
         return []
 
 
-runtime["os"].pidfd_open = lambda _pid: 99
+runtime["os"].pidfd_open = lambda pid: opened_pids.append(pid) or 99
 runtime["os"].close = lambda _fd: None
 runtime["signal"].pidfd_send_signal = lambda pidfd, signum: signals.append((pidfd, signum))
 runtime["select"].poll = OnePoll
-runtime["linux_record"] = lambda pid, session: ("python", "S", pid, pid, "token", 1, 1, 1)
+located_pids = []
+opened_pids = []
+
+
+def fake_locate(pid, namespace=None, token=None):
+    located_pids.append(pid)
+    return 77, 5, True
+
+
+def fake_record(pid, session, namespace=None, token=None, proc_pid=None):
+    # The kill path may resolve an owner once; after that only the pid its
+    # pidfd was opened on may be read, so a second resolution is a defect.
+    assert proc_pid == 77, f"record read without the pidfd's pid: {proc_pid}"
+    return ("python", "S", pid, pid, "token", 1, 1, 1, 5)
+
+
+runtime["linux_locate"] = fake_locate
+runtime["linux_record"] = fake_record
 runtime["clock_now_ns"] = lambda _path: 1
 runtime["clock_elapsed"] = lambda _path, _started, _duration: False
 bounded = kill_generation(41, "token", "team", sys.argv[2])
@@ -1713,10 +1992,13 @@ def broken_clock(_path, _started, _duration):
 runtime["clock_elapsed"] = broken_clock
 clock_failed = kill_generation(41, "token", "team", sys.argv[2])
 print(f"{bounded}:{len(poll_calls)}:{clock_failed}:{len(signals)}")
+print(f"{len(located_pids)}:{sorted(set(opened_pids))}")
 PY
 )"
 equal "death confirmation has one kernel fallback and names a post-signal clock fault" \
-  "3:1:4:2" "$tick_death_bound_probe"
+  "3:1:4:2" "$(head -1 <<<"$tick_death_bound_probe")"
+equal "each kill resolves its owner once and signals only the pid its pidfd was opened on" \
+  "2:[77]" "$(tail -1 <<<"$tick_death_bound_probe")"
 
 tick_deadline_bound_probe="$(python3 - "$ROOT/libexec/gang-tick-deadline" \
   "$ROOT/libexec/gang-clock" 2>/dev/null <<'PY'
