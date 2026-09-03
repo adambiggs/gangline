@@ -81,7 +81,7 @@ selects the harness. If a native first-run gate appears, `up` exposes it before
 waiting for startup-contract delivery, so answering that prompt remains the
 only operator step.
 
-### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-r|--role role] [-l|--lights lights] [--resume [session-id]]`
+### `gang hitch <name> [-c harness] [-d dir] [-m model] [-e effort] [-t|--task label] [-r|--role role] [-l|--lights lights] [--resume [session-id]]`
 
 Starts a native harness in a named tmux window and delivers one startup contract.
 That contract names the agent and carries `CONTRACT.md`, which holds the
@@ -104,6 +104,13 @@ If `$GANG_CONFIG_DIR/DOCTRINE.md` is present, readable,
 valid UTF-8 prose, the contract attributes and
 appends it byte-exactly. Every hitch carries doctrine; Gangline cannot infer
 which caller is the operator. `adopt` still injects no startup text.
+
+`hitch` registers the launch record `gang usage` joins on: the model and effort
+chosen (empty where none was), the directory, the wall-clock start, and the
+optional `-t` label, an opaque string of at most 200 printable characters that
+Gangline prints and never reads. A resume re-registers all of them for the new
+launch. `adopt` registers the pane's current directory and an empty model and
+effort, because it did not choose them.
 
 The launch environment carries the exact `GANG_SESSION`, the absolute resolved
 `GANG_CONFIG_DIR`, and any custom collar and lock paths, so harness commands
@@ -466,7 +473,9 @@ harness's id without declaring such a launch gets the id alone, said to be a
 record of the session rather than a way back into it — `hitch` takes no
 `--resume` for that collar, so quoting the command would print a line it
 refuses. If the collar has supplied no stamp, `drop` says that instead. Its
-tmux-owned state and spool die with it after any pending messages are archived.
+tmux-owned state and spool die with it after any pending messages are archived,
+and one usage record is appended as `gang usage` describes; a record that
+cannot be written is one stderr line, never a refusal to drop.
 
 ### `gang down <session>`
 
@@ -474,7 +483,8 @@ Kills the exact team session and every window in it, archiving each window's
 pending spool first. The session name is required and must match the team this
 shell is pointed at; `down` refuses a name that does not match, and refuses
 outright when it is run from a pane inside that session. There is no override:
-an agent must not be able to end the team it is running in.
+an agent must not be able to end the team it is running in. After the archives
+it appends one usage record per window, reading ccusage once for all of them.
 
 ## Delivery and compaction
 
@@ -1179,6 +1189,42 @@ reader, malformed row, missing reset, or missing observation time fails loudly.
 A successful read records the most constrained native window on the target's
 tmux window. `status` and `roster` report that ephemeral evidence without
 sampling again; it dies with the agent window.
+
+### `gang usage [--all]`
+
+Prints token consumption per agent and per model. Gangline supplies the agent,
+harness, model, effort, state, and duration from its own launch record; the
+token columns come from `ccusage session --json --no-cost --offline`, run under
+a 30-second bound when a `ccusage` executable is on `PATH`, and joined by
+native session id — the stamped id exactly for Claude Code, and as the
+trailing id of the rollout-shaped period ccusage prints for Codex. Gangline
+never parses a transcript for tokens.
+
+The per-agent table shows live agents of this team and, below them, agents
+recorded as ended in this team since its session was created. The per-model
+roll-up sums ccusage's per-model breakdowns across those rows. A `not covered`
+section names every row the join could not fill and why: `absent` when no
+ccusage is on `PATH`, `failed` with the exit status and first error line,
+`malformed` naming the first field ccusage printed that is not the documented
+shape, `unstamped` when no native session id is registered, `unmatched` when
+ccusage lists no such session, and `ambiguous` when it lists more than one.
+Codex rows carry a standing note that ccusage documents its Codex reader as
+experimental. Live rows are read fresh; ended rows print what was recorded
+when they ended, so a session resumed after that shows in its live row only.
+
+`--all` reads every record on this host regardless of team or time. With no
+live team the command says so and prints the records for that team name.
+
+Records live in `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`,
+one JSON object per line, appended by `drop` and `down`. Each carries `v` (1),
+`host`, `team`, `agent`, `collar`, `model`, `effort`, `dir`, `task`,
+`session_id`, `hitched_at`, `ended_at`, `ended_by`, `duration_s`, the join
+`usage_status` and `usage_note`, and where matched ccusage's `usage_agent`,
+`models` (per-model breakdown), `input`, `output`, `cache_read`,
+`cache_write`, and `last_activity`. Fields Gangline did not have are `null`.
+The file is never rewritten or pruned by Gangline; `gang usage` prints its
+path, a line it cannot read is counted in `not covered`, and removing it is
+`rm`. Provider percent-used windows are `gang limits`, not this command.
 
 ### `gang wait-limit [name] [--resume <turn>]` / `gang wait-limit [name] --clear`
 

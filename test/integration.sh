@@ -424,6 +424,7 @@ export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$RUN_ROOT/locks"
 export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
 export XDG_STATE_HOME="$RUN_ROOT/state"
+export XDG_DATA_HOME="$RUN_ROOT/data"
 export GANG_TEST_TICK_MODE=manual
 # A COLLAR MAY READ ITS HARNESS'S OWN CONFIGURATION, and the Codex collar reads
 # $CODEX_HOME to learn which model a hitch without -m will launch. Pointed at a
@@ -637,7 +638,7 @@ gate_pid=$!
 # below names that closure before any fragment sources: a partial request that
 # omits one refuses with the exact parts to add, rather than failing later on a
 # raw tmux or missing-fixture read.
-integration_parts="cli substrate hitch compose spool readiness hooks notify tick"
+integration_parts="cli substrate hitch compose spool readiness hooks notify usage tick"
 integration_declared_parts="$integration_parts"
 integration_selector="${GANG_INTEGRATION_PARTS:-all}"
 IFS=, read -r -a integration_selected_parts <<< "$integration_selector"
@@ -657,7 +658,7 @@ integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit 
   case "$1" in
     cli) printf '\n' ;;
     substrate|spool|notify|tick) printf 'cli\n' ;;
-    hitch|compose|readiness) printf 'cli substrate\n' ;;
+    hitch|compose|readiness|usage) printf 'cli substrate\n' ;;
     hooks) printf 'cli substrate spool\n' ;;
     *) return 2 ;;
   esac
@@ -700,6 +701,7 @@ integration_part readiness && { integration_ran_parts="${integration_ran_parts:+
 integration_part hooks && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }hooks"; . "$ROOT/test/integration-codex-stop-hook.sh"; }
 integration_part hooks && . "$ROOT/test/integration-hooks.sh"
 integration_part notify && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }notify"; . "$ROOT/test/integration-notify.sh"; }
+integration_part usage && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }usage"; . "$ROOT/test/integration-usage.sh"; }
 integration_part tick && { integration_ran_parts="${integration_ran_parts:+$integration_ran_parts }tick"; . "$ROOT/test/integration-tick.sh"; }
 
 if [ "${GANG_INTEGRATION_REQUIRE_ALL:-0}" = 1 ]; then

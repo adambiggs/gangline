@@ -289,6 +289,7 @@ DEFAULT_SESSION=gangline
 SESSION="${GANG_SESSION:-$DEFAULT_SESSION}"
 
 GANGLINE_CLOCK_HELPER="$ROOT/libexec/gang-clock"
+GANGLINE_USAGE_HELPER="$ROOT/libexec/gang-usage"
 if [ "${GANG_TEST_COLLARS:-}" = 1 ] && [ -n "${GANG_TEST_CLOCK:-}" ]; then
   case "$GANG_TEST_CLOCK" in
     /*) [ -x "$GANG_TEST_CLOCK" ] \
@@ -465,6 +466,7 @@ watch agents
   composer  read an agent's input box
   context   read an agent's context
   limits    read provider usage limits
+  usage     read token consumption per agent
   wait-limit resume at a provider reset
   whoami    read this pane's identity
   attach    join the team in tmux
@@ -525,6 +527,7 @@ gang hitch
     [-d <dir>]
     [-m <model>]
     [-e <effort>]
+    [-t <task>]
     [-r <role>]
     [-l <lights>]
     [--resume [session-id]]
@@ -550,6 +553,10 @@ gang hitch
       reasoning-effort level, from that
       harness's own vocabulary; checked
       before a window opens.
+  -t, --task <task>
+      opaque label for what this agent was
+      hitched to do; gang usage prints it
+      and gang never reads it.
   -r, --role <role>
       role brief for this agent, on top of
       the contract every agent gets. gang
@@ -891,6 +898,24 @@ gang limits
   window, percent used, reset time, and sample
   age. A collar with no such source fails
   loudly; gang never substitutes a pane scrape.
+EOF
+      ;;
+    usage) cat <<'EOF'
+gang usage
+  Read token consumption per agent and per
+  model, joined from ccusage.
+
+  gang usage [--all]
+
+  --all   every agent recorded on this host,
+          not only this team's
+
+  Gangline records who ran, on what, where and
+  for how long; ccusage (if installed) reports
+  the tokens. Rows join by native session id.
+  Without ccusage the table still prints, and
+  says why the token columns are empty.
+  Provider percent-used windows are gang limits.
 EOF
       ;;
     wait-limit) cat <<'EOF'
@@ -9131,7 +9156,7 @@ hitch_register() { # $1 window, $2 agent name, $3 option, $4 value
 }
 
 cmd_hitch() {
-  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
+  local name="" prof="${GANG_COLLAR:-claude-code}" dir="$PWD" model="" effort="" task="" missing="" role="" role_path="" id="" resume=0 resume_id="" resume_stamped="" launch_env collar_arg=0 pane_dead lookup_rc=0 opened_session=0
   local lights="" lights_arg="" lights_given=0 lights_subject="" boot="${GANG_BOOT_TIMEOUT:-30}" gate_looks="${GANG_GATE_LOOKS:-60}"
   local hitched_by=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
@@ -9143,6 +9168,7 @@ cmd_hitch() {
     -d|--dir)     [ $# -ge 2 ] || die "hitch: $1 needs a value"; dir="$2";  shift 2 ;;
     -m|--model)   [ $# -ge 2 ] || die "hitch: $1 needs a value"; model="$2"; shift 2 ;;
     -e|--effort)  [ $# -ge 2 ] || die "hitch: $1 needs a value"; effort="$2"; shift 2 ;;
+    -t|--task)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; task="$2"; shift 2 ;;
     -r|--role)    [ $# -ge 2 ] || die "hitch: $1 needs a value"; role="$2"; shift 2 ;;
     -l|--lights)  [ $# -ge 2 ] || die "hitch: $1 needs a value"
                   lights_arg="$2"; lights_given=1; shift 2 ;;
@@ -9158,6 +9184,7 @@ cmd_hitch() {
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
   require_whole GANG_GATE_LOOKS "$gate_looks" observations
   [ -d "$dir" ] || die "hitch: no such directory '$dir'"
+  launch_record_check "$task"
   ! test_only_collar "$prof" \
     || die "hitch: '$prof' is a stand-in for gangline's own suite, not a harness to run an agent on (GANG_TEST_COLLARS=1 if you are testing gang itself)"
   if [ "$collar_arg" -eq 0 ]; then
@@ -9361,6 +9388,14 @@ cmd_hitch() {
   # old native process; only the new launch's own Stop may witness another.
   waiting_clear "$id"
   hitch_register "$id" "$name" @gl_root "$ROOT"
+  # WRITTEN ON EVERY HITCH, INCLUDING THE EMPTY ONES: a resume respawns a
+  # window whose options outlive the old launch, and the model, effort and
+  # task an agent is charged under are this launch's, not the last one's.
+  hitch_register "$id" "$name" @gl_model "$model"
+  hitch_register "$id" "$name" @gl_effort "$effort"
+  hitch_register "$id" "$name" @gl_dir "$dir"
+  hitch_register "$id" "$name" @gl_task "$task"
+  hitch_register "$id" "$name" @gl_hitched_at "$(date +%s)"
   stamp_binary_id "$id" "$name"
   spool_mint "$id"
   # AFTER THIS SESSION HAS A SPOOL OF ITS OWN, and only for the hitch that
@@ -10624,6 +10659,72 @@ usage_limit_age() { # $1 observed epoch, $2 now
   else
     printf 'in %s (clock skew)' "$(human_seconds $(( $1 - $2 )))"
   fi
+}
+
+launch_record_check() { # $1 = task label; refuse what a record line cannot carry
+  [ -n "$1" ] || return 0
+  case "$1" in
+    *[$'\001'-$'\037'$'\177']*) die "hitch: task '$(printf '%s' "$1" | config_sanitize)' has control characters gang will not record" ;;
+  esac
+  [ "${#1}" -le 200 ] || die "hitch: task label is longer than 200 characters; it is a label, not a brief"
+}
+
+usage_events_path() { printf '%s' "${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl"; }
+
+usage_agent_stream() { # $1 window id -> one NUL-separated launch record for the helper
+  local key value
+  printf 'team=%s\0' "$SESSION"
+  for key in agent collar model effort dir task session_id hitched_at; do
+    value="$(tmux show-options -wqv -t "$1" "@gl_$key" 2>/dev/null)" || value=""
+    printf '%s=%s\0' "$key" "$value"
+  done
+  printf '\0'
+}
+
+usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
+  local how="$1" id out rc=0; shift
+  # THE MAIL IS ALREADY ARCHIVED WHEN THIS RUNS, and a record that could not be
+  # written is one stderr line rather than a refusal: holding a half-ended team
+  # over a usage line costs more than the line. The helper runs ccusage once
+  # for every window it is given and bounds it itself.
+  out="$(
+    for id in "$@"; do usage_agent_stream "$id"; done \
+      | "$GANGLINE_USAGE_HELPER" record --events "$(usage_events_path)" --ended-by "$how" 2>&1
+  )" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    [ -z "$out" ] || printf '%s\n' "$(colour "$C_DIM" "$out")"
+  else
+    printf 'gang: usage record not written (helper status %s): %s\n' "$rc" "$out" >&2
+  fi
+}
+
+cmd_usage() { # token consumption per agent, joined from ccusage by native session id
+  local since=0 id special ids="" scope=()
+  case "${1:-}" in
+    '') ;;
+    --all) scope=(--all); [ $# -eq 1 ] || die "usage: unexpected argument '$2'" ;;
+    *) die "usage: unexpected argument '$1'" ;;
+  esac
+  if session_live; then
+    # READ THROUGH THE SESSION'S WINDOWS, not display-message: tmux 3.2a's
+    # server exits on `display-message -p -t =session` from a client with no
+    # pane, and every window of a session carries the same creation time.
+    since="$(tmux list-windows -t "=$SESSION" -F '#{session_created}' 2>/dev/null | head -n 1)"
+    [[ "$since" =~ ^[0-9]+$ ]] \
+      || die "usage: could not read when session '$SESSION' was created (read [$since])"
+    while read -r id special; do
+      [ -n "$id" ] || continue
+      [ "$special" != 1 ] || continue
+      ids="${ids:+$ids }$id"
+    done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}')
+  else
+    printf '%s\n' "$(colour "$C_DIM" "no live team (session '$SESSION' not running); showing what was recorded for that name")"
+  fi
+  # shellcheck disable=SC2086  # ids are tmux window ids, never blank-bearing
+  { for id in $ids; do usage_agent_stream "$id"; done; } \
+    | "$GANGLINE_USAGE_HELPER" report --events "$(usage_events_path)" \
+        --team "$SESSION" --since "$since" ${scope[@]+"${scope[@]}"} \
+    || die "usage: the report helper failed (status $?)"
 }
 
 cmd_limits() { # sample the collar's correctness source, never its usage UI
@@ -12454,6 +12555,13 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   hitched_by="$(hitched_by_of)"
   tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
   tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
+  # An adopted harness was launched by someone else, so its model and effort
+  # are unknown rather than empty choices; the directory is the pane's own.
+  tmux set-option -w -t "$id" @gl_model ""
+  tmux set-option -w -t "$id" @gl_effort ""
+  tmux set-option -w -t "$id" @gl_dir "$(tmux display-message -p -t "$id" '#{pane_current_path}')"
+  tmux set-option -w -t "$id" @gl_task ""
+  tmux set-option -w -t "$id" @gl_hitched_at "$(date +%s)"
   waiting_clear "$id"
   stamp_binary_id "$id"
   state_note_clear "$id"
@@ -12578,6 +12686,7 @@ cmd_drop() {
   spool_archive "$id"
   idle_notice_archive "$id"
   spool_forget "$id"
+  usage_events_record drop "$id"
   tmux kill-window -t "$id"
   # kill-window does not promise pane-exited on every supported tmux. Any
   # registration its native hook did not already consume is released here,
@@ -12634,6 +12743,7 @@ cmd_down() { # inverse of up: end the whole team's session
     spool_archive "$id"
     idle_notice_archive "$id"
     spool_forget "$id"
+    usage_events_record down "$id"
   done <<<"$ids"
   tick_state_forget
   tmux kill-session -t "=$SESSION"
@@ -12891,7 +13001,7 @@ case "$cmd" in
   interrupt) cmd_interrupt "$@" ;;
   compact)  cmd_compact "$@" ;;
   context)  cmd_context "$@" ;;
-  usage)    die "usage was retired in 2.0: it drove the harness's own usage page through the composer. 'gang limits' reads the same quota from the collar's non-interactive source." ;;
+  usage)    cmd_usage "$@" ;;
   limits)   cmd_limits "$@" ;;
   wait-limit) cmd_wait_limit "$@" ;;
   wait)     cmd_wait "$@" ;;

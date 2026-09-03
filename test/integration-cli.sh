@@ -6,9 +6,8 @@
 # in order and it reads that shell's fixtures, helpers and counters.
 # Help coverage is derived from the dispatcher, so missing help cannot hide by
 # also being absent from a hand-maintained help inventory. The exclusions are
-# deliberate non-operator routes: the native callback, help's own dispatcher
-# arms, and the retired `usage` name, whose arm exists only to name the command
-# that replaced it.
+# deliberate non-operator routes: the native callback and help's own dispatcher
+# arms.
 dispatch_commands="$({
   sed -n '/^case "$cmd" in$/,/^esac$/p' "$GANG" |
     awk '
@@ -18,9 +17,9 @@ dispatch_commands="$({
         for (i=1; i<=n; i++) print names[i]
       }
     '
-} | awk '$0 != "hook" && $0 != "reply-obligations" && $0 != "reply-released" && $0 != "__tick-worker" && $0 != "usage" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
+} | awk '$0 != "hook" && $0 != "reply-obligations" && $0 != "__tick-worker" && $0 != "-h" && $0 != "--help" && $0 != "help"' | sort -u)"
 bare_error_commands="hitch adopt rename talk send at flush mail interrupt compact context limits wait-limit wait status explain capture composer whoami drop down"
-meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify upgrade"
+meaningful_bare_commands="up roster attach teams alerts tick collars models roles config curfew notify usage upgrade"
 classified_commands="$(printf '%s\n' $bare_error_commands $meaningful_bare_commands | sort -u)"
 
 # ONE MONOTONIC READER AND ONE ELAPSED-SINCE DECISION. Callers retain their
@@ -230,6 +229,7 @@ arity_probes=(
   "roles|STRAY|roles: takes no arguments"
   "config|STRAY|config: takes no arguments"
   "upgrade|STRAY|upgrade: unexpected argument 'STRAY'"
+  "usage|STRAY|usage: unexpected argument 'STRAY'"
 )
 arity_probe_commands="$(printf '%s\n' "${arity_probes[@]}" | cut -d'|' -f1 | sort -u)"
 equal "every dispatched operator command refuses arity it cannot consume" \

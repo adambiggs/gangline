@@ -223,11 +223,12 @@ refuses "a missing collar_context names the collar" \
   "collar 'ctx-none' declares no collar_context" \
   "$GANG" context ctx-missing
 
-# 2.0 retired the composer-driven usage page. The verb refuses and names the
-# structured command that replaced it, rather than failing as an unknown word.
-refuses "the retired usage verb names its replacement" \
-  "'gang limits' reads the same quota" "$GANG" usage alpha
-excludes "the retired usage verb types nothing into its former target" \
+# 2.0 retired the composer-driven usage page, and the verb now reads token
+# consumption for the whole team. A name is not an argument it takes, and it
+# still types nothing into the composer the 1.x page was driven from.
+refuses "the usage verb refuses a name it cannot consume" \
+  "usage: unexpected argument 'alpha'" "$GANG" usage alpha
+excludes "the usage verb types nothing into its former target" \
   "$(pane alpha)" "/usage"
 
 alpha_before_bare_help="$(pane alpha)"

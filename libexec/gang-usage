@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+"""Join ccusage's session report to Gangline's hitch records.
+
+`record` appends one normalized line per ended agent to the usage event file.
+`report` prints per-agent consumption, a per-model roll-up, and what the join
+could not cover. Both read agent records from stdin as NUL-separated
+`key=value` entries with an empty entry between agents; a value may hold
+anything but NUL. ccusage runs from PATH under a bound, and every token count
+it prints is validated before it is believed; an absent, failed, or malformed
+reading is a status on every row rather than a guess.
+"""
+
+import argparse
+import json
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import time
+
+TOKEN_KEYS = (
+    ("inputTokens", "input"),
+    ("outputTokens", "output"),
+    ("cacheReadTokens", "cache_read"),
+    ("cacheCreationTokens", "cache_write"),
+)
+AGENT_KEYS = (
+    "team", "agent", "collar", "model", "effort", "dir", "task",
+    "session_id", "hitched_at",
+)
+
+
+class Malformed(Exception):
+    pass
+
+
+def read_agents(stream: bytes) -> list:
+    agents, current = [], {}
+    for entry in stream.split(b"\0"):
+        if entry == b"":
+            if current:
+                agents.append(current)
+            current = {}
+            continue
+        key, sep, value = entry.partition(b"=")
+        if not sep:
+            raise Malformed(f"agent record entry without '=': {entry!r}")
+        current[key.decode("utf-8")] = value.decode("utf-8", "replace")
+    if current:
+        agents.append(current)
+    return agents
+
+
+def whole(value, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise Malformed(f"{where} is not a whole number: {value!r}")
+    return value
+
+
+def load_ccusage(raw: bytes) -> list:
+    """The session rows ccusage printed, or Malformed naming the first defect."""
+    if not raw.strip():
+        raise Malformed("ccusage printed nothing")
+    try:
+        data = json.loads(raw)
+    except ValueError as err:
+        raise Malformed(f"ccusage output is not JSON: {err}")
+    if not isinstance(data, dict) or not isinstance(data.get("session"), list):
+        raise Malformed("ccusage output has no 'session' list")
+    rows = []
+    for number, row in enumerate(data["session"], 1):
+        where = f"session row {number}"
+        if not isinstance(row, dict):
+            raise Malformed(f"{where} is not an object")
+        period = row.get("period")
+        agent = row.get("agent")
+        if not isinstance(period, str) or not period:
+            raise Malformed(f"{where} has no session id ('period')")
+        if not isinstance(agent, str) or not agent:
+            raise Malformed(f"{where} names no agent")
+        totals = {ours: whole(row.get(theirs), f"{where} {theirs}")
+                  for theirs, ours in TOKEN_KEYS}
+        breakdowns = row.get("modelBreakdowns")
+        if not isinstance(breakdowns, list):
+            raise Malformed(f"{where} has no modelBreakdowns list")
+        models = []
+        for b_number, part in enumerate(breakdowns, 1):
+            b_where = f"{where} modelBreakdowns[{b_number}]"
+            if not isinstance(part, dict) or not isinstance(part.get("modelName"), str) \
+                    or not part["modelName"]:
+                raise Malformed(f"{b_where} names no model")
+            models.append({
+                "model": part["modelName"],
+                **{ours: whole(part.get(theirs), f"{b_where} {theirs}")
+                   for theirs, ours in TOKEN_KEYS},
+            })
+        metadata = row.get("metadata")
+        last = metadata.get("lastActivity") if isinstance(metadata, dict) else None
+        rows.append({
+            "period": period, "agent": agent, "totals": totals,
+            "models": models,
+            "last_activity": last if isinstance(last, str) else None,
+        })
+    return rows
+
+
+def match(rows: list, session_id: str) -> list:
+    return [r for r in rows if r["period"] == session_id
+            or r["period"].endswith("-" + session_id)]
+
+
+def join(agent: dict, source: tuple) -> dict:
+    """One agent's usage fields: status, note, and the counts where matched."""
+    status, detail = source
+    out = {"usage_status": status, "usage_note": None, "usage_agent": None,
+           "models": None, "last_activity": None}
+    out.update({ours: None for _, ours in TOKEN_KEYS})
+    if status != "read":
+        out["usage_note"] = detail
+        return out
+    session_id = agent.get("session_id", "")
+    if not session_id:
+        out["usage_status"] = "unstamped"
+        out["usage_note"] = "no native session id is registered, so there is nothing to join on"
+        return out
+    found = match(detail, session_id)
+    if not found:
+        out["usage_status"] = "unmatched"
+        out["usage_note"] = "ccusage lists no session with this id"
+        return out
+    if len(found) > 1:
+        out["usage_status"] = "ambiguous"
+        out["usage_note"] = f"ccusage lists {len(found)} sessions ending in this id"
+        return out
+    row = found[0]
+    out["usage_status"] = "matched"
+    out["usage_agent"] = row["agent"]
+    out["models"] = row["models"]
+    out["last_activity"] = row["last_activity"]
+    out.update(row["totals"])
+    return out
+
+
+def epoch_or_none(value):
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        return int(value, 10)
+    return None
+
+
+CCUSAGE_BOUND_SECONDS = 30
+
+
+def read_source() -> tuple:
+    """("read", rows) or (status, note) where status names why there are none."""
+    exe = shutil.which("ccusage")
+    if not exe:
+        return ("absent", "no ccusage executable on PATH")
+    try:
+        proc = subprocess.run(
+            [exe, "session", "--json", "--no-cost", "--offline"],
+            capture_output=True, timeout=CCUSAGE_BOUND_SECONDS, check=False)
+    except subprocess.TimeoutExpired:
+        return ("failed", f"ccusage did not finish within {CCUSAGE_BOUND_SECONDS}s")
+    except OSError as err:
+        return ("failed", f"could not run {exe}: {err}")
+    if proc.returncode != 0:
+        first = proc.stderr.decode("utf-8", "replace").strip().splitlines()[:1]
+        return ("failed", f"ccusage exited {proc.returncode}"
+                + (f": {first[0]}" if first else " and printed no error"))
+    try:
+        return ("read", load_ccusage(proc.stdout))
+    except Malformed as err:
+        return ("malformed", str(err))
+
+
+def record(args) -> int:
+    agents = read_agents(sys.stdin.buffer.read())
+    if not agents:
+        raise Malformed("record was given no agent")
+    source = read_source()
+    ended_at = args.now if args.now is not None else int(time.time())
+    host = args.host or socket.gethostname()
+    lines = []
+    for agent in agents:
+        hitched_at = epoch_or_none(agent.get("hitched_at"))
+        line = {key: (agent.get(key) or None) for key in AGENT_KEYS}
+        line.update({
+            "v": 1,
+            "host": host,
+            "hitched_at": hitched_at,
+            "ended_at": ended_at,
+            "ended_by": args.ended_by,
+            "duration_s": (ended_at - hitched_at
+                           if hitched_at is not None and ended_at >= hitched_at else None),
+        })
+        line.update(join(agent, source))
+        lines.append(line)
+    try:
+        os.makedirs(os.path.dirname(args.events), exist_ok=True)
+        with open(args.events, "a", encoding="utf-8") as handle:
+            for line in lines:
+                handle.write(json.dumps(line, sort_keys=True, ensure_ascii=False) + "\n")
+    except OSError as err:
+        raise Malformed(f"cannot append to {args.events}: {err}")
+    for line in lines:
+        note = f" — {visible(line['usage_note'])}" if line["usage_note"] else ""
+        print(f"usage: {visible(line['agent'])} {line['usage_status']}{note}")
+    print(f"usage: recorded in {visible(args.events)}")
+    return 0
+
+
+def read_events(path: str, team: str, since, everything: bool) -> tuple:
+    """(rows to show, count of unreadable lines); absent file is no rows."""
+    rows, unreadable = [], 0
+    try:
+        handle = open(path, "r", encoding="utf-8")
+    except FileNotFoundError:
+        return rows, unreadable
+    with handle:
+        for raw in handle:
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                unreadable += 1
+                continue
+            if not isinstance(row, dict) or row.get("v") != 1 \
+                    or not isinstance(row.get("agent"), str):
+                unreadable += 1
+                continue
+            if everything:
+                rows.append(row)
+                continue
+            ended = epoch_or_none(row.get("ended_at"))
+            if row.get("team") == team and ended is not None and ended >= since:
+                rows.append(row)
+    return rows, unreadable
+
+
+def duration_text(seconds) -> str:
+    if seconds is None:
+        return "unknown"
+    minutes, secs = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    if minutes:
+        return f"{minutes}m{secs:02d}s"
+    return f"{secs}s"
+
+
+def visible(value) -> str:
+    """Terminal-safe, single-line text: control bytes become '?', tabs a space.
+
+    Registrations and ccusage fields are raw bytes; a name may carry an escape
+    sequence, and nothing that reaches the terminal may carry it through."""
+    text = "" if value is None else str(value)
+    return "".join(" " if ch == "\t" else "?" if ord(ch) < 0x20 or ord(ch) == 0x7F else ch
+                   for ch in text)
+
+
+def count_text(value) -> str:
+    return "" if value is None else f"{value:,}"
+
+
+def table(headers: list, rows: list, numeric: set) -> str:
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for index, cell in enumerate(row):
+            widths[index] = max(widths[index], len(cell))
+    lines = []
+    for row in [headers] + rows:
+        cells = []
+        for index, cell in enumerate(row):
+            if index in numeric:
+                cells.append(cell.rjust(widths[index]))
+            else:
+                cells.append(cell.ljust(widths[index]))
+        lines.append("  ".join(cells).rstrip())
+    return "\n".join(lines)
+
+
+def report(args) -> int:
+    live = read_agents(sys.stdin.buffer.read())
+    source = read_source()
+    now = args.now if args.now is not None else int(time.time())
+    shown = []
+    for agent in live:
+        row = dict(agent)
+        row["state"] = "live"
+        hitched_at = epoch_or_none(agent.get("hitched_at"))
+        row["duration_s"] = (now - hitched_at
+                             if hitched_at is not None and now >= hitched_at else None)
+        row.update(join(agent, source))
+        shown.append(row)
+    ended, unreadable = read_events(args.events, args.team, args.since, args.all)
+    for row in ended:
+        row = dict(row)
+        row["state"] = "ended"
+        shown.append(row)
+
+    headers = ["agent", "harness", "model", "effort", "state", "duration",
+               "input", "output", "cache-r", "cache-w", "usage"]
+    body = []
+    for row in shown:
+        body.append([
+            visible(row.get("agent")), visible(row.get("collar")), visible(row.get("model")),
+            visible(row.get("effort")), row["state"],
+            duration_text(row.get("duration_s")),
+            count_text(row.get("input")), count_text(row.get("output")),
+            count_text(row.get("cache_read")), count_text(row.get("cache_write")),
+            row.get("usage_status") or "",
+        ])
+    out = []
+    if body:
+        out.append(table(headers, body, {6, 7, 8, 9}))
+    else:
+        out.append("no agents: none live in this team and none recorded for it")
+
+    by_model = {}
+    for row in shown:
+        for part in row.get("models") or []:
+            slot = by_model.setdefault(part["model"], {"agents": 0, "input": 0, "output": 0,
+                                                       "cache_read": 0, "cache_write": 0})
+            slot["agents"] += 1
+            for _, ours in TOKEN_KEYS:
+                slot[ours] += part[ours]
+    if by_model:
+        rows = [[visible(name), str(v["agents"]), count_text(v["input"]), count_text(v["output"]),
+                 count_text(v["cache_read"]), count_text(v["cache_write"])]
+                for name, v in sorted(by_model.items())]
+        out.append("")
+        out.append(table(["model", "agents", "input", "output", "cache-r", "cache-w"],
+                         rows, {1, 2, 3, 4, 5}))
+
+    uncovered = []
+    if source[0] != "read":
+        uncovered.append(f"ccusage {source[0]}: {visible(source[1]) or 'no reading'}")
+    for row in shown:
+        if row.get("usage_status") != "matched":
+            uncovered.append(f"{visible(row.get('agent'))}: {row.get('usage_status')}"
+                             f"{' — ' + visible(row['usage_note']) if row.get('usage_note') else ''}")
+    if any((row.get("collar") == "codex") for row in shown):
+        uncovered.append("codex rows come from ccusage's Codex reader, which ccusage documents as experimental")
+    if unreadable:
+        uncovered.append(f"{unreadable} line(s) in {visible(args.events)} could not be read as usage records")
+    if uncovered:
+        out.append("")
+        out.append("not covered:")
+        out.extend("  " + line for line in uncovered)
+    out.append("")
+    out.append(f"record: {visible(args.events)}")
+    print("\n".join(out))
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(prog="gang-usage")
+    sub = parser.add_subparsers(dest="mode", required=True)
+    for name in ("record", "report"):
+        part = sub.add_parser(name)
+        part.add_argument("--events", required=True)
+        part.add_argument("--now", type=int)
+    sub.choices["record"].add_argument("--ended-by", required=True, choices=["drop", "down"])
+    sub.choices["record"].add_argument("--host")
+    sub.choices["report"].add_argument("--team", required=True)
+    sub.choices["report"].add_argument("--since", type=int, default=0)
+    sub.choices["report"].add_argument("--all", action="store_true")
+    args = parser.parse_args()
+    try:
+        return record(args) if args.mode == "record" else report(args)
+    except Malformed as err:
+        print(f"gang-usage: {err}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

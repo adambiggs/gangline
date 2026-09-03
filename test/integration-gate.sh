@@ -699,7 +699,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     "1" "$require_all_probe_rc"
   contains "the required run names every part cli omitted" \
     "$require_all_probe_out" \
-    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,tick"
+    "required full run omitted declared parts: substrate,hitch,compose,spool,readiness,hooks,notify,usage,tick"
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
@@ -707,7 +707,7 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
     GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)"
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
-    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify tick)"
+    "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"
 fi
 
 cat > "$gate_run/test/integration.sh" <<SH

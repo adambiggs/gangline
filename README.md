@@ -218,6 +218,10 @@ gang limits worker
 gang wait-limit worker
 ```
 
+`gang usage` reports what each agent consumed: Gangline's launch record joined
+to ccusage's per-session token counts when that tool is installed, and the
+same table with its gaps named when it is not.
+
 `gang limits` reports native usage windows, reset times, and sample age. A
 provider-reset wait is one transient systemd user timer; it delivers an
 attributed continuation through the ordinary Gangline path and then disappears.

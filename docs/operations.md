@@ -256,8 +256,8 @@ spending quota on a refresh. A collar with neither source reports the capability
 unavailable. The command may target an agent mid-turn, because it never drives
 that agent's composer.
 
-`gang usage`, which drove the harness's own usage page through the composer, was
-retired in 2.0. Attach if you want the full native page.
+The composer-driven native usage page was retired in 2.0; `gang usage` now
+reads token consumption, not quota. Attach if you want the full native page.
 
 ## Waiting for a provider reset
 
@@ -856,6 +856,10 @@ refuses collars that cannot do so. There is no latest-session fallback. This is
 relaunch, not a claim that Gangline reconstructed the old team.
 
 ### Mail was left behind by a window that died without a teardown
+
+`drop` and `down` also append one line per agent to the usage record under
+`${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`. Gangline
+never prunes it; remove it when its history is no longer wanted.
 
 `drop` and `down` archive a window's spool and delete it. Nothing else does, so
 a window killed any other way — an external `tmux kill-window`, or a tmux server
