@@ -4265,6 +4265,26 @@ alert_binding_line() {
   tmux list-keys -T prefix A 2>/dev/null
 }
 
+alert_binding_record_form() { # the bytes an option keeps for a rendered key
+  # tmux 3.4 rewrites $NAME to \$NAME when it stores an option value, while
+  # its key table keeps a bound command raw, so the list-keys line and the
+  # option that recorded it can differ on the same server. Passing the line
+  # through an option yields the form the record holds here, whatever the
+  # version's rewrite is.
+  local kept=""
+  tmux set-option -g @gl_alert_binding_probe "$1" >/dev/null 2>&1 || return 1
+  kept="$(tmux show-options -gqv @gl_alert_binding_probe 2>/dev/null)" || kept=""
+  tmux set-option -gu @gl_alert_binding_probe >/dev/null 2>&1 || true
+  printf '%s' "$kept"
+}
+
+alert_binding_owned() { # true when the live key is the one Gangline recorded
+  local actual="$1" owned="$2"
+  [ -n "$actual" ] && [ -n "$owned" ] || return 1
+  [ "$owned" = "$actual" ] && return 0
+  [ "$owned" = "$(alert_binding_record_form "$actual")" ]
+}
+
 ALERT_BINDING_FD=""
 
 alert_binding_claim() { # serialize the server-global binding decision
@@ -4310,12 +4330,11 @@ alert_binding_ensure() { # install Prefix+A only while its exact key is unclaime
   owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
   owned_version="$(tmux show-options -gqv @gl_alert_binding_version 2>/dev/null)" \
     || owned_version=""
-  if [ -n "$owned" ] && [ "$actual" = "$owned" ] \
-     && [ "$owned_version" = 2 ]; then
+  if alert_binding_owned "$actual" "$owned" && [ "$owned_version" = 2 ]; then
     tmux set-option -u -t "=$SESSION:" @gl_alert_binding_conflict 2>/dev/null || true
     return 0
   fi
-  if [ -n "$actual" ] && { [ -z "$owned" ] || [ "$actual" != "$owned" ]; }; then
+  if [ -n "$actual" ] && ! alert_binding_owned "$actual" "$owned"; then
     tmux set-option -t "=$SESSION:" @gl_alert_binding_conflict \
       'Prefix+A is already bound; Gangline left it unchanged' >/dev/null
     return 0
@@ -4384,7 +4403,7 @@ alert_binding_release() { # called under claim: unbind only our exact last-team 
   fi
   actual="$(alert_binding_line)" || actual=""
   owned="$(tmux show-options -gqv @gl_alert_binding 2>/dev/null)" || owned=""
-  if [ -n "$owned" ] && [ "$actual" = "$owned" ]; then
+  if alert_binding_owned "$actual" "$owned"; then
     tmux unbind-key -T prefix A >/dev/null || return 1
   fi
   tmux set-option -gu @gl_alert_binding 2>/dev/null || true
