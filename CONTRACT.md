@@ -23,10 +23,16 @@ through Gangline; no literal wording is required, and it is enough to say that
 you are waiting on background work and will report later. A message correlated
 as that reply creates no reciprocal acknowledgement debt.
 
+If the sender's stable identity is provably gone, the obligation retires
+without a reply because no correlated delivery remains possible. Its audit
+record stays attached to the original message; a fresh agent reusing the name
+does not inherit it. An unreadable identity is not proof of retirement.
+
 Session-keyboard input, including operator input, neither creates nor clears a
 peer-reply obligation. It also cannot hide an obligation already owed. Native
 tool, waiting, steering, compaction, and later-turn events leave the obligation
-standing until Gangline verifies delivery of the correlated reply.
+standing until Gangline verifies delivery of the correlated reply or proves
+the sender retirement described above.
 
 Before improvising a team operation or asking the operator for one, run `gang`
 for the quick-start guide and `gang --help` for the full command list. In

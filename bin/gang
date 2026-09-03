@@ -1193,8 +1193,8 @@ EOF
     reply-obligations) cat <<'EOF'
 gang reply-obligations
   Internal native Stop-hook query. The calling pane is the identity; it prints
-  verified peer reply debts or ambiguous provenance as TSV. Do not call it by
-  hand.
+  verified peer reply debts, retired sender audits, or ambiguous
+  provenance as TSV. Do not call it by hand.
 EOF
       ;;
     attach) cat <<'EOF'
@@ -5289,6 +5289,7 @@ EOF
 #   @gl_rprompt_NONCE  sha256
 #   @gl_rdelivery_NONCE sha256
 #   @gl_rsettled_NONCE sha256
+#   @gl_rretired_NONCE sha256
 #
 # This is deliberately not one mutable state word. Native prompt observation
 # and transport verification can finish concurrently; independent facts cannot
@@ -5300,6 +5301,7 @@ REPLY_STATE_PREFIX='@gl_reply_'
 REPLY_PROMPT_PREFIX='@gl_rprompt_'
 REPLY_DELIVERY_PREFIX='@gl_rdelivery_'
 REPLY_SETTLED_PREFIX='@gl_rsettled_'
+REPLY_RETIRED_PREFIX='@gl_rretired_'
 REPLY_STATUS="" REPLY_TOKEN="" REPLY_WITNESS="" REPLY_MODE=""
 REPLY_DIGEST="" REPLY_TO="" REPLY_NONCE=""
 
@@ -5357,7 +5359,7 @@ reply_nonce_valid_digest() { # $1 sha256
 
 REPLY_ROWS_ERROR=""
 reply_state_rows() { # $1 window -> nonce derived-state token witness mode digest reply-to
-  local rows joined kind key value prompt delivery settled proof_nonce extra
+  local rows joined kind key value prompt delivery settled retired proof_nonce extra
   REPLY_ROWS_ERROR=""
   rows="$(tmux show-options -w -t "$1" 2>/dev/null)" \
     || {
@@ -5368,14 +5370,15 @@ reply_state_rows() { # $1 window -> nonce derived-state token witness mode diges
   # JOIN ONCE. Long-lived agents retain completed audit records, so scanning
   # the complete option set once per proof and per message makes every Stop
   # query quadratic. awk's associative join produces one metadata row with its
-  # three proofs plus one row for every orphan. Values are prefixed with '=' so
+  # four proofs plus one row for every orphan. Values are prefixed with '=' so
   # an empty malformed value remains a field rather than collapsing under the
   # shell's whitespace IFS; '-' can then mean absence unambiguously.
   joined="$(printf '%s\n' "$rows" | awk \
     -v metadata="$REPLY_STATE_PREFIX" \
     -v prompt="$REPLY_PROMPT_PREFIX" \
     -v delivery="$REPLY_DELIVERY_PREFIX" \
-    -v settled="$REPLY_SETTLED_PREFIX" '
+    -v settled="$REPLY_SETTLED_PREFIX" \
+    -v retired="$REPLY_RETIRED_PREFIX" '
 function suffix(key, prefix) { return substr(key, length(prefix) + 1) }
 function encoded(present, value) { return present ? "=" value : "-" }
 {
@@ -5392,24 +5395,28 @@ function encoded(present, value) { return present ? "=" value : "-" }
     nonce = suffix(key, delivery); d[nonce] = value; dp[nonce] = 1; dk[nonce] = key; next
   }
   if (index(key, settled) == 1) {
-    nonce = suffix(key, settled); s[nonce] = value; sp[nonce] = 1; sk[nonce] = key
+    nonce = suffix(key, settled); s[nonce] = value; sp[nonce] = 1; sk[nonce] = key; next
+  }
+  if (index(key, retired) == 1) {
+    nonce = suffix(key, retired); r[nonce] = value; rp[nonce] = 1; rk[nonce] = key
   }
 }
 END {
   for (nonce in m)
-    printf "M\t%s\t=%s\t%s\t%s\t%s\n", mk[nonce], m[nonce],
+    printf "M\t%s\t=%s\t%s\t%s\t%s\t%s\n", mk[nonce], m[nonce],
       encoded(pp[nonce], p[nonce]), encoded(dp[nonce], d[nonce]),
-      encoded(sp[nonce], s[nonce])
-  for (nonce in p) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", pk[nonce], p[nonce]
-  for (nonce in d) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", dk[nonce], d[nonce]
-  for (nonce in s) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\n", sk[nonce], s[nonce]
+      encoded(sp[nonce], s[nonce]), encoded(rp[nonce], r[nonce])
+  for (nonce in p) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", pk[nonce], p[nonce]
+  for (nonce in d) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", dk[nonce], d[nonce]
+  for (nonce in s) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", sk[nonce], s[nonce]
+  for (nonce in r) if (!(nonce in m)) printf "O\t%s\t=%s\t-\t-\t-\t-\n", rk[nonce], r[nonce]
 }
 ')" || {
     REPLY_ROWS_ERROR="reply-obligation evidence could not be joined"
     printf '! %s\n' "$REPLY_ROWS_ERROR"
     return 3
   }
-  while IFS=$'\t' read -r kind key value prompt delivery settled extra; do
+  while IFS=$'\t' read -r kind key value prompt delivery settled retired extra; do
     [ -n "$kind" ] || continue
     [ -z "$extra" ] && [ "${value#=}" != "$value" ] || {
       REPLY_ROWS_ERROR="reply-obligation option $key is malformed"
@@ -5422,6 +5429,7 @@ END {
         "$REPLY_PROMPT_PREFIX"*) proof_nonce="${key#"$REPLY_PROMPT_PREFIX"}" ;;
         "$REPLY_DELIVERY_PREFIX"*) proof_nonce="${key#"$REPLY_DELIVERY_PREFIX"}" ;;
         "$REPLY_SETTLED_PREFIX"*) proof_nonce="${key#"$REPLY_SETTLED_PREFIX"}" ;;
+        "$REPLY_RETIRED_PREFIX"*) proof_nonce="${key#"$REPLY_RETIRED_PREFIX"}" ;;
         *) proof_nonce="" ;;
       esac
       if ! reply_nonce_valid "$proof_nonce" || ! reply_nonce_valid_digest "$value"; then
@@ -5460,7 +5468,17 @@ END {
       return 3
     }
     settled=$REPLY_PROOF_PRESENT
-    if [ "$settled" -eq 1 ]; then
+    reply_joined_proof "$retired" "$REPLY_DIGEST" || {
+      REPLY_ROWS_ERROR="reply-obligation retirement proof for $REPLY_NONCE is malformed"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    }
+    retired=$REPLY_PROOF_PRESENT
+    if [ "$settled" -eq 1 ] && [ "$retired" -eq 1 ]; then
+      REPLY_ROWS_ERROR="reply-obligation $REPLY_NONCE has conflicting settlement and retirement proofs"
+      printf '! %s\n' "$REPLY_ROWS_ERROR"
+      return 3
+    elif [ "$settled" -eq 1 ]; then
       [ "$REPLY_MODE" = request ] || {
         REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE has no request"
         printf '! %s\n' "$REPLY_ROWS_ERROR"
@@ -5470,6 +5488,17 @@ END {
         REPLY_STATUS=settled
       else
         REPLY_STATUS=settlement
+      fi
+    elif [ "$retired" -eq 1 ]; then
+      [ "$REPLY_MODE" = request ] || {
+        REPLY_ROWS_ERROR="reply-obligation retirement proof for $REPLY_NONCE has no request"
+        printf '! %s\n' "$REPLY_ROWS_ERROR"
+        return 3
+      }
+      if [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
+        REPLY_STATUS=retired
+      else
+        REPLY_STATUS=retirement
       fi
     elif [ "$REPLY_MODE" = legacy ]; then
       REPLY_STATUS=legacy
@@ -5680,6 +5709,10 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     [ -n "$nonce" ] || continue
     case "$state" in settled|complete) continue ;; esac
     any=1
+    if [ "$state" = retired ]; then
+      printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
+      continue
+    fi
     if [ "$state" != owed ] || [ "$mode" != request ]; then
       printf 'unknown\t%s\t%s\t%s\n' "$nonce" "$witness" "provenance-$state-$mode"
       continue
@@ -5687,7 +5720,11 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
     live_rc=0; stable_agent_resolve "$token" || live_rc=$?
     case "$live_rc" in
       0) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
-      3) printf 'owed\t%s\t%s\tgone\n' "$nonce" "$witness" ;;
+      3) if reply_proof_write "$1" "$REPLY_RETIRED_PREFIX" "$nonce" "$digest"; then
+           printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
+         else
+           printf 'unknown\t%s\t%s\tretirement-proof-write-failed\n' "$nonce" "$witness"
+         fi ;;
       *) printf 'unknown\t%s\t%s\tsender-identity-unreadable\n' "$nonce" "$witness" ;;
     esac
   done <<<"$rows"
@@ -5709,6 +5746,7 @@ reply_obligation_status_report() { # $1 window; every debt or ambiguous record
     case "$status" in
       clear|'') ;;
       owed) printf '%s\n' "$(colour "$C_BAD" "reply owed to $peer (message $nonce; sender $detail)")" ;;
+      retired) printf '%s\n' "$(colour "$C_DIM" "reply obligation retired for $peer (message $nonce; sender gone)")" ;;
       unknown) printf '%s\n' "$(colour "$C_BAD" "reply obligation UNKNOWN (${nonce:-?} from ${peer:-?}: $detail); Stop fails closed")" ;;
     esac
   done <<<"$rows"

@@ -84,6 +84,15 @@ delivery proof: the original conjunction must still be complete before the
 record derives clear. Join retained metadata and proofs in one linear pass so
 the audit trail does not make Stop queries quadratic.
 
+Retire an otherwise complete reply obligation when a complete stable-identity
+inventory proves its sender token no longer exists. Write a separate monotonic
+retirement proof beside the immutable message evidence, then report the record
+as retired without resolving that dead token again; retained history therefore
+preserves the reply query's linear pass. The audit verdict and status name
+sender retirement. This is lifecycle settlement, not fabricated reply proof: a
+fresh agent with the same name does not inherit the old token, and an unreadable
+identity remains unknown and blocks Stop.
+
 ## An observed sender and a claimed one are marked apart
 
 Gangline reads the sender off the calling window where it can see one and

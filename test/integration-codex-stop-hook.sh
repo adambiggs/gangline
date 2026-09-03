@@ -444,8 +444,8 @@ equal "retained settled history remains semantically clear" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
-# Corrupt evidence is never repaired into absence. A vanished sender remains a
-# named debt rather than being redirected to the hitcher or team lead.
+# Corrupt evidence is never repaired into absence. A vanished sender remains
+# named in the audit trail, but no longer leaves an impossible obligation.
 tmux set-option -w -t "$reply_b_id" @gl_reply_bad malformed
 contains "malformed provenance is a loud unknown" \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)" \
@@ -471,12 +471,51 @@ printf '%s' REQ_GONE \
 reply_gone_nonce="$(reply_nonce_from "$reply_b_id" reply-a)"
 reply_prompt_event "$reply_b_pane" \
   "$(reply_request_envelope reply-a "$reply_gone_nonce" REQ_GONE)"
-"$GANG" drop reply-a >/dev/null
-equal "a vanished sender stays attached to its original message debt" \
-  $'owed\t'"$reply_gone_nonce"$'\treply-a\tgone' \
+tmux set-option -w -t "$reply_a_id" @gl_agent invalid/name
+equal "an unreadable sender identity remains Stop-blocking ambiguity" \
+  $'unknown\t'"$reply_gone_nonce"$'\treply-a\tsender-identity-unreadable' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
-contains "stale sender provenance still refuses idle" "$reply_stop_output" '"decision": "block"'
+contains "unreadable sender identity fails closed at Stop" \
+  "$reply_stop_output" '"decision": "block"'
+tmux set-option -w -t "$reply_a_id" @gl_agent reply-a
+equal "repairing sender identity restores the live obligation" \
+  $'owed\t'"$reply_gone_nonce"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_gone_meta="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_gone_nonce")"
+IFS=: read -r _ reply_gone_token _ _ reply_gone_digest _ <<<"$reply_gone_meta"
+"$GANG" drop reply-a >/dev/null
+equal "a vanished sender retires its original message debt with an audit note" \
+  $'retired\t'"$reply_gone_nonce"$'\treply-a\tsender-gone' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "sender retirement writes one monotonic proof" "$reply_gone_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rretired_$reply_gone_nonce")"
+tmux set-option -w -t "$reply_b_id" "@gl_rsettled_$reply_gone_nonce" "$reply_gone_digest"
+contains "conflicting reply and retirement proofs fail closed" \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)" \
+  "conflicting settlement and retirement proofs"
+reply_stop_run "$reply_b_pane"
+contains "conflicting lifecycle proofs block Stop" \
+  "$reply_stop_output" '"decision": "block"'
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_gone_nonce"
+reply_c_token="$(tmux show-options -wqv -t "$reply_c_id" @gl_spool)"
+tmux set-option -w -t "$reply_c_id" @gl_spool "$reply_gone_token"
+tmux set-option -w -t "$reply_c_id" @gl_agent invalid/name
+equal "the retirement proof avoids resolving the gone sender again" \
+  $'retired\t'"$reply_gone_nonce"$'\treply-a\tsender-gone' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+tmux set-option -w -t "$reply_c_id" @gl_agent reply-c
+tmux set-option -w -t "$reply_c_id" @gl_spool "$reply_c_token"
+contains "status retains the vanished sender retirement history" \
+  "$("$GANG" status reply-b)" \
+  "reply obligation retired for reply-a (message $reply_gone_nonce; sender gone)"
+reply_b_roster_row="$("$GANG" roster | awk '$1 == "reply-b" { print }')"
+contains "roster retains the debtor after sender retirement" \
+  "$reply_b_roster_row" "reply-b"
+excludes "roster does not carry a blocking alarm for retired history" \
+  "$reply_b_roster_row" "reply-owed"
+reply_stop_run "$reply_b_pane"
+equal "a vanished sender cannot wedge its debtor at Stop" "{}" "$reply_stop_output"
 
 # Adapter failures are ambiguity, never permission. Its one clear arm delegates
 # generic Stop bookkeeping; malformed or failed query paths do not.
@@ -510,6 +549,22 @@ equal "a proved clear query delegates ordinary Stop bookkeeping" "hook" \
   "$(cat "$reply_fake_log")"
 : > "$reply_fake_log"
 reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='retired\t1111111111111111\tretired-peer\tsender-gone\nowed\t2222222222222222\tlive-peer\tlive\n' \
+    FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@7d5922ca40f6: the complete fake-adapter stdout is the mixed-verdict decision, so any producer is valid evidence
+contains "a retired sender does not hide another peer's live obligation" \
+  "$reply_fake_out" '"decision": "block"'
+# source-guard: whole-surface@0024ed8cba27: the complete fake-adapter stdout is the mixed-verdict reason, so any producer is valid evidence
+contains "the mixed verdict asks only for the live peer" \
+  "$reply_fake_out" "reply to live-peer"
+excludes "the mixed verdict never asks for the retired peer" \
+  "$reply_fake_out" "retired-peer"
+# source-guard: whole-surface@f037d514ecc3: the complete fake hook log must stay empty for a mixed blocking verdict, so any producer is valid evidence
+equal "a mixed retired and owed query cannot close the native boundary" "" \
+  "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
   | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
     FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
 # source-guard: whole-surface@5185de53a929: the complete fake-adapter stdout is the failed-boundary verdict, so any visible producer is valid evidence
@@ -531,8 +586,7 @@ contains "the Claude collar installs the same peer-reply Stop enforcement" \
 contains "the Claude launch carries the explicitly selected unlimited Stop-block lifecycle" \
   "$claude_reply_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0"
 
-# The final gone-sender record is impossible to satisfy by design. Dropping the
-# disposable window retires its complete option-scoped audit trail together.
+# Dropping the disposable window retires its complete option-scoped audit trail.
 "$GANG" drop reply-b >/dev/null
 "$GANG" drop reply-c >/dev/null
 "$GANG" drop auto-resume >/dev/null

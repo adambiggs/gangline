@@ -4,9 +4,9 @@
 
 The helper is shared by the Codex and Claude Code collars. Gangline owns the
 message provenance and returns a small TSV query; this adapter either blocks
-Stop while a debt or ambiguity remains, or delegates a clear boundary to the
-ordinary ``gang hook`` bookkeeping path. Operator-authored prompts never enter
-the query, so they neither create nor erase peer debt.
+Stop while a debt or ambiguity remains, or delegates a non-blocking boundary
+to the ordinary ``gang hook`` bookkeeping path. Operator-authored prompts never
+enter the query, so they neither create nor erase peer debt.
 """
 
 from __future__ import annotations
@@ -84,9 +84,16 @@ def query(gang: str) -> list[Verdict]:
             if (
                 not NONCE.fullmatch(verdict.nonce)
                 or not AGENT.fullmatch(verdict.peer)
-                or verdict.detail not in ("live", "gone")
+                or verdict.detail != "live"
             ):
                 raise ValueError("Gangline query returned a malformed owed record")
+        elif verdict.status == "retired":
+            if (
+                not NONCE.fullmatch(verdict.nonce)
+                or not AGENT.fullmatch(verdict.peer)
+                or verdict.detail != "sender-gone"
+            ):
+                raise ValueError("Gangline query returned a malformed retired record")
         elif verdict.status == "unknown":
             if (
                 verdict.nonce != "-" and not NONCE.fullmatch(verdict.nonce)
@@ -150,8 +157,13 @@ def main(argv: list[str]) -> int:
     try:
         read_payload(raw)
         verdicts = query(gang)
-        if any(verdict.status != "clear" for verdict in verdicts):
-            block(block_reason(verdicts))
+        blocking = [
+            verdict
+            for verdict in verdicts
+            if verdict.status not in ("clear", "retired")
+        ]
+        if blocking:
+            block(block_reason(blocking))
             return 0
         settle_stop(gang, raw)
         allow()

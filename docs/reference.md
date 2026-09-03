@@ -521,15 +521,26 @@ Gangline does not parse the reply body: any genuine concise acknowledgement is
 enough, including one that says background work is still running and a fuller
 report will follow. Requests from different peers retain independent records.
 
+When the complete team-window inventory proves that an owed request's original
+stable sender token no longer exists, the obligation retires without inventing
+reply proof. The first conclusive query writes a monotonic retirement proof;
+later queries emit a `retired` audit row naming `sender-gone` without resolving
+the dead token again. The private Stop query, `status`, and `roster` share
+this query path, so any of them may be the reader that first latches the proof.
+`status` retains the message and witnessed sender as retirement history, and
+Stop may proceed if no live or ambiguous obligation remains. A fresh hitch with
+the same name has a different token and inherits nothing; failure to read the
+identity inventory remains unknown and fails closed.
+
 Unenveloped session-keyboard input and `self-declared:` envelopes create no
 peer obligation. They also do not clear, supersede, or mask one. Tool events,
 background-work notices, native steering, Stop recursion, compaction, and later
 turn boundaries likewise leave the per-message window options intact. `status`
-names each outstanding or ambiguous record and `roster` carries `reply-owed` or
-`reply-unknown`; the shared native Stop adapter permits idle only when its
-private `reply-obligations` query proves the set clear. Dropping the recipient
-window retires the tmux-owned records with the rest of that agent's ephemeral
-state.
+names each outstanding, retired, or ambiguous record and `roster` carries
+`reply-owed` or `reply-unknown` only for the blocking cases; the shared native
+Stop adapter permits idle when its private `reply-obligations` query contains no
+debt or ambiguity. Dropping the recipient window retires the tmux-owned records
+with the rest of that agent's ephemeral state.
 
 An upgraded three-line spool entry has no stable sender token, nonce, or reply
 correlation. Known Gangline control authors remain control mail. A peer-shaped
