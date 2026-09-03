@@ -79,13 +79,19 @@ in separate monotonic options, so concurrent native and transport writers
 cannot lose one another's proof. Legacy peer spool entries lacking correlation
 stay unknown. A launch-installed Stop promise cannot be adopted, and a Claude
 hitch refuses unless the operator explicitly disables its finite native
-consecutive-block cap. Settlement proof does not outrank a missing prompt or
-delivery proof: the original conjunction must still be complete before the
-record derives clear. Join retained metadata and proofs in one linear pass so
+consecutive-block cap. A correlated reply discharges the request once either
+arrival witness stands beside the settlement proof: the reply is itself evidence
+the request reached the debtor, each arrival proof has exactly one writer that
+has already run, and a record failing closed on the weaker missing witness left
+the debtor a Stop block its own reply could not clear. A settlement proof with
+no arrival witness at all stays unknown. Join retained metadata and proofs in one linear pass so
 the audit trail does not make Stop queries quadratic.
 
-Retire an otherwise complete reply obligation when a complete stable-identity
-inventory proves its sender token no longer exists. Write a separate monotonic
+Retire a reply obligation, complete or partial, when a complete stable-identity
+inventory proves its sender token no longer exists. Resolve that token for every
+request record rather than only for an armed one: incomplete arrival evidence
+asks the same question about who could still be answered, and a record whose
+sender is gone names an action no debtor can take. Write a separate monotonic
 retirement proof beside the immutable message evidence, then report the record
 as retired without resolving that dead token again; retained history therefore
 preserves the reply query's linear pass. The audit verdict and status name

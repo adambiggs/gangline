@@ -113,16 +113,32 @@ def query(gang: str) -> list[Verdict]:
     return verdicts
 
 
+# An ambiguous record whose request half is complete enough for Gangline to
+# correlate a reply against it is cleared by replying; every other ambiguity
+# names evidence no message of the blocked agent can change.
+ANSWERABLE = ("provenance-prompt-request", "provenance-verified-request")
+
+
+def answerable(verdict: Verdict) -> bool:
+    if verdict.status == "owed":
+        return True
+    return (
+        verdict.status == "unknown"
+        and verdict.detail in ANSWERABLE
+        and bool(AGENT.fullmatch(verdict.peer))
+    )
+
+
 def block_reason(verdicts: list[Verdict]) -> str:
-    unknown = [v for v in verdicts if v.status == "unknown"]
-    if unknown:
-        details = ", ".join(dict.fromkeys(v.detail for v in unknown))
+    stuck = [v for v in verdicts if not answerable(v)]
+    if stuck:
+        details = ", ".join(dict.fromkeys(v.detail for v in stuck))
         return (
             "you may not go idle: Gangline cannot prove peer-reply provenance "
-            "clear (%s). Preserve the evidence and send a correlated reply to "
-            "the relevant peer before stopping" % details
+            "clear (%s), and no message you can send changes that record. "
+            "Preserve the evidence and raise it with the operator" % details
         )
-    peers = list(dict.fromkeys(v.peer for v in verdicts if v.status == "owed"))
+    peers = list(dict.fromkeys(v.peer for v in verdicts))
     return (
         "you may not go idle: reply to %s with any concise genuine reply or "
         "acknowledgement (gang send --to NAME --stdin). It may say you are "

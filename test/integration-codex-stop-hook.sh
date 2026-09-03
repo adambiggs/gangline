@@ -140,6 +140,9 @@ reply_prompt_event "$reply_b_pane" \
 equal "prompt-first concurrent evidence is preserved while delivery is in flight" \
   $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-prompt-request' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+contains "an answerable ambiguity asks for the reply that clears it" \
+  "$reply_stop_output" "reply to reply-a"
 printf '%s' ACK_PROMPT_FIRST \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
 reply_race_ack_nonce="$(reply_nonce_for_body \
@@ -150,11 +153,21 @@ reply_prompt_event "$reply_a_pane" \
 reply_stop_run "$reply_a_pane"
 equal "the prompt-first reply recipient may idle without reciprocal debt" \
   "{}" "$reply_stop_output"
-equal "settlement cannot clear prompt-only provenance" \
-  $'unknown\t'"$reply_race_nonce"$'\treply-a\tprovenance-settlement-request' \
+equal "a correlated reply discharges prompt-only provenance" \
+  $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the answered debtor may idle while its delivery proof is in flight" \
+  "{}" "$reply_stop_output"
+reply_race_meta="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_race_nonce")"
+IFS=: read -r _ _ _ _ reply_race_digest _ <<<"$reply_race_meta"
+equal "the discharged record carries no delivery proof yet" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rdelivery_$reply_race_nonce")"
 tmux wait-for -S "$reply_race_gate-release"
 wait "$reply_race_pid"
+equal "the released delivery proof completes the discharged audit record" \
+  "$reply_race_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rdelivery_$reply_race_nonce")"
 equal "the missing delivery proof completes the already correlated settlement" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
@@ -185,16 +198,72 @@ reply_prompt_event "$reply_a_pane" \
 reply_stop_run "$reply_a_pane"
 equal "the delivery-first reply recipient may idle without reciprocal debt" \
   "{}" "$reply_stop_output"
-equal "settlement cannot clear delivery-only provenance" \
-  $'unknown\t'"$reply_delivery_only"$'\treply-a\tprovenance-settlement-request' \
+equal "a correlated reply discharges delivery-only provenance" \
+  $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the answered debtor may idle without its native prompt witness" \
+  "{}" "$reply_stop_output"
+reply_delivery_meta="$(tmux show-options -wqv -t "$reply_b_id" \
+  "@gl_reply_$reply_delivery_only")"
+IFS=: read -r _ _ _ _ reply_delivery_digest _ <<<"$reply_delivery_meta"
+equal "the discharged record carries no prompt proof yet" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_delivery_only")"
 reply_prompt_event "$reply_b_pane" "$reply_delivery_only_wire"
+equal "the late prompt proof completes the discharged audit record" \
+  "$reply_delivery_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_delivery_only")"
 equal "the missing prompt proof completes the already correlated settlement" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
 equal "the delivery-first sender may idle after both proofs complete" \
   "{}" "$reply_stop_output"
+
+# A settlement proof beside neither arrival witness is corrupt evidence rather
+# than a discharged obligation: no delivery path can produce that record.
+reply_unwitnessed_nonce=0f1e2d3c4b5a6978
+reply_unwitnessed_digest=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+reply_unwitnessed_token="$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_unwitnessed_nonce" \
+  "message:$reply_unwitnessed_token:reply-a:request:$reply_unwitnessed_digest:-"
+tmux set-option -w -t "$reply_b_id" "@gl_rsettled_$reply_unwitnessed_nonce" \
+  "$reply_unwitnessed_digest"
+equal "a settlement proof with no arrival witness stays ambiguous" \
+  $'unknown\t'"$reply_unwitnessed_nonce"$'\treply-a\tprovenance-unwitnessed-request' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+contains "an unwitnessed settlement fails closed at Stop" \
+  "$reply_stop_output" '"decision": "block"'
+excludes "an unwitnessed settlement demands no impossible reply" \
+  "$reply_stop_output" "reply to reply-a"
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_unwitnessed_nonce"
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_unwitnessed_nonce"
+equal "removing the corrupt record restores a clear window" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+
+# A request with incomplete arrival evidence asks the same question about its
+# sender as a complete one. Naming a reply to a sender no inventory can find is
+# an instruction the debtor cannot carry out.
+reply_gone_partial=1a2b3c4d5e6f7081
+reply_gone_partial_digest=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210
+tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_gone_partial" \
+  "message:00000000:reply-a:request:$reply_gone_partial_digest:-"
+tmux set-option -w -t "$reply_b_id" "@gl_rprompt_$reply_gone_partial" \
+  "$reply_gone_partial_digest"
+equal "a partial request from a vanished sender retires" \
+  $'retired\t'"$reply_gone_partial"$'\treply-a\tsender-gone' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "retiring a partial request writes its own monotonic proof" \
+  "$reply_gone_partial_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rretired_$reply_gone_partial")"
+reply_stop_run "$reply_b_pane"
+equal "an unanswerable partial request cannot wedge its debtor" \
+  "{}" "$reply_stop_output"
+tmux set-option -uw -t "$reply_b_id" "@gl_rretired_$reply_gone_partial"
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_gone_partial"
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_gone_partial"
 
 printf '%s' REQ_A_ONE \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
@@ -564,6 +633,36 @@ excludes "the mixed verdict never asks for the retired peer" \
 equal "a mixed retired and owed query cannot close the native boundary" "" \
   "$(cat "$reply_fake_log")"
 : > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='unknown\t3333333333333333\tstuck-peer\tsender-identity-unreadable\n' \
+    FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@f788fc80dc85: the complete fake-adapter stdout is the unreachable-ambiguity decision, so any producer is valid evidence
+contains "an unreachable ambiguity fails closed" \
+  "$reply_fake_out" '"decision": "block"'
+# source-guard: whole-surface@517a2ffc9bae: the complete fake-adapter stdout is the unreachable-ambiguity reason, so any producer is valid evidence
+contains "an unreachable ambiguity names the evidence it cannot read" \
+  "$reply_fake_out" "sender-identity-unreadable"
+excludes "an unreachable ambiguity demands no reply" "$reply_fake_out" "reply to"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='unknown\t4444444444444444\tanswerable-peer\tprovenance-prompt-request\n' \
+    FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@1d9038b9a1d5: the complete fake-adapter stdout is the answerable-ambiguity decision, so any producer is valid evidence
+contains "an answerable ambiguity still refuses idle" \
+  "$reply_fake_out" '"decision": "block"'
+# source-guard: whole-surface@70a0bbcdfc2d: the complete fake-adapter stdout is the answerable-ambiguity reason, so any producer is valid evidence
+contains "an answerable ambiguity names the peer to answer" \
+  "$reply_fake_out" "reply to answerable-peer"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='unknown\t4444444444444444\tanswerable-peer\tprovenance-prompt-request\nunknown\t5555555555555555\tstuck-peer\tsender-identity-unreadable\n' \
+    FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@083823472772: the complete fake-adapter stdout is the mixed-ambiguity reason, so any producer is valid evidence
+contains "a mixed ambiguity reports the record no reply reaches" \
+  "$reply_fake_out" "sender-identity-unreadable"
+excludes "a mixed ambiguity does not reduce to its answerable half" \
+  "$reply_fake_out" "reply to answerable-peer"
 reply_fake_out="$(printf '%s' "$reply_stop_payload" \
   | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
     FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"

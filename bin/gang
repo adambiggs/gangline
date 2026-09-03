@@ -5303,9 +5303,12 @@ EOF
 # This is deliberately not one mutable state word. Native prompt observation
 # and transport verification can finish concurrently; independent facts cannot
 # overwrite each other. A request is owed only with both prompt and delivery
-# proof. A correlated reply adds settlement proof to the original request, and
-# the immutable record remains as its audit trail until the window goes away.
-# Any missing, malformed, or orphaned evidence fails closed.
+# proof. A correlated reply adds settlement proof to the original request:
+# with either arrival witness beside it that reply discharges the obligation,
+# because a reply Gangline correlated and delivered is itself evidence the
+# request reached the debtor, and the missing witness has no later writer. The
+# immutable record remains as its audit trail until the window goes away. Any
+# missing, malformed, or orphaned evidence fails closed.
 REPLY_STATE_PREFIX='@gl_reply_'
 REPLY_PROMPT_PREFIX='@gl_rprompt_'
 REPLY_DELIVERY_PREFIX='@gl_rdelivery_'
@@ -5495,8 +5498,10 @@ END {
       }
       if [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
         REPLY_STATUS=settled
+      elif [ "$prompt" -eq 1 ] || [ "$delivery" -eq 1 ]; then
+        REPLY_STATUS=discharged
       else
-        REPLY_STATUS=settlement
+        REPLY_STATUS=unwitnessed
       fi
     elif [ "$retired" -eq 1 ]; then
       [ "$REPLY_MODE" = request ] || {
@@ -5504,11 +5509,7 @@ END {
         printf '! %s\n' "$REPLY_ROWS_ERROR"
         return 3
       }
-      if [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
-        REPLY_STATUS=retired
-      else
-        REPLY_STATUS=retirement
-      fi
+      REPLY_STATUS=retired
     elif [ "$REPLY_MODE" = legacy ]; then
       REPLY_STATUS=legacy
     elif [ "$prompt" -eq 1 ] && [ "$delivery" -eq 1 ]; then
@@ -5694,11 +5695,10 @@ reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
   prompt="$(collar_submitted_prompt "$1" "$3")" || rc=$?
   [ "$rc" -eq 0 ] && [ -n "$prompt" ] || return 0
   while read -r nonce state token witness mode digest replies; do
-    # A correlated acknowledgement may settle a delivery-only record before
-    # the native prompt event arrives. Settlement is still incomplete there,
-    # so accept the missing monotonic prompt proof and let the full conjunction
-    # derive clear.
-    case "$state" in candidate|verified|settlement) ;; *) continue ;; esac
+    # A correlated acknowledgement may discharge a record before the native
+    # prompt event arrives. That record no longer blocks, so the late prompt
+    # proof completes its audit trail rather than releasing Stop.
+    case "$state" in candidate|verified|discharged|unwitnessed) ;; *) continue ;; esac
     seen="$(reply_prompt_envelope_digest "$prompt" "$witness" "$nonce" 2>/dev/null)" || seen=""
     [ -n "$seen" ] && [ "$seen" = "$digest" ] || continue
     reply_proof_write "$1" "$REPLY_PROMPT_PREFIX" "$nonce" "$digest" || continue
@@ -5716,19 +5716,27 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
   fi
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
-    case "$state" in settled|complete) continue ;; esac
+    case "$state" in settled|discharged|complete) continue ;; esac
     any=1
     if [ "$state" = retired ]; then
       printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
       continue
     fi
-    if [ "$state" != owed ] || [ "$mode" != request ]; then
+    if [ "$mode" != request ]; then
       printf 'unknown\t%s\t%s\t%s\n' "$nonce" "$witness" "provenance-$state-$mode"
       continue
     fi
+    # A PARTIAL REQUEST IS RESOLVED LIKE A COMPLETE ONE. Its arrival evidence is
+    # incomplete, but who could ever answer it is the same question, and only
+    # the answer decides whether the block names an action the debtor can take.
     live_rc=0; stable_agent_resolve "$token" || live_rc=$?
     case "$live_rc" in
-      0) printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME" ;;
+      0) if [ "$state" = owed ]; then
+           printf 'owed\t%s\t%s\tlive\n' "$nonce" "$STABLE_AGENT_NAME"
+         else
+           printf 'unknown\t%s\t%s\tprovenance-%s-request\n' \
+             "$nonce" "$STABLE_AGENT_NAME" "$state"
+         fi ;;
       3) if reply_proof_write "$1" "$REPLY_RETIRED_PREFIX" "$nonce" "$digest"; then
            printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"
          else
