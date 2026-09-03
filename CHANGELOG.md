@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.9.1](https://github.com/adambiggs/gangline/compare/gangline-v2.9.0...gangline-v2.9.1) (2026-09-03)
+
+
+### Bug Fixes
+
+* **replies:** arm peer debt on the native prompt proof alone ([173ad02](https://github.com/adambiggs/gangline/commit/173ad02cbf0ccb5d872626a323a83f80c8688d88))
+* **replies:** settle a correlated reply when the spool accepts it ([ffb7d67](https://github.com/adambiggs/gangline/commit/ffb7d67dd3834492062b66801a5cd39b2cb984a9))
+
 ## [2.9.0](https://github.com/adambiggs/gangline/compare/gangline-v2.8.0...gangline-v2.9.0) (2026-09-03)
 
 
