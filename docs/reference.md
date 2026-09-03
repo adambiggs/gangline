@@ -1384,8 +1384,10 @@ the window for `status` and `roster`, and the event is not acted on. It is the
 one command that does not die on unconsumed arity, because a hook must not be
 fatal to the harness that fired it; declining the event is the refusal.
 Prompt/tool events open the turn fact, Stop closes it and may dispatch deferred
-self-compaction only where the collar has not declared its native-idle witness
-unavailable; it may also drain the spool. Permission requests
+self-compaction; where the collar has declared its native-idle witness
+unavailable, Stop retires any self-compaction request it finds instead, since
+such a request is refused at `gang compact` and can never be granted. Stop may
+also drain the spool. Permission requests
 raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
 it and drains. A harness that refuses a compaction raises the opening event and
 never the closing one, so any turn event also settles a bracket left open.
@@ -1546,7 +1548,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_MIDTURN_INPUT=steer` | commit to the attributed spool first, then allow a free composer to accept its claim as native mid-turn steering; PostToolUse supplies later opportunities |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
-| `GANG_SELF_COMPACT_WITNESS=unavailable` | Stop, terminal turn records, compact hooks, and composer paint do not prove this harness has released its active task; preserve self-compaction requests and fail before any dispatcher, Enter, consumption, or continuation |
+| `GANG_SELF_COMPACT_WITNESS=unavailable` | Stop, terminal turn records, compact hooks, and composer paint do not prove this harness has released its active task; `gang compact` from inside the agent is refused as unsupported and points at a peer's `gang compact <name> --resume`, no request is recorded, and one recorded earlier is retired at the next boundary before any dispatcher, Enter, or continuation |
 | `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |
 | `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
 | `GANG_USAGE_LIGHT_INTERVAL` | minimum seconds between hook-driven native usage reads; zero disables reuse, while explicit commands remain fresh |

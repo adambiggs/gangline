@@ -730,6 +730,48 @@ compact_bad_rc=0
 "$GANG" compact compactable --resume "   " >/dev/null 2>&1 || compact_bad_rc=$?
 equal "a whitespace-only continuation is refused rather than typed" \
   "1" "$compact_bad_rc"
+
+# A PEER COMPACTION ANSWERS WHATEVER THE WINDOW ASKED FOR ITSELF. A refusal
+# left standing would keep flagging a stall that just ended, and a standing
+# request would fire at the next boundary and compact the fresh context twice.
+tmux set-option -w -t "$(window_id compactable)" @gl_self_compact_requested "test-peer-clears-$$"
+tmux set-option -w -t "$(window_id compactable)" @gl_self_compact_witness "test-peer-clears-$$"$'\t'unavailable
+tmux set-option -w -t "$(window_id compactable)" @gl_self_compact_resume "SELF_NEXT_STEP"
+tmux set-option -w -t "$(window_id compactable)" @gl_self_compact_noted "test-peer-clears-$$"
+tmux set-option -w -t "$(window_id compactable)" @gl_self_compact_failed "unsupported on collar 'native': fixture refusal"
+# THE PEER'S CLEARING SHARES ONE CLAIM WITH A BOUNDARY'S RETIREMENT. A peer
+# arriving while a boundary holds that claim is refused before a keystroke,
+# exactly as a contended delivery is, and nothing native runs under it.
+compactable_id="$(window_id compactable)"
+compactable_claim="$GANG_LOCK_DIR/self-compact-$(printf '%s' \
+  "$compactable_id-state" | tr -c 'A-Za-z0-9' '_').claim"
+tmux wait-for "test-compactable-claim-$$" &
+compactable_holder=$!
+ln -s "$compactable_holder" "$compactable_claim"
+rm -f "$RUN_ROOT/native-compact-executed"
+compact_claim_rc=0
+compact_claim_out="$("$GANG" compact compactable --resume "PEER_UNDER_CLAIM" 2>&1)" \
+  || compact_claim_rc=$?
+equal "a peer compaction is refused while a boundary holds the record claim" \
+  "3" "$compact_claim_rc"
+contains "and says what holds it" \
+  "$compact_claim_out" "retiring its self-compaction request"
+equal "a refused peer compaction runs no native command" absent \
+  "$([ -e "$RUN_ROOT/native-compact-executed" ] && printf present || printf absent)"
+equal "and clears no record" "test-peer-clears-$$" \
+  "$(tmux show-options -wqv -t "$compactable_id" @gl_self_compact_requested)"
+tmux wait-for -S "test-compactable-claim-$$"
+wait "$compactable_holder"
+rm -f "$compactable_claim"
+rm -f "$RUN_ROOT/native-compact-executed"
+"$GANG" compact compactable --resume "PEER_CLEARS_MARKER" >/dev/null
+equal "the peer compaction executed the collar's native command" \
+  "NATIVE_COMPACT" "$(cat "$RUN_ROOT/native-compact-executed")"
+for compact_option in @gl_self_compact_requested @gl_self_compact_witness \
+    @gl_self_compact_resume @gl_self_compact_noted @gl_self_compact_failed; do
+  equal "a landed peer compaction clears $compact_option" "" \
+    "$(tmux show-options -wqv -t "$(window_id compactable)" "$compact_option")"
+done
 "$GANG" drop compactable >/dev/null 2>&1 || :
 
 # THE CONTINUATION IS MEANT TO PARK, AND THE PARK IS THE LANDING. A harness that
@@ -848,9 +890,17 @@ fi
 # released, and task_complete is persisted before that release too. This
 # fixture makes the historical false-positive discriminating: its compact
 # command emits the exact native rejection and leaves an artifact if Gangline
-# submits it. The unavailable witness must stop before a worker, Enter, request
-# consumption, or continuation -- both while Stop is running and on every
-# later apparently-idle boundary.
+# submits it. The unavailable witness must stop before a worker, Enter, or
+# continuation -- while Stop is running and on every later boundary.
+#
+# AND THE REFUSAL IS TERMINAL. This block once asserted that the refused
+# request stayed on record, preserved for a collar with a real witness. Under
+# the same declaration every later boundary can only refuse it again, so the
+# record read as a compaction still to come: an agent that ended its turn on
+# "recorded" while status said "still scheduled; gang retries" waited on a
+# boundary that could only refuse it. A self-request is now refused before
+# anything is recorded, the refusal names the peer form that does work, and a
+# request recorded before this rule is retired at its next boundary.
 codex_race_executed="$RUN_ROOT/codex-stop-race-executed"
 codex_race_busy="$RUN_ROOT/codex-stop-race-busy"
 codex_race_draft="$RUN_ROOT/codex-stop-race-draft"
@@ -884,15 +934,20 @@ printf -v codex_race_command ': > %q; printf BUSY_CODEX_STOP; GANG_SESSION=%q GA
 tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
 tmux send-keys -t "$codex_race_id" Enter
 tmux wait-for "$codex_race_requested"
-codex_race_token="$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
-equal "the unavailable verdict is bound to the exact request token" \
-  "$codex_race_token"$'\t'unavailable \
+equal "an unsupported self-compaction records no request" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "and binds no witness verdict" "" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_witness)"
-# source-guard: producer@e8bba860b45a: the target command names only gang compact; this diagnostic is emitted only by the fail-closed branch
-contains "Codex self-compaction fails closed during its active turn" \
-  "$(pane codex-stop-race)" "self-compaction was recorded but NOT submitted"
-# source-guard: producer@20debf6ef4e4: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_1 marker
-contains "the fail-closed command returns nonzero" \
+# source-guard: producer@27a6b5d72fd8: the typed command names only gang compact; this refusal text is emitted only by gang's unsupported-witness branch
+contains "Codex self-compaction is refused as unsupported during its active turn" \
+  "$(pane codex-stop-race)" "self-compaction unsupported on collar 'codex-stop-race'"
+# source-guard: producer@c0f626424478: the typed command never spells --resume; only the refusal names the peer form
+contains "and the refusal names the peer form that works" \
+  "$(pane codex-stop-race)" "gang compact codex-stop-race --resume"
+excludes "the refusal no longer reads as a recorded request" \
+  "$(pane codex-stop-race)" "recorded but NOT submitted"
+# source-guard: producer@8b6dcbb4e17a: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_1 marker
+contains "the refusal returns nonzero" \
   "$(pane codex-stop-race)" "CODEX_COMPACT_RC_1"
 equal "the active-turn path never invokes the rejecting compact command" absent \
   "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
@@ -902,38 +957,23 @@ excludes "the active-turn path injects no false recovery continuation" \
   "$(pane codex-stop-race)" "Your context was just compacted"
 tmux wait-for -S "$codex_race_release"
 tmux wait-for "$codex_race_released"
-
-if [ -n "$codex_race_token" ]; then
-  tmux wait-for "gang-self-compact-$codex_race_token" &
-  codex_race_waiter=$!
-  mv "$RUN_ROOT/collars/codex-stop-race.sh" \
-    "$RUN_ROOT/collars/codex-stop-race.sh.away"
-  printf '%s' '{"hook_event_name":"Stop"}' |
-    TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
-  wait "$codex_race_waiter"
-  mv "$RUN_ROOT/collars/codex-stop-race.sh.away" \
-    "$RUN_ROOT/collars/codex-stop-race.sh"
-  pass "the still-running Stop hook reaches a no-submission barrier after its collar disappears"
-else
-  fail "the fail-closed Codex request remains diagnosable" \
-    "@gl_self_compact_requested is empty"
-fi
-equal "Stop preserves the exact fail-closed request" "$codex_race_token" \
-  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
-contains "Stop records why no native command can be sent" \
-  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
-  "no positive post-Stop native-idle witness"
 codex_race_status="$("$GANG" status codex-stop-race)"
-contains "status names the pre-submission refusal" \
-  "$codex_race_status" "self-compaction NOT submitted:"
-contains "status names the unavailable native-idle boundary" \
-  "$codex_race_status" "request preserved; blocked because this collar has no positive native-idle witness"
-contains "roster exposes the pending failed request" \
+contains "status carries the refusal for the roster" \
+  "$codex_race_status" "self-compaction NOT submitted: unsupported on collar 'codex-stop-race'"
+contains "and points the lead at the peer form" \
+  "$codex_race_status" "gang compact codex-stop-race --resume"
+excludes "status promises no retry" "$codex_race_status" "still scheduled"
+excludes "status preserves no request" "$codex_race_status" "request preserved"
+excludes "status shows no pending request" "$codex_race_status" "self-compaction requested"
+contains "roster exposes the refusal" \
   "$("$GANG" roster)" "self-compact-failed"
 
 # Upgrade compatibility has no request-bound witness yet. A collar which has
 # disappeared is unavailable evidence, not permission to fall through to the
-# legacy composer dispatcher and spend that older request.
+# legacy composer dispatcher and spend that older request -- and not its
+# declaration either, so such a request is kept rather than retired.
+codex_race_token="test-codex-race-unbound-$$"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_requested "$codex_race_token"
 tmux set-option -uw -t "$codex_race_id" @gl_self_compact_witness
 mv "$RUN_ROOT/collars/codex-stop-race.sh" \
   "$RUN_ROOT/collars/codex-stop-race.sh.away"
@@ -959,12 +999,152 @@ contains "the mismatched verdict is explicit rather than treated as legacy" \
   "malformed or belongs to another request"
 equal "a mismatched stored verdict submits no native command" absent \
   "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+
+# A BOUNDARY THAT CANNOT TAKE THE RECORD CLAIM WRITES NOTHING. The holder is a
+# peer compaction that clears this request itself, so the retirement yields
+# rather than write a refusal over a record the peer is about to clear.
+codex_race_claim="$GANG_LOCK_DIR/self-compact-$(printf '%s' \
+  "$codex_race_id-state" | tr -c 'A-Za-z0-9' '_').claim"
 tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
   "$codex_race_token"$'\t'unavailable
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_resume "LEGACY_NEXT_STEP"
+tmux wait-for "test-codex-race-claim-$$" &
+codex_race_holder=$!
+ln -s "$codex_race_holder" "$codex_race_claim"
+tmux wait-for "gang-self-compact-$codex_race_token" &
+codex_race_waiter=$!
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+wait "$codex_race_waiter"
+equal "a boundary that cannot claim the record leaves the request standing" \
+  "$codex_race_token" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "and its continuation" "LEGACY_NEXT_STEP" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_resume)"
+excludes "and writes no refusal over the holder's record" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "unsupported on collar"
+excludes "and spools no retirement note" \
+  "$("$GANG" roster | grep '^codex-stop-race ' || :)" "spool-held"
+tmux wait-for -S "test-codex-race-claim-$$"
+wait "$codex_race_holder"
+rm -f "$codex_race_claim"
+
+# A REQUEST RECORDED BEFORE THIS RULE IS RETIRED, NOT KEPT. Its stored verdict
+# is enough to retire it; the collar's presence is not needed, so the collar is
+# away while Stop runs, exactly as the old preservation check had it.
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
+  "$codex_race_token"$'\t'unavailable
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_resume "LEGACY_NEXT_STEP"
+tmux wait-for "gang-self-compact-$codex_race_token" &
+codex_race_waiter=$!
+mv "$RUN_ROOT/collars/codex-stop-race.sh" \
+  "$RUN_ROOT/collars/codex-stop-race.sh.away"
+printf '%s' '{"hook_event_name":"Stop"}' |
+  TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
+wait "$codex_race_waiter"
+mv "$RUN_ROOT/collars/codex-stop-race.sh.away" \
+  "$RUN_ROOT/collars/codex-stop-race.sh"
+pass "the still-running Stop hook reaches a no-submission barrier after its collar disappears"
+equal "Stop retires the pre-rule request" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "its witness binding" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_witness)"
+equal "and its recorded continuation" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_resume)"
+codex_race_failed="$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)"
+contains "Stop records the refusal in the request's place" \
+  "$codex_race_failed" "unsupported on collar 'codex-stop-race'"
+excludes "with no retry promised" "$codex_race_failed" "still scheduled"
+equal "retirement invokes no compact command" absent \
+  "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
+excludes "and creates no false recovery continuation" \
+  "$(pane codex-stop-race)" "Your context was just compacted"
+codex_race_mail="$("$GANG" mail codex-stop-race)"
+contains "the agent is told its request was retired" \
+  "$codex_race_mail" "retired before it ran"
+contains "and which peer command to ask for" \
+  "$codex_race_mail" "gang compact codex-stop-race --resume"
+codex_race_status="$("$GANG" status codex-stop-race)"
+excludes "status shows no pending request after retirement" \
+  "$codex_race_status" "self-compaction requested"
+excludes "and no preserved one" "$codex_race_status" "request preserved"
+
+# A SELF-CALL THAT FINDS A REQUEST RECORDED BEFORE THIS RULE RETIRES IT. Left
+# beside the refusal, that request would read as pending until a boundary
+# happened to retire it; the command that refuses is a boundary that can.
+codex_race_legacy="test-codex-race-legacy-$$"
+codex_race_again="test-codex-race-again-$$"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_requested "$codex_race_legacy"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
+  "$codex_race_legacy"$'\t'unavailable
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_resume "LEGACY_SELF_STEP"
+tmux set-option -uw -t "$codex_race_id" @gl_self_compact_failed
+printf -v codex_race_command 'GANG_SESSION=%q GANG_COLLARS=%q %q compact; printf " CODEX_AGAIN_RC_%%s" "$?"; tmux wait-for -S %q' \
+  "$GANG_SESSION" "$GANG_COLLARS" "$GANG" "$codex_race_again"
+tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
+tmux send-keys -t "$codex_race_id" Enter
+tmux wait-for "$codex_race_again"
+# source-guard: producer@d29d25a31d39: the typed command contains a percent placeholder, so only its executed status print can produce the expanded AGAIN_RC_1 marker
+contains "a self-call over a pre-rule request is refused" \
+  "$(pane codex-stop-race)" "CODEX_AGAIN_RC_1"
+equal "and retires that request" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "its witness binding" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_witness)"
+equal "and its continuation" "" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_resume)"
+contains "leaving the refusal in its place" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "unsupported on collar 'codex-stop-race'"
+codex_race_mail="$("$GANG" mail codex-stop-race)"
+contains "the agent is told the pre-rule request was retired" \
+  "$codex_race_mail" "retired before it ran"
+excludes "status shows no pending request after a refused self-call" \
+  "$("$GANG" status codex-stop-race)" "self-compaction requested"
+
+# A SELF-CALL READS THE BINDING THE WAY THE DISPATCHER DOES. A request whose
+# stored verdict belongs to another request is the state the dispatcher keeps
+# with its diagnostic; the command must not become a second path that spends
+# it as an ordinary legacy request.
+codex_race_mismatch="test-codex-race-mismatch-$$"
+codex_race_third="test-codex-race-third-$$"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_requested "$codex_race_mismatch"
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_witness \
+  "different-request"$'\t'unavailable
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_resume "MISMATCH_STEP"
+tmux set-option -uw -t "$codex_race_id" @gl_self_compact_failed
+printf -v codex_race_command 'GANG_SESSION=%q GANG_COLLARS=%q %q compact; printf " CODEX_THIRD_RC_%%s" "$?"; tmux wait-for -S %q' \
+  "$GANG_SESSION" "$GANG_COLLARS" "$GANG" "$codex_race_third"
+tmux send-keys -l -t "$codex_race_id" "$codex_race_command"
+tmux send-keys -t "$codex_race_id" Enter
+tmux wait-for "$codex_race_third"
+# source-guard: producer@fad451c87bb4: the typed command contains a percent placeholder, so only its executed status print can produce the expanded THIRD_RC_1 marker
+contains "a self-call over a mismatched binding is refused" \
+  "$(pane codex-stop-race)" "CODEX_THIRD_RC_1"
+equal "and keeps that request standing" "$codex_race_mismatch" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+equal "with its continuation" "MISMATCH_STEP" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_resume)"
+contains "and writes the dispatcher's diagnostic, not a retirement" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "malformed or belongs to another request"
+# source-guard: producer@d622d935df75: the typed command never spells this phrase; only the refused self-call branch of gang emits it
+contains "the refusal says an untrusted request stands" \
+  "$(pane codex-stop-race)" "witness binding gang cannot trust"
+excludes "and spools no retirement note for it" \
+  "$("$GANG" roster | grep '^codex-stop-race ' || :)" "spool-held"
+# The mismatched request is fixture state the boundaries below must not see.
+for codex_race_option in @gl_self_compact_requested @gl_self_compact_witness \
+    @gl_self_compact_resume @gl_self_compact_failed; do
+  tmux set-option -uw -t "$codex_race_id" "$codex_race_option"
+done
+tmux set-option -w -t "$codex_race_id" @gl_self_compact_failed \
+  "unsupported on collar 'codex-stop-race': fixture refusal"
 
 # Later idle-looking ticks, duplicate Stops, and unrelated manual or automatic
 # native compactions are not a command-to-hook correlation mechanism. None may
-# spend the request or synthesize a continuation.
+# submit a command or synthesize a continuation on a window holding a refusal.
 "$GANG" tick >/dev/null
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
@@ -978,44 +1158,44 @@ printf '%s' '{"hook_event_name":"PreCompact","trigger":"manual"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
 printf '%s' '{"hook_event_name":"PostCompact","trigger":"manual"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
-equal "idle tick, duplicate Stop, changed session, and unrelated compact hooks preserve the request" \
-  "$codex_race_token" \
+equal "idle tick, duplicate Stop, changed session, and unrelated compact hooks record no request" \
+  "" \
   "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
 equal "no later boundary invokes the rejecting compact command" absent \
   "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
 excludes "no later boundary creates a false recovery continuation" \
   "$(pane codex-stop-race)" "Your context was just compacted"
 
-# A pending diagnostic state owns no composer and no spool. Draft/copy-mode
-# observations stay intact, and ordinary peer mail drains once its own native
-# boundary is safe while the self request remains pending.
+# A refusal record owns no composer and no spool. Draft/copy-mode observations
+# stay intact, and ordinary peer mail drains once its own native boundary is
+# safe while the refusal stays on record.
 : > "$codex_race_draft"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
-equal "a pending fail-closed request preserves an operator draft" \
+equal "a refusal record preserves an operator draft" \
   "OPERATOR_DRAFT" "$("$GANG" composer codex-stop-race)"
 tmux copy-mode -t "$codex_race_pane"
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
-equal "a pending fail-closed request preserves copy-mode" 1 \
+equal "a refusal record preserves copy-mode" 1 \
   "$(tmux display-message -p -t "$codex_race_pane" '#{pane_in_mode}')"
 tmux send-keys -t "$codex_race_pane" -X cancel
 printf 'MARK_MAIL_PAST_FAILED_COMPACT' |
   "$GANG" send --to codex-stop-race --from tester --stdin >/dev/null
-contains "the operator draft parks ordinary mail, not the self-compaction state" \
+contains "the operator draft parks ordinary mail, not the refusal" \
   "$("$GANG" status codex-stop-race)" "spooled: 1"
-rm -f -- "$codex_race_draft"
+rm -f "$codex_race_draft"
 tmux wait-for "gang-spool-drain-$codex_race_id" &
 codex_race_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop"}' |
   TMUX_PANE="$codex_race_pane" "$GANG" hook >/dev/null
 wait "$codex_race_drain_waiter"
-# source-guard: producer@354cf37b16a4: the marker enters only as the external sender's body, so its target-pane appearance witnesses spool delivery
-contains "ordinary mail drains past the fail-closed diagnostic state" \
+# source-guard: producer@c7e688f29e4f: the marker enters only as the external sender's body, so its target-pane appearance witnesses spool delivery
+contains "ordinary mail drains past the refusal" \
   "$(pane codex-stop-race)" "MARK_MAIL_PAST_FAILED_COMPACT"
-equal "mail delivery does not consume the self-compaction request" \
-  "$codex_race_token" \
-  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_requested)"
+contains "mail delivery leaves the refusal on record" \
+  "$(tmux show-options -wqv -t "$codex_race_id" @gl_self_compact_failed)" \
+  "unsupported on collar 'codex-stop-race'"
 codex_race_drop_rc=0
 codex_race_drop_output="$("$GANG" drop codex-stop-race 2>&1)" \
   || codex_race_drop_rc=$?
