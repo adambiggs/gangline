@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.9.2](https://github.com/adambiggs/gangline/compare/gangline-v2.9.1...gangline-v2.9.2) (2026-09-03)
+
+
+### Bug Fixes
+
+* **codex:** skip stdio peers when reading held background work ([6343b2d](https://github.com/adambiggs/gangline/commit/6343b2d968de2b8f985e7cc46b5ed362577117f5)), closes [#189](https://github.com/adambiggs/gangline/issues/189)
+* **compact:** refuse unsupported self-compaction instead of deferring it ([6bb45d1](https://github.com/adambiggs/gangline/commit/6bb45d127e27fc24c6970fa7c7a67ce0702babe3)), closes [#190](https://github.com/adambiggs/gangline/issues/190)
+* **tick:** resolve lock owners by pid namespace and retire other users' pids ([3730180](https://github.com/adambiggs/gangline/commit/37301807a312a430137205ebc4e947ffb30ee138)), closes [#184](https://github.com/adambiggs/gangline/issues/184)
+
 ## [2.9.1](https://github.com/adambiggs/gangline/compare/gangline-v2.9.0...gangline-v2.9.1) (2026-09-03)
 
 
