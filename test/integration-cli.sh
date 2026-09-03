@@ -2412,7 +2412,12 @@ guard_run() { # $1 TMUX, $2 TMUX_TMPDIR, $3 GANG_TMUX_GUARD, rest = argv;
   [ "$want_tmpdir" != - ] || want_tmpdir=""
   [ "$want_guard" != - ] || want_guard=""
   rm -f -- "$guard_ran"
-  err="$(PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
+  # The helper is the detached-operator control.  A gate launched from an
+  # actual agent pane inherits both of these values, but neither belongs to
+  # this fixture's stated environment; retaining either would turn a test of
+  # the allowed detached override into a test of the agent refusal.
+  err="$(env -u TMUX_PANE -u GANG_TMUX_GUARD_AGENT \
+    PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
     GANG_SESSION="$guard_session" GANG_LOCK_DIR="$guard_state" \
     TMUX="$want_tmux" TMUX_TMPDIR="$want_tmpdir" GANG_TMUX_GUARD="$want_guard" \
     "$guard_shim" "$@" 2>&1 >/dev/null)" || rc=$?
