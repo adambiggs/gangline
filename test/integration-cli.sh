@@ -2573,6 +2573,66 @@ fi
 contains "the original team root receives the sandbox refusal" \
   "$(cat "$guard_team_log/tmux-guard.log" 2>/dev/null)" "refused"
 
+# AN AGENT CANNOT TURN ITS OWN GUARD OFF. This is a real disposable `-L`
+# server, not the suite's server: before the fix the one invocation below
+# destroys this server; after it, the registered pane survives and proves the
+# override stopped before real tmux ran. The label and root are unique, and
+# cleanup addresses that label with the real tmux after both observations.
+guard_override_root="$guard_home/agent-override"
+guard_override_label="gangline-guard-agent-override-$$"
+guard_override_session="guard-agent-override-$$"
+mkdir -p "$guard_override_root"
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  new-session -d -s "$guard_override_session" -n agent 'exec cat'
+guard_override_socket="$(env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  display-message -p '#{socket_path}')"
+guard_override_pane="$(env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  display-message -p -t "=$guard_override_session:agent" '#{window_id}')"
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  set-option -w -t "$guard_override_pane" @gl_agent override-agent
+guard_rc=0
+guard_out="$(PATH="$ROOT/libexec/gang-tmux-guard:$(dirname "$REAL_TMUX"):/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  TMUX="$guard_override_socket,1,0" TMUX_PANE="$guard_override_pane" \
+  GANG_TMUX_GUARD=off "$guard_shim" kill-server 2>&1 >/dev/null)" || guard_rc=$?
+equal "a registered agent pane cannot override its tmux guard" 3 "$guard_rc"
+contains "the agent override refusal names the forbidden context" \
+  "$guard_out" "not honoured from a Gangline agent pane"
+if env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  has-session -t "=$guard_override_session" >/dev/null 2>&1; then
+  pass "the refused agent override leaves its -L scratch server alive"
+else
+  fail "the refused agent override leaves its -L scratch server alive" \
+    "$guard_override_session was ended by the override"
+fi
+env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  TMUX_TMPDIR="$guard_override_root" "$REAL_TMUX" -L "$guard_override_label" \
+  kill-server >/dev/null 2>&1 || true
+
+# HITCH EXPORTS ITS AGENT MARKER BEFORE TMUX CAN REGISTER @gl_agent ON THE
+# WINDOW. That launch interval has no pane option to consult, so prove the
+# marker alone still stops an inherited `off` before the real tmux is reached.
+rm -f -- "$guard_ran"
+guard_rc=0
+guard_out="$(env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
+  PATH="$ROOT/libexec/gang-tmux-guard:$guard_bin:/usr/bin:/bin" \
+  GANG_SESSION=probe GANG_LOCK_DIR="$guard_real_state" \
+  GANG_TMUX_GUARD_AGENT=1 GANG_TMUX_GUARD=off \
+  "$guard_shim" kill-server 2>&1 >/dev/null)" || guard_rc=$?
+equal "the pre-registration agent marker cannot override its tmux guard" 3 "$guard_rc"
+contains "the marker-only override refusal names the forbidden context" \
+  "$guard_out" "not honoured from a Gangline agent pane"
+if guard_reached_tmux; then
+  fail "the marker-only override never reaches tmux" "the real tmux ran"
+else
+  pass "the marker-only override never reaches tmux"
+fi
+
 # TMUX ITSELF SETTLES THE TARGET. tmux 3.2a silently ignores a TMUX_TMPDIR
 # whose directory is absent and falls back to its ordinary socket root. The
 # guard used to build the missing path itself, fail to read it, and then pass
@@ -2678,6 +2738,16 @@ equal "a kill-server with TMUX unset and a private TMUX_TMPDIR runs" \
   0 "$(printf '%s' "$guard_out" | head -1)"
 contains "an unprotected teardown fall-open is recorded" \
   "$(cat "$guard_state/tmux-guard.log" 2>/dev/null)" "fall-open-no-gangline-agent"
+guard_out="$(guard_run - "$guard_home/sandbox" - -S '' kill-server)"
+equal "an empty explicit scratch socket is refused instead of using tmux default" \
+  3 "$(printf '%s' "$guard_out" | head -1)"
+contains "the empty scratch socket refusal says what is missing" \
+  "$guard_out" "nonempty socket path"
+if guard_reached_tmux; then
+  fail "an empty explicit scratch socket never reaches tmux" "the real tmux ran"
+else
+  pass "an empty explicit scratch socket never reaches tmux"
+fi
 guard_unreadable_socket="$guard_home/unreadable-socket"
 printf '%s\n' "$guard_unreadable_socket" > "$guard_unreadable_servers"
 guard_out="$(guard_run - - - -S "$guard_unreadable_socket" kill-server)"

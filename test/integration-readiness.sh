@@ -2355,6 +2355,6 @@ GANG_LAUNCH=": ; printf '%s' \"\\\$PATH\" > $guardpath_file; tmux wait-for -S $g
 SH
 GANG_TMUX_GUARD=off "$HITCH" unguarded -c guardpath -d /tmp >/dev/null
 tmux wait-for "$guardpath_chan"
-excludes "GANG_TMUX_GUARD=off leaves the agent's PATH alone" \
+contains "GANG_TMUX_GUARD=off still keeps the agent's tmux guard on PATH" \
   "$(cat "$guardpath_file")" "$ROOT/libexec/gang-tmux-guard"
 "$GANG" drop unguarded >/dev/null

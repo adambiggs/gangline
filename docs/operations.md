@@ -914,8 +914,11 @@ would resolve through such a root, before fixture traffic can reach another
 server. An explicit `-S` remains aimed, and an unqualified command inside a pane
 still follows `$TMUX`; neither depends on `TMUX_TMPDIR`.
 
-It is a guardrail, not a boundary: `GANG_TMUX_GUARD=off` in front of one command
-runs it anyway. Every teardown verdict — refusal, override, or fall-open — is
+It is a guardrail, not a boundary: a detached, unregistered operator context
+may put `GANG_TMUX_GUARD=off` in front of one command, and that use is recorded.
+The same value is refused from a hitched agent pane, including the small launch
+interval before its `@gl_agent` registration, so it cannot become an accidental
+agent bypass. Every teardown verdict — refusal, override, or fall-open — is
 appended to `tmux-guard.log` under the caller's `GANG_LOCK_DIR` and the original
 team log root `hitch` exported as `GANG_TMUX_GUARD_LOG_DIR`; the default root is
 also used when distinct. `GANG_TMUX_GUARD_LOG_DIR` is internal launch provenance,

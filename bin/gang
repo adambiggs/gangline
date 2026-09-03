@@ -8780,15 +8780,17 @@ tmux_guard_dir() { printf '%s/libexec/gang-tmux-guard' "$ROOT"; }
 # and is not.
 tmux_guard_wrap() {
   local dir log_dir
-  [ "$GANG_TMUX_GUARD" = on ] || return 0
   dir="$(tmux_guard_dir)"
   [ -x "$dir/tmux" ] || {
-    printf 'gang: WARNING: GANG_TMUX_GUARD=on but %s/tmux is missing or not executable, so this agent launches without the guard against ending its own team'"'"'s tmux server. Reinstall gangline, or set GANG_TMUX_GUARD=off to stop asking for it.\n' \
+    printf 'gang: WARNING: %s/tmux is missing or not executable, so this agent launches without the guard against ending its own team'"'"'s tmux server. Reinstall gangline before hitching an agent.\n' \
       "$dir" >&2
     return 0
   }
   log_dir="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
-  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_LOG_DIR=$(shell_quote "$log_dir"); $GANG_LAUNCH"
+  # A launch-time `off` cannot remove the shim from an agent. The shim may
+  # honour that explicit override only outside an agent context; this marker
+  # closes the interval before hitch records @gl_agent on the new window.
+  GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_LOG_DIR=$(shell_quote "$log_dir"); export GANG_TMUX_GUARD_AGENT=1; $GANG_LAUNCH"
 }
 
 scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope

@@ -1423,7 +1423,7 @@ Exactly these keys are settable:
 | `GANG_USAGE_LIGHTS` | `off` | `off` or increasing provider-used thresholds such as `90%,95%` |
 | `GANG_AUTO_RESUME` | `off` | `off` or one provider-used percentage such as `97%` at which a reset wake is armed automatically |
 | `GANG_SCOPE` | `off` | `off`, or `on` to launch each hitched harness, and the tmux server gang forks, in its own transient systemd user scope |
-| `GANG_TMUX_GUARD` | `on` | `on` to put a `tmux` shim at the front of every hitched agent's `PATH`; it refuses commands that could be retargeted by an absent `TMUX_TMPDIR`, and refuses destructive commands when the server tmux resolves has live or unreadable `@gl_agent` registrations, or `off` to launch agents with an untouched `PATH` |
+| `GANG_TMUX_GUARD` | `on` | `on` enables normal guard enforcement. `off` is an explicit, logged override only from a detached, unregistered operator context; it cannot remove the shim from a hitched agent or bypass it from an agent pane. |
 | `GANG_BOOT_TIMEOUT` | `30` | initial startup readiness bound; after a positively identified gate, one foreground observation slice in seconds |
 | `GANG_GATE_LOOKS` | `60` | observations of an unanswered native first-run prompt before `hitch` stops waiting and exits 4 |
 | `GANG_CHURN_WAIT` | `0.5` | stable-pane observation interval |
@@ -1441,6 +1441,14 @@ native hooks; recovery is in `docs/operations.md`.
 is the launch-time team log root, retained when a test redirects
 `GANG_LOCK_DIR` so each teardown verdict remains attributable. It is internal
 provenance, not a settable configuration key.
+
+Every hitched agent receives the tmux shim, including when its launch
+environment has `GANG_TMUX_GUARD=off`. The shim records and honours that
+override only outside a Gangline agent context, for example a detached operator
+shell. A pane registered with `@gl_agent` (and the brief launch interval before
+that registration) refuses it. Fixture and test teardown must use a nonempty
+explicit `tmux -S` socket; an empty socket is refused rather than allowed to
+fall back to tmux's default server.
 
 Doctrine is never written by Gangline. It must be a readable regular file with
 no NUL, no controls other than tab and newline, and valid UTF-8. Byte count does
