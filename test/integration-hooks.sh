@@ -189,6 +189,15 @@ printf '%s' '{"hook_event_name":"Stop"}' |
 # A reader that consults only the main thread's children, or that holds on any
 # live child, fails one of the two verdicts below.
 #
+# AND IT KEEPS A STDIO PEER, WHICH IS NEITHER. Codex spawns each configured
+# MCP server before the agent's first turn and drives it over its stdin and
+# stdout for the whole session -- a live child outside CODEX_HOME that is not
+# background work, and that made every idle window with an MCP server read
+# waiting for as long as it lived. The peer here is a shell whose stdin and
+# stdout are pipes the root holds, running a tool that reads /dev/null: the
+# tool alone would not pass the peer test, so the idle verdict below holds
+# only if the peer is skipped together with everything beneath it.
+#
 # Each child is a `cat` blocked on a FIFO. Opening the other end returns only
 # once that child has opened its own end, so the child is observably exec'd
 # before any verdict is read; closing it is an immediate release with no
@@ -197,6 +206,7 @@ codex_wait_home="$RUN_ROOT/codex-wait-home"
 mkdir -p "$codex_wait_home/bin"
 codex_wait_cat="$(command -v cat)"
 cp -- "$codex_wait_cat" "$codex_wait_home/bin/codex-wait-helper"
+cp -- "$codex_wait_cat" "$RUN_ROOT/codex-wait-peer-tool"
 codex_wait_ready="gang-test-codex-wait-ready-$$"
 codex_wait_release="gang-test-codex-wait-release-$$"
 codex_wait_done="gang-test-codex-wait-done-$$"
@@ -205,14 +215,31 @@ import subprocess
 import sys
 import threading
 
-helper, command, helper_fifo, child_fifo, tmux, ready, release, done = sys.argv[1:9]
+(
+    helper, command, helper_fifo, child_fifo, tmux, ready, release, done,
+    peer_tool, peer_fifo,
+) = sys.argv[1:11]
 
 
 def worker():
     helper_process = subprocess.Popen([helper, helper_fifo])
     child_process = subprocess.Popen([command, child_fifo])
+    # The peer is a shell driven over pipes this root holds, as Codex drives
+    # an MCP server. Its tool reads the FIFO with stdin from /dev/null, and
+    # `; :` keeps the shell from exec'ing into it, so the subtree is the
+    # shape under test: a peer above, a non-peer below it. The shell is bash
+    # by name: dash applies a simple command's redirection in the parent
+    # before forking, which would put /dev/null on the peer's own stdin for
+    # as long as the tool runs, and the shape would no longer be the one
+    # described.
+    peer_process = subprocess.Popen(
+        ["bash", "-c", '"$1" "$2" </dev/null; :', "peer", peer_tool, peer_fifo],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+    )
     helper_writer = open(helper_fifo, "w")
     child_writer = open(child_fifo, "w")
+    peer_writer = open(peer_fifo, "w")
     subprocess.run([tmux, "wait-for", "-S", ready], check=True)
     subprocess.run([tmux, "wait-for", release], check=True)
     child_writer.close()
@@ -229,13 +256,15 @@ thread = threading.Thread(target=worker)
 thread.start()
 thread.join()
 PY
-mkfifo "$RUN_ROOT/codex-wait-helper.fifo" "$RUN_ROOT/codex-wait-child.fifo"
+mkfifo "$RUN_ROOT/codex-wait-helper.fifo" "$RUN_ROOT/codex-wait-child.fifo" \
+  "$RUN_ROOT/codex-wait-peer.fifo"
 codex_wait_name="codex-wait-native-$$"
-printf -v codex_wait_command 'exec python3 %q %q %q %q %q %q %q %q %q' \
+printf -v codex_wait_command 'exec python3 %q %q %q %q %q %q %q %q %q %q %q' \
   "$RUN_ROOT/codex-wait-root.py" "$codex_wait_home/bin/codex-wait-helper" \
   "$codex_wait_cat" "$RUN_ROOT/codex-wait-helper.fifo" \
   "$RUN_ROOT/codex-wait-child.fifo" "$(command -v tmux)" \
-  "$codex_wait_ready" "$codex_wait_release" "$codex_wait_done"
+  "$codex_wait_ready" "$codex_wait_release" "$codex_wait_done" \
+  "$RUN_ROOT/codex-wait-peer-tool" "$RUN_ROOT/codex-wait-peer.fifo"
 tmux new-window -d -t "=$GANG_SESSION" -n "$codex_wait_name" -c /tmp \
   "$codex_wait_command"
 codex_wait_id="$(tmux display-message -p -t "=$GANG_SESSION:$codex_wait_name" '#{window_id}')"
@@ -248,6 +277,22 @@ tmux wait-for "$codex_wait_ready"
 codex_wait_root="$(tmux display-message -p -t "$codex_wait_id" '#{pane_pid}')"
 equal "the stand-in Codex root forked nothing from its main thread" "" \
   "$(cat "/proc/$codex_wait_root/task/$codex_wait_root/children")"
+codex_wait_peer="$(pgrep -P "$codex_wait_root" -x bash)"
+codex_wait_peer_tool="$(pgrep -P "${codex_wait_peer:-0}" -x codex-wait-peer)"
+codex_wait_peer_stdin="$(readlink "/proc/${codex_wait_peer:-0}/fd/0" 2>/dev/null)"
+case "$codex_wait_peer_stdin" in
+  'pipe:['*) pass "the stand-in stdio peer reads a pipe on its stdin" ;;
+  *) fail "the stand-in stdio peer reads a pipe on its stdin" \
+       "peer '$codex_wait_peer' stdin is '$codex_wait_peer_stdin'" ;;
+esac
+# Compared as text: a pipe name carries brackets, which find's -lname would
+# read as a character class.
+equal "and that pipe is one the stand-in root holds" 1 \
+  "$(for codex_wait_fd in "/proc/$codex_wait_root/fd"/*; do
+       readlink "$codex_wait_fd"
+     done 2>/dev/null | grep -cxF "$codex_wait_peer_stdin")"
+equal "the tool beneath the peer reads /dev/null instead" /dev/null \
+  "$(readlink "/proc/${codex_wait_peer_tool:-0}/fd/0" 2>/dev/null)"
 codex_wait_rc=0
 codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
   '. "$1"; collar_waiting "$2" "$3"' fixture \
@@ -270,6 +315,8 @@ codex_wait_output="$(CODEX_HOME="$codex_wait_home" bash -c \
   || codex_wait_rc=$?
 equal "a live Codex helper inside CODEX_HOME is not held work" "1" "$codex_wait_rc"
 equal "an absent Codex waiting verdict prints no witness" "" "$codex_wait_output"
+equal "the stdio peer and its tool were live while that verdict was read" "S S" \
+  "$(awk '{print $3}' "/proc/${codex_wait_peer:-0}/stat" "/proc/${codex_wait_peer_tool:-0}/stat" 2>/dev/null | paste -sd' ')"
 
 # ONE ODDLY NAMED PROCESS ANYWHERE ON THE HOST IS NOT A GAP IN THIS READING.
 # The probe finds children by reading every process's recorded parent, and

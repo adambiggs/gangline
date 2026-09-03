@@ -731,6 +731,69 @@ def printable(value):
     return "".join(char if " " <= char < "\x7f" else "?" for char in value)[:32]
 
 
+def harness_pipes():
+    """Pipe inodes the harness holds open besides its own standard streams.
+
+    The harness's own stdin, stdout and stderr are whatever launched it and
+    say nothing about its children, so they are left out even when they are
+    pipes themselves. An fd table this probe cannot list yields the empty
+    set, and the empty set classes nothing as a peer: the error goes toward a
+    named process in the status line, never toward a hidden one.
+    """
+    pipes = set()
+    try:
+        entries = os.listdir(f"/proc/{root_pid}/fd")
+    except FileNotFoundError:
+        raise TreeGone
+    except OSError:
+        return pipes
+    for entry in entries:
+        if entry in ("0", "1", "2"):
+            continue
+        try:
+            target = os.readlink(f"/proc/{root_pid}/fd/{entry}")
+        except OSError:
+            continue
+        if target.startswith("pipe:["):
+            pipes.add(target)
+    return pipes
+
+
+def stdio_peer(pid, pipes):
+    """True when pid talks a stdio protocol with the harness.
+
+    LAUNCH-TIME INFRASTRUCTURE IS NOT WORK THE AGENT STARTED. Codex spawns an
+    MCP server from its configuration before the agent's first turn and keeps
+    it for the whole session, and it runs its code-mode host the same way.
+    Neither is a background task, but each is a live child outside CODEX_HOME,
+    which is exactly the reading this probe gives held work -- so an idle
+    window with any MCP server configured read as waiting for as long as it
+    lived, and `gang wait --until idle` could never be satisfied for it.
+
+    What distinguishes such a child is provenance in the fd table, not a
+    name or a config entry: Codex drives it over its stdin and stdout, so both
+    are pipes whose other ends Codex itself holds. A tool call gets no such
+    stdin -- the sandbox helper and a directly exec'd command read /dev/null,
+    and a command under the unified exec pty reads its pty -- while its stdout
+    pipe alone does not qualify it. Observed on codex-cli 0.151.0.
+
+    The peer's descendants are its own implementation (npx, a shell, the
+    server it resolves to) and are skipped with it. Work a server holds on the
+    agent's behalf is beyond what Codex itself knows about, and is not read
+    here. An fd this probe cannot read makes the process not a peer, so it is
+    named as held: the misreading is visible, as elsewhere in this reader.
+    """
+    if not pipes:
+        return False
+    try:
+        return (
+            os.readlink(f"/proc/{pid}/fd/0") in pipes
+            and os.readlink(f"/proc/{pid}/fd/1") in pipes
+        )
+    except OSError:
+        return False
+
+
 def held_witness(pid, own_tree):
     """Name pid when it is work Codex is holding, else None.
 
@@ -784,6 +847,7 @@ def codex_owned(exe, own_tree):
 
 def held_read(ancestors, own_tree):
     table = process_table()
+    pipes = harness_pipes()
     unread = list(OPAQUE)
     queue = [root_pid]
     seen = {root_pid}
@@ -798,6 +862,8 @@ def held_read(ancestors, own_tree):
                     f"the Codex child-process probe exceeded its {max_processes}-process bound"
                 )
             if child in ancestors:
+                continue
+            if stdio_peer(child, pipes):
                 continue
             queue.append(child)
             witness = held_witness(child, own_tree)
