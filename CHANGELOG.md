@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.9.0](https://github.com/adambiggs/gangline/compare/gangline-v2.8.0...gangline-v2.9.0) (2026-09-03)
+
+
+### Features
+
+* **stop:** release a re-Stop under the native block cap with the debt recorded ([87bab53](https://github.com/adambiggs/gangline/commit/87bab530cf21019a90a991f40fe1b91a7993a0f9))
+
+
+### Bug Fixes
+
+* **alerts:** run popup command on tmux 3.2a ([bcf0289](https://github.com/adambiggs/gangline/commit/bcf0289aa32e6a75a60272d6f300630eb55cd69f))
+* **codex:** report each Stop adapter failure under its own name ([f3554e5](https://github.com/adambiggs/gangline/commit/f3554e5248b7b0480c106db32a269dd8a0100f92))
+* **codex:** retry delayed harness identity probe ([b70cf5f](https://github.com/adambiggs/gangline/commit/b70cf5feb49678a194943e495aa603e778e8d787))
+* **codex:** validate unattended launch prerequisites ([5ed5a23](https://github.com/adambiggs/gangline/commit/5ed5a235219d5fb74a3cb5d7cfb220d8286fb42f))
+* **hitch:** stop refusing Claude hitches over the shell's Stop-cap variable ([2ba8c75](https://github.com/adambiggs/gangline/commit/2ba8c75e92b31fa7fae163311ae938fda4819f70))
+* **messages:** enforce verified peer reply obligations ([563942f](https://github.com/adambiggs/gangline/commit/563942f8c22ad0c509a3baa60bdbf5197693b421))
+* **messages:** harden reply provenance lifecycle ([cd62d4c](https://github.com/adambiggs/gangline/commit/cd62d4c0cd7e6816b48aea9283290a6e9fec8dab))
+* **messages:** preserve partial settlement provenance ([c76b3b6](https://github.com/adambiggs/gangline/commit/c76b3b6582de32f5415ad2b83696fbbc50193049))
+* **replies:** discharge a request its debtor already answered ([cd80a09](https://github.com/adambiggs/gangline/commit/cd80a095eb7f3acf7818471e4b331ba614882939)), closes [#193](https://github.com/adambiggs/gangline/issues/193)
+* **replies:** retire debt when sender disappears ([67a746f](https://github.com/adambiggs/gangline/commit/67a746fcda375e9837239a7c05e3f6012e21e932)), closes [#192](https://github.com/adambiggs/gangline/issues/192)
+* **replies:** stop failing Stop closed on a reply record ([12c0483](https://github.com/adambiggs/gangline/commit/12c0483a947c41dbff8bef21c0f1cc8883fe86e0))
+* **tick:** close the detached tick's inherited descriptors ([ae8766f](https://github.com/adambiggs/gangline/commit/ae8766f8a541b5e86eea85a0acac7b4d3cfbab04))
+* **tick:** recognise the owned Prefix+A key on tmux that rewrites options ([8b4cd6b](https://github.com/adambiggs/gangline/commit/8b4cd6b5501aca902809f8500249ae3c4deb842c))
+* **tmux:** refuse guard overrides in agent panes ([0265c29](https://github.com/adambiggs/gangline/commit/0265c2949ed055013ac8ff2f98c6e1c4d3af8cb8))
+
 ## [2.8.0](https://github.com/adambiggs/gangline/compare/gangline-v2.7.0...gangline-v2.8.0) (2026-09-02)
 
 
