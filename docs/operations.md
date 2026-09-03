@@ -335,13 +335,24 @@ statusline side therefore reaches running harnesses at the next repaint, while
 a change to hook wiring reaches only processes started after it — re-hitch to
 pick it up.
 
-Claude Code also has a finite native cap on consecutive Stop-hook blocks. A
-finite cap cannot uphold an outstanding peer-reply obligation, so the collar
-prefixes its own launch line with `CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0`; the
-hitching shell's environment plays no part and nothing is refused on its
-account. `adopt` refuses every collar declaring `GANG_STOP_HOOK=1`: it cannot
-prove that an existing harness installed the exact native hook its collar
-promises.
+Claude Code also caps consecutive Stop-hook blocks and then ends the turn
+without telling the hook (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`, eight on 2.1.259).
+Gangline leaves that cap in force and never reaches it on its own: the shared
+Stop adapter refuses idle once per turn while a peer reply is owed or its
+provenance is unreadable, and releases the re-Stop the harness marks with
+`stop_hook_active`. The release changes no record. `status` prints the release
+stamp and what stood at the boundary until the next native prompt, `roster`
+keeps `reply-owed` or `reply-unknown`, a `stop alert` reaches the notify target
+— or the agent named `lead` when none is declared, and the window says so when
+there is neither — and the next delivery's first Stop refuses idle again. A
+`reply-obligations` query that answers nothing inside the adapter's deadline
+is retried within it and then refused and released the same way under the
+name `query-timeout`, so a contended Gangline costs one turn rather than
+every turn; the timeout is stamped and told before the state is read again,
+so it stays visible even when that reading finds nothing standing. `adopt`
+refuses every collar declaring `GANG_STOP_HOOK=1`: it
+cannot prove that an existing harness installed the exact native hook its
+collar promises.
 
 ## Optional provider-usage lights
 

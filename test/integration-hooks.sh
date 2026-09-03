@@ -2647,7 +2647,7 @@ cat > "$auto_stream_transcript" <<'JSONL'
 {"type":"assistant","uuid":"side-error-a","isSidechain":true,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
 {"type":"system","uuid":"after-success","parentUuid":"success-a","subtype":"turn_duration"}
 JSONL
-CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 GANG_AUTO_RESUME=95% \
+GANG_AUTO_RESUME=95% \
   "$HITCH" auto-stream -c auto-stream -d /tmp >/dev/null
 auto_stream_id="$(window_id auto-stream)"
 auto_stream_pane="$(tmux list-panes -t "$auto_stream_id" -F '#{pane_id}')"
@@ -2768,7 +2768,7 @@ cat > "$auto_stream_claim_transcript" <<'JSONL'
 {"type":"assistant","uuid":"claim-error","isSidechain":false,"error":"server_error","isApiErrorMessage":true,"message":{"role":"assistant"}}
 {"type":"system","uuid":"claim-duration","parentUuid":"claim-error","subtype":"turn_duration"}
 JSONL
-CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 GANG_AUTO_RESUME=95% \
+GANG_AUTO_RESUME=95% \
   "$HITCH" auto-stream-claim -c auto-stream -d /tmp >/dev/null
 auto_stream_claim_id="$(window_id auto-stream-claim)"
 auto_stream_claim_pane="$(tmux list-panes -t "$auto_stream_claim_id" -F '#{pane_id}')"
@@ -2800,8 +2800,7 @@ contains "the repaired failed-turn claim records its marked continuation" \
   "[gang:auto-resume#"
 "$GANG" drop auto-stream-claim >/dev/null
 
-CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 \
-  "$HITCH" auto-stream-off -c auto-stream -d /tmp >/dev/null
+"$HITCH" auto-stream-off -c auto-stream -d /tmp >/dev/null
 auto_stream_off_id="$(window_id auto-stream-off)"
 auto_stream_off_pane="$(tmux list-panes -t "$auto_stream_off_id" -F '#{pane_id}')"
 auto_stream_off_before="$(pane_all auto-stream-off)"

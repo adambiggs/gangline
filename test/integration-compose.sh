@@ -31,7 +31,7 @@ else
   tmux_path="$PATH"
 fi
 tmux set-environment -g PATH "$CLAUDE_STUB/bin:$tmux_path"
-if env -u CLAUDE_CODE_STOP_HOOK_BLOCK_CAP PATH="$CLAUDE_STUB/bin:$PATH" GANG_BOOT_TIMEOUT=0 \
+if PATH="$CLAUDE_STUB/bin:$PATH" GANG_BOOT_TIMEOUT=0 \
   "$GANG" hitch realmodel -c claude-code -d /tmp -m claude-opus-5 -e xhigh \
   >/dev/null 2> "$RUN_ROOT/realmodel.err"; then
   fail "a stub that never paints a composer cannot complete a hitch" \
@@ -49,8 +49,8 @@ tmux set-environment -g PATH "$tmux_path"
 real_launch="$(tmux display-message -p -t "$(window_id realmodel)" '#{pane_start_command}')"
 contains "the real collar's launch command is the one that ran" \
   "$real_launch" "claude --settings"
-contains "the explicit native Stop-block choice reaches the launched process" \
-  "$real_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0"
+excludes "the launch leaves Claude's native Stop-block cap in force" \
+  "$real_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP"
 contains "the exact model binds into the real launch line" \
   "$real_launch" "--model claude-opus-5"
 contains "and the joined effort rides beside it" \

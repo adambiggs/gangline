@@ -66,9 +66,12 @@ This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
 and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
 select another role. Detach from tmux with `Ctrl-b d`.
 
-Claude Code caps consecutive Stop-hook blocks. The shipped collar disables that
-cap on its own launch line so a verified peer reply obligation cannot go idle
-under it; nothing has to be set in the hitching shell.
+Claude Code caps consecutive Stop-hook blocks and ends the turn past the cap.
+Gangline leaves that cap in force. Its Stop adapter refuses idle once per turn
+while a verified peer reply is owed, then releases the turn with the debt still
+recorded: `gang status` and `roster` keep showing it, the notify target or the
+lead is told, and the next delivery raises it again. Nothing has to be set in
+the hitching shell.
 
 Pass a model and effort at every hitch whose collar takes them; Gangline warns
 when a supported choice is omitted and lets the collar pick. Not every collar

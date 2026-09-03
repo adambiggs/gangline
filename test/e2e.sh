@@ -460,8 +460,7 @@ for line in open(sys.argv[1], encoding="utf-8"):
 # at all would have.
 E2E_HITCH_LIMIT="${GANG_E2E_HITCH_LIMIT:-120}"
 hitch_agent() {
-  CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 \
-    timeout -k 10 "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
+  timeout -k 10 "$E2E_HITCH_LIMIT" "$GANG" hitch "$AGENT" -c claude-code -d "$WORK" \
       -m "${GANG_E2E_MODEL:-claude-sonnet-4-5}" -e "${GANG_E2E_EFFORT:-low}"
 }
 

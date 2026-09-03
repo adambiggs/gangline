@@ -1197,6 +1197,15 @@ gang reply-obligations
   provenance as TSV. Do not call it by hand.
 EOF
       ;;
+    reply-released) cat <<'EOF'
+gang reply-released [query-timeout]
+  Internal native Stop-hook report. The calling pane is the identity; the
+  adapter runs it when the harness is already continuing after a Stop-hook
+  block and a peer reply obligation still stands, so the turn is released
+  with the debt recorded, shown by status and roster, and told to the notify
+  target or the agent named lead. Do not call it by hand.
+EOF
+      ;;
     attach) cat <<'EOF'
 gang attach
   Join the team in tmux.
@@ -5762,6 +5771,76 @@ cmd_reply_obligations() { # private native Stop query; caller identity is TMUX_P
   reply_obligation_query "$child"
 }
 
+REPLY_RELEASED_OPTION='@gl_stop_released' # outside REPLY_STATE_PREFIX: not a reply record
+
+reply_release_summary() { # $1 window -> what stands now; 1 = nothing does
+  # READ NOW, NOT AT THE RELEASE. The adapter may have released on a query
+  # that timed out, and the note that follows should say what Gangline can
+  # read at the moment it speaks; a record cleared since then is nothing to
+  # report, and one the adapter never saw is still named.
+  local rows status nonce peer detail out=""
+  rows="$(reply_obligation_query "$1")"
+  while IFS=$'\t' read -r status nonce peer detail; do
+    [ "$peer" != - ] || peer=""
+    case "$status" in
+      owed) out="${out:+$out; }a reply owed to $peer (message $nonce)" ;;
+      unknown) out="${out:+$out; }a reply record it cannot clear ($detail${peer:+, from $peer})" ;;
+    esac
+  done <<<"$rows"
+  [ -n "$out" ] || return 1
+  printf '%s' "$out"
+}
+
+cmd_reply_released() { # private: the native Stop adapter released a turn with debt standing
+  # THE OBLIGATION IS NOT FORGIVEN, ONLY THE HARNESS TURN. The records stay on
+  # the window exactly as they were, so `status` and `roster` keep reporting
+  # them and the next delivery's first Stop refuses idle again. What this adds
+  # is the loud half: a release stamp `status` prints until the next native
+  # prompt, and a state note to whoever watches the team.
+  local child origin="${1:-stop}" summary
+  [ "$#" -le 1 ] || return 1
+  case "$origin" in stop|query-timeout) ;; *) return 1 ;; esac
+  child="$(self_window)" \
+    || { printf 'reply-released: this pane is not a window of session %s\n' "$SESSION" >&2; return 1; }
+  if [ "$origin" = query-timeout ]; then
+    # A TIMEOUT IS RECORDED BEFORE ANYTHING IS READ AGAIN. The adapter is here
+    # because its query did not answer inside its budget, and this command
+    # runs under a bound of its own, so the stamp and the note go on the
+    # window first; a summary that does answer only enriches the stamp.
+    reply_release_stamp "$child" query-timeout || return 1
+    state_note "$child" reply-owed "$origin"
+    summary="$(reply_release_summary "$child")" || return 0
+    reply_release_stamp "$child" "query-timeout; $summary" || return 1
+    return 0
+  fi
+  summary="$(reply_release_summary "$child")" || return 0
+  reply_release_stamp "$child" "$summary" || return 1
+  state_note "$child" reply-owed "$origin"
+}
+
+reply_release_stamp() { # $1 window, $2 what stood (or query-timeout[; what stood])
+  tmux set-option -w -t "$1" "$REPLY_RELEASED_OPTION" "$(date +%s) $2" 2>/dev/null \
+    || { printf 'reply-released: could not stamp the release on the window\n' >&2; return 1; }
+}
+
+reply_released_status_report() { # $1 window; the stamp the last release left
+  local raw at rest now
+  raw="$(tmux show-options -wqv -t "$1" "$REPLY_RELEASED_OPTION" 2>/dev/null)" || raw=""
+  [ -n "$raw" ] || return 0
+  read -r at rest <<<"$raw"
+  case "$at" in ''|*[!0-9]*) return 0 ;; esac
+  now="$(date +%s)"
+  [ "$at" -le "$now" ] || at="$now"
+  case "$rest" in
+    query-timeout)
+      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago after its reply query timed out; nothing readable stood, and the next delivery raises whatever does")" ;;
+    "query-timeout; "*)
+      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago after its reply query timed out, with ${rest#query-timeout; } standing; the next delivery raises it again")" ;;
+    *)
+      printf '%s\n' "$(colour "$C_BAD" "Stop released $(human_seconds $(( now - at ))) ago with $rest standing; the next delivery raises it again")" ;;
+  esac
+}
+
 reply_obligation_status_report() { # $1 window; every debt or ambiguous record
   local rows status nonce peer detail
   rows="$(reply_obligation_query "$1")"
@@ -7037,12 +7116,27 @@ state_note_clear() { # a new native turn makes a later unusable transition disti
   tmux set-option -uw -t "$1" @gl_state_note_noted 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_state_note_failed 2>/dev/null || true
+  tmux set-option -uw -t "$1" "$REPLY_RELEASED_OPTION" 2>/dev/null || true
 }
 
 state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
-  local agent notify="" target="" rc=0 deliver_rc=0 err="" body
+  local agent notify="" target="" rc=0 deliver_rc=0 err="" body summary=""
   agent="$(agent_name_of "$1")" || return 1
   notify="$(tmux show-options -qv -t "=$SESSION:" @gl_notify 2>/dev/null)" || notify=""
+  if [ -z "$notify" ] && [ "$2" = reply-owed ]; then
+    # A RELEASED REPLY DEBT IS TOLD TO SOMEONE. Every other state note is
+    # silent without a declared target, because it reports a stall the operator
+    # chose whether to watch. This one reports a turn Gangline let go with a
+    # peer still waiting, so when nobody was declared it goes to the agent
+    # `gang up` names for the team's lead, and says so on the window when
+    # there is no such agent either.
+    if win_id lead >/dev/null 2>&1; then
+      notify=lead
+    else
+      state_note_failed_write "$1" "stop release alert NOT delivered: no notify target is declared and no agent is named lead (gang notify NAME)"
+      return 1
+    fi
+  fi
   [ -n "$notify" ] || return 1
   target="$(win_id "$notify" 2>/dev/null)" || {
     rc=$?
@@ -7057,7 +7151,25 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
     state_note_failed_write "$1" "notify target '$notify' is the affected agent itself"
     return 1
   }
-  body="state alert ($3): $agent is $2 — inspect with gang explain $agent"
+  if [ "$2" = reply-owed ]; then
+    # Composed at delivery, not at the release: a tick retrying a pending
+    # note must say what stands now, and a debt cleared since then is a note
+    # with nothing left to say.
+    summary="$(reply_release_summary "$1")" || summary=""
+    if [ -n "$summary" ]; then
+      body="stop alert ($3): $agent went idle with $summary standing — the obligation is not forgiven and its next delivery raises it again; inspect with gang explain $agent"
+    elif [ "$3" = query-timeout ]; then
+      # The fault is the timeout itself, so it is told even when nothing
+      # stands now: a query that stops answering is what #195 looked like.
+      body="stop alert ($3): $agent went idle after its reply query timed out; nothing readable stands now, and the next delivery raises whatever does; inspect with gang explain $agent"
+    else
+      tmux set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null || return 1
+      tmux set-option -uw -t "$1" @gl_state_note_pending 2>/dev/null || true
+      return 0
+    fi
+  else
+    body="state alert ($3): $agent is $2 — inspect with gang explain $agent"
+  fi
   err="$(stall_deliver "$target" "$notify" "$agent" "$body" 2>&1)" || deliver_rc=$?
   if [ "$deliver_rc" -eq 0 ]; then
     tmux set-option -w -t "$1" @gl_state_note_noted "$2" 2>/dev/null || return 1
@@ -7071,7 +7183,7 @@ state_note_attempt() { # $1 window, $2 state word, $3 origin; 0 accepted
 
 state_note() { # $1 window, $2 state word, $3 origin; never fatal to hook/tick
   local noted="" pending="" claim_rc=0
-  case "$2" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
+  case "$2" in blocked|bricked|dead|harness-lost|reply-owed) ;; *) return 0 ;; esac
   noted="$(tmux show-options -wqv -t "$1" @gl_state_note_noted 2>/dev/null)" || noted=""
   [ "$noted" != "$2" ] || return 0
   pending="$(tmux show-options -wqv -t "$1" @gl_state_note_pending 2>/dev/null)" || pending=""
@@ -7090,7 +7202,7 @@ state_note_retry() { # $1 window; retry the exact retained transition, no reread
   [ -n "$pending" ] || return 0
   read -r state origin extra <<<"$pending"
   [ -z "$extra" ] || return 0
-  case "$state" in blocked|bricked|dead|harness-lost) ;; *) return 0 ;; esac
+  case "$state" in blocked|bricked|dead|harness-lost|reply-owed) ;; *) return 0 ;; esac
   [ -n "$origin" ] || return 0
   state_note "$1" "$state" "$origin"
 }
@@ -11346,6 +11458,7 @@ cmd_status() {
     3) printf '%s\n' "$(colour "$C_DIM" "hitched by $hitched, whose window is gone")" ;;
   esac
   reply_obligation_status_report "$AGENT_ID"
+  reply_released_status_report "$AGENT_ID"
   tick_health_report
   action_status_report "$AGENT_ID"
   state_note_failed="$(tmux show-options -wqv -t "$AGENT_ID" @gl_state_note_failed 2>/dev/null)" || state_note_failed=""
@@ -12551,6 +12664,7 @@ case "$cmd" in
   explain)  cmd_explain "$@" ;;
   hook)     cmd_hook "$@" ;;
   reply-obligations) cmd_reply_obligations "$@" ;;
+  reply-released) cmd_reply_released "$@" ;;
   capture)  cmd_capture "$@" ;;
   composer) cmd_composer "$@" ;;
   whoami)   cmd_whoami "$@" ;;

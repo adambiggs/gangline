@@ -295,9 +295,52 @@ contains "status names the exact peer reply debt" "$($GANG status reply-b)" \
 contains "roster carries a compact peer debt alarm" "$($GANG roster)" "reply-owed"
 reply_stop_run "$reply_b_pane"
 contains "an outstanding peer request refuses idle" "$reply_stop_output" '"decision": "block"'
+# ONE REFUSAL PER TURN. The re-Stop the harness marks as continuing after a
+# block is released with the debt recorded, said by status and roster, and told
+# to whoever watches the team; the record itself is untouched.
 reply_stop_run "$reply_b_pane" "$reply_stop_active_payload"
-contains "the native recursion marker does not erase an outstanding debt" \
-  "$reply_stop_output" '"decision": "block"'
+equal "a re-Stop the harness marks as continuing after a block is released" \
+  "{}" "$reply_stop_output"
+equal "the release forgives nothing: the same debt is still owed" \
+  $'owed\t'"$reply_a_one"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+contains "status stamps the release with what stood at the boundary" \
+  "$($GANG status reply-b)" \
+  "ago with a reply owed to reply-a (message $reply_a_one) standing; the next delivery raises it again"
+contains "roster keeps the debt alarm after the release" "$($GANG roster)" "reply-owed"
+contains "with no notify target and no lead, the undelivered alert is said on the window" \
+  "$($GANG status reply-b)" "stop release alert NOT delivered: no notify target is declared and no agent is named lead"
+"$GANG" notify reply-c >/dev/null
+reply_stop_run "$reply_b_pane" "$reply_stop_active_payload"
+equal "a later re-Stop with the debt still standing is released the same way" \
+  "{}" "$reply_stop_output"
+# source-guard: whole-surface@f1d1ed63e691: the complete notify pane is the delivered stop alert, so any producer is valid evidence
+contains "the notify target is told the turn went idle with the debt standing" \
+  "$(tmux capture-pane -p -J -t "$reply_c_pane")" \
+  "stop alert (stop): reply-b went idle with a reply owed to reply-a (message $reply_a_one) standing"
+equal "the alert is Gangline's own and leaves its target nothing to owe" \
+  $'clear\t-\t-\t-' "$(TMUX_PANE="$reply_c_pane" "$GANG" reply-obligations)"
+excludes "a delivered alert retires the undelivered note" \
+  "$($GANG status reply-b)" "stop release alert NOT delivered"
+# A TIMED-OUT QUERY IS RECORDED BEFORE ANYTHING IS READ AGAIN, and told even
+# when the second reading finds nothing standing: the fault is the timeout.
+reply_auto_pane="$(tmux list-panes -t "$(window_id auto-resume)" -F '#{pane_id}')"
+TMUX_PANE="$reply_auto_pane" "$GANG" reply-released query-timeout
+contains "a query-timeout release with nothing standing still stamps the window" \
+  "$($GANG status auto-resume)" \
+  "ago after its reply query timed out; nothing readable stood, and the next delivery raises whatever does"
+# source-guard: whole-surface@b5bf205de486: the complete notify pane is the delivered timeout alert, so any producer is valid evidence
+contains "the notify target is told about the timed-out query itself" \
+  "$(tmux capture-pane -p -J -t "$reply_c_pane")" \
+  "stop alert (query-timeout): auto-resume went idle after its reply query timed out; nothing readable stands now"
+reply_prompt_event "$reply_auto_pane" "the next native prompt retires a query-timeout stamp"
+excludes "a new native prompt retires the query-timeout stamp" \
+  "$($GANG status auto-resume)" "Stop released"
+TMUX_PANE="$reply_b_pane" "$GANG" reply-released query-timeout
+contains "a query-timeout release names what the second reading found standing" \
+  "$($GANG status reply-b)" \
+  "ago after its reply query timed out, with a reply owed to reply-a (message $reply_a_one) standing; the next delivery raises it again"
+"$GANG" notify clear >/dev/null
 
 # None of the later native events owns reply state. An operator prompt is the
 # discriminating interleave: old last-prompt logic lost the peer provenance.
@@ -315,6 +358,11 @@ printf '%s' "$reply_stop_payload" \
 equal "operator prompts, tools, background notices, compaction, and a later boundary preserve debt" \
   $'owed\t'"$reply_a_one"$'\treply-a\tlive' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+excludes "a new native prompt retires the release stamp" \
+  "$($GANG status reply-b)" "Stop released"
+reply_stop_run "$reply_b_pane"
+contains "the next turn's first Stop refuses idle for the same debt again" \
+  "$reply_stop_output" '"decision": "block"'
 
 # Any genuine correlated reply satisfies the debt; its wording is not policy.
 reply_ack_one='Waiting on background work; I will report later.'
@@ -648,7 +696,10 @@ mkdir -p "$reply_fake_root"
 cat > "$reply_fake_root/gang" <<'SH'
 #!/bin/sh
 case "$1" in
-  reply-obligations) printf '%b' "$FAKE_REPLY_QUERY"; exit "${FAKE_REPLY_RC:-0}" ;;
+  reply-obligations) printf 'query\n' >> "${FAKE_QUERY_LOG:-/dev/null}"
+                     [ -z "${FAKE_REPLY_HOLD:-}" ] || exec cat "$FAKE_REPLY_HOLD"
+                     printf '%b' "$FAKE_REPLY_QUERY"; exit "${FAKE_REPLY_RC:-0}" ;;
+  reply-released) printf 'released%s\n' "${2:+ $2}" >> "$FAKE_REPLY_LOG"; exit "${FAKE_RELEASE_RC:-0}" ;;
   hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null; exit "${FAKE_HOOK_RC:-0}" ;;
   *) exit 99 ;;
 esac
@@ -753,6 +804,58 @@ excludes "a failed boundary does not send the agent to the query path" \
   "$reply_fake_out" "repair the query path"
 # source-guard: whole-surface@aa46cab9286d: the complete fake hook log records the only delegated boundary attempted by this invocation, so any visible producer is valid evidence
 equal "the failed boundary was attempted exactly once" "hook" "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_QUERY='owed\t2222222222222222\tlive-peer\tlive\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@5557affec9d8: the complete fake-adapter stdout is the released verdict, so any producer is valid evidence
+equal "a re-Stop with debt standing is released, not held" "{}" "$reply_fake_out"
+# source-guard: whole-surface@8d591dac2c95: the complete fake hook log orders the release before the boundary, so any producer is valid evidence
+equal "the release is reported to Gangline before the boundary closes" \
+  $'released\nhook' "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_QUERY='owed\t2222222222222222\tlive-peer\tlive\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_RELEASE_RC=7 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@fbbe604c0c37: the complete fake-adapter stdout is the released verdict, so any producer is valid evidence
+equal "a release Gangline could not record still releases" "{}" "$reply_fake_out"
+# source-guard: whole-surface@85ec03f4a6b7: the complete fake hook log orders the failed release before the boundary, so any producer is valid evidence
+equal "the boundary is closed even when the release report failed" \
+  $'released\nhook' "$(cat "$reply_fake_log")"
+# THE QUERY TIMEOUT IS THE BEHAVIOUR UNDER TEST, so its clock is scaled, not
+# stopped. The fake never answers: it opens a FIFO nobody writes and stays
+# there until the adapter kills it. Measured margin: the fake answers a quiet
+# box in well under 50 ms; the fixture budget is 0.25 s per attempt inside a
+# 0.45 s deadline; production is 5 s per attempt inside 9 s, under the
+# collars' 15 s native fuse.
+reply_fake_query_log="$reply_fake_root/queries"
+reply_fake_hold="$reply_fake_root/hold"
+mkfifo "$reply_fake_hold"
+: > "$reply_fake_log"; : > "$reply_fake_query_log"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_HOLD="$reply_fake_hold" GANG_STOP_QUERY_ATTEMPT_SEC=0.25 GANG_STOP_QUERY_DEADLINE_SEC=0.45 \
+    FAKE_REPLY_LOG="$reply_fake_log" FAKE_QUERY_LOG="$reply_fake_query_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>"$reply_stop_stderr")"
+# source-guard: whole-surface@b36adaf24f9f: the complete fake-adapter stdout is the timed-out query verdict, so any producer is valid evidence
+contains "a query that never answers inside its deadline is refused under its own name" \
+  "$reply_fake_out" "could not read verified peer-reply provenance in time"
+excludes "a timed-out query is not sent to repair the query path" \
+  "$reply_fake_out" "repair the query path"
+# source-guard: whole-surface@abe5dcec80a3: the complete fake query log counts every attempt inside the deadline, so any producer is valid evidence
+equal "the query was retried inside its deadline and then given up" \
+  $'query\nquery' "$(cat "$reply_fake_query_log")"
+# source-guard: whole-surface@795f44d43b6b: the complete fake hook log must stay empty for a refused timeout, so any producer is valid evidence
+equal "a refused query-timeout closes no native boundary" "" "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"; : > "$reply_fake_query_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_HOLD="$reply_fake_hold" GANG_STOP_QUERY_ATTEMPT_SEC=0.25 GANG_STOP_QUERY_DEADLINE_SEC=0.45 \
+    FAKE_REPLY_LOG="$reply_fake_log" FAKE_QUERY_LOG="$reply_fake_query_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@03d993bf8f89: the complete fake-adapter stdout is the released timeout verdict, so any producer is valid evidence
+equal "a query-timeout on the re-Stop is released rather than held" "{}" "$reply_fake_out"
+# source-guard: whole-surface@bc2c69ae2232: the complete fake hook log names the timeout as the release's own state, so any producer is valid evidence
+equal "the query-timeout is released under its own name before the boundary closes" \
+  $'released query-timeout\nhook' "$(cat "$reply_fake_log")"
 
 codex_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/codex.sh")"
@@ -764,8 +867,8 @@ claude_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/claude-code.sh")"
 contains "the Claude collar installs the same peer-reply Stop enforcement" \
   "$claude_reply_launch" "codex-stop-hook.py"
-contains "the Claude launch carries the explicitly selected unlimited Stop-block lifecycle" \
-  "$claude_reply_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0"
+excludes "the Claude launch leaves the native Stop-block cap in force" \
+  "$claude_reply_launch" "CLAUDE_CODE_STOP_HOOK_BLOCK_CAP"
 
 # Dropping the disposable window retires its complete option-scoped audit trail.
 "$GANG" drop reply-b >/dev/null

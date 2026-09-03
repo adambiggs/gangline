@@ -550,8 +550,18 @@ turn boundaries likewise leave the per-message window options intact. `status`
 names each outstanding, retired, or ambiguous record and `roster` carries
 `reply-owed` or `reply-unknown` only for the blocking cases; the shared native
 Stop adapter permits idle when its private `reply-obligations` query contains no
-debt or ambiguity. Dropping the recipient window retires the tmux-owned records
-with the rest of that agent's ephemeral state.
+debt or ambiguity. While it does, the adapter refuses idle once per turn: the
+first Stop is refused with the record's name, and the re-Stop the harness marks
+with `stop_hook_active` is released through the private `reply-released`
+report, which leaves every record untouched, stamps the release on the window
+for `status` until the next native prompt, and raises a `reply-owed` state
+note to the notify target or, when none is declared, to the agent named
+`lead`. The next delivery's first Stop refuses idle again. A query that answers
+nothing inside the adapter's deadline is retried within it and then refused
+and released under the name `query-timeout`; that release stamps the window
+and raises its note before the state is read again, so a timeout is told even
+when the second reading finds nothing standing. Dropping the recipient window
+retires the tmux-owned records with the rest of that agent's ephemeral state.
 
 An upgraded three-line spool entry has no stable sender token, nonce, or reply
 correlation. Known Gangline control authors remain control mail. A peer-shaped

@@ -1939,3 +1939,24 @@ Binding changes serialize on an open descriptor for the tmux socket's existing
 directory. The kernel releases that claim with the descriptor or process, so
 the server-global decision needs no Gangline-created lock artifact or cleanup
 protocol.
+
+## The native Stop-block cap is a guardrail Gangline keeps
+
+Claude Code overrides a Stop hook after a finite run of consecutive blocks and
+ends the turn without telling it. Gangline once lifted that cap on every Claude
+launch and refused a hitch whose shell had not lifted it too, so that a peer
+reply obligation could hold the harness at Stop for as long as it stood. Every
+fault in the reply subsystem — a proof that never landed, a sender that
+vanished, a query lost to lock contention — then became an unbounded run of
+model turns, and an agent stranded on a record no message could clear had no
+exit short of being dropped.
+
+The cap stays in force and the adapter never depends on reaching it. It refuses
+idle once per turn, releases the re-Stop the harness marks with
+`stop_hook_active`, and makes the release loud rather than forgiving: the
+records stay exactly as they were, `status` and `roster` keep reporting them,
+the notify target or the lead is told, and the next delivery's first Stop
+refuses again. A query that cannot answer inside the adapter's deadline is its
+own named state under the same rule. Provenance still fails closed for a
+boundary; nothing fails forever.
+
