@@ -31,12 +31,6 @@ collar_context_lights() { # $1 model; 0 with thresholds, 1 = no default for it
 }
 GANG_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude"
 GANG_RESUME_LAUNCH="env CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 claude --resume {{session_id}}"
-collar_hitch_check() {
-  [ "${CLAUDE_CODE_STOP_HOOK_BLOCK_CAP:-}" = 0 ] || {
-    printf '%s' 'Claude Code ends a turn after its finite consecutive Stop-block cap, which would let an outstanding peer reply obligation go idle. Set CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 explicitly for this hitch to disable that native cap'
-    return 1
-  }
-}
 _gl_cc_dir="${BASH_SOURCE[0]%/*}"
 if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
   case "$ROOT$_gl_cc_dir" in

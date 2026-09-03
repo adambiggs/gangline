@@ -59,19 +59,16 @@ contract.
 From the repository the agents should work in:
 
 ```sh
-CLAUDE_CODE_STOP_HOOK_BLOCK_CAP=0 \
-  gang up -c claude-code -m sonnet -e high
+gang up -c claude-code -m sonnet -e high
 ```
 
 This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
 and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
 select another role. Detach from tmux with `Ctrl-b d`.
 
-The explicit Stop-block setting disables Claude Code's finite consecutive-hook
-cap. Without it, Claude can end a turn while a verified peer reply is still
-owed, so the shipped collar refuses the hitch before opening a window. Gangline
-carries the explicit value into tmux rather than relying on the server's older
-environment.
+Claude Code caps consecutive Stop-hook blocks. The shipped collar disables that
+cap on its own launch line so a verified peer reply obligation cannot go idle
+under it; nothing has to be set in the hitching shell.
 
 Pass a model and effort at every hitch whose collar takes them; Gangline warns
 when a supported choice is omitted and lets the collar pick. Not every collar

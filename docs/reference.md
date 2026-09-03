@@ -1499,7 +1499,6 @@ there, never in a harness-name branch in the core script.
 |---|---|
 | `GANG_LAUNCH` | required native launch command |
 | `GANG_RESUME_LAUNCH` | optional explicit native resume template containing exactly one `{{session_id}}` slot |
-| `collar_hitch_check` | optional preflight run after collar loading and before any tmux mutation; return nonzero with one actionable reason when the launch cannot uphold a native lifecycle prerequisite |
 | `GANG_MODEL_OPT` | optional native model flag |
 | `GANG_MODEL_ALIASES` | optional newline-separated documented aliases when the harness has no complete catalog; discovery labels them as incomplete |
 | `collar_models` | print the complete native catalog as `model-id[<TAB>comma-separated-efforts]`; nonzero, empty, duplicate, or malformed output is unknown and refused |

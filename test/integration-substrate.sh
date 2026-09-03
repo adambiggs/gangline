@@ -540,7 +540,6 @@ cat > "$clipped_collar_dir/clipped-claude.sh" <<SH
 # shellcheck shell=bash
 . "$ROOT/collars/claude-code.sh"
 GANG_STOP_HOOK=""
-unset -f collar_hitch_check
 SH
 GANG_COLLARS="$clipped_collar_dir" \
   "$GANG" adopt clipped-agent -c clipped-claude >/dev/null
@@ -1335,7 +1334,6 @@ GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' dialog-claude"
 GANG_RESUME_LAUNCH=""
 GANG_STOP_HOOK=""
 GANG_SELF_COMPACT=""
-unset -f collar_hitch_check
 GANG_DIALOGS='external-import-trust|^❯ [0-9]+\. |Yes, allow external imports||Enter'
 GANG_DIALOG_LINES_external_import_trust='Important: Only use Claude Code with files you trust. Accessing untrusted files may pose security risks https://code.claude.com/docs/en/security
 Yes, allow external imports

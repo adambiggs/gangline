@@ -1511,7 +1511,7 @@ load_collar() { # $1 = collar name; sets the GANG_* strategy surface
   unset -f collar_context collar_context_lights collar_input collar_overlay \
     collar_session_id collar_live_session_id collar_harness_identity collar_models collar_model_check collar_bricked collar_blocked collar_waiting collar_queued collar_advisory \
     collar_last_action collar_usage_limits collar_usage_limits_error \
-    collar_auto_resume_record collar_submitted_prompt collar_hitch_check 2>/dev/null || true
+    collar_auto_resume_record collar_submitted_prompt 2>/dev/null || true
   # shellcheck source=/dev/null
   . "$f"
   case "$GANG_USAGE_LIGHT_INTERVAL" in
@@ -8897,12 +8897,6 @@ cmd_hitch() {
   # shellcheck disable=SC2034  # read by the collar sourced on the next line
   GANG_MODEL="$model"
   load_collar "$prof"
-  if declare -F collar_hitch_check >/dev/null; then
-    local collar_check="" collar_check_rc=0
-    collar_check="$(collar_hitch_check 2>&1)" || collar_check_rc=$?
-    [ "$collar_check_rc" -eq 0 ] \
-      || die "hitch: collar '$prof' cannot uphold its native lifecycle prerequisite${collar_check:+ — $collar_check}. No window was opened"
-  fi
   ROLE_NAME="" ROLE_FILE="" ROLE_BODY="" SYSTEM_PROMPT=""
   if [ -n "$role" ]; then
     valid_role_name "$role" \
