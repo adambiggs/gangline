@@ -521,8 +521,14 @@ never blocks.
 
 The next verified outbound message to a peer with outstanding requests is
 correlated to all of that peer's outstanding message nonces. Its envelope
-carries the correlation, successful delivery marks only those records settled, and
-the recipient classifies it as a reply rather than opening reciprocal debt.
+carries the correlation, Gangline marks only those records settled when it
+accepts the reply, whether typed into the peer's composer or parked in the
+peer's spool behind a live turn, and the recipient classifies it as a reply
+rather than opening reciprocal debt. A parked reply drains at the peer's next
+native boundary; the drain writes the delivery proof beside the settlement
+that acceptance already wrote, and the spool entry stays visible to `status`
+and `mail` until then. A `--supersede` that retires a parked reply hands its
+correlation to the replacement, which is then the reply.
 A correlated reply discharges the request as soon as either arrival witness,
 the exact native prompt proof or positive delivery proof, stands beside it. The
 delivery proof is written only by the sending process that produced it, so a

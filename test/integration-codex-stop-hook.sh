@@ -443,6 +443,75 @@ reply_stop_run "$reply_a_pane"
 reply_stop_run "$reply_b_pane"
 equal "a reply to durable mail restores an idle-safe clear state" "{}" "$reply_stop_output"
 
+# A correlated reply parked behind the creditor's live turn is already the
+# debtor's whole answer: only the creditor's next boundary drains it, so a
+# debtor held until delivery was blocked at every Stop for a reply it had
+# sent, and each block invited another copy. Acceptance into the spool settles
+# the debt; the drain then completes the audit record with the delivery proof.
+printf '%s' REQ_PARKED_REPLY \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_parked_req="$(reply_nonce_from "$reply_b_id" reply-a)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_parked_req" REQ_PARKED_REPLY)"
+equal "the creditor's request is owed before its reply is parked" \
+  $'owed\t'"$reply_parked_req"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+tmux set-option -w -t "$reply_a_id" @gl_turn "open $(date +%s)"
+reply_parked_out="$(printf '%s' ACK_PARKED_REPLY \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin)"
+contains "a correlated reply can wait behind the creditor's live turn" \
+  "$reply_parked_out" "queued for reply-a"
+reply_parked_meta="$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_parked_req")"
+IFS=: read -r _ _ _ _ reply_parked_digest _ <<<"$reply_parked_meta"
+equal "acceptance into the spool writes the settlement proof" \
+  "$reply_parked_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_parked_req")"
+equal "a parked correlated reply settles the debt before delivery" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the debtor may idle while its reply waits for the creditor's boundary" \
+  "{}" "$reply_stop_output"
+# The debtor replaces its waiting reply. The replacement stands in for what it
+# retires, so it carries the retired reply's correlation: the record on the
+# debtor is already settled and would not correlate it again.
+reply_a_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv -t "$reply_a_id" @gl_spool)"
+reply_super_out="$(printf '%s' ACK_PARKED_SUPERSEDE \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --supersede --stdin)"
+contains "a replacement for a parked reply is accepted" \
+  "$reply_super_out" "queued for reply-a"
+reply_super_meta=""
+for reply_super_entry in "$reply_a_spool"/[0-9]*; do
+  reply_super_meta="$reply_super_meta$(head -n 1 "$reply_super_entry" | cut -f2,4,5)"$'\n'
+done
+equal "the replacement inherits the retired reply's correlation" \
+  $'reply-b\treply\t'"$reply_parked_req"$'\n' "$reply_super_meta"
+equal "superseding a settled reply leaves the debt settled" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_a_drain_channel="gang-spool-drain-$reply_a_id"
+tmux wait-for "$reply_a_drain_channel" &
+reply_parked_waiter=$!
+reply_stop_run "$reply_a_pane"
+wait "$reply_parked_waiter"
+equal "the creditor's boundary drains the parked reply" "{}" "$reply_stop_output"
+reply_parked_ack_nonce="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b reply ACK_PARKED_SUPERSEDE)"
+equal "the drained reply completes the audit record with its delivery proof" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_parked_ack_nonce" | cut -d: -f5)" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_rdelivery_$reply_parked_ack_nonce")"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_response_envelope reply-b "$reply_parked_ack_nonce" \
+    "$reply_parked_req" ACK_PARKED_SUPERSEDE)"
+equal "the drained reply opens no reciprocal debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_a_pane"
+equal "the creditor may idle after reading the drained reply" "{}" "$reply_stop_output"
+equal "the delivered reply leaves the settled debt settled" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+
 # Upgrade compatibility cannot invent the stable identity and nonce absent
 # from the old three-line spool shape. Deliver the body, but retain a loud
 # legacy ambiguity instead of silently treating peer mail as control traffic.

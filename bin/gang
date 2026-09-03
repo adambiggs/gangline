@@ -6307,8 +6307,8 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
   # and nothing has yet been destroyed; if any step fails, every one it moved
   # goes back. Nothing is unlinked until the caller has the replacement safely
   # parked and calls spool_retire_commit.
-  local e base held="" nl=$'\n'
-  SPOOL_SUPERSEDE_ERROR=""; SPOOL_RETIRED=""
+  local e base held="" nl=$'\n' n rest
+  SPOOL_SUPERSEDE_ERROR=""; SPOOL_RETIRED=""; SPOOL_RETIRED_REPLIES=""
   spool_existing "$1" || return 0
   [ -d "$SPOOL_DIR" ] || return 0
   # NO ENTRY TO EXCLUDE. The sweep used to be handed the replacement's own name
@@ -6323,6 +6323,20 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
     mv -- "$e" "$SPOOL_DIR/.retiring-$base" \
       || { SPOOL_SUPERSEDE_ERROR="cannot supersede the spooled message $e"; break; }
     held="$held$base$nl"
+    # A RETIRED REPLY HANDS ITS CORRELATION TO THE REPLACEMENT. Acceptance into
+    # the spool settled the debt this reply answered, so nothing on the sender's
+    # window would correlate the replacement to it again; retiring the reply
+    # without passing that on left the debt settled and the request unanswered.
+    [ "$SPOOL_REPLY_MODE" = reply ] || continue
+    rest="$SPOOL_REPLY_TO"
+    while :; do
+      n="${rest%%,*}"
+      case ",$SPOOL_RETIRED_REPLIES," in *",$n,"*) ;; *)
+        SPOOL_RETIRED_REPLIES="${SPOOL_RETIRED_REPLIES:+$SPOOL_RETIRED_REPLIES,}$n" ;;
+      esac
+      [ "$rest" != "$n" ] || break
+      rest="${rest#*,}"
+    done
   done
   SPOOL_RETIRED="$held"
   if [ -n "$SPOOL_SUPERSEDE_ERROR" ]; then
@@ -6333,7 +6347,7 @@ spool_supersede_try() { # $1 window, $2 sender; retire that sender's waiting ent
   return 0
 }
 
-SPOOL_RETIRED="" SPOOL_ROLLBACK_ERROR=""
+SPOOL_RETIRED="" SPOOL_RETIRED_REPLIES="" SPOOL_ROLLBACK_ERROR=""
 spool_retire_rollback() { # put every set-aside predecessor back where a drain reads
   # THE RETIREMENT IS NOT FINAL UNTIL THE REPLACEMENT IS. Anything that goes
   # wrong between the two — an entry the sweep cannot read, a park that fails —
@@ -9579,7 +9593,7 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
 }
 
 cmd_send() {
-  local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag
+  local name="" from="" use_stdin=0 body="" live_only=0 supersede=0 rc=0 err="" frag n rest
   local drain_rc=0 drain_err="" commit_err="" next_opportunity="next completes a turn"
   while [ $# -gt 0 ]; do case "$1" in
     --to) [ $# -ge 2 ] || die "send: --to needs a value"
@@ -9652,6 +9666,22 @@ cmd_send() {
   if [ "$supersede" -ne 0 ] && ! spool_supersede_try "$AGENT_ID" "$SEND_FROM"; then
     lock_release
     die "$SPOOL_SUPERSEDE_ERROR — so nothing was sent: --supersede promised the recipient would see this message INSTEAD of your older waiting ones, and it cannot be delivered without retiring them. Nothing was typed and nothing was retired. Read what could not be retired, then send again"
+  fi
+  # The replacement stands in for what it retires, correlation included. Only
+  # the envelope changes; nothing has recorded its nonce yet.
+  if [ -n "$SPOOL_RETIRED_REPLIES" ]; then
+    rest="$SPOOL_RETIRED_REPLIES"
+    while :; do
+      n="${rest%%,*}"
+      case ",$MESSAGE_REPLY_TO," in *",$n,"*) ;; *)
+        [ "$MESSAGE_REPLY_TO" != - ] && MESSAGE_REPLY_TO="$MESSAGE_REPLY_TO,$n" \
+          || MESSAGE_REPLY_TO="$n" ;;
+      esac
+      [ "$rest" != "$n" ] || break
+      rest="${rest#*,}"
+    done
+    MESSAGE_REPLY_MODE="reply"
+    envelope "$SEND_WIRE" "$body" "$MESSAGE_REPLY_TO"
   fi
   reply_candidate_prepare "$AGENT_ID" "$ENVELOPE_NONCE" "$MESSAGE_SENDER_TOKEN" \
     "$SEND_FROM" "$MESSAGE_REPLY_MODE" "$MESSAGE_REPLY_TO" "$ENVELOPE" \
@@ -9736,6 +9766,14 @@ cmd_send() {
   fi
   [ "$supersede" -eq 0 ] || spool_retire_commit \
     || printf '%s\n' "gang: $SPOOL_SUPERSEDE_ERROR" >&2
+  # ACCEPTANCE INTO THE SPOOL SETTLES THE DEBT. The correlated reply is now
+  # durable and nothing the debtor can do moves it sooner: it drains at the
+  # creditor's next native boundary, which only the creditor reaches. Settling
+  # at delivery instead held the debtor at every Stop until then, with a block
+  # text that asked for the reply it had already sent. The drain rewrites the
+  # same monotonic proof, so a delivered reply settles exactly as before.
+  reply_settle_by_token "$MESSAGE_SENDER_TOKEN" \
+    "$(tmux show-options -wqv -t "$AGENT_ID" @gl_spool 2>/dev/null)" "$MESSAGE_REPLY_TO"
   # Steering-capable collars still land without a keystroke: the committed
   # spool entry is now the ordering authority. While this same pane lock is
   # held, try the whole queue. A free composer drains it now; copy-mode, a
