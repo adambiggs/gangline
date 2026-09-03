@@ -69,7 +69,9 @@ hitch relationship or visually latest prompt. Clear it only when Gangline
 positively delivers an outbound message correlated to that peer request; the
 reply body is prose and is never parsed for an acknowledgement phrase. Mark the
 correlated envelope as a reply so its recipient does not acquire reciprocal
-debt. Operator and self-declared input changes none of this state, while partial
+debt, at every stage of that record's arrival evidence: the mode is stamped in
+the same immutable metadata as the rest, so a partial reply record is as much a
+non-obligation as a complete one and blocking on one named no action. Operator and self-declared input changes none of this state, while partial
 or malformed provenance blocks Stop as unknown. Message-scoped records preserve
 crossed turns and multiple senders without adding a coordinator or a protocol
 outside the existing verified transport.

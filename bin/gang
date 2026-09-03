@@ -5717,6 +5717,12 @@ reply_obligation_query() { # calling window -> one or more four-field TSV verdic
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
     case "$state" in settled|discharged|complete) continue ;; esac
+    # A REPLY RECORD IS AUDIT, NEVER DEBT. Its mode is stamped in the same
+    # immutable metadata whether or not both arrival proofs landed, so a
+    # partial reply record is exactly as much a non-obligation as a complete
+    # one. Failing closed on one named no action, because no message its
+    # holder can send settles a record that was never a request.
+    [ "$mode" != reply ] || continue
     any=1
     if [ "$state" = retired ]; then
       printf 'retired\t%s\t%s\tsender-gone\n' "$nonce" "$witness"

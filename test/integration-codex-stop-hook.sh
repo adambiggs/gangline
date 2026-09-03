@@ -243,6 +243,23 @@ equal "removing the corrupt record restores a clear window" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 
+# A reply record is audit rather than debt however incomplete its arrival
+# evidence is: nothing its holder can send settles a record that was never a
+# request, so failing closed on one named no action.
+reply_partial_reply=2b3c4d5e6f708192
+reply_partial_reply_digest=89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567
+tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_partial_reply" \
+  "message:00000000:reply-a:reply:$reply_partial_reply_digest:-"
+tmux set-option -w -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply" \
+  "$reply_partial_reply_digest"
+equal "a reply record with one arrival witness is not a debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "a partial reply record cannot wedge its holder" "{}" "$reply_stop_output"
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply"
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_partial_reply"
+
 # A request with incomplete arrival evidence asks the same question about its
 # sender as a complete one. Naming a reply to a sender no inventory can find is
 # an instruction the debtor cannot carry out.

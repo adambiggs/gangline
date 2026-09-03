@@ -509,9 +509,11 @@ provenance. The target records immutable metadata before Enter; exact native
 prompt submission, positive delivery, and later reply settlement each write a
 separate monotonic proof option. Independent writers therefore cannot overwrite
 one another. A reply obligation arms only when prompt and delivery proof both
-match that envelope, in either order. A partial record whose sender is live, and
-any orphaned or malformed record, remains unknown and makes the native Stop
-helper fail closed; it is never repaired into absence.
+match that envelope, in either order. A partial request record whose sender is
+live, and any orphaned or malformed record, remains unknown and makes the native
+Stop helper fail closed; it is never repaired into absence. A record the sender
+stamped as a reply is audit rather than debt at every stage of its arrival
+evidence, so it never blocks.
 
 The next verified outbound message to a peer with outstanding requests is
 correlated to all of that peer's outstanding message nonces. Its envelope
