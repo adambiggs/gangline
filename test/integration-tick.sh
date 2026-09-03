@@ -1091,7 +1091,7 @@ tick_dead_pid=$!
 IFS= read -r -N 1 _ < "$tick_dead_ready"
 tick_dead_identity="$("$ROOT/libexec/gang-process-identity" \
   --tick "$tick_dead_pid" "$GANG_SESSION")"
-IFS=$'\t' read -r _ tick_dead_token tick_dead_pgrp _ _ _ _ \
+IFS=$'\t' read -r _ tick_dead_token tick_dead_pgrp _ _ _ _ tick_dead_namespace \
   <<<"$tick_dead_identity"
 tick_dead_command="$(ps -o command= -p "$tick_dead_pid")"
 contains "the killed-owner fixture resolves its unique process before signalling" \
@@ -1100,10 +1100,12 @@ kill -KILL "$tick_dead_pid"
 wait "$tick_dead_pid" 2>/dev/null || true
 tick_dead_state=0
 "$ROOT/libexec/gang-process-identity" --tick "$tick_dead_pid" "$GANG_SESSION" \
+  "$tick_dead_namespace" "$tick_dead_token" \
   >/dev/null 2>&1 || tick_dead_state=$?
 equal "the killed-owner fixture proves the exact generation is dead" 1 \
   "$tick_dead_state"
-ln -s "v2:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1" "$tick_lock_path"
+ln -s "v3:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1:$tick_dead_namespace" \
+  "$tick_lock_path"
 tmux set-option -t "=$GANG_SESSION:" status-right \
   "operator-left #('/stale/snapshot/gang-tick-health.sh' '/stale/health') operator-right"
 tmux set-option -u -t "=$GANG_SESSION:" @gl_tick_health_segment
@@ -1144,7 +1146,7 @@ equal "a zombie owner is dead and its tick lock is reclaimed" absent \
 # The live shell is deliberately paired with an impossible start token; it
 # must not be dirtied or signalled as though it were the vanished owner.
 tick_shell_identity="$("$ROOT/libexec/gang-process-identity" --tick "$$" "$GANG_SESSION")"
-IFS=$'\t' read -r _ tick_shell_token tick_shell_pgrp _ _ _ _ \
+IFS=$'\t' read -r _ tick_shell_token tick_shell_pgrp _ _ _ _ tick_shell_namespace \
   <<<"$tick_shell_identity"
 ln -s "v2:$$:$tick_shell_token:$tick_shell_pgrp:later" "$tick_lock_path"
 tick_bad_v2_rc=0
@@ -1169,7 +1171,8 @@ equal "the trailing-field record remains fail-closed" present \
   "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
 rm -f -- "$tick_lock_path"
 
-ln -s "v2:$$:0:$tick_shell_pgrp:$(date +%s)" "$tick_lock_path"
+ln -s "v3:$$:0:$tick_shell_pgrp:$(date +%s):$tick_shell_namespace" \
+  "$tick_lock_path"
 "$GANG" tick >/dev/null
 equal "a generation mismatch is reclaimed without signalling the reused pid" absent \
   "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
@@ -1245,6 +1248,8 @@ fi
 # no process in that namespace remains, and a contender inside a namespace that
 # cannot see the owner retains the lock and names the namespace it cannot see.
 tick_host_namespace="$(cut -f 8 <<<"$tick_shell_identity")"
+tick_reader_at_root=0
+[ "$tick_host_namespace" != "$((0xEFFFFFFC))" ] || tick_reader_at_root=1
 tick_namespace_run() { # a fresh pid table under this same uid, as a harness sandbox is
   unshare --kill-child=SIGKILL -U --map-user="$(id -u)" --map-group="$(id -g)" \
     -pf --mount-proc "$@"
@@ -1349,14 +1354,32 @@ PY
   tick_ns_dead_rc=0
   "$ROOT/libexec/gang-process-identity" --tick "$tick_ns_inner" "$GANG_SESSION" \
     "$tick_ns_namespace" >/dev/null 2>&1 || tick_ns_dead_rc=$?
-  equal "no process remains in the dead namespace, which the host reads as death" \
-    1 "$tick_ns_dead_rc"
   tick_ns_reclaim_rc=0
-  "$GANG" tick >/dev/null 2>&1 || tick_ns_reclaim_rc=$?
-  equal "an owner that died with its pid namespace is reclaimed by a host contender" \
-    0 "$tick_ns_reclaim_rc"
-  equal "the dead namespaced owner's lock is gone after the pass" absent \
-    "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+  "$GANG" tick > "$RUN_ROOT/tick-ns-dead.out" 2>&1 || tick_ns_reclaim_rc=$?
+  if [ "$tick_reader_at_root" -eq 1 ]; then
+    equal "no process remains in the dead namespace, which the host reads as death" \
+      1 "$tick_ns_dead_rc"
+    equal "an owner that died with its pid namespace is reclaimed by a host contender" \
+      0 "$tick_ns_reclaim_rc"
+    equal "the dead namespaced owner's lock is gone after the pass" absent \
+      "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
+  else
+    unknown "no process remains in the dead namespace, which the host reads as death" \
+      "this contender is itself outside the initial PID namespace"
+    unknown "an owner that died with its pid namespace is reclaimed by a host contender" \
+      "this contender is itself outside the initial PID namespace"
+    unknown "the dead namespaced owner's lock is gone after the pass" \
+      "this contender is itself outside the initial PID namespace"
+    equal "a non-initial reader cannot call an unseen namespace owner dead" \
+      4 "$tick_ns_dead_rc"
+    equal "a non-initial contender fails closed on the unseen namespace" \
+      1 "$tick_ns_reclaim_rc"
+    contains "the non-initial contender names the namespace it cannot see" \
+      "$(<"$RUN_ROOT/tick-ns-dead.out")" \
+      "in pid namespace $tick_ns_namespace, which this process cannot see; lock was retained"
+    equal "a non-initial contender retains the unseen namespace owner's lock" present \
+      "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+  fi
   rm -f -- "$tick_lock_path" "${tick_lock_path%.lock}.dirty"
 
   # The other direction: a contender inside a fresh pid table sees none of the
@@ -1491,9 +1514,9 @@ SH
 }
 
 tick_reclaim_guard_race dead-owner \
-  "v2:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1" "$tick_dead_pid"
+  "v3:$tick_dead_pid:$tick_dead_token:$tick_dead_pgrp:1:$tick_dead_namespace" "$tick_dead_pid"
 tick_reclaim_guard_race replaced-generation \
-  "v2:$$:0:$tick_shell_pgrp:1" "$$"
+  "v3:$$:0:$tick_shell_pgrp:1:$tick_shell_namespace" "$$"
 
 # UNKNOWN PROCESS EVIDENCE IS NOT DEATH. One helper shim returns the unknown
 # verdict; the other appends the malformed empty field owned by the helper-output
@@ -1692,11 +1715,12 @@ GANG_TEST_TICK_RELEASE_FIFO="$tick_token_release" \
 tick_token_owner=$!
 IFS= read -r -N 1 _ < "$tick_token_ready"
 tick_token_record="$(readlink "$tick_lock_path")"
-IFS=: read -r _ tick_token_worker tick_token_value _ _ \
+IFS=: read -r _ tick_token_worker tick_token_value _ _ tick_token_namespace \
   <<<"$tick_token_record"
 tick_wrong_token_rc=0
 "$ROOT/libexec/gang-process-identity" --kill "$tick_token_worker" \
   "${tick_token_value}x" "$GANG_SESSION" "$ROOT/libexec/gang-clock" \
+  "$tick_token_namespace" \
   >/dev/null 2>&1 \
   || tick_wrong_token_rc=$?
 equal "the pidfd helper refuses a mismatched generation token" \
@@ -1820,14 +1844,14 @@ tick_expired_owner=$!
 IFS= read -r -N 1 _ < "$tick_expired_ready"
 tick_expired_record="$(readlink "$tick_lock_path")"
 IFS=: read -r tick_expired_version tick_expired_pid tick_expired_token \
-  tick_expired_pgrp _ <<<"$tick_expired_record"
+  tick_expired_pgrp _ tick_expired_namespace <<<"$tick_expired_record"
 equal "the expiry fixture owns a generation-bearing production lock" v3 \
   "$tick_expired_version"
 equal "the expiry fixture worker is its own process-group leader" \
   "$tick_expired_pid" "$tick_expired_pgrp"
 tick_expired_old=$(( $(tick_monotonic_ns) - 120000000000 ))
 rm -f -- "$tick_lock_path"
-ln -s "v2:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old" \
+ln -s "v3:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old:$tick_expired_namespace" \
   "$tick_lock_path"
 tick_expired_rc=0
 "$GANG" tick > "$RUN_ROOT/tick-expired-reclaim.out" 2>&1 \
@@ -1838,7 +1862,8 @@ equal "pidfd-confirmed expiry retires the worker lock" absent \
   "$([ ! -e "$tick_lock_path" ] && [ ! -L "$tick_lock_path" ] && printf absent || printf present)"
 tick_expired_generation_state=0
 "$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_expired_pid" "$GANG_SESSION" >/dev/null 2>&1 \
+  --tick "$tick_expired_pid" "$GANG_SESSION" \
+  "$tick_expired_namespace" "$tick_expired_token" >/dev/null 2>&1 \
   || tick_expired_generation_state=$?
 equal "expiry leaves the real owner generation dead" \
   1 "$tick_expired_generation_state"
@@ -1847,7 +1872,7 @@ equal "expiry leaves the real owner generation dead" \
 # worker exits and the later tick can retire the stale lock.
 if [ "$tick_expired_generation_state" -eq 0 ]; then
   equal "an owner surviving expiry retains its exact record" \
-    "v2:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old" \
+    "v3:$tick_expired_pid:$tick_expired_token:$tick_expired_pgrp:$tick_expired_old:$tick_expired_namespace" \
     "$(readlink "$tick_lock_path" 2>/dev/null || true)"
   rm -f -- "$tick_lock_path"
   ln -s "$tick_expired_record" "$tick_lock_path"
@@ -1875,9 +1900,11 @@ tick_controller_owner=$!
 IFS= read -r -N 1 _ < "$tick_controller_ready"
 tick_controller_record="$(readlink "$tick_lock_path")"
 IFS=: read -r tick_controller_version tick_controller_worker \
-  _ tick_controller_pgrp _ <<<"$tick_controller_record"
+  tick_controller_token tick_controller_pgrp _ tick_controller_namespace \
+  <<<"$tick_controller_record"
 tick_controller_identity="$("$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_controller_worker" "$GANG_SESSION")"
+  --tick "$tick_controller_worker" "$GANG_SESSION" \
+  "$tick_controller_namespace" "$tick_controller_token")"
 IFS=$'\t' read -r _ _ _ tick_controller_session _ tick_controller_role _ \
   <<<"$tick_controller_identity"
 tick_controller_pid="$(ps -o ppid= -p "$tick_controller_worker" | tr -d ' ')"
@@ -1899,7 +1926,8 @@ equal "controller TERM remains a surfaced tick failure" 1 \
   "$tick_controller_owner_rc"
 tick_controller_worker_rc=0
 "$ROOT/libexec/gang-process-identity" \
-  --tick "$tick_controller_worker" "$GANG_SESSION" >/dev/null 2>&1 \
+  --tick "$tick_controller_worker" "$GANG_SESSION" \
+  "$tick_controller_namespace" "$tick_controller_token" >/dev/null 2>&1 \
   || tick_controller_worker_rc=$?
 equal "controller TERM leaves no live worker generation" 1 \
   "$tick_controller_worker_rc"
