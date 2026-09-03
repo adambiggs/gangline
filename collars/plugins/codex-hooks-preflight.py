@@ -11,9 +11,9 @@ Codex gates hook execution on a per-hook content hash recorded in
       2. Trust all and continue
       3. Continue without trusting (hooks won't run)
 
-before it draws a composer. The Gangline collar installs six hooks whose
-command carries the install root, so any new install, upgrade or worktree
-presents six unseen hashes. `hitch` then behaves exactly as designed — the
+before it draws a composer. Every hook the Gangline collar installs carries the
+install root in its command, so any new install, upgrade or worktree presents
+hashes codex has never seen. `hitch` then behaves exactly as designed — the
 screen is occupied, delivery parks, and it waits for a person — and an
 unattended team stalls there until a human attaches. This runs before the
 harness so the hitch fails at once instead, saying what is wrong and how to
@@ -155,7 +155,7 @@ def config_values(command):
 
 
 def expected_hooks(command):
-    """Read the six collar-owned event/command pairs from its inline layers."""
+    """Read the collar-owned event/command pairs from its inline layers."""
     candidates = {}
     for option in config_values(command):
         key, separator, value = option.partition("=")
@@ -309,7 +309,7 @@ def main():
             ["gang: codex's own hook-trust state could not be read, so whether this",
              "launch would stop on the native hooks-review menu is unknown rather",
              "than settled: %s." % exc,
-             "Gangline installs six hooks here and will not launch blind into a",
+             "Gangline installs its hooks here and will not launch blind into a",
              "prompt only a person can answer.",
              "",
              "Re-verify collars/plugins/codex-hooks-preflight.py against the",
@@ -337,7 +337,7 @@ def main():
             disabled.append(event)
     if missing or disabled or mismatched:
         detail = [
-            "gang: codex did not report the six enabled Gangline hooks this launch",
+            "gang: codex did not report every enabled Gangline hook this launch",
             "requires, so its declared native turn boundaries are unavailable:",
             "",
         ]

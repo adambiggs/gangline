@@ -1821,8 +1821,8 @@ until a person completes those steps.
 
 The preflight asks `hooks/list` under the launch's `-c`/`--config`, `--enable`,
 `--disable`, and `--strict-config` layers in their original order. It requires
-the exact six Gangline event/command pairs to be present, enabled, and trusted
-or managed. A native configuration error, a missing or disabled pair, or a
+every Gangline event/command pair the collar installs to be present, enabled,
+and trusted or managed. A native configuration error, a missing or disabled pair, or a
 changed command refuses the launch; warnings are printed but remain nonfatal.
 If an operator layer disables hooks, remove that layer or set
 `features.hooks=true` there rather than having Gangline override the choice
