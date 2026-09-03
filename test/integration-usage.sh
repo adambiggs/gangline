@@ -241,15 +241,17 @@ excludes "the drop with an unwritable record still ended the agent" \
   "$(window_names)" "usage-gamma"
 
 # --- --all reads every record; an unreadable line is counted -----------------
-# Four foreign lines: another team's record; a record from an earlier team of
-# this name, ended after this one began; a line that is not JSON; and a JSON
-# line of the right version whose duration is text and whose status is an
-# escape sequence. The last is somebody else's write, and it must neither
-# crash the arithmetic nor reach the terminal.
+# Five foreign lines: another team's record; a record from an earlier team of
+# this name, ended after this one began; a line that is not JSON; a JSON line
+# of the right version whose duration is text and whose status is an escape
+# sequence; and a valid record carrying a C1 control in its note. The last two
+# are somebody else's writes, and neither must crash the arithmetic nor reach
+# the terminal.
 printf '%s\n' '{"v":1,"agent":"elsewhere","collar":"codex","team":"another-team","ended_at":1,"ended_by":"down","usage_status":"unmatched","model":"gpt-5.6"}' \
   "{\"v\":1,\"agent\":\"reborn\",\"collar\":\"bash\",\"team\":\"$GANG_SESSION\",\"team_created\":1,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"usage_status\":\"unmatched\"}" \
   'this line is not a record' \
   "{\"v\":1,\"agent\":\"forged\",\"team\":\"$GANG_SESSION\",\"team_created\":$usage_team_created,\"ended_at\":$((usage_team_created + 1)),\"ended_by\":\"drop\",\"duration_s\":\"not-a-duration\",\"usage_status\":\"\\u001b[2J\"}" \
+  '{"v":1,"agent":"c1-forged","team":"another-team","ended_at":1,"ended_by":"down","usage_status":"unmatched","usage_note":"\u009b2J"}' \
   >> "$usage_events"
 usage_scoped_out="$(PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds beside foreign record lines" "status $?: [$usage_scoped_out]"
@@ -271,6 +273,8 @@ excludes "a forged record's status never reaches the terminal" \
   "$usage_all_out" "forged"
 excludes "a forged record's escape byte never reaches the terminal" \
   "$usage_all_out" $'\033'
+excludes "a foreign record's C1 control never reaches the terminal" \
+  "$usage_all_out" $'\302\233'
 
 # --- down records every window from one ccusage read -----------------------
 usage_down_session="usage-down-$$"

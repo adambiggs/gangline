@@ -330,12 +330,13 @@ def duration_text(seconds) -> str:
 
 
 def visible(value) -> str:
-    """Terminal-safe, single-line text: control bytes become '?', tabs a space.
+    """Terminal-safe, single-line text: C0, DEL, and C1 become '?'; tabs a space.
 
     Registrations and ccusage fields are raw bytes; a name may carry an escape
     sequence, and nothing that reaches the terminal may carry it through."""
     text = "" if value is None else str(value)
-    return "".join(" " if ch == "\t" else "?" if ord(ch) < 0x20 or ord(ch) == 0x7F else ch
+    return "".join(" " if ch == "\t" else "?"
+                   if ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F else ch
                    for ch in text)
 
 
