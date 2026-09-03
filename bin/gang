@@ -10678,7 +10678,13 @@ usage_team_created() { # print the live session's creation epoch, or nothing
   # name plus this epoch is the team's identity in the usage record; a later
   # team reusing the name is a different team.
   local created
-  created="$(tmux list-windows -t "=$SESSION" -F '#{session_created}' 2>/dev/null | head -n 1)" || created=""
+  # Do not pipe this client to head.  It exits after the first window and
+  # closes stdout while tmux is still writing the remaining windows; on the
+  # test server that can tear down the very session whose identity we are
+  # trying to record.  Every window has the same creation epoch, so retain
+  # the first line after tmux has completed normally.
+  created="$(tmux list-windows -t "=$SESSION" -F '#{session_created}' 2>/dev/null)" || created=""
+  created="${created%%$'\n'*}"
   [[ "$created" =~ ^[0-9]+$ ]] && printf '%s' "$created"
 }
 

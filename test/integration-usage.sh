@@ -58,7 +58,11 @@ command -v ccusage >/dev/null 2>&1 && usage_absent_proven=0
 usage_claude_id="11111111-aaaa-4bbb-8ccc-000000000001"
 usage_codex_id="22222222-bbbb-4ccc-8ddd-000000000002"
 usage_stray_id="33333333-cccc-4ddd-8eee-000000000003"
-usage_team_created="$(tmux list-windows -t "=$GANG_SESSION" -F '#{session_created}' | head -n 1)"
+# Read the whole client response before selecting one line: closing a pipe at
+# head while tmux writes the other shared-team windows can take this test's
+# server down.
+usage_team_created="$(tmux list-windows -t "=$GANG_SESSION" -F '#{session_created}')"
+usage_team_created="${usage_team_created%%$'\n'*}"
 
 # --- The launch record hitch registers -------------------------------------
 "$HITCH" usage-alpha -c bash -d /tmp -t 'github:gangline#421' >/dev/null
@@ -99,6 +103,10 @@ tmux set-option -w -t "$(window_id usage-delta)" @gl_session_id "$usage_stray_id
 usage_argv="$RUN_ROOT/usage-argv"
 usage_out="$(USAGE_FIXTURE_ARGV="$usage_argv" PATH="$usage_present" XDG_DATA_HOME="$usage_data" "$GANG" usage 2>&1)" \
   || fail "gang usage succeeds with ccusage present" "status $?: [$usage_out]"
+tmux has-session -t "=$GANG_SESSION" 2>/dev/null \
+  && pass "reading usage leaves the live team's tmux server intact" \
+  || fail "reading usage leaves the live team's tmux server intact" \
+       "session $GANG_SESSION disappeared"
 equal "gang usage asks ccusage for the offline costless session report" \
   "session --json --no-cost --offline" "$(<"$usage_argv")"
 usage_alpha_row="$(printf '%s\n' "$usage_out" | awk '$1 == "usage-alpha"')"
