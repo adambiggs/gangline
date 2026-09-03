@@ -44,6 +44,11 @@ state_lead_id="$(window_id state-lead)"
 state_lead_pane="$(tmux list-panes -t "$state_lead_id" -F '#{pane_id}')"
 "$GANG" notify state-lead >/dev/null
 
+# A collar with no root-process probe must not be conflated with a declared
+# probe that hitch has not yet been able to establish.
+contains "explain distinguishes a collar with no root probe" \
+  "$("$GANG" explain state-lead)" "harness identity: collar declares no probe"
+
 # idle_prompt is deliberately only a wake. A collar capable of reading a
 # terminal state does not need to declare it as a generic stall: quietness must
 # never acquire a state-notification transition on its own.
@@ -208,6 +213,42 @@ fi
 # only shipped environment with the needed kernel start stamp; elsewhere the
 # absence must be explicit rather than synthesized from ps output.
 ln -s /bin/sleep "$RUN_ROOT/codex"
+cat > "$RUN_ROOT/collars/state-codex-delayed.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/codex.sh"
+GANG_STOP_HOOK=
+collar_harness_identity() {
+  [ -e "$RUN_ROOT/state-codex-identity-ready" ] || return 1
+  local pane_pid
+  pane_pid="\$(tmux display-message -p -t "\$1" '#{pane_pid}' 2>/dev/null)" || return 2
+  "\$ROOT/libexec/gang-process-identity" --codex "\$pane_pid"
+}
+SH
+state_codex_delayed_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
+  -n state-codex-delayed "exec '$RUN_ROOT/codex' 600")"
+"$GANG" adopt state-codex-delayed -c state-codex-delayed >/dev/null
+equal "the early Codex preflight probe records no root" "" \
+  "$(tmux show-options -wqv -t "$state_codex_delayed_id" @gl_harness_identity)"
+contains "explain names an unestablished declared root probe" \
+  "$("$GANG" explain state-codex-delayed)" "harness identity: not yet established"
+: > "$RUN_ROOT/state-codex-identity-ready"
+state_codex_delayed_pane="$(tmux list-panes -t "$state_codex_delayed_id" -F '#{pane_id}')"
+printf '%s' '{"hook_event_name":"Stop"}' \
+  | GANG_TEST_TICK_MODE=manual TMUX_PANE="$state_codex_delayed_pane" "$GANG" hook >/dev/null
+if [ "$(uname -s)" = Linux ]; then
+  if [[ "$(tmux show-options -wqv -t "$state_codex_delayed_id" @gl_harness_identity)" =~ ^[0-9]+[[:space:]][0-9]+$ ]]; then
+    pass "the first native hook establishes the delayed Codex root"
+  else
+    fail "the first native hook establishes the delayed Codex root" \
+      "got [$(tmux show-options -wqv -t "$state_codex_delayed_id" @gl_harness_identity)]"
+  fi
+  tmux respawn-pane -k -t "$state_codex_delayed_id" "PS1='❯ ' exec bash --norc"
+  GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+  contains "a root established at the first hook remains protected from replacement" \
+    "$("$GANG" status state-codex-delayed)" "!harness-lost!"
+fi
+"$GANG" drop state-codex-delayed >/dev/null
 state_codex_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n state-codex "exec '$RUN_ROOT/codex' 600")"
 "$GANG" adopt state-codex -c state-codex-adopt >/dev/null
@@ -264,10 +305,10 @@ PY
       "$(pane_all state-lead | grep -oF 'state-codex is harness-lost' | wc -l | tr -d ' ')"
   fi
 else
-  equal "a platform without the kernel stamp leaves Codex coverage unrecorded" "" \
+  equal "a platform without the kernel stamp leaves Codex coverage unestablished" "" \
     "$(tmux show-options -wqv -t "$state_codex_id" @gl_harness_identity)"
-  contains "explain makes unavailable liveness coverage visible" \
-    "$("$GANG" explain state-codex)" "harness identity: not recorded"
+  contains "explain makes unestablished liveness coverage visible" \
+    "$("$GANG" explain state-codex)" "harness identity: not yet established"
 fi
 
 "$GANG" notify clear >/dev/null

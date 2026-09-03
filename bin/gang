@@ -4880,14 +4880,18 @@ tick_identity_verify() { # $1 window, $2 collar; 0 match, 1 unavailable, 2 lost
   return "$rc"
 }
 
-# THE ROOT WITNESS IS RECORDED ONCE, at hitch/adopt. A later quiet process is
-# not evidence of health, so tick compares only a positive identity a collar
-# already established. PID plus the kernel's process-start stamp defeats reuse.
-harness_identity_establish() { # $1 window; absence is visible, never a failure
+# THE ROOT WITNESS IS RECORDED AT HITCH/ADOPT AND MAY BE RE-ESTABLISHED ON THE
+# FIRST NATIVE HOOK. Codex puts a preflight interpreter ahead of its real
+# harness, so the launch-time read can truthfully find no Codex process even
+# though the first hook comes from one. A later quiet process remains no health
+# evidence: only that one native boundary receives the bounded second read.
+harness_identity_establish() { # $1 window, $2 = initial or hook; absence is visible, never a failure
   local observed="" rc=0
   tmux set-option -uw -t "$1" @gl_harness_identity 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_harness_lost 2>/dev/null || true
   tmux set-option -uw -t "$1" @gl_harness_identity_unreadable 2>/dev/null || true
+  [ "${2:-initial}" != initial ] \
+    || tmux set-option -uw -t "$1" @gl_harness_identity_hook_attempted 2>/dev/null || true
   declare -F collar_harness_identity >/dev/null || return 0
   observed="$(collar_harness_identity "$1")" || rc=$?
   case "$rc" in
@@ -4899,6 +4903,17 @@ harness_identity_establish() { # $1 window; absence is visible, never a failure
     2) tmux set-option -w -t "$1" @gl_harness_identity_unreadable "$observed" 2>/dev/null || true ;;
     *) die "collar_harness_identity in $GANG_COLLAR_FILE returned unknown verdict $rc" ;;
   esac
+}
+
+harness_identity_hook_retry() { # $1 pane/window; only the first native boundary may re-establish
+  local recorded="" attempted=""
+  recorded="$(tmux show-options -wqv -t "$1" @gl_harness_identity 2>/dev/null)" || recorded=""
+  [ -z "$recorded" ] || return 0
+  declare -F collar_harness_identity >/dev/null || return 0
+  attempted="$(tmux show-options -wqv -t "$1" @gl_harness_identity_hook_attempted 2>/dev/null)" || attempted=""
+  [ -z "$attempted" ] || return 0
+  tmux set-option -w -t "$1" @gl_harness_identity_hook_attempted 1 2>/dev/null || return 0
+  harness_identity_establish "$1" hook
 }
 
 harness_identity_verify() { # $1 window; 0 match/not-recorded, 1 unreadable, 2 lost
@@ -10923,8 +10938,10 @@ cmd_explain() {
     printf 'harness identity: recorded\n'
   elif [ -n "$harness_unreadable" ]; then
     printf 'harness identity: unreadable\n'
+  elif declare -F collar_harness_identity >/dev/null; then
+    printf 'harness identity: not yet established\n'
   else
-    printf 'harness identity: not recorded\n'
+    printf 'harness identity: collar declares no probe\n'
   fi
   explain_rule_report GANG_OCCUPIED_REGEX \
     "$EXPLAIN_OCCUPIED_RESULT" "$EXPLAIN_OCCUPIED_FRAGMENT"
@@ -12023,6 +12040,10 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   collar="$(collar_read "$TMUX_PANE" 2>/dev/null)" || exit 0
   [ -n "$collar" ] || exit 0
   hook_identity_assert "$TMUX_PANE" "$collar" "$payload"
+  # The hook crosses Codex's preflight exec boundary. A launch-time probe that
+  # found only that interpreter gets exactly this one chance to establish the
+  # real root; a quiet tick never converts a newly seen process into evidence.
+  ( load_collar "$collar"; harness_identity_hook_retry "$TMUX_PANE" ) || true
   if [ "$event" = UserPromptSubmit ]; then
     ( reply_prompt_observe "$TMUX_PANE" "$collar" "$payload" ) || true
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
