@@ -12539,7 +12539,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" collar="" id rc=0 hitched_by=""
+  local name="" collar="" id rc=0 hitched_by="" pane_dir=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
@@ -12574,7 +12574,8 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   # are unknown rather than empty choices; the directory is the pane's own.
   tmux set-option -w -t "$id" @gl_model ""
   tmux set-option -w -t "$id" @gl_effort ""
-  tmux set-option -w -t "$id" @gl_dir "$(tmux display-message -p -t "$id" '#{pane_current_path}')"
+  pane_dir="$(tmux list-panes -t "$id" -f '#{pane_active}' -F '#{pane_current_path}' 2>/dev/null)" || pane_dir=""
+  tmux set-option -w -t "$id" @gl_dir "$pane_dir"
   tmux set-option -w -t "$id" @gl_task ""
   tmux set-option -w -t "$id" @gl_hitched_at "$(date +%s)"
   waiting_clear "$id"

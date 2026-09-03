@@ -449,6 +449,8 @@ contains "an unreadable activity clock remains visible to the operator" \
 origin_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \
   -n hitch-origin "PS1='❯ ' bash --norc")"
 "$GANG" adopt hitch-origin -c bash >/dev/null
+equal "adoption records its active pane path through list-panes" \
+  "$PWD" "$(tmux show-options -wqv -t "$origin_id" @gl_dir)"
 origin_pane="$(tmux list-panes -t "$origin_id" -F '#{pane_id}')"
 origin_token="$(tmux show-options -wqv -t "$origin_id" @gl_spool)"
 helper_id="$(tmux new-window -d -P -F '#{window_id}' -t "=$GANG_SESSION" \

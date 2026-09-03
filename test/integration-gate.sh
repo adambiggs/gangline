@@ -1,5 +1,16 @@
 # shellcheck shell=bash
 # SPDX-License-Identifier: Apache-2.0
+
+# An adoption runs from an ordinary client, where tmux 3.2a can take down the
+# server if display-message targets the adopted pane.  Pane facts use the
+# list/format reader; keep this structural guard so the dangerous form cannot
+# return with a future refactor.
+if rg -Fq "display-message -p -t \"\$id\" '#{pane_current_path}'" "$ROOT/bin/gang"; then
+  fail "adoption never reads pane path through display-message" \
+    "bin/gang targets pane_current_path through display-message"
+else
+  pass "adoption never reads pane path through display-message"
+fi
 # test/gate.sh itself: the tree it judges, the snapshot it takes, and the evidence a failure owes.
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file
