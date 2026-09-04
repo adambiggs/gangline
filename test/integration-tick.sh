@@ -108,6 +108,8 @@ contains "the session-local popup command contains the complete invocation" \
   "$alert_ui_installed_command" "alerts --open"
 contains "the session-local command pins its shell-quoted session" \
   "$alert_ui_installed_command" "GANG_SESSION="
+excludes "the session-local popup command leaves no dollar for tmux to rewrite" \
+  "$alert_ui_installed_command" '$'
 alert_ui_right_once="$(alert_ui_tmux show-options -qv \
   -t "=$alert_ui_session:" status-right)"
 alert_ui_gang tick >/dev/null
