@@ -429,6 +429,7 @@ export GANG_LOCK_DIR="$RUN_ROOT/locks"
 export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
 export XDG_STATE_HOME="$RUN_ROOT/state"
 export XDG_DATA_HOME="$RUN_ROOT/data"
+export HOME="$RUN_ROOT/home"
 export GANG_TEST_TICK_MODE=manual
 # A COLLAR MAY READ ITS HARNESS'S OWN CONFIGURATION, and the Codex collar reads
 # $CODEX_HOME to learn which model a hitch without -m will launch. Pointed at a
