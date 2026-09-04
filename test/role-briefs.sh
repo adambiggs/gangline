@@ -428,7 +428,13 @@ SH
     fi
     id="$(TMUX_TMPDIR="$root/$variant" tmux list-windows -t "=$session" -F '#{window_id}')"
     map="$root/$variant.map"
-    TMUX_TMPDIR="$root/$variant" tmux show-options -w -t "$id" > "$map"
+    # @gl_hitched_at is the wall clock of the hitch. The two hitches here are
+    # made one after the other, so its value differs whenever they straddle a
+    # second, and it says nothing about what a role changes. The option itself
+    # still must be present and well formed under both hitches, so only a
+    # whole-number value is replaced; a missing or malformed one still differs.
+    TMUX_TMPDIR="$root/$variant" tmux show-options -w -t "$id" \
+      | sed -E 's/^@gl_hitched_at [0-9]+$/@gl_hitched_at <epoch>/' > "$map"
     TMUX_TMPDIR="$root/$variant" tmux show-options -t "$id" >> "$map"
     tmux -S "$socket" kill-server
     rm -f -- "$socket"
