@@ -512,9 +512,9 @@ wait_done_channel="$(sed -n '1p' "$wait_trace")"
 excludes "a native Stop removes its caller-owned hook" \
   "$(tmux show-hooks -g pane-exited)" "$wait_done_channel"
 if "$GANG" wait waitable --until idle >/dev/null; then
-  pass "an already-idle target satisfies an idle barrier immediately"
+  pass "an outside caller still satisfies an idle barrier immediately"
 else
-  fail "an already-idle target satisfies an idle barrier immediately" \
+  fail "an outside caller still satisfies an idle barrier immediately" \
     "gang wait returned nonzero"
 fi
 if "$GANG" wait alpha --until "done" >/dev/null; then
@@ -523,8 +523,17 @@ else
   fail "an already-idle target needs no declared Stop source" \
     "gang wait returned nonzero"
 fi
+wait_hitched_out="$RUN_ROOT/wait-hitched.out"
+wait_hitched_rc=0
+env TMUX_PANE="$alpha_tmux_pane" "$GANG" wait waitable --until "done" \
+  >"$wait_hitched_out" 2>&1 || wait_hitched_rc=$?
+equal "a hitched caller gets the distinct wait-refusal status" \
+  "3" "$wait_hitched_rc"
+equal "the hitched-caller refusal ends polling with the push boundary" \
+  "gang: wait: delivery is push-based; end this turn and the report will arrive at the boundary" \
+  "$(<"$wait_hitched_out")"
 refuses "an agent cannot deadlock its own turn inside a barrier" \
-  "this agent's own window" env TMUX_PANE="$waitable_pane" \
+  "delivery is push-based" env TMUX_PANE="$waitable_pane" \
   "$GANG" wait waitable --until "done"
 refuses "a zero-padded explicit bound cannot disable the boundary" \
   "positive whole number" "$GANG" wait waitable --until "done" --timeout 00

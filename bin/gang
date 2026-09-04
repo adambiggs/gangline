@@ -407,7 +407,6 @@ read what was sent to you
 watch a teammate
     gang status NAME   what it is doing
     gang explain NAME  why that state
-    gang wait NAME --until idle|done
 
 what an exit code means
     0  it happened
@@ -967,6 +966,12 @@ gang wait
 
   idle  return when a live state read is idle
   done  return at the next Stop boundary
+
+  This command is for an operator shell or an
+  external script. It refuses inside a hitched
+  agent window in the target team: delivery is
+  push-based, so end the turn and receive the
+  report at that boundary instead.
 
   An already-idle agent returns immediately.
   Otherwise the target collar must supply its
@@ -11730,13 +11735,13 @@ cmd_wait() {
     *[1-9]*) ;;
     *) die "wait: --timeout must be a positive whole number of seconds, got '$bound'" ;;
   esac
+  self="$(self_window)" || self=""
+  [ -z "$self" ] \
+    || refuse "wait: delivery is push-based; end this turn and the report will arrive at the boundary"
   require_python3
   resolve "$name"
   pane="$(wait_active_pane "$AGENT_ID")" \
     || die "wait: cannot identify the active pane in '$name'"
-  self="$(self_window)" || self=""
-  [ -z "$self" ] || [ "$self" != "$AGENT_ID" ] \
-    || refuse "wait: '$name' is this agent's own window — its native Stop cannot fire while this turn is blocked inside gang wait"
   state="$(state_now "$AGENT_ID")"
   case "$state" in
     '~idle~'*) return 0 ;;

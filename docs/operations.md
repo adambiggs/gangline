@@ -38,8 +38,8 @@ read -r -p "Codex effort: " CODEX_EFFORT
 Every Codex example in this document reuses `$CODEX_MODEL` and
 `$CODEX_EFFORT` from that step.
 
-When another action should start only after an agent settles, use an explicit
-barrier instead of repeatedly sampling status:
+From an operator shell outside the team's agent windows, use an explicit barrier
+when another action should start only after an agent settles:
 
 ```sh
 gang wait worker --until idle
@@ -52,7 +52,9 @@ already working; it does not assign or track a turn. Unknown evidence and a
 vanished or replaced target fail loudly. A hookless collar cannot supply the
 boundary and is refused before the command blocks. Each boundary also has a
 fail-loud foreground deadline: pass `--timeout <seconds>` for a caller-specific
-bound, or omit it to use `GANG_TURN_LIMIT`.
+bound, or omit it to use `GANG_TURN_LIMIT`. A hitched agent cannot call this
+barrier from its team window: delivery to that agent is push-based, so it ends
+its turn and receives the report at the boundary instead.
 
 During hitch, a first-run prompt is reported as soon as Gangline has positive
 pane evidence rather than a merely blank startup screen. At that point it parks
