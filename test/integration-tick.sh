@@ -350,7 +350,7 @@ contains "the popup proof uses a real attached client with its own terminal" \
 alert_ui_tmux set-option -t "=$alert_ui_observer:" @gl_alert_command \
   "printf wrong-session > '$alert_ui_wrong_session_ledger'; tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; tmux wait-for -S $alert_ui_client_done"
 alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
-  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; GANG_TEST_ALERT_RENDER_READY_EVENT=$(shell_quote "$alert_ui_popup_render_ready") $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
+  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; GANG_TEST_ALERT_RENDER_READY_EVENT='$alert_ui_popup_render_ready' $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
 alert_ui_popup_ready_waiter=$!
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
