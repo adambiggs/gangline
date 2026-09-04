@@ -31,7 +31,7 @@ equal "the popup option word round-trips shell-significant bytes" \
 # `down`, allowing the uninstall result itself to be observed.
 alert_ui_root="$RUN_ROOT/alert-ui-server"
 alert_ui_injected="/var/tmp/gangline-alert-injected-$$"
-alert_ui_session="quote'\\\`# \$(touch $alert_ui_injected)'"
+alert_ui_session="quote'\`# \$(touch $alert_ui_injected)'"
 alert_ui_survivor="gang-alert-ui-survivor-$$"
 alert_ui_observer="gang-alert-ui-observer-$$"
 mkdir -p "$alert_ui_root"
