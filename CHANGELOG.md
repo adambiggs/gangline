@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.10.1](https://github.com/adambiggs/gangline/compare/gangline-v2.10.0...gangline-v2.10.1) (2026-09-04)
+
+
+### Bug Fixes
+
+* **wait:** reserve boundary waits for outside callers ([8aa52f9](https://github.com/adambiggs/gangline/commit/8aa52f9d7028778db0a7c6915a2089fc2f5693e5))
+
 ## [2.10.0](https://github.com/adambiggs/gangline/compare/gangline-v2.9.2...gangline-v2.10.0) (2026-09-04)
 
 
