@@ -703,6 +703,8 @@ equal "the last Gangline team removes only its owned Prefix+A binding" absent \
   "$(if alert_ui_tmux list-keys -T prefix A >/dev/null 2>&1; then printf present; else printf absent; fi)"
 equal "the last Gangline team removes its binding version marker" "" \
   "$(alert_ui_tmux show-options -gqv @gl_alert_binding_version)"
+equal "the last Gangline team removes its temporary binding probe" "" \
+  "$(alert_ui_tmux show-options -gqv @gl_alert_binding_probe)"
 equal "alert-center teardown leaves no binding-guard filesystem state" absent \
   "$([ ! -e "$alert_ui_binding_root" ] && [ ! -L "$alert_ui_binding_root" ] \
       && [ ! -e "$alert_ui_socket.gangline-alert-binding.guard" ] \
