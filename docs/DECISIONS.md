@@ -1110,14 +1110,18 @@ as if replay could repair the selected model.
 
 ## Caller barriers use temporary native events
 
-`gang wait` is an opt-in barrier, never a patrol or supervisor. Each caller owns
-a unique temporary tmux `wait-for` channel and sparse hook key pinned to the
-target window and active pane; ownership is re-read before cleanup because tmux
-reuses the lowest free ordinary hook-array slot. Native Stop closes the turn
-before signalling it, while natural pane exit and Gangline teardown release it
-as a loud vanished-target failure. Direct tmux kill commands bypass that release
-and are documented as unsupported teardown for a waited target. A foreground
-deadline, defaulting to the existing native turn-fact bound, is a Python
+`gang wait` is an opt-in operator or external-script barrier, never a patrol or
+supervisor. A caller pane inside the target team is resolved by the same session
+membership rule that gives `gang send` its observed identity and is refused:
+delivery is push-based, so an agent ends its turn and receives the report at that
+boundary instead of blocking it. Each allowed caller owns a unique temporary tmux
+`wait-for` channel and sparse hook key pinned to the target window and active
+pane; ownership is re-read before cleanup because tmux reuses the lowest free
+ordinary hook-array slot. Native Stop closes the turn before signalling it, while
+natural pane exit and Gangline teardown release it as a loud vanished-target
+failure. Direct tmux kill commands bypass that release and are documented as
+unsupported teardown for a waited target. A foreground deadline, defaulting to
+the existing native turn-fact bound, is a Python
 one-shot alarm around one fresh Bash/tmux process group. Python is already a
 required dependency; this avoids GNU `timeout`, while deadline and foreground
 signals kill and reap that exact group before the caller cleans its hook. No

@@ -127,6 +127,10 @@ gang drop worker
 gang down gangline
 ```
 
+`gang wait` is for an operator shell or external script. A hitched agent in the
+target team ends its turn instead; delivery is push-based, and its report arrives
+at that boundary.
+
 `gang interrupt` sends the keystroke the harness's collar declares for stopping
 a turn. `gang flush` recovers a message a harness parked in its own input queue,
 reading the reloaded composer back against what Gangline recorded before
