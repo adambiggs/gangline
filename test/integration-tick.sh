@@ -665,14 +665,16 @@ wait "$alert_ui_down_owner" || alert_ui_down_rc=$?
 equal "the serialized first-team teardown completes" 0 "$alert_ui_down_rc"
 alert_ui_gang_for "$alert_ui_survivor" tick >/dev/null
 alert_ui_survivor_binding="$(alert_ui_tmux list-keys -T prefix A)"
+alert_ui_survivor_command="$(alert_ui_tmux show-options -qv \
+  -t "=$alert_ui_survivor:" @gl_alert_command)"
 contains "the surviving team installs the popup after the teardown seam" \
   "${alert_ui_survivor_binding//\"/}" \
   "display-popup -E -h 70% -w 80%"
-contains "the surviving team records the command that binding resolves" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
-  "$ROOT/bin/gang"
+equal "the surviving team's encoded command resolves to this gang binary" \
+  "$("$ROOT/bin/gang" --version)" \
+  "$(sh -c "${alert_ui_survivor_command% alerts --open} --version")"
 contains "the surviving team's command includes the complete alert invocation" \
-  "$(alert_ui_tmux show-options -qv -t "=$alert_ui_survivor:" @gl_alert_command)" \
+  "$alert_ui_survivor_command" \
   "alerts --open"
 
 # A teardown that loses the same server-global claim must mutate nothing. Hold
