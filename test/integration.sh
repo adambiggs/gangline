@@ -19,8 +19,8 @@ GANG="$ROOT/bin/gang"
 TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 
 # tmux's Unix socket path has a 107-byte limit. Keep the fixture root compact:
-# guard fixtures add their own nested names and the sandbox's PID namespace can
-# contribute six digits, so the descriptive former prefix made a valid private
+# guard fixtures add their own nested names and the host PID namespace can
+# contribute seven digits, so the descriptive former prefix made a valid private
 # TMPDIR unusable before a test could state its result.
 RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gl.XXXXXX")"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
