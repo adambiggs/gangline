@@ -15,6 +15,14 @@ fi
 #
 # A PART IS A FRAGMENT, NOT A SCRIPT. test/integration.sh sources this file
 # in order and it reads that shell's fixtures, helpers and counters.
+# Every no-argument gate below is a disposable fixture, never the mandatory
+# gate. A focused integration run has no outer gate process to pass this marker
+# down, so without it each fixture re-execs through the host-wide heavy lock and
+# can outlive the focused parent as a waiter. The fixtures have private trees
+# and state under RUN_ROOT; they need the nested-gate disposition, not a slot in
+# the host-wide mandatory queue.
+export _GANGLINE_GATE_LOCKED=1
+
 # THE GATE OWNS THE TREE IT JUDGES. Two failures wrote test/gate.sh: a mandatory
 # assertion that could not pass while bin/gang was uncommitted, so the complete
 # gate only ever ran after a commit; and a run whose source was edited while it
@@ -660,6 +668,32 @@ shift
 exec "\$@"
 SH
 chmod +x "$gate_flock_bin/flock"
+# The fixture marker has to cover a focused integration run too, which has no
+# outer test/gate.sh from which to inherit it. A flock that would otherwise
+# record its invocation proves the stand-in gate did not join the host-wide
+# mandatory queue. The next check deliberately unsets the marker and therefore
+# still proves that an ordinary user-facing gate acquires that queue's lock.
+gate_fixture_flock="$RUN_ROOT/gate-fixture-flock"
+gate_fixture_flock_calls="$RUN_ROOT/gate-fixture-flock-calls"
+export GATE_FIXTURE_FLOCK_CALLS="$gate_fixture_flock_calls"
+cat > "$gate_fixture_flock" <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" >> "$GATE_FIXTURE_FLOCK_CALLS"
+exit 93
+SH
+chmod +x "$gate_fixture_flock"
+mkdir -p "$RUN_ROOT/gate-fixture-flock-bin"
+ln -s "$gate_fixture_flock" "$RUN_ROOT/gate-fixture-flock-bin/flock"
+gate_fixture_out="$(PATH="$RUN_ROOT/gate-fixture-flock-bin:$PATH" \
+  "$gate_run/test/gate.sh" 2>&1)"
+if [ ! -e "$gate_fixture_flock_calls" ]; then
+  pass "a gate fixture inherits the nested-gate marker outside an ordinary gate"
+else
+  fail "a gate fixture inherits the nested-gate marker outside an ordinary gate" \
+    "fixture flock was invoked with [$(cat "$gate_fixture_flock_calls")]"
+fi
+contains "the marked fixture still runs its declared suite" \
+  "$gate_fixture_out" "integration: every declared part ran"
 gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
 equal "the ordinary gate owns a close-on-exec heavy-test lock" \
