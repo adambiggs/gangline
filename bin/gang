@@ -5392,6 +5392,10 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
   fi
   if [ "$mode" = open ] && [ -t 0 ] && [ -t 1 ]; then
     printf '\nPress any key to close.\n'
+    if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
+       && [ -n "${GANG_TEST_ALERT_RENDER_READY_FIFO:-}" ]; then
+      printf x > "$GANG_TEST_ALERT_RENDER_READY_FIFO"
+    fi
     IFS= read -r -n 1 _ || true
   fi
 }

@@ -290,6 +290,7 @@ alert_ui_client_status="$RUN_ROOT/alert-ui-client-status"
 alert_ui_client_attached="alert-ui-client-attached-$$"
 alert_ui_popup_ready="alert-ui-popup-ready-$$"
 alert_ui_popup_release="alert-ui-popup-release-$$"
+alert_ui_popup_render_ready="$RUN_ROOT/alert-ui-popup-render-ready"
 alert_ui_client_done="alert-ui-client-done-$$"
 alert_ui_client_exited="alert-ui-client-exited-$$"
 alert_ui_wrong_session_ledger="$RUN_ROOT/alert-ui-wrong-session-ran"
@@ -302,6 +303,7 @@ equal "the attached client excludes the suite's fake instant commands" absent \
   "$([[ ":$alert_ui_client_path:" == *":$RUN_ROOT/bin:"* ]] \
       && printf present || printf absent)"
 mkfifo "$alert_ui_client_input"
+mkfifo "$alert_ui_popup_render_ready"
 exec 8<>"$alert_ui_client_input"
 alert_ui_tmux set-hook -g client-attached \
   "wait-for -S $alert_ui_client_attached"
@@ -333,7 +335,7 @@ contains "the popup proof uses a real attached client with its own terminal" \
 alert_ui_tmux set-option -t "=$alert_ui_observer:" @gl_alert_command \
   "printf wrong-session > '$alert_ui_wrong_session_ledger'; tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; tmux wait-for -S $alert_ui_client_done"
 alert_ui_tmux set-option -t "=$alert_ui_session:" @gl_alert_command \
-  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
+  "tmux wait-for -S $alert_ui_popup_ready; tmux wait-for $alert_ui_popup_release; GANG_TEST_ALERT_RENDER_READY_FIFO=$(shell_quote "$alert_ui_popup_render_ready") $alert_ui_installed_command; tmux wait-for -S $alert_ui_client_done"
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_popup_ready" &
 alert_ui_popup_ready_waiter=$!
 TMUX_TMPDIR="$alert_ui_root" tmux wait-for "$alert_ui_client_done" &
@@ -344,6 +346,7 @@ wait "$alert_ui_popup_ready_waiter" || alert_ui_popup_ready_rc=$?
 equal "Prefix+A starts the installed popup shell on the attached client" \
   0 "$alert_ui_popup_ready_rc"
 alert_ui_tmux wait-for -S "$alert_ui_popup_release"
+IFS= read -r -N 1 _ < "$alert_ui_popup_render_ready"
 printf 'x' >&8
 alert_ui_client_done_rc=0
 wait "$alert_ui_client_done_waiter" || alert_ui_client_done_rc=$?
