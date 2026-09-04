@@ -58,15 +58,25 @@ command -v ccusage >/dev/null 2>&1 && usage_absent_proven=0
 usage_claude_id="11111111-aaaa-4bbb-8ccc-000000000001"
 usage_codex_id="22222222-bbbb-4ccc-8ddd-000000000002"
 usage_stray_id="33333333-cccc-4ddd-8eee-000000000003"
-# Read the whole client response before selecting one line: closing a pipe at
-# head while tmux writes the other shared-team windows can take this test's
-# server down.
-usage_team_created="$(tmux list-windows -t "=$GANG_SESSION" -F '#{session_created}')"
-usage_team_created="${usage_team_created%%$'\n'*}"
-
 # --- The launch record hitch registers -------------------------------------
 "$HITCH" usage-alpha -c bash -d /tmp -t 'github:gangline#421' >/dev/null
 usage_alpha_id="$(window_id usage-alpha)"
+# THE TEAM IS READ ONLY AFTER THIS PART HAS HITCHED INTO IT. This part may
+# begin after the previous part dropped the session's last window, which is
+# how tmux ends a session; gang hitch creates the session when it is absent,
+# so the hitch above is what guarantees there is a team to read.
+# Read the whole client response before selecting one line: closing a pipe at
+# head while tmux writes the other shared-team windows can take this test's
+# server down.
+usage_team_created="$(tmux list-windows -t "=$GANG_SESSION" -F '#{session_created}' 2>/dev/null)" \
+  || usage_team_created=""
+usage_team_created="${usage_team_created%%$'\n'*}"
+if [[ "$usage_team_created" =~ ^[0-9]+$ ]]; then
+  pass "the team epoch is read from a live session this part hitched into"
+else
+  fail "the team epoch is read from a live session this part hitched into" \
+    "no live session '$GANG_SESSION' to read: [$usage_team_created]"
+fi
 equal "hitch registers the launch directory" \
   "/tmp" "$(tmux show-options -wqv -t "$usage_alpha_id" @gl_dir)"
 equal "hitch registers the task label verbatim" \
