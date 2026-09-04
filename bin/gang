@@ -5402,7 +5402,11 @@ cmd_alerts() { # read active conditions; --open changes only their seen state
 
 tick_launch() { # isolate a post-command candidate from the command's own result
   [ -z "${GANG_TICK_INTERNAL:-}" ] || return 0
-  case "${cmd:-}" in alerts|tick|__tick-worker) return 0 ;; esac
+  # The private Stop query is one read inside the adapter's native boundary,
+  # not independent team activity. Letting it launch here made every Stop
+  # start one tick for the query and another for the terminal `gang hook`.
+  # The hook remains the clear Stop's one cooperative edge.
+  case "${cmd:-}" in alerts|tick|__tick-worker|reply-obligations) return 0 ;; esac
   tick_session_live || return 0
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;

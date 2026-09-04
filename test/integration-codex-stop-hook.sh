@@ -743,19 +743,19 @@ excludes "roster does not carry a blocking alarm for retired history" \
 reply_stop_run "$reply_b_pane"
 equal "a vanished sender cannot wedge its debtor at Stop" "{}" "$reply_stop_output"
 
-# THE QUERY CLOSES ITS OWN PIPE. Every gang command launches a detached
-# cooperative tick on its way out, and the adapter reads the query through a
+# THE NATIVE BOUNDARY CLOSES ITS OWN PIPE. A hook launches a detached
+# cooperative tick on its way out, and the adapter reads the hook through a
 # pipe it waits on until EOF. A detached descendant that inherits the write end
-# holds a complete verdict hostage until the tick finishes: the query has
-# answered and the adapter still times out (#195). Hold the tick at its first
-# pass and list the pipe's holders once the query itself has exited: only the
-# reader may remain. The tick is then walked to its commit so its one pass has
-# finished before anything later reads the team.
+# holds a completed boundary hostage until the adapter times out (#195). Hold
+# the tick at its first pass and list the pipe's holders once the hook itself
+# has exited: only the reader may remain. The tick is then walked to its commit
+# so its one pass has finished before anything later reads the team.
 reply_tick_ready="$RUN_ROOT/reply-tick-ready"
 reply_tick_release="$RUN_ROOT/reply-tick-release"
 reply_tick_commit_ready="$RUN_ROOT/reply-tick-commit-ready"
 reply_tick_commit_release="$RUN_ROOT/reply-tick-commit-release"
 reply_tick_pipe="$RUN_ROOT/reply-tick-pipe"
+reply_tick_hook_rc=0
 mkfifo "$reply_tick_ready" "$reply_tick_release" "$reply_tick_pipe" \
   "$reply_tick_commit_ready" "$reply_tick_commit_release"
 cat "$reply_tick_pipe" > "$RUN_ROOT/reply-tick-query.out" &
@@ -765,7 +765,8 @@ GANG_TEST_TICK_READY_FIFO="$reply_tick_ready" \
 GANG_TEST_TICK_RELEASE_FIFO="$reply_tick_release" \
 GANG_TEST_TICK_COMMIT_READY_FIFO="$reply_tick_commit_ready" \
 GANG_TEST_TICK_COMMIT_RELEASE_FIFO="$reply_tick_commit_release" \
-TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations > "$reply_tick_pipe" || true
+TMUX_PANE="$reply_b_pane" "$GANG" hook > "$reply_tick_pipe" \
+  <<<"$reply_stop_payload" || reply_tick_hook_rc=$?
 IFS= read -r -N 1 _ < "$reply_tick_ready"
 # find reports the fd tables it may not read on the way past; the holders it
 # could read are the whole answer, and the reader itself is one of them.
@@ -777,9 +778,36 @@ printf '\n' > "$reply_tick_release"
 IFS= read -r -N 1 _ < "$reply_tick_commit_ready"
 printf '\n' > "$reply_tick_commit_release"
 wait "$reply_tick_reader"
-equal "the query's verdict reached its reader without waiting on the tick" \
-  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)" \
-  "$(<"$RUN_ROOT/reply-tick-query.out")"
+equal "the hook whose pipe closed returned successfully" 0 "$reply_tick_hook_rc"
+equal "the successful hook recorded its Stop boundary" closed \
+  "$(case "$(tmux show-options -wqv -t "$reply_b_id" @gl_turn)" in
+       'closed v2:'*) printf closed ;;
+       *) printf other ;;
+     esac)"
+
+# A clear native Stop has one cooperative retry edge. reply-obligations is the
+# adapter's private, read-only first stage; if it launches its own tick, that
+# Stop produces two whole-team passes. Synchronous test mode is safe here
+# because the stages run directly, with no adapter timeout around the tick:
+# the query produces no pass and the terminal gang hook produces one.
+reply_stop_tick_ledger="$RUN_ROOT/reply-stop-tick-ledger"
+: > "$reply_stop_tick_ledger"
+reply_tick_query="$(GANG_TEST_TICK_MODE=sync \
+  GANG_TEST_TICK_LEDGER="$reply_stop_tick_ledger" \
+  TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "the private Stop query still returns its retired audit" \
+  $'retired\t'"$reply_gone_nonce"$'\treply-a\tsender-gone' "$reply_tick_query"
+equal "the private Stop query launches no cooperative pass" 0 \
+  "$(wc -l < "$reply_stop_tick_ledger" | tr -d ' ')"
+: > "$reply_stop_tick_ledger"
+reply_tick_hook_rc=0
+GANG_TEST_TICK_MODE=sync GANG_TEST_TICK_LEDGER="$reply_stop_tick_ledger" \
+  TMUX_PANE="$reply_b_pane" "$GANG" hook >/dev/null \
+    <<<"$reply_stop_payload" || reply_tick_hook_rc=$?
+equal "the terminal Stop hook succeeds outside an adapter timeout" 0 \
+  "$reply_tick_hook_rc"
+equal "the terminal Stop hook launches the clear boundary's one pass" 1 \
+  "$(wc -l < "$reply_stop_tick_ledger" | tr -d ' ')"
 
 # Adapter failures are ambiguity, never permission. Its one clear arm delegates
 # generic Stop bookkeeping; malformed or failed query paths do not.

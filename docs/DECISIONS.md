@@ -692,7 +692,7 @@ a refusal rather than a guess, because a silently wrong target is worse than no
 target. tmux appends its own flags after the name; that rendering is documented,
 not fought.
 
-## Every Gangline invocation ends with a cooperative tick
+## Every ordinary Gangline invocation ends with a cooperative tick
 
 Every invocation that can address a live team launches one detached, one-shot
 tick after preserving its own result. The tick makes one full pass over every
@@ -2036,3 +2036,13 @@ Quota percentages stay with `gang limits`, cross-host aggregation stays with
 whatever carries the file between hosts, and no success column exists because
 Gangline records no outcome. `docs/records/usage-spec.md` holds those
 follow-ups.
+
+## The private Stop query is not a cooperative edge
+
+The private `reply-obligations` command is the read-only first stage of the
+Stop adapter, not a separate activity edge. Its terminal `gang hook` invocation
+supplies the cooperative tick. Launching from both stages doubled whole-team
+passes for every clear Stop; under a busy team that amplification kept the
+singleton dirty and spent both commands' foreground budgets. A released
+re-Stop still runs the state-mutating `reply-released` command before its hook,
+and each retains its tick. Other commands retain the one-tick rule.
