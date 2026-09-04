@@ -18,7 +18,11 @@ GANG="$ROOT/bin/gang"
 # working tree, uncommitted work included, and runs the gate from the copy.
 TREE_AT_START="$("$ROOT/test/gate.sh" --assert-owned)"
 
-RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gangline-test.XXXXXX")"
+# tmux's Unix socket path has a 107-byte limit. Keep the fixture root compact:
+# guard fixtures add their own nested names and the sandbox's PID namespace can
+# contribute six digits, so the descriptive former prefix made a valid private
+# TMPDIR unusable before a test could state its result.
+RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/gl.XXXXXX")"
 TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
