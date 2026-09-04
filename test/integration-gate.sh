@@ -694,6 +694,11 @@ else
 fi
 contains "the marked fixture still runs its declared suite" \
   "$gate_fixture_out" "integration: every declared part ran"
+# The nested-marker probe is another stand-in gate over the same instruments.
+# Its evidence proves only that it did not take flock, so it must not join the
+# ordinary gate's exactly-once counters below.
+: > "$gate_order"
+: > "$gate_where"
 gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
 equal "the ordinary gate owns a close-on-exec heavy-test lock" \
