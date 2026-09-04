@@ -598,8 +598,17 @@ pane_all() { tmux capture-pane -pJ -S - -t "$(window_id "$1")"; }
 # selectable for mutation calibration. Run it beside the substrate checks and
 # join its complete verdict below: every check still runs, while two independent
 # private fixtures no longer spend the mandatory gate's wall clock in series.
+#
+# Its parent has a private XDG data root already, so remove that inheritance and
+# give the child a writable stand-in for an operator home. A role fixture that
+# forgets its own XDG_DATA_HOME then appends here at drop; the observed empty
+# host-default path turns that omission into a red result without touching the
+# operator's real usage history.
 role_output="$RUN_ROOT/role-briefs.out"
-"$ROOT/test/role-briefs.sh" > "$role_output" 2>&1 &
+role_host_home="$RUN_ROOT/role-fixture-host-home"
+role_host_usage="$role_host_home/.local/share/gangline/usage/events.jsonl"
+env -u XDG_DATA_HOME HOME="$role_host_home" \
+  "$ROOT/test/role-briefs.sh" > "$role_output" 2>&1 &
 role_pid=$!
 
 # THE GATE SELF-TEST BUILDS ONLY ITS OWN GIT FIXTURES. It reads the helpers and
@@ -750,6 +759,10 @@ wait "$role_pid" || role_rc=$?
 role_pid=""
 cat "$role_output"
 [ "$role_rc" -eq 0 ] || exit "$role_rc"
+role_host_usage_rows=0
+[ ! -f "$role_host_usage" ] || role_host_usage_rows="$(wc -l < "$role_host_usage" | tr -d ' ')"
+equal "role fixtures leave the observed host usage path untouched" \
+  "0" "$role_host_usage_rows"
 
 # THE SAME TREE THIS RUN STARTED AGAINST, OR NO VERDICT. A source edit landing
 # mid-run is not caught by either read — bash has already executed whatever it

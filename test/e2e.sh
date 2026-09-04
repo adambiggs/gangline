@@ -384,6 +384,7 @@ PY
   export GANG_CONFIG_DIR="$RUN_ROOT/config"
   export GANG_LOCK_DIR="$RUN_ROOT/locks"
   export GANG_ARCHIVE_DIR="$RUN_ROOT/archive"
+  export XDG_DATA_HOME="$RUN_ROOT/data"
   export GANG_SESSION="gangline-e2e-$$"
 
   # The tmux server this lane starts inherits these, so the harness launched

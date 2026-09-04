@@ -33,6 +33,7 @@ export GANG_TEST_COLLARS=1
 export GANG_CHURN_WAIT=0
 export GANG_LOCK_DIR="$TEST_ROOT/locks"
 export GANG_COLLARS="$TEST_ROOT/collars"
+export XDG_DATA_HOME="$TEST_ROOT/data"
 
 # The focused message fixtures read the Bash stand-in's newest prompt from its
 # complete history so verified delivery does not depend on pane wrapping.
