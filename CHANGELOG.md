@@ -1,5 +1,25 @@
 # Changelog
 
+## [2.10.0](https://github.com/adambiggs/gangline/compare/gangline-v2.9.2...gangline-v2.10.0) (2026-09-04)
+
+
+### Features
+
+* **usage:** report token consumption joined from ccusage ([d93b4c0](https://github.com/adambiggs/gangline/commit/d93b4c0d9a69befe6dcf0e633dc8a9cc6fd6add0))
+
+
+### Bug Fixes
+
+* **alerts:** encode popup option bytes safely ([67752e0](https://github.com/adambiggs/gangline/commit/67752e0f9ca27b5c292cd9266364340d70a5989d))
+* **alerts:** preserve dollar-bearing popup targets ([af5a27d](https://github.com/adambiggs/gangline/commit/af5a27d3391e767e9978dd301f4cc430762a200d))
+* **hitch:** recover startup delivery races ([8a044fc](https://github.com/adambiggs/gangline/commit/8a044fc3910e5991063d8c74910641a0817c8166)), closes [#197](https://github.com/adambiggs/gangline/issues/197)
+* **stop:** coalesce adapter tick launches ([ef8c25b](https://github.com/adambiggs/gangline/commit/ef8c25bdb43690395ac67cebaaccb09b57f11ab4)), closes [#195](https://github.com/adambiggs/gangline/issues/195)
+* **test:** keep gate fixtures out of the heavy queue ([1df8745](https://github.com/adambiggs/gangline/commit/1df874557cb56adb2640d1cad4e1a6cf0c821410))
+* **usage:** isolate team usage records ([1bfb3e0](https://github.com/adambiggs/gangline/commit/1bfb3e02098067af466d8825b6816294e79245f5))
+* **usage:** read adopted pane path without display-message ([948550d](https://github.com/adambiggs/gangline/commit/948550d0fd0bd8db579c91b31e2c185969b15401))
+* **usage:** read team epoch without truncating tmux output ([828a201](https://github.com/adambiggs/gangline/commit/828a20110460b7846de2b04452846176c18e6ccd))
+* **usage:** sanitize C1 event text ([cfb01f4](https://github.com/adambiggs/gangline/commit/cfb01f4439a09c8bc5a3c077842283a5a684b165))
+
 ## [2.9.2](https://github.com/adambiggs/gangline/compare/gangline-v2.9.1...gangline-v2.9.2) (2026-09-03)
 
 
