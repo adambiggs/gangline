@@ -8,6 +8,22 @@
 tick_original_session="$GANG_SESSION"
 tick_original_collars="${GANG_COLLARS:-}"
 
+# The popup stores this word in a tmux option before `sh -c` reads it. Keep
+# the byte proof adjacent to its consumer: a dollar must be encoded without
+# relying on tmux's option rewrite, while ordinary shell-significant bytes
+# still arrive exactly as they started.
+alert_ui_option_quote_program="$(awk '
+  /^shell_quote\(\) \{/ { keep=1 }
+  /^gang_root\(\) \{/ { exit }
+  keep { print }
+' "$GANG")"
+alert_ui_option_quote_program+=$'\nencoded="$(option_shell_quote "$OPTION_QUOTE_FIXTURE")" || exit 1\nOPTION_QUOTE_ENCODED="$encoded" sh -c \'sh -c "printf %s \\"${OPTION_QUOTE_ENCODED}\\""\'\n'
+alert_ui_option_quote_fixture="path \$ quote ' backtick \` hash # slash \\"
+alert_ui_option_quote_result="$(OPTION_QUOTE_FIXTURE="$alert_ui_option_quote_fixture" \
+  bash -c "$alert_ui_option_quote_program")"
+equal "the popup option word round-trips shell-significant bytes" \
+  "$alert_ui_option_quote_fixture" "$alert_ui_option_quote_result"
+
 # THE ALERT CENTER GETS ITS OWN TMUX SERVER. Key tables are server-global, so a
 # binding-conflict fixture on the substrate server would rewrite configuration
 # owned by the other integration parts. This exact private socket contains one
