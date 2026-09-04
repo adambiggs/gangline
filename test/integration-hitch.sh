@@ -701,6 +701,119 @@ excludes "a completed delayed composer leaves no first-run warning" \
   "$(<"$late_output")" "answer it with 'gang attach'"
 "$GANG" drop late-composer >/dev/null
 
+# Readiness and delivery do not share a lock: a harness may start writing after
+# wait_ready accepts its empty box and before inject takes its protected pair of
+# composer readings. This fixture makes that exact transition inside the
+# collar's read seam. The first protected pair disagrees, so no byte may be
+# typed; every later read is the real empty box, so the same foreground hitch
+# has a quiet delivery opportunity without any timer driving the transition.
+cat > "$RUN_ROOT/collars/startup-delivery-race.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+_gl_startup_delivery_real="\$(declare -f collar_input)"
+eval "startup_delivery_real_input \${_gl_startup_delivery_real#collar_input}"
+collar_input() {
+  case " \${FUNCNAME[*]} " in
+    *" composer_settled "*)
+      if [ ! -e "$RUN_ROOT/startup-delivery-first" ]; then
+        : > "$RUN_ROOT/startup-delivery-first"
+        printf ''
+        return 0
+      fi
+      if [ ! -e "$RUN_ROOT/startup-delivery-second" ]; then
+        : > "$RUN_ROOT/startup-delivery-second"
+        printf 'HARNESS_STARTUP_DRAFT'
+        return 0
+      fi
+      ;;
+  esac
+  startup_delivery_real_input "\$1"
+}
+SH
+if startup_delivery_out="$("$GANG" hitch startup-delivery-race \
+    -c startup-delivery-race -d /tmp 2>&1)"; then
+  pass "a startup composer race completes the original hitch"
+else
+  fail "a startup composer race completes the original hitch" \
+    "$startup_delivery_out"
+fi
+# source-guard: producer@042a8d2c6d17: the successful nonce-addressed hitch is the only producer of this startup body, and the empty-composer assertion below independently witnesses its submission
+contains "the raced startup contract reaches the agent" \
+  "$(pane startup-delivery-race)" \
+  "You are startup-delivery-race in Gangline"
+excludes "the completed retry leaves no startup contract waiting" \
+  "$("$GANG" status startup-delivery-race)" "spooled:"
+submitted "the raced startup contract was submitted" startup-delivery-race
+"$GANG" drop startup-delivery-race >/dev/null
+
+# The same race may reveal a first-run prompt rather than the next composer.
+# The collar paints its marker from inject's second protected composer read,
+# after initial readiness has already accepted the empty box. It waits until
+# the pane actually carries that marker before returning the conflicting read,
+# so the first-run verdict can only come from the new startup-delivery retry.
+# One gate observation spends the existing gate budget immediately, proving
+# this path preserves the established live-window-plus-durable-contract
+# recovery rather than treating the prompt as repeated composer churn and
+# rolling the agent back.
+cat > "$RUN_ROOT/collars/startup-delivery-gate.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_LAUNCH="sh -c 'PS1=\"❯ \" exec bash --norc' fixture"
+GANG_OCCUPIED_REGEX='LATE_STARTUP_GATE'
+_gl_startup_gate_real="\$(declare -f collar_input)"
+eval "startup_gate_real_input \${_gl_startup_gate_real#collar_input}"
+collar_input() {
+  local startup_gate_pane startup_gate_try
+  case " \${FUNCNAME[*]} " in
+    *" composer_settled "*)
+      if [ ! -e "$RUN_ROOT/startup-gate-first" ]; then
+        : > "$RUN_ROOT/startup-gate-first"
+        printf ''
+        return 0
+      fi
+      if [ ! -e "$RUN_ROOT/startup-gate-second" ]; then
+        : > "$RUN_ROOT/startup-gate-second"
+        tmux send-keys -t "\$1" "printf 'LATE_STARTUP_GATE\\n'" Enter \
+          || return 3
+        startup_gate_pane=""
+        for startup_gate_try in {1..100}; do
+          startup_gate_pane="\$(tmux capture-pane -pJ -t "\$1")" \
+            || return 3
+          case "\$startup_gate_pane" in
+            *LATE_STARTUP_GATE*) break ;;
+          esac
+          /bin/sleep 0.01
+        done
+        case "\$startup_gate_pane" in
+          *LATE_STARTUP_GATE*) ;;
+          *) return 3 ;;
+        esac
+        printf 'HARNESS_STARTUP_DRAFT'
+        return 0
+      fi
+      ;;
+  esac
+  [ ! -e "$RUN_ROOT/startup-gate-second" ] \
+    || return 1
+  startup_gate_real_input "\$1"
+}
+SH
+startup_gate_rc=0
+startup_gate_out="$(GANG_GATE_LOOKS=1 "$GANG" hitch startup-delivery-gate \
+  -c startup-delivery-gate -d /tmp 2>&1)" || startup_gate_rc=$?
+equal "a gate painted during startup retry keeps the established gate verdict" \
+  4 "$startup_gate_rc"
+contains "the late gate retains the manual recovery" \
+  "$startup_gate_out" "Answer the prompt with 'gang attach'"
+contains "the late gate retains its attributed startup contract" \
+  "$("$GANG" status startup-delivery-gate)" "spooled: 1"
+excludes "the late gate receives none of the startup contract" \
+  "$(pane startup-delivery-gate)" "You are startup-delivery-gate in Gangline"
+"$GANG" drop startup-delivery-gate >/dev/null
+
 cat > "$RUN_ROOT/collars/broken-observer.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1074,9 +1187,10 @@ contains "a delivery-sized doctrine failure leaves its window for inspection" \
   "$(window_names)" "doctrine-pane-overflow"
 "$GANG" drop doctrine-pane-overflow >/dev/null
 
-# Hitch has the same refusal contract as send. Start a fixture whose composer
-# already carries the collar's parked-queue evidence, so inject refuses before
-# pasting and the public hitch boundary must preserve that status and message.
+# Hitch preserves inject's pre-keystroke refusal status. Start a fixture whose
+# composer already carries the collar's parked-queue evidence, so every bounded
+# startup retry refuses before pasting and the public hitch boundary must roll
+# back the window with one composed diagnostic rather than strand an agent.
 cat > "$RUN_ROOT/collars/doctrine-prequeued.sh" <<SH
 # shellcheck shell=bash
 # shellcheck disable=SC2034
@@ -1089,12 +1203,18 @@ doctrine_refusal_out="$("$GANG" hitch doctrine-refusal \
   -c doctrine-prequeued -d /tmp 2>&1)" || doctrine_refusal_rc=$?
 equal "a startup delivery refusal preserves the inject refusal status" \
   "3" "$doctrine_refusal_rc"
-contains "a startup delivery refusal has one diagnostic prefix" \
+contains "a startup delivery refusal names the bounded rollback" \
   "$doctrine_refusal_out" \
-  "gang: startup contract to 'doctrine-refusal' was not delivered: refusing to deliver"
+  "gang: startup contract to 'doctrine-refusal' was not delivered after"
+contains "the startup delivery rollback leaves no live agent" \
+  "$doctrine_refusal_out" \
+  "so gang rolled back the new agent and no live window remains"
+contains "the startup delivery rollback retains the inject refusal" \
+  "$doctrine_refusal_out" "refusing to deliver"
 excludes "a startup delivery refusal does not nest a second diagnostic prefix" \
-  "$doctrine_refusal_out" ": gang: refusing to deliver"
-"$GANG" drop doctrine-refusal >/dev/null
+  "$doctrine_refusal_out" ": gang:"
+excludes "a refused startup delivery leaves no registered window" \
+  "$(window_names)" "doctrine-refusal"
 
 # A queued-composer fixture records the exact startup body before Enter. That
 # record is the witness for the trailing bytes the pane itself cannot display

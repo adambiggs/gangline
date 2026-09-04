@@ -7068,8 +7068,14 @@ EOF
        done <<EOF
 $claims
 EOF
+       # A public caller adds gang's one diagnostic prefix. Inject is itself a
+       # public boundary and its captured refusal already carries that prefix,
+       # so remove it before composing the spool explanation; otherwise hitch's
+       # startup retry prints `gang: ...: gang: ...` on its final rollback.
+       err="${err##*$'\n'}"
+       err="${err#gang: }"
        printf 'spool drain stopped with %s message(s) still waiting: %s\n' \
-         "$n" "${err##*$'\n'}" >&2
+         "$n" "$err" >&2
        [ "$keep_lock" -eq 1 ] || lock_release
        return 3 ;;
     5)
@@ -9524,6 +9530,93 @@ cmd_hitch() {
   esac
   envelope hitch "$msg"
   delivery_err="$(inject "$id" "$ENVELOPE" 2>&1)" || delivery_rc=$?
+  if [ "$delivery_rc" -eq 3 ]; then
+    # READINESS IS NOT A RESERVATION. The harness can begin painting between
+    # wait_ready's accepted composer and inject's locked composer reads. A
+    # pre-keystroke refusal still owns the complete envelope, so commit it to
+    # the window's existing spool before observing another quiet opportunity.
+    # The foreground hitch remains its only retry owner and spends at most the
+    # boot budget; exhaustion removes the exact window this invocation made,
+    # so a failed hitch never leaves a live agent without its contract.
+    spool_write "$id" hitch "$ENVELOPE" "startup contract"
+    local startup_entry="$SPOOL_ENTRY" startup_dir="$SPOOL_DIR" startup_base
+    startup_base="${startup_entry##*/}"
+    local follow_boot="$boot" delivery_looks=0 delivery_done=0 retry_ready=0
+    local gate_seen=0 gate_noted=0
+    local current_id="" current_id_rc=0
+    [ "$follow_boot" -gt 0 ] || follow_boot=1
+    printf '%s\n%s\n' \
+      "$(colour "$C_OK" "queued startup contract for $name — accepted, not yet in the session")" \
+      "$(colour "$C_DIM" "($(spool_count "$id") waiting) startup delivery was refused before typing; this hitch will retry at the next quiet observation for up to $follow_boot observation(s), and nothing further is needed from you")"
+    while [ "$delivery_looks" -lt "$follow_boot" ]; do
+      delivery_looks=$((delivery_looks + 1))
+      retry_ready=0
+      wait_ready "$id" 1 "$name" quiet || retry_ready=$?
+      [ "$retry_ready" -ne 6 ] \
+        || die "$(launch_death_note "$name" "$id" "$GANG_LAUNCH")"
+      if [ "$retry_ready" -eq 5 ]; then
+        gate_seen=$((gate_seen + 1))
+        if [ "$gate_noted" -eq 0 ]; then
+          printf '%s\n' "$(colour "$C_WORK" "'$name' is waiting on a first-run prompt — answer it with 'gang attach'; hitch keeps observing until its input box appears or its gate budget runs out")" >&2
+          hitch_up_attach "$id"
+          gate_noted=1
+        fi
+        [ "$HITCH_UP_MODE" -eq 1 ] || [ "$gate_seen" -lt "$gate_looks" ] \
+          || hitch_gate_unanswered "$name" "$id" "$gate_seen"
+        sleep 1
+        delivery_looks=$((delivery_looks - 1))
+        continue
+      fi
+      [ "$retry_ready" -eq 0 ] || continue
+      delivery_rc=0
+      delivery_err="$(spool_drain "$id" 2>&1)" || delivery_rc=$?
+      case "$delivery_rc" in
+        0) delivery_done=1; break ;;
+        3) continue ;;
+        4) if ! spool_existing "$id" || [ "$SPOOL_DIR" != "$startup_dir" ] \
+              || [ ! -d "$startup_dir" ]; then
+             fail 1 "startup contract to '$name' cannot be accounted for during its quiet-composer retry: its original spool is no longer attached to the window"
+           fi
+           if [ -e "$startup_entry" ] || [ -e "$startup_dir/sending-$startup_base" ] \
+             || [ -e "$startup_dir/failed-$startup_base" ] \
+             || [ -e "$startup_dir/unverified-$startup_base" ]; then
+             fail 1 "startup contract to '$name' is still held in its spool after another delivery worker crossed this hitch"
+           fi
+           delivery_done=1
+           break ;;
+        5) delivery_err="${delivery_err#gang: }"
+           fail 5 "startup contract to '$name' was typed into its composer and its submission could not be verified — it may already have been delivered, so gang will not send it again: ${delivery_err:-delivery could not be confirmed}" ;;
+        *) delivery_err="${delivery_err#gang: }"
+           fail "$delivery_rc" "startup contract to '$name' remains in spool state during its quiet-composer retry: ${delivery_err:-delivery failed without an error}" ;;
+      esac
+    done
+    if [ "$delivery_done" -eq 1 ]; then
+      glyph_write "$id" "-busy-"
+      printf '%s\n' "$(colour "$C_OK" "delivered queued startup contract to $name")"
+      return 0
+    fi
+    if ! spool_existing "$id" || [ "$SPOOL_DIR" != "$startup_dir" ] \
+        || [ ! -d "$startup_dir" ]; then
+      fail 1 "startup contract to '$name' cannot be accounted for before rollback: its original spool is no longer attached to the window"
+    fi
+    if [ -e "$startup_dir/sending-$startup_base" ] \
+        || [ -e "$startup_dir/failed-$startup_base" ] \
+        || [ -e "$startup_dir/unverified-$startup_base" ]; then
+      fail 1 "startup contract to '$name' is held in a delivery state that cannot be rolled back safely"
+    fi
+    if [ ! -e "$startup_entry" ]; then
+      glyph_write "$id" "-busy-"
+      printf '%s\n' "$(colour "$C_OK" "delivered queued startup contract to $name")"
+      return 0
+    fi
+    current_id="$(win_id "$name")" || current_id_rc=$?
+    [ "$current_id_rc" -eq 0 ] && [ "$current_id" = "$id" ] \
+      || fail 1 "startup contract to '$name' was not delivered after $delivery_looks quiet-composer observation(s), and gang could not prove that the registered window still names the one this hitch created, so it refused to tear down an uncertain target"
+    cmd_drop "$name"
+    [ "$opened_session" -eq 0 ] || session_live || team_socket_forget "$SESSION"
+    delivery_err="${delivery_err#gang: }"
+    fail 3 "startup contract to '$name' was not delivered after $delivery_looks quiet-composer observation(s), so gang rolled back the new agent and no live window remains: ${delivery_err:-delivery was repeatedly refused before typing}"
+  fi
   if [ "$delivery_rc" -ne 0 ]; then
     delivery_err="${delivery_err#gang: }"
     fail "$delivery_rc" "startup contract to '$name' was not delivered: ${delivery_err:-delivery failed without an error}"
