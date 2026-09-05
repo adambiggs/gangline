@@ -286,10 +286,22 @@ def main(argv: list[str]) -> int:
     try:
         settle_stop(gang, raw)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        # THE REFUSAL SAYS WHAT THE QUERY FOUND. A released re-Stop reaches
+        # here with debt standing; calling its provenance clear sent the
+        # debtor to repair a hook path while its reply was still owed.
+        if blocking:
+            failure = (
+                "the turn was released with a reply still owed, but the "
+                "native Stop boundary could not be closed"
+            )
+        else:
+            failure = (
+                "peer-reply provenance is clear, but the native Stop boundary "
+                "could not be closed"
+            )
         refuse(
             exc,
-            "peer-reply provenance is clear, but the native Stop boundary "
-            "could not be closed",
+            failure,
             "preserve the current state and repair the Gangline hook path",
         )
         return 0

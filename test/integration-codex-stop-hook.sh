@@ -1118,6 +1118,15 @@ equal "a release Gangline could not record still releases" "{}" "$reply_fake_out
 # source-guard: whole-surface@85ec03f4a6b7: the complete fake hook log orders the failed release before the boundary, so any producer is valid evidence
 equal "the boundary is closed even when the release report failed" \
   $'released\nhook' "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_QUERY='owed\t2222222222222222\tlive-peer\tlive\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@9b4301c3b50b: the complete fake-adapter stdout is the failed-boundary reason after a release, so any producer is valid evidence
+contains "a failed boundary after a release names the debt still standing" \
+  "$reply_fake_out" "released with a reply still owed"
+excludes "a failed boundary after a release does not call the provenance clear" \
+  "$reply_fake_out" "provenance is clear"
 # THE QUERY TIMEOUT IS THE BEHAVIOUR UNDER TEST, so its clock is scaled, not
 # stopped. The fake never answers: it opens a FIFO nobody writes and stays
 # there until the adapter kills it. Measured margin: the fake answers a quiet
