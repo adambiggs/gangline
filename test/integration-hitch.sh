@@ -1947,20 +1947,117 @@ PATH="$RUN_ROOT/scope-bin:$PATH" GANG_SCOPE=on \
   "$HITCH" scoped -c bash -d /tmp >/dev/null
 tmux set-environment -g PATH "$scope_path"
 scope_line="$(tmux display-message -p -t "$(window_id scoped)" '#{pane_start_command}')"
+scope_unit="$(tmux show-options -wqv -t "$(window_id scoped)" @gl_scope)"
 contains "a scoped hitch launches inside its own transient user scope" \
   "$scope_line" "systemd-run --user --scope"
-contains "and the scope is named after the session and the agent" \
-  "$scope_line" "--unit='gangline-$GANG_SESSION-scoped.scope'"
+case "$scope_unit" in
+  "gangline-$GANG_SESSION-scoped-"[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9].scope)
+    pass "and the scope has an immutable per-hitch identity" ;;
+  *) fail "and the scope has an immutable per-hitch identity" "$scope_unit" ;;
+esac
+contains "and the launch uses the unit recorded on the window" \
+  "$scope_line" "--unit='$scope_unit'"
 contains "memory accounting is stated, not inherited" \
   "$scope_line" "-p MemoryAccounting=yes"
 contains "the scope wraps the launch rather than replacing it" \
   "$scope_line" "PS1='❯ ' bash --norc"
 contains "and systemd-run was invoked with the unit, not merely handed it" \
-  "$(<"$RUN_ROOT/scope.argv")" "--unit=gangline-$GANG_SESSION-scoped.scope"
+  "$(<"$RUN_ROOT/scope.argv")" "--unit=$scope_unit"
 printf 'MARK_SCOPED' | "$GANG" send --to scoped --from tester --stdin >/dev/null
 # source-guard: producer@8daa1cf9ed62: the verified send just above is the only producer of MARK_SCOPED — no fixture, collar or other sender writes that literal, and the scoped window was hitched empty
 contains "a scoped agent is an ordinary agent" "$(pane scoped)" "MARK_SCOPED"
+"$GANG" adopt scoped -c bash >/dev/null
+equal "re-adopting a registered agent preserves its launch scope" \
+  "$scope_unit" "$(tmux show-options -wqv -t "$(window_id scoped)" @gl_scope)"
 "$GANG" drop scoped >/dev/null
+
+# A REGISTERED NAME CAN MOVE WHILE THE PROCESS STAYS PUT. A scope named from
+# that mutable registration still occupies the old name after `gang rename`,
+# so the registry says the name is free while the next hitch's systemd
+# preflight says it is not. This fixture gives each simulated systemd-run an
+# explicit live-unit record bound to the process that systemd-run execs. An
+# implementation that never starts the scope cannot make it active; a stale
+# record cannot remain active after the recorded scoped process is gone.
+mkdir -p "$RUN_ROOT/scope-rename-bin" "$RUN_ROOT/scope-rename-live"
+cat > "$RUN_ROOT/scope-rename-bin/systemd-run" <<SH
+#!/bin/sh
+unit=''
+while [ "\${1:-}" != env ]; do
+  case "\${1:-}" in --unit=*) unit="\${1#--unit=}" ;; esac
+  [ \$# -gt 0 ] || exit 97
+  shift
+done
+[ -n "\$unit" ] || exit 98
+live='$RUN_ROOT/scope-rename-live/'"\$unit"
+printf '%s\n' "\$\$" > "\$live"
+exec "\$@"
+SH
+cat > "$RUN_ROOT/scope-rename-bin/systemctl" <<SH
+#!/bin/sh
+[ "\${1:-}" != --user ] || shift
+case "\${1:-}" in
+  show) exit 0 ;;
+  is-active)
+    while [ "\$#" -gt 0 ] && [ "\$1" != -- ]; do shift; done
+    [ "\$#" -eq 0 ] || shift
+    unit="\${1:-}"
+    live="$RUN_ROOT/scope-rename-live/\$unit"
+    [ -f "\$live" ] || exit 3
+    IFS= read -r pid < "\$live" || exit 3
+    if ! kill -0 "\$pid" 2>/dev/null; then
+      rm -f -- "\$live"
+      exit 3
+    fi
+    printf '%s\n' active
+    exit 0
+    ;;
+  *) exit 0 ;;
+esac
+SH
+chmod +x "$RUN_ROOT/scope-rename-bin/systemd-run" \
+  "$RUN_ROOT/scope-rename-bin/systemctl"
+tmux set-environment -g PATH "$RUN_ROOT/scope-rename-bin:$scope_path"
+PATH="$RUN_ROOT/scope-rename-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopeold -c bash -d /tmp >/dev/null
+"$GANG" rename scopeold scopekept >/dev/null
+scope_reuse_rc=0
+PATH="$RUN_ROOT/scope-rename-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopeold -c bash -d /tmp >/dev/null 2>&1 || scope_reuse_rc=$?
+equal "rename frees the old registration for another scoped hitch" \
+  0 "$scope_reuse_rc"
+scope_kept_id="$(window_id scopekept)"
+scope_old_id="$(window_id scopeold)"
+scope_kept_unit="$(tmux show-options -wqv -t "$scope_kept_id" @gl_scope 2>/dev/null || :)"
+scope_old_unit=""
+[ -z "$scope_old_id" ] \
+  || scope_old_unit="$(tmux show-options -wqv -t "$scope_old_id" @gl_scope 2>/dev/null || :)"
+[ -n "$scope_kept_unit" ] \
+  && pass "a scoped hitch records its immutable unit on the window" \
+  || fail "a scoped hitch records its immutable unit on the window" "no @gl_scope value"
+[ -n "$scope_old_unit" ] \
+  && pass "the replacement hitch records its own immutable unit" \
+  || fail "the replacement hitch records its own immutable unit" "no @gl_scope value"
+case "$scope_kept_unit" in
+  "gangline-$GANG_SESSION-scopeold-"[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9].scope)
+    pass "the renamed scope keeps its human hitch-time label" ;;
+  *) fail "the renamed scope keeps its human hitch-time label" "$scope_kept_unit" ;;
+esac
+excludes "renamed and replacement agents have distinct immutable scope identities" \
+  "$scope_old_unit" "$scope_kept_unit"
+equal "explain maps the renamed registration to its exact scope" \
+  "scope: $scope_kept_unit" \
+  "$("$GANG" explain scopekept | sed -n '/^scope:/p')"
+equal "the renamed agent's recorded scope remains active" active \
+  "$(PATH="$RUN_ROOT/scope-rename-bin:$PATH" systemctl --user is-active -- "$scope_kept_unit" 2>/dev/null || printf inactive)"
+equal "the replacement agent's recorded scope is independently active" active \
+  "$(PATH="$RUN_ROOT/scope-rename-bin:$PATH" systemctl --user is-active -- "$scope_old_unit" 2>/dev/null || printf inactive)"
+"$GANG" drop scopekept >/dev/null
+[ -z "$scope_old_id" ] || "$GANG" drop scopeold >/dev/null
+equal "dropping the renamed agent collects its immutable scope" inactive \
+  "$(PATH="$RUN_ROOT/scope-rename-bin:$PATH" systemctl --user is-active -- "$scope_kept_unit" 2>/dev/null || printf inactive)"
+equal "dropping the replacement agent collects its immutable scope" inactive \
+  "$(PATH="$RUN_ROOT/scope-rename-bin:$PATH" systemctl --user is-active -- "$scope_old_unit" 2>/dev/null || printf inactive)"
+tmux set-environment -g PATH "$scope_path"
 
 # A PID-isolated sandbox can reach the host system bus while its direct user
 # bus is unusable. The local-host machine transport must carry both the manager
@@ -2019,8 +2116,12 @@ equal "a refused scope leaves no window behind" "" "$(window_id scopeless)"
 refuses "a scope setting that is neither on nor off is refused" \
   "GANG_SCOPE must be on or off" \
   env GANG_SCOPE=yes "$GANG" config
-refuses "a scope name still held by an earlier agent is refused, not respawned" \
-  "is still running, so something from an earlier 'scopeheld' outlived its window" \
+refuses "an immutable scope identity already active is refused, not respawned" \
+  "is still running, so this per-hitch scope identity collides" \
+  env PATH="$RUN_ROOT/scope-taken-bin:$PATH" GANG_SCOPE=on \
+    "$GANG" hitch scopeheld -c bash -d /tmp
+refuses "a per-hitch identity collision says to retry, not stop its owner" \
+  "retry the hitch to mint another identity" \
   env PATH="$RUN_ROOT/scope-taken-bin:$PATH" GANG_SCOPE=on \
     "$GANG" hitch scopeheld -c bash -d /tmp
 equal "a refused scope name leaves no window behind" "" "$(window_id scopeheld)"
@@ -2070,8 +2171,11 @@ contains "and that unit wraps the new-session that forks it" \
   "$scope_server_argv" "tmux new-session"
 contains "memory accounting is stated for the server too" \
   "$scope_server_argv" "--unit=gangline-$scope_server_session.scope -p MemoryAccounting=yes"
-contains "the agent inside it still gets a unit of its own" \
-  "$scope_server_argv" "--unit=gangline-$scope_server_session-srvlead.scope"
+case "$scope_server_argv" in
+  *"--unit=gangline-$scope_server_session-srvlead-"[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9].scope*)
+    pass "the agent inside it still gets an immutable unit of its own" ;;
+  *) fail "the agent inside it still gets an immutable unit of its own" "$scope_server_argv" ;;
+esac
 env TMUX_TMPDIR="$scope_server_root" GANG_SESSION="$scope_server_session" \
     GANG_LOCK_DIR="$scope_server_root/locks" \
     GANG_ARCHIVE_DIR="$scope_server_root/archive" \

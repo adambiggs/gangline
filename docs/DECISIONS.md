@@ -2050,3 +2050,39 @@ passes for every clear Stop; under a busy team that amplification kept the
 singleton dirty and spent both commands' foreground budgets. A released
 re-Stop still runs the state-mutating `reply-released` command before its hook,
 and each retains its tick. Other commands retain the one-tick rule.
+
+## Cgroup identity belongs to the hitch, not the agent name
+
+An agent's registered name is mutable: `gang rename` changes it without
+restarting the pane. Naming its transient systemd scope from that registration
+therefore left the old unit active after the old name was free, and the next
+`hitch` of that name was refused by a resource the registry said belonged to
+someone else.
+
+Each scoped hitch now mints an immutable 16-hex-digit identity and launches in
+`gangline-<session>-<hitch-name>-<hitch-id>.scope`, recording the exact unit in
+the window's `@gl_scope` and exposing it through `gang explain`. The hitch-time
+name remains only as a human label: rename leaves that label, the record, and
+the running cgroup alone, while the nonce lets a replacement reuse the old
+registered name. Moving a live process to a newly named scope was rejected
+because it would turn a metadata rename into a second platform mutation with a
+separately failing boundary; a partial move could leave the registration and
+actual cgroup contradicting each other.
+
+The old deterministic name made a leaked scope discoverable on the next hitch
+of that agent name. Per-hitch identity deliberately gives up that collision as
+a discovery path: normal teardown relies on systemd-run's `--collect`, while a
+detached child may keep its unit alive after the window and its exact
+`@gl_scope` record are gone. Keeping the hitch-time label in the unit preserves
+human attribution in systemd's unit list; it does not reserve the registration
+or prevent another hitch of that name.
+
+Drop, roster, usage, tick, and explain already resolve an agent to its window
+before acting or observing. They continue through that stable window identity
+and never synthesize a unit from the current name; the window's `@gl_scope` is
+the only registration-to-unit record. A resumed hitch overwrites it with its
+new unit, an unscoped hitch writes it empty, and a newly adopted window gets an
+empty record because Gangline did not launch that process. Re-adopting an
+already registered agent preserves the scope Gangline launched. The tmux
+server's team scope remains `gangline-<session>.scope` because the team name is
+not changed in place.

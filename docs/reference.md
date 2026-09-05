@@ -198,11 +198,14 @@ dash, and must be unique in the team. `hitch` is reserved as the startup-envelop
 sender.
 
 With `GANG_SCOPE=on` the launch is wrapped in a transient systemd user scope,
-`gangline-<session>-<agent>.scope`, with `MemoryAccounting=yes` stated rather
-than inherited. `systemd-run --scope` execs the harness, so the pane process,
-its tty, its environment, and its exit status are the harness's own; only the
-cgroup changes. The setting is off unless declared, and a host that has no
-`systemd-run` or no reachable user manager refuses the hitch instead of
+`gangline-<session>-<hitch-name>-<hitch-id>.scope`, with
+`MemoryAccounting=yes` stated rather than inherited. The hitch name is a human
+label captured at launch; the random 16-hex-digit hitch id is the immutable
+identity. The exact unit is recorded as `@gl_scope` on the window and printed
+by `gang explain <name>`. `systemd-run --scope` execs the harness, so the pane
+process, its tty, its environment, and its exit status are the harness's own;
+only the cgroup changes. The setting is off unless declared, and a host that has
+no `systemd-run` or no reachable user manager refuses the hitch instead of
 launching an unscoped agent.
 
 Gangline tries the process's direct user bus first. If that bus is unusable but
@@ -212,11 +215,13 @@ inside a PID-isolated sandbox hitch a scoped agent without granting the caller a
 different filesystem policy; the harness still launches from tmux's host
 context.
 
-The scope name is stable, so a name still held by something an earlier agent
-left behind refuses the hitch and names the unit to stop, rather than failing
-inside tmux as a window that died at launch. `adopt` registers a window Gangline
-did not launch and so cannot scope one; an adopted agent stays in whatever
-cgroup its window already had.
+The unit identity, unlike the registered agent name, stays stable for that
+hitch. A unit already holding the newly minted identity refuses the hitch and
+names it for inspection, then says to retry and mint another identity rather
+than stopping the existing owner. `adopt` registers a window Gangline did not
+launch and so cannot scope one; a newly adopted agent stays in whatever cgroup
+its window already had and gets an empty `@gl_scope` record. Re-adopting an
+agent Gangline already registered preserves its recorded launch scope.
 
 The tmux server that holds the team is scoped the same way, as
 `gangline-<session>.scope`, so its death is a named unit stopping rather than an
@@ -308,7 +313,11 @@ and attempts to send to the old name fail rather than reaching it by title.
 
 Renaming does not replace the window or restart its harness. Its `@gl_spool`
 token is unchanged, so messages already parked for the agent remain reachable
-and drain normally under the new name.
+and drain normally under the new name. Its immutable `@gl_scope` unit is also
+unchanged. A later scoped hitch may therefore take the old registered name while
+the renamed agent remains alive; lifecycle and observation commands continue to
+resolve both agents by their window registrations and never reconstruct a scope
+from either name.
 
 ### `gang attach`
 

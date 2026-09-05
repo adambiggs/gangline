@@ -9064,8 +9064,10 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
 # swap, is never selected, and the mechanism would fail silently.
 SCOPE_PREFIX=""
 SCOPE_ARGV=()
+SCOPE_UNIT=""
 scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
-                     # $3 = what a name still held says outlived what;
+                     # $3 = what a name still held says outlived what,
+                     # optional $4 = retry when a per-hitch identity collided;
                      # SCOPE_PREFIX / SCOPE_ARGV = the wrapper, empty when off
   local manager_user systemctl_recover='systemctl --user'
   local -a scope_systemctl=(systemctl --user)
@@ -9092,10 +9094,13 @@ scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
   [ "${#1}" -le 255 ] \
     || die "GANG_SCOPE=on cannot give $2 its own cgroup: '$1' is longer than a systemd unit name may be"
   # A scope outlives what it held when a detached child was left behind, and the
-  # name is stable, so a relaunch would meet its own predecessor. systemd-run's
-  # failure would land inside tmux as a window that died at launch; the operator
-  # gets the unit and the remedy here instead.
+  # unit identity is stable, so reusing it would meet its own predecessor.
+  # systemd-run's failure would land inside tmux as a window that died at
+  # launch; the operator gets the unit and the remedy here instead.
   if "${scope_systemctl[@]}" is-active --quiet -- "$1" 2>/dev/null; then
+    if [ "${4:-}" = retry ]; then
+      die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$systemctl_recover status $1'; retry the hitch to mint another identity"
+    fi
     die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$systemctl_recover status $1' and release the name with '$systemctl_recover stop $1'"
   fi
   SCOPE_ARGV=(systemd-run --user --scope --quiet --collect --unit="$1" -p MemoryAccounting=yes)
@@ -9129,9 +9134,19 @@ tmux_guard_wrap() {
   GANG_LAUNCH="export PATH=$(shell_quote "$dir"):\$PATH; export GANG_TMUX_GUARD_LOG_DIR=$(shell_quote "$log_dir"); export GANG_TMUX_GUARD_AGENT=1; $GANG_LAUNCH"
 }
 
-scope_launch_wrap() { # $1 = agent name; prefix GANG_LAUNCH with its own scope
-  scope_prefix_for "gangline-$SESSION-$1.scope" "'$1'" \
-    "something from an earlier '$1' outlived its window"
+scope_launch_wrap() { # $1 = agent name; mint its immutable per-hitch scope
+  local scope_id
+  SCOPE_UNIT=""
+  [ "$GANG_SCOPE" = on ] || return 0
+  scope_id="$(mint_message_nonce)"
+  [ -n "$scope_id" ] \
+    || die "GANG_SCOPE=on cannot mint a stable scope identity for '$1'"
+  # The name is a human label, not the identity. Keeping the hitch-time label
+  # makes a detached child attributable after its window record is gone; the
+  # nonce is what lets a renamed agent and a replacement share that label.
+  SCOPE_UNIT="gangline-$SESSION-$1-$scope_id.scope"
+  scope_prefix_for "$SCOPE_UNIT" "'$1'" \
+    "this per-hitch scope identity collides with a unit that outlived its window" retry
   [ -z "$SCOPE_PREFIX" ] || GANG_LAUNCH="$SCOPE_PREFIX $GANG_LAUNCH"
 }
 
@@ -9144,7 +9159,8 @@ server_running() { # 0 = a tmux server is already answering on this socket
 
 # THE SERVER THAT HOLDS THE TEAM IS THE ONE PROCESS WHOSE DEATH ENDS ALL OF IT,
 # and until this it was the only one gangline owned no account of. Each agent is
-# launched into `gangline-<session>-<agent>.scope`; the server was started by
+# launched into `gangline-<session>-<hitch-name>-<hitch-id>.scope`; the
+# server was started by
 # whatever ran `gang up` and inherited that shell's cgroup — an ssh login scope
 # whose number means nothing here. So a whole team could vanish and leave
 # journald nothing but "session-NNNN.scope: Deactivated successfully", which
@@ -9418,6 +9434,12 @@ cmd_hitch() {
   # old native process; only the new launch's own Stop may witness another.
   waiting_clear "$id"
   hitch_register "$id" "$name" @gl_root "$ROOT"
+  # THE REGISTERED NAME MAY MOVE. Keep the cgroup's immutable launch identity
+  # on the window that owns it, so no later lifecycle path has to reconstruct a
+  # unit from @gl_agent and a rename cannot reserve its old name accidentally.
+  # Written empty as well: a resume is a new hitch and must not retain the dead
+  # launch's scope record when scoping is now off.
+  hitch_register "$id" "$name" @gl_scope "$SCOPE_UNIT"
   # WRITTEN ON EVERY HITCH, INCLUDING THE EMPTY ONES: a resume respawns a
   # window whose options outlive the old launch, and the model, effort and
   # task an agent is charged under are this launch's, not the last one's.
@@ -11345,7 +11367,7 @@ explain_blocked_report() {
 }
 
 cmd_explain() {
-  local name="${1:-}" pane harness_identity="" harness_lost="" harness_unreadable=""
+  local name="${1:-}" pane scope_unit="" harness_identity="" harness_lost="" harness_unreadable=""
   [ $# -le 1 ] || die "explain: unexpected argument '$2'"
   case "$name" in ''|-*) cmd_help explain; exit 1 ;; esac
   resolve "$name"
@@ -11383,6 +11405,8 @@ cmd_explain() {
   EXPLAINING=0
   printf 'agent: %s\npane: %s\ncollar: %s\nstate: %s\n' \
     "$name" "$pane" "$AGENT_COLLAR" "$STATE_NOW_RESULT"
+  scope_unit="$(tmux show-options -wqv -t "$AGENT_ID" @gl_scope 2>/dev/null)" || scope_unit=""
+  printf 'scope: %s\n' "${scope_unit:-not recorded}"
   harness_identity="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity 2>/dev/null)" || harness_identity=""
   harness_lost="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_lost 2>/dev/null)" || harness_lost=""
   harness_unreadable="$(tmux show-options -wqv -t "$AGENT_ID" @gl_harness_identity_unreadable 2>/dev/null)" || harness_unreadable=""
@@ -12656,7 +12680,7 @@ cmd_composer() { # what a human actually typed — capture shows the raw pane,
 }
 
 cmd_adopt() { # register an EXISTING tmux window as a gang agent
-  local name="" collar="" id rc=0 hitched_by="" pane_dir=""
+  local name="" collar="" id rc=0 hitched_by="" pane_dir="" registered=""
   name="${1:-}"; case "$name" in ''|-*) usage_die ;; esac; shift
   valid_name "$name" \
     || die "adopt: '$name' is not a usable agent name — hitch and gangline are reserved for Gangline; other names use letters, digits, dot, dash and underscore only. Rename the window first (tmux rename-window)"
@@ -12674,6 +12698,7 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   id="$(win_id "$name")" || { rc=$?; win_id_missing "$rc" "no window '$name' in session '$SESSION' to adopt"; }
   launch_dead "$id" \
     && die "adopt: nothing is running in window '$name', so there is no harness to adopt. Restart the harness there and retry, or if tmux is holding the dead window remove it with: tmux kill-window -t '$id'"
+  registered="$(tmux show-options -wqv -t "$id" @gl_agent 2>/dev/null)" || registered=""
   registered_identity_guard "$id" "$name" adopt "$collar"
   usage_lights_parse "$GANG_USAGE_LIGHTS" >/dev/null || true
   auto_resume_parse "$GANG_AUTO_RESUME" >/dev/null || true
@@ -12684,6 +12709,11 @@ cmd_adopt() { # register an EXISTING tmux window as a gang agent
   tmux set-option -w -t "$id" allow-rename off
   tmux set-option -w -t "$id" @gl_agent "$name"
   tmux set-option -w -t "$id" @gl_collar "$collar"
+  # A newly adopted process was launched outside Gangline, so its cgroup
+  # identity is unknown rather than inferred from the name being registered.
+  # Re-adoption of an already registered agent is metadata repair and must not
+  # erase a scope Gangline launched and still owns.
+  [ -n "$registered" ] || tmux set-option -w -t "$id" @gl_scope ""
   hitched_by="$(hitched_by_of)"
   tmux set-option -w -t "$id" @gl_hitched_by "${hitched_by%%$'\t'*}"
   tmux set-option -w -t "$id" @gl_hitched_by_name "${hitched_by#*$'\t'}"
