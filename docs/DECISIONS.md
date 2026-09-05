@@ -2086,3 +2086,13 @@ empty record because Gangline did not launch that process. Re-adopting an
 already registered agent preserves the scope Gangline launched. The tmux
 server's team scope remains `gangline-<session>.scope` because the team name is
 not changed in place.
+
+## A message answers only what its sender has read
+
+Outbound mail correlates to a peer's request only when the sender's own native
+prompt proof of that request stands. A request with delivery proof alone is
+queued in the harness, not in the sender's context, and a message that crosses
+it settled a debt the debtor had never seen; the crossed request now stays
+audit until it is read and is owed then, and the crossing message is a request
+of its own. The contract already asks a crossed message to be acknowledged in
+the next reply, which is only possible if the crossing does not answer it.

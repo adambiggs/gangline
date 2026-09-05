@@ -5511,13 +5511,15 @@ EOF
 #
 # This is deliberately not one mutable state word. Native prompt observation
 # and transport verification can finish concurrently; independent facts cannot
-# overwrite each other. A request is owed only with both prompt and delivery
-# proof. A correlated reply adds settlement proof to the original request:
-# with either arrival witness beside it that reply discharges the obligation,
-# because a reply Gangline correlated and delivered is itself evidence the
-# request reached the debtor, and the missing witness has no later writer. The
-# immutable record remains as its audit trail until the window goes away. Any
-# missing, malformed, or orphaned evidence fails closed.
+# overwrite each other. A request is owed once its prompt proof lands. A
+# correlated reply adds settlement proof to the original request: with either
+# arrival witness beside it that reply discharges the obligation, because a
+# reply Gangline correlated and delivered is itself evidence the request
+# reached the debtor, and the missing witness has no later writer. Outbound
+# mail correlates only to records the sender has read (prompt proof), so a
+# message crossing an unread request is fresh business rather than its answer.
+# The immutable record remains as its audit trail until the window goes away.
+# Any missing, malformed, or orphaned evidence fails closed.
 REPLY_STATE_PREFIX='@gl_reply_'
 REPLY_PROMPT_PREFIX='@gl_rprompt_'
 REPLY_DELIVERY_PREFIX='@gl_rdelivery_'
@@ -5793,10 +5795,17 @@ reply_outgoing_classify() { # $1 sender window, $2 target window
   rows="$(reply_state_rows "$1")" || rc=$?
   [ "$rc" -eq 0 ] \
     || die "send: $(reply_rows_error "$rows"); no message was typed and no existing obligation was settled"
+  # CORRELATE ONLY TO WHAT THE SENDER HAS READ. A request with delivery proof
+  # alone is still queued in the harness, so an outbound message crossing it
+  # cannot be its answer; treating it as one settled a debt the debtor never
+  # saw.
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
-    case "$state" in prompt|verified|owed) ;; *) continue ;; esac
-    [ "$mode" = request ] && [ "$token" = "$target_token" ] || continue
+    case "$mode:$state" in
+      request:prompt|request:owed) ;;
+      *) continue ;;
+    esac
+    [ "$token" = "$target_token" ] || continue
     matched="${matched:+$matched,}$nonce"
   done <<<"$rows"
   [ -n "$matched" ] || return 0

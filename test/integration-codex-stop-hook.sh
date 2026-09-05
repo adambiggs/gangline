@@ -81,6 +81,17 @@ reply_nonce_for_body() { # target window, sender, mode, body -> correlated nonce
   return 1
 }
 
+reply_record_wire() { # window nonce body -> the exact envelope its record digests
+  local value _marker _token witness mode _digest replies _extra
+  value="$(tmux show-options -wqv -t "$1" "@gl_reply_$2")"
+  IFS=: read -r _marker _token witness mode _digest replies _extra <<<"$value"
+  if [ "$mode" = request ]; then
+    reply_request_envelope "$witness" "$2" "$3"
+  else
+    reply_response_envelope "$witness" "$2" "$replies" "$3"
+  fi
+}
+
 reply_request_envelope() { # sender nonce body
   printf '[gang:%s#%s] %s [/gang:%s#%s]' "$1" "$2" "$3" "$1" "$2"
 }
@@ -175,54 +186,83 @@ reply_stop_run "$reply_b_pane"
 equal "the prompt-first sender may idle after both proofs complete" \
   "{}" "$reply_stop_output"
 
-# Direct verified request. Delivery verification and the native prompt witness
-# are independent facts and may arrive in either order.
+# Direct verified request. Delivery proof means the harness accepted the paste,
+# not that the request reached the agent: a harness that queues typed input
+# mid-turn submits it only at a later boundary. Demanding the reply here blocked
+# the debtor, boundary after boundary, for a message its pane still listed as
+# queued.
 printf '%s' REQ_DELIVERY_ONLY \
   | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
 reply_delivery_only="$(reply_nonce_for_body \
   "$reply_b_id" reply-a request REQ_DELIVERY_ONLY)"
 reply_delivery_only_wire="$(reply_request_envelope reply-a \
   "$reply_delivery_only" REQ_DELIVERY_ONLY)"
-# Delivery proof means the harness accepted the paste, not that the request
-# reached the agent: a harness that queues typed input mid-turn submits it only
-# at a later boundary. Demanding the reply here blocked the debtor, boundary
-# after boundary, for a message its pane still listed as queued.
 equal "delivery without its native prompt witness is audit, not debt" \
   $'clear\t-\t-\t-' \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
 equal "a request the debtor has not yet seen permits idle" "{}" "$reply_stop_output"
+# A message that crosses an unread request does not answer it. Correlation
+# needs the sender's own prompt proof of the request: without it the outbound
+# is fresh business, the request stays audit until it is read, and it is owed
+# then. Auto-correlating here settled a request its debtor never saw. The
+# crossed request is answered before its recipient reads the crossing message:
+# a prompt opens the reader's native turn, and mail sent into an open turn
+# parks in the spool instead of landing as a record.
+printf '%s' CROSSED_DELIVERY_ONLY \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_crossed_nonce="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b request CROSSED_DELIVERY_ONLY || true)"
+equal "a message crossing an unread request is a request, not its reply" \
+  request \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_crossed_nonce" | cut -d: -f4)"
+equal "the crossing message settles nothing its sender has not read" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_delivery_only")"
+equal "the unread request stays audit after the crossing message" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_b_pane" "$reply_delivery_only_wire"
+equal "the late prompt proof arms the crossed request" \
+  $'owed\t'"$reply_delivery_only"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+contains "the crossed request asks for its reply once read" \
+  "$reply_stop_output" "reply to reply-a"
 printf '%s' ACK_DELIVERY_ONLY \
   | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
 reply_delivery_ack_nonce="$(reply_nonce_for_body \
-  "$reply_a_id" reply-b reply ACK_DELIVERY_ONLY)"
+  "$reply_a_id" reply-b reply ACK_DELIVERY_ONLY || true)"
+equal "a reply sent after reading the request settles it" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the answered debtor may idle" "{}" "$reply_stop_output"
 reply_prompt_event "$reply_a_pane" \
-  "$(reply_response_envelope reply-b "$reply_delivery_ack_nonce" \
-    "$reply_delivery_only" ACK_DELIVERY_ONLY)"
+  "$(reply_request_envelope reply-b "$reply_crossed_nonce" CROSSED_DELIVERY_ONLY)"
+equal "the crossing message is owed a reply by its recipient" \
+  $'owed\t'"$reply_crossed_nonce"$'\treply-b\tlive' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_delivery_ack_nonce" ACK_DELIVERY_ONLY)"
+equal "the reply opens no reciprocal debt beside the crossed request" \
+  $'owed\t'"$reply_crossed_nonce"$'\treply-b\tlive' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+printf '%s' ACK_CROSSED \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_crossed_ack_nonce="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a reply ACK_CROSSED || true)"
+equal "answering the crossed request clears its recipient" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_record_wire "$reply_b_id" "$reply_crossed_ack_nonce" ACK_CROSSED)"
+equal "both sides of a crossing are clear once each request is answered" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_a_pane"
-equal "the delivery-first reply recipient may idle without reciprocal debt" \
-  "{}" "$reply_stop_output"
-equal "a correlated reply discharges delivery-only provenance" \
-  $'clear\t-\t-\t-' \
-  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+equal "the crossed request's recipient may idle once it answered" "{}" "$reply_stop_output"
 reply_stop_run "$reply_b_pane"
-equal "the answered debtor may idle without its native prompt witness" \
-  "{}" "$reply_stop_output"
-reply_delivery_meta="$(tmux show-options -wqv -t "$reply_b_id" \
-  "@gl_reply_$reply_delivery_only")"
-IFS=: read -r _ _ _ _ reply_delivery_digest _ <<<"$reply_delivery_meta"
-equal "the discharged record carries no prompt proof yet" "" \
-  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_delivery_only")"
-reply_prompt_event "$reply_b_pane" "$reply_delivery_only_wire"
-equal "the late prompt proof completes the discharged audit record" \
-  "$reply_delivery_digest" \
-  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rprompt_$reply_delivery_only")"
-equal "the missing prompt proof completes the already correlated settlement" \
-  $'clear\t-\t-\t-' \
-  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
-reply_stop_run "$reply_b_pane"
-equal "the delivery-first sender may idle after both proofs complete" \
-  "{}" "$reply_stop_output"
+equal "the crossing sender may idle once both answers landed" "{}" "$reply_stop_output"
 
 # A settlement proof beside neither arrival witness is corrupt evidence rather
 # than a discharged obligation: no delivery path can produce that record.
