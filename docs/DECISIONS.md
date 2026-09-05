@@ -2109,3 +2109,14 @@ that ends the turn which read it; left open, every later message to that peer
 would be a correlated reply and a follow-up request would open no debt. A
 reply not yet read is left open across a boundary, since its turn has not
 begun.
+
+## Every witness of a correlated reply settles it
+
+The creditor's native prompt proof of a correlated reply writes the same
+settlement on the debtor's request that spool acceptance and delivery
+verification write. A sending process killed between typing and verification,
+at a tick deadline or after losing the screen, left the reply record without
+delivery proof and no later writer, so the debtor was refused idle at every
+Stop for a reply it had given and sent it again. The settlement is one
+immutable digest per record, so late and repeated witnesses rewrite the same
+bytes rather than conflicting.

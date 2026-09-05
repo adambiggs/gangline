@@ -548,6 +548,56 @@ reply_prompt_event "$reply_a_pane" \
 reply_stop_run "$reply_a_pane"
 equal "the later request's sender may idle after the answer" "{}" "$reply_stop_output"
 
+# A correlated reply whose delivery proof never lands still settles once the
+# creditor's native prompt witnesses it. The sending process can die between
+# typing and verification: a tick killed at its deadline, or a live send that
+# lost the screen. The barrier holds the delivery proof after the metadata is
+# written, exactly the state such a death leaves; the debtor was then asked
+# for a reply it had already given at every Stop until it sent another.
+printf '%s' REQ_LATE_WITNESS \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_late_req="$(reply_nonce_for_body "$reply_b_id" reply-a request REQ_LATE_WITNESS || true)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_late_req" REQ_LATE_WITNESS)"
+equal "the request to be answered late is owed" \
+  $'owed\t'"$reply_late_req"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_late_gate="reply-late-witness-$$"
+reply_late_state="$RUN_ROOT/reply-late-witness-state"
+printf '%s' REPLY_LATE_WITNESS \
+  | GANG_TEST_REPLY_PROOF_GATE="$reply_late_gate" \
+    GANG_TEST_REPLY_GATE_STATE="$reply_late_state" \
+    TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin \
+      >"$RUN_ROOT/reply-late-witness.out" 2>"$RUN_ROOT/reply-late-witness.err" &
+reply_late_pid=$!
+tmux wait-for "$reply_late_gate-ready"
+reply_late_reply="$(reply_nonce_for_body "$reply_a_id" reply-b reply REPLY_LATE_WITNESS || true)"
+equal "the held reply carries no delivery proof" "" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_rdelivery_$reply_late_reply")"
+equal "without any arrival witness the debt still stands" \
+  $'owed\t'"$reply_late_req"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_late_reply" REPLY_LATE_WITNESS)"
+equal "the creditor's prompt witness settles the debt the delivery proof missed" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_b_pane"
+equal "the debtor may idle on the creditor's witness alone" "{}" "$reply_stop_output"
+reply_late_settled="$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_late_req")"
+tmux wait-for -S "$reply_late_gate-release"
+wait "$reply_late_pid"
+equal "the released delivery proof completes the reply record" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_late_reply" | cut -d: -f5)" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_rdelivery_$reply_late_reply")"
+equal "the late delivery proof rewrites the same settlement" "$reply_late_settled" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_late_req")"
+equal "the late-witnessed debt stays settled after the retried proof" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_a_pane"
+equal "the creditor owes nothing for the late-witnessed reply" "{}" "$reply_stop_output"
+
 # A request parked during a live turn retains its stable sender and nonce until
 # the next native boundary drains it. The event barrier is the worker's own
 # completion signal, not a poll or timing assertion.

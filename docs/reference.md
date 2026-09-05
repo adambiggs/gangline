@@ -571,9 +571,12 @@ A correlated reply discharges the request as soon as either arrival witness,
 the exact native prompt proof or positive delivery proof, stands beside it. The
 delivery proof is written only by the sending process that produced it, so a
 record missing that half cannot complete later and would otherwise block Stop
-with a demand the debtor has already met. The remaining proof still lands in the
-audit record if its writer runs. A settlement proof with neither arrival witness
-remains unknown and fails closed.
+with a demand the debtor has already met. The creditor's native prompt proof of
+the reply writes the same settlement, so a reply whose sending process died
+between typing and verification still settles when it is read. Every witness
+writes one immutable digest per record, so repeated or late witnesses rewrite
+the same proof. A settlement proof with neither arrival witness remains unknown
+and fails closed.
 Gangline does not parse the reply body: any genuine concise acknowledgement is
 enough, including one that says background work is still running and a fuller
 report will follow. Requests from different peers retain independent records.
