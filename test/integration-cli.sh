@@ -1955,8 +1955,11 @@ equal "the Codex collar defers self-compaction to its native Stop hook" \
   "deferred" "$codex_self_compact"
 codex_self_witness="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   '. "$1"; printf "%s" "$GANG_SELF_COMPACT_WITNESS"' fixture "$codex_collar")"
-equal "the Codex collar refuses self-compaction without a post-task witness" \
-  "unavailable" "$codex_self_witness"
+equal "the Codex collar reads its post-Stop witness from the rollout" \
+  "native-idle" "$codex_self_witness"
+codex_native_idle_reader="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
+  '. "$1"; declare -F collar_native_idle >/dev/null && printf defined' fixture "$codex_collar")"
+equal "and defines the reader that witness names" defined "$codex_native_idle_reader"
 codex_stall_types="$(GANG_TEST_COLLARS='' ROOT="$ROOT" bash -c \
   'unset GANG_STALL_TYPES; . "$1"; printf "%s" "${GANG_STALL_TYPES:-}"' \
   fixture "$codex_collar")"

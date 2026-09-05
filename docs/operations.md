@@ -227,17 +227,21 @@ Do this after finishing a coherent arc and putting unfinished work in repository
 files that teammates can read, not in the middle of a half-applied edit. Native
 harness compaction owns the summary and context transition.
 
-Codex cannot currently prove a post-Stop native-idle boundary: its Stop hook
-runs inside the task, its terminal turn record is persisted before the active
-task is released, and its compact hooks do not correlate a later manual compact
-to Gangline's command. `gang compact` from inside Codex is therefore refused as
-unsupported: it records no request, submits neither `/compact` nor a
+On Codex the request is also deferred to Stop, but the boundary Gangline
+waits for is the rollout, not the screen: Codex runs its Stop hook inside the
+task, so the composer already paints idle while the hook runs and an Enter
+typed there is dropped. The dispatcher waits for the rollout's terminal record
+of the turn the Stop named (`task_complete` or `turn_aborted`, written only
+after the hook returns) within `GANG_BOOT_TIMEOUT`, and only then submits
+`/compact` and the continuation through the ordinary composer gates. If the
+record has not landed in that budget, or the rollout cannot answer for the
+turn, the request is put back for the next Stop and the agent is told once;
+`gang status <name>` shows it as still scheduled with the reason. A collar that
+declares its witness unavailable refuses the self-request as unsupported
+instead: it records no request, submits neither the command nor a
 continuation, and names the form that works, a peer's
-`gang compact <name> --resume`. `status` and `roster` carry the refusal until a
-peer compaction lands, which clears it. A request recorded before this rule is
-retired at the window's next Stop or cooperative tick with the same note to the
-agent; nothing retries it. Do not treat a later automatic/native compaction as proof
-that this request ran.
+`gang compact <name> --resume`. Do not treat a later automatic/native
+compaction as proof that a request ran.
 
 ## Reading provider limits without attaching
 
@@ -528,7 +532,9 @@ from any team window. Its cooperative tick retries both actions through their
 ordinary safety gates; the idle recipient does not need a manual nudge or a new
 turn boundary. A collar whose native-idle witness is unavailable refuses
 self-compaction outright and holds no request, so only the spool is waiting
-there. Use `gang status <name>` to distinguish the two. `--live-only`
+there; one that declares a native-idle witness holds the request until the
+harness has persisted the end of the turn. Use `gang status <name>` to
+distinguish them. `--live-only`
 is the exception: it explicitly refuses without parking, so its caller still
 owns that body.
 
@@ -674,8 +680,9 @@ And continuing WITHOUT trusting is the option to avoid. It leaves codex running
 with its hooks inert, so that agent supplies no native `Stop` witness for spool
 delivery. Cooperative ticks still retry already accepted mail through live
 composer gates, but cannot invent the native facts the disabled hooks would
-have supplied. Hooked Codex self-compaction also remains unsupported: the hooks
-it does expose still contain no post-task idle witness, so a peer compacts it.
+have supplied. Codex self-compaction needs the Stop hook too: it is the hook
+that dispatches the deferred request, and the rollout record it then waits for
+is read for the turn that hook named. With hooks inert, a peer compacts it.
 
 Hitch does not hold the terminal for this indefinitely. It parks the contract,
 says the prompt is waiting, and after `GANG_GATE_LOOKS` observations of an

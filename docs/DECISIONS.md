@@ -181,21 +181,48 @@ this beside the verified tty substrate it needs rather than creating a second
 product or a duplicate injection path; defer the command to Stop when a harness
 cannot submit it during its own turn.
 
-Deferral still needs a positive post-Stop native-idle boundary. Codex runs Stop
-inside its active task, persists its terminal turn record before clearing that
-task, and gives compact hooks no command correlation. Composer paint and those
-events therefore cannot authorize Enter. Its collar declares the witness
-unavailable, and under that declaration a self-request is refused as
-unsupported rather than deferred: no request is recorded, no dispatcher starts,
-no recovery continuation is created, and the refusal names the peer form that
-does work, since a peer types into a composer it can see is idle. The refusal
-stays on the window for `status` and `roster` until a peer compaction lands. A
-request recorded before this rule is retired, with a note to the agent, by the
-next boundary or by the next refused self-call, whichever comes first.
-Preserving such a request as "pending" read as a compaction that would still
-happen, and an agent that ended its turn on that reading waited on a boundary
-that could only refuse it while the roster showed it scheduled. A peer compaction that lands clears whatever self-request the
-same window holds, whatever its collar: leaving it would compact the fresh
+Deferral still needs a positive post-Stop native-idle boundary, and the
+boundary is the harness's own record, not its screen. Codex runs Stop inside
+its active task: its composer paints idle for the whole hook and drops an Enter
+typed there, and its compact hooks give no command correlation. What Codex does
+leave is its rollout's terminal turn record (`task_complete` or
+`turn_aborted`, carrying the turn id the Stop payload names), appended only
+after every Stop hook has returned and flushed at once. The collar declares
+`GANG_SELF_COMPACT_WITNESS=native-idle` and reads that record through
+`collar_native_idle`; the dispatcher started by Stop waits for it inside the
+boot budget before it consults the composer, so a self-request from inside a
+Codex agent is deferred exactly as it is on claude-code. A record that has not
+landed when the budget runs out, or a rollout that cannot answer for the
+turn, refuses at that boundary and leaves the request standing for the next
+Stop, which carries a fresh payload. A cooperative tick carries no payload and
+asks about the newest turn. Nothing falls through to the pane.
+
+The record speaks for a turn, not for the composer at the keystroke, and the
+harness can open its next turn on its own the instant the last one ends
+(queued input, a continuation of its own). So the witness is read a second
+time under the pane lock, together with the pane's busy verdict, immediately
+before the command is typed; a rollout that names a later turn by then, or a
+pane that no longer reads idle, refuses the boundary with nothing typed. The
+binding travels with the request: one recorded against a native-idle witness
+is never released by a collar that later declares less, because without the
+reader the read cannot happen, so that boundary refuses and the request waits
+for a collar that defines it. The helper reads past nothing it cannot
+correlate: only `turn_aborted` may go unnamed (it is attributed to the turn it
+interrupted); a `task_complete` naming no turn, or a turn id that is not a
+string, is no answer for a named turn.
+
+A collar that declares the witness `unavailable` keeps the earlier rule: a
+self-request is refused as unsupported rather than deferred, no request is
+recorded, no dispatcher starts, no recovery continuation is created, and the
+refusal names the peer form that does work, since a peer types into a composer
+it can see is idle. The refusal stays on the window for `status` and `roster`
+until a peer compaction lands. A request recorded before this rule is retired,
+with a note to the agent, by the next boundary or by the next refused
+self-call, whichever comes first. Preserving such a request as "pending" read
+as a compaction that would still happen, and an agent that ended its turn on
+that reading waited on a boundary that could only refuse it while the roster
+showed it scheduled. A peer compaction that lands clears whatever self-request
+the same window holds, whatever its collar: leaving it would compact the fresh
 context a second time at the next boundary. The retirement and the peer's
 clearing take one per-window claim, since tmux has no compare-and-set and a
 retirement that read its request before the peer cleared it would otherwise

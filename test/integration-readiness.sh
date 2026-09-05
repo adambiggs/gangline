@@ -886,12 +886,14 @@ else
 fi
 "$GANG" drop selfable >/dev/null 2>&1 || :
 
-# CODEX HAS NO POST-TASK HOOK. Its Stop callback runs before active_turn is
-# released, and task_complete is persisted before that release too. This
-# fixture makes the historical false-positive discriminating: its compact
-# command emits the exact native rejection and leaves an artifact if Gangline
-# submits it. The unavailable witness must stop before a worker, Enter, or
-# continuation -- while Stop is running and on every later boundary.
+# A COLLAR THAT DECLARES ITS WITNESS UNAVAILABLE. Its Stop callback runs
+# before the harness releases its active turn, and nothing it can read says
+# when that release happens. This fixture makes the historical false-positive
+# discriminating: its compact command emits the exact native rejection and
+# leaves an artifact if Gangline submits it. The unavailable witness must stop
+# before a worker, Enter, or continuation -- while Stop is running and on
+# every later boundary. (Codex itself now declares native-idle; see the block
+# after this one.)
 #
 # AND THE REFUSAL IS TERMINAL. This block once asserted that the refused
 # request stayed on record, preserved for a collar with a real witness. Under
@@ -1213,6 +1215,336 @@ if tmux list-windows -a -F '#{window_id}' | grep -Fxq -- "$codex_race_id"; then
 else
   pass "native disappearance leaves no window where a stale dispatcher can act"
 fi
+
+# THE HARNESS'S OWN RECORD IS THE POST-STOP WITNESS. Codex runs Stop inside
+# its task and paints an idle composer that drops the Enter; it appends the
+# turn's terminal record to its rollout only after the hook returns. A collar
+# that declares GANG_SELF_COMPACT_WITNESS=native-idle reads that record through
+# collar_native_idle, and the dispatcher submits nothing until it answers 0.
+# The fixture stands in for Codex with a rollout file the suite appends to:
+# Stop fires while the turn's newest record is still its start, the worker
+# waits, the record lands, and only then does the compact command execute
+# followed by the continuation.
+native_idle_helper="$ROOT/collars/plugins/codex-native-idle.py"
+native_idle_fixtures="$RUN_ROOT/native-idle"
+mkdir -p "$native_idle_fixtures"
+native_idle_read() { # $1 fixture name, $2 turn id or empty -> "rc<TAB>message"
+  local out rc=0
+  out="$(python3 "$native_idle_helper" "$native_idle_fixtures/$1" ${2:+"$2"})" || rc=$?
+  printf '%s\t%s' "$rc" "$out"
+}
+native_idle_record() { # $1 lifecycle kind, $2 turn id -> one rollout line
+  printf '{"type":"event_msg","payload":{"type":"%s","turn_id":"%s"}}\n' "$1" "$2"
+}
+native_idle_record task_started T > "$native_idle_fixtures/open.jsonl"
+equal "an open turn is not idle" $'1\tturn T is still open: task_started is its newest record' \
+  "$(native_idle_read open.jsonl T)"
+{ native_idle_record task_started T; native_idle_record task_complete T; } \
+  > "$native_idle_fixtures/done.jsonl"
+equal "a persisted task_complete for the named turn is idle" $'0\ttask_complete for turn T' \
+  "$(native_idle_read done.jsonl T)"
+printf '%s' '{"type":"event_msg","pay' >> "$native_idle_fixtures/done.jsonl"
+equal "a partial trailing line while the recorder appends does not hide the record" \
+  $'0\ttask_complete for turn T' "$(native_idle_read done.jsonl T)"
+{ native_idle_record task_started T; native_idle_record task_complete T
+  native_idle_record task_started U; } > "$native_idle_fixtures/later.jsonl"
+equal "a later turn that has started since is not idle for the named one" \
+  $'1\ta later turn (U) has started since turn T' "$(native_idle_read later.jsonl T)"
+equal "without a named turn the newest turn answers" \
+  $'1\tturn U is still open: task_started is its newest record' "$(native_idle_read later.jsonl)"
+native_idle_record task_started T > "$native_idle_fixtures/aborted.jsonl"
+printf '%s\n' '{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":null,"reason":"interrupted"}}' \
+  >> "$native_idle_fixtures/aborted.jsonl"
+equal "an unnamed turn_aborted ends the turn it interrupted" $'0\tturn_aborted for turn T' \
+  "$(native_idle_read aborted.jsonl T)"
+{ native_idle_record task_started T; native_idle_record task_complete T; } \
+  > "$native_idle_fixtures/other.jsonl"
+equal "a record for another turn is no answer for the named one" \
+  $'2\tthe rollout holds no lifecycle record for turn V' "$(native_idle_read other.jsonl V)"
+: > "$native_idle_fixtures/empty.jsonl"
+equal "an empty rollout gives no answer" $'2\tthe rollout holds no turn lifecycle record' \
+  "$(native_idle_read empty.jsonl)"
+equal "a missing rollout gives no answer" 2 \
+  "$(native_idle_read missing.jsonl T | cut -f1)"
+{ native_idle_record task_started T
+  printf '%s\n' '{"type":"event_msg","payload":{"type":"task_complete"}}'; } \
+  > "$native_idle_fixtures/unnamed-complete.jsonl"
+equal "a task_complete that names no turn cannot speak for a named one" \
+  $'2\tthe newest task_complete record names no turn, so it cannot speak for turn T' \
+  "$(native_idle_read unnamed-complete.jsonl T)"
+{ native_idle_record task_started T
+  printf '%s\n' '{"type":"event_msg","payload":{"type":"task_complete","turn_id":7}}'; } \
+  > "$native_idle_fixtures/malformed-complete.jsonl"
+equal "a turn id that is not a string is no answer" \
+  $'2\tthe newest task_complete record carries a turn id that is not a string' \
+  "$(native_idle_read malformed-complete.jsonl T)"
+
+native_idle_executed="$RUN_ROOT/native-idle-executed"
+native_idle_busy="$RUN_ROOT/native-idle-busy"
+native_idle_rollout="$RUN_ROOT/native-idle-rollout.jsonl"
+native_idle_nohold="$RUN_ROOT/native-idle-nohold"
+native_idle_hold_ok="$RUN_ROOT/native-idle-hold-ok"
+native_idle_collar() { # $1 = native-idle (with its reader) or unavailable (without)
+  cat > "$RUN_ROOT/collars/codex-native-idle.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf NATIVE_IDLE_COMPACT; : > $native_idle_executed"
+GANG_SELF_COMPACT=deferred
+GANG_SELF_COMPACT_WITNESS=$1
+GANG_STOP_HOOK=1
+GANG_BUSY_REGEX='BUSY_NATIVE_IDLE'
+_gl_native_idle_input="\$(declare -f collar_input)"
+eval "native_idle_real_input \${_gl_native_idle_input#collar_input}"
+collar_input() {
+  [ ! -e "$native_idle_busy" ] || { printf ''; return; }
+  native_idle_real_input "\$1"
+}
+SH
+  [ "$1" = native-idle ] || return 0
+  cat >> "$RUN_ROOT/collars/codex-native-idle.sh" <<SH
+# A NOT-YET ANSWER IS HELD UNTIL THE SUITE RELEASES IT. The suite's sleep is
+# instant, so without this hold the worker would spend its whole budget before
+# the record could be appended; the hold signals that the worker is inside its
+# poll, which is the moment the suite inspects. The marker file turns the hold
+# off for the boundary that must run out its budget. A second, one-shot marker
+# holds an IDLE answer instead, so the suite can open the next turn between
+# the witness and the keystroke.
+collar_native_idle() {
+  local turn rc=0 out
+  turn="\$(printf '%s' "\$2" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("turn_id",""))' 2>/dev/null)" || turn=""
+  out="\$(python3 "$native_idle_helper" "$native_idle_rollout" \${turn:+"\$turn"})" || rc=\$?
+  printf '%s' "\$out"
+  if [ "\$rc" -eq 1 ] && [ ! -e "$native_idle_nohold" ]; then
+    tmux wait-for -S "native-idle-asked-$$"
+    tmux wait-for "native-idle-poll-$$"
+  elif [ "\$rc" -eq 0 ] && [ -e "$native_idle_hold_ok" ]; then
+    rm -f -- "$native_idle_hold_ok"
+    tmux wait-for -S "native-idle-ok-$$"
+    tmux wait-for "native-idle-go-$$"
+  fi
+  return "\$rc"
+}
+SH
+}
+native_idle_collar native-idle
+native_idle_record task_started turn-one > "$native_idle_rollout"
+"$HITCH" native-idle -c codex-native-idle -d /tmp >/dev/null
+native_idle_id="$(window_id native-idle)"
+native_idle_pane="$(tmux list-panes -t "$native_idle_id" -F '#{pane_id}')"
+native_idle_requested="test-native-idle-requested-$$"
+native_idle_release="test-native-idle-release-$$"
+native_idle_released="test-native-idle-released-$$"
+# The backslash keeps the typed command line from spelling the marker the
+# continuation is later expected to paint; the shell drops it before gang
+# records the continuation.
+printf -v native_idle_command ': > %q; printf BUSY_NATIVE_IDLE; GANG_SESSION=%q GANG_COLLARS=%q %q compact --resume NEXT_STEP_\\MARK; printf " NATIVE_IDLE_RC_%%s" "$?"; tmux wait-for -S %q; tmux wait-for %q; rm -f -- %q; tmux wait-for -S %q' \
+  "$native_idle_busy" "$GANG_SESSION" "$GANG_COLLARS" "$GANG" \
+  "$native_idle_requested" "$native_idle_release" "$native_idle_busy" \
+  "$native_idle_released"
+tmux send-keys -l -t "$native_idle_id" "$native_idle_command"
+tmux send-keys -t "$native_idle_id" Enter
+tmux wait-for "$native_idle_requested"
+native_idle_request="$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+# source-guard: producer@8567e88e6eb5: the typed command names only gang compact; only gang's scheduling branch prints this promise
+contains "a native-idle collar schedules the agent's own compaction" \
+  "$(pane native-idle)" "self-compaction scheduled for the end of this turn"
+# source-guard: producer@02e231e0cab9: the typed command contains a percent placeholder, so only its executed status print can produce the expanded RC_0 marker
+contains "and the request returns zero" "$(pane native-idle)" "NATIVE_IDLE_RC_0"
+excludes "the self-request is not refused as unsupported" \
+  "$(pane native-idle)" "self-compaction unsupported"
+equal "the request binds the native-idle verdict to its token" \
+  "$native_idle_request"$'\t'native-idle \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_witness)"
+equal "and records the continuation" NEXT_STEP_MARK \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_resume)"
+tmux wait-for -S "$native_idle_release"
+tmux wait-for "$native_idle_released"
+if [ -n "$native_idle_request" ]; then
+  tmux wait-for "gang-self-compact-$native_idle_request" &
+  native_idle_waiter=$!
+  printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-one","transcript_path":"'"$native_idle_rollout"'"}' |
+    TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+  # The worker is inside its poll. Its barrier is still up, the pane is idle,
+  # and the only thing missing is the harness's record; nothing may be typed.
+  tmux wait-for "native-idle-asked-$$"
+  equal "Stop with the turn still open submits nothing while the composer paints idle" absent \
+    "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+  excludes "and types no continuation" "$(pane native-idle)" "NEXT_STEP_MARK"
+  equal "the worker is still dispatching" "$native_idle_request" \
+    "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_dispatching)"
+  native_idle_record task_complete turn-one >> "$native_idle_rollout"
+  tmux wait-for -S "native-idle-poll-$$"
+  wait "$native_idle_waiter"
+  if [ -e "$native_idle_executed" ]; then
+    pass "the persisted end of the turn releases the deferred compaction"
+  else
+    fail "the persisted end of the turn releases the deferred compaction" \
+      "the worker exited without the collar command's execution artifact"
+  fi
+  # source-guard: producer@fc11d595d585: the typed command never spells this marker; only the recorded --resume continuation gang injects after the compaction carries it
+  contains "and the continuation follows it" "$(pane native-idle)" "NEXT_STEP_MARK"
+  equal "the request is consumed" "" \
+    "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+  equal "without a recorded failure" "" \
+    "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)"
+else
+  fail "a native-idle collar schedules the agent's own compaction" \
+    "@gl_self_compact_requested is empty"
+fi
+
+# A RECORD THAT NEVER LANDS IS NOT AT THIS BOUNDARY, NOT NEVER. The budget
+# runs out, nothing is typed, and the request stands for a later Stop that
+# carries a fresh payload. The agent is told once.
+rm -f "$native_idle_executed"
+: > "$native_idle_nohold"
+native_idle_record task_started turn-two >> "$native_idle_rollout"
+native_idle_second="$(TMUX_PANE="$native_idle_pane" "$GANG" compact --resume SECOND_STEP_MARK 2>&1)" || :
+contains "a second self-request is scheduled after the first completed" \
+  "$native_idle_second" "self-compaction scheduled"
+native_idle_request="$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
+  GANG_BOOT_TIMEOUT=2 TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_waiter"
+equal "a turn whose end is never persisted submits no compact command" absent \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+excludes "and no continuation" "$(pane native-idle)" "SECOND_STEP_MARK"
+equal "the request stands for a later boundary" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+contains "and the record names the missing witness" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
+  "has not persisted the end of this turn"
+contains "the agent is told the compaction was put back" \
+  "$("$GANG" mail native-idle)" "put back rather than dropped"
+# The note is mail, and mail takes the next boundary ahead of the compaction.
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_drain_waiter"
+equal "the note drains without spending the request" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+# A Stop whose payload the rollout cannot answer for refuses without waiting
+# out the budget, and leaves the same request standing.
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-unknown","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_waiter"
+equal "an unanswerable turn keeps the request" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+equal "and submits nothing" absent \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+contains "the record says the rollout could not answer" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
+  "cannot witness the end of this turn"
+# The next boundary whose record does land completes the standing request.
+native_idle_record task_complete turn-two >> "$native_idle_rollout"
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_waiter"
+equal "a later boundary with the record completes the standing request" present \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+equal "and clears it" "" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+equal "and its failure" "" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)"
+
+# THE RECORD SPEAKS FOR A TURN, NOT FOR THE COMPOSER. The harness can open its
+# next turn on its own the instant the last one ends — queued input, a
+# continuation — and a witness read before that has certified nothing about
+# the moment of the keystroke. So the witness is read once more under the
+# pane lock, and a rollout that now names a later turn refuses the boundary
+# with nothing typed. The hold below parks the worker between its first idle
+# answer and that second read; the suite opens the next turn in the gap.
+rm -f "$native_idle_executed"
+native_idle_third="$(TMUX_PANE="$native_idle_pane" "$GANG" compact --resume THIRD_STEP_MARK 2>&1)" || :
+contains "a third self-request is scheduled" "$native_idle_third" "self-compaction scheduled"
+native_idle_request="$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+: > "$native_idle_hold_ok"
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+tmux wait-for "native-idle-ok-$$"
+native_idle_record task_started turn-three >> "$native_idle_rollout"
+tmux wait-for -S "native-idle-go-$$"
+wait "$native_idle_waiter"
+equal "a turn that opens between the witness and the keystroke submits nothing" absent \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+excludes "and no continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
+equal "the request stands" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+contains "and the record names the turn that opened" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
+  "a later turn (turn-three) has started"
+equal "the lock is released with the refusal" absent \
+  "$([ -L "$GANG_LOCK_DIR/$(printf '%s' "$native_idle_id" | tr -c 'A-Za-z0-9' '_').lock" ] && printf held || printf absent)"
+contains "and the agent is told once more that the compaction was put back" \
+  "$("$GANG" mail native-idle)" "put back rather than dropped"
+# That note is mail, and mail takes the next boundary ahead of the compaction.
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_drain_waiter"
+equal "the note drains and the request still stands" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+
+# A REQUEST BOUND TO THE WITNESS KEEPS ITS BINDING. The collar is rewritten
+# underneath a standing request to declare only `unavailable`, which retires
+# a NEW request at dispatch but says nothing about one that was scheduled on
+# the promise of a read: without the reader that read cannot happen, and the
+# boundary refuses before the pane is consulted, leaving the request for a
+# collar that can honour it.
+native_idle_record task_complete turn-three >> "$native_idle_rollout"
+native_idle_collar unavailable
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_waiter"
+equal "a collar that stops reading the witness submits nothing for a request bound to it" absent \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+excludes "and types no continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
+equal "the request still stands" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+contains "and the record names the missing reader" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
+  "no longer defines collar_native_idle"
+native_idle_collar native-idle
+tmux wait-for "gang-self-compact-$native_idle_request" &
+native_idle_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_waiter"
+equal "the reader restored, the next boundary completes the request" present \
+  "$([ -e "$native_idle_executed" ] && printf present || printf absent)"
+# source-guard: producer@b7a3655c58fa: the typed command never spells this marker; only the recorded --resume continuation gang injects after the compaction carries it
+contains "with its continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
+equal "and clears the request" "" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+"$GANG" drop native-idle >/dev/null 2>&1 || :
+
+# THE DECLARATION WITHOUT ITS READER IS REFUSED AT LOAD, so no request can be
+# scheduled against a witness nothing will ever read.
+cat > "$RUN_ROOT/collars/native-idle-readerless.sh" <<SH
+# shellcheck shell=bash
+# shellcheck disable=SC2034
+. "$ROOT/collars/bash.sh"
+GANG_COMPACT_CMD="printf READERLESS"
+GANG_SELF_COMPACT=deferred
+GANG_SELF_COMPACT_WITNESS=native-idle
+GANG_STOP_HOOK=1
+SH
+native_idle_readerless="$("$HITCH" native-idle-readerless -c native-idle-readerless -d /tmp 2>&1)" || :
+contains "a native-idle declaration without collar_native_idle is refused" \
+  "$native_idle_readerless" "defines no collar_native_idle"
+"$GANG" drop native-idle-readerless >/dev/null 2>&1 || :
 equal "native disappearance still cannot invoke the rejected command" absent \
   "$([ -e "$codex_race_executed" ] && printf present || printf absent)"
 

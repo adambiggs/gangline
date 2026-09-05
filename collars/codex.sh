@@ -81,12 +81,18 @@ if [ -n "${ROOT:-}" ] && [ -x "$ROOT/bin/gang" ]; then
       # adding to it, so the first root's next Codex hitch prompts in turn.
       GANG_STOP_HOOK=1
       GANG_SELF_COMPACT=deferred
-      # Codex persists task_complete before it clears active_turn, and
-      # PreCompact/PostCompact callbacks still execute inside the compact task.
-      # Neither is the post-task boundary self-compaction needs; the composer
-      # is only paint. Until Codex exposes a later correlated witness, preserve
-      # the request and fail closed before any Enter or continuation.
-      GANG_SELF_COMPACT_WITNESS=unavailable
+      # THE COMPOSER IS ONLY PAINT AT STOP. Codex runs its Stop hooks inside
+      # the task that owns the turn: the composer already paints idle while
+      # the hook runs, and an Enter typed there is dropped without a trace.
+      # The task emits task_complete only after every Stop hook has returned,
+      # and the rollout recorder appends that record to the session file at
+      # once (observed on 0.151.0: on disk 3ms after the hook exited, and a
+      # slash command entered after it ran natively). That persisted record
+      # for the Stop payload's turn is the positive post-Stop witness;
+      # collar_native_idle below reads it. Between the record and the release
+      # of active_turn a submission starts a new turn rather than steering the
+      # finished one, which is where Codex's own TUI submits its queued input.
+      GANG_SELF_COMPACT_WITNESS=native-idle
       unset _gl_codex_hook _gl_codex_stop_hook _gl_codex_hook_flags _gl_codex_event
       ;;
   esac
@@ -514,6 +520,40 @@ codex_session_file() { # $1 = tmux target -> this window's bound rollout path
   file="$(tmux show-options -wqv -t "$1" @gl_session)" || file=""
   [ -n "$file" ] && [ -f "$file" ] || return 1
   printf '%s' "$file"
+}
+
+# THE POST-STOP WITNESS IS THE ROLLOUT, NOT THE SCREEN. Answers 0 when the
+# bound rollout holds a terminal record (task_complete or turn_aborted) for
+# the turn the Stop payload names, 1 while that turn's newest record is still
+# its start or a later turn has begun, and 2 when the rollout cannot answer:
+# no rollout is bound, the file is unreadable, or the turn is unknown to it.
+# Without a payload (a cooperative tick) the newest turn in the rollout is the
+# one asked about. Prints the reason on stdout for the caller's diagnostics.
+collar_native_idle() { # $1 = tmux target, $2 = native Stop payload or empty
+  local rollout="" turn="" fields
+  if [ -n "$2" ]; then
+    fields="$(printf '%s' "$2" | python3 -c '
+import json, sys
+try:
+    payload = json.load(sys.stdin)
+except ValueError:
+    raise SystemExit(1)
+if not isinstance(payload, dict):
+    raise SystemExit(1)
+turn = payload.get("turn_id")
+transcript = payload.get("transcript_path")
+print(turn if isinstance(turn, str) else "")
+print(transcript if isinstance(transcript, str) else "")
+')" || { printf '%s' "the Stop payload is not readable JSON"; return 2; }
+    turn="${fields%%$'\n'*}"
+    rollout="${fields#*$'\n'}"
+  fi
+  case "$turn$rollout" in
+    *[[:cntrl:]]*) printf '%s' "the Stop payload carries control characters"; return 2 ;;
+  esac
+  [ -n "$rollout" ] || rollout="$(codex_session_file "$1")" || rollout=""
+  [ -n "$rollout" ] || { printf '%s' "no rollout is bound to this window"; return 2; }
+  python3 "${BASH_SOURCE[0]%/*}/plugins/codex-native-idle.py" "$rollout" ${turn:+"$turn"}
 }
 
 # THE LIVE PROCESS, NOT THE SESSIONS DIRECTORY. A Codex process holds its

@@ -909,16 +909,24 @@ external-target and witnessed-collar path; no continuation is created when
 Gangline fails closed before submitting a command.
 
 When a hooked agent requests its own compaction, Gangline records a one-shot
-request. A collar may declare `GANG_SELF_COMPACT_WITNESS=unavailable` when Stop
-and the composer do not establish that the native task is idle. Such a request
+request. A collar whose composer paints idle before the harness has released
+its turn declares `GANG_SELF_COMPACT_WITNESS=native-idle` and defines
+`collar_native_idle`, which reads what the harness itself persists after Stop;
+the dispatcher waits for that answer inside the boot budget before it consults
+the composer, reads it once more under the pane lock just before typing, and a
+boundary where the answer does not come, or stops holding, puts the request
+back for the next one. Codex declares this: its rollout's terminal turn record
+is appended only after its Stop hooks return, so that record for the turn the
+Stop payload names is the witness. A collar may instead declare
+`GANG_SELF_COMPACT_WITNESS=unavailable` when neither Stop, the composer, nor
+anything it persists establishes that the native task is idle. Such a request
 fails closed before a dispatcher or Enter exists: its witness verdict is bound
 to the exact request token, so it survives a later missing collar. The request
-and explicit failure remain visible, ordinary peer mail remains independent, and neither a
-later tick nor a duplicate Stop submits or continues it. Codex declares this
-state because its terminal turn record precedes release of the native active
-task and its compact hooks do not identify which command caused them. A visible
-composer, PreCompact/PostCompact, a later automatic compaction, or the terminal
-record therefore cannot produce “your context was just compacted.”
+and explicit failure remain visible, ordinary peer mail remains independent,
+and neither a later tick nor a duplicate Stop submits or continues it. Under
+either declaration a visible composer, PreCompact/PostCompact, or a later
+automatic compaction cannot on its own produce “your context was just
+compacted.”
 
 Other deferred collars retain their established Stop-and-composer behavior. A
 later cooperative tick retries a safely unsubmitted request only through the
@@ -1467,9 +1475,11 @@ the window for `status` and `roster`, and the event is not acted on. It is the
 one command that does not die on unconsumed arity, because a hook must not be
 fatal to the harness that fired it; declining the event is the refusal.
 Prompt/tool events open the turn fact, Stop closes it and may dispatch deferred
-self-compaction; where the collar has declared its native-idle witness
-unavailable, Stop retires any self-compaction request it finds instead, since
-such a request is refused at `gang compact` and can never be granted. Stop may
+self-compaction, handing the dispatcher its payload so a native-idle witness
+is read for the turn that Stop named; where the collar has declared its
+native-idle witness unavailable, Stop retires any self-compaction request it
+finds instead, since such a request is refused at `gang compact` and can never
+be granted. Stop may
 also drain the spool. Permission requests
 raise occupancy. PreCompact opens the compaction bracket and PostCompact closes
 it and drains. A harness that refuses a compaction raises the opening event and
@@ -1631,6 +1641,7 @@ there, never in a harness-name branch in the core script.
 | `GANG_MIDTURN_INPUT=steer` | commit to the attributed spool first, then allow a free composer to accept its claim as native mid-turn steering; PostToolUse supplies later opportunities |
 | `GANG_COMPACT_CMD` | native compaction command |
 | `GANG_SELF_COMPACT=deferred` | self-compaction must wait for Stop |
+| `GANG_SELF_COMPACT_WITNESS=native-idle` | the harness persists something after Stop that proves it has released its turn, and `collar_native_idle target payload` reads it: 0 released (prints which record), 1 not yet, 2 cannot answer; the dispatcher waits for 0 inside `GANG_BOOT_TIMEOUT` before consulting the composer, reads it again under the pane lock before typing, and puts the request back at a boundary that answers 1 for the whole budget, 2 at all, or anything but 0 on that second read; a request bound to this witness is refused, not released, by a collar that later stops defining the reader |
 | `GANG_SELF_COMPACT_WITNESS=unavailable` | Stop, terminal turn records, compact hooks, and composer paint do not prove this harness has released its active task; `gang compact` from inside the agent is refused as unsupported and points at a peer's `gang compact <name> --resume`, no request is recorded, and one recorded earlier is retired at the next boundary before any dispatcher, Enter, or continuation |
 | `collar_usage_limits target` | print `label<TAB>percent-used<TAB>reset-epoch<TAB>observed-epoch` rows from a non-interactive native source; absence declares provider-limit awareness unavailable |
 | `collar_usage_limits_error status` | optionally explain a collar-specific native-reader failure status; Gangline sanitizes and surfaces it in hooks and explicit commands |
