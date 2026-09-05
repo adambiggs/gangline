@@ -13610,8 +13610,17 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
   fi
   if [ "$event" = Notification ]; then
+    # A FIELD OF THE WRONG TYPE IS NOT A VALUE. Printing whatever `.get`
+    # returns renders a null as None and a list as its repr, so a payload whose
+    # shape has changed arrives as plausible nonempty text and is read below as
+    # a kind this collar does not act on. Both readings are wrong in the same
+    # direction — quiet — so only a nonempty string is a kind at all.
     kind="$(printf '%s' "$payload" \
-      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("notification_type",""))' \
+      | python3 -c 'import json, sys
+value = json.load(sys.stdin).get("notification_type")
+if not isinstance(value, str) or not value:
+    raise SystemExit(1)
+sys.stdout.write(value)' \
         2>/dev/null)" || kind=""
     # A kind gang cannot read is not a kind outside the collar's declaration:
     # the second is an interpreted event this collar does not act on, and the

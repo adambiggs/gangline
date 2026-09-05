@@ -927,8 +927,16 @@ fi
 # suppresses stall reporting. The loudness cannot be a nonzero exit — that is
 # the agent's own turn to break, for an event that concerns only Gangline — so
 # it is stderr plus a fact on the window that status and roster carry.
+# A FIELD OF THE WRONG TYPE IS UNREADABLE, NOT A KIND GANG DECLINES TO ACT ON.
+# A null and a list both render as plausible nonempty text when the payload is
+# read for its value alone, and the reading that follows classifies them as a
+# Notification kind this collar does not act on — a changed native shape
+# passing as an ordinary event, silently.
 for hook_shape in 'not json at all' '{"hook_event_name":""}' '{"no_event":"here"}' \
-    '{"hook_event_name":"Renamed"}' '{"hook_event_name":"Notification"}'; do
+    '{"hook_event_name":"Renamed"}' '{"hook_event_name":"Notification"}' \
+    '{"hook_event_name":"Notification","notification_type":null}' \
+    '{"hook_event_name":"Notification","notification_type":[]}' \
+    '{"hook_event_name":"Notification","notification_type":7}'; do
   tmux set-option -uw -t "$alpha_id" @gl_hook_failed
   hook_shape_rc=0
   hook_shape_err="$(printf '%s' "$hook_shape" |
