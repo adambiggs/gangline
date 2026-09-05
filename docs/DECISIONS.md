@@ -197,12 +197,31 @@ turn, refuses at that boundary and leaves the request standing for the next
 Stop, which carries a fresh payload. A cooperative tick carries no payload and
 asks about the newest turn. Nothing falls through to the pane.
 
+Peer delivery uses that witness too. Before closing the turn bracket, a native
+Stop records its exact payload on the window; while that payload's rollout turn
+is still open, `busy` treats the empty-looking composer as busy, and an
+unanswerable rollout is unknown rather than idle. A default send therefore
+parks in the attributed spool without typing. If mail was already waiting when
+Stop fired, its detached drain waits inside the same boot budget and releases
+itself after the terminal record lands; it does not depend on a cooperative tick
+racing that append. Recording the payload before closing the bracket means a
+racing sender always sees either the open bracket or the rollout witness, never
+the false-idle composer alone. A new prompt or an interrupt retires the old
+payload only after opening or clearing the turn bracket, respectively. The
+payload itself preserves the native-idle binding across a collar rewrite: if
+the current collar has no reader, delivery is unknown and cannot fall through
+to an apparently empty composer. A live native boundary also outranks a
+collar's ordinary mid-turn-input permission: Codex accepts steering during
+normal work but drops Enter while its Stop hook owns the turn.
+
 The record speaks for a turn, not for the composer at the keystroke, and the
 harness can open its next turn on its own the instant the last one ends
 (queued input, a continuation of its own). So the witness is read a second
 time under the pane lock, together with the pane's busy verdict, immediately
-before the command is typed; a rollout that names a later turn by then, or a
-pane that no longer reads idle, refuses the boundary with nothing typed. The
+before the command is typed; a rollout whose newest later turn is still open,
+or a pane that no longer reads idle, refuses the boundary with nothing typed.
+A later turn whose terminal record has also landed is idle, so a missed hook
+cannot turn an older payload into a permanent busy veto. The
 binding travels with the request: one recorded against a native-idle witness
 is never released by a collar that later declares less, because without the
 reader the read cannot happen, so that boundary refuses and the request waits
@@ -216,9 +235,10 @@ self-request is refused as unsupported rather than deferred, no request is
 recorded, no dispatcher starts, no recovery continuation is created, and the
 refusal names the peer form that does work, since a peer types into a composer
 it can see is idle. The refusal stays on the window for `status` and `roster`
-until a peer compaction lands. A request recorded before this rule is retired,
-with a note to the agent, by the next boundary or by the next refused
-self-call, whichever comes first. Preserving such a request as "pending" read
+until a peer compaction lands from a genuinely idle boundary. A request
+recorded before this rule is retired, with a note to the agent, by the next
+boundary or by the next refused self-call, whichever comes first. Preserving
+such a request as "pending" read
 as a compaction that would still happen, and an agent that ended its turn on
 that reading waited on a boundary that could only refuse it while the roster
 showed it scheduled. A peer compaction that lands clears whatever self-request

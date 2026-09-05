@@ -2422,7 +2422,14 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
     printf 'gang: the shared monotonic turn clock is unreadable\n' >&2
     return 1 ;;
   esac
-  tmux set-option -w -t "$1" @gl_turn "$2 v2:$now_ns" 2>/dev/null || true
+  if tmux set-option -w -t "$1" @gl_turn "$2 v2:$now_ns" 2>/dev/null; then
+    # A new accepted prompt supersedes any Stop boundary from the turn before
+    # it. Write the open bracket first, so there is never an interval where a
+    # sender sees neither fact while the new turn owns the composer.
+    [ "$2" != open ] \
+      || tmux set-option -uw -t "$1" @gl_native_idle_boundary 2>/dev/null \
+      || true
+  fi
 }
 
 # Dropping the fact is a WRITER's edit, and `gang interrupt` is the only caller:
@@ -2431,7 +2438,10 @@ turn_state_write() { # $1 = window id, $2 = open|closed; the fact, stamped now
 # path was using it to repair a malformed value it had merely read, and a fresh
 # hook stamp landing between that read and the unset would be erased. That
 # reasoning binds readers, not the command holding the keystroke.
-turn_state_clear() { tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true; }
+turn_state_clear() {
+  tmux set-option -uw -t "$1" @gl_turn 2>/dev/null || true
+  tmux set-option -uw -t "$1" @gl_native_idle_boundary 2>/dev/null || true
+}
 
 # COMPACTION IS A BRACKET, FOR THE SAME REASON A TURN IS. A harness that is
 # compacting will not accept input — it queues it — and gang used to learn that
@@ -2600,6 +2610,34 @@ BUSY_EXPIRED_WHAT="pty activity bound reached"
 # decision, and read by delivery, which may not spend that as ordinary
 # could-not-determine.
 BUSY_MOVED=0
+BUSY_NATIVE_UNKNOWN=0
+BUSY_NATIVE_HOLD=0
+NATIVE_IDLE_WHAT=""
+
+# A NATIVE STOP CAN CLOSE THE TURN BRACKET BEFORE THE HARNESS HAS RELEASED
+# THE TURN. Codex does exactly that: while its Stop hook runs, the composer is
+# already painted empty but Enter is swallowed. The hook keeps the exact Stop
+# payload on the window, and the collar's rollout reader answers whether that
+# named turn has really ended. No payload means this collar has never exposed
+# the false-idle interval; status 3 lets the ordinary witnesses decide.
+native_idle_boundary() { # $1 window; 0 idle, 1 busy, 2 unknown, 3 no boundary
+  local payload="" rc=0 why=""
+  NATIVE_IDLE_WHAT=""
+  payload="$(tmux show-options -wqv -t "$1" @gl_native_idle_boundary 2>/dev/null)" \
+    || payload=""
+  [ -n "$payload" ] || return 3
+  declare -F collar_native_idle >/dev/null || {
+    NATIVE_IDLE_WHAT="the recorded boundary is native-idle but the current collar defines no reader"
+    return 2
+  }
+  why="$(collar_native_idle "$1" "$payload")" || rc=$?
+  NATIVE_IDLE_WHAT="${why##*$'\n'}"
+  case "$rc" in
+    0|1|2) return "$rc" ;;
+    *) NATIVE_IDLE_WHAT="the collar's native-idle reader returned status $rc"
+       return 2 ;;
+  esac
+}
 
 decay_moved_note() {
   [ "$DECAY_MOVED" -eq 1 ] || return 0
@@ -2656,9 +2694,11 @@ decay_allowed() { # $1 = window id, $2 = the witness pair taken before the tier 
 }
 
 busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
-  local turn_rc=0 undetermined=0 stale_turn=0 compaction_rc=0
+  local turn_rc=0 undetermined=0 stale_turn=0 compaction_rc=0 native_rc=3
   BUSY_EXPIRED_WHAT="pty activity bound reached"
   BUSY_MOVED=0
+  BUSY_NATIVE_UNKNOWN=0
+  BUSY_NATIVE_HOLD=0
   # Asked FIRST, because it answers the question delivery actually has. An open
   # turn and an open compaction both mean "will not accept input now"; only the
   # second is invisible to @gl_turn, which stays closed for the whole of it.
@@ -2667,7 +2707,20 @@ busy() { # $1 = window id; 0 = busy, 1 = not busy, 2 = could not determine
   turn_witness "$1" || turn_rc=$?
   case "$turn_rc" in
     0) activity_hold_clear "$1"; return 0 ;;
-    1) activity_hold_clear "$1"; return 1 ;;
+    1)
+      # Only a closed, usable bracket can expose Codex's false-idle Stop
+      # interval. An open, expired, malformed or absent bracket keeps its own
+      # recovery path and avoids paying for a rollout read that cannot decide
+      # that path's verdict.
+      native_idle_boundary "$1" || native_rc=$?
+      case "$native_rc" in
+        0) activity_hold_clear "$1"; return 1 ;;
+        1) BUSY_NATIVE_HOLD=1; activity_hold_clear "$1"; return 0 ;;
+        2) undetermined=1; BUSY_NATIVE_UNKNOWN=1
+           BUSY_EXPIRED_WHAT="native Stop idleness is unproved${NATIVE_IDLE_WHAT:+: $NATIVE_IDLE_WHAT}" ;;
+        3) activity_hold_clear "$1"; return 1 ;;
+        *) die "internal: native_idle_boundary returned unknown verdict $native_rc" ;;
+      esac ;;
     2) undetermined=1; stale_turn="$TURN_ABANDONED" ;;
     3) ;;
     *) die "internal: turn_witness returned unknown verdict $turn_rc" ;;
@@ -2837,8 +2890,11 @@ self_compact_native_idle_confirm() { # $1 window, $2 Stop payload or empty; call
 # at this boundary. Both leave the request standing (status 3), because a
 # later boundary carries a fresh payload and a fresh chance. Neither ever
 # falls through to the pane.
-self_compact_native_idle_wait() { # $1 window, $2 budget in seconds, $3 Stop payload or empty
+# Shared by peer delivery and deferred self-compaction: both cross from the
+# synchronous Stop hook to the terminal rollout record it causes after return.
+native_idle_wait() { # $1 window, $2 budget in seconds, $3 Stop payload
   local t=0 rc=0 why=""
+  NATIVE_IDLE_WHAT=""
   while :; do
     rc=0
     why="$(collar_native_idle "$1" "$3")" || rc=$?
@@ -2846,12 +2902,28 @@ self_compact_native_idle_wait() { # $1 window, $2 budget in seconds, $3 Stop pay
     case "$rc" in
       0) return 0 ;;
       1) ;;
-      *) refuse "the harness cannot witness the end of this turn: ${why:-no reason given}" ;;
+      *) NATIVE_IDLE_WHAT="${why:-no reason given}"; return 2 ;;
     esac
-    [ "$t" -lt "$2" ] \
-      || refuse "the harness has not persisted the end of this turn within ${2}s: ${why:-no reason given}"
+    if [ "$t" -ge "$2" ]; then
+      NATIVE_IDLE_WHAT="the harness has not persisted the end of this turn within ${2}s: ${why:-no reason given}"
+      return 1
+    fi
     sleep 1; t=$((t + 1))
   done
+}
+
+# Both failures leave the self-compaction request standing (status 3), because
+# a later boundary carries a fresh payload and a fresh chance. Neither ever
+# falls through to the pane.
+self_compact_native_idle_wait() { # $1 window, $2 budget in seconds, $3 Stop payload or empty
+  local rc=0
+  native_idle_wait "$1" "$2" "$3" || rc=$?
+  case "$rc" in
+    0) return 0 ;;
+    1) refuse "$NATIVE_IDLE_WHAT" ;;
+    2) refuse "the harness cannot witness the end of this turn: ${NATIVE_IDLE_WHAT:-no reason given}" ;;
+    *) die "internal: native_idle_wait returned unknown verdict $rc" ;;
+  esac
 }
 
 compact_continue() { # $1 window id, $2 the agent's continuation or empty; caller holds the lock
@@ -7404,8 +7476,9 @@ EOF
   [ "$keep_lock" -eq 1 ] || lock_release
 }
 
-spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
-  local ready=0 box_rc=0 boot="${GANG_BOOT_TIMEOUT:-30}"
+spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn,
+                            # optional $4 = native Stop payload
+  local ready=0 box_rc=0 native_rc=0 boot="${GANG_BOOT_TIMEOUT:-30}"
   load_collar "$2"
   if [ "${3:-}" = midturn ]; then
     [ "$GANG_MIDTURN_INPUT" = steer ] \
@@ -7414,6 +7487,22 @@ spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
     return
   fi
   require_whole GANG_BOOT_TIMEOUT "$boot" seconds
+  if [ -n "${4:-}" ]; then
+    declare -F collar_native_idle >/dev/null || {
+      printf "the Stop boundary was recorded as native-idle, but collar '%s' defines no reader; no delivery was attempted and the spool remains waiting\n" \
+        "$2" >&2
+      return 1
+    }
+    native_idle_wait "$1" "$boot" "$4" || native_rc=$?
+    case "$native_rc" in
+      0) ;;
+      1) return 3 ;;
+      2) printf 'the harness cannot witness the end of this turn: %s; no delivery was attempted and the spool remains waiting\n' \
+           "${NATIVE_IDLE_WHAT:-no reason given}" >&2
+         return 1 ;;
+      *) die "internal: native_idle_wait returned unknown verdict $native_rc" ;;
+    esac
+  fi
   wait_ready "$1" "$boot" || ready=$?
   if [ "$ready" -ne 0 ]; then
     # A readable obstruction is an ordinary refusal: nothing was typed, and a
@@ -7449,7 +7538,8 @@ spool_drain_after_event() { # $1 window id, $2 collar, optional $3 = midturn
   spool_drain "$1"
 }
 
-spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn
+spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn,
+                         # optional $4 = native Stop payload
   # No in-progress flag. The pane lock is taken before any claim, so a crossed
   # worker refuses without touching the queue. A flag would add a state that
   # outlives a killed worker and wedges the spool silently.
@@ -7457,7 +7547,7 @@ spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn
   (
     trap '' HUP INT TERM
     local err="" rc=0
-    err="$(spool_drain_after_event "$1" "$2" "${3:-}" 2>&1)" || rc=$?
+    err="$(spool_drain_after_event "$1" "$2" "${3:-}" "${4:-}" 2>&1)" || rc=$?
     case "$rc" in
       0) tmux set-option -uw -t "$1" @gl_spool_failed 2>/dev/null || true ;;
       3) ;;
@@ -7471,11 +7561,12 @@ spool_drain_dispatch() { # $1 window id, $2 collar, optional $3 = midturn
   disown
 }
 
-spool_event() { # $1 window a native opportunity fired in, $2 collar, optional $3
+spool_event() { # $1 window, $2 collar, optional $3 = midturn,
+                # optional $4 = native Stop payload
   # The drain serializes on the WINDOW's lock. A lock named after the firing
   # pane would not exclude an ordinary send holding the window-named one.
   [ -n "$1" ] || return 0
-  spool_drain_dispatch "$1" "$2" "${3:-}"
+  spool_drain_dispatch "$1" "$2" "${3:-}" "${4:-}"
 }
 
 stall_failed_write() { # $1 = raising window, rest = reason; a hook never dies for it
@@ -10095,6 +10186,8 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
        # sender has nothing left to do. The one caller where waiting IS the
        # answer is --live-only, and that path prints its own "NOT parked" line
        # saying so, because there the message really was not taken.
+       [ "$BUSY_NATIVE_HOLD" -eq 0 ] \
+         || refuse "'$1' is still inside its native Stop boundary; its composer does not accept input yet"
        case "${GANG_MIDTURN_INPUT:-}" in
          1) ;;
          steer) [ "${3:-}" != live-only ] \
@@ -10113,6 +10206,8 @@ send_live() { # $1 target, $2 locked if caller holds lock, $3 live-only probe;
        # risk truthfully; anything less than provably empty refuses, naming
        # BOTH the expired witness and the box state instead of claiming
        # mid-turn work nobody witnessed.
+       [ "$BUSY_NATIVE_UNKNOWN" -eq 0 ] \
+         || refuse "'$1' has no usable busy witness ($BUSY_EXPIRED_WHAT) — the recorded native Stop boundary cannot be spent as permission to type; restore its collar reader or wait for a fresh prompt boundary"
        if [ "${GANG_MIDTURN_INPUT:-}" != 1 ]; then
          # NOT every could-not-determine is an absence. The fall-through below
          # exists because stale evidence must not veto what a fresh reading can
@@ -12790,6 +12885,23 @@ hook_identity_assert() { # $1 pane, $2 collar, $3 native payload; never kills a 
   session_identity_record "$1" "$live" >/dev/null 2>&1 || true
 }
 
+native_idle_boundary_write() ( # $1 pane, $2 collar, $3 native Stop payload
+  local witness=""
+  # A missing or broken collar is handled by the boundary's existing owners
+  # below (including self-compaction's preserved-request path). This extra
+  # witness must not intercept that diagnosis merely because it cannot tell
+  # whether the collar used to declare native-idle.
+  witness="$( ( load_collar "$2"
+                 printf '%s' "${GANG_SELF_COMPACT_WITNESS:-}"
+               ) 2>/dev/null )" || exit 3
+  [ "$witness" = native-idle ] || exit 3
+  # WRITE BEFORE @gl_turn CLOSES. A sender racing this hook then sees either
+  # the still-open bracket or this payload; there is no interval where the
+  # composer can be mistaken for idle without the rollout question beside it.
+  tmux set-option -w -t "$1" @gl_native_idle_boundary "$3" >/dev/null \
+    || exit 1
+)
+
 # A SHAPE GANG CANNOT INTERPRET IS A FAILURE, NOT A NO-OP. Swallowing the parse
 # and exiting 0 tells the harness the hook worked while Gangline records
 # nothing: a lost Stop leaves the turn bracket open, dispatches no deferred
@@ -12816,6 +12928,7 @@ hook_uninterpretable() { # $1 = firing pane (may be empty), rest = what failed
 
 cmd_hook() { # native harness events; facts are silent unless a light crosses
   local payload event collar kind="" window="" waiting_rc=1
+  local native_boundary_rc=3 spool_payload=""
   # THE EVENT IS THE PAYLOAD, SO ARGV IS AN INVOCATION GANG CANNOT READ. Every
   # other command answers unconsumed arity by dying; this one must not, because
   # its caller is a harness configuration and law 7 keeps hooks non-fatal. It
@@ -12900,7 +13013,17 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
                                              || spool_event "$window" "$collar" midturn
                                          ) || true
                                   fi ;;
-    Stop) turn_state_write "$TMUX_PANE" closed
+    Stop) native_boundary_rc=0
+          native_idle_boundary_write "$TMUX_PANE" "$collar" "$payload" \
+            || native_boundary_rc=$?
+          case "$native_boundary_rc" in
+            0) spool_payload="$payload" ;;
+            3) ;;
+            *) hook_uninterpretable "$TMUX_PANE" \
+                 "the native-idle Stop payload could not be recorded before its turn bracket closed"
+               exit 0 ;;
+          esac
+          turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
           waiting_refresh "$TMUX_PANE" "$collar" "$payload"
@@ -12925,7 +13048,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
           if tick_delivery_active "$window"; then
             :
           elif [ "$(spool_count "$window")" -gt 0 ]; then
-            spool_event "$window" "$collar"
+            spool_event "$window" "$collar" '' "$spool_payload"
           else
             self_compact_dispatch "$window" "$collar" '' "$payload"
           fi

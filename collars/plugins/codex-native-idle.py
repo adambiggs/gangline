@@ -20,7 +20,7 @@ read from the end of the file backwards so an appended record is seen before
 anything older:
 
   0  the turn has ended (prints which record proved it)
-  1  the turn is still open, or a later turn has started since
+  1  the turn is still open, or the newest later turn is still open
   2  the rollout gives no answer (missing, unreadable, or no record for the
      turn); the caller must not treat this as idle
 
@@ -107,13 +107,20 @@ def verdict(path, wanted):
             if turn is MALFORMED:
                 return 2, "the newest %s record carries a turn id that is not a string" % kind
             if wanted and turn is not None and turn != wanted:
-                # Another turn's records say nothing about the wanted one on
-                # their own. A start among them is remembered: once a record
-                # for the wanted turn is found below it, that start proves a
-                # later turn has opened since; with no such record it proves
-                # nothing about a turn the rollout never saw.
-                if kind == "task_started" and later is None:
-                    later = turn
+                # The newest later turn describes whether the harness is idle
+                # now. Remember its newest lifecycle verdict, but do not spend
+                # it until a record below proves the requested turn belongs to
+                # this rollout. A completed later turn must not make an old
+                # Stop boundary a permanent busy veto.
+                if later is None:
+                    if kind == "task_started":
+                        if pending_abort:
+                            later = (0, "turn_aborted", turn)
+                            pending_abort = False
+                        else:
+                            later = (1, "task_started", turn)
+                    else:
+                        later = (0, kind, turn)
                 continue
             if kind == "turn_aborted" and turn is None:
                 pending_abort = True
@@ -123,7 +130,17 @@ def verdict(path, wanted):
                 # turn cannot be correlated with the one asked about.
                 return 2, "the newest task_complete record names no turn, so it cannot speak for turn %s" % wanted
             if later is not None:
-                return 1, "a later turn (%s) has started since turn %s" % (later, wanted)
+                status, later_kind, later_turn = later
+                if status == 1:
+                    return 1, "a later turn (%s) has started since turn %s" % (
+                        later_turn,
+                        wanted,
+                    )
+                return 0, "%s for later turn %s after turn %s" % (
+                    later_kind,
+                    later_turn,
+                    wanted,
+                )
             if kind == "task_started":
                 if pending_abort:
                     return 0, "turn_aborted for turn %s" % (turn or "(unnamed)")

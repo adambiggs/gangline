@@ -1250,8 +1250,12 @@ equal "a partial trailing line while the recorder appends does not hide the reco
   native_idle_record task_started U; } > "$native_idle_fixtures/later.jsonl"
 equal "a later turn that has started since is not idle for the named one" \
   $'1\ta later turn (U) has started since turn T' "$(native_idle_read later.jsonl T)"
+native_idle_record task_complete U >> "$native_idle_fixtures/later.jsonl"
+equal "a later turn that also completed leaves the harness idle" \
+  $'0\ttask_complete for later turn U after turn T' \
+  "$(native_idle_read later.jsonl T)"
 equal "without a named turn the newest turn answers" \
-  $'1\tturn U is still open: task_started is its newest record' "$(native_idle_read later.jsonl)"
+  $'0\ttask_complete for turn U' "$(native_idle_read later.jsonl)"
 native_idle_record task_started T > "$native_idle_fixtures/aborted.jsonl"
 printf '%s\n' '{"type":"event_msg","payload":{"type":"turn_aborted","turn_id":null,"reason":"interrupted"}}' \
   >> "$native_idle_fixtures/aborted.jsonl"
@@ -1284,6 +1288,9 @@ native_idle_busy="$RUN_ROOT/native-idle-busy"
 native_idle_rollout="$RUN_ROOT/native-idle-rollout.jsonl"
 native_idle_nohold="$RUN_ROOT/native-idle-nohold"
 native_idle_hold_ok="$RUN_ROOT/native-idle-hold-ok"
+native_idle_waiting_hold="$RUN_ROOT/native-idle-waiting-hold"
+native_idle_waiting_entered="native-idle-waiting-entered-$$"
+native_idle_waiting_release="native-idle-waiting-release-$$"
 native_idle_collar() { # $1 = native-idle (with its reader) or unavailable (without)
   cat > "$RUN_ROOT/collars/codex-native-idle.sh" <<SH
 # shellcheck shell=bash
@@ -1293,12 +1300,21 @@ GANG_COMPACT_CMD="printf NATIVE_IDLE_COMPACT; : > $native_idle_executed"
 GANG_SELF_COMPACT=deferred
 GANG_SELF_COMPACT_WITNESS=$1
 GANG_STOP_HOOK=1
+GANG_MIDTURN_INPUT=1
+GANG_INTERRUPT_KEY=C-c
 GANG_BUSY_REGEX='BUSY_NATIVE_IDLE'
 _gl_native_idle_input="\$(declare -f collar_input)"
 eval "native_idle_real_input \${_gl_native_idle_input#collar_input}"
 collar_input() {
   [ ! -e "$native_idle_busy" ] || { printf ''; return; }
   native_idle_real_input "\$1"
+}
+collar_waiting() {
+  if [ -e "$native_idle_waiting_hold" ]; then
+    tmux wait-for -S "$native_idle_waiting_entered"
+    tmux wait-for "$native_idle_waiting_release"
+  fi
+  return 1
 }
 SH
   [ "$1" = native-idle ] || return 0
@@ -1328,13 +1344,150 @@ collar_native_idle() {
 SH
 }
 native_idle_collar native-idle
-native_idle_record task_started turn-one > "$native_idle_rollout"
+native_idle_record task_started peer-turn > "$native_idle_rollout"
 "$HITCH" native-idle -c codex-native-idle -d /tmp >/dev/null
 native_idle_id="$(window_id native-idle)"
 native_idle_pane="$(tmux list-panes -t "$native_idle_id" -F '#{pane_id}')"
 native_idle_requested="test-native-idle-requested-$$"
 native_idle_release="test-native-idle-release-$$"
 native_idle_released="test-native-idle-released-$$"
+
+# PEER DELIVERY SEES THE SAME FALSE-IDLE WINDOW. The Stop hook closes gang's
+# turn bracket while Codex still owns the task and paints an empty composer;
+# Enter is swallowed there. Keep the exact payload on the window so a sender
+# can ask the rollout about the turn that produced this apparent idle state.
+# A default send is accepted into the attributed spool without a keystroke.
+native_idle_peer_payload='{"hook_event_name":"Stop","turn_id":"peer-turn","transcript_path":"'"$native_idle_rollout"'"}'
+: > "$native_idle_nohold"
+printf '%s' "$native_idle_peer_payload" |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+equal "a native-idle Stop keeps the payload that names its rollout turn" \
+  "$native_idle_peer_payload" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_native_idle_boundary)"
+native_idle_peer_out="$(printf 'MARK_NATIVE_IDLE_PEER' |
+  "$GANG" send --to native-idle --from tester --stdin 2>&1)" || :
+contains "peer mail at a false-idle Stop composer is accepted into the spool" \
+  "$native_idle_peer_out" "queued for native-idle"
+excludes "and no peer Enter is typed before the rollout witnesses the turn end" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_PEER"
+contains "the accepted peer mail remains visibly waiting" \
+  "$native_idle_peer_out" "(1 waiting)"
+native_idle_record task_complete peer-turn >> "$native_idle_rollout"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+# source-guard: producer@736ef479c8b6: the fixture command never contains this marker; only the spooled envelope can paint it after the tick submits it
+contains "the terminal rollout record releases the peer delivery" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_PEER"
+excludes "and the delivered peer mail no longer remains in the spool" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
+
+# THE STOP WORKER OWNS THE RETRY. A message that was already waiting when Stop
+# fired cannot rely on a later cooperative tick happening to race the rollout
+# append. UserPromptSubmit opens the turn, the send parks, and Stop launches its
+# detached drain while the native record is deliberately absent. The collar's
+# barrier proves the worker reached that read. Once the record lands, that same
+# worker must drain the message without any manual tick.
+rm -f -- "$native_idle_nohold"
+native_idle_record task_started peer-auto > "$native_idle_rollout"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","turn_id":"peer-auto"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+equal "a new prompt retires the preceding native Stop boundary" "" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_native_idle_boundary)"
+tmux send-keys -l -t "$native_idle_id" 'NATIVE_IDLE_AUTO_DRAFT'
+native_idle_auto_out="$(printf 'MARK_NATIVE_IDLE_AUTO' |
+  "$GANG" send --to native-idle --from tester --stdin 2>&1)" || :
+contains "mail sent during the native turn waits for its Stop" \
+  "$native_idle_auto_out" "queued for native-idle"
+tmux send-keys -t "$native_idle_id" C-u
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_auto_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"peer-auto","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+tmux wait-for "native-idle-asked-$$"
+excludes "the Stop worker types nothing before the terminal record" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_AUTO"
+native_idle_record task_complete peer-auto >> "$native_idle_rollout"
+tmux wait-for -S "native-idle-poll-$$"
+wait "$native_idle_auto_waiter"
+# source-guard: producer@8f90518a86a4: the fixture command never contains this marker; only the spooled envelope can paint it after the Stop worker's bounded witness wait
+contains "the terminal record releases that worker without a manual tick" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_AUTO"
+excludes "the automatic release consumes the waiting message" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
+
+# A BOUNDARY NAMES THE STATE NOW, NOT A PERMANENT VETO. If a later turn starts
+# and finishes without another gang hook, the rollout still positively says
+# the harness is idle. The old Stop payload must not strand every future send.
+{ native_idle_record task_started peer-later
+  native_idle_record task_complete peer-later
+} >> "$native_idle_rollout"
+if native_idle_stale_out="$(printf 'MARK_NATIVE_IDLE_STALE' |
+  "$GANG" send --to native-idle --from tester --stdin 2>&1)"; then
+  pass "a completed later turn does not leave the older boundary busy forever"
+else
+  fail "a completed later turn does not leave the older boundary busy forever" \
+    "$native_idle_stale_out"
+fi
+# source-guard: producer@bec89d535023: the fixture command never contains this marker; only the peer envelope can paint it after delivery
+contains "and the delivery lands" "$(pane native-idle)" "MARK_NATIVE_IDLE_STALE"
+
+# THE RECORDED BINDING OUTLIVES A COLLAR REWRITE. Presence of the Stop payload
+# says this boundary needs the reader that recorded it; a current collar that
+# declares less cannot turn that missing read into permission to type.
+native_idle_collar unavailable
+tmux set-option -w -t "$native_idle_id" @gl_native_idle_boundary \
+  "$native_idle_peer_payload"
+if native_idle_rebind_out="$(printf 'MARK_NATIVE_IDLE_REBIND' |
+  "$GANG" send --to native-idle --from tester --live-only --stdin 2>&1)"; then
+  fail "a collar rewrite cannot discard a recorded native-idle binding" \
+    "send succeeded without the recorded boundary's reader"
+else
+  pass "a collar rewrite cannot discard a recorded native-idle binding"
+fi
+contains "the refusal names the missing native witness" \
+  "$native_idle_rebind_out" "native Stop idleness is unproved"
+excludes "and nothing is typed" "$(pane native-idle)" "MARK_NATIVE_IDLE_REBIND"
+native_idle_collar native-idle
+
+# THE STOP WORKER KEEPS THE RECORDED BINDING TOO. Hold the synchronous hook
+# after it records the payload but before it dispatches the detached worker,
+# then remove the reader. The worker must surface that missing witness and
+# leave the accepted message waiting rather than type through it.
+native_idle_record task_started peer-reader-loss > "$native_idle_rollout"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","turn_id":"peer-reader-loss"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+tmux send-keys -l -t "$native_idle_id" 'NATIVE_IDLE_READER_LOSS_DRAFT'
+native_idle_reader_loss_out="$(printf 'MARK_NATIVE_IDLE_READER_LOSS' |
+  "$GANG" send --to native-idle --from tester --stdin 2>&1)" || :
+contains "the reader-loss fixture first accepts mail into the spool" \
+  "$native_idle_reader_loss_out" "queued for native-idle"
+tmux send-keys -t "$native_idle_id" C-u
+: > "$native_idle_waiting_hold"
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_reader_loss_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"peer-reader-loss","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null &
+native_idle_reader_loss_hook=$!
+tmux wait-for "$native_idle_waiting_entered"
+native_idle_collar unavailable
+tmux wait-for -S "$native_idle_waiting_release"
+wait "$native_idle_reader_loss_hook"
+wait "$native_idle_reader_loss_waiter"
+contains "a Stop worker records the missing reader" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_spool_failed)" \
+  "recorded as native-idle"
+contains "and leaves the accepted message waiting" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
+excludes "and types nothing without that reader" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_READER_LOSS"
+rm -f -- "$native_idle_waiting_hold"
+native_idle_collar native-idle
+native_idle_record task_complete peer-reader-loss >> "$native_idle_rollout"
+GANG_TEST_TICK_MODE=manual "$GANG" tick >/dev/null
+# source-guard: producer@c7bb86e630d8: the fixture command never contains this marker; only the preserved spooled envelope can paint it after the restored reader releases delivery
+contains "the restored reader releases the preserved message" \
+  "$(pane native-idle)" "MARK_NATIVE_IDLE_READER_LOSS"
+
+native_idle_record task_started turn-one > "$native_idle_rollout"
 # The backslash keeps the typed command line from spelling the marker the
 # continuation is later expected to paint; the shell drops it before gang
 # records the continuation.
@@ -1419,12 +1572,30 @@ contains "and the record names the missing witness" \
 contains "the agent is told the compaction was put back" \
   "$("$GANG" mail native-idle)" "put back rather than dropped"
 # The note is mail, and mail takes the next boundary ahead of the compaction.
+# That boundary is still false-idle while the rollout says its turn is open,
+# so the note remains spooled too; gang's own envelope gets no exemption from
+# the peer-delivery safety boundary.
 tmux wait-for "gang-spool-drain-$native_idle_id" &
 native_idle_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
 wait "$native_idle_drain_waiter"
-equal "the note drains without spending the request" "$native_idle_request" \
+contains "the note stays spooled while the rollout still says the turn is open" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
+equal "and the note's boundary does not spend the request" "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+# Once the terminal record lands, the next boundary drains the older note and
+# leaves the self-compaction request for one later native opportunity.
+native_idle_record task_complete turn-two >> "$native_idle_rollout"
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_drain_waiter"
+excludes "the terminal record lets the older note leave the spool" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
+equal "draining the note still leaves the request for a later boundary" \
+  "$native_idle_request" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 # A Stop whose payload the rollout cannot answer for refuses without waiting
 # out the budget, and leaves the same request standing.
@@ -1441,7 +1612,6 @@ contains "the record says the rollout could not answer" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_failed)" \
   "cannot witness the end of this turn"
 # The next boundary whose record does land completes the standing request.
-native_idle_record task_complete turn-two >> "$native_idle_rollout"
 tmux wait-for "gang-self-compact-$native_idle_request" &
 native_idle_waiter=$!
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-two","transcript_path":"'"$native_idle_rollout"'"}' |
@@ -1487,12 +1657,16 @@ equal "the lock is released with the refusal" absent \
 contains "and the agent is told once more that the compaction was put back" \
   "$("$GANG" mail native-idle)" "put back rather than dropped"
 # That note is mail, and mail takes the next boundary ahead of the compaction.
+# The later turn is still open there, so it remains spooled until its terminal
+# record arrives just like the earlier timeout note did.
 tmux wait-for "gang-spool-drain-$native_idle_id" &
 native_idle_drain_waiter=$!
 printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
   TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
 wait "$native_idle_drain_waiter"
-equal "the note drains and the request still stands" "$native_idle_request" \
+contains "the later-turn note stays spooled while that turn remains open" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled=1"
+equal "and its boundary leaves the request standing" "$native_idle_request" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 
 # A REQUEST BOUND TO THE WITNESS KEEPS ITS BINDING. The collar is rewritten
@@ -1502,6 +1676,16 @@ equal "the note drains and the request still stands" "$native_idle_request" \
 # boundary refuses before the pane is consulted, leaving the request for a
 # collar that can honour it.
 native_idle_record task_complete turn-three >> "$native_idle_rollout"
+tmux wait-for "gang-spool-drain-$native_idle_id" &
+native_idle_drain_waiter=$!
+printf '%s' '{"hook_event_name":"Stop","turn_id":"turn-three","transcript_path":"'"$native_idle_rollout"'"}' |
+  TMUX_PANE="$native_idle_pane" "$GANG" hook >/dev/null
+wait "$native_idle_drain_waiter"
+excludes "the later terminal record lets its note leave the spool" \
+  "$("$GANG" roster | grep '^native-idle ' || :)" "spooled="
+equal "and leaves the request for the collar-change boundary" \
+  "$native_idle_request" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
 native_idle_collar unavailable
 tmux wait-for "gang-self-compact-$native_idle_request" &
 native_idle_waiter=$!
@@ -1528,6 +1712,14 @@ equal "the reader restored, the next boundary completes the request" present \
 contains "with its continuation" "$(pane native-idle)" "THIRD_STEP_MARK"
 equal "and clears the request" "" \
   "$(tmux show-options -wqv -t "$native_idle_id" @gl_self_compact_requested)"
+
+# INTERRUPT RETIRES BOTH TURN FACTS. A Stop payload left above the paint and
+# activity tiers would otherwise recreate the permanent wedge this fix removes.
+tmux set-option -w -t "$native_idle_id" @gl_native_idle_boundary \
+  "$native_idle_peer_payload"
+"$GANG" interrupt native-idle >/dev/null
+equal "interrupt retires the native Stop boundary" "" \
+  "$(tmux show-options -wqv -t "$native_idle_id" @gl_native_idle_boundary)"
 "$GANG" drop native-idle >/dev/null 2>&1 || :
 
 # THE DECLARATION WITHOUT ITS READER IS REFUSED AT LOAD, so no request can be
