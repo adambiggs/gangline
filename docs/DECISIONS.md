@@ -2151,3 +2151,19 @@ delivery proof and no later writer, so the debtor was refused idle at every
 Stop for a reply it had given and sent it again. The settlement is one
 immutable digest per record, so late and repeated witnesses rewrite the same
 bytes rather than conflicting.
+
+## Usage measurement stays with the caller; persistence belongs to tmux
+
+A sandboxed agent may read its transcripts while seeing the operator's usage
+data directory as read-only. `drop` and `down` therefore prepare their normalized
+JSON and ccusage join in the caller, preserving its PATH and transcript roots,
+then pass that JSON through a named tmux buffer to a synchronous `run-shell`
+append in the server's host mount namespace. This uses Gangline's existing tmux
+substrate without weakening a collar's sandbox or adding a daemon.
+
+The buffer is deleted after a successful append. If the primary event file is
+unavailable, the host-side worker saves the prepared JSON under the effective
+archive root's `usage-unrecorded/` directory and prints the exact recovery path; if even
+that write fails, it keeps and names the tmux buffer until the server exits.
+Teardown still proceeds, but a missing record is never silent and its retained
+copy has an explicit deletion path.

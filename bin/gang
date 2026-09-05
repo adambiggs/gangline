@@ -5496,7 +5496,7 @@ tick_launch() { # isolate a post-command candidate from the command's own result
   # not independent team activity. Letting it launch here made every Stop
   # start one tick for the query and another for the terminal `gang hook`.
   # The hook remains the clear Stop's one cooperative edge.
-  case "${cmd:-}" in alerts|tick|__tick-worker|reply-obligations) return 0 ;; esac
+  case "${cmd:-}" in alerts|tick|__tick-worker|__usage-record-worker|reply-obligations) return 0 ;; esac
   tick_session_live || return 0
   case "${GANG_TEST_TICK_MODE:-}" in
     manual) [ "${GANG_TEST_COLLARS:-}" = 1 ] && return 0 ;;
@@ -10998,23 +10998,94 @@ usage_agent_stream() { # $1 window id, $2 team creation epoch -> one NUL-separat
   printf '\0'
 }
 
-usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
-  local how="$1" id out created rc=0; shift
-  # THE MAIL IS ALREADY ARCHIVED WHEN THIS RUNS, and a record that could not be
-  # written is one stderr line rather than a refusal: holding a half-ended team
-  # over a usage line costs more than the line. The helper runs ccusage once
-  # for every window it is given and bounds it itself, so a teardown of many
-  # windows hands them over in one call.
-  created="$(usage_team_created)"
-  out="$(
-    for id in "$@"; do usage_agent_stream "$id" "$created"; done \
-      | "$GANGLINE_USAGE_HELPER" record --events "$(usage_events_path)" --ended-by "$how" 2>&1
-  )" || rc=$?
+usage_events_append_worker() { # $1 tmux buffer, $2 events, $3 fallback root
+  local buffer="$1" events="$2" fallback_root="$3" out rc=0
+  local fallback_dir fallback
+  out="$(tmux save-buffer -b "$buffer" - \
+    | "$GANGLINE_USAGE_HELPER" append --events "$events" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then
+    tmux delete-buffer -b "$buffer" \
+      || printf 'gang: usage event was recorded, but its staging buffer %s could not be removed\n' "$buffer" >&2
     [ -z "$out" ] || printf '%s\n' "$(colour "$C_DIM" "$out")"
-  else
-    printf 'gang: usage record not written (helper status %s): %s\n' "$rc" "$out" >&2
+    return 0
   fi
+
+  printf 'gang: usage record not written (helper status %s): %s\n' "$rc" "$out" >&2
+  fallback_dir="$fallback_root/usage-unrecorded"
+  if ! mkdir -p "$fallback_dir"; then
+    printf 'gang: usage event not written: its destination was %s, fallback directory %s could not be created, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
+      "$events" "$fallback_dir" "$buffer" >&2
+    return 0
+  fi
+  fallback="$fallback_dir/usage-$(date +%Y%m%dT%H%M%S)-$(mint_nonce).jsonl"
+  while [ -e "$fallback" ]; do
+    fallback="$fallback_dir/usage-$(date +%Y%m%dT%H%M%S)-$(mint_nonce).jsonl"
+  done
+  # A save-buffer filename is itself format-expanded by tmux. Stream bytes to
+  # stdout and let this host-side shell open the literal recovery path.
+  if tmux save-buffer -b "$buffer" - > "$fallback"; then
+    tmux delete-buffer -b "$buffer" \
+      || printf 'gang: usage event was preserved, but its staging buffer %s could not be removed\n' "$buffer" >&2
+    printf 'gang: usage event preserved at %s; append it to %s after repairing that destination, then remove the fallback file\n' \
+      "$fallback" "$events" >&2
+  else
+    printf 'gang: usage event not written: its destination was %s, fallback %s also failed, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
+      "$events" "$fallback" "$buffer" >&2
+  fi
+}
+
+usage_events_record() { # $1 drop|down, rest = window ids; never refuses a teardown
+  local how="$1" id events fallback_root created prepared buffer command out rc=0; shift
+  events="$(usage_events_path)"
+  fallback_root="$(archive_root)"
+  # READ CCUSAGE IN THE CALLER'S ENVIRONMENT, where its PATH and transcript
+  # roots have the same meaning they always did. Only the prepared JSON crosses
+  # the sandbox boundary: a named tmux buffer carries it into a run-shell child
+  # in the server's host mount namespace, which performs the append without
+  # weakening the caller's sandbox.
+  created="$(usage_team_created)"
+  prepared="$(
+    for id in "$@"; do usage_agent_stream "$id" "$created"; done \
+      | "$GANGLINE_USAGE_HELPER" prepare --ended-by "$how" 2>&1
+  )" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf 'gang: usage event LOST before append (helper status %s): %s; destination was %s\n' \
+      "$rc" "$prepared" "$events" >&2
+    return 0
+  fi
+  buffer="gang-usage-$(mint_nonce)"
+  if ! printf '%s\n' "$prepared" | tmux load-buffer -b "$buffer" -; then
+    printf 'gang: usage event LOST before append: tmux could not stage its prepared JSON; destination was %s\n' \
+      "$events" >&2
+    return 0
+  fi
+  # run-shell expands tmux formats before invoking the shell. Rebuild every
+  # caller-supplied byte through a word containing neither '#' nor '$', just as
+  # popup commands do, so paths and settings cannot become tmux syntax.
+  command="GANG_USAGE_RECORD_INTERNAL=1 GANG_SESSION=$(option_shell_quote "$SESSION")"
+  command+=" GANG_CONFIG_DIR=$(option_shell_quote "$CONFIG_DIR")"
+  command+=" PATH=$(option_shell_quote "$PATH") HOME=$(option_shell_quote "${HOME:-}") TMUX_PANE="
+  command+=" \"$(option_shell_quote "$ROOT/bin/gang")\" __usage-record-worker"
+  command+=" \"$(option_shell_quote "$buffer")\" \"$(option_shell_quote "$events")\" \"$(option_shell_quote "$fallback_root")\" 2>&1"
+  out="$(tmux run-shell "$command" 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    if [[ "$out" == *"gang: usage record not written"* ]] \
+       || [[ "$out" == *"gang: usage event "* ]]; then
+      [ -z "$out" ] || printf '%s\n' "$out" >&2
+    else
+      [ -z "$out" ] || printf '%s\n' "$out"
+    fi
+  else
+    printf 'gang: usage event not written: tmux could not run its host-side append (status %s): %s; destination was %s, and the prepared JSON remains in tmux buffer %s until that server exits\n' \
+      "$rc" "$out" "$events" "$buffer" >&2
+  fi
+}
+
+cmd_usage_record_worker() { # internal host-side append reached only through tmux run-shell
+  [ "${GANG_USAGE_RECORD_INTERNAL:-}" = 1 ] \
+    || die "__usage-record-worker is internal; run gang usage"
+  [ $# -eq 3 ] || die "internal usage record worker needs a tmux buffer, event path, and fallback root"
+  usage_events_append_worker "$@"
 }
 
 cmd_usage() { # token consumption per agent, joined from ccusage by native session id
@@ -13360,6 +13431,8 @@ case "$cmd" in
             [ "${GANG_TICK_INTERNAL:-}" = 1 ] \
               || die "__tick-worker is internal; run gang tick"
             cmd_tick_worker "$@" ;;
+  __usage-record-worker)
+            cmd_usage_record_worker "$@" ;;
   drop)     cmd_drop "$@" ;;
   down)     cmd_down "$@" ;;
   collars)  cmd_collars "$@" ;;

@@ -483,8 +483,15 @@ record of the session rather than a way back into it — `hitch` takes no
 `--resume` for that collar, so quoting the command would print a line it
 refuses. If the collar has supplied no stamp, `drop` says that instead. Its
 tmux-owned state and spool die with it after any pending messages are archived,
-and one usage record is appended as `gang usage` describes; a record that
-cannot be written is one stderr line, never a refusal to drop.
+and one usage record is appended as `gang usage` describes. The caller prepares
+the record and the tmux server appends it from its host mount namespace, so a
+sandbox that exposes the usage directory read-only does not lose the event. An
+append that still fails never refuses the drop: Gangline preserves the prepared
+JSON under the effective archive root's `usage-unrecorded/` directory and
+prints that exact fallback path, or names the tmux buffer retaining it if even
+the fallback cannot be written. The archive root defaults below
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive`; `GANG_ARCHIVE_DIR`
+overrides it.
 
 ### `gang down <session>`
 
@@ -493,7 +500,8 @@ pending spool first. The session name is required and must match the team this
 shell is pointed at; `down` refuses a name that does not match, and refuses
 outright when it is run from a pane inside that session. There is no override:
 an agent must not be able to end the team it is running in. After the archives
-it appends one usage record per window, reading ccusage once for all of them.
+it prepares one usage record per window with a single ccusage read and asks the
+tmux server to append the prepared batch from its host mount namespace.
 
 ## Delivery and compaction
 
@@ -1257,7 +1265,13 @@ one JSON object per line, appended by `drop` and `down`. Each carries `v` (1),
 `cache_write`, and `last_activity`. Fields Gangline did not have are `null`.
 The file is never rewritten or pruned by Gangline; `gang usage` prints its
 path, a line it cannot read as a version 1 record is counted in `not covered`
-and nothing of it is printed, and removing it is `rm`. Provider percent-used windows are `gang limits`, not this command.
+and nothing of it is printed, and removing it is `rm`. The caller measures and
+prepares the JSON, then a synchronous tmux `run-shell` child appends it from the
+server's host mount namespace. If that append fails, the prepared JSON is saved
+under the effective archive root's `usage-unrecorded/` directory and its exact path is printed; append
+that file to the repaired event file and remove it. If neither path is writable,
+Gangline prints the named tmux buffer that retains the JSON until the server
+exits. Provider percent-used windows are `gang limits`, not this command.
 
 ### `gang wait-limit [name] [--resume <turn>]` / `gang wait-limit [name] --clear`
 

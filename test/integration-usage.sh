@@ -248,15 +248,70 @@ equal "the failed read is the second record" \
   "usage-beta failed" \
   "$(python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()][1]; print(r["agent"], r["usage_status"])' "$usage_events")"
 
+# The caller gets a private mount namespace in which its data root is read
+# only. The tmux server was started outside that namespace and sees the same
+# path writable, matching a sandboxed agent calling into its host tmux server.
+# A mode bit cannot stage that boundary: caller and server have the same uid,
+# so chmod would make the path writable or read-only for both of them. A real
+# pane id exercises tmux's pane-client output routing, and the literal hashes
+# prove that run-shell cannot interpret caller values as tmux formats.
+if ! unshare -Ur -m true 2>/dev/null; then
+  unknown "drop routes the append outside a read-only caller" \
+    "unprivileged user and mount namespaces are unavailable here (unshare -Ur -m)"
+  unknown "the server-side append records the agent dropped by a read-only caller" \
+    "unprivileged user and mount namespaces are unavailable here (unshare -Ur -m)"
+else
+  "$HITCH" usage-readonly-caller -c bash -d /tmp >/dev/null
+  usage_readonly_id="$(window_id usage-readonly-caller)"
+  usage_readonly_pane="$(tmux list-panes -t "$usage_readonly_id" -F '#{pane_id}')"
+  usage_readonly_data="$RUN_ROOT/usage readonly-##-data"
+  usage_readonly_events="$usage_readonly_data/gangline/usage/events.jsonl"
+  mkdir -p "$usage_readonly_data/gangline/usage"
+  usage_readonly_out="$(
+    unshare -Ur -m sh -eu -c '
+      mount --bind "$1" "$1"
+      mount -o remount,bind,ro "$1"
+      env XDG_DATA_HOME="$1" PATH="$2" GANG_SESSION="$4" TMUX_TMPDIR="$5" \
+        TMUX="$6,0,0" TMUX_PANE="$7" "$3" drop usage-readonly-caller
+    ' usage-readonly-drop "$usage_readonly_data" "$usage_present" "$GANG" \
+      "$GANG_SESSION" "$TMUX_TMPDIR" "$TMUX_SOCKET" "$usage_readonly_pane" 2>&1
+  )" || fail "drop succeeds from a caller whose usage data root is read-only" \
+    "status $?: [$usage_readonly_out]"
+  contains "drop routes the append outside a read-only caller" \
+    "$usage_readonly_out" "usage: recorded in $usage_readonly_events"
+  usage_readonly_recorded="missing"
+  if [ -f "$usage_readonly_events" ]; then
+    usage_readonly_recorded="$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["agent"])' "$usage_readonly_events")"
+  fi
+  equal "the server-side append records the agent dropped by a read-only caller" \
+    "usage-readonly-caller" "$usage_readonly_recorded"
+fi
+
 # A record that cannot be written is one stderr line, and the drop proceeds.
 usage_blocked_data="$RUN_ROOT/usage-blocked-data"
+usage_blocked_archive="$RUN_ROOT/usage archive-##-literal"
 : > "$usage_blocked_data"
-usage_drop_blocked_out="$(XDG_DATA_HOME="$usage_blocked_data" PATH="$usage_present" "$GANG" drop usage-gamma 2>&1)" \
+usage_drop_blocked_out="$(GANG_ARCHIVE_DIR="$usage_blocked_archive" \
+  XDG_DATA_HOME="$usage_blocked_data" PATH="$usage_present" "$GANG" drop usage-gamma 2>&1)" \
   || fail "drop succeeds when the record cannot be written" "status $?: [$usage_drop_blocked_out]"
 contains "an unwritable record is reported on the drop" \
   "$usage_drop_blocked_out" "usage record not written"
 contains "an unwritable record names the path it could not append to" \
   "$usage_drop_blocked_out" "$usage_blocked_data/gangline/usage/events.jsonl"
+contains "an unwritable record names the fallback that preserved its event" \
+  "$usage_drop_blocked_out" "usage event preserved at $usage_blocked_archive/usage-unrecorded/"
+usage_fallback_files=""
+if [ -d "$usage_blocked_archive/usage-unrecorded" ]; then
+  usage_fallback_files="$(find "$usage_blocked_archive/usage-unrecorded" -type f -name 'usage-*.jsonl' -print)"
+fi
+equal "one failed append preserves one fallback event" \
+  "1" "$(printf '%s\n' "$usage_fallback_files" | sed '/^$/d' | wc -l | tr -d ' ')"
+usage_fallback_recorded="missing"
+if [ -n "$usage_fallback_files" ]; then
+  usage_fallback_recorded="$(python3 -c 'import json,sys; print(json.loads(open(sys.argv[1]).readline())["agent"])' "$usage_fallback_files")"
+fi
+equal "the preserved fallback contains the event the primary path refused" \
+  "usage-gamma" "$usage_fallback_recorded"
 excludes "the drop with an unwritable record still ended the agent" \
   "$(window_names)" "usage-gamma"
 

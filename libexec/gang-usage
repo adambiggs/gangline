@@ -3,8 +3,11 @@
 """Join ccusage's session report to Gangline's hitch records.
 
 `record` appends one normalized line per ended agent to the usage event file.
-`report` prints per-agent consumption, a per-model roll-up, and what the join
-could not cover. Both read agent records from stdin as NUL-separated
+`prepare` emits those normalized lines without writing, and `append` validates
+and appends prepared lines; Gangline uses that split to cross a caller's
+read-only sandbox boundary through tmux. `report` prints per-agent consumption,
+a per-model roll-up, and what the join could not cover. Record preparation and
+reporting read agent records from stdin as NUL-separated
 `key=value` entries with an empty entry between agents; a value may hold
 anything but NUL. ccusage runs from PATH under a bound, and every token count
 it prints is validated before it is believed; an absent, failed, or malformed
@@ -206,10 +209,10 @@ def read_source() -> tuple:
         return ("malformed", str(err))
 
 
-def record(args) -> int:
+def prepare(args) -> list:
     agents = read_agents(sys.stdin.buffer.read())
     if not agents:
-        raise Malformed("record was given no agent")
+        raise Malformed("prepare was given no agent")
     source = read_source()
     ended_at = args.now if args.now is not None else int(time.time())
     host = args.host or socket.gethostname()
@@ -229,17 +232,52 @@ def record(args) -> int:
         })
         line.update(join(agent, source))
         lines.append(line)
+    return lines
+
+
+def append_records(events: str, lines: list) -> None:
     try:
-        os.makedirs(os.path.dirname(args.events), exist_ok=True)
-        with open(args.events, "a", encoding="utf-8") as handle:
+        os.makedirs(os.path.dirname(events), exist_ok=True)
+        with open(events, "a", encoding="utf-8") as handle:
             for line in lines:
                 handle.write(json.dumps(line, sort_keys=True, ensure_ascii=False) + "\n")
     except OSError as err:
-        raise Malformed(f"cannot append to {args.events}: {err}")
+        raise Malformed(f"cannot append to {events}: {err}")
+
+
+def report_recorded(events: str, lines: list) -> None:
     for line in lines:
         note = f" — {visible(line['usage_note'])}" if line["usage_note"] else ""
         print(f"usage: {visible(line['agent'])} {line['usage_status']}{note}")
-    print(f"usage: recorded in {visible(args.events)}")
+    print(f"usage: recorded in {visible(events)}")
+
+
+def record(args) -> int:
+    lines = prepare(args)
+    append_records(args.events, lines)
+    report_recorded(args.events, lines)
+    return 0
+
+
+def prepare_only(args) -> int:
+    for line in prepare(args):
+        print(json.dumps(line, sort_keys=True, ensure_ascii=False))
+    return 0
+
+
+def append_only(args) -> int:
+    lines = []
+    for number, raw in enumerate(sys.stdin, 1):
+        if not raw.strip():
+            continue
+        try:
+            lines.append(load_event(raw))
+        except Malformed as err:
+            raise Malformed(f"prepared line {number} is not an event: {err}")
+    if not lines:
+        raise Malformed("append was given no prepared event")
+    append_records(args.events, lines)
+    report_recorded(args.events, lines)
     return 0
 
 
@@ -442,14 +480,25 @@ def main() -> int:
         part = sub.add_parser(name)
         part.add_argument("--events", required=True)
         part.add_argument("--now", type=int)
-    sub.choices["record"].add_argument("--ended-by", required=True, choices=["drop", "down"])
-    sub.choices["record"].add_argument("--host")
+    append_parser = sub.add_parser("append")
+    append_parser.add_argument("--events", required=True)
+    prepare_parser = sub.add_parser("prepare")
+    prepare_parser.add_argument("--now", type=int)
+    for name in ("record", "prepare"):
+        sub.choices[name].add_argument("--ended-by", required=True, choices=["drop", "down"])
+        sub.choices[name].add_argument("--host")
     sub.choices["report"].add_argument("--team", required=True)
     sub.choices["report"].add_argument("--team-created", type=int, default=0)
     sub.choices["report"].add_argument("--all", action="store_true")
     args = parser.parse_args()
     try:
-        return record(args) if args.mode == "record" else report(args)
+        if args.mode == "record":
+            return record(args)
+        if args.mode == "prepare":
+            return prepare_only(args)
+        if args.mode == "append":
+            return append_only(args)
+        return report(args)
     except Malformed as err:
         print(f"gang-usage: {err}", file=sys.stderr)
         return 2

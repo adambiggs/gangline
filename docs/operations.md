@@ -868,7 +868,15 @@ relaunch, not a claim that Gangline reconstructed the old team.
 
 `drop` and `down` also append one line per agent to the usage record under
 `${XDG_DATA_HOME:-$HOME/.local/share}/gangline/usage/events.jsonl`. Gangline
-never prunes it; remove it when its history is no longer wanted.
+never prunes it; remove it when its history is no longer wanted. The caller
+prepares each event, while the tmux server performs the append from its host
+mount namespace so a read-only agent sandbox does not lose it. If the primary
+append fails, Gangline prints the fallback file it wrote under the effective
+archive root's `usage-unrecorded/` directory (normally below
+`${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive`, unless
+`GANG_ARCHIVE_DIR` overrides it); append that JSON to the repaired event file,
+then remove the fallback. If the fallback is also unavailable, the error names
+the tmux buffer holding the JSON and its lifetime.
 
 `drop` and `down` archive a window's spool and delete it. Nothing else does, so
 a window killed any other way — an external `tmux kill-window`, or a tmux server
