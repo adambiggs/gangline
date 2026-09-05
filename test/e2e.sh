@@ -77,8 +77,11 @@ fi
 
 command -v claude >/dev/null 2>&1 \
   || { echo "e2e: claude is not installed, so there is no harness to drive" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 \
-  || { echo "e2e: python3 cannot run here, so the stub server cannot start" >&2; exit 1; }
+# Resolving on PATH is not the ability to run, and this lane's stub server is a
+# python program: the suite's one interpreter rule answers both.
+. "$ROOT/test/suite-python.sh"
+suite_python3 >/dev/null \
+  || { echo "e2e: the stub server cannot start without a python3 interpreter" >&2; exit 1; }
 # Teardown proves the harness has left before it removes the world underneath
 # it, and a lane that cannot prove that reports a clean exit it never checked.
 [ -d /proc ] \

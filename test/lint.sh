@@ -22,10 +22,95 @@ esac
 # this suite becomes runnable before a commit rather than only at pre-push.
 test/gate.sh --assert-owned >/dev/null
 
-python3 --version >/dev/null 2>&1 || {
-  echo "lint: python3 cannot run here, so the source-guard dataflow check cannot run" >&2
+# The source-guard dataflow check is a python program, and the suite has one
+# rule for finding an interpreter rather than one per entry point.
+. test/suite-python.sh
+suite_python3 >/dev/null || {
+  echo "lint: the source-guard dataflow check cannot run without a python3 interpreter" >&2
   exit 1
 }
+# AND THE RULE IS CALIBRATED BEFORE IT IS TRUSTED. On a host whose python3 is
+# already an ordinary binary the rule is a no-op, so a green run there says
+# nothing about the case it exists for and the guard would rot unnoticed. Both
+# halves of the case are therefore built rather than waited for: a python3 that
+# refuses unless it finds a version file under $HOME, which is what a version
+# manager's shim does, standing in front of an interpreter shaped like a
+# virtual environment, which is what a pin can silently leave.
+python_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+mkdir -p "$python_cal/bin" "$python_cal/versioned" "$python_cal/unversioned" "$python_cal/venv/bin"
+: > "$python_cal/versioned/.tool-versions"
+python_cal_real="$(suite_python3)"
+# A minimal environment built here rather than `python3 -m venv`, which is
+# packaged separately on some distributions: the two files below are all
+# CPython reads, and the base interpreter is asked for its own location so
+# nothing here names an installation path.
+python_cal_base="$("$python_cal_real" -c 'import sys
+sys.stdout.write(getattr(sys, "_base_executable", "") or sys.executable)')"
+ln -s "$python_cal_base" "$python_cal/venv/bin/python3"
+printf 'home = %s\ninclude-system-site-packages = false\n' \
+  "$(dirname "$python_cal_base")" > "$python_cal/venv/pyvenv.cfg"
+cat > "$python_cal/bin/python3" <<SH
+#!/bin/sh
+[ -f "\$HOME/.tool-versions" ] || {
+  echo 'python3: No version is set for command python3' >&2
+  exit 126
+}
+exec '$python_cal/venv/bin/python3' "\$@"
+SH
+chmod +x "$python_cal/bin/python3"
+cat > "$python_cal/shebang" <<'SH'
+#!/usr/bin/env python3
+import sys
+print(sys.prefix)
+SH
+chmod +x "$python_cal/shebang"
+: > "$python_cal/notadir"
+
+# Six readings. The shim reproduces the failure at all; the rule answers with
+# the interpreter that shim chose, which a rule reading PATH can name and a
+# rule carrying a written-down path cannot; that interpreter survives the
+# fixture $HOME; a shebang program reaches it once the rule has pinned it, and
+# is still inside the environment rather than the installation behind it; the
+# same program reaches nothing without the pin, which is the state this guard
+# was written against; and a pin that cannot be written refuses instead of
+# reporting a success that leaves PATH pointing at nothing.
+cal_shim_rc=0
+env PATH="$python_cal/bin:$PATH" HOME="$python_cal/unversioned" \
+  python3 -c '' 2>/dev/null || cal_shim_rc=$?
+cal_resolved="$(env PATH="$python_cal/bin:$PATH" HOME="$python_cal/versioned" \
+  bash -c '. test/suite-python.sh; suite_python3' 2>/dev/null)" || cal_resolved=""
+cal_survives=no
+[ -n "$cal_resolved" ] \
+  && env HOME="$python_cal/unversioned" "$cal_resolved" -c '' 2>/dev/null \
+  && cal_survives=yes
+cal_pinned="$(env PATH="$python_cal/bin:$PATH" HOME="$python_cal/versioned" \
+  bash -c '. test/suite-python.sh
+suite_python3_pin "$1/pin" || exit 1
+HOME="$1/unversioned" exec "$1/shebang"' _ "$python_cal" 2>/dev/null)" || cal_pinned=""
+cal_unpinned_rc=0
+env PATH="$python_cal/bin:$PATH" HOME="$python_cal/unversioned" \
+  "$python_cal/shebang" >/dev/null 2>&1 || cal_unpinned_rc=$?
+cal_unusable_rc=0
+env PATH="$python_cal/bin:$PATH" HOME="$python_cal/versioned" \
+  bash -c '. test/suite-python.sh; suite_python3_pin "$1/notadir"' _ "$python_cal" \
+  >/dev/null 2>&1 || cal_unusable_rc=$?
+rm -rf -- "$python_cal"
+if [ "$cal_shim_rc" -eq 0 ] \
+   || [ "$cal_resolved" != "$python_cal/venv/bin/python3" ] \
+   || [ "$cal_survives" != yes ] \
+   || [ "$cal_pinned" != "$python_cal/venv" ] \
+   || [ "$cal_unpinned_rc" -eq 0 ] || [ "$cal_unusable_rc" -eq 0 ]; then
+  printf '%s\n' \
+    "lint: the interpreter rule in test/suite-python.sh does not hold its own calibration, so a run that gives itself a private HOME is not covered." \
+    "home-bound shim refused with: $cal_shim_rc (0 means the fixture reproduced nothing)" \
+    "interpreter resolved: ${cal_resolved:-<none>}, wanted $python_cal/venv/bin/python3" \
+    "and it runs without the version file: $cal_survives" \
+    "pinned shebang program reported prefix: ${cal_pinned:-<nothing>}, wanted $python_cal/venv" \
+    "unpinned shebang program exited: $cal_unpinned_rc (0 means the pin proved nothing)" \
+    "pin into an unwritable destination exited: $cal_unusable_rc (0 means a failed pin reported success)" >&2
+  exit 1
+fi
+
 python3 test/source-guards.py --discover test
 if [ "$fast" -eq 0 ]; then
   test/source-guards-fixtures.sh

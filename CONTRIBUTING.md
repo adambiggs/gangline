@@ -90,6 +90,12 @@ The following rules are mandatory:
   the annotation to get the exact forms it will accept. The introduction-time
   migration ledger is closed to new entries: copying, moving, changing, or
   deleting one of its reviewed assertions requires a fresh inline decision.
+- Reach python through `test/suite-python.sh`. A version-manager shim resolves
+  `python3` by reading a version file under `$HOME`, and `test/integration.sh`
+  gives the run a private `$HOME`, so the interpreter is resolved to an absolute
+  path once before that line and pinned onto `PATH` — which is also how a
+  `#!/usr/bin/env python3` program reaches it. Do not add a second resolution,
+  and do not prepend an interpreter directory by hand to get a run to pass.
 - Use a private tmux server and disposable session for integration tests. Never
   address the live `gangline` session.
 - Real harness turns are explicit operator smoke tests, not mandatory tests. Run

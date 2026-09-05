@@ -28,6 +28,14 @@ TMUX_SOCKET="$RUN_ROOT/tmux-$(id -u)/default"
 export GIT_CONFIG_GLOBAL="$RUN_ROOT/gitconfig"
 export GIT_CONFIG_SYSTEM=/dev/null
 
+# THE PYTHON THIS RUN USES IS DECIDED BEFORE THE RUN OWNS $HOME. Everything
+# below this line moves into fixture directories, and $HOME becomes one of them
+# a few hundred lines down; a version-manager shim resolves `python3` through
+# $HOME and stops resolving anything at that point. The rule, and what it cost
+# before it existed, are in the file itself.
+. "$ROOT/test/suite-python.sh"
+suite_python3_pin "$RUN_ROOT/pybin" || exit 1
+
 # The Bash fixture establishes every transition synchronously except one: a pane
 # answers its terminal asynchronously. Production waits are inputs here, not
 # evidence, so the settled-composer clock returns immediately. The fixture
