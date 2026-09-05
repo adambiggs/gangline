@@ -12,8 +12,10 @@ Codex gates hook execution on a per-hook content hash recorded in
       3. Continue without trusting (hooks won't run)
 
 before it draws a composer. Every hook the Gangline collar installs carries the
-install root in its command, so any new install, upgrade or worktree presents
-hashes codex has never seen. `hitch` then behaves exactly as designed — the
+install root in its command, so a checkout at a path codex has not trusted
+before — a second install, a worktree, a moved tree — presents unseen hashes.
+An upgrade in place does not: the command string is what codex trusts, and
+replacing the files under the same root leaves it byte-identical. `hitch` then behaves exactly as designed — the
 screen is occupied, delivery parks, and it waits for a person — and an
 unattended team stalls there until a human attaches. This runs before the
 harness so the hitch fails at once instead, saying what is wrong and how to
@@ -374,7 +376,8 @@ def main():
         "",
         "'modified' means codex has trusted a hook under this key before but not",
         "with this content — a Gangline hook command carries its install root, so a",
-        "new install, an upgrade or a worktree presents a hook codex has not seen.",
+        "second install, a worktree or a moved tree presents a hook codex has not",
+        "seen. Replacing the files under the same root does not.",
         "",
         "Trusting is yours to grant, not Gangline's. Start codex once in",
         "%s with the same launch and answer" % cwd,
