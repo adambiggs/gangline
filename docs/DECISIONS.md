@@ -2183,6 +2183,31 @@ detached child may keep its unit alive after the window and its exact
 human attribution in systemd's unit list; it does not reserve the registration
 or prevent another hitch of that name.
 
+That residue is now part of lifecycle rather than a systemd scavenging job.
+Status and roster compare active nonce-bearing team scopes with the complete
+live `@gl_scope` register and report the difference without mutation. Drop
+captures its unit before deleting the window; down captures every live unit and
+every already-orphaned unit before deleting the session. Only after that tmux
+identity is gone does teardown read the surviving unit's ControlGroup and task
+membership and explicitly stop it, printing what it stopped. A prefix match is
+not ownership, and neither is a 16-hex suffix by itself: before launch, hitch
+reserves each issued nonce and exact unit under the team's shared lock root. A
+look-alike without that corroborating record is reported and left alone, and
+unreadable membership also leaves a unit alone. The registry survives loss of
+the window or tmux server, because either loss can be the event that leaves the
+scope behind; a lifecycle read removes records for collected units, and a
+successful stop removes its record. Exact unit discovery reads systemd's `Id`
+property rather than its human unit table, whose launch-derived Description can
+contain newlines and cannot be parsed as one row per unit.
+
+Drop and down keep their historical success across pre-nonce windows whose
+recorded scope is already gone. After the window or session is deleted, they
+return nonzero only when a recorded scope is still active or its state cannot be
+read and Gangline lacks the issuance proof or membership evidence required to
+stop it. That exit says the primary teardown happened but promised cleanup did
+not; it never grants authority to stop on a name alone. This keeps cleanup on
+commands already responsible for deletion and avoids a resident scope watcher.
+
 Drop, roster, usage, tick, and explain already resolve an agent to its window
 before acting or observing. They continue through that stable window identity
 and never synthesize a unit from the current name; the window's `@gl_scope` is

@@ -920,6 +920,21 @@ failure for shapes the parser cannot identify.
 named window. Always run `gang roster` first when other people or agents may be
 using the same session.
 
+If a pane leaves a detached descendant, its transient scope can outlive the
+window. `gang status` and `gang roster` name an active scope whose immutable
+hitch identity is absent from every live window record, without changing it.
+`gang drop` and `gang down` stop such survivors only after reading their cgroup
+membership, and print the exact unit and membership they stopped. A similarly
+named unit without Gangline's matching issuance record under the shared lock
+root is reported and left alone, even when its suffix has the right shape;
+inspect it with
+`systemctl --user status UNIT` and decide its ownership outside Gangline.
+An already-collected pre-nonce scope from a live team upgraded in place is
+silent and does not change teardown's exit status. If a recorded unit still
+survives after teardown but cannot be proved issued or its membership cannot be
+read, the window/session is gone but the command exits nonzero and names the
+unit it deliberately left running.
+
 For experimental tmux work, use an explicit private socket (`tmux -L NAME ...` or
 `tmux -S PATH ...`). Never run an unaimed `tmux kill-server` or `kill-session` on
 a shared server.

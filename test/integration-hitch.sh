@@ -1978,6 +1978,339 @@ equal "re-adopting a registered agent preserves its launch scope" \
   "$scope_unit" "$(tmux show-options -wqv -t "$(window_id scoped)" @gl_scope)"
 "$GANG" drop scoped >/dev/null
 
+# A TRANSIENT SCOPE IS ONLY COLLECTED WHEN ITS CGROUP EMPTIES. A harness can
+# leave a detached child behind when its pane dies, so this manager keeps every
+# launched unit active until Gangline explicitly stops it. Its operation ledger
+# independently proves that teardown first read the surviving cgroup and only
+# then asked systemd to stop it; the stop refuses while the window record still
+# exists, making the required post-window ordering observable rather than
+# inferred from the final absence.
+mkdir -p "$RUN_ROOT/scope-orphan-bin" "$RUN_ROOT/scope-orphan-active" \
+  "$RUN_ROOT/scope-orphan-deactivating" "$RUN_ROOT/scope-orphan-autocollect"
+cat > "$RUN_ROOT/scope-orphan-bin/systemd-run" <<SH
+#!/bin/sh
+unit=''
+while [ "\${1:-}" != env ] && [ "\${1:-}" != tmux ]; do
+  case "\${1:-}" in --unit=*) unit="\${1#--unit=}" ;; esac
+  [ \$# -gt 0 ] || exit 97
+  shift
+done
+[ -n "\$unit" ] || exit 98
+scope_id="\${unit%.scope}"; scope_id="\${scope_id##*-}"
+record_lock=''; record_session=''
+for arg in "\$@"; do
+  case "\$arg" in
+    GANG_LOCK_DIR=*) record_lock="\${arg#GANG_LOCK_DIR=}" ;;
+    GANG_SESSION=*) record_session="\${arg#GANG_SESSION=}" ;;
+  esac
+done
+record="\$record_lock/scopes/\$record_session/\$scope_id/unit"
+if [ -f "\$record" ] && [ "\$(cat "\$record")" = "\$unit" ]; then
+  printf '%s\\n' issued-before-launch >> '$RUN_ROOT/scope-orphan.issue-order'
+else
+  printf '%s\\n' missing-before-launch >> '$RUN_ROOT/scope-orphan.issue-order'
+fi
+: > '$RUN_ROOT/scope-orphan-active/'"\$unit"
+exec "\$@"
+SH
+cat > "$RUN_ROOT/scope-orphan-bin/systemctl" <<SH
+#!/bin/sh
+[ "\${1:-}" != --user ] || shift
+case "\${1:-}" in --machine=*) shift ;; esac
+cmd="\${1:-}"; shift || :
+case "\$cmd" in
+  show)
+    case " \$* " in
+      *' --property=Version '*) exit 0 ;;
+      *' --property=Id '*)
+        printf '%s\\n' 'enumerate-ids' >> '$RUN_ROOT/scope-orphan.ops'
+        for active in '$RUN_ROOT/scope-orphan-active/'*; do
+          [ -f "\$active" ] || continue
+          printf '%s\\n' "\${active##*/}"
+        done
+        ;;
+      *' --property=ControlGroup '*)
+        unit=''; for arg in "\$@"; do unit="\$arg"; done
+        printf '%s\\n' "/fixture/\$unit"
+        printf '%s\\n' 'membership' >> '$RUN_ROOT/scope-orphan.ops'
+        ;;
+      *' --property=TasksCurrent '*) printf '%s\\n' 1 ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  is-active)
+    unit=''; for arg in "\$@"; do unit="\$arg"; done
+    [ -f '$RUN_ROOT/scope-orphan-active/'"\$unit" ] || exit 3
+    if [ -f '$RUN_ROOT/scope-orphan-autocollect/'"\$unit" ] \
+       && ! tmux list-windows -a -F '#{@gl_scope}' 2>/dev/null \
+            | grep -Fxq -- "\$unit"; then
+      rm -f -- '$RUN_ROOT/scope-orphan-active/'"\$unit" \
+        '$RUN_ROOT/scope-orphan-autocollect/'"\$unit"
+      exit 3
+    fi
+    state=active
+    [ ! -f '$RUN_ROOT/scope-orphan-deactivating/'"\$unit" ] || state=deactivating
+    case " \$* " in *' --quiet '*) ;; *) printf '%s\\n' "\$state" ;; esac
+    ;;
+  list-units)
+    # Real Description values can contain the launch's multiline system
+    # prompt. This continuation deliberately starts like another unit: a
+    # parser of the human table invents it, while an Id-property reader never
+    # asks for this unstructured surface.
+    for active in '$RUN_ROOT/scope-orphan-active/'*; do
+      [ -f "\$active" ] || continue
+      printf '%s loaded active running fixture\\n' "\${active##*/}"
+      printf '%s\\n' 'gangline-$GANG_SESSION-description-0123456789abcdef.scope loaded active running injected-description'
+    done
+    ;;
+  stop)
+    unit=''; for arg in "\$@"; do unit="\$arg"; done
+    if tmux list-windows -a -F '#{@gl_scope}' 2>/dev/null | grep -Fxq -- "\$unit"; then
+      printf '%s\\n' 'stop-before-window-gone' >> '$RUN_ROOT/scope-orphan.ops'
+      exit 88
+    fi
+    if [ -f '$RUN_ROOT/scope-orphan-stop-fail' ]; then
+      printf '%s\\n' "stop-failed \$unit" >> '$RUN_ROOT/scope-orphan.ops'
+      exit 89
+    fi
+    printf '%s\\n' "stop \$unit" >> '$RUN_ROOT/scope-orphan.ops'
+    rm -f -- '$RUN_ROOT/scope-orphan-active/'"\$unit"
+    rm -f -- '$RUN_ROOT/scope-orphan-deactivating/'"\$unit"
+    rm -f -- '$RUN_ROOT/scope-orphan-autocollect/'"\$unit"
+    ;;
+  *) exit 2 ;;
+esac
+SH
+chmod +x "$RUN_ROOT/scope-orphan-bin/systemd-run" \
+  "$RUN_ROOT/scope-orphan-bin/systemctl"
+tmux set-environment -g PATH "$RUN_ROOT/scope-orphan-bin:$scope_path"
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopeleak -c bash -d /tmp >/dev/null
+scope_leak_unit="$(tmux show-options -wqv -t "$(window_id scopeleak)" @gl_scope)"
+: > "$RUN_ROOT/scope-orphan-deactivating/$scope_leak_unit"
+: > "$RUN_ROOT/scope-orphan.ops"
+scope_drop_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" drop scopeleak)"
+equal "drop stops a deactivating scope that survived its window" \
+  "membership
+stop $scope_leak_unit" "$(<"$RUN_ROOT/scope-orphan.ops")"
+equal "hitch reserves the exact issuance record before the scope launches" \
+  "issued-before-launch" "$(<"$RUN_ROOT/scope-orphan.issue-order")"
+contains "drop prints the exact surviving scope it stopped" \
+  "$scope_drop_out" "stopped surviving scope $scope_leak_unit"
+contains "and prints the cgroup membership it read before stopping" \
+  "$scope_drop_out" "cgroup /fixture/$scope_leak_unit held 1 task(s)"
+equal "the explicitly stopped scope is no longer active" "" \
+  "$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f -printf '%f')"
+scope_leak_nonce="${scope_leak_unit%.scope}"; scope_leak_nonce="${scope_leak_nonce##*-}"
+equal "a successful stop removes the persistent issuance record" "" \
+  "$(find "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_leak_nonce" \
+    -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
+
+# READS NAME BOTH CLASSES AND MUTATE NEITHER. The first unit was issued by an
+# actual hitch and then orphaned by an external window death. The second only
+# resembles Gangline's namespace, including a valid-shaped 16-hex nonce, but
+# has no issuance record and is not a unit Gangline may stop during teardown.
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopeobserver -c bash -d /tmp >/dev/null
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$HITCH" scopeorphan -c bash -d /tmp >/dev/null
+scope_orphan_unit="$(tmux show-options -wqv -t "$(window_id scopeorphan)" @gl_scope)"
+scope_foreign_unit="gangline-$GANG_SESSION-lookalike-0123456789abcdef.scope"
+scope_description_unit="gangline-$GANG_SESSION-description-0123456789abcdef.scope"
+: > "$RUN_ROOT/scope-orphan-active/$scope_foreign_unit"
+tmux kill-window -t "$(window_id scopeorphan)"
+scope_orphan_nonce="${scope_orphan_unit%.scope}"; scope_orphan_nonce="${scope_orphan_nonce##*-}"
+equal "the issuance proof survives loss of the window that launched the scope" \
+  "$scope_orphan_unit" \
+  "$(<"$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_orphan_nonce/unit")"
+: > "$RUN_ROOT/scope-orphan.ops"
+scope_status_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" status scopeobserver)"
+scope_roster_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" roster)"
+contains "status reports a nonce-bearing scope with no live registry record" \
+  "$scope_status_out" "orphaned scope $scope_orphan_unit"
+contains "roster reports the same orphaned scope" \
+  "$scope_roster_out" "orphaned scope $scope_orphan_unit"
+contains "status reports a foreign look-alike as outside Gangline ownership" \
+  "$scope_status_out" "$scope_foreign_unit — its name carries no Gangline-issued hitch identity; left alone"
+contains "roster reports the foreign look-alike too" \
+  "$scope_roster_out" "$scope_foreign_unit — its name carries no Gangline-issued hitch identity; left alone"
+excludes "status does not parse a multiline systemd Description as a unit" \
+  "$scope_status_out" "$scope_description_unit"
+excludes "roster does not parse a multiline systemd Description as a unit" \
+  "$scope_roster_out" "$scope_description_unit"
+equal "status and roster never stop either reported unit" "" \
+  "$(grep -E '^(membership|stop )' "$RUN_ROOT/scope-orphan.ops" || true)"
+equal "status and roster enumerate exact Id properties, not the human unit table" \
+  $'enumerate-ids\nenumerate-ids' "$(<"$RUN_ROOT/scope-orphan.ops")"
+equal "the owned orphan remains active after read-only commands" "$scope_orphan_unit" \
+  "$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f -name "$scope_orphan_unit" -printf '%f')"
+equal "the foreign look-alike remains active after read-only commands" "$scope_foreign_unit" \
+  "$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f -name "$scope_foreign_unit" -printf '%f')"
+
+# AN ABSENT RESERVATION IS FORGOTTEN ONLY AFTER THE PRE-LAUNCH RACE WINDOW.
+# This exercises the age boundary itself: a settled old record is removed, a
+# new record that could still precede launch remains, and an active issued unit
+# remains authoritative regardless of age.
+scope_prune_stale="gangline-$GANG_SESSION-prunestale-fedcba9876543210.scope"
+scope_prune_recent="gangline-$GANG_SESSION-prunerecent-abcdef0123456789.scope"
+scope_prune_stale_dir="$GANG_LOCK_DIR/scopes/$GANG_SESSION/fedcba9876543210"
+scope_prune_recent_dir="$GANG_LOCK_DIR/scopes/$GANG_SESSION/abcdef0123456789"
+mkdir -p "$scope_prune_stale_dir" "$scope_prune_recent_dir"
+printf '%s\n' "$scope_prune_stale" > "$scope_prune_stale_dir/unit"
+printf '%s\n' "$scope_prune_recent" > "$scope_prune_recent_dir/unit"
+touch -d '3 minutes ago' "$scope_prune_stale_dir"
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" "$GANG" status scopeobserver >/dev/null
+equal "an aged absent issuance reservation is pruned" "" \
+  "$(find "$scope_prune_stale_dir" -maxdepth 1 -type f -name unit -printf '%f' 2>/dev/null || true)"
+equal "a recent absent issuance reservation survives the pre-launch race" \
+  "$scope_prune_recent" "$(<"$scope_prune_recent_dir/unit")"
+equal "an active issued scope keeps its issuance reservation" \
+  "$scope_orphan_unit" \
+  "$(<"$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_orphan_nonce/unit")"
+rm -f -- "$scope_prune_recent_dir/unit"
+rmdir -- "$scope_prune_recent_dir" 2>/dev/null || true
+
+# WHOLE-TEAM TEARDOWN HAS TO CAPTURE ORPHANS BEFORE IT DESTROYS THE REGISTER.
+# A separate private server lets this assertion drive `down` without ending the
+# fixture team that owns the rest of the suite.
+scope_down_session="scopedown-$$"
+scope_down_root="$RUN_ROOT/scope-down-run"
+mkdir -p "$scope_down_root"
+scope_down_socket="$scope_down_root/tmux-$(id -u)/default"
+env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+    TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
+    GANG_LOCK_DIR="$scope_down_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_down_root/archive" \
+    "$GANG" hitch downobserver -c bash -d /tmp >/dev/null
+env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+    TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
+    GANG_LOCK_DIR="$scope_down_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_down_root/archive" \
+    "$GANG" hitch downorphan -c bash -d /tmp >/dev/null
+# A live team created by the previous Gangline names its scopes without an
+# issued nonce record. If that stale record names a unit already collected
+# when the window disappears, teardown remains successful and silent instead
+# of turning an upgrade into a false cleanup failure.
+TMUX_TMPDIR="$scope_down_root" tmux new-window -d \
+  -t "=$scope_down_session" -n downlegacy -c /tmp bash
+env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+    TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
+    GANG_LOCK_DIR="$scope_down_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_down_root/archive" \
+    "$GANG" adopt downlegacy -c bash >/dev/null
+scope_legacy_unit="gangline-$scope_down_session-legacy.scope"
+: > "$RUN_ROOT/scope-orphan-active/$scope_legacy_unit"
+: > "$RUN_ROOT/scope-orphan-autocollect/$scope_legacy_unit"
+TMUX_TMPDIR="$scope_down_root" tmux set-option -w \
+  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+    -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
+    | awk '$2 == "downlegacy" { print $1 }')" @gl_scope "$scope_legacy_unit"
+scope_down_orphan="$(TMUX_TMPDIR="$scope_down_root" tmux show-options -wqv \
+  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+    -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
+    | awk '$2 == "downorphan" { print $1 }')" @gl_scope)"
+TMUX_TMPDIR="$scope_down_root" tmux kill-window \
+  -t "$(TMUX_TMPDIR="$scope_down_root" tmux list-windows \
+    -t "=$scope_down_session" -F '#{window_id} #{@gl_agent}' \
+    | awk '$2 == "downorphan" { print $1 }')"
+: > "$RUN_ROOT/scope-orphan.ops"
+scope_down_rc=0
+scope_down_out="$(env PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+    TMUX_TMPDIR="$scope_down_root" GANG_SESSION="$scope_down_session" \
+    GANG_LOCK_DIR="$scope_down_root/locks" \
+    GANG_ARCHIVE_DIR="$scope_down_root/archive" \
+    "$GANG" down "$scope_down_session")" || scope_down_rc=$?
+equal "down stays successful across an already-collected legacy scope record" \
+  0 "$scope_down_rc"
+contains "down stops a scope whose window was already gone" \
+  "$(<"$RUN_ROOT/scope-orphan.ops")" "stop $scope_down_orphan"
+contains "down prints the already-orphaned scope it stopped" \
+  "$scope_down_out" "stopped surviving scope $scope_down_orphan"
+equal "down leaves the foreign look-alike outside its stop set" "$scope_foreign_unit" \
+  "$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f -name "$scope_foreign_unit" -printf '%f')"
+equal "down distinguishes its issued orphan from a valid-shaped foreign nonce" \
+  $'stop '"$scope_down_orphan"$'\n'"$scope_foreign_unit" \
+  "$(grep -Fx "stop $scope_down_orphan" "$RUN_ROOT/scope-orphan.ops" || true)
+$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f \
+  -name "$scope_foreign_unit" -printf '%f')"
+excludes "down is silent for a legacy scope record whose unit is already gone" \
+  "$scope_down_out" "$scope_legacy_unit"
+tmux -S "$scope_down_socket" kill-server 2>/dev/null || true
+# Drop has the same upgrade path: an old window can still carry a pre-nonce
+# scope name after its already-collected unit is gone.
+tmux new-window -d -t "=$GANG_SESSION" -n legacydrop -c /tmp bash
+"$GANG" adopt legacydrop -c bash >/dev/null
+scope_drop_legacy="gangline-$GANG_SESSION-legacy.scope"
+: > "$RUN_ROOT/scope-orphan-active/$scope_drop_legacy"
+: > "$RUN_ROOT/scope-orphan-autocollect/$scope_drop_legacy"
+tmux set-option -w -t "$(window_id legacydrop)" @gl_scope "$scope_drop_legacy"
+scope_drop_legacy_rc=0
+scope_drop_legacy_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" drop legacydrop 2>&1)" || scope_drop_legacy_rc=$?
+equal "drop stays successful across an already-collected legacy scope record" \
+  0 "$scope_drop_legacy_rc"
+excludes "drop is silent for a legacy scope record whose unit is already gone" \
+  "$scope_drop_legacy_out" "$scope_drop_legacy"
+
+# A PRE-NONCE OR OTHERWISE UNPROVABLE RECORD THAT REALLY SURVIVES IS NOT THE
+# harmless upgrade case above. Teardown has happened, but the command fails
+# loudly and never turns the recorded name alone into authority to stop it.
+tmux new-window -d -t "=$GANG_SESSION" -n unprovable -c "$RUN_ROOT" bash
+"$GANG" adopt unprovable -c bash >/dev/null
+scope_unprovable_unit="gangline-$GANG_SESSION-unprovable-1111111111111111.scope"
+: > "$RUN_ROOT/scope-orphan-active/$scope_unprovable_unit"
+tmux set-option -w -t "$(window_id unprovable)" @gl_scope "$scope_unprovable_unit"
+scope_unprovable_rc=0
+scope_unprovable_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" \
+  "$GANG" drop unprovable 2>&1)" || scope_unprovable_rc=$?
+equal "drop exits nonzero when an unprovable recorded scope really survives" \
+  1 "$scope_unprovable_rc"
+contains "drop explains why the unprovable survivor was not stopped" \
+  "$scope_unprovable_out" \
+  "surviving scope $scope_unprovable_unit was NOT stopped: no registry record proves Gangline issued it"
+equal "drop leaves an unprovable surviving scope untouched" \
+  "$scope_unprovable_unit" \
+  "$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 -type f \
+    -name "$scope_unprovable_unit" -printf '%f')"
+rm -f -- "$RUN_ROOT/scope-orphan-active/$scope_unprovable_unit"
+
+# HITCH'S ROLLBACK REFUSAL IS AUTHORITATIVE EVEN WHEN SCOPE CLEANUP FAILS.
+# cmd_drop has already destroyed the window before its scope stop can return
+# nonzero; under set -e that status must not skip the designed status-3
+# delivery diagnostic or the rest of rollback cleanup.
+: > "$RUN_ROOT/scope-orphan-stop-fail"
+scope_rollback_rc=0
+scope_rollback_out="$(PATH="$RUN_ROOT/scope-orphan-bin:$PATH" GANG_SCOPE=on \
+  "$GANG" hitch scope-rollback -c doctrine-prequeued -d /tmp 2>&1)" \
+  || scope_rollback_rc=$?
+rm -f -- "$RUN_ROOT/scope-orphan-stop-fail"
+scope_rollback_unit="$(find "$RUN_ROOT/scope-orphan-active" -maxdepth 1 \
+  -type f -name "gangline-$GANG_SESSION-scope-rollback-*.scope" -printf '%f')"
+equal "a failed rollback scope stop preserves hitch's delivery refusal status" \
+  3 "$scope_rollback_rc"
+contains "a failed rollback scope stop keeps its cleanup diagnostic" \
+  "$scope_rollback_out" \
+  "surviving scope $scope_rollback_unit was NOT stopped after gang read cgroup"
+contains "a failed rollback scope stop keeps hitch's authoritative diagnostic" \
+  "$scope_rollback_out" \
+  "so gang rolled back the new agent and no live window remains"
+excludes "a failed rollback scope stop still leaves no registered window" \
+  "$(window_names)" "scope-rollback"
+equal "the forced rollback fixture reached systemd only after window teardown" \
+  "stop-failed $scope_rollback_unit" \
+  "$(grep -F "stop-failed $scope_rollback_unit" "$RUN_ROOT/scope-orphan.ops" || true)"
+rm -f -- "$RUN_ROOT/scope-orphan-active/$scope_rollback_unit"
+scope_rollback_nonce="${scope_rollback_unit%.scope}"
+scope_rollback_nonce="${scope_rollback_nonce##*-}"
+rm -f -- "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_rollback_nonce/unit"
+rmdir -- "$GANG_LOCK_DIR/scopes/$GANG_SESSION/$scope_rollback_nonce" \
+  2>/dev/null || true
+PATH="$RUN_ROOT/scope-orphan-bin:$PATH" "$GANG" drop scopeobserver >/dev/null
+tmux set-environment -g PATH "$scope_path"
+
 # A REGISTERED NAME CAN MOVE WHILE THE PROCESS STAYS PUT. A scope named from
 # that mutable registration still occupies the old name after `gang rename`,
 # so the registry says the name is free while the next hitch's systemd

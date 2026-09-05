@@ -249,6 +249,30 @@ launch and so cannot scope one; a newly adopted agent stays in whatever cgroup
 its window already had and gets an empty `@gl_scope` record. Re-adopting an
 agent Gangline already registered preserves its recorded launch scope.
 
+A pane exit normally empties and collects its scope. If a detached descendant
+keeps it alive, `drop` reads the exact recorded unit before removing the window,
+then reads the survivor's cgroup membership and stops it after the window is
+gone. `down` does the same for every recorded unit and for any earlier orphan it
+can identify before destroying the team's live registry. Each explicit stop
+prints the unit, cgroup, and task count Gangline read. An unreadable membership
+is a refusal to stop, not permission to guess.
+
+`status` and human `roster` list active `gangline-<session>-...scope` units not
+claimed by any live window. They are observations only. A unit with the exact
+hitch-time label plus 16-hex-digit identity Gangline mints, corroborated by the
+team-scoped issuance record reserved under the shared lock root before launch,
+is reported as an orphan; a look-alike without that exact record is reported
+separately and is never stopped. Because the record is outside tmux it survives
+loss of the window or
+server; lifecycle reads remove it after its unit is collected, and teardown
+removes it after a stop. The porcelain roster remains one fixed-shape row per
+live agent and does not include either team-level report.
+
+The default lock root is under `/tmp`, so without an installer-supplied
+`GANG_LOCK_DIR` the issuance proof lasts for the current boot, matching the
+transient scopes it describes. A persistent lock root makes that proof survive
+reboots as well. Gangline does not infer ownership after either root is lost.
+
 The tmux server that holds the team is scoped the same way, as
 `gangline-<session>.scope`, so its death is a named unit stopping rather than an
 anonymous process exit inside whatever login session started it. Only the
@@ -256,6 +280,10 @@ anonymous process exit inside whatever login session started it. Only the
 that is already running, `new-session` forks nothing and the scope would hold
 only the client that exits a moment later, so that case prints a warning saying
 the server stays outside the accounting and hitches anyway.
+
+The server scope has no hitch nonce or issuance record. A detached descendant
+that keeps it alive after the tmux server exits is therefore reported by
+systemd but is not reclaimed by the agent-scope orphan lifecycle.
 
 The reason is blast radius. `systemd-oomd` kills the descendant *leaf* cgroup
 holding the most swap, and a tmux server inherits the cgroup of whatever started

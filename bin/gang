@@ -9567,12 +9567,27 @@ hitch_up_attach() { # $1 = startup-gated window; let `up` expose its prompt
 SCOPE_PREFIX=""
 SCOPE_ARGV=()
 SCOPE_UNIT=""
+SCOPE_SYSTEMCTL=()
+SCOPE_SYSTEMCTL_RECOVER='systemctl --user'
+scope_systemctl_connect() { # reusable direct/host-user-manager client
+  local manager_user
+  SCOPE_SYSTEMCTL=(systemctl --user)
+  SCOPE_SYSTEMCTL_RECOVER='systemctl --user'
+  command -v systemctl >/dev/null 2>&1 || return 1
+  if "${SCOPE_SYSTEMCTL[@]}" show --property=Version --value >/dev/null 2>&1; then
+    return 0
+  fi
+  manager_user="$(id -un 2>/dev/null)" || manager_user=""
+  [ -n "$manager_user" ] || return 1
+  SCOPE_SYSTEMCTL+=(--machine="$manager_user@.host")
+  SCOPE_SYSTEMCTL_RECOVER="systemctl --user --machine=$(shell_quote "$manager_user@.host")"
+  "${SCOPE_SYSTEMCTL[@]}" show --property=Version --value >/dev/null 2>&1
+}
+
 scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
                      # $3 = what a name still held says outlived what,
                      # optional $4 = retry when a per-hitch identity collided;
                      # SCOPE_PREFIX / SCOPE_ARGV = the wrapper, empty when off
-  local manager_user systemctl_recover='systemctl --user'
-  local -a scope_systemctl=(systemctl --user)
   SCOPE_PREFIX=""; SCOPE_ARGV=()
   [ "$GANG_SCOPE" = on ] || return 0
   case "$SESSION" in *[!A-Za-z0-9._-]*)
@@ -9585,25 +9600,19 @@ scope_prefix_for() { # $1 = unit name, $2 = what the scope holds, in a refusal,
   # the same user manager without weakening that sandbox. Prefer the ordinary
   # path; the fallback is only the preflight/control client, while systemd-run
   # below still executes with the harness in tmux's host context.
-  if ! "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1; then
-    manager_user="$(id -un 2>/dev/null)" || manager_user=""
-    [ -n "$manager_user" ] || die "GANG_SCOPE=on cannot give $2 its own cgroup: could not name the current user for the systemd user manager$(config_origin_note GANG_SCOPE)"
-    scope_systemctl+=(--machine="$manager_user@.host")
-    systemctl_recover="systemctl --user --machine=$(shell_quote "$manager_user@.host")"
-    "${scope_systemctl[@]}" show --property=Version --value >/dev/null 2>&1 \
-      || die "GANG_SCOPE=on cannot give $2 its own cgroup: 'systemctl --user' reaches no systemd user manager directly or through the local host$(config_origin_note GANG_SCOPE)"
-  fi
+  scope_systemctl_connect \
+    || die "GANG_SCOPE=on cannot give $2 its own cgroup: 'systemctl --user' reaches no systemd user manager directly or through the local host$(config_origin_note GANG_SCOPE)"
   [ "${#1}" -le 255 ] \
     || die "GANG_SCOPE=on cannot give $2 its own cgroup: '$1' is longer than a systemd unit name may be"
   # A scope outlives what it held when a detached child was left behind, and the
   # unit identity is stable, so reusing it would meet its own predecessor.
   # systemd-run's failure would land inside tmux as a window that died at
   # launch; the operator gets the unit and the remedy here instead.
-  if "${scope_systemctl[@]}" is-active --quiet -- "$1" 2>/dev/null; then
+  if "${SCOPE_SYSTEMCTL[@]}" is-active --quiet -- "$1" 2>/dev/null; then
     if [ "${4:-}" = retry ]; then
-      die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$systemctl_recover status $1'; retry the hitch to mint another identity"
+      die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$SCOPE_SYSTEMCTL_RECOVER status $1'; retry the hitch to mint another identity"
     fi
-    die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$systemctl_recover status $1' and release the name with '$systemctl_recover stop $1'"
+    die "GANG_SCOPE=on cannot give $2 its own cgroup: $1 is still running, so $3. Inspect it with '$SCOPE_SYSTEMCTL_RECOVER status $1' and release the name with '$SCOPE_SYSTEMCTL_RECOVER stop $1'"
   fi
   SCOPE_ARGV=(systemd-run --user --scope --quiet --collect --unit="$1" -p MemoryAccounting=yes)
   SCOPE_PREFIX="systemd-run --user --scope --quiet --collect --unit=$(shell_quote "$1") -p MemoryAccounting=yes"
@@ -9637,19 +9646,239 @@ tmux_guard_wrap() {
 }
 
 scope_launch_wrap() { # $1 = agent name; mint its immutable per-hitch scope
-  local scope_id
+  local scope_id attempts=0
   SCOPE_UNIT=""
   [ "$GANG_SCOPE" = on ] || return 0
-  scope_id="$(mint_message_nonce)"
-  [ -n "$scope_id" ] \
-    || die "GANG_SCOPE=on cannot mint a stable scope identity for '$1'"
-  # The name is a human label, not the identity. Keeping the hitch-time label
-  # makes a detached child attributable after its window record is gone; the
-  # nonce is what lets a renamed agent and a replacement share that label.
-  SCOPE_UNIT="gangline-$SESSION-$1-$scope_id.scope"
-  scope_prefix_for "$SCOPE_UNIT" "'$1'" \
-    "this per-hitch scope identity collides with a unit that outlived its window" retry
+  while [ "$attempts" -lt 8 ]; do
+    scope_id="$(mint_message_nonce)"
+    [ -n "$scope_id" ] \
+      || die "GANG_SCOPE=on cannot mint a stable scope identity for '$1'"
+    # The name is a human label, not the identity. Keeping the hitch-time label
+    # makes a detached child attributable after its window record is gone; the
+    # nonce is what lets a renamed agent and a replacement share that label.
+    SCOPE_UNIT="gangline-$SESSION-$1-$scope_id.scope"
+    scope_prefix_for "$SCOPE_UNIT" "'$1'" \
+      "this per-hitch scope identity collides with a unit that outlived its window" retry
+    # Reserve provenance before anything can launch under this unit. The
+    # lock-root record survives a window or tmux-server death, unlike an option
+    # inside the server whose loss is exactly the failure being recovered.
+    scope_issue_record "$SCOPE_UNIT" "$1" && break
+    attempts=$((attempts + 1))
+  done
+  [ "$attempts" -lt 8 ] \
+    || die "GANG_SCOPE=on could not reserve a unique scope identity for '$1' after 8 attempts"
   [ -z "$SCOPE_PREFIX" ] || GANG_LAUNCH="$SCOPE_PREFIX $GANG_LAUNCH"
+}
+
+SCOPE_ORPHANS="" SCOPE_FOREIGN=""
+scope_unit_identity() { # $1 unit -> hitch nonce; only Gangline's minted shape
+  local stem nonce label prefix="gangline-$SESSION-"
+  case "$1" in "$prefix"*.scope) ;; *) return 1 ;; esac
+  stem="${1#"$prefix"}"; stem="${stem%.scope}"
+  nonce="${stem##*-}"; label="${stem%-"$nonce"}"
+  [ "${#nonce}" -eq 16 ] || return 1
+  case "$nonce" in *[!a-f0-9]*) return 1 ;; esac
+  valid_name "$label" || return 1
+  printf '%s' "$nonce"
+}
+
+SCOPE_ISSUE_ROOT=""
+scope_issue_root_read() { # SCOPE_ISSUE_ROOT = this team's persistent registry
+  local name
+  SCOPE_ISSUE_ROOT=""
+  name="$(team_record_name "$SESSION")" || return 1
+  SCOPE_ISSUE_ROOT="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}/scopes/$name"
+}
+
+scope_issue_root_prepare() {
+  local base="${GANG_LOCK_DIR:-/tmp/gangline-$(id -u)}"
+  scope_issue_root_read \
+    || die "GANG_SCOPE=on cannot reserve scope identities for session '$SESSION': its name is not usable as a registry directory"
+  lock_base "$base"
+  lock_base "$base/scopes"
+  lock_base "$SCOPE_ISSUE_ROOT"
+}
+
+scope_issue_record() { # $1 unit, $2 agent; 1 = nonce reservation collision
+  local nonce dir
+  [ -n "$1" ] || return 0
+  nonce="$(scope_unit_identity "$1")" \
+    || die "internal: scoped hitch for '$2' produced an invalid unit identity"
+  scope_issue_root_prepare
+  dir="$SCOPE_ISSUE_ROOT/$nonce"
+  if ! mkdir -m 700 "$dir" 2>/dev/null; then
+    [ -e "$dir" ] && return 1
+    die "could not reserve the scope identity Gangline issued for '$2' under $SCOPE_ISSUE_ROOT"
+  fi
+  printf '%s\n' "$1" > "$dir/unit" 2>/dev/null \
+    || { rmdir -- "$dir" 2>/dev/null || true
+         die "could not write the scope identity Gangline issued for '$2' under $SCOPE_ISSUE_ROOT"; }
+}
+
+scope_unit_issued() { # $1 exact unit -> true only when this team recorded it
+  local nonce recorded file
+  nonce="$(scope_unit_identity "$1")" || return 1
+  scope_issue_root_read || return 1
+  file="$SCOPE_ISSUE_ROOT/$nonce/unit"
+  [ -f "$file" ] && [ ! -L "$file" ] || return 1
+  IFS= read -r recorded < "$file" || return 1
+  [ "$recorded" = "$1" ]
+}
+
+scope_issue_forget() { # $1 exact issued unit; release its persistent provenance
+  local nonce dir
+  nonce="$(scope_unit_identity "$1")" || return 0
+  scope_unit_issued "$1" || return 0
+  dir="$SCOPE_ISSUE_ROOT/$nonce"
+  rm -f -- "$dir/unit" 2>/dev/null || true
+  rmdir -- "$dir" 2>/dev/null || true
+}
+
+SCOPE_ACTIVE_STATE=""
+scope_unit_active() { # manager connected, $1 unit; 0 active-like, 1 gone, 2 unknown
+  SCOPE_ACTIVE_STATE="$("${SCOPE_SYSTEMCTL[@]}" is-active -- "$1" 2>/dev/null)" || true
+  case "$SCOPE_ACTIVE_STATE" in
+    active|activating|deactivating|reloading|refreshing) return 0 ;;
+    inactive|failed|unknown|'') return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+scope_issue_prune() { # $1 active ids, $2 live ids; forget settled reservations
+  local active="$1" live="$2" dir nonce issued nl=$'\n'
+  scope_issue_root_read || return 0
+  [ -d "$SCOPE_ISSUE_ROOT" ] || return 0
+  for dir in "$SCOPE_ISSUE_ROOT"/*; do
+    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    nonce="${dir##*/}"
+    [ "${#nonce}" -eq 16 ] || continue
+    case "$nonce" in *[!a-f0-9]*) continue ;; esac
+    IFS= read -r issued < "$dir/unit" 2>/dev/null || continue
+    [ "$(scope_unit_identity "$issued" 2>/dev/null)" = "$nonce" ] || continue
+    case "$nl$active$nl" in *"$nl$issued$nl"*) continue ;; esac
+    case "$nl$live$nl" in *"$nl$issued$nl"*) continue ;; esac
+    # Reservation precedes both the systemd unit and tmux window. A concurrent
+    # status can observe that narrow gap, so only age can establish that an
+    # absent unit and absent registration are settled rather than pre-launch.
+    [ -n "$(find "$dir" -prune -mmin +1 -print -quit 2>/dev/null)" ] || continue
+    scope_issue_forget "$issued"
+  done
+}
+
+scope_orphans_read() { # active team units absent from the live window register
+  local candidates listed="" live="" unit state_rc nl=$'\n'
+  SCOPE_ORPHANS=""; SCOPE_FOREIGN=""
+  scope_systemctl_connect || return 1
+  # `list-units`' human table includes Description, which a launch command can
+  # make multiline. Read the newline-free Id property, then classify state one
+  # exact unit at a time; description text can never become another candidate.
+  candidates="$("${SCOPE_SYSTEMCTL[@]}" show --property=Id --value -- \
+    "gangline-$SESSION-*.scope" 2>/dev/null)" || return 1
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    state_rc=0
+    scope_unit_active "$unit" || state_rc=$?
+    case "$state_rc" in
+      0) listed="$listed$unit$nl" ;;
+      1) ;;
+      *) return 1 ;;
+    esac
+  done <<<"$candidates"
+  live="$(tmux list-windows -a -F '#{@gl_scope}' 2>/dev/null)" || return 1
+  scope_issue_prune "$listed" "$live"
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    case "$unit" in "gangline-$SESSION-"*.scope) ;; *) continue ;; esac
+    scope_unit_identity "$unit" >/dev/null || continue
+    case "$nl$live$nl" in *"$nl$unit$nl"*) continue ;; esac
+    if ! scope_unit_issued "$unit"; then
+      SCOPE_FOREIGN="$SCOPE_FOREIGN$unit$nl"
+      continue
+    fi
+    SCOPE_ORPHANS="$SCOPE_ORPHANS$unit$nl"
+  done <<<"$listed"
+}
+
+scope_orphan_report() { # report only; status and roster must not mutate units
+  local unit
+  if ! scope_orphans_read; then
+    [ "$GANG_SCOPE" != on ] \
+      || printf '%s\n' "$(colour "$C_BAD" "orphaned scopes: UNKNOWN — gang could not read both the user manager and tmux's live scope register")"
+    return 0
+  fi
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    printf '%s\n' "$(colour "$C_BAD" "orphaned scope $unit — no live window claims its Gangline-issued hitch identity; left running")"
+  done <<<"$SCOPE_ORPHANS"
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    printf '%s\n' "$(colour "$C_BAD" "scope resembling Gangline's namespace: $unit — its name carries no Gangline-issued hitch identity; left alone")"
+  done <<<"$SCOPE_FOREIGN"
+}
+
+scope_orphan_stop() { # $1 unit, $2=issued after provenance was read before death
+  local unit="$1" state_rc cgroup tasks
+  [ -n "$unit" ] || return 0
+  if [ "${2:-}" != issued ] || ! scope_unit_identity "$unit" >/dev/null; then
+    printf 'gang: scope %s was NOT stopped: its name carries no Gangline-issued hitch identity\n' \
+      "$(printf '%s' "$unit" | config_sanitize)" >&2
+    return 1
+  fi
+  scope_systemctl_connect || {
+    printf 'gang: orphaned scope %s was NOT stopped: the systemd user manager is unreachable\n' \
+      "$unit" >&2
+    return 1
+  }
+  state_rc=0
+  scope_unit_active "$unit" || state_rc=$?
+  case "$state_rc" in
+    0) ;;
+    1) scope_issue_forget "$unit"; return 0 ;;
+    *) printf 'gang: surviving scope %s was NOT stopped: its active state is unreadable (%s)\n' \
+         "$unit" "$(printf '%s' "$SCOPE_ACTIVE_STATE" | config_sanitize)" >&2
+       return 1 ;;
+  esac
+  cgroup="$("${SCOPE_SYSTEMCTL[@]}" show --property=ControlGroup --value -- "$unit" 2>/dev/null)" \
+    || cgroup=""
+  tasks="$("${SCOPE_SYSTEMCTL[@]}" show --property=TasksCurrent --value -- "$unit" 2>/dev/null)" \
+    || tasks=""
+  case "$cgroup" in /*) ;; *) cgroup="" ;; esac
+  case "$tasks" in ''|*[!0-9]*) tasks="" ;; esac
+  if [ -z "$cgroup" ] || [ -z "$tasks" ]; then
+    printf 'gang: surviving scope %s was NOT stopped: its cgroup membership could not be read\n' \
+      "$unit" >&2
+    return 1
+  fi
+  [ "$tasks" -ne 0 ] || { scope_issue_forget "$unit"; return 0; }
+  "${SCOPE_SYSTEMCTL[@]}" stop -- "$unit" >/dev/null 2>&1 || {
+    printf 'gang: surviving scope %s was NOT stopped after gang read cgroup %s holding %s task(s)\n' \
+      "$unit" "$cgroup" "$tasks" >&2
+    return 1
+  }
+  scope_issue_forget "$unit"
+  printf '%s\n' "$(colour "$C_WORK" "stopped surviving scope $unit — cgroup $cgroup held $tasks task(s)")"
+}
+
+scope_unissued_survivor() { # $1 recorded unit after its window/session is gone
+  local unit="$1" state_rc
+  [ -n "$unit" ] || return 0
+  scope_systemctl_connect || {
+    printf 'gang: scope %s may have survived but was NOT stopped: the systemd user manager is unreachable and no issuance record authorizes a stop\n' \
+      "$(printf '%s' "$unit" | config_sanitize)" >&2
+    return 1
+  }
+  state_rc=0
+  scope_unit_active "$unit" || state_rc=$?
+  case "$state_rc" in
+    1) return 0 ;;
+    0) printf 'gang: surviving scope %s was NOT stopped: no registry record proves Gangline issued it\n' \
+         "$(printf '%s' "$unit" | config_sanitize)" >&2
+       return 1 ;;
+    *) printf 'gang: scope %s may have survived but was NOT stopped: its active state is unreadable (%s) and no issuance record authorizes a stop\n' \
+         "$(printf '%s' "$unit" | config_sanitize)" \
+         "$(printf '%s' "$SCOPE_ACTIVE_STATE" | config_sanitize)" >&2
+       return 1 ;;
+  esac
 }
 
 server_running() { # 0 = a tmux server is already answering on this socket
@@ -9888,13 +10117,15 @@ cmd_hitch() {
   [ -z "${GANG_LOCK_DIR:-}" ] \
     || launch_env="$launch_env GANG_LOCK_DIR=$(shell_quote "$GANG_LOCK_DIR")"
   GANG_LAUNCH="env $launch_env $GANG_LAUNCH"
-  scope_launch_wrap "$name"
-  tmux_guard_wrap
-
   # Every hitch publishes a spool identity after launch. A bad operator root
   # is already fully knowable here; discovering it only in spool_mint reports
   # failure after leaving a registered, running agent behind.
   spool_root_prepare
+
+  # Scope provenance is the final pre-launch reservation: every validation and
+  # shared-root preflight above has completed before it can leave durable state.
+  scope_launch_wrap "$name"
+  tmux_guard_wrap
 
   gang_path_skew_warn
 
@@ -10160,7 +10391,10 @@ cmd_hitch() {
     current_id="$(win_id "$name")" || current_id_rc=$?
     [ "$current_id_rc" -eq 0 ] && [ "$current_id" = "$id" ] \
       || fail 1 "startup contract to '$name' was not delivered after $delivery_looks quiet-composer observation(s), and gang could not prove that the registered window still names the one this hitch created, so it refused to tear down an uncertain target"
-    cmd_drop "$name"
+    # Drop has already removed the window when a surviving scope makes its
+    # cleanup status nonzero. Keep that diagnostic, but do not let `set -e`
+    # replace hitch's authoritative rollback refusal below.
+    cmd_drop "$name" || true
     [ "$opened_session" -eq 0 ] || session_live || team_socket_forget "$SESSION"
     delivery_err="${delivery_err#gang: }"
     fail 3 "startup contract to '$name' was not delivered after $delivery_looks quiet-composer observation(s), so gang rolled back the new agent and no live window remains: ${delivery_err:-delivery was repeatedly refused before typing}"
@@ -12645,6 +12879,7 @@ cmd_status() {
   current="$(binary_id)"
   skew="$(binary_skew_note "$AGENT_ID" "$current")" || skew=""
   [ -z "$skew" ] || printf '%s\n' "$(colour "$C_BAD" "$skew")"
+  scope_orphan_report
 }
 
 # READING YOUR OWN QUEUE IS ITS DELIVERY. A body the addressee has already read
@@ -12844,7 +13079,10 @@ EOF
   # command resolves a spool through @gl_spool and therefore cannot see it at
   # all. Not in --porcelain, whose columns are per-agent and whose consumers
   # parse a fixed shape.
-  [ "$porcelain" -eq 1 ] || spool_orphan_report
+  if [ "$porcelain" -eq 0 ]; then
+    spool_orphan_report
+    scope_orphan_report
+  fi
   [ -z "$unread" ] \
     || die "roster: could not read the state of:$unread — every agent in the team is listed above, and the rows gang could not read carry an unknown state rather than a state nobody looked at"
 }
@@ -13453,7 +13691,7 @@ parting_lines() { # $1 = window id, $2 = the name a relaunch would take
 }
 
 cmd_drop() {
-  local id shown rc=0
+  local id shown rc=0 scope_unit="" scope_owned=0 scope_rc=0
   [ $# -le 1 ] || die "drop: unexpected argument '$2'"
   # The argument reaches the terminal, and drop is the one command an operator
   # runs with a name they read off a hostile registration. It is not validated
@@ -13463,6 +13701,8 @@ cmd_drop() {
   # Droppable, contained, and printed safely is the combination that holds.
   shown="$(printf '%s' "$1" | config_sanitize)"
   id="$(win_id "$1")" || { rc=$?; win_id_missing "$rc" "no agent '$shown'"; }
+  scope_unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || scope_unit=""
+  [ -z "$scope_unit" ] || ! scope_unit_issued "$scope_unit" || scope_owned=1
   parting_lines "$id" "$shown"
   # A spool would outlive its window on disk, which is not a design: this is
   # its deletion path — but a composed message is archived out of it first.
@@ -13477,11 +13717,20 @@ cmd_drop() {
   # registration its native hook did not already consume is released here,
   # after the identity is gone so the waiter cannot mistake teardown for done.
   wait_signal_registered "$id"
+  if [ -n "$scope_unit" ]; then
+    if [ "$scope_owned" -eq 1 ]; then
+      scope_orphan_stop "$scope_unit" issued || scope_rc=$?
+    else
+      scope_unissued_survivor "$scope_unit" || scope_rc=$?
+    fi
+  fi
   printf '%s\n' "$(colour "$C_OK" "dropped $shown")"
+  return "$scope_rc"
 }
 
 cmd_down() { # inverse of up: end the whole team's session
   local named="${1:-}" id raw special shown names="" self="" wait_ids="" ids=""
+  local unit scope_units="" unissued_scopes="" orphan_scopes="" scope_rc=0
   [ $# -le 1 ] || die "down: unexpected argument '$2'"
   [ "$named" = "$SESSION" ] \
     || die "down: this shell's team is '$SESSION' and you named '$named' — refusing to end a session you did not name. Gang ends exactly the team it is pointed at (gang roster; GANG_SESSION selects another)"
@@ -13501,6 +13750,28 @@ cmd_down() { # inverse of up: end the whole team's session
     [ "$special" != 1 ] || continue
     ids="${ids:+$ids$'\n'}$id"
   done < <(tmux list-windows -t "=$SESSION" -F '#{window_id} #{@gl_tick_alerts}')
+  while read -r id; do
+    [ -n "$id" ] || continue
+    unit="$(tmux show-options -wqv -t "$id" @gl_scope 2>/dev/null)" || unit=""
+    [ -z "$unit" ] && continue
+    if scope_unit_issued "$unit"; then
+      scope_units="${scope_units:+$scope_units$'\n'}$unit"
+    else
+      unissued_scopes="${unissued_scopes:+$unissued_scopes$'\n'}$unit"
+    fi
+  done <<<"$ids"
+  # Capture already-orphaned units while the live registry still exists. They
+  # have no window to appear in the loop above, and killing the session first
+  # would destroy the only comparison that proves they are unclaimed.
+  if scope_orphans_read; then
+    orphan_scopes="$SCOPE_ORPHANS"
+    while IFS= read -r unit; do
+      [ -n "$unit" ] || continue
+      printf '%s\n' "$(colour "$C_BAD" "scope resembling Gangline's namespace: $unit — its name carries no Gangline-issued hitch identity; left alone")"
+    done <<<"$SCOPE_FOREIGN"
+  elif [ "$GANG_SCOPE" = on ]; then
+    printf '%s\n' "$(colour "$C_BAD" "orphaned scopes: UNKNOWN before teardown — gang could not read both the user manager and tmux's live scope register")" >&2
+  fi
   # WHOLE-TEAM PREFLIGHT. Each window's archive is internally all-or-nothing,
   # but down used to archive and detach the spools of earlier windows before a
   # later unarchiveable child refused the teardown. The session stayed live
@@ -13537,6 +13808,16 @@ cmd_down() { # inverse of up: end the whole team's session
   tmux kill-session -t "=$SESSION"
   team_socket_forget "$SESSION"
   for id in $wait_ids; do wait_signal_registered "$id"; done
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    scope_orphan_stop "$unit" issued || scope_rc=$?
+  done <<<"$scope_units
+$orphan_scopes"
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    scope_unissued_survivor "$unit" || scope_rc=$?
+  done <<<"$unissued_scopes"
+  return "$scope_rc"
 }
 
 cmd_attach() {
