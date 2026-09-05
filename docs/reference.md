@@ -551,16 +551,21 @@ reply is audit rather than debt at every stage of its arrival evidence, so it
 never blocks.
 
 The next verified outbound message to a peer is correlated to every request
-from that peer the sender has read (its native prompt proof stands). A request
-with delivery proof alone is still queued in the harness, so a message crossing
-it is a fresh request rather than its answer, and the crossed request is owed
-once its prompt proof lands. The envelope carries the correlation, Gangline
-marks only those records settled when it accepts the reply, whether typed into
-the peer's composer or parked in the peer's spool behind a live turn, and the
-recipient classifies it as a reply rather than opening reciprocal debt. A
-parked reply drains at the peer's next native boundary; the drain writes the
-delivery proof beside the settlement that acceptance already wrote, and the
-spool entry stays visible to `status` and `mail` until then. A `--supersede` that retires a parked reply hands its
+from that peer the sender has read (its native prompt proof stands) and to
+every reply from that peer read in the current turn. A request with delivery
+proof alone is still queued in the harness, so a message crossing it is a
+fresh request rather than its answer, and the crossed request is owed once its
+prompt proof lands. The envelope carries the correlation, Gangline marks only
+those records settled when it accepts the reply, whether typed into the peer's
+composer or parked in the peer's spool behind a live turn, and the recipient
+classifies it as a reply rather than opening reciprocal debt. A reply record
+takes the same settlement proof when it is acknowledged or when the turn that
+read it ends at a native Stop, so an acknowledgement of a reply is itself
+correlated and opens no debt, a thread closes on any acknowledgement, and a
+message sent in a later turn is a new request. A parked reply drains at the
+peer's next native boundary; the drain writes the delivery proof beside the
+settlement that acceptance already wrote, and the spool entry stays visible to
+`status` and `mail` until then. A `--supersede` that retires a parked reply hands its
 correlation to the replacement, which is then the reply.
 A correlated reply discharges the request as soon as either arrival witness,
 the exact native prompt proof or positive delivery proof, stands beside it. The

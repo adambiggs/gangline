@@ -289,7 +289,9 @@ equal "removing the corrupt record restores a clear window" \
 
 # A reply record is audit rather than debt however incomplete its arrival
 # evidence is: nothing its holder can send settles a record that was never a
-# request, so failing closed on one named no action.
+# request, so failing closed on one named no action. A read reply is a
+# correlation target only for the turn that read it: the boundary closes it
+# with the same settlement proof an acknowledgement would have written.
 reply_partial_reply=2b3c4d5e6f708192
 reply_partial_reply_digest=89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567
 tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_partial_reply" \
@@ -301,6 +303,13 @@ equal "a reply record with one arrival witness is not a debt" \
   "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
 reply_stop_run "$reply_b_pane"
 equal "a partial reply record cannot wedge its holder" "{}" "$reply_stop_output"
+equal "the boundary closes the read reply record it saw" \
+  "$reply_partial_reply_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+equal "a closed reply record stays audit" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply"
 tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply"
 tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_partial_reply"
 
@@ -442,6 +451,102 @@ reply_stop_run "$reply_a_pane"
 equal "the reply recipient may idle without an acknowledgement loop" "{}" "$reply_stop_output"
 reply_stop_run "$reply_b_pane"
 equal "the acknowledging agent may idle while background work continues" "{}" "$reply_stop_output"
+
+# A thread closes on any acknowledgement. A message sent to a reply's sender in
+# the turn that read the reply is correlated to it and opens no debt, so an ack
+# of an ack costs its recipient nothing; every ack in a chain was a request
+# before, and the chain could not end without one unanswered message. Each
+# side ends its reading turn before the peer writes to it again: a prompt
+# opens the native turn, and mail sent into an open turn parks in the spool.
+printf '%s' THREAD_REQ \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_thread_req="$(reply_nonce_for_body "$reply_a_id" reply-b request THREAD_REQ || true)"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_request_envelope reply-b "$reply_thread_req" THREAD_REQ)"
+equal "a thread opens with a request owed" \
+  $'owed\t'"$reply_thread_req"$'\treply-b\tlive' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+printf '%s' THREAD_REPLY \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_ack_one_nonce="$(reply_nonce_for_body "$reply_b_id" reply-a reply THREAD_REPLY || true)"
+reply_stop_run "$reply_a_pane"
+equal "the answered request lets its debtor idle" "{}" "$reply_stop_output"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_record_wire "$reply_b_id" "$reply_ack_one_nonce" THREAD_REPLY)"
+printf '%s' ACK_OF_ACK \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_ack_two_nonce="$(reply_nonce_for_body "$reply_a_id" reply-b reply ACK_OF_ACK || true)"
+equal "an acknowledgement of a correlated reply is correlated to that reply" \
+  "$reply_ack_one_nonce" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_ack_two_nonce" | cut -d: -f6)"
+equal "acknowledging a reply closes it as a correlation target" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_ack_one_nonce" | cut -d: -f5)" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_ack_one_nonce")"
+reply_stop_run "$reply_b_pane"
+equal "the acknowledging agent may idle after acknowledging" "{}" "$reply_stop_output"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_ack_two_nonce" ACK_OF_ACK)"
+equal "an acknowledged acknowledgement opens no debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+printf '%s' ACK_CHAIN_END \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_ack_three_nonce="$(reply_nonce_for_body "$reply_b_id" reply-a reply ACK_CHAIN_END || true)"
+equal "a further acknowledgement is correlated to the ack it answers" \
+  "$reply_ack_two_nonce" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_ack_three_nonce" | cut -d: -f6)"
+reply_stop_run "$reply_a_pane"
+equal "the chain's sender may idle after its acknowledgement" "{}" "$reply_stop_output"
+# A boundary does not close a reply its holder has not read; the reply is
+# still answerable in the turn that reads it.
+reply_stop_run "$reply_b_pane"
+equal "a boundary before the reply is read leaves it open" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_ack_three_nonce")"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_record_wire "$reply_b_id" "$reply_ack_three_nonce" ACK_CHAIN_END)"
+printf '%s' ACK_CHAIN_MORE \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_ack_four_nonce="$(reply_nonce_for_body "$reply_a_id" reply-b reply ACK_CHAIN_MORE || true)"
+equal "a reply read after that boundary is still answerable in the turn that read it" \
+  "$reply_ack_three_nonce" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_ack_four_nonce" | cut -d: -f6)"
+reply_stop_run "$reply_b_pane"
+# The chain ends on an unanswered acknowledgement: reading it costs nothing,
+# and the boundary that ends the reading turn closes it.
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_ack_four_nonce" ACK_CHAIN_MORE)"
+equal "the last acknowledgement in a chain opens no debt" \
+  $'clear\t-\t-\t-' \
+  "$(TMUX_PANE="$reply_a_pane" "$GANG" reply-obligations)"
+reply_stop_run "$reply_a_pane"
+equal "the acknowledged agent may idle without answering the ack" "{}" "$reply_stop_output"
+equal "the boundary closes the reply that turn read" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_ack_four_nonce" | cut -d: -f5)" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_rsettled_$reply_ack_four_nonce")"
+# A message sent in a later turn is fresh business. The turn that read the
+# reply ended at its Stop, so the next message to that peer is a request and
+# is owed like any other.
+printf '%s' REQ_AFTER_THREAD \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_after_thread_nonce="$(reply_nonce_for_body \
+  "$reply_b_id" reply-a request REQ_AFTER_THREAD || true)"
+equal "a message sent in a later turn is a request, not a reply" request \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_after_thread_nonce" | cut -d: -f4)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_after_thread_nonce" REQ_AFTER_THREAD)"
+equal "the later request is owed by its recipient" \
+  $'owed\t'"$reply_after_thread_nonce"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+printf '%s' ACK_AFTER_THREAD \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_after_thread_ack="$(reply_nonce_for_body \
+  "$reply_a_id" reply-b reply ACK_AFTER_THREAD || true)"
+reply_stop_run "$reply_b_pane"
+equal "the later request's recipient may idle once it answered" "{}" "$reply_stop_output"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_after_thread_ack" ACK_AFTER_THREAD)"
+reply_stop_run "$reply_a_pane"
+equal "the later request's sender may idle after the answer" "{}" "$reply_stop_output"
 
 # A request parked during a live turn retains its stable sender and nonce until
 # the next native boundary drains it. The event barrier is the worker's own

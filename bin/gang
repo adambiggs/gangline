@@ -5518,6 +5518,9 @@ EOF
 # reached the debtor, and the missing witness has no later writer. Outbound
 # mail correlates only to records the sender has read (prompt proof), so a
 # message crossing an unread request is fresh business rather than its answer.
+# A reply record takes the same settlement proof when it is answered or when
+# the turn that read it ends: an acknowledgement of a reply is correlated to
+# it and opens no debt, and a message sent in a later turn is a new request.
 # The immutable record remains as its audit trail until the window goes away.
 # Any missing, malformed, or orphaned evidence fails closed.
 REPLY_STATE_PREFIX='@gl_reply_'
@@ -5702,7 +5705,11 @@ END {
       printf '! %s\n' "$REPLY_ROWS_ERROR"
       return 3
     elif [ "$settled" -eq 1 ]; then
-      [ "$REPLY_MODE" = request ] || {
+      # A request's settlement is its answer; a reply's is the end of its
+      # thread, written by the acknowledgement that answered it or by the
+      # boundary that ended the turn which read it. Legacy peer mail carries
+      # no correlation and cannot take either.
+      [ "$REPLY_MODE" != legacy ] || {
         REPLY_ROWS_ERROR="reply-obligation settlement proof for $REPLY_NONCE has no request"
         printf '! %s\n' "$REPLY_ROWS_ERROR"
         return 3
@@ -5798,11 +5805,14 @@ reply_outgoing_classify() { # $1 sender window, $2 target window
   # CORRELATE ONLY TO WHAT THE SENDER HAS READ. A request with delivery proof
   # alone is still queued in the harness, so an outbound message crossing it
   # cannot be its answer; treating it as one settled a debt the debtor never
-  # saw.
+  # saw. A reply the sender has read is a correlation target until its thread
+  # closes, so an acknowledgement of it opens no debt and an ack chain ends on
+  # any message; the boundary that ends the reading turn closes it, so a
+  # later message to the same peer is a fresh request.
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] || continue
     case "$mode:$state" in
-      request:prompt|request:owed) ;;
+      request:prompt|request:owed|reply:prompt|reply:complete) ;;
       *) continue ;;
     esac
     [ "$token" = "$target_token" ] || continue
@@ -5844,7 +5854,7 @@ reply_candidates_abort() { # only after positive proof that no key was typed
   REPLY_PREPARED=""
 }
 
-reply_settle_by_token() { # sending-agent token, target token, comma-separated owed nonces
+reply_settle_by_token() { # sending-agent token, target token, comma-separated correlated nonces
   local sender_token="$1" target_token="$2" list="$3" nonce value rc=0
   [ "$list" != - ] || return 0
   stable_agent_resolve "$sender_token" || rc=$?
@@ -5853,7 +5863,7 @@ reply_settle_by_token() { # sending-agent token, target token, comma-separated o
     nonce="${list%%,*}"
     value="$(tmux show-options -wqv -t "$STABLE_AGENT_WINDOW" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
     if [ -n "$value" ] && reply_state_parse "$REPLY_STATE_PREFIX$nonce" "$value"; then
-      if [ "$REPLY_MODE" = request ] && [ "$REPLY_TOKEN" = "$target_token" ]; then
+      if [ "$REPLY_MODE" != legacy ] && [ "$REPLY_TOKEN" = "$target_token" ]; then
         reply_proof_write "$STABLE_AGENT_WINDOW" "$REPLY_SETTLED_PREFIX" \
           "$nonce" "$REPLY_DIGEST" || true
       fi
@@ -5922,6 +5932,22 @@ reply_prompt_observe() { # pane, collar, UserPromptSubmit payload
     reply_proof_write "$1" "$REPLY_PROMPT_PREFIX" "$nonce" "$digest" || continue
     value="$(tmux show-options -wqv -t "$1" "$REPLY_STATE_PREFIX$nonce" 2>/dev/null)" || value=""
     [ -n "$value" ] || tmux set-option -uw -t "$1" "$REPLY_PROMPT_PREFIX$nonce" 2>/dev/null || true
+  done <<<"$rows"
+}
+
+reply_threads_close() { # $1 window; the turn that read a reply is over
+  # A REPLY IS ANSWERABLE IN THE TURN THAT READ IT. Left open, it would make
+  # every later message to its sender a correlated reply, and a follow-up
+  # request would open no debt. Closing it at the boundary that ends the
+  # reading turn keeps the ack window exactly one turn wide. A reply the
+  # holder has not read yet is left alone: its turn has not begun.
+  local rows="" rc=0 nonce state token witness mode digest replies
+  rows="$(reply_state_rows "$1")" || rc=$?
+  [ "$rc" -eq 0 ] || return 0
+  while read -r nonce state token witness mode digest replies; do
+    [ -n "$nonce" ] && [ "$mode" = reply ] || continue
+    case "$state" in prompt|complete) ;; *) continue ;; esac
+    reply_proof_write "$1" "$REPLY_SETTLED_PREFIX" "$nonce" "$digest" || true
   done <<<"$rows"
 }
 
@@ -12569,6 +12595,7 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     Stop) turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
+          reply_threads_close "$window"
           waiting_refresh "$TMUX_PANE" "$collar" "$payload"
           waiting_rc=0
           waiting_read "$TMUX_PANE" || waiting_rc=$?

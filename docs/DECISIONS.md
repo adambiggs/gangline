@@ -2096,3 +2096,16 @@ it settled a debt the debtor had never seen; the crossed request now stays
 audit until it is read and is owed then, and the crossing message is a request
 of its own. The contract already asks a crossed message to be acknowledged in
 the next reply, which is only possible if the crossing does not answer it.
+
+## A reply is answerable in the turn that read it
+
+A message sent to a reply's sender in the turn that read the reply is
+correlated to it and opens no debt, so a thread closes on any acknowledgement.
+Under the former rule every acknowledgement of a reply was a request, and a
+thread could not end without one message left unanswered, at one paid turn per
+acknowledgement. The reply record takes the same settlement proof a request
+does, written by the acknowledgement that answered it or by the native Stop
+that ends the turn which read it; left open, every later message to that peer
+would be a correlated reply and a follow-up request would open no debt. A
+reply not yet read is left open across a boundary, since its turn has not
+begun.

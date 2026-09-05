@@ -21,9 +21,12 @@ A verified message from another observed Gangline agent leaves a reply owed to
 that sender. Satisfy it with any concise genuine reply or acknowledgement sent
 through Gangline; no literal wording is required, and it is enough to say that
 you are waiting on background work and will report later. A message correlated
-as that reply creates no reciprocal acknowledgement debt. Gangline correlates
-a message only to messages you have read: one that crosses a message you have
-not yet read does not answer it, and that message is owed once it reaches you.
+as that reply creates no reciprocal acknowledgement debt. A message you send to
+that reply's sender in the turn that read it is correlated to the reply and
+creates no debt either, so a thread closes on any acknowledgement; a message
+sent in a later turn is a new request. Gangline correlates a message only to
+messages you have read: one that crosses a message you have not yet read does
+not answer it, and that message is owed once it reaches you.
 
 If the sender's stable identity is provably gone, the obligation retires
 without a reply because no correlated delivery remains possible. Its audit
