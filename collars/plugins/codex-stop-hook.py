@@ -287,18 +287,18 @@ def main(argv: list[str]) -> int:
         settle_stop(gang, raw)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         # THE REFUSAL SAYS WHAT THE QUERY FOUND. A released re-Stop reaches
-        # here with debt standing; calling its provenance clear sent the
-        # debtor to repair a hook path while its reply was still owed.
-        if blocking:
-            failure = (
-                "the turn was released with a reply still owed, but the "
-                "native Stop boundary could not be closed"
-            )
+        # here with debt standing, with provenance it could not resolve, or
+        # with no answer at all; calling any of those clear sent the debtor
+        # to repair a hook path while its reply was still owed.
+        if release_why:
+            stood = "the turn was released after its reply query timed out"
+        elif any(v.status == "owed" for v in blocking):
+            stood = "the turn was released with a reply still owed"
+        elif blocking:
+            stood = "the turn was released with peer-reply provenance unresolved"
         else:
-            failure = (
-                "peer-reply provenance is clear, but the native Stop boundary "
-                "could not be closed"
-            )
+            stood = "peer-reply provenance is clear"
+        failure = stood + ", but the native Stop boundary could not be closed"
         refuse(
             exc,
             failure,

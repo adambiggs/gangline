@@ -313,6 +313,49 @@ tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply"
 tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply"
 tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_partial_reply"
 
+# The close fails closed. A boundary whose settlement proof cannot be written
+# leaves the reply open and refuses to end the turn, so the reply stays
+# answerable in it; an allowed Stop with the reply open would correlate the
+# next turn's fresh work to it. The close is also the last fact of the
+# boundary: every other bookkeeping ran before it.
+tmux set-option -w -t "$reply_b_id" "@gl_reply_$reply_partial_reply" \
+  "message:00000000:reply-a:reply:$reply_partial_reply_digest:-"
+tmux set-option -w -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply" \
+  "$reply_partial_reply_digest"
+GANG_TEST_REPLY_SETTLE_FAIL=1 reply_stop_run "$reply_b_pane"
+contains "a boundary that cannot close a read reply refuses idle" \
+  "$reply_stop_output" '"decision": "block"'
+contains "the refusal names the boundary, not the query" \
+  "$reply_stop_output" "native Stop boundary could not be closed"
+equal "the reply stays open when its close was not written" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+reply_stop_run "$reply_b_pane"
+equal "the next boundary closes it" "{}" "$reply_stop_output"
+equal "and writes the settlement proof the failed one could not" \
+  "$reply_partial_reply_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply"
+# An interrupted turn never reaches Stop and leaves no turn bracket. The
+# prompt that begins the next turn closes the replies the ended turn read
+# before it observes its own message; a prompt inside a live turn is steering
+# and leaves them answerable.
+tmux set-option -uw -t "$reply_b_id" @gl_turn
+reply_prompt_event "$reply_b_pane" "operator prompt after an interrupt"
+equal "a prompt after an interrupted turn closes the replies that turn read" \
+  "$reply_partial_reply_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply"
+reply_prompt_event "$reply_b_pane" "operator prompt inside the live turn"
+equal "a prompt inside a live turn leaves the replies it read answerable" "" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+reply_stop_run "$reply_b_pane"
+equal "the live turn's boundary closes them" \
+  "$reply_partial_reply_digest" \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply")"
+tmux set-option -uw -t "$reply_b_id" "@gl_rsettled_$reply_partial_reply"
+tmux set-option -uw -t "$reply_b_id" "@gl_rprompt_$reply_partial_reply"
+tmux set-option -uw -t "$reply_b_id" "@gl_reply_$reply_partial_reply"
+
 # A request with incomplete arrival evidence asks the same question about its
 # sender as a complete one. Naming a reply to a sender no inventory can find is
 # an instruction the debtor cannot carry out.
@@ -547,6 +590,46 @@ reply_prompt_event "$reply_a_pane" \
   "$(reply_record_wire "$reply_a_id" "$reply_after_thread_ack" ACK_AFTER_THREAD)"
 reply_stop_run "$reply_a_pane"
 equal "the later request's sender may idle after the answer" "{}" "$reply_stop_output"
+# A turn ended by an interrupt closes what it read as a Stop would. The
+# interrupt leaves no turn bracket; the prompt that begins the next turn closes
+# the reply before it observes the operator's message, so fresh work sent to
+# the reply's sender is a request and is owed.
+printf '%s' REQ_INTERRUPTED \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_interrupted_req="$(reply_nonce_for_body "$reply_b_id" reply-a request REQ_INTERRUPTED || true)"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_interrupted_req" REQ_INTERRUPTED)"
+printf '%s' REPLY_INTERRUPTED \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_interrupted_reply="$(reply_nonce_for_body "$reply_a_id" reply-b reply REPLY_INTERRUPTED || true)"
+reply_stop_run "$reply_b_pane"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_interrupted_reply" REPLY_INTERRUPTED)"
+tmux set-option -uw -t "$reply_a_id" @gl_turn
+reply_prompt_event "$reply_a_pane" "operator prompt that begins the next turn"
+equal "the next turn's prompt closes the reply the interrupted turn read" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_reply_$reply_interrupted_reply" | cut -d: -f5)" \
+  "$(tmux show-options -wqv -t "$reply_a_id" "@gl_rsettled_$reply_interrupted_reply")"
+printf '%s' REQ_AFTER_INTERRUPT \
+  | TMUX_PANE="$reply_a_pane" "$GANG" send --to reply-b --stdin >/dev/null
+reply_after_interrupt="$(reply_nonce_for_body "$reply_b_id" reply-a request REQ_AFTER_INTERRUPT || true)"
+equal "fresh work after an interrupted turn is a request, not a reply" request \
+  "$(tmux show-options -wqv -t "$reply_b_id" "@gl_reply_$reply_after_interrupt" | cut -d: -f4)"
+reply_stop_run "$reply_a_pane"
+reply_prompt_event "$reply_b_pane" \
+  "$(reply_request_envelope reply-a "$reply_after_interrupt" REQ_AFTER_INTERRUPT)"
+equal "and is owed by its recipient" \
+  $'owed\t'"$reply_after_interrupt"$'\treply-a\tlive' \
+  "$(TMUX_PANE="$reply_b_pane" "$GANG" reply-obligations)"
+printf '%s' ACK_AFTER_INTERRUPT \
+  | TMUX_PANE="$reply_b_pane" "$GANG" send --to reply-a --stdin >/dev/null
+reply_after_interrupt_ack="$(reply_nonce_for_body "$reply_a_id" reply-b reply ACK_AFTER_INTERRUPT || true)"
+reply_stop_run "$reply_b_pane"
+equal "the interrupted agent's peer may idle once it answered" "{}" "$reply_stop_output"
+reply_prompt_event "$reply_a_pane" \
+  "$(reply_record_wire "$reply_a_id" "$reply_after_interrupt_ack" ACK_AFTER_INTERRUPT)"
+reply_stop_run "$reply_a_pane"
+equal "the interrupted agent may idle after reading the answer" "{}" "$reply_stop_output"
 
 # A correlated reply whose delivery proof never lands still settles once the
 # creditor's native prompt witnesses it. The sending process can die between
@@ -1127,6 +1210,15 @@ contains "a failed boundary after a release names the debt still standing" \
   "$reply_fake_out" "released with a reply still owed"
 excludes "a failed boundary after a release does not call the provenance clear" \
   "$reply_fake_out" "provenance is clear"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_QUERY='unknown\t3333333333333333\tstuck-peer\tsender-identity-unreadable\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@fdf3ab0a7763: the complete fake-adapter stdout is the failed-boundary reason after releasing unresolved provenance, so any producer is valid evidence
+contains "a failed boundary after releasing unresolved provenance says so" \
+  "$reply_fake_out" "released with peer-reply provenance unresolved"
+excludes "unresolved provenance is not reported as a reply owed" \
+  "$reply_fake_out" "reply still owed"
 # THE QUERY TIMEOUT IS THE BEHAVIOUR UNDER TEST, so its clock is scaled, not
 # stopped. The fake never answers: it opens a FIFO nobody writes and stays
 # there until the adapter kills it. Measured margin: the fake answers a quiet
@@ -1161,6 +1253,16 @@ equal "a query-timeout on the re-Stop is released rather than held" "{}" "$reply
 # source-guard: whole-surface@bc2c69ae2232: the complete fake hook log names the timeout as the release's own state, so any producer is valid evidence
 equal "the query-timeout is released under its own name before the boundary closes" \
   $'released query-timeout\nhook' "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"; : > "$reply_fake_query_log"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_HOLD="$reply_fake_hold" GANG_STOP_QUERY_ATTEMPT_SEC=0.25 GANG_STOP_QUERY_DEADLINE_SEC=0.45 \
+    FAKE_REPLY_LOG="$reply_fake_log" FAKE_QUERY_LOG="$reply_fake_query_log" \
+    FAKE_HOOK_RC=9 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@cba200edd698: the complete fake-adapter stdout is the failed-boundary reason after a timed-out query, so any producer is valid evidence
+contains "a failed boundary after a timed-out query names the timeout" \
+  "$reply_fake_out" "released after its reply query timed out"
+excludes "a timed-out query is not called clear provenance" \
+  "$reply_fake_out" "provenance is clear"
 
 codex_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/codex.sh")"

@@ -5954,14 +5954,38 @@ reply_threads_close() { # $1 window; the turn that read a reply is over
   # request would open no debt. Closing it at the boundary that ends the
   # reading turn keeps the ack window exactly one turn wide. A reply the
   # holder has not read yet is left alone: its turn has not begun.
-  local rows="" rc=0 nonce state token witness mode digest replies
+  # FAILS CLOSED. A close that could not be read or written leaves the
+  # reply open and says so, so the caller can refuse to end the turn: an
+  # unclosed boundary keeps the reply answerable, where a silently allowed
+  # one would correlate the next turn's fresh work to a stale reply.
+  local rows="" rc=0 failed=0 nonce state token witness mode digest replies
   rows="$(reply_state_rows "$1")" || rc=$?
-  [ "$rc" -eq 0 ] || return 0
+  [ "$rc" -eq 0 ] || {
+    printf 'read reply records could not be closed: %s\n' "$(reply_rows_error "$rows")" >&2
+    return 1
+  }
   while read -r nonce state token witness mode digest replies; do
     [ -n "$nonce" ] && [ "$mode" = reply ] || continue
     case "$state" in prompt|complete) ;; *) continue ;; esac
-    reply_proof_write "$1" "$REPLY_SETTLED_PREFIX" "$nonce" "$digest" || true
+    reply_proof_write "$1" "$REPLY_SETTLED_PREFIX" "$nonce" "$digest" || {
+      printf 'read reply %s could not be closed: its settlement proof was not written\n' "$nonce" >&2
+      failed=1
+    }
   done <<<"$rows"
+  return "$failed"
+}
+
+reply_threads_close_if_ended() { # $1 window; a prompt is arriving
+  # A prompt inside a live turn is steering: the replies that turn read stay
+  # answerable. A prompt under a closed, cleared, expired or unreadable
+  # bracket begins a new turn, so the replies read before it are closed
+  # first and the message this prompt carries is the only one left open.
+  # Doubt closes: a mistaken close costs one acknowledgement turn, where a
+  # mistaken open loses an obligation without a trace.
+  local rc=0
+  turn_witness "$1" || rc=$?
+  [ "$rc" -ne 0 ] || return 0
+  reply_threads_close "$1"
 }
 
 reply_obligation_query() { # calling window -> one or more four-field TSV verdicts
@@ -10601,6 +10625,10 @@ cmd_interrupt() {
   # truthful place to hang it in today's two-valued turn fact, and inventing a
   # third value here would be redesigning the state this arc was told not to.
   turn_state_clear "$AGENT_ID"
+  # The interrupted turn ends here, so the replies it read close here; a
+  # close that fails is said, and the next prompt's boundary retries it.
+  reply_threads_close "$AGENT_ID" \
+    || printf 'interrupt: a reply read by the interrupted turn stays open until the next prompt closes it\n' >&2
   if [ "$have_m" -eq 1 ]; then
     wait_ready "$AGENT_ID" "${GANG_BOOT_TIMEOUT:-30}" || ready=$?
     [ "$ready" -eq 0 ] \
@@ -12566,6 +12594,9 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
   # real root; a quiet tick never converts a newly seen process into evidence.
   ( load_collar "$collar"; harness_identity_hook_retry "$TMUX_PANE" ) || true
   if [ "$event" = UserPromptSubmit ]; then
+    window="$(tmux display-message -p -t "$TMUX_PANE" '#{window_id}' 2>/dev/null)" \
+      || window=""
+    [ -z "$window" ] || ( reply_threads_close_if_ended "$window" ) || true
     ( reply_prompt_observe "$TMUX_PANE" "$collar" "$payload" ) || true
     ( auto_resume_prompt_witness "$TMUX_PANE" "$collar" "$payload" ) || true
   fi
@@ -12608,7 +12639,6 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
     Stop) turn_state_write "$TMUX_PANE" closed
           compaction_state_settle "$TMUX_PANE"
           stall_clear "$TMUX_PANE"
-          reply_threads_close "$window"
           waiting_refresh "$TMUX_PANE" "$collar" "$payload"
           waiting_rc=0
           waiting_read "$TMUX_PANE" || waiting_rc=$?
@@ -12634,7 +12664,13 @@ cmd_hook() { # native harness events; facts are silent unless a light crosses
             spool_event "$window" "$collar"
           else
             self_compact_dispatch "$window" "$collar"
-          fi ;;
+          fi
+          # LAST, AND FAIL CLOSED. The replies this turn read close only
+          # once every other fact of the boundary is recorded, so a Stop the
+          # adapter refuses for failed bookkeeping has not closed them; and a
+          # close that fails refuses the boundary itself, so the turn stays
+          # open and its replies stay answerable.
+          reply_threads_close "$window" || exit 1 ;;
     PreCompact) compaction_state_write "$TMUX_PANE" open
                 glyph_write "$TMUX_PANE" "-busy-" ;;
     PostCompact) compaction_state_write "$TMUX_PANE" closed

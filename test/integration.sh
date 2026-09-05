@@ -241,6 +241,13 @@ if [ "$verb" = set-option ] && [ -n "${GANG_TEST_REPLY_PROOF_GATE:-}" ]; then
     esac
   done
 fi
+# A TEST-SCOPED WRITE FAILURE for one proof family: the reply-thread close at a
+# boundary must fail closed when its settlement proof cannot be written.
+if [ "$verb" = set-option ] && [ -n "${GANG_TEST_REPLY_SETTLE_FAIL:-}" ]; then
+  for word in "$@"; do
+    case "$word" in @gl_rsettled_*) exit 1 ;; esac
+  done
+fi
 [ "$verb" = wait-for ] && [ "$next" != -S ] || exec "$real" "$@"
 
 ceiling=${GANG_TEST_WAIT_CEILING:-120}
