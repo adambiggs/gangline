@@ -1005,6 +1005,257 @@ equal "the guard probe worker completes its cooperative pass" 0 \
 equal "a cooperative-pass subprocess inherits no tick ownership guard" 0 \
   "$(<"$tick_guard_probe")"
 
+# A MARKER SET DURING THE RERUN IS NOT ANOTHER RERUN. The owner consumes one
+# dirty edge with one more pass; a candidate arriving during that rerun hands
+# its edge to a fresh worker instead of extending this one. A team whose
+# commands and hooks arrive faster than a pass completes otherwise keeps one
+# owner rerunning until the deadline kills it. The rm shim pauses the owner at
+# the start of its second pass — the removal of the consumed marker — so the
+# second contender's crossing is deterministic. On the third removal the shim
+# reports who is removing: the same worker, which is the unbounded loop's third
+# pass, or a fresh one, whose deadline controller's session it records. Every
+# outcome this shell waits for arrives on one event stream: a worker's first
+# pass, the shim's report, the owner's exit with its status, and the fresh
+# worker's completion. No branch is a timeout.
+tick_rerun_bin="$RUN_ROOT/tick-rerun-bin"
+tick_rerun_ready="$RUN_ROOT/tick-rerun-ready"
+tick_rerun_release="$RUN_ROOT/tick-rerun-release"
+tick_rerun_events="$RUN_ROOT/tick-rerun-events"
+tick_rerun_first_release="$RUN_ROOT/tick-rerun-first-release"
+tick_rerun_count="$RUN_ROOT/tick-rerun-count"
+tick_rerun_owner_worker="$RUN_ROOT/tick-rerun-owner-worker"
+tick_rerun_sessions="$RUN_ROOT/tick-rerun-sessions"
+tick_rerun_ledger="$RUN_ROOT/tick-rerun-ledger"
+mkdir -p "$tick_rerun_bin"
+mkfifo "$tick_rerun_ready" "$tick_rerun_release" \
+  "$tick_rerun_events" "$tick_rerun_first_release"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v rm)"
+  printf 'DIRTY=%q\n' "$tick_dirty_path"
+  printf 'READY=%q\n' "$tick_rerun_ready"
+  printf 'RELEASE=%q\n' "$tick_rerun_release"
+  printf 'EVENTS=%q\n' "$tick_rerun_events"
+  printf 'COUNT=%q\n' "$tick_rerun_count"
+  printf 'OWNER=%q\n' "$tick_rerun_owner_worker"
+  printf 'SESSIONS=%q\n' "$tick_rerun_sessions"
+  cat <<'SH'
+# The worker removes the marker itself, so the shim's parent is the worker.
+# The fields after the command name in /proc/PID/stat are state, parent,
+# process group, session; $1 is the number of the wanted field, $2 the pid.
+proc_field() {
+  set -- "$1" $(sed 's/^.*) //' "/proc/$2/stat")
+  shift "$1"
+  printf '%s' "$1"
+}
+if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ]; then
+  n=0
+  [ ! -e "$COUNT" ] || IFS= read -r n < "$COUNT"
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$COUNT"
+  case "$n" in
+    2)
+      "$REAL" "$@" || exit $?
+      printf '%s %s\n' "$PPID" "$(proc_field 4 "$PPID")" > "$OWNER"
+      printf x > "$READY"
+      IFS= read -r _ < "$RELEASE"
+      exit 0 ;;
+    3)
+      IFS=' ' read -r owner_pid owner_session < "$OWNER"
+      if [ "$PPID" = "$owner_pid" ]; then
+        printf o > "$EVENTS"
+      else
+        controller="$(proc_field 2 "$PPID")"
+        printf '%s %s\n' "$owner_session" "$(proc_field 4 "$controller")" > "$SESSIONS"
+      fi ;;
+  esac
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_rerun_bin/rm"
+chmod +x "$tick_rerun_bin/rm"
+# Both fifos are opened read-write by this shell so no writer blocks on it.
+exec 7<>"$tick_rerun_events" 11<>"$tick_rerun_first_release"
+tick_rerun_owner_status=0
+{
+  GANG_TEST_TICK_MODE='' \
+  GANG_TEST_TICK_READY_FIFO="$tick_rerun_events" \
+  GANG_TEST_TICK_RELEASE_FIFO="$tick_rerun_first_release" \
+  GANG_TEST_TICK_SUCCESSOR_DONE_FIFO="$tick_rerun_events" \
+  GANG_TEST_TICK_LEDGER="$tick_rerun_ledger" PATH="$tick_rerun_bin:$PATH" \
+    "$GANG" tick > "$RUN_ROOT/tick-rerun-owner.out" 2> "$RUN_ROOT/tick-rerun-owner.err" \
+    || tick_rerun_owner_status=$?
+  printf 'e%s' "$tick_rerun_owner_status" >&7
+} &
+tick_rerun_owner_pid=$!
+IFS= read -r -N 1 _ <&7
+"$GANG" tick >/dev/null
+printf '\n' >&11
+IFS= read -r -N 1 _ < "$tick_rerun_ready"
+equal "the rerun begins by consuming the first dirty marker" 0 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+"$GANG" tick >/dev/null
+equal "a candidate arriving during the rerun leaves one dirty marker" 1 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+printf '\n' > "$tick_rerun_release"
+# The owner's exit and the third removal arrive in either order. A fresh
+# worker announces its first pass before its hold, so once the owner has
+# returned successfully that announcement is the one event still owed; an
+# owner that failed owes nothing more.
+tick_rerun_third="nobody" tick_rerun_owner_rc="unreturned" tick_rerun_event=""
+while :; do
+  IFS= read -r -N 1 tick_rerun_event <&7
+  case "$tick_rerun_event" in
+    x) tick_rerun_third="a fresh worker" ;;
+    o) tick_rerun_third="the same owner" ;;
+    e) IFS= read -r -N 1 tick_rerun_owner_rc <&7 ;;
+    *) fail "the hand-off event stream carries only known events" \
+         "unexpected event [$tick_rerun_event]"
+       break ;;
+  esac
+  [ "$tick_rerun_owner_rc" != unreturned ] || continue
+  [ "$tick_rerun_third" = nobody ] && [ "$tick_rerun_owner_rc" = 0 ] && continue
+  break
+done
+equal "a marker set during the rerun is handed to a fresh worker" \
+  "a fresh worker" "$tick_rerun_third"
+# The fresh worker is still held at its first pass, so an owner that has
+# returned did not wait for it: the synchronous caller got its bounded passes.
+equal "the owner returns while its successor is still in its first pass" 0 \
+  "$tick_rerun_owner_rc"
+equal "the fresh worker owns the lock the finished owner released" present \
+  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+equal "the fresh worker consumed the handed-over marker before its pass" 0 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+equal "the owner ran at most one dirty rerun before handing over" "1 2 1 " \
+  "$(tr '\n' ' ' < "$tick_rerun_ledger")"
+# The owner's deadline kills its process group. A successor chain started in
+# that group would lose its controller to that kill and keep its worker.
+tick_rerun_owner_session="" tick_rerun_controller_session=""
+[ ! -s "$tick_rerun_sessions" ] \
+  || IFS=' ' read -r tick_rerun_owner_session tick_rerun_controller_session \
+       < "$tick_rerun_sessions"
+if [ -n "$tick_rerun_controller_session" ] \
+   && [ "$tick_rerun_controller_session" != "$tick_rerun_owner_session" ]; then
+  pass "the fresh worker's deadline controller runs outside the owner's session"
+else
+  fail "the fresh worker's deadline controller runs outside the owner's session" \
+    "owner session [$tick_rerun_owner_session], controller session [$tick_rerun_controller_session]"
+fi
+wait "$tick_rerun_owner_pid" || true
+printf '\n' >&11
+if [ "$tick_rerun_third" = "a fresh worker" ]; then
+  IFS= read -r -N 1 tick_rerun_event <&7
+  equal "the fresh worker completes its pass" d "$tick_rerun_event"
+else
+  fail "the fresh worker completes its pass" "no fresh worker was started"
+fi
+equal "the hand-off leaves no lock or dirty residue" 0 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
+exec 7<&- 11<&-
+rm -f -- "$tick_lock_path" "$tick_dirty_path"
+
+# A SUCCESSOR THAT CANNOT BE ARMED IS THE OWNER'S FAILURE. The owner arms the
+# successor while it still holds the lock and hears back that it is in place.
+# When that fails, the marker is left where the next tick consumes it, and the
+# owner says so with a failed tick rather than reporting a clean pass that
+# quietly dropped the edge it was handed. The python3 shim refuses only the
+# successor launcher, so every other helper the tick runs is the real one. It
+# hands through to the interpreter itself rather than to whatever `command -v`
+# found: a version-manager wrapper there puts the interpreter's own bin
+# directory ahead of this shim in the PATH of everything it starts, and the
+# deadline controller it starts is what runs the worker under test.
+tick_noarm_bin="$RUN_ROOT/tick-noarm-bin"
+tick_noarm_ready="$RUN_ROOT/tick-noarm-ready"
+tick_noarm_release="$RUN_ROOT/tick-noarm-release"
+tick_noarm_events="$RUN_ROOT/tick-noarm-events"
+tick_noarm_first_release="$RUN_ROOT/tick-noarm-first-release"
+tick_noarm_count="$RUN_ROOT/tick-noarm-count"
+tick_noarm_ledger="$RUN_ROOT/tick-noarm-ledger"
+mkdir -p "$tick_noarm_bin"
+mkfifo "$tick_noarm_ready" "$tick_noarm_release" \
+  "$tick_noarm_events" "$tick_noarm_first_release"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(command -v rm)"
+  printf 'DIRTY=%q\n' "$tick_dirty_path"
+  printf 'READY=%q\n' "$tick_noarm_ready"
+  printf 'RELEASE=%q\n' "$tick_noarm_release"
+  printf 'COUNT=%q\n' "$tick_noarm_count"
+  cat <<'SH'
+if [ "${1:-}" = -f ] && [ "${2:-}" = -- ] && [ "${3:-}" = "$DIRTY" ]; then
+  n=0
+  [ ! -e "$COUNT" ] || IFS= read -r n < "$COUNT"
+  n=$((n + 1))
+  printf '%s\n' "$n" > "$COUNT"
+  if [ "$n" -eq 2 ]; then
+    "$REAL" "$@" || exit $?
+    printf x > "$READY"
+    IFS= read -r _ < "$RELEASE"
+    exit 0
+  fi
+fi
+exec "$REAL" "$@"
+SH
+} > "$tick_noarm_bin/rm"
+{
+  printf '#!/usr/bin/env bash\n'
+  printf 'REAL=%q\n' "$(python3 -c 'import sys; print(sys.executable)')"
+  cat <<'SH'
+case "${1:-}:${2:-}" in -c:*start_new_session*) exit 1 ;; esac
+exec "$REAL" "$@"
+SH
+} > "$tick_noarm_bin/python3"
+chmod +x "$tick_noarm_bin/rm" "$tick_noarm_bin/python3"
+exec 7<>"$tick_noarm_events" 11<>"$tick_noarm_first_release"
+tick_noarm_owner_status=0
+{
+  GANG_TEST_TICK_MODE='' \
+  GANG_TEST_TICK_READY_FIFO="$tick_noarm_events" \
+  GANG_TEST_TICK_RELEASE_FIFO="$tick_noarm_first_release" \
+  GANG_TEST_TICK_LEDGER="$tick_noarm_ledger" PATH="$tick_noarm_bin:$PATH" \
+    "$GANG" tick > "$RUN_ROOT/tick-noarm-owner.out" 2> "$RUN_ROOT/tick-noarm-owner.err" \
+    || tick_noarm_owner_status=$?
+  printf 'e%s' "$tick_noarm_owner_status" >&7
+} &
+tick_noarm_owner_pid=$!
+IFS= read -r -N 1 _ <&7
+"$GANG" tick >/dev/null
+printf '\n' >&11
+IFS= read -r -N 1 _ < "$tick_noarm_ready"
+"$GANG" tick >/dev/null
+equal "a candidate during the rerun of the unarmable owner leaves one marker" 1 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+printf '\n' > "$tick_noarm_release"
+tick_noarm_owner_rc="unreturned" tick_noarm_event=""
+IFS= read -r -N 1 tick_noarm_event <&7
+[ "$tick_noarm_event" != e ] || IFS= read -r -N 1 tick_noarm_owner_rc <&7
+wait "$tick_noarm_owner_pid" || true
+equal "a tick whose successor cannot be armed fails" 1 "$tick_noarm_owner_rc"
+contains "and names the marker it left behind" \
+  "$(<"$RUN_ROOT/tick-noarm-owner.err")" \
+  "left for a successor tick that could not be armed"
+equal "the unarmable owner ran no third pass itself" "1 2 " \
+  "$(tr '\n' ' ' < "$tick_noarm_ledger")"
+equal "the unarmable owner still released the lock" absent \
+  "$([ -L "$tick_lock_path" ] && printf present || printf absent)"
+equal "the marker stays for the next tick" 1 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 -type f -name '*.dirty' | wc -l | tr -d ' ')"
+tick_noarm_socket="$(tmux display-message -p -t "=$GANG_SESSION" '#{socket_path}')"
+tick_noarm_digest="$(python3 -c 'import hashlib,sys; print(hashlib.sha256((sys.argv[1]+"\0"+sys.argv[2]).encode()).hexdigest()[:24])' \
+  "$tick_noarm_socket" "$GANG_SESSION")"
+tick_noarm_health="$XDG_STATE_HOME/gangline/tick/$tick_noarm_digest/health"
+contains "the failed hand-off is the team's recorded tick health" \
+  "$(<"$tick_noarm_health")" $'failed\t'
+contains "and the health note says what was left behind" \
+  "$(<"$tick_noarm_health")" "could not be armed"
+"$GANG" tick >/dev/null
+equal "the next tick consumes the marker the failed hand-off left" 0 \
+  "$(find "$GANG_LOCK_DIR/tick" -maxdepth 1 \( -type l -name '*.lock' -o -type f -name '*.dirty' \) | wc -l | tr -d ' ')"
+contains "and restores the team's tick health" "$(<"$tick_noarm_health")" $'ok\t'
+exec 7<&- 11<&-
+rm -f -- "$tick_lock_path" "$tick_dirty_path"
+
 # A LIVE TICK OWNER MAY RELEASE AFTER -L BUT BEFORE READLINK. The shim is the
 # exact seam: tick_lock_acquire made its own failed ln and successful -L
 # observation before invoking this external readlink. The internal worker

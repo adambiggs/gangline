@@ -5313,8 +5313,55 @@ tick_full_pass_once() {
   return "$rc"
 }
 
+# The passes one owner may run: its own and one rerun for a dirty edge.
+TICK_PASS_BOUND=2
+
+TICK_HANDOVER_FD=""
+
+tick_successor_arm() { # establish the successor before letting go of the tick lock
+  # THE SUCCESSOR EXISTS BEFORE THE OWNER LETS GO. A marker set during the
+  # rerun was once consumed by the same owner without the lock ever changing
+  # hands; the bounded owner hands it to a `gang tick` that must still start
+  # after the contender's edge whatever happens to this owner. So the successor
+  # is armed while this owner holds the tick lock: a process, in a session of
+  # its own where the owner's deadline kill cannot reach it, reading a pipe
+  # whose write end this owner holds. That read ends when the owner closes the
+  # write end after releasing the tick lock, or dies holding it, and nothing
+  # else ends it. The successor is spawned already holding the read end, so
+  # its launcher returning success is the whole witness: no step follows that
+  # could fail to wait, and nothing is left on disk. A launcher that does not
+  # return success is this owner's failure rather than a marker quietly left
+  # for whoever ticks next. Nothing is armed under the manual test tick mode,
+  # which tests use to run the successor themselves.
+  local done_fifo="" launcher=""
+  if [ "${GANG_TEST_COLLARS:-}" = 1 ]; then
+    [ "${GANG_TEST_TICK_MODE:-}" != manual ] || return 0
+    done_fifo="${GANG_TEST_TICK_SUCCESSOR_DONE_FIFO:-}"
+  fi
+  tick_successor_release
+  { exec {TICK_HANDOVER_FD}> >(GANG_TICK_INTERNAL=1 python3 -c '
+import subprocess, sys
+subprocess.Popen(sys.argv[1:], stdin=0, stdout=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL, start_new_session=True)
+' bash -c 'IFS= read -r _ || :
+exec </dev/null >/dev/null 2>&1
+"$1" tick
+[ -z "$2" ] || printf d > "$2"' _ "$ROOT/bin/gang" "$done_fifo" >/dev/null 2>&1); } 2>/dev/null \
+    || { TICK_HANDOVER_FD=""; return 1; }
+  launcher=$!
+  wait "$launcher" || { tick_successor_release; return 1; }
+  return 0
+}
+
+tick_successor_release() { # let an armed successor start; nothing when none is armed
+  [ -n "$TICK_HANDOVER_FD" ] || return 0
+  exec {TICK_HANDOVER_FD}>&-
+  TICK_HANDOVER_FD=""
+  return 0
+}
+
 cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
-  local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0
+  local rc=0 lock_rc=0 pass=0 pass_output="" output="" committed=0 handover=0
   local dirty_path=""
   [ $# -eq 0 ] || die "internal tick worker takes no arguments"
   session_live || return 0
@@ -5340,7 +5387,26 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
     if [ -n "$pass_output" ]; then
       output="${output:+$output$'\n'}$pass_output"
     fi
-    [ -e "$TICK_DIRTY_PATH" ] && continue
+    # ONE RERUN CONSUMES THE EDGE; A SECOND EDGE GETS A FRESH WORKER. Every
+    # contender that finds a live owner marks it dirty and exits, trusting the
+    # owner to run one more pass. Rerunning again for a marker set DURING that
+    # rerun made the owner's lifetime depend on how often the team issues
+    # commands: with a dozen agents a pass takes seconds and a hook or command
+    # arrives every few seconds, so the owner reran until the hard deadline
+    # killed it and failed health, while every synchronous `gang tick` and
+    # every delivery verification folded into it waited on the same clock. The
+    # bound is what the contract already promised. The marker is not dropped:
+    # the released lock and a detached successor carry it to a pass that starts
+    # after the edge, which is all a contender was ever owed.
+    if [ -e "$TICK_DIRTY_PATH" ]; then
+      [ "$pass" -ge "$TICK_PASS_BOUND" ] || continue
+      if tick_successor_arm; then
+        handover=1
+      else
+        rc=1
+        output="${output:+$output$'\n'}the marker set during the rerun was left for a successor tick that could not be armed"
+      fi
+    fi
     if [ "${GANG_TEST_COLLARS:-}" = 1 ] \
        && [ -n "${GANG_TEST_TICK_COMMIT_READY_FIFO:-}" ] \
        && [ -n "${GANG_TEST_TICK_COMMIT_RELEASE_FIFO:-}" ]; then
@@ -5365,14 +5431,27 @@ cmd_tick_worker() { # internal owner; 75 contention, 76 committed failed pass
     fi
     dirty_path="$TICK_DIRTY_PATH"
     tick_lock_release
-    if [ -e "$dirty_path" ]; then
-      lock_rc=0
-      tick_lock_acquire || lock_rc=$?
-      case "$lock_rc" in
-        0) output=""; continue ;;
-        75) return 75 ;;
-        *) return "$lock_rc" ;;
-      esac
+    tick_successor_release
+    if [ -e "$dirty_path" ] && [ "$handover" -eq 0 ]; then
+      if [ "$pass" -ge "$TICK_PASS_BOUND" ]; then
+        # A marker set after the rerun's own check, during commit or release,
+        # is handed over the same way. This owner holds no lock any more, so
+        # arming and releasing the successor are one step here.
+        if tick_successor_arm; then
+          tick_successor_release
+        else
+          rc=1 committed=0
+          output="${output:+$output$'\n'}a marker set while this owner was releasing was left for a successor tick that could not be armed"
+        fi
+      else
+        lock_rc=0
+        tick_lock_acquire || lock_rc=$?
+        case "$lock_rc" in
+          0) output=""; continue ;;
+          75) return 75 ;;
+          *) return "$lock_rc" ;;
+        esac
+      fi
     fi
     if [ "$rc" -eq 0 ]; then return 0; fi
     [ -z "$output" ] || printf '%s\n' "$output" >&2

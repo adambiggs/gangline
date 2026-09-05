@@ -368,7 +368,14 @@ pass subprocesses cannot inherit exclusion. Metadata retirement holds the same
 guard across its decision and unlink. The empty guard file remains under
 `GANG_LOCK_DIR` until the operator removes that lock root. A concurrent
 candidate touches a dirty marker and exits immediately; the owner consumes that
-marker with another pass. Dead, zombie, and replaced generations are reclaimed.
+marker with one more pass. A marker set during that rerun is not consumed by
+the same owner: while it still holds the lock it arms one successor tick, in a
+session of its own, that waits on a pipe the owner holds and starts when the
+owner closes it after releasing the lock or dies holding it, so the pass a
+contender was promised still starts after its edge while no owner lives longer
+than two passes. The hand-over leaves nothing on disk. An owner that cannot arm
+that successor fails its tick and leaves the marker for the next one. Dead, zombie, and replaced
+generations are reclaimed.
 The record names the owner's pid namespace as well as its pid: a worker inside
 a sandbox with its own pid table records the number it sees there, and on the
 host that number belongs to an unrelated process. A contender in the initial
