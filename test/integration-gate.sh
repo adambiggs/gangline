@@ -758,6 +758,19 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
     "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"
+
+  readiness_dependency_rc=0
+  readiness_dependency_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL \
+    GANG_INTEGRATION_PARTS=cli,substrate,readiness \
+    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)" \
+    || readiness_dependency_rc=$?
+  equal "a focused readiness run refuses before using compose's fixture" \
+    "2" "$readiness_dependency_rc"
+  contains "the refusal pins readiness's compose dependency" \
+    "$readiness_dependency_out" "focused part readiness requires compose"
+  contains "the repair selector retains every part already selected" \
+    "$readiness_dependency_out" \
+    "run GANG_INTEGRATION_PARTS=cli,substrate,compose,readiness"
 fi
 
 cat > "$gate_run/test/integration.sh" <<SH

@@ -687,7 +687,8 @@ integration_part_dependencies() { # $1 = selectable fragment, stdout = explicit 
   case "$1" in
     cli) printf '\n' ;;
     substrate|spool|notify|tick) printf 'cli\n' ;;
-    hitch|compose|readiness|usage) printf 'cli substrate\n' ;;
+    hitch|compose|usage) printf 'cli substrate\n' ;;
+    readiness) printf 'cli substrate compose\n' ;;
     hooks) printf 'cli substrate spool\n' ;;
     *) return 2 ;;
   esac
@@ -714,9 +715,16 @@ if ! integration_part all; then
         || integration_missing_parts="${integration_missing_parts:+$integration_missing_parts,}$integration_required_part"
     done
     [ -z "$integration_missing_parts" ] && continue
-    printf 'integration: focused part %s requires %s; run GANG_INTEGRATION_PARTS=%s,%s\n' \
+    integration_recommended_parts=""
+    for integration_declared_part in $integration_parts; do
+      if integration_part "$integration_declared_part" \
+        || [[ ",$integration_missing_parts," == *,"$integration_declared_part",* ]]; then
+        integration_recommended_parts="${integration_recommended_parts:+$integration_recommended_parts,}$integration_declared_part"
+      fi
+    done
+    printf 'integration: focused part %s requires %s; run GANG_INTEGRATION_PARTS=%s\n' \
       "$integration_selected_part" "$integration_missing_parts" \
-      "$integration_missing_parts" "$integration_selected_part" >&2
+      "$integration_recommended_parts" >&2
     exit 2
   done
 fi
@@ -751,6 +759,7 @@ fi
 
 unset integration_declared_part integration_declared_parts integration_missing_parts \
   integration_parts integration_ran_parts integration_required_part \
+  integration_recommended_parts \
   integration_required_parts integration_selected_part integration_selected_parts \
   integration_selector
 
