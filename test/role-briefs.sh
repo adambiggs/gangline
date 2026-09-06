@@ -12,9 +12,14 @@ SCRIPT_ROOT="$(cd -P "$(dirname "$0")/.." && pwd)"
 GANG="${GANG_UNDER_TEST:-$SCRIPT_ROOT/bin/gang}"
 PRODUCT_ROOT="$(cd -P "$(dirname "$GANG")/.." && pwd)"
 
+# This instrument's exit status is read by test/integration.sh, which exits on
+# it, so the teardown reaches the removal through the shared function rather
+# than deciding a verdict of its own.
+. "$SCRIPT_ROOT/test/suite-tail.sh"
+
 cleanup() {
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
-  rm -rf -- "$TEST_ROOT"
+  suite_discard_run_root "$TEST_ROOT"
 }
 trap cleanup EXIT HUP INT TERM
 

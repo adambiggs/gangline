@@ -412,7 +412,7 @@ cleanup() {
     || env -u TMUX -u TMUX_PANE -u TMUX_TMPDIR \
       "$REAL_TMUX" -L "$guard_ordinary_label" kill-server 2>/dev/null || true
   tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
-  rm -rf -- "$RUN_ROOT"
+  suite_discard_run_root "$RUN_ROOT"
 }
 # A SIGNAL ENDS THE RUN; IT DOES NOT ANNOTATE IT. One handler for the exit and
 # for the signals reads as if a signalled run stops here, and it does not: a

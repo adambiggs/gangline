@@ -1513,9 +1513,54 @@ contains "and the channel it waited on is in that report" \
 contains "and how long it waited, so a ceiling is not mistaken for a slow box" \
   "$tail_wedged_out" "waited 120s"
 
+# AND THE TEARDOWN THAT DECIDES NOTHING. A suite removes its run root in the
+# last command of an EXIT trap under `set -e`, so a removal that failed used to
+# become the suite's exit status: a run where every check passed reporting a
+# failure that names no check, and — because test/integration.sh's status is
+# what a nested run hands back here — a suite of thousands of checks ending
+# early with a verdict on none of them. The removal is made to fail here the one
+# way a fixture can arrange on demand, a directory `rm` may not write into,
+# because the way it fails in the field is a race with panes that outlive the
+# tmux server they were killed with.
+tail_discard="$tail_fix/discarded"
+mkdir -p "$tail_discard/held"
+: > "$tail_discard/held/entry"
+chmod 500 "$tail_discard/held"
+tail_discard_rc=0
+tail_discard_err="$(. "$ROOT/test/suite-tail.sh"; suite_discard_run_root "$tail_discard" 2>&1)" \
+  || tail_discard_rc=$?
+chmod 700 "$tail_discard/held"
+equal "a run root that could not be removed is not a failed run" \
+  "0" "$tail_discard_rc"
+contains "and the directory left behind is named rather than left to be found" \
+  "$tail_discard_err" "$tail_discard"
+contains "and the reader is pointed at the checks instead of the removal" \
+  "$tail_discard_err" "the checks above are its verdict"
+equal "and the run root that could not be removed is still there" \
+  "yes" "$([ -d "$tail_discard" ] && echo yes || echo no)"
+rm -rf -- "$tail_discard"
+tail_discard_ok="$tail_fix/discarded-ok"
+mkdir -p "$tail_discard_ok/inner"
+: > "$tail_discard_ok/inner/entry"
+tail_discard_ok_rc=0
+( . "$ROOT/test/suite-tail.sh"; suite_discard_run_root "$tail_discard_ok" ) \
+  || tail_discard_ok_rc=$?
+equal "an ordinary run root is removed and says nothing" \
+  "0 no" \
+  "$tail_discard_ok_rc $([ -e "$tail_discard_ok" ] && echo yes || echo no)"
+
 # AND BOTH SUITES REACH IT THROUGH THAT FILE. A private copy of the summary in
 # either one is a copy the three checks above do not cover, which is how this
 # branch went unexercised in the first place.
+for tail_discard_suite in integration.sh role-briefs.sh; do
+  if grep -q 'suite_discard_run_root "\$' "$ROOT/test/$tail_discard_suite" \
+    && ! grep -qE '^[[:space:]]*rm -rf -- "\$(RUN|TEST)_ROOT"' "$ROOT/test/$tail_discard_suite"; then
+    pass "test/$tail_discard_suite discards its run root through the shared function"
+  else
+    fail "test/$tail_discard_suite discards its run root through the shared function" \
+      "it still removes the root itself, so a failed removal is its exit status"
+  fi
+done
 for tail_suite in integration.sh e2e.sh; do
   if grep -q '^\. "\$ROOT/test/suite-tail\.sh"$' "$ROOT/test/$tail_suite" \
     && grep -q 'suite_tail "\$checks" "\$fails" "\$SECONDS"' "$ROOT/test/$tail_suite"; then

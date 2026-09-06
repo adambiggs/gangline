@@ -47,6 +47,27 @@ suite_wedged_barriers() { # $1 = the ledger the wait shim appends to
   done < "$1"
 }
 
+# THE VERDICT IS THE CHECKS, NOT THE TEARDOWN. A suite removes its run root in
+# the last command of an EXIT trap, and under `set -e` the status of that
+# removal becomes the status of the whole process. The removal races what the
+# run started: killing a tmux server returns before the panes under it have
+# died, and one of them recreating a path inside the root that `rm` has already
+# emptied leaves the directory non-empty, so `rm` exits 1 and a run in which
+# every check passed reports a failure that names no check. Its caller then has
+# a status and nothing to read: test/integration.sh's exit status is what
+# test/integration-gate.sh reads back from a nested run, and one nonzero there
+# ends a suite of thousands of checks with no verdict on any of them.
+#
+# Removal stays best effort and stays loud — `rm` names the path that blocked
+# it, and the line below names the directory left behind — but what the run
+# measured is settled above this line and nothing here may overwrite it.
+suite_discard_run_root() { # $1 = the directory this run created
+  rm -rf -- "$1" && return 0
+  printf 'this run could not remove %s and has left it behind; the checks above are its verdict\n' \
+    "$1" >&2
+  return 0
+}
+
 # And the count rides the one line everyone reads, because a green run with
 # unknowns above zero is a different reading from a green run without them.
 suite_unknown_clause() { # $1 = how many claims this run could not settle
