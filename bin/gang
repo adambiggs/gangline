@@ -391,7 +391,7 @@ say something
     printf '%s\n' "..." |
       gang send --to NAME --stdin
   Delivery is verified in the target's own
-  input box, and never interrupts a turn. A
+  input box, and never interrupts a turn.
   If the teammate cannot take it now, the
   message stays in its spool and is delivered
   at the next turn boundary its harness
@@ -598,7 +598,7 @@ gang hitch
   unanswered prompt it stops waiting and
   exits 4, leaving the agent alive and the
   contract in its spool. Answer the prompt,
-  then drop and hitch again.
+  then run gang tick to retry delivery.
 EOF
       ;;
     adopt) cat <<'EOF'
@@ -640,6 +640,8 @@ gang rename
   stops resolving immediately. The window's
   spool identity does not change, so messages
   already waiting for it remain reachable.
+  Its launch scope also stays unchanged; a
+  later scoped hitch may reuse the old name.
 EOF
       ;;
     send) cat <<'EOF'
@@ -687,6 +689,13 @@ gang send
   is available it cannot park: that exits 3
   saying NOT parked, and the message is still
   yours to send.
+
+  A peer message answers that peer's requests
+  you have read. A crossing unread request
+  remains unanswered. A reply is answerable
+  only in the turn that read it: any
+  acknowledgement closes that thread, while
+  a later turn's message starts a new request.
 
   On exit 1, do not simply send again. The
   body may have been typed, left staged, or
@@ -874,6 +883,12 @@ gang compact
   it: the request stands, gang retries when
   the next turn ends, and the agent is told
   its context was not compacted.
+
+  Where a composer paints idle before release,
+  gang first waits for the harness's own
+  native-idle record. A boundary that cannot
+  prove it puts the request back without
+  typing.
 EOF
       ;;
     context) cat <<'EOF'
@@ -1121,12 +1136,13 @@ gang explain
 
   gang explain <name>
 
-  Prints the agent, active pane, collar and
-  resulting state, then the collar-owned fatal
-  reader and the GANG_OCCUPIED_REGEX and
-  GANG_BUSY_REGEX rules: whether that same read
-  used them, the fatal cause, or the exact regex
-  and first captured pane line it matched.
+  Prints the agent, active pane, collar,
+  resulting state and recorded launch scope,
+  then the collar-owned fatal reader and the
+  GANG_OCCUPIED_REGEX and GANG_BUSY_REGEX
+  rules: whether that same read used them,
+  the fatal cause, or the exact regex and
+  first captured pane line it matched.
 
   A rule can be matched, not matched, not
   declared, or not evaluated because stronger
@@ -1304,6 +1320,12 @@ gang drop
   before the window dies. Whatever exists
   only on that screen goes with it; gang
   capture first if it matters.
+
+  Teardown also records usage. The caller
+  measures it and tmux appends it from the
+  host mount namespace. Failure does not stop
+  the drop: stderr names a preserved fallback
+  file, or a tmux buffer kept until server exit.
 EOF
       ;;
     down) cat <<'EOF'
@@ -1324,6 +1346,12 @@ gang down
   session, with no override: an agent must
   not end the team it is running in. Detach
   and run it from a shell outside tmux.
+
+  Teardown also records usage. The caller
+  measures it and tmux appends it from the
+  host mount namespace. Failure does not stop
+  shutdown: stderr names a preserved fallback
+  file, or a tmux buffer kept until server exit.
 EOF
       ;;
     collars) cat <<'EOF'
@@ -4076,11 +4104,12 @@ lock_pane() { # $1 = window id; held until lock_release or this process exits
 # first composer appears.
 #
 # The spool is not a resident retry manager. Native boundaries remain immediate
-# opportunities, and every later Gangline invocation supplies one bounded
-# cooperative tick across the whole team. The pre-turn exception remains inside
-# the foreground hitch command that already observes boot; no watcher survives
-# either path. A collar with no Stop hook therefore still parks a pre-keystroke
-# refusal for the next tick, but cannot supply hook-owned turn facts.
+# opportunities. `gang tick` runs one bounded cooperative pass across the whole
+# team, and other operational commands launch that pass after preserving their
+# own results. The pre-turn exception remains inside the foreground hitch command
+# that already observes boot; no watcher survives either path. A collar with no
+# Stop hook therefore still parks a pre-keystroke refusal for the next tick, but
+# cannot supply hook-owned turn facts.
 #
 # Entries are named by a fixed-width nanosecond stamp, so the glob that reads
 # them is already oldest-first. They live under a token minted into the target's
@@ -9914,13 +9943,13 @@ cmd_hitch() {
 # reports is that gang stopped watching, and it exits 4 so a caller can tell
 # this apart from a hitch that failed and from one that delivered.
 #
-# NOTHING DRAINS THAT ENTRY ON ITS OWN. A spool is claimed at a native turn
-# boundary, and an agent still behind its first-run prompt has taken no turn and
-# will take none until a person answers — so the recovery named here is the one
-# that works rather than the one that sounds least disruptive. Answering is a
-# native, persisted choice: the next hitch on that harness boots past it.
+# NOTHING DRAINS THAT ENTRY WHILE THE PROMPT STILL OWNS THE COMPOSER. Once a
+# person answers, the next cooperative tick can claim the spool without waiting
+# for that agent to take a turn. Answering is a native, persisted choice, so the
+# existing harness should be kept unless the native process itself needs
+# replacement.
 hitch_gate_unanswered() { # $1 name, $2 window, $3 observations spent
-  fail 4 "'$1' is still showing a native first-run prompt after $3 observations, so its startup contract was NOT delivered and gang has stopped waiting for the prompt to be answered. The agent is alive and the contract is parked in its spool ('gang mail $1' reads it, 'gang roster' shows it waiting), but nothing claims a spool before that agent takes a turn, and it cannot take one from behind the prompt. Answer the prompt with 'gang attach', then 'gang drop $1' and hitch again. Raise GANG_GATE_LOOKS where a terminal is free to keep waiting."
+  fail 4 "'$1' is still showing a native first-run prompt after $3 observations, so its startup contract was NOT delivered and gang has stopped waiting for the prompt to be answered. The agent is alive and the contract is parked in its spool ('gang mail $1' reads it, 'gang roster' shows it waiting). Answer the prompt with 'gang attach', then run 'gang tick' to retry delivery. Drop and hitch again only if the native process itself must be replaced. Raise GANG_GATE_LOOKS where a terminal is free to keep waiting."
 }
 
 cmd_up() { # bare `gang up` is the whole setup: one agent, and you in it

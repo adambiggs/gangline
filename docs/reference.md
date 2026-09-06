@@ -140,9 +140,10 @@ party, and giving up would detach the one client that can answer.
 
 Gangline starts no resident watcher. A hitch that stops waiting — at that bound
 or on an interrupt — leaves the attributed entry inspectable. After the prompt
-is answered, any later Gangline invocation supplies a one-shot tick that retries
-that spool through the ordinary delivery gates; no turn from the recipient is
-required merely to create the opportunity. Drop and hitch again only when the
+is answered, `gang tick` retries that spool through the ordinary delivery
+gates; no turn from the recipient is required merely to create the opportunity.
+Other operational commands launch the same one-shot pass after preserving their
+own result; alert inspection does not. Drop and hitch again only when the
 native process itself must be replaced. The printed `--resume` form applies only
 if a native session was stamped, and a pre-turn gate normally has no resumable
 identity.
@@ -400,9 +401,9 @@ signals a bare PID or process-group number. A legacy pid-only lock is retired
 when the live PID is positively not a tick worker for this team, but never
 authorizes termination because it has no generation or monotonic acquisition
 stamp. Ambiguous identity, a tick-shaped live legacy owner, and failed
-termination retain the lock and fail loudly. Recovery is
-cooperative, so it begins on the next Gangline invocation rather than in a
-resident watcher.
+termination retain the lock and fail loudly. Recovery begins on the next
+cooperative tick, invoked directly or launched by an operational command,
+rather than in a resident watcher.
 
 The worker and its descendants are also killed by their owning deadline
 controller at 60 seconds. HUP, INT, TERM, or ALRM caught by that controller
@@ -1063,12 +1064,14 @@ long as the foreground command.
 ### `gang explain <name>`
 
 Runs the ordinary live state classification once and prints the agent, pinned
-active pane, collar, and resulting state. It then reports the optional collar
-fatal-turn reader and both collar-owned state rules, `GANG_OCCUPIED_REGEX` and
-`GANG_BUSY_REGEX`, as matched, did not match, not declared, not evaluated
-because higher-priority evidence settled that part of the classification first,
-or could not determine. Matched fatal evidence includes its cause. A matched
-regex includes its exact ERE and the first pane line that matched.
+active pane, collar, resulting state, and exact launch scope recorded on the
+window (`not recorded` for an unscoped or newly adopted agent). It then reports
+the optional collar fatal-turn reader and both collar-owned state rules,
+`GANG_OCCUPIED_REGEX` and `GANG_BUSY_REGEX`, as matched, did not match, not
+declared, not evaluated because higher-priority evidence settled that part of
+the classification first, or could not determine. Matched fatal evidence
+includes its cause. A matched regex includes its exact ERE and the first pane
+line that matched.
 
 The diagnostic instruments the regex evaluations inside that same state read.
 It does not recapture the pane afterward, so a moving TUI cannot make the

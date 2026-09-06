@@ -294,10 +294,11 @@ second copy of a message that may have landed is worse than one loud failure.
 Parking is the default and `--live-only` is the explicit probe. A collar with a
 native Stop event drains there immediately; a `steer` collar may also drain at
 PostToolUse when its composer is free, after attribution has committed the
-entry. Every later Gangline invocation supplies the bounded cooperative tick,
-so hookless collars can park pre-keystroke refusals without a resident poller,
-scheduler, or watcher. Missing hooks still mean missing native facts, not
-missing retry. An entry is claimed out of
+entry. `gang tick` supplies the bounded cooperative pass, and other operational
+commands launch it after preserving their own results, so hookless collars can
+park pre-keystroke refusals without a resident poller, scheduler, or watcher.
+Missing hooks still mean missing native facts, not missing retry. An entry is
+claimed out of
 the spool before it is delivered, because ownership has to span the submission
 AND the retirement: the pane lock is released inside the delivery, so anything
 still live afterwards could be sent again by the next drain or the next
@@ -719,11 +720,12 @@ a refusal rather than a guess, because a silently wrong target is worse than no
 target. tmux appends its own flags after the name; that rendering is documented,
 not fought.
 
-## Every ordinary Gangline invocation ends with a cooperative tick
+## Operational Gangline commands supply a cooperative tick
 
-Every invocation that can address a live team launches one detached, one-shot
-tick after preserving its own result. The tick makes one full pass over every
-hitched window: it retries all waiting spool entries through the existing
+`gang tick` runs one synchronous pass over every hitched window. Other
+operational commands launch the pass detached after preserving their own
+result; alert inspection and the tick's internal workers do not recursively
+launch one. The pass retries all waiting spool entries through the existing
 verified-delivery gates, retries safe deferred self-compaction, and verifies a
 collar's live native-session identity where one can be read. Native hooks still
 own their event facts and event-specific work; a tick may prefer a closed native
@@ -733,7 +735,7 @@ permission to interrupt or type.
 This supersedes hook-frequency selection. Copy-mode, an idle pane that raises no
 later boundary, a hook disabled at launch, and a falsely occupied screen can no
 longer leave accepted work dependent on that same recipient producing another
-event. Any later Gangline activity in the team supplies the retry.
+event. A later `gang tick` supplies the retry directly.
 
 The worker is ephemeral, not resident: no process outlives the pass it was born
 to finish. A per-team kernel flock serializes lock-metadata transactions; the
@@ -1074,9 +1076,9 @@ hooks at a native security gate, adds no harness event or persistent fact, and
 leaves the envelope inspectable if hitch is interrupted.
 Once that positive evidence commits the entry, the hitch remains its foreground
 owner without a post-gate deadline; Gangline starts no resident watcher. If the
-foreground hitch is interrupted, the cooperative tick of any later Gangline
-invocation becomes the retry owner once the prompt clears. Drop and re-hitch is
-reserved for replacing the native process, and resume applies only where a
+foreground hitch is interrupted, a later `gang tick` becomes the retry owner
+once the prompt clears. Drop and re-hitch is reserved for replacing the native
+process, and resume applies only where a
 native session identity was stamped before interruption. A second hand-sent
 contract is never the recovery.
 Unknown stable screens still fail loudly instead of being called startup
@@ -1509,9 +1511,9 @@ stalled third party there, and the give-up would detach the one client that can
 answer — reporting that nobody answered by removing the means to.
 
 The budget cannot be recovered by waiting longer, because the prompt still owns
-the composer. The cooperative tick changes what happens after it clears: any
-later Gangline invocation retries the existing spool without waiting for that
-idle agent to raise a boundary. Answering is a native persisted choice, and
+the composer. The cooperative tick changes what happens after it clears:
+`gang tick` retries the existing spool without waiting for that idle agent to
+raise a boundary. Answering is a native persisted choice, and
 codex's hook trust in
 particular is keyed on the hook definition rather than on the bytes of the
 script the hook command names — so ordinary development on `bin/gang` leaves an
@@ -2051,15 +2053,26 @@ window beside the collar and session id already there. They are records of what
 was asked for, written once at launch and re-written by a resume; Gangline
 never reads them to decide anything.
 
-`drop` and `down` append one normalized line per agent to
+`drop` and `down` prepare one normalized line per agent for
 `${XDG_DATA_HOME:-~/.local/share}/gangline/usage/events.jsonl`, carrying the
 launch record, the team's identity (its name and the epoch its session was
 created, since a name is reused), the end time, and ccusage's reading at that
 moment, read once for every window a `down` ends, with a status
 that says whether it was matched, unmatched, unstamped, absent, failed, or
-malformed. The ccusage call is bounded and its failure is one stderr line: an
-unwritable record must not hold a teardown that has already archived the
-agent's mail, so the line is the deletion path's loudness, not a refusal. The
+malformed. Preparation stays in the caller, preserving its PATH and transcript
+roots. A sandboxed caller may be able to read those transcripts while seeing
+the operator's usage data directory as read-only, so the normalized JSON
+crosses the sandbox boundary in a named tmux buffer and a synchronous
+`run-shell` child appends it from the server's host mount namespace. This
+preserves the record without weakening a collar's sandbox or adding a daemon.
+The ccusage call stays bounded, and the buffer is deleted after a successful
+append.
+
+A preparation failure is reported as a lost event. If the primary append fails,
+the host-side worker saves the prepared JSON under the effective archive root's
+`usage-unrecorded/` directory and prints the exact recovery path; if that write
+also fails, it keeps and names the tmux buffer until the server exits. None of
+these failures holds a teardown that has already archived the agent's mail. The
 file is the operator's; `gang usage` prints its path, `--all` reads all of it,
 and removing it is `rm`.
 
@@ -2151,22 +2164,6 @@ delivery proof and no later writer, so the debtor was refused idle at every
 Stop for a reply it had given and sent it again. The settlement is one
 immutable digest per record, so late and repeated witnesses rewrite the same
 bytes rather than conflicting.
-
-## Usage measurement stays with the caller; persistence belongs to tmux
-
-A sandboxed agent may read its transcripts while seeing the operator's usage
-data directory as read-only. `drop` and `down` therefore prepare their normalized
-JSON and ccusage join in the caller, preserving its PATH and transcript roots,
-then pass that JSON through a named tmux buffer to a synchronous `run-shell`
-append in the server's host mount namespace. This uses Gangline's existing tmux
-substrate without weakening a collar's sandbox or adding a daemon.
-
-The buffer is deleted after a successful append. If the primary event file is
-unavailable, the host-side worker saves the prepared JSON under the effective
-archive root's `usage-unrecorded/` directory and prints the exact recovery path; if even
-that write fails, it keeps and names the tmux buffer until the server exits.
-Teardown still proceeds, but a missing record is never silent and its retained
-copy has an explicit deletion path.
 
 ## A tick owner runs at most one rerun
 

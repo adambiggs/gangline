@@ -103,13 +103,13 @@ themselves with `--from`. Delivery succeeds only after the target composer
 visibly accepts the paste and submission.
 
 A target that cannot take input right now gets the message parked by default:
-it waits in the target's spool. Native delivery opportunities and the
-cooperative tick carried by every later Gangline invocation retry it through
-the same verified path. A collar may declare that a free composer accepts
-native mid-turn steering; attribution still lands in the spool before the first
-keystroke. Drafts and tmux copy-mode remain parked, then drain as soon as their
-gates clear and any team window invokes Gangline. `--live-only` refuses instead
-of parking when a message is only worth sending now.
+it waits in the target's spool. Native delivery opportunities, `gang tick`, and
+the cooperative pass launched by other operational Gangline commands retry it
+through the same verified path. A collar may declare that a free composer
+accepts native mid-turn steering; attribution still lands in the spool before
+the first keystroke. Drafts and tmux copy-mode remain parked, then drain after
+their gates clear and the next cooperative pass runs. `--live-only` refuses
+instead of parking when a message is only worth sending now.
 
 Observe and control the team without replacing the harness interface:
 

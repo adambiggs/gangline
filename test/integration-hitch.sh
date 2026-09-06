@@ -171,8 +171,10 @@ equal "the gate budget is spent one second per unanswered observation" \
   2 "$(clock_naps "$gate_budget_ledger" 1)"
 contains "and the refusal says the contract was not delivered" \
   "$gate_budget_out" "startup contract was NOT delivered"
-contains "and names the recovery that works from there" \
-  "$gate_budget_out" "gang drop gate-budget"
+contains "and names the live retry that works from there" \
+  "$gate_budget_out" "run 'gang tick' to retry delivery"
+excludes "and does not tell the operator to replace a healthy process" \
+  "$gate_budget_out" "then 'gang drop gate-budget' and hitch again"
 equal "and still nothing answered the prompt" "" \
   "$(<"$RUN_ROOT/dialog-gate-budget.keys")"
 equal "the attributed contract is still parked where roster shows it" "1" \

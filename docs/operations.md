@@ -72,10 +72,10 @@ no resident watcher.
 Do not send a second copy by hand. `gang roster` and `gang status <name>` show
 the contract queued until the verified drain completes. Interrupting hitch
 leaves that attributed envelope in the spool for inspection rather than
-silently discarding it. After resolving the native gate, invoke any Gangline
-command from the team; its one-shot tick retries the contract without requiring
-the idle recipient to create a turn boundary. Drop and re-hitch only if the
-native process itself must be replaced. Use `--resume` only when drop prints a
+silently discarding it. After resolving the native gate, run `gang tick` from
+the team; it retries the contract without requiring the idle recipient to
+create a turn boundary. Drop and re-hitch only if the native process itself
+must be replaced. Use `--resume` only when drop prints a
 stamped native-session line; a pre-turn gate normally has no native identity to
 resume. Do not send a replacement contract by hand.
 
@@ -193,10 +193,10 @@ operator housekeeping should remove read and teardown archives that no longer
 have a recovery purpose.
 
 For a harness whose native Stop event does not reach Gangline, an ordinary send
-still tries live delivery. A pre-keystroke refusal parks normally and every
-later Gangline invocation supplies a cooperative retry. The missing hook still
-means there is no immediate Stop opportunity and no native turn fact for
-`gang wait` or inside-harness deferred self-compaction.
+still tries live delivery. A pre-keystroke refusal parks normally; `gang tick`
+supplies a cooperative retry. The missing hook still means there is no
+immediate Stop opportunity and no native turn fact for `gang wait` or
+inside-harness deferred self-compaction.
 
 ## Working in the shared checkout
 
@@ -527,10 +527,10 @@ server and stand-in collar; they do not spend real harness turns.
 
 Gangline types nothing while tmux copy-mode or scrollback owns the pane. A
 default send remains in the target's spool, and a deferred self-compaction
-request remains recorded. Leave copy-mode, then invoke any Gangline command
-from any team window. Its cooperative tick retries both actions through their
-ordinary safety gates; the idle recipient does not need a manual nudge or a new
-turn boundary. A collar whose native-idle witness is unavailable refuses
+request remains recorded. Leave copy-mode, then run `gang tick` from any team
+window. That cooperative pass retries both actions through their ordinary
+safety gates; the idle recipient does not need a manual nudge or a new turn
+boundary. A collar whose native-idle witness is unavailable refuses
 self-compaction outright and holds no request, so only the spool is waiting
 there; one that declares a native-idle witness holds the request until the
 harness has persisted the end of the turn. Use `gang status <name>` to
@@ -687,8 +687,8 @@ is read for the turn that hook named. With hooks inert, a peer compacts it.
 Hitch does not hold the terminal for this indefinitely. It parks the contract,
 says the prompt is waiting, and after `GANG_GATE_LOOKS` observations of an
 unanswered prompt it exits 4 with the agent still alive and the contract still
-in its spool. Answer the prompt, then invoke any Gangline command to supply the
-cooperative retry; re-hitch only if the process itself needs replacement.
+in its spool. Answer the prompt, then run `gang tick` to retry delivery;
+re-hitch only if the process itself needs replacement.
 
 An operator who wants no gate at all sets that in their own configuration
 rather than in a collar: codex takes `--dangerously-bypass-hook-trust`, and a

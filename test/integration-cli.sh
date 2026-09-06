@@ -71,6 +71,8 @@ equal "the welcome page fits the phone-SSH width" "" \
   "$(printf '%s\n' "$welcome" | help_width_failure)"
 contains "the welcome page carries the send one-liner" \
   "$welcome" "gang send --to NAME --stdin"
+excludes "the welcome page has no stale orphaned A fragment" \
+  "$welcome" "input box, and never interrupts a turn. A"
 source_version="$(<"$ROOT/version.txt")"
 equal "source gang reports the release-owned version" \
   "gang $source_version" "$(env GANG_CONFIG_DIR="$RUN_ROOT/no-config" "$GANG" --version)"
@@ -121,6 +123,20 @@ contains "gang curfew help prints the new synopsis" \
   "$("$GANG" curfew --help)" "gang curfew"
 contains "gang roster help names its scripting mode" \
   "$("$GANG" roster --help)" "--porcelain"
+contains "gang send help names unread crossing semantics" \
+  "$("$GANG" send --help)" "crossing unread request"
+contains "gang rename help names immutable scope" \
+  "$("$GANG" rename --help)" "launch scope also stays unchanged"
+contains "gang compact help names its native-idle witness" \
+  "$("$GANG" compact --help)" "native-idle record"
+contains "gang explain help names its scope output" \
+  "$("$GANG" explain --help)" "recorded launch scope"
+contains "gang drop help names usage recovery" \
+  "$("$GANG" drop --help)" "Teardown also records usage"
+contains "gang down help names usage recovery" \
+  "$("$GANG" down --help)" "Teardown also records usage"
+contains "gang hitch help names the live delivery retry" \
+  "$("$GANG" hitch --help)" "run gang tick"
 equal "every dispatched operator command has a bare classification" \
   "$dispatch_commands" "$classified_commands"
 
