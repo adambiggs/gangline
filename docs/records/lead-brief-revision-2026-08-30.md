@@ -160,6 +160,11 @@ could obey it and do nothing differently. Locking a sentence like that would
 give rationale the same permanence as a decision. The specific paragraphs carry
 the behaviour; this record carries the reason.
 
+One of these lines is now scored. `test/leadeval.sh` measures the
+reviewer-selection line against a staged lead's dispatches; its scope and its
+limits are stated in the lane itself and in `docs/DECISIONS.md`. The rest of
+this section states why the remaining lines are harder to reach.
+
 Testing conduct needs a different lane, and it is further from the current
 substrate than it first appears. Gangline transports prose and observes tmux. It
 holds no arc, no file ownership and no task state, and by `CONSTITUTION.md` it
