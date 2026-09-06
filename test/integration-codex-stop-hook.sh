@@ -1097,8 +1097,13 @@ case "$1" in
   reply-obligations) printf 'query\n' >> "${FAKE_QUERY_LOG:-/dev/null}"
                      [ -z "${FAKE_REPLY_HOLD:-}" ] || exec cat "$FAKE_REPLY_HOLD"
                      printf '%b' "$FAKE_REPLY_QUERY"; exit "${FAKE_REPLY_RC:-0}" ;;
-  reply-released) printf 'released%s\n' "${2:+ $2}" >> "$FAKE_REPLY_LOG"; exit "${FAKE_RELEASE_RC:-0}" ;;
-  hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null; exit "${FAKE_HOOK_RC:-0}" ;;
+  reply-released) printf 'released%s\n' "${2:+ $2}" >> "$FAKE_REPLY_LOG"
+                  [ -z "${FAKE_RELEASE_HOLD:-}" ] || exec cat "$FAKE_RELEASE_HOLD"
+                  exit "${FAKE_RELEASE_RC:-0}" ;;
+  hook) printf 'hook\n' >> "$FAKE_REPLY_LOG"; cat >/dev/null
+        [ -z "${FAKE_HOOK_DELAY:-}" ] || /bin/sleep "$FAKE_HOOK_DELAY"
+        [ -z "${FAKE_HOOK_HOLD:-}" ] || exec cat "$FAKE_HOOK_HOLD"
+        exit "${FAKE_HOOK_RC:-0}" ;;
   *) exit 99 ;;
 esac
 SH
@@ -1263,6 +1268,106 @@ contains "a failed boundary after a timed-out query names the timeout" \
   "$reply_fake_out" "released after its reply query timed out"
 excludes "a timed-out query is not called clear provenance" \
   "$reply_fake_out" "provenance is clear"
+
+# THE BOUNDARY SPENDS WHAT THE QUERY LEFT, ON A REAL CLOCK. A boundary slower
+# than a few seconds but well inside the native fuse must close, and the number
+# the adapter carried was near the idle cost of one Gangline call, so this case
+# is measured against the wall clock the collars bound rather than a scaled one.
+# It therefore names /bin/sleep: the suite's own `sleep` on PATH is the counting
+# stub that returns at once, which would leave this fixture holding nothing.
+# Measured margin: the fake answers a quiet box in well under 50 ms, the fixture
+# holds the boundary for 4 s, and production leaves the boundary everything the
+# 15 s fuse has left after a 1 s reserve.
+reply_fake_hook_hold="$reply_fake_root/hook-hold"
+mkfifo "$reply_fake_hook_hold"
+: > "$reply_fake_log"
+# source-guard: whole-surface@9bfe5b4dba00: the complete fake-adapter stdout is the slow-boundary verdict, so any producer is valid evidence
+equal "a boundary slower than a few seconds still closes inside the native fuse" \
+  "{}" "$(printf '%s' "$reply_stop_payload" \
+    | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+      FAKE_HOOK_DELAY=4 python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@ababcc619f93: the complete fake hook log records every boundary this invocation attempted, so any producer is valid evidence
+equal "a slow boundary is delegated once and not retried" "hook" \
+  "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+reply_fake_out="$(printf '%s' "$reply_stop_payload" \
+  | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_HOOK_HOLD="$reply_fake_hook_hold" GANG_STOP_HOOK_BUDGET_SEC=1.5 \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@db456842115c: the complete fake-adapter stdout is the unclosed-boundary verdict, so any producer is valid evidence
+contains "a boundary that never closes inside the budget is refused under its own name" \
+  "$reply_fake_out" "did not close inside its time budget"
+excludes "an unclosed boundary is not reported as a broken hook path" \
+  "$reply_fake_out" "repair the Gangline hook path"
+# source-guard: whole-surface@e870119f1e4e: the complete fake-adapter stdout is the unclosed-boundary remedy, so any producer is valid evidence
+contains "an unclosed boundary asks for the wait that can clear it" \
+  "$reply_fake_out" "wait for the load to fall"
+# THE MUTATING BOUNDARY IS ATTEMPTED ONCE OR NOT AT ALL. `gang hook` closes the
+# turn, records the boundary's facts, dispatches delivery, and closes reply
+# threads last; a killed attempt leaves a prefix of that done and a second
+# attempt would repeat it beside a child the kill did not reach.
+# source-guard: whole-surface@7ca557c333e1: the complete fake hook log records every boundary this invocation attempted, so any producer is valid evidence
+equal "an unclosed boundary is never attempted a second time" "hook" \
+  "$(cat "$reply_fake_log")"
+: > "$reply_fake_log"
+# AN UNCLOSED BOUNDARY FAILS CLOSED ON THE RE-STOP TOO. Allowing there leaves
+# the turn bracket open, and a prompt under an open bracket is steering, so the
+# replies that turn read stay answerable: the next message out can be
+# correlated to one of them and its recipient is owed nothing back. A refusal
+# is loud and recoverable; that loss has no record at all.
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_QUERY='clear\t-\t-\t-\n' FAKE_REPLY_LOG="$reply_fake_log" \
+    FAKE_HOOK_HOLD="$reply_fake_hook_hold" GANG_STOP_HOOK_BUDGET_SEC=1.5 \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+# source-guard: whole-surface@962ee1fd1e44: the complete fake-adapter stdout is the unclosed-boundary verdict on a re-Stop, so any producer is valid evidence
+contains "an unclosed boundary on the re-Stop still fails closed" \
+  "$reply_fake_out" '"decision": "block"'
+excludes "the re-Stop refusal is not a broken hook path either" \
+  "$reply_fake_out" "repair the Gangline hook path"
+# A STAGE THAT CANNOT FIT DOES NOT START. Every bound is clamped to what the
+# fuse has left, so a query that spends its deadline and a release report that
+# never answers leave nothing for the boundary — and a boundary with nothing
+# left is not begun, because beginning it would mutate a prefix the harness is
+# about to kill. Here the query spends 0.45 s of a 1.5 s fuse and the release
+# report is clamped to the rest of it.
+reply_fake_release_hold="$reply_fake_root/release-hold"
+mkfifo "$reply_fake_release_hold"
+: > "$reply_fake_log"; : > "$reply_fake_query_log"
+reply_fake_started="$(date +%s%N)"
+reply_fake_out="$(printf '%s' "$reply_stop_active_payload" \
+  | FAKE_REPLY_HOLD="$reply_fake_hold" FAKE_RELEASE_HOLD="$reply_fake_release_hold" \
+    FAKE_HOOK_HOLD="$reply_fake_hook_hold" \
+    GANG_STOP_QUERY_ATTEMPT_SEC=0.25 GANG_STOP_QUERY_DEADLINE_SEC=0.45 \
+    GANG_STOP_HOOK_BUDGET_SEC=1.5 \
+    FAKE_REPLY_LOG="$reply_fake_log" FAKE_QUERY_LOG="$reply_fake_query_log" \
+    python3 "$reply_stop_hook" "$reply_fake_root/gang" 2>/dev/null)"
+reply_fake_elapsed_ms=$(( ( $(date +%s%N) - reply_fake_started ) / 1000000 ))
+# source-guard: whole-surface@f9cb1e28dd21: the complete fake hook log records every stage this invocation started, so any producer is valid evidence
+equal "a fuse spent by the earlier stages never starts the mutating boundary" \
+  "released query-timeout" "$(cat "$reply_fake_log")"
+# source-guard: whole-surface@d19a5ab7088c: the complete fake-adapter stdout is the verdict for a spent fuse, so any producer is valid evidence
+contains "a spent fuse still prints a verdict rather than nothing" \
+  "$reply_fake_out" '"decision": "block"'
+# source-guard: whole-surface@8a544445bc2e: the complete fake-adapter stdout names what the query found before the boundary ran out, so any producer is valid evidence
+contains "a spent fuse names the released query alongside the unclosed boundary" \
+  "$reply_fake_out" "released after its reply query timed out"
+# The ceiling is coarse on purpose: it is twice the scaled fuse, so it survives
+# a loaded box while still failing an adapter whose stage bounds add past the
+# fuse. Stage constants unclamped, this same fixture spends 3.45 s. What the
+# scaled numbers prove is the ordering and the clamping, not the production
+# bound: interpreter startup precedes the adapter's clock and does not scale
+# with the fixture, so it eats a scaled reserve while leaving most of the
+# production one. A fixture at the production budget would be a mandatory test
+# spending 15 s of wall time, which this suite does not admit.
+equal "no stage bound outlives the fuse it was granted" yes \
+  "$([ "$reply_fake_elapsed_ms" -lt 3000 ] && printf yes || printf no)"
+reply_hook_budget="$(python3 -c '
+import re, sys
+match = re.search(r"GANG_STOP_HOOK_BUDGET_SEC\", \"([0-9.]+)\"", open(sys.argv[1]).read())
+print(match.group(1) if match else "")
+' "$reply_stop_hook")"
+equal "the adapter budgets exactly the native fuse the collars grant" 15 \
+  "$reply_hook_budget"
 
 codex_reply_launch="$(env GANG_TEST_COLLARS='' ROOT="$ROOT" GANG_CONTEXT_LIGHTS=off bash -c \
   '. "$1"; printf "%s" "$GANG_LAUNCH"' fixture "$ROOT/collars/codex.sh")"

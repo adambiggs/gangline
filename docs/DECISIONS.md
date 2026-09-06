@@ -2054,14 +2054,50 @@ vanished, a query lost to lock contention — then became an unbounded run of
 model turns, and an agent stranded on a record no message could clear had no
 exit short of being dropped.
 
-The cap stays in force and the adapter never depends on reaching it. It refuses
-idle once per turn, releases the re-Stop the harness marks with
-`stop_hook_active`, and makes the release loud rather than forgiving: the
+The cap stays in force, and for peer-reply provenance the adapter never depends
+on reaching it. It refuses idle once per turn, releases the re-Stop the harness
+marks with `stop_hook_active`, and makes the release loud rather than
+forgiving: the
 records stay exactly as they were, `status` and `roster` keep reporting them,
 the notify target or the lead is told, and the next delivery's first Stop
 refuses again. A query that cannot answer inside the adapter's deadline is its
-own named state under the same rule. Provenance still fails closed for a
-boundary; nothing fails forever.
+own named state under the same rule. A Stop boundary that fails or runs out of
+time is the exception carved out below: it leaves no record that survives a
+release, so it refuses on the re-Stop too and may reach the cap. Provenance
+still fails closed for a boundary; no provenance state fails forever.
+
+Every stage of that adapter is bounded by one native fuse rather than by a
+constant of its own. The query keeps its attempt and deadline and the release
+report its small fixed bound, but each is clamped to what the fuse has left,
+and no stage starts on a budget it cannot fit; a reserve keeps the verdict
+printed before the fuse rather than at it. Stage constants spent independently
+add up past the fuse, and a verdict printed after it is a verdict the harness
+never reads at all.
+
+The ordinary Stop bookkeeping then takes everything the fuse has left, once. A
+fixed three-second cap on it was under twice the idle cost of one Gangline
+call, so ordinary CPU contention timed it out, and the refusal named a broken
+hook path that answered well inside the cap the moment load fell. A refusal
+that names the wrong cause is worse than a slow boundary: it spends a model
+turn and one of the native cap's blocks sending the agent to rewrite wiring
+that works. The refusal therefore says the boundary ran out of time and asks
+for the wait that can clear it.
+
+That boundary is never retried and never begun below its floor. `gang hook`
+closes the turn, records the boundary's facts, dispatches delivery or
+self-compaction, and closes reply threads last; a killed attempt leaves some
+prefix of that done, and a second attempt would repeat the prefix beside a
+child the kill did not reach. One attempt or none is the only shape that keeps
+a mutating boundary honest under a deadline.
+
+A boundary that runs out of time still refuses, on the re-Stop as on the first,
+because the alternative loses an obligation silently. An unclosed boundary
+leaves the turn bracket open; a prompt arriving under an open bracket is
+steering, so the replies that turn read stay answerable, and the next message
+the agent sends can be correlated to one of them — its recipient is then owed
+no reply and no record says why. A refusal is loud, is bounded by the native
+cap, and ends a session the operator can see. Only a boundary that can prove it
+closed exactly once may release the turn.
 
 ## Token consumption is ccusage's reading, joined by Gangline
 

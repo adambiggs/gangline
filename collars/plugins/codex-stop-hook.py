@@ -18,6 +18,15 @@ outstanding releases the turn LOUDLY through ``gang reply-released`` — the
 obligation stays recorded and visible, the notify target is told, and the next
 delivery raises it again — instead of spending model turns until the harness
 overrides the block behind Gangline's back.
+
+THAT RULE IS ABOUT PROVENANCE, NOT ABOUT THE BOUNDARY. A reply obligation can
+be released because the record outlives the release and the next delivery
+raises it again. An ordinary Stop boundary that never closed leaves no such
+record: the turn bracket stays open, a prompt arriving under an open bracket is
+steering rather than a new turn, and the message that follows can be correlated
+to a reply that turn had already read. A boundary that fails or runs out of
+time therefore refuses on the re-Stop as on the first, and may reach the native
+cap — where the operator sees it — rather than losing an obligation in silence.
 """
 
 from __future__ import annotations
@@ -32,20 +41,41 @@ from dataclasses import dataclass
 from typing import Optional
 
 
-# THE BUDGET IS THE COLLARS' NATIVE FUSE, SPENT IN NAMED PARTS. Both collars
-# wire this helper with a 15-second native timeout, after which the harness
-# ends the hook and reads no verdict at all. The query is retried only on a
-# timeout — a lock held for a moment, not an answer — and only inside its own
-# deadline, so a contended Gangline cannot hold Stop for longer than the
-# deadline says; the release report and the ordinary boundary then take what is
-# left. A fixture may scale the two query numbers through the environment; the
-# production values are the defaults.
+# THE BUDGET IS ONE NATIVE FUSE, SPENT IN NAMED PARTS. Both collars wire this
+# helper with a 15-second native timeout, after which the harness ends the hook
+# and reads no verdict at all. Every subprocess bound below is therefore
+# clamped to what that fuse has left, and no stage starts on a budget it cannot
+# fit: stage constants spent independently added up past the fuse, which is a
+# verdict the harness never reads rather than a verdict it reads late. The
+# clamp is internal, so it bounds what this process asks for rather than what
+# the kernel grants it; what is left over is measured margin, not proof. A
+# fixture may scale these numbers through the environment; the production
+# values are the defaults.
+HOOK_BUDGET_SEC = float(os.environ.get("GANG_STOP_HOOK_BUDGET_SEC", "15"))
+# Held back from every stage so the verdict is printed before the fuse rather
+# than at it. It covers interpreter startup, which happens before the clock
+# below starts, and the slack in a subprocess deadline on a host that is not
+# scheduling this process. Neither of those scales with a fixture's budget, so
+# a scaled run can exceed its own scaled fuse while production keeps its
+# margin; the margin that matters is measured at the production defaults.
+HOOK_RESERVE_SEC = HOOK_BUDGET_SEC / 15
+HOOK_STARTED = time.monotonic()
 QUERY_ATTEMPT_SEC = float(os.environ.get("GANG_STOP_QUERY_ATTEMPT_SEC", "5"))
 QUERY_DEADLINE_SEC = float(os.environ.get("GANG_STOP_QUERY_DEADLINE_SEC", "9"))
-# The floor scales with the attempt so a scaled fixture keeps the same shape.
 QUERY_MIN_ATTEMPT_SEC = QUERY_ATTEMPT_SEC / 5
 RELEASE_TIMEOUT_SEC = 2
-SETTLE_TIMEOUT_SEC = 3
+# THE BOUNDARY SPENDS WHAT THE EARLIER PARTS LEFT, ONCE. A fixed budget near
+# the idle cost of one Gangline call is a budget only a quiet host can meet:
+# under CPU contention the boundary timed out, the Stop was refused, and the
+# refusal sent the agent to repair a hook path that answered normally the
+# moment load fell. Its bound is therefore everything the fuse has left, which
+# on the ordinary path is an order of magnitude more than the old fixed cap.
+# It is never retried and never started below the floor, because unlike the
+# read-only query this call mutates: `gang hook` closes the turn, records the
+# boundary's facts, dispatches delivery or self-compaction, and closes reply
+# threads last. A killed attempt leaves some prefix of that done, and a second
+# attempt would repeat the prefix beside a child the kill did not reach.
+SETTLE_MIN_SEC = HOOK_BUDGET_SEC / 15
 QUERY_TIMEOUT = "query-timeout"
 NONCE = re.compile(r"[a-f0-9]{16}\Z")
 AGENT = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
@@ -75,11 +105,20 @@ class QueryTimeout(Exception):
     """Every query attempt inside the deadline timed out; provenance is unread."""
 
 
+class SettleTimeout(Exception):
+    """The boundary did not close inside the fuse, or could not be started."""
+
+
+def fuse_left() -> float:
+    """Seconds the collars' native timeout has left, less the printing reserve."""
+    return HOOK_BUDGET_SEC - HOOK_RESERVE_SEC - (time.monotonic() - HOOK_STARTED)
+
+
 def gang_run(
     gang: str,
     args: list[str],
+    timeout: float,
     payload: Optional[str] = None,
-    timeout: float = SETTLE_TIMEOUT_SEC,
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [gang, *args],
@@ -96,11 +135,16 @@ def query_run(gang: str) -> subprocess.CompletedProcess[str]:
     started = time.monotonic()
     attempts = 0
     while True:
-        remaining = QUERY_DEADLINE_SEC - (time.monotonic() - started)
-        if attempts and remaining < QUERY_MIN_ATTEMPT_SEC:
+        remaining = min(QUERY_DEADLINE_SEC - (time.monotonic() - started), fuse_left())
+        if remaining < QUERY_MIN_ATTEMPT_SEC:
+            if attempts:
+                raise QueryTimeout(
+                    "Gangline query timed out %d time(s) inside its %gs deadline"
+                    % (attempts, QUERY_DEADLINE_SEC)
+                )
             raise QueryTimeout(
-                "Gangline query timed out %d time(s) inside its %gs deadline"
-                % (attempts, QUERY_DEADLINE_SEC)
+                "the %gs native fuse was spent before the Gangline query could "
+                "be started" % HOOK_BUDGET_SEC
             )
         budget = max(min(QUERY_ATTEMPT_SEC, remaining), QUERY_MIN_ATTEMPT_SEC)
         attempts += 1
@@ -183,8 +227,24 @@ def block_reason(verdicts: list[Verdict]) -> str:
     )
 
 
+def settle_run(gang: str, payload: str) -> subprocess.CompletedProcess[str]:
+    budget = fuse_left()
+    if budget < SETTLE_MIN_SEC:
+        raise SettleTimeout(
+            "the %gs native fuse was spent before Gangline bookkeeping could be "
+            "started" % HOOK_BUDGET_SEC
+        )
+    try:
+        return gang_run(gang, ["hook"], budget, payload)
+    except subprocess.TimeoutExpired as exc:
+        raise SettleTimeout(
+            "Gangline bookkeeping did not answer inside the %gs the %gs native "
+            "fuse had left" % (budget, HOOK_BUDGET_SEC)
+        ) from exc
+
+
 def settle_stop(gang: str, payload: str) -> None:
-    result = gang_run(gang, ["hook"], payload, timeout=SETTLE_TIMEOUT_SEC)
+    result = settle_run(gang, payload)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
         raise ValueError("ordinary Stop bookkeeping failed: " + detail)
@@ -197,7 +257,13 @@ def report_release(gang: str, why: str) -> None:
     # already been told once, and holding the turn again would only spend the
     # model turns this release exists to save.
     args = ["reply-released"] + ([why] if why else [])
-    result = gang_run(gang, args, timeout=RELEASE_TIMEOUT_SEC)
+    budget = min(RELEASE_TIMEOUT_SEC, fuse_left())
+    if budget <= 0:
+        raise ValueError(
+            "the %gs native fuse was spent before the release could be recorded"
+            % HOOK_BUDGET_SEC
+        )
+    result = gang_run(gang, args, budget)
     if result.returncode:
         detail = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
         raise ValueError("Gangline could not record the release: " + detail)
@@ -285,7 +351,7 @@ def main(argv: list[str]) -> int:
             stderr("released with the obligation unrecorded: %s" % exc)
     try:
         settle_stop(gang, raw)
-    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+    except (SettleTimeout, OSError, ValueError, subprocess.SubprocessError) as exc:
         # THE REFUSAL SAYS WHAT THE QUERY FOUND. A released re-Stop reaches
         # here with debt standing, with provenance it could not resolve, or
         # with no answer at all; calling any of those clear sent the debtor
@@ -298,12 +364,26 @@ def main(argv: list[str]) -> int:
             stood = "the turn was released with peer-reply provenance unresolved"
         else:
             stood = "peer-reply provenance is clear"
-        failure = stood + ", but the native Stop boundary could not be closed"
-        refuse(
-            exc,
-            failure,
-            "preserve the current state and repair the Gangline hook path",
-        )
+        # A BUSY HOST IS NOT A BROKEN PATH. The wiring answers the moment load
+        # falls, so a boundary that ran out of time asks for the wait that can
+        # clear it. It still refuses: an unclosed boundary leaves the turn
+        # bracket open, and a prompt under an open bracket is steering, so the
+        # replies that turn read stay answerable and the next message out can
+        # be correlated to one of them. That is an obligation lost with no
+        # record, where a refusal is loud and recoverable.
+        if isinstance(exc, SettleTimeout):
+            failure = stood + (
+                ", but the native Stop boundary did not close inside its time "
+                "budget"
+            )
+            remedy = (
+                "this is host load rather than misconfigured wiring: wait for "
+                "the load to fall, then end the turn again"
+            )
+        else:
+            failure = stood + ", but the native Stop boundary could not be closed"
+            remedy = "preserve the current state and repair the Gangline hook path"
+        refuse(exc, failure, remedy)
         return 0
     allow()
     return 0
