@@ -752,6 +752,62 @@ tmux new-session -d -s "$GANG_SESSION" -n caller "PS1='❯ ' bash --norc"
 tick_caller_id="$(window_id caller)"
 tick_caller_pane="$(tmux list-panes -t "$tick_caller_id" -F '#{pane_id}')"
 
+# A TICK'S TEAM KEY AND UID ARE INVOCATION-SCOPED INPUTS. The worker, its
+# deadline child, and every guarded tmux client in the pass all address the
+# same team as the parent. Pin their external resolutions here so adding a new
+# path or probe cannot silently restore per-window fan-out.
+tick_cost_bin="$RUN_ROOT/tick-cost-bin"
+tick_cost_uid_calls="$RUN_ROOT/tick-cost-uid-calls"
+tick_cost_hash_calls="$RUN_ROOT/tick-cost-hash-calls"
+tick_cost_real_id="$(command -v id)"
+tick_cost_real_python="$(python3 -c 'import sys; print(sys.executable)')"
+mkdir -p "$tick_cost_bin"
+cat > "$tick_cost_bin/id" <<SH
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = -u ]; then
+  printf 'uid\n' >> '$tick_cost_uid_calls'
+fi
+exec '$tick_cost_real_id' "\$@"
+SH
+cat > "$tick_cost_bin/python3" <<SH
+#!/bin/sh
+case "\${1:-}:\${2:-}" in
+  -c:*hashlib.sha256*) printf 'hash\n' >> '$tick_cost_hash_calls' ;;
+esac
+exec '$tick_cost_real_python' "\$@"
+SH
+chmod +x "$tick_cost_bin/id" "$tick_cost_bin/python3"
+PATH="$tick_cost_bin:$PATH" id -u >/dev/null
+equal "the uid execution counter sees its PATH-local instrument" 1 \
+  "$(wc -l < "$tick_cost_uid_calls" | tr -d ' ')"
+: > "$tick_cost_uid_calls"
+PATH="$tick_cost_bin:$ROOT/libexec/gang-tmux-guard:$PATH" \
+  "$GANG" tick >/dev/null
+equal "one explicit tick launches no uid lookup across its whole worker tree" 0 \
+  "$(wc -l < "$tick_cost_uid_calls" | tr -d ' ')"
+equal "one explicit tick computes its team hash once across its whole worker tree" 1 \
+  "$(wc -l < "$tick_cost_hash_calls" | tr -d ' ')"
+
+# A PUBLIC COMMAND MAY CREATE THE TEAM BEFORE ITS EXIT-LAUNCHED TICK RUNS. An
+# internal carrier inherited from the caller cannot name that new team: the
+# public boundary discards it, and the synchronous test tick leaves exactly
+# one observable state directory under the newly created session's own root.
+tick_carrier_plant=000000000000000000000000
+tick_carrier_session="gangtick-carrier-$$"
+tick_carrier_state="$RUN_ROOT/tick-carrier-state"
+GANGLINE_TICK_DIGEST="$tick_carrier_plant" \
+  GANG_SESSION="$tick_carrier_session" \
+  GANG_TEST_TICK_MODE=sync \
+  XDG_STATE_HOME="$tick_carrier_state" \
+  "$GANG" hitch carrier -c bash -d "$RUN_ROOT" >/dev/null
+tick_carrier_dirs="$(find "$tick_carrier_state/gangline/tick" \
+  -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null || true)"
+equal "a public hitch launches one tick against the team it created" 1 \
+  "$(printf '%s\n' "$tick_carrier_dirs" | awk 'NF { count++ } END { print count + 0 }')"
+excludes "a public hitch discards an inherited internal team key" \
+  "$tick_carrier_dirs" "/$tick_carrier_plant"
+tmux kill-session -t "=$tick_carrier_session"
+
 # The recipient fixture closes the hook-owned turn fact before each prompt
 # becomes observable. Actual Stop events establish that fact at the two
 # delivery decisions below; keeping the prompt callback immediate lets the

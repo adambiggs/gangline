@@ -66,8 +66,14 @@ IFS=$saved_ifs
 run_real() { exec "$real_tmux" "$@"; }
 
 # THE LOG ROOT IS FIXED AT HITCH TIME. A test may redirect its ordinary state
-# root, but its teardown verdict must still outlive that redirection.
-default_guard_state="/tmp/gangline-$(id -u 2>/dev/null || echo 0)"
+# root, but its teardown verdict must still outlive that redirection. Gang
+# exports the UID it already read for this invocation; a direct tmux call has
+# no such cache and resolves its caller here as before.
+case "${GANGLINE_PROCESS_UID:-}" in
+  ''|*[!0-9]*) guard_uid="$(id -u 2>/dev/null || echo 0)" ;;
+  *) guard_uid="$GANGLINE_PROCESS_UID" ;;
+esac
+default_guard_state="/tmp/gangline-$guard_uid"
 guard_state="${GANG_LOCK_DIR:-$default_guard_state}"
 team_guard_state="${GANG_TMUX_GUARD_LOG_DIR:-$default_guard_state}"
 

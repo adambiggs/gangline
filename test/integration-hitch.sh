@@ -1304,6 +1304,11 @@ for required_command in date dirname git locale sed tmux; do
 done
 refuses "a clock curfew names a missing python3 dependency" \
   "python3 is required" env PATH="$no_python_path" /bin/bash "$GANG" curfew 09:00
+excludes "a clock curfew emits no raw shell diagnostic for missing python3" \
+  "$(env PATH="$no_python_path" /bin/bash "$GANG" curfew 09:00 2>&1 || true)" \
+  "command not found"
+refuses "a tick names its missing python3 dependency" \
+  "python3 is required" env PATH="$no_python_path" /bin/bash "$GANG" tick
 clock_spec="$(python3 - <<'PY'
 from datetime import datetime, timedelta
 
