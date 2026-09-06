@@ -46,6 +46,21 @@ the word was understood, and the reading that comes back is then of something
 nobody asked for. `gang hook` names it and declines the event instead of dying,
 because its caller is a harness configuration rather than a person; see below.
 
+## Repository gate
+
+`test/gate.sh` serializes the heavy suite on `/tmp/gangline-heavy.lock`. When the
+lock is occupied it reports the holder's PID, working directory, and elapsed
+lifetime from the record written into that inode under the lock. Once
+acquired, it runs lint, smoke, and
+integration in separately isolated process groups. A step that completes no
+output line for 300 seconds is failed with status 124 after the gate prints its
+process tree and last 30 lines; the gate ends only that process group and then
+releases the host lock.
+
+`GANG_GATE_QUIET_SECONDS` replaces the 300-second inactivity budget with any
+positive number of seconds. Every completed output line renews the budget, so
+the variable does not cap the total duration of a healthy, talkative step.
+
 ## Installation
 
 The bootstrap command in `README.md` downloads `install.sh` from `main`, but the

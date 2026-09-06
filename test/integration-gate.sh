@@ -620,7 +620,10 @@ refuses "a commit that does touch one is movement in the subtree" \
 # time and was wrong to preserve once it broke the mandatory ceiling.
 gate_run="$RUN_ROOT/gate-default"
 mkdir -p "$gate_run/test"
-cp "$ROOT/test/gate.sh" "$gate_run/test/gate.sh"
+gate_run_lock="$RUN_ROOT/gate-default.lock"
+sed "s|GATE_HEAVY_LOCK=/tmp/gangline-heavy.lock|GATE_HEAVY_LOCK=$gate_run_lock|" \
+  "$ROOT/test/gate.sh" > "$gate_run/test/gate.sh"
+chmod +x "$gate_run/test/gate.sh"
 gate_run="$(cd -P "$gate_run" && pwd)"
 gate_order="$RUN_ROOT/gate-default-order"
 gate_where="$RUN_ROOT/gate-default-where"
@@ -661,9 +664,15 @@ mkdir -p "$gate_flock_bin"
 cat > "$gate_flock_bin/flock" <<SH
 #!/bin/sh
 printf '%s\n' "\$@" > "$gate_flock_args"
-[ "\${1:-}" = -o ] || exit 91
+[ "\${1:-}" = -E ] || exit 91
 shift
-[ "\${1:-}" = /tmp/gangline-heavy.lock ] || exit 92
+[ "\${1:-}" = 75 ] || exit 92
+shift
+[ "\${1:-}" = -n ] || exit 93
+shift
+[ "\${1:-}" = -o ] || exit 94
+shift
+[ "\${1:-}" = "$gate_run_lock" ] || exit 95
 shift
 exec "\$@"
 SH
@@ -702,7 +711,9 @@ contains "the marked fixture still runs its declared suite" \
 gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
 equal "the ordinary gate owns a close-on-exec heavy-test lock" \
-  "$(printf '%s\n' -o /tmp/gangline-heavy.lock "$gate_run/test/gate.sh")" \
+  "$(printf '%s\n' -E 75 -n -o "$gate_run_lock" env \
+      _GANGLINE_GATE_LOCKED=1 _GANGLINE_GATE_LOCK_OWNER=1 \
+      "$gate_run/test/gate.sh")" \
   "$(<"$gate_flock_args")"
 equal "the no-argument gate runs lint, smoke, and the suite exactly once" \
   "$(printf 'integration\nlint\nsmoke')" "$(sort "$gate_order")"
@@ -736,6 +747,179 @@ equal "the mandatory gate does not pass a focused selector to integration" \
 # off, and the reader is left concluding green from the absence of a FAIL.
 equal "a green gate ends on a verdict a truncated read still carries" \
   "gate: VERDICT PASS (status 0)" "$(printf '%s\n' "$gate_default_out" | tail -n 1)"
+
+# A WAITER NEEDS TO DISTINGUISH A QUEUE FROM A HANG before it joins the queue.
+# This copy differs only in its lock path, so the fixture can own the inode
+# without reading or changing the host-wide lock used by the gate around it.
+gate_wait="$RUN_ROOT/gate-wait"
+cp -R "$gate_run" "$gate_wait"
+gate_wait_lock="$RUN_ROOT/gate-wait.lock"
+sed "s|GATE_HEAVY_LOCK=/tmp/gangline-heavy.lock|GATE_HEAVY_LOCK=$gate_wait_lock|" \
+  "$ROOT/test/gate.sh" > "$gate_wait/test/gate.sh"
+chmod +x "$gate_wait/test/gate.sh"
+git -C "$gate_wait" add test/gate.sh
+git -C "$gate_wait" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: private lock fixture'
+gate_wait_ready="$RUN_ROOT/gate-wait-ready"
+gate_wait_release="$RUN_ROOT/gate-wait-release"
+gate_wait_stream="$RUN_ROOT/gate-wait-stream"
+mkfifo "$gate_wait_ready" "$gate_wait_release" "$gate_wait_stream"
+exec 7<> "$gate_wait_ready"
+exec 8<> "$gate_wait_release"
+(
+  cd "$gate_wait" || exit
+  export GATE_WAIT_LOCK="$gate_wait_lock"
+  exec flock -o "$gate_wait_lock" bash -c \
+    'printf "pid=%s\tstarted=%s\tcwd=%q\n" "$PPID" "$(date +%s)" "$PWD" > "$GATE_WAIT_LOCK"; printf "ready\n" >&7; IFS= read -r -u 8' 7>&7 8>&8
+) &
+gate_wait_holder=$!
+IFS= read -r -u 7 gate_wait_state
+equal "the private holder acquired its lock before the waiter starts" \
+  "ready" "$gate_wait_state"
+env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_wait_stream" 2>&1 &
+gate_wait_pid=$!
+exec 9< "$gate_wait_stream"
+gate_wait_line=""
+IFS= read -r -t 1 -u 9 gate_wait_line || true
+printf 'release\n' >&8
+wait "$gate_wait_holder"
+wait "$gate_wait_pid"
+contains "a queued gate immediately names the lock holder" \
+  "$gate_wait_line" "pid=$gate_wait_holder"
+contains "the lock report names the holder's working directory" \
+  "$gate_wait_line" "cwd=$gate_wait"
+contains "the lock report says how long the holder has run" \
+  "$gate_wait_line" "held_for="
+exec 7>&- 8>&- 9>&-
+
+# THE TIMEOUT EXCEPTION IS SCALED, NOT STOPPED. The healthy CI measurement is
+# 104s, the production budget is 300s, the fixture quiet budget is 0.2s, and
+# this outer read gives the fixture 1s to turn the same state into a verdict.
+# The blocked step writes two lines and its PID first; both are independent
+# witnesses that it ran before the watchdog acts. The fake flock owns a marker
+# for exactly as long as the nested ordinary gate, so its disappearance proves
+# the failure returned through the lock holder rather than merely killing a
+# child behind a lock that remained held.
+gate_stall="$RUN_ROOT/gate-stall"
+cp -R "$gate_run" "$gate_stall"
+gate_stall_block="$RUN_ROOT/gate-stall-block"
+gate_stall_stream="$RUN_ROOT/gate-stall-stream"
+gate_stall_pidfile="$RUN_ROOT/gate-stall-child.pid"
+gate_stall_lock_marker="$RUN_ROOT/gate-stall-lock-held"
+mkfifo "$gate_stall_block" "$gate_stall_stream"
+cat > "$gate_stall/test/integration.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+printf 'integration last line one\n'
+printf 'integration last line two\n'
+printf '%s\n' "\$\$" > "$gate_stall_pidfile"
+exec 7<> "$gate_stall_block"
+IFS= read -r -u 7
+SH
+chmod +x "$gate_stall/test/integration.sh"
+git -C "$gate_stall" add test/integration.sh
+git -C "$gate_stall" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: blocked integration fixture'
+gate_stall_flock_bin="$RUN_ROOT/gate-stall-flock-bin"
+mkdir -p "$gate_stall_flock_bin"
+cat > "$gate_stall_flock_bin/flock" <<SH
+#!/bin/sh
+# SPDX-License-Identifier: Apache-2.0
+trap 'rm -f "$gate_stall_lock_marker"' EXIT HUP INT TERM
+: > "$gate_stall_lock_marker"
+while [ \$# -gt 0 ]; do
+  case "\$1" in
+    -E) shift 2 ;;
+    -n|-o) shift ;;
+    *) break ;;
+  esac
+done
+shift
+"\$@"
+SH
+chmod +x "$gate_stall_flock_bin/flock"
+env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=0.2 \
+  PATH="$gate_stall_flock_bin:$PATH" setsid "$gate_stall/test/gate.sh" \
+  > "$gate_stall_stream" 2>&1 &
+gate_stall_gate_pid=$!
+exec 9< "$gate_stall_stream"
+gate_stall_out=""
+while IFS= read -r -t 1 -u 9 gate_stall_line; do
+  gate_stall_out="${gate_stall_out}${gate_stall_out:+
+}${gate_stall_line}"
+done
+if kill -0 "$gate_stall_gate_pid" 2>/dev/null; then
+  fail "a quiet integration step fails within the scaled watchdog budget" \
+    "the fixture gate was still alive after the 1s test budget"
+  gate_stall_ppid="$(ps -o ppid= -p "$gate_stall_gate_pid" | tr -d ' ')"
+  gate_stall_sid="$(ps -o sid= -p "$gate_stall_gate_pid" | tr -d ' ')"
+  if [ "$gate_stall_ppid" = "$BASHPID" ] && \
+      [ "$gate_stall_sid" = "$gate_stall_gate_pid" ]; then
+    kill -TERM -- "-$gate_stall_gate_pid"
+  else
+    fail "the stalled fixture remains scoped to its disposable process group" \
+      "pid=$gate_stall_gate_pid ppid=$gate_stall_ppid sid=$gate_stall_sid"
+  fi
+else
+  pass "a quiet integration step fails within the scaled watchdog budget"
+fi
+gate_stall_rc=0
+wait "$gate_stall_gate_pid" || gate_stall_rc=$?
+exec 9>&-
+equal "a stalled integration is the gate's quiet-expiry status" "124" "$gate_stall_rc"
+if [ -s "$gate_stall_pidfile" ]; then
+  gate_stall_child_pid="$(cat "$gate_stall_pidfile")"
+else
+  gate_stall_child_pid=""
+fi
+contains "the stall names the step and quiet budget" \
+  "$gate_stall_out" "STALLED: integration produced no output for 0.2s"
+contains "the stall prints its process tree" "$gate_stall_out" "PROCESS TREE"
+contains "the stall keeps the first trailing line" \
+  "$gate_stall_out" "integration last line one"
+contains "the stall keeps the last trailing line" \
+  "$gate_stall_out" "integration last line two"
+if [ -n "$gate_stall_child_pid" ] && \
+    ! kill -0 "$gate_stall_child_pid" 2>/dev/null; then
+  pass "the stalled step leaves no descendant process"
+else
+  fail "the stalled step leaves no descendant process" \
+    "the fixture child [$gate_stall_child_pid] is still alive or was never witnessed"
+fi
+if [ ! -e "$gate_stall_lock_marker" ]; then
+  pass "the stalled gate releases its heavy-test lock"
+else
+  fail "the stalled gate releases its heavy-test lock" \
+    "the fake lock holder's lifetime marker remains"
+fi
+
+# A healthy long step must keep extending its lease. Each pulse arrives at half
+# the scaled 0.2s quiet budget, three times in a row; success therefore proves
+# the budget resets on output rather than becoming a total-duration ceiling.
+gate_pulse="$RUN_ROOT/gate-pulse"
+cp -R "$gate_run" "$gate_pulse"
+gate_pulse_wait="$RUN_ROOT/gate-pulse-wait"
+mkfifo "$gate_pulse_wait"
+cat > "$gate_pulse/test/integration.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+exec 7<> "$gate_pulse_wait"
+for n in 1 2 3; do
+  IFS= read -r -t 0.1 -u 7 || true
+  printf 'pulse %s\n' "\$n"
+done
+printf 'integration: every declared part ran\n'
+SH
+chmod +x "$gate_pulse/test/integration.sh"
+git -C "$gate_pulse" add test/integration.sh
+git -C "$gate_pulse" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: pulsing integration fixture'
+gate_pulse_rc=0
+gate_pulse_out="$(GANG_GATE_QUIET_SECONDS=0.2 \
+  "$gate_pulse/test/gate.sh" 2>&1)" || gate_pulse_rc=$?
+equal "a step that prints just under the quiet bound passes" "0" "$gate_pulse_rc"
+contains "the pulsing step ran through its final pulse" "$gate_pulse_out" "pulse 3"
+excludes "a pulsing step is not called stalled" "$gate_pulse_out" "STALLED"
 
 # REQUIRE_ALL is the gate's evidence, not a permission to print its verdict. A
 # nested real focused run reaches the actual omitted-part branch. Its own gate
