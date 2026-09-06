@@ -238,6 +238,104 @@ equal "an ended agent prints what was recorded, not a fresh reading" \
   "bash ended 10 20 300 40 matched" \
   "$(printf '%s\n' "$usage_after_out" | awk '$1 == "usage-alpha" { print $2, $3, $5, $6, $7, $8, $9 }')"
 
+# NOTHING A TEARDOWN SAYS MAY LAND ON AN AGENT'S SCREEN. The append crosses into
+# the server's mount namespace through tmux run-shell, and tmux does not give a
+# run-shell child's output back to the caller: it prints every line of it, and a
+# line of its own for a nonzero exit, into a pane, forcing that pane into
+# view-mode. With no -t and no client of its own the pane it picks belongs to
+# whichever agent tmux found, and a pane in view-mode does not take a paste at
+# its shell, so the next message delivered there is lost with nothing said
+# anywhere. This path prints on success too, so it is every drop and every down,
+# not an error branch.
+#
+# CALIBRATE THE INSTRUMENT ON THE FAULT IT MUST CATCH. A tmux that hands that
+# output back to its caller cannot fail the claim below, and it reads exactly
+# like a reader that cannot see a hijack, so the unguarded shape is driven once
+# against a throwaway window made the session's active one — the pane an
+# untargeted run-shell settles on — and a tmux that does not hijack leaves the
+# claim unsettled rather than passing it.
+usage_mode_active="$(tmux display-message -p -t "=$GANG_SESSION:" '#{window_id}')"
+usage_mode_calib_id="$(tmux new-window -d -P -F '#{window_id}' \
+  -t "=$GANG_SESSION" -n usage-mode-calib 'exec cat')"
+tmux select-window -t "$usage_mode_calib_id"
+tmux run-shell "printf 'calibration\n'" >/dev/null 2>&1 || :
+usage_mode_calibrated="$(tmux display-message -p -t "$usage_mode_calib_id" \
+  '#{?pane_in_mode,#{pane_mode},none}')"
+tmux kill-window -t "$usage_mode_calib_id"
+tmux select-window -t "$usage_mode_active"
+if [ "$usage_mode_calibrated" != view-mode ]; then
+  unknown "a recorded teardown leaves every pane in the team out of any mode" \
+    "the unguarded shape did not put the calibration pane in view-mode on this tmux, which left it in [$usage_mode_calibrated], so a hijack has nothing to show here and this claim cannot be read"
+else
+  pass "an unguarded run-shell does put this team's active pane in view-mode"
+  # Its own data root: the records this part counts are indexed by position.
+  "$HITCH" usage-mode-witness -c bash -d /tmp >/dev/null
+  "$HITCH" usage-mode-ended -c bash -d /tmp >/dev/null
+  PATH="$usage_present" XDG_DATA_HOME="$RUN_ROOT/usage-mode-data" \
+    "$GANG" drop usage-mode-ended >/dev/null
+  equal "a recorded teardown leaves every pane in the team out of any mode" "" \
+    "$(tmux list-panes -s -t "=$GANG_SESSION" \
+        -F '#{?pane_in_mode,#{window_name} #{pane_mode},}' | sed '/^$/d' | tr '\n' ' ')"
+  PATH="$usage_present" XDG_DATA_HOME="$RUN_ROOT/usage-mode-data" \
+    "$GANG" drop usage-mode-witness >/dev/null
+fi
+
+# THE REPORT IS PUBLISHED AFTER THE WORK, SO ITS ABSENCE PROVES NOTHING. A
+# worker that never started, one that appended and then lost the server, and one
+# that died mid-append all leave the caller with no report. What keeps the
+# caller's diagnostic honest instead is that the staged copy of the event
+# outlives the append: the caller owns that buffer and discards it only once a
+# report has told it the event reached the record or a recovery file, so naming
+# that buffer as the remaining copy is a fact rather than an inference. The
+# ordering that has to hold is between the worker's append and its report, so
+# the worker is driven directly here.
+usage_worker_root="$RUN_ROOT/usage-worker"
+usage_worker_sealed="$usage_worker_root/sealed"
+mkdir -p "$usage_worker_root" "$usage_worker_sealed"
+usage_worker_prepared="$(tail -n 1 "$usage_events")"
+usage_worker_run() { # $1 buffer, $2 events, $3 fallback root, $4 report, $5 token
+  printf '%s\n' "$usage_worker_prepared" | tmux load-buffer -b "$1" -
+  GANG_USAGE_RECORD_INTERNAL=1 "$GANG" __usage-record-worker "$1" "$2" "$3" "$4" "$5"
+}
+usage_worker_buffer() { # $1 buffer name -> present|gone
+  tmux list-buffers -F '#{buffer_name}' | grep -qxF "$1" && printf present || printf gone
+}
+usage_worker_token="0123456789abcdef0123456789abcdef"
+usage_worker_said="$(usage_worker_run gang-usage-probe-ok \
+  "$usage_worker_root/events.jsonl" "$usage_worker_root" \
+  gang-usage-report-probe-ok "$usage_worker_token" 2>&1)" \
+  || fail "the record worker ends on a green status" "status $?"
+equal "the record worker says nothing where tmux would render it" "" "$usage_worker_said"
+usage_worker_report="$(tmux save-buffer -b gang-usage-report-probe-ok -)"
+equal "its report opens with this call's token and where the event ended up" \
+  "gang-usage-report $usage_worker_token recorded" \
+  "${usage_worker_report%%$'\n'*}"
+equal "the event it reported on is in the record" "$usage_worker_prepared" \
+  "$(cat "$usage_worker_root/events.jsonl")"
+equal "and the staged copy is still there for the caller that owns it" present \
+  "$(usage_worker_buffer gang-usage-probe-ok)"
+# A worker that could neither append nor preserve the event says the staged copy
+# is the only one, which is the caller's cue to keep it.
+chmod 500 "$usage_worker_sealed"
+usage_worker_kept="$(usage_worker_run gang-usage-probe-kept \
+  "$usage_worker_sealed/events.jsonl" "$usage_worker_sealed" \
+  gang-usage-report-probe-kept "$usage_worker_token" 2>&1)" \
+  || fail "the record worker ends green when the append fails" "status $?"
+equal "a failed append is silent where tmux would render it too" "" "$usage_worker_kept"
+usage_worker_kept_report="$(tmux save-buffer -b gang-usage-report-probe-kept -)"
+equal "an event that reached neither the record nor a recovery file is reported kept" \
+  "gang-usage-report $usage_worker_token kept" \
+  "${usage_worker_kept_report%%$'\n'*}"
+contains "and the report carries what failed" "$usage_worker_kept_report" \
+  "gang: usage record not written"
+equal "and that staged copy is still there as well" present \
+  "$(usage_worker_buffer gang-usage-probe-kept)"
+chmod 700 "$usage_worker_sealed"
+for usage_worker_leftover in $(tmux list-buffers -F '#{buffer_name}' \
+    | sed -n '/^gang-usage-\(report-\)\?probe-/p'); do
+  tmux delete-buffer -b "$usage_worker_leftover"
+done
+
 # A drop whose ccusage fails still ends the agent and records the failure.
 usage_drop_failed_out="$(PATH="$usage_failing" XDG_DATA_HOME="$usage_data" "$GANG" drop usage-beta 2>&1)" \
   || fail "drop succeeds when ccusage fails" "status $?: [$usage_drop_failed_out]"
@@ -247,6 +345,11 @@ excludes "the dropped window is gone" "$(window_names)" "usage-beta"
 equal "the failed read is the second record" \
   "usage-beta failed" \
   "$(python3 -c 'import json,sys; r=[json.loads(l) for l in open(sys.argv[1]) if l.strip()][1]; print(r["agent"], r["usage_status"])' "$usage_events")"
+
+# Neither buffer outlives the teardown that made them: the caller reads its
+# report, deletes it, and discards the staged copy the report accounted for.
+equal "a recorded teardown leaves no usage buffer behind in the server" "" \
+  "$(tmux list-buffers -F '#{buffer_name}' | grep '^gang-usage' | tr '\n' ' ')"
 
 # The caller gets a private mount namespace in which its data root is read
 # only. The tmux server was started outside that namespace and sees the same
@@ -314,6 +417,99 @@ equal "the preserved fallback contains the event the primary path refused" \
   "usage-gamma" "$usage_fallback_recorded"
 excludes "the drop with an unwritable record still ended the agent" \
   "$(window_names)" "usage-gamma"
+
+# A PRESERVED EVENT IS ACCOUNTED FOR, so the caller discards the copy it staged
+# and neither buffer outlives that teardown either.
+equal "a preserved event leaves no usage buffer behind in the server" "" \
+  "$(tmux list-buffers -F '#{buffer_name}' | grep '^gang-usage' | tr '\n' ' ')"
+
+# THE CALLER'S OTHER BRANCHES ONLY RUN WHEN SOMETHING IS ALREADY BROKEN, and a
+# branch a passing run never takes is the one that has to be right. Each is
+# driven through a real teardown, with its own data root because the records
+# this part counts are indexed by position.
+usage_branch_data="$RUN_ROOT/usage-branch-data"
+usage_branch_sealed="$RUN_ROOT/usage-branch-sealed"
+mkdir -p "$usage_branch_sealed"
+usage_branch_drop() { # $1 = agent, rest = environment for the drop
+  local agent="$1"; shift
+  "$HITCH" "$agent" -c bash -d /tmp >/dev/null
+  env "$@" XDG_DATA_HOME="$usage_branch_data" PATH="$usage_present" \
+    "$GANG" drop "$agent" 2>&1
+}
+usage_branch_identity() { # $1 = a buffer name -> the width of the identity in it
+  local rest="${1#gang-usage-}"
+  [ "$rest" != "$1" ] || { printf 'not a staged event: %s' "$1"; return; }
+  case "$rest" in
+    ''|*[!0-9a-f]*) printf 'not one minted identity: %s' "$rest" ;;
+    *) printf '%s hex digits' "${#rest}" ;;
+  esac
+}
+usage_branch_staged() { # -> the staging buffers left in the server, newest last
+  tmux list-buffers -F '#{buffer_name}' | sed -n '/^gang-usage-[0-9a-f]/p' | tr '\n' ' '
+}
+# Take away whatever a case left, not whatever it was expected to leave. The
+# checks have already read the difference by then, and a teardown that ends the
+# run on a buffer that is not there would replace their verdict with its own.
+usage_branch_discard() {
+  local name
+  for name in $(tmux list-buffers -F '#{buffer_name}' | sed -n '/^gang-usage/p'); do
+    tmux delete-buffer -b "$name"
+  done
+}
+# An event that reached neither the record nor a recovery file is the staged
+# copy, and the caller keeps it and says where it is.
+: > "$usage_branch_data"
+chmod 500 "$usage_branch_sealed"
+usage_kept_out="$(usage_branch_drop usage-kept \
+  GANG_ARCHIVE_DIR="$usage_branch_sealed/archive")" \
+  || fail "drop succeeds when neither the record nor a fallback can be written" "status $?"
+chmod 700 "$usage_branch_sealed"
+contains "an event that reached nothing is reported as still staged" \
+  "$usage_kept_out" "gang: the prepared JSON remains in tmux buffer gang-usage-"
+usage_kept_buffer="$(printf '%s\n' "$usage_kept_out" \
+  | sed -n 's/.*remains in tmux buffer \(gang-usage-[0-9a-f]*\) .*/\1/p' | tail -n 1)"
+equal "the staged event it names carries a whole call identity" "32 hex digits" \
+  "$(usage_branch_identity "$usage_kept_buffer")"
+equal "and that buffer is where the caller says it is" "$usage_kept_buffer " \
+  "$(usage_branch_staged)"
+usage_branch_discard
+rm -f "$usage_branch_data"
+# A report that is not there proves nothing about the append, and the staged
+# copy is the caller's to keep saying so.
+usage_missing_out="$(usage_branch_drop usage-noreport GANG_TEST_USAGE_REPORT_FAULT=missing)" \
+  || fail "drop succeeds when its report is gone" "status $?"
+contains "a report that is not there is reported as unknown, not as a failed append" \
+  "$usage_missing_out" "gang: usage record left no report"
+contains "and it does not claim the append did or did not happen" \
+  "$usage_missing_out" "are both unknown"
+usage_missing_buffer="$(usage_branch_staged)"
+equal "a caller with no report keeps the copy it staged" "32 hex digits" \
+  "$(usage_branch_identity "${usage_missing_buffer% }")"
+usage_branch_discard
+# A report under this call's name that is not this call's report is refused,
+# and refusing it leaves both buffers where they are.
+usage_foreign_out="$(usage_branch_drop usage-foreign GANG_TEST_USAGE_REPORT_FAULT=foreign)" \
+  || fail "drop succeeds when its report is another call's" "status $?"
+contains "a report without this call's token is refused" \
+  "$usage_foreign_out" "gang: usage record report rejected"
+excludes "a refused report is not read as a result" \
+  "$usage_foreign_out" "a result nobody here asked for"
+equal "a refused report leaves both buffers where they are" "2" \
+  "$(tmux list-buffers -F '#{buffer_name}' | sed -n '/^gang-usage/p' | wc -l | tr -d ' ')"
+usage_branch_discard
+# The fault is the suite's to ask for, not the environment's to leak: an
+# ordinary teardown that inherited the variable records as if it were unset.
+usage_inherited_out="$(usage_branch_drop usage-inherited \
+  -u GANG_TEST_COLLARS GANG_TEST_USAGE_REPORT_FAULT=missing)" \
+  || fail "drop succeeds with an inherited report fault" "status $?"
+excludes "an inherited report fault does not damage an ordinary teardown" \
+  "$usage_inherited_out" "usage record left no report"
+equal "and that teardown leaves no usage buffer behind either" "" \
+  "$(usage_branch_staged)"
+for usage_branch_agent in usage-kept usage-noreport usage-foreign usage-inherited; do
+  excludes "the drop through a broken report still ended $usage_branch_agent" \
+    "$(window_names)" "$usage_branch_agent"
+done
 
 # --- --all reads every record; an unreadable line is counted -----------------
 # Five foreign lines: another team's record; a record from an earlier team of
