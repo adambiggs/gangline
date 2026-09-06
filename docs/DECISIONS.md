@@ -2239,3 +2239,7 @@ age the owner wrote into the locked inode before it joins the queue. Gate and
 end-to-end owners clear that record before unlocking. A second permanent kernel
 lock corroborates a stable read; an acquisition gap, a legacy holder, or bytes
 left by a dead predecessor are reported as unknown instead of attributed.
+An unknown report includes a best-effort `fuser` command for rollout periods
+where legacy owners cannot provide a corroborated record. A stalled step's 124
+or ownership-refusal 125 takes precedence over the concurrent branch's internal
+cancellation; 123 is reserved for a branch that vanishes without either cause.

@@ -109,6 +109,10 @@ gate_report_lock_holder() {
   fi
   printf 'gate: waiting on %s (pid=%s cwd=%s held_for=%ss)\n' \
     "$GATE_HEAVY_LOCK" "$lock_pid" "$lock_cwd" "$lock_age" >&2
+  if [ "$lock_pid" = unknown ]; then
+    printf 'gate: find the holder with: fuser -v %q\n' \
+      "$GATE_HEAVY_LOCK" >&2
+  fi
 }
 
 if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
@@ -664,7 +668,7 @@ gate_suite_branch() {
   gate_monitored_step smoke "$WORK/smoke.out" 1 "$SNAP" ./test/smoke.sh || smoke_rc=$?
   printf '%s\n' "$smoke_rc" > "$WORK/smoke.status"
   if [ -e "$WORK/smoke.stalled" ]; then
-    printf '%s\n' 125 > "$WORK/integration.status"
+    printf '%s\n' cancelled > "$WORK/integration.status"
     return "$smoke_rc"
   fi
   gate_monitored_step integration "$WORK/integration.out" 1 "$SNAP" \
@@ -813,7 +817,7 @@ main() {
 
   snapshot_rc=0
   gate_monitored_step snapshot "$WORK/snapshot.out" 1 "$ROOT" \
-    "$0" --snapshot "$SNAP" || snapshot_rc=$?
+    "$ROOT/test/gate.sh" --snapshot "$SNAP" || snapshot_rc=$?
   if [ "$snapshot_rc" -ne 0 ]; then
     keep=1
     decided=1
@@ -852,19 +856,37 @@ main() {
   wait "$suite_monitor_pid" 2>/dev/null || true
   lint_monitor_pid=""
   suite_monitor_pid=""
-  lint_rc="$(cat "$WORK/lint.status" 2>/dev/null || printf 125)"
-  smoke_rc="$(cat "$WORK/smoke.status" 2>/dev/null || printf 125)"
-  integration_rc="$(cat "$WORK/integration.status" 2>/dev/null || printf 125)"
+  lint_rc="$(cat "$WORK/lint.status" 2>/dev/null || printf cancelled)"
+  smoke_rc="$(cat "$WORK/smoke.status" 2>/dev/null || printf cancelled)"
+  integration_rc="$(cat "$WORK/integration.status" 2>/dev/null || printf cancelled)"
   cat "$lint_out"
-  if [ "$lint_rc" -eq 0 ] && [ "$smoke_rc" -eq 0 ] \
-      && [ "$integration_rc" -eq 0 ] \
+  if [ "$lint_rc" = 0 ] && [ "$smoke_rc" = 0 ] \
+      && [ "$integration_rc" = 0 ] \
       && ! grep -Fx 'integration: every declared part ran' "$integration_out" >/dev/null; then
     integration_rc=1
     printf 'gate: integration did not attest that every declared part ran.\n' >&2
   fi
-  rc="$lint_rc"
-  [ "$rc" -ne 0 ] || rc="$smoke_rc"
-  [ "$rc" -ne 0 ] || rc="$integration_rc"
+  # A watchdog result is the cause of its sibling's cancellation, not the
+  # other way around. Select that result before ordinary branch order so the
+  # internal cancellation sentinel cannot turn a 124 timeout into a 125
+  # ownership refusal. Status 123 is reserved for a cancellation with no
+  # corresponding watchdog record, which is an orchestration failure of its
+  # own rather than a claim about process ownership.
+  if [ -e "$WORK/lint.stalled" ]; then
+    rc="$lint_rc"
+  elif [ -e "$WORK/smoke.stalled" ]; then
+    rc="$smoke_rc"
+  elif [ -e "$WORK/integration.stalled" ]; then
+    rc="$integration_rc"
+  elif [ "$lint_rc" = cancelled ] || [ "$smoke_rc" = cancelled ] \
+      || [ "$integration_rc" = cancelled ]; then
+    rc=123
+    printf 'gate: a mandatory branch ended without status outside watchdog cancellation.\n' >&2
+  else
+    rc="$lint_rc"
+    [ "$rc" -ne 0 ] || rc="$smoke_rc"
+    [ "$rc" -ne 0 ] || rc="$integration_rc"
+  fi
   if [ "$rc" -ne 0 ]; then
     keep=1
     decided=1

@@ -764,6 +764,19 @@ else
     "the released inode still contains [$(<"$gate_run_lock")]"
 fi
 
+# A relative invocation remains relative to the caller, but snapshot creation
+# changes to the repository root before re-executing the helper mode. The gate
+# must therefore resolve its own executable before that directory change.
+gate_subdir_rc=0
+gate_subdir_out="$(
+  cd "$gate_run/test" || exit
+  GANG_GATE_QUIET_SECONDS=0.2 ./gate.sh 2>&1
+)" || gate_subdir_rc=$?
+equal "a gate invoked from its test directory can snapshot itself" \
+  "0" "$gate_subdir_rc"
+contains "the subdirectory invocation completes the mandatory suite" \
+  "$gate_subdir_out" "passed lint, smoke, and the integration suite"
+
 # A failed lint is one result, not permission to omit the behavioural evidence.
 : > "$gate_order"
 : > "$gate_where"
@@ -893,12 +906,16 @@ env -u _GANGLINE_GATE_LOCKED "$gate_wait/test/gate.sh" > "$gate_stale_stream" 2>
 gate_stale_waiter=$!
 exec 9< "$gate_stale_stream"
 gate_stale_line=""
+gate_stale_hint=""
 IFS= read -r -t 1 -u 9 gate_stale_line || true
+IFS= read -r -t 1 -u 9 gate_stale_hint || true
 printf 'release\n' >&8
 wait "$gate_stale_holder"
 wait "$gate_stale_waiter"
 contains "an uncorroborated predecessor is reported as unknown" \
   "$gate_stale_line" "pid=unknown cwd=unknown held_for=unknowns"
+contains "an unknown holder report gives a local recovery hint" \
+  "$gate_stale_hint" "find the holder with: fuser -v $gate_wait_lock"
 excludes "an uncorroborated predecessor is never named as the holder" \
   "$gate_stale_line" "/dead/predecessor"
 exec 7>&- 8>&- 9>&-
@@ -957,7 +974,17 @@ gate_stall_block="$RUN_ROOT/gate-stall-block"
 gate_stall_stream="$RUN_ROOT/gate-stall-stream"
 gate_stall_pidfile="$RUN_ROOT/gate-stall-child.pid"
 gate_stall_lock="$RUN_ROOT/gate-stall.lock"
-mkfifo "$gate_stall_block" "$gate_stall_stream"
+gate_stall_lint_block="$RUN_ROOT/gate-stall-lint-block"
+mkfifo "$gate_stall_block" "$gate_stall_lint_block" "$gate_stall_stream"
+cat > "$gate_stall/test/lint.sh" <<SH
+#!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+exec 8<> "$gate_stall_lint_block"
+while :; do
+  IFS= read -r -t 0.1 -u 8 || true
+  printf 'lint pulse\n'
+done
+SH
 cat > "$gate_stall/test/integration.sh" <<SH
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
@@ -967,10 +994,10 @@ printf '%s\n' "\$\$" > "$gate_stall_pidfile"
 exec 7<> "$gate_stall_block"
 IFS= read -r -u 7
 SH
-chmod +x "$gate_stall/test/integration.sh"
-git -C "$gate_stall" add test/integration.sh
+chmod +x "$gate_stall/test/lint.sh" "$gate_stall/test/integration.sh"
+git -C "$gate_stall" add test/lint.sh test/integration.sh
 git -C "$gate_stall" -c user.name=fixture -c user.email=fixture@example.invalid \
-  commit -qm 'test: blocked integration fixture'
+  commit -qm 'test: blocked integration with live lint sibling'
 sed "s|GATE_HEAVY_LOCK=$gate_run_lock|GATE_HEAVY_LOCK=$gate_stall_lock|" \
   "$gate_stall/test/gate.sh" > "$gate_stall/test/gate.sh.new"
 mv "$gate_stall/test/gate.sh.new" "$gate_stall/test/gate.sh"
