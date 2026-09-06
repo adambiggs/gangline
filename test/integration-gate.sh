@@ -1210,8 +1210,22 @@ if [ "${GANG_INTEGRATION_REQUIRE_ALL_PROBE:-0}" != 1 ]; then
   excludes "a focused required run never attests every part ran" \
     "$require_all_probe_out" "integration: every declared part ran"
 
+  # THE ONE PROBE HERE THAT ENDED THE WHOLE SUITE INSTEAD OF REPORTING. A bare
+  # assignment leaves the child's status to `set -e`, which kills this subshell
+  # before it writes its counts; the parent then has a status and nothing to
+  # read, and a run of thousands of checks ends early with a verdict on none of
+  # them. The status is a check of its own now, and the child's own output is
+  # what the failure carries, so a nested run that dies says why here.
+  focused_probe_rc=0
   focused_probe_out="$(env -u GANG_INTEGRATION_REQUIRE_ALL GANG_INTEGRATION_PARTS=cli \
-    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)"
+    GANG_INTEGRATION_REQUIRE_ALL_PROBE=1 "$ROOT/test/integration.sh" 2>&1)" \
+    || focused_probe_rc=$?
+  if [ "$focused_probe_rc" -ne 0 ]; then
+    fail "a green focused run ends on a green status" \
+      "status $focused_probe_rc; its last lines were [$(printf '%s\n' "$focused_probe_out" | tail -n 5)]"
+  else
+    pass "a green focused run ends on a green status"
+  fi
   contains "a focused run carries its scope in the terminal summary" \
     "$(printf '%s\n' "$focused_probe_out" | tail -n 1)" \
     "focused parts cli (full suite: cli substrate hitch compose spool readiness hooks notify usage tick)"
