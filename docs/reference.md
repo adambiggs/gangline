@@ -1481,6 +1481,11 @@ nonempty usable role at that instant. Invalid names and unusable files remain
 visible with their specific defect, and only `ok` names appear in an unknown
 role refusal's accepted-value list.
 
+The shipped `lead` states what the agent who delegates arcs is answerable for,
+and the shipped `worker` what the agent who owns one is answerable for. A hitch
+may still be role-less, and an operator file of the same name replaces a shipped
+brief whole. `gang roles` is what says which briefs this installation has.
+
 ### `gang config`
 
 Prints every effective operator setting with its origin: built-in default,

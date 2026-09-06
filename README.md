@@ -66,6 +66,11 @@ This hitches `lead` with Claude Code, attaches the shipped `lead` role brief,
 and joins its window. Omit `-c` to use `GANG_COLLAR` instead, and pass `-r` to
 select another role. Detach from tmux with `Ctrl-b d`.
 
+The lead hitches the agent who owns each arc with `gang hitch <name> -r worker`,
+which attaches the shipped `worker` brief: what an arc owner is answerable for,
+so the arc's own message carries only that arc. `gang roles` lists the briefs
+this installation has.
+
 Claude Code caps consecutive Stop-hook blocks and ends the turn past the cap.
 Gangline leaves that cap in force. Its Stop adapter refuses idle once per turn
 while a verified peer reply is owed, then releases the turn with the debt still

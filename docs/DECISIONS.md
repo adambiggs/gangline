@@ -20,6 +20,16 @@ knowledge a collar carries. Gangline validates a brief as prose and
 delivers it — at system-prompt level where a collar declares the option,
 at message level otherwise — and never parses it.
 
+`lead` and `worker` ship as the two ends of one delegation. A team with a lead
+brief and none for the agent it delegates to left every arc owner briefed by a
+message written fresh for that arc, so the terms an owner is always held to —
+commission the review, fail a test before fixing, leave evidence a lead can
+read, go through the push gate, send one report — were rewritten per arc,
+unevenly, and reached an owner after its first turn or not at all. Those terms are the same in every arc, so
+they belong in prose delivered with the contract, leaving the arc's own message
+to carry only what is particular to that arc. Neither brief is required: a hitch
+may still be role-less, and an operator file replaces either whole.
+
 Attachment is a launch choice like a model or an effort level. `gang up`
 chooses the shipped `lead` role because it creates the team's lead; an explicit
 role replaces that default. `gang hitch` attaches only the role its caller

@@ -607,14 +607,30 @@ ac17() {
 
 ac18() {
   local config="$TEST_ROOT/hostile-A"$'\t'"B"$'\n'"C"$'\033'"D" out report msg system refusal rc prefix="$TEST_ROOT/ac18-argv"
+  local discovered discovered_file
+  local -A discovered_names
   mkdir -p "$config/roles"
   printf 'INVALID_HOSTILE\n' > "$config/roles/bad"$'\t'"name"$'\n'"part"$'\033'"tail.md"
   printf 'SAFE_BODY\n' > "$config/roles/safe.md"
   : > "$config/roles/empty.md"
   printf 'before\rafter' > "$config/roles/control.md"
   out="$(GANG_CONFIG_DIR="$config" "$GANG" roles)"
-  equal "AC18 listing keeps one row per discovered role" 5 "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
-  equal "AC18 rows keep three fields" 5 "$(printf '%s\n' "$out" | awk -F '\t' 'NF==3 {n++} END {print n+0}')"
+  # Counted from the two directories rather than written as a number: the
+  # shipped set grows, and a literal here would make every new brief look like
+  # a listing defect. Counted by basename because an operator file replaces the
+  # shipped file of the same name and one row is emitted, not two, so adding the
+  # two directory sizes would over-count the day a shipped brief takes a name
+  # this fixture already uses. Globs, not find, because one fixture name
+  # contains a newline.
+  discovered_names=()
+  for discovered_file in "$config/roles"/*.md "$config/roles"/.*.md \
+    "$PRODUCT_ROOT/roles"/*.md "$PRODUCT_ROOT/roles"/.*.md; do
+    [ -e "$discovered_file" ] || [ -L "$discovered_file" ] || continue
+    discovered_names["${discovered_file##*/}"]=1
+  done
+  discovered=${#discovered_names[@]}
+  equal "AC18 listing keeps one row per discovered role" "$discovered" "$(printf '%s\n' "$out" | wc -l | tr -d ' ')"
+  equal "AC18 rows keep three fields" "$discovered" "$(printf '%s\n' "$out" | awk -F '\t' 'NF==3 {n++} END {print n+0}')"
   excludes "AC18 listing removes hostile tab sequence" "$out" $'hostile-A\tB'
   excludes "AC18 listing removes hostile newline sequence" "$out" $'B\nC'
   excludes "AC18 listing removes hostile escape sequence" "$out" $'C\033D'
@@ -813,7 +829,88 @@ SH
   drop_agent role-ac25
 }
 
-for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac22 ac23 ac24 ac25; do
+# The worker brief is the counterpart to the lead brief: it states what an arc
+# owner is answerable for, so a team no longer needs a per-arc message to say
+# it. The locks below hold one decision each, and are read against the file on
+# disk so a deletion or rewording fails here rather than in a live team.
+ac26() {
+  local prefix="$TEST_ROOT/ac26-argv" value worker rc=0 out
+  make_argv_collar argv26 "$prefix"
+  out="$(GANG_CONFIG_DIR="$TEST_ROOT/ac26-config" \
+    "$GANG" hitch role-ac26 -c argv26 -d /tmp -r worker 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "AC26 -r worker resolves to a shipped brief"
+    value="$(<"$prefix.2.bin")"
+    contains "AC26 the shipped worker body reaches the system prompt" "$value" \
+      "The review of your result is yours to commission"
+    if [ -f "$PRODUCT_ROOT/roles/worker.md" ]; then
+      contains "AC26 the whole shipped worker body reaches the system prompt" \
+        "$value" "$(cat "$PRODUCT_ROOT/roles/worker.md")"
+    else
+      fail "AC26 the whole shipped worker body reaches the system prompt" \
+        "no $PRODUCT_ROOT/roles/worker.md"
+    fi
+    equal "AC26 the worker startup contract was submitted" "" \
+      "$("$GANG" composer role-ac26)"
+    drop_agent role-ac26
+  else
+    fail "AC26 -r worker resolves to a shipped brief" "$out"
+  fi
+
+  contains "AC26 roles lists the shipped worker as usable" \
+    "$(GANG_CONFIG_DIR="$TEST_ROOT/ac26-roles-config" "$GANG" roles)" \
+    "$(printf 'worker\tshipped\tok')"
+
+  # A collar with no system-prompt option carries the same bytes in the startup
+  # contract, so the role is delivered on every harness rather than only where
+  # a launch option exists to hold it.
+  rc=0
+  out="$(GANG_CONFIG_DIR="$TEST_ROOT/ac26-msg-config" \
+    "$GANG" hitch role-ac26-msg -c bash -d /tmp -r worker 2>&1)" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "AC26 a role-less-option collar accepts the worker role"
+    # An early marker proves the body was reached, not that it arrived whole: a
+    # delivery truncated after the first decision would satisfy it while
+    # dropping every term below. The pane is matched against the file with
+    # whitespace flattened, because a capture rewraps the prose it renders.
+    # source-guard: whole-surface@55efe6d4b41b: these sentences exist only in the shipped worker brief, and the bash fixture types nothing, so any producer that put them on the pane is the startup contract being delivered
+    contains "AC26 the startup contract carries the worker body" \
+      "$(pane_all role-ac26-msg | tr -s ' \n' '  ')" \
+      "$(tr -s ' \n' '  ' < "$PRODUCT_ROOT/roles/worker.md")"
+    submitted "AC26 the message-level worker contract was submitted" role-ac26-msg
+    drop_agent role-ac26-msg
+  else
+    fail "AC26 a role-less-option collar accepts the worker role" "$out"
+  fi
+
+  worker="$(tr '\n' ' ' < "$PRODUCT_ROOT/roles/worker.md" | tr -s ' ')"
+  contains "AC26 the worker reads the brief the lead names" "$worker" \
+    "Read the arc brief the lead names"
+  contains "AC26 the worker commissions its own review" "$worker" \
+    "The review of your result is yours to commission."
+  contains "AC26 the reviewer runs a model other than the owner's" "$worker" \
+    "Hitch a reviewer running a model other than your own"
+  contains "AC26 a second harness over one model is not that reviewer" "$worker" \
+    "a second harness over the same model shares the blind spot"
+  contains "AC26 every finding is addressed or its refusal recorded" "$worker" \
+    "address every finding or record why you did not"
+  contains "AC26 each fix carries a test that fails first" "$worker" \
+    "a test that fails on the unfixed code"
+  contains "AC26 the failing run is kept" "$worker" \
+    "Run it before the fix and keep that failing output"
+  contains "AC26 evidence outlives the agent and is named to the lead" "$worker" \
+    "a directory that outlives your window, and name that directory"
+  contains "AC26 the push gate is never bypassed" "$worker" \
+    "Never disable it, skip it, or route around it."
+  contains "AC26 a refusing gate is answered by fixing the content" "$worker" \
+    "naming a defect in what you are pushing, so fix the content"
+  contains "AC26 one report follows the landing" "$worker" \
+    "Send the lead one report once the work has landed"
+  contains "AC26 the report names commits, proof, gaps and operator work" "$worker" \
+    "the commits, what each test proves, what remains unproven, and anything the operator must do"
+}
+
+for ac_name in ac1 ac2 ac3 ac4 ac5 ac6 ac7 ac8 ac9 ac10 ac11 ac12 ac13 ac14 ac15 ac16 ac17 ac18 ac19 ac20 ac21 ac22 ac23 ac24 ac25 ac26; do
   run_ac "$ac_name"
 done
 
