@@ -67,6 +67,11 @@ landing mid-run can change what executes. `test/lint.sh` and
 `test/integration.sh` still run directly against an already-settled tree, and
 refuse one they would not own.
 
+Lint runs concurrently with the ordered smoke-and-integration path so the full
+mandatory gate retains its five-minute ceiling. A normal failure does not skip
+the other mandatory evidence; a watchdog expiry cancels the concurrent branch
+so the gate can release the host lock promptly.
+
 Each mandatory step must complete an output line within 300 seconds. A quiet
 step is reported with its process tree and last 30 lines, then its private
 process group is ended and the heavy-test lock is released. Set
@@ -114,7 +119,8 @@ The following rules are mandatory:
 The gate watchdog fixture is the sole timeout-behaviour exception. It scales
 the quiet budget to 0.2 seconds, gives the fixture a 1-second outer budget, and
 records those numbers beside the production and measured healthy budgets. Its
-pulsing control emits every 0.1 seconds to prove activity renews the budget.
+pulsing control emits every 0.1 seconds for six renewals, three times the total
+quiet budget, to prove activity renews the budget.
 Changing those values requires a fresh healthy output-gap measurement and an
 updated margin in the fixture.
 

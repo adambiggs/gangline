@@ -2219,11 +2219,15 @@ quiet team, and an owner's lifetime by the age of the tick lock symlink under
 
 ## The mandatory gate treats output as a renewable lease
 
-Run lint, smoke, and integration in separate process groups, and refuse a step
-that completes no output line inside the configured quiet budget. On refusal,
-print that group's process tree and trailing output before ending exactly that
-group. The outer `flock -o` process remains outside it, so the gate's exit
-releases the shared heavy-test lock and no descendant can inherit the lock.
+Run the snapshot copy, lint, smoke, and integration in separate process groups,
+and refuse a step that completes no output line inside the configured quiet
+budget. Lint retains the overlap that keeps the mandatory gate below its
+five-minute ceiling; smoke and integration run in order on the other branch,
+and an ordinary failure in either branch does not omit the remaining evidence.
+On a stall, print that group's process tree and trailing output before ending
+exactly that group and cancelling its concurrent sibling. The gate shell closes
+both lock descriptions at the process-group boundary, so its exit releases the
+shared heavy-test lock and no descendant can inherit either lock.
 
 The default lease is 300 seconds, over twice the 104-second trailing quiet gap
 measured in a healthy lint run and far above the 6.430-second maximum
@@ -2231,5 +2235,7 @@ adjacent-line gap in a successful 759-second integration run. It still leaves
 most of the mandatory CI ceiling available for diagnosis and teardown.
 `GANG_GATE_QUIET_SECONDS` carries the operator's slower-host choice. A waiter
 first takes a nonblocking reading and reports the PID, working directory, and
-age the owner wrote into the locked inode before it joins the queue. The record
-crosses PID namespaces without creating a separately stale sidecar.
+age the owner wrote into the locked inode before it joins the queue. Gate and
+end-to-end owners clear that record before unlocking. A second permanent kernel
+lock corroborates a stable read; an acquisition gap, a legacy holder, or bytes
+left by a dead predecessor are reported as unknown instead of attributed.

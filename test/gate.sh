@@ -46,61 +46,108 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR G
 # the process tree: nested gate fixtures are already serialized by this parent.
 #
 # A NONBLOCKING ATTEMPT SEPARATES ACQUISITION FROM WAITING. Its distinct status
-# says the lock is occupied rather than that the gate under the lock refused.
-# Before joining the queue, the waiter identifies the kernel's actual flock
-# owner. No sidecar can go stale and name a dead predecessor as the holder.
+# belongs only to the probe, which runs no gate step and therefore cannot
+# collide with a step's exit status. Before joining the queue, the waiter reads
+# the owner's record from the locked inode and corroborates it against a second
+# kernel lock. An empty, changing, or uncorroborated record is reported as
+# unknown rather than naming a predecessor.
 GATE_HEAVY_LOCK=/tmp/gangline-heavy.lock
-# The lock inode is the one record every PID namespace can read. The owner
-# writes its outermost visible PID, acquisition epoch, and quoted cwd only after
-# flock has launched it under the lock, then removes the one-shot marker before
-# any nested fixture inherits the environment.
-if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCK_OWNER:-}" = 1 ]; then
+GATE_HEAVY_OWNER_LOCK="${GATE_HEAVY_LOCK}.owner"
+GATE_LOCK_OWNED=0
+
+gate_release_heavy_lock() {
+  [ "$GATE_LOCK_OWNED" -eq 1 ] || return 0
+  # Clear while both locks still belong to this run. A waiter can therefore
+  # never corroborate the record after the run that wrote it has released.
+  : > "$GATE_HEAVY_LOCK"
+  flock -u "$GATE_HEAVY_OWNER_FD" 2>/dev/null || true
+  exec {GATE_HEAVY_OWNER_FD}>&-
+  flock -u "$GATE_HEAVY_LOCK_FD" 2>/dev/null || true
+  exec {GATE_HEAVY_LOCK_FD}>&-
+  GATE_LOCK_OWNED=0
+}
+
+gate_close_inherited_locks() {
+  [ "$GATE_LOCK_OWNED" -eq 1 ] || return 0
+  # Closing a duplicate leaves the gate shell's open file descriptions locked;
+  # unlocking here would release them for every process that shares them.
+  exec {GATE_HEAVY_OWNER_FD}>&-
+  exec {GATE_HEAVY_LOCK_FD}>&-
+  GATE_LOCK_OWNED=0
+}
+
+gate_report_lock_holder() {
+  local before after verify_fd verify_rc=0
+  local lock_pid_field lock_started_field lock_cwd_field lock_lease_field
+  local lock_pid="" lock_started="" lock_cwd="" lock_age=unknown lock_now
+  IFS= read -r before < "$GATE_HEAVY_LOCK" || before=""
+  exec {verify_fd}>> "$GATE_HEAVY_OWNER_LOCK"
+  flock -E 201 -n "$verify_fd" || verify_rc=$?
+  if [ "$verify_rc" -eq 0 ]; then
+    flock -u "$verify_fd" 2>/dev/null || true
+  fi
+  exec {verify_fd}>&-
+  IFS= read -r after < "$GATE_HEAVY_LOCK" || after=""
+
+  if [ "$verify_rc" -eq 201 ] && [ -n "$before" ] && [ "$before" = "$after" ]; then
+    IFS=$'\t' read -r lock_pid_field lock_started_field lock_cwd_field lock_lease_field \
+      <<<"$before"
+    case "${lock_pid_field:-}" in pid=[0-9]*) lock_pid="${lock_pid_field#pid=}" ;; esac
+    case "${lock_started_field:-}" in started=[0-9]*) lock_started="${lock_started_field#started=}" ;; esac
+    case "${lock_cwd_field:-}" in cwd=?*) lock_cwd="${lock_cwd_field#cwd=}" ;; esac
+    case "${lock_lease_field:-}" in lease=?*) ;; *) lock_pid="" ;; esac
+  fi
+  if ! [[ "$lock_pid" =~ ^[0-9]+$ && "$lock_started" =~ ^[0-9]+$ ]] \
+      || [ -z "$lock_cwd" ]; then
+    lock_pid=unknown
+    lock_cwd=unknown
+  else
+    lock_now="$(date +%s)"
+    if [ "$lock_now" -ge "$lock_started" ]; then
+      lock_age=$((lock_now - lock_started))
+    fi
+  fi
+  printf 'gate: waiting on %s (pid=%s cwd=%s held_for=%ss)\n' \
+    "$GATE_HEAVY_LOCK" "$lock_pid" "$lock_cwd" "$lock_age" >&2
+}
+
+if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
+  command -v flock >/dev/null 2>&1 \
+    || { echo "gate: flock is required to serialize the mandatory suite" >&2; exit 1; }
+  exec {GATE_HEAVY_LOCK_FD}>> "$GATE_HEAVY_LOCK"
+  lock_rc=0
+  flock -E 200 -n "$GATE_HEAVY_LOCK_FD" || lock_rc=$?
+  if [ "$lock_rc" -eq 200 ]; then
+    gate_report_lock_holder
+    flock "$GATE_HEAVY_LOCK_FD"
+  elif [ "$lock_rc" -ne 0 ]; then
+    exit "$lock_rc"
+  fi
+
+  # Primary ownership makes any surviving owner lock an invariant violation,
+  # not something to wait behind silently.
+  : > "$GATE_HEAVY_LOCK"
+  exec {GATE_HEAVY_OWNER_FD}>> "$GATE_HEAVY_OWNER_LOCK"
+  owner_rc=0
+  flock -E 201 -n "$GATE_HEAVY_OWNER_FD" || owner_rc=$?
+  if [ "$owner_rc" -ne 0 ]; then
+    echo "gate: the owner-verification lock survived without the heavy lock; refusing" >&2
+    exit "$owner_rc"
+  fi
+  GATE_LOCK_OWNED=1
+  trap gate_release_heavy_lock EXIT
   lock_owner_pid=$$
   if [ -r /proc/self/status ]; then
     lock_owner_pid="$(awk '/^NSpid:/ { print $2; exit }' /proc/self/status)"
     [ -n "$lock_owner_pid" ] || lock_owner_pid=$$
   fi
   lock_owner_cwd="$(cd -P "$(dirname "$0")/.." && pwd)"
-  printf 'pid=%s\tstarted=%s\tcwd=%q\n' \
-    "$lock_owner_pid" "$(date +%s)" "$lock_owner_cwd" > "$GATE_HEAVY_LOCK"
-  unset _GANGLINE_GATE_LOCK_OWNER
-fi
-if [ $# -eq 0 ] && [ "${_GANGLINE_GATE_LOCKED:-}" != 1 ]; then
-  command -v flock >/dev/null 2>&1 \
-    || { echo "gate: flock is required to serialize the mandatory suite" >&2; exit 1; }
-  lock_rc=0
-  flock -E 75 -n -o "$GATE_HEAVY_LOCK" \
-    env _GANGLINE_GATE_LOCKED=1 _GANGLINE_GATE_LOCK_OWNER=1 "$0" || lock_rc=$?
-  [ "$lock_rc" -eq 75 ] || exit "$lock_rc"
-
-  lock_pid=""
-  lock_started=""
-  lock_cwd=""
-  IFS=$'\t' read -r lock_pid_field lock_started_field lock_cwd_field \
-    < "$GATE_HEAVY_LOCK" || true
-  case "${lock_pid_field:-}" in pid=[0-9]*) lock_pid="${lock_pid_field#pid=}" ;; esac
-  case "${lock_started_field:-}" in started=[0-9]*) lock_started="${lock_started_field#started=}" ;; esac
-  case "${lock_cwd_field:-}" in cwd=?*) lock_cwd="${lock_cwd_field#cwd=}" ;; esac
-  if ! [[ "$lock_pid" =~ ^[0-9]+$ && "$lock_started" =~ ^[0-9]+$ ]] \
-      || [ -z "$lock_cwd" ]; then
-    lock_pid=""
-    lock_started=""
-    lock_cwd=""
-  fi
-  lock_age=unknown
-  if [ -n "$lock_started" ]; then
-    lock_now="$(date +%s)"
-    if [ "$lock_now" -ge "$lock_started" ]; then
-      lock_age=$((lock_now - lock_started))
-    fi
-  else
-    lock_pid=unknown
-    lock_cwd=unknown
-  fi
-  printf 'gate: waiting on %s (pid=%s cwd=%s held_for=%ss)\n' \
-    "$GATE_HEAVY_LOCK" "$lock_pid" "$lock_cwd" "$lock_age" >&2
-  exec flock -o "$GATE_HEAVY_LOCK" \
-    env _GANGLINE_GATE_LOCKED=1 _GANGLINE_GATE_LOCK_OWNER=1 "$0"
+  lock_started="$(date +%s)"
+  lock_lease="${lock_owner_pid}-${lock_started}-${RANDOM}-${BASHPID}"
+  printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\n' \
+    "$lock_owner_pid" "$lock_started" "$lock_owner_cwd" "$lock_lease" \
+    > "$GATE_HEAVY_LOCK"
+  export _GANGLINE_GATE_LOCKED=1
 fi
 
 # WHAT COUNTS AS THIS TREE MUST NOT DEPEND ON WHO ASKED. The suite exports a
@@ -517,14 +564,19 @@ gate_step_tree() { # $1 process-group id
 # the integration all-parts attestation below. A partial final line is retained
 # at EOF, but a program that never completes that line has not made new terminal
 # output visible and does not renew the lease.
-gate_monitored_step() { # $1 name, $2 output file, $3 live output, rest = argv
-  local name="$1" output="$2" live="$3" fifo pidfile pid parent fd line read_rc rc
-  shift 3
+gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
+  local name="$1" output="$2" live="$3" cwd="$4"
+  local fifo pidfile pid parent fd line read_rc rc
+  shift 4
   fifo="$WORK/$name.fifo"
   pidfile="$WORK/$name.pid"
   mkfifo "$fifo"
   (
-    cd "$SNAP"
+    cd "$cwd"
+    # The gate shell, not a test process, owns both lock descriptions. Closing
+    # them at this boundary prevents a tmux server or other descendant from
+    # extending either lock beyond the gate's lifetime.
+    gate_close_inherited_locks
     exec setsid "$@"
   ) > "$fifo" 2>&1 &
   pid=$!
@@ -552,8 +604,10 @@ gate_monitored_step() { # $1 name, $2 output file, $3 live output, rest = argv
     gate_step_tree "$pid"
     printf 'gate: LAST OUTPUT (%s, up to 30 lines)\n' "$name" >&2
     tail -n 30 "$output" >&2
+    : > "$WORK/$name.stalled"
     if ! gate_stop_step "$pid" "$parent" "$name"; then
       exec {fd}<&-
+      rm -f -- "$pidfile" "$fifo"
       return 125
     fi
     wait "$pid" 2>/dev/null || true
@@ -565,6 +619,60 @@ gate_monitored_step() { # $1 name, $2 output file, $3 live output, rest = argv
   rc=0
   wait "$pid" || rc=$?
   rm -f -- "$pidfile" "$fifo"
+  return "$rc"
+}
+
+gate_cancel_branch() { # $1 branch pid, $2 step names it may currently own
+  local branch_pid="$1" step_name pidfile step_pid step_parent recorded_name branch_parent
+  shift
+  for step_name in "$@"; do
+    pidfile="$WORK/$step_name.pid"
+    [ -f "$pidfile" ] || continue
+    read -r step_pid step_parent recorded_name < "$pidfile" || continue
+    if gate_stop_step "$step_pid" "$step_parent" "$recorded_name"; then
+      rm -f -- "$pidfile" "$WORK/$step_name.fifo"
+    else
+      # Ownership refusal is already loud. Do not turn it into an unbounded
+      # wait in EXIT while this gate still holds the host lock.
+      rm -f -- "$pidfile" "$WORK/$step_name.fifo"
+    fi
+  done
+  if [ -n "$branch_pid" ] && kill -0 "$branch_pid" 2>/dev/null; then
+    branch_parent="$(ps -o ppid= -p "$branch_pid" 2>/dev/null | tr -d ' ' || true)"
+    if [ "$branch_parent" = "$BASHPID" ]; then
+      kill -TERM "$branch_pid" 2>/dev/null || true
+      kill -KILL "$branch_pid" 2>/dev/null || true
+    else
+      printf 'gate: refusing to kill monitor pid=%s ppid=%s, expected ppid=%s\n' \
+        "$branch_pid" "${branch_parent:-unknown}" "$BASHPID" >&2
+      return 1
+    fi
+  fi
+}
+
+gate_lint_branch() {
+  local rc=0
+  gate_close_inherited_locks
+  gate_monitored_step lint "$WORK/lint.out" 0 "$SNAP" ./test/lint.sh || rc=$?
+  printf '%s\n' "$rc" > "$WORK/lint.status"
+  return "$rc"
+}
+
+gate_suite_branch() {
+  local smoke_rc=0 integration_rc=0 rc
+  gate_close_inherited_locks
+  gate_monitored_step smoke "$WORK/smoke.out" 1 "$SNAP" ./test/smoke.sh || smoke_rc=$?
+  printf '%s\n' "$smoke_rc" > "$WORK/smoke.status"
+  if [ -e "$WORK/smoke.stalled" ]; then
+    printf '%s\n' 125 > "$WORK/integration.status"
+    return "$smoke_rc"
+  fi
+  gate_monitored_step integration "$WORK/integration.out" 1 "$SNAP" \
+    env -u GANG_INTEGRATION_PARTS -u GANG_INTEGRATION_REQUIRE_ALL_PROBE \
+    GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh || integration_rc=$?
+  printf '%s\n' "$integration_rc" > "$WORK/integration.status"
+  rc="$smoke_rc"
+  [ "$rc" -ne 0 ] || rc="$integration_rc"
   return "$rc"
 }
 
@@ -648,14 +756,28 @@ main() {
   # collects these later — no gate run touches another run's snapshot — so the
   # deletion is the reader's, stated as the exact command rather than left to be
   # discovered as accumulated copies of the source under TMPDIR.
+  lint_monitor_pid=""
+  suite_monitor_pid=""
   cleanup() {
     local status=$? step_pidfile step_pid step_parent step_name
     for step_pidfile in "$WORK"/*.pid; do
       [ -f "$step_pidfile" ] || continue
       read -r step_pid step_parent step_name < "$step_pidfile" || continue
-      gate_stop_step "$step_pid" "$step_parent" "$step_name" || true
-      wait "$step_pid" 2>/dev/null || true
+      if gate_stop_step "$step_pid" "$step_parent" "$step_name"; then
+        wait "$step_pid" 2>/dev/null || true
+      fi
+      rm -f -- "$step_pidfile"
     done
+    if [ -n "$lint_monitor_pid" ]; then
+      if gate_cancel_branch "$lint_monitor_pid" lint; then
+        wait "$lint_monitor_pid" 2>/dev/null || true
+      fi
+    fi
+    if [ -n "$suite_monitor_pid" ]; then
+      if gate_cancel_branch "$suite_monitor_pid" smoke integration; then
+        wait "$suite_monitor_pid" 2>/dev/null || true
+      fi
+    fi
     if [ "$keep" -eq 1 ]; then
       printf '\ngate: the snapshot that produced this verdict is kept for reading:\n' >&2
       printf '  %s\n' "$SNAP" >&2
@@ -665,6 +787,7 @@ main() {
     else
       rm -rf -- "$WORK"
     fi
+    gate_release_heavy_lock
     gate_verdict "$status" "$decided"
   }
   # A SIGNAL ENDS THE GATE; IT DOES NOT ANNOTATE IT. One handler for the exit
@@ -688,7 +811,15 @@ main() {
   trap 'gate_on_signal 2' INT
   trap 'gate_on_signal 15' TERM
 
-  snapshot_into "$SNAP" "$WORK"
+  snapshot_rc=0
+  gate_monitored_step snapshot "$WORK/snapshot.out" 1 "$ROOT" \
+    "$0" --snapshot "$SNAP" || snapshot_rc=$?
+  if [ "$snapshot_rc" -ne 0 ]; then
+    keep=1
+    decided=1
+    printf '\ngate: REFUSED (status %s)\n' "$snapshot_rc" >&2
+    exit "$snapshot_rc"
+  fi
 
   # Read the same way the ownership check reads, so an untracked-only tree is not
   # announced as settled by a diagnostic that only looks at tracked files.
@@ -696,29 +827,35 @@ main() {
   printf 'gate: testing a snapshot of %s\n' "$ROOT"
   printf 'gate: source tree %s\n' "$source_state"
 
-  # EVERY STEP GETS ITS OWN QUIET LEASE AND PROCESS GROUP. Running them on one
-  # foreground path makes an expired lease the gate's verdict immediately:
-  # nothing else can keep the host lock after the watchdog has found a stall.
-  # Each output stream is both live and retained for the trailing diagnostic.
+  # LINT OVERLAPS THE BEHAVIOURAL PATH. They read the same immutable snapshot
+  # and write separate roots, so serialising them spends lint's entire runtime
+  # without ordering evidence. Each branch is monitored independently; the
+  # first stalled branch cancels its sibling before the verdict releases the
+  # lock, while an ordinary failure still allows every mandatory step to run.
   lint_out="$WORK/lint.out"
-  smoke_out="$WORK/smoke.out"
   integration_out="$WORK/integration.out"
-  lint_rc=0
-  smoke_rc=0
-  integration_rc=0
-  gate_monitored_step lint "$lint_out" 1 ./test/lint.sh || lint_rc=$?
-  if [ "$lint_rc" -eq 0 ]; then
-    gate_monitored_step smoke "$smoke_out" 1 ./test/smoke.sh || smoke_rc=$?
-  fi
   if [ -n "${GANG_INTEGRATION_PARTS+x}" ]; then
     printf 'gate: ignoring GANG_INTEGRATION_PARTS=%q; mandatory gate runs every declared integration part.\n' \
       "$GANG_INTEGRATION_PARTS"
   fi
-  if [ "$lint_rc" -eq 0 ] && [ "$smoke_rc" -eq 0 ]; then
-    gate_monitored_step integration "$integration_out" 1 \
-      env -u GANG_INTEGRATION_PARTS -u GANG_INTEGRATION_REQUIRE_ALL_PROBE \
-      GANG_INTEGRATION_REQUIRE_ALL=1 ./test/integration.sh || integration_rc=$?
+  gate_lint_branch &
+  lint_monitor_pid=$!
+  gate_suite_branch &
+  suite_monitor_pid=$!
+  wait -n "$lint_monitor_pid" "$suite_monitor_pid" 2>/dev/null || true
+  if [ -e "$WORK/lint.stalled" ] || [ -e "$WORK/smoke.stalled" ] \
+      || [ -e "$WORK/integration.stalled" ]; then
+    gate_cancel_branch "$lint_monitor_pid" lint || true
+    gate_cancel_branch "$suite_monitor_pid" smoke integration || true
   fi
+  wait "$lint_monitor_pid" 2>/dev/null || true
+  wait "$suite_monitor_pid" 2>/dev/null || true
+  lint_monitor_pid=""
+  suite_monitor_pid=""
+  lint_rc="$(cat "$WORK/lint.status" 2>/dev/null || printf 125)"
+  smoke_rc="$(cat "$WORK/smoke.status" 2>/dev/null || printf 125)"
+  integration_rc="$(cat "$WORK/integration.status" 2>/dev/null || printf 125)"
+  cat "$lint_out"
   if [ "$lint_rc" -eq 0 ] && [ "$smoke_rc" -eq 0 ] \
       && [ "$integration_rc" -eq 0 ] \
       && ! grep -Fx 'integration: every declared part ran' "$integration_out" >/dev/null; then

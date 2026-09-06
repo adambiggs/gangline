@@ -63,6 +63,7 @@ fi
 # outliving a killed run has done exactly this — would otherwise park an
 # unattended lane forever before a single trap exists to clean up after it.
 HEAVY_LOCK="${GANG_E2E_LOCK:-/tmp/gangline-heavy.lock}"
+HEAVY_OWNER_LOCK="${HEAVY_LOCK}.owner"
 E2E_LOCK_WAIT="${GANG_E2E_LOCK_WAIT:-900}"
 if [ "${GANG_E2E_LOCKED:-0}" != 1 ]; then
   command -v flock >/dev/null 2>&1 \
@@ -74,6 +75,29 @@ if [ "${GANG_E2E_LOCKED:-0}" != 1 ]; then
     exit 1
   }
 fi
+if [ "${GANG_E2E_LOCK_OWNER:-0}" != 1 ]; then
+  # Primary ownership makes the old record stale by definition. Clear it
+  # before taking the corroboration lock, then write only from beneath both.
+  : > "$HEAVY_LOCK"
+  export GANG_E2E_LOCK_OWNER=1
+  exec flock -E 201 -n -o "$HEAVY_OWNER_LOCK" "$0" "$@"
+fi
+
+e2e_clear_lock_record() {
+  : > "$HEAVY_LOCK"
+}
+trap e2e_clear_lock_record EXIT
+e2e_lock_pid=$$
+if [ -r /proc/self/status ]; then
+  e2e_lock_pid="$(awk '/^NSpid:/ { print $2; exit }' /proc/self/status)"
+  [ -n "$e2e_lock_pid" ] || e2e_lock_pid=$$
+fi
+e2e_lock_started="$(date +%s)"
+e2e_lock_cwd="$(cd -P "$(dirname "$0")/.." && pwd)"
+e2e_lock_lease="${e2e_lock_pid}-${e2e_lock_started}-${RANDOM}-${BASHPID}"
+printf 'pid=%s\tstarted=%s\tcwd=%q\tlease=%s\n' \
+  "$e2e_lock_pid" "$e2e_lock_started" "$e2e_lock_cwd" "$e2e_lock_lease" \
+  > "$HEAVY_LOCK"
 
 command -v claude >/dev/null 2>&1 \
   || { echo "e2e: claude is not installed, so there is no harness to drive" >&2; exit 1; }
@@ -278,6 +302,7 @@ harness_gone() {
 on_exit() {
   local rc=$?
   teardown
+  e2e_clear_lock_record
   [ "$artifact_failed" -eq 0 ] || {
     echo "e2e: requested diagnostics could not be preserved — the run is not green" >&2
     exit 1
