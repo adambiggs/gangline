@@ -821,16 +821,21 @@ gang mail
   [name]  whose queue to read (default: this
           window)
 
-  Reading somebody else's queue inspects it
-  and changes nothing. An agent reading its
+  Reading somebody else's queue never consumes
+  deliverable mail. Any read may archive an
+  unverified record whose stable sender is gone.
+  An agent reading its
   own queue is destructive: every waiting
   message it prints is consumed, never
   delivered again, and moved into a readable
   archive whose path is printed on stderr.
   Never pipe your own read through head or
   tail — the part you cut is already out of
-  the queue. Held entries are printed too and
-  are never consumed.
+  the queue. A kept record is not awaiting
+  delivery. Unverified submissions stay kept
+  while their stable sender exists; once it
+  is gone, they retire to the archive and no
+  longer appear here.
 EOF
       ;;
     interrupt) cat <<'EOF'
@@ -1196,6 +1201,12 @@ gang roster
   ?unknown? row and exits 0, as status does.
   Either way the row is the answer, not the
   exit status.
+
+  Plain rows say spooled=N for deliverable
+  mail and spool-held=N for kept records that
+  will not be delivered. Unverified records
+  retire from that count when their stable
+  sender is gone.
 
   With no team running, the plain form says
   so and --porcelain prints no rows; both
@@ -5734,7 +5745,7 @@ spool_root_prepare() { # establish the shared roots before a window depends on t
   lock_base "$base/spool"
 }
 
-archive_root() { # where a message goes when its window dies
+archive_root() { # where Gangline puts message recovery archives
   printf '%s' "${GANG_ARCHIVE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/gangline/archive}"
 }
 
@@ -6691,6 +6702,93 @@ spool_held() { # $1 = window id -> entries a drain claimed and never retired
   printf '%s' "$n"
 }
 
+SPOOL_RETIRED_COUNT=0 SPOOL_RETIRE_ARCHIVE="" SPOOL_RETIRE_ERROR=""
+spool_retire_gone_unverified() { # $1 = window id; archive ambiguity whose stable sender is gone
+  # AN UNVERIFIED SUBMISSION'S LIFETIME FOLLOWS ITS STABLE SENDER IDENTITY.
+  # The entry may already have arrived, so Gangline never delivers it again.
+  # Once its sender's exact spool token is absent, the contract retires the
+  # sender and this record with it. The body stays available in the archive,
+  # and every move names both source and destination on stderr; retirement is
+  # never indistinguishable from a record that vanished. The witnessed name is
+  # deliberately irrelevant: a newly hitched agent with the same name has
+  # another token and inherits nothing from the old one.
+  #
+  # LEGACY AND UNREADABLE PROVENANCE FAIL CLOSED. A three-line entry has no
+  # stable token, and a failed tmux registry read does not prove absence. Both
+  # remain held. Only stable_agent_resolve's explicit gone verdict moves bytes.
+  # The reply mode distinguishes legacy entries; 00000000 cannot, because it
+  # is also one possible four-byte spool-token mint.
+  local id="$1" dir e rc name="" dest="" label sender="" retire_failed=0
+  SPOOL_RETIRED_COUNT=0 SPOOL_RETIRE_ARCHIVE="" SPOOL_RETIRE_ERROR=""
+  spool_existing "$id" || return 0
+  dir="$SPOOL_DIR"
+  for e in "$dir"/unverified-*; do
+    [ -f "$e" ] || continue
+    spool_read_try "$e" || continue
+    case "$SPOOL_REPLY_MODE" in request|reply) ;; *) continue ;; esac
+    sender="$SPOOL_SENDER"
+    rc=0
+    stable_agent_resolve "$SPOOL_SENDER_TOKEN" || rc=$?
+    case "$rc" in
+      0) continue ;;
+      3) ;;
+      *) continue ;;
+    esac
+    if [ -z "$dest" ]; then
+      if ! archive_claim_try "$SESSION-retired"; then
+        SPOOL_RETIRE_ERROR="$ARCHIVE_CLAIM_ERROR"
+        return 1
+      fi
+      SPOOL_RETIRE_ARCHIVE="$ARCHIVE_CLAIMED"
+      name="$(agent_name_of "$id" 2>/dev/null)" || name=""
+      valid_name "$name" || name="${id#@}"
+      dest="$SPOOL_RETIRE_ARCHIVE/$name"
+      if ! mkdir -p "$dest"; then
+        SPOOL_RETIRE_ERROR="cannot create $dest for retired unverified spool records — the live spool is untouched"
+        if rmdir -- "$SPOOL_RETIRE_ARCHIVE" 2>/dev/null; then
+          SPOOL_RETIRE_ARCHIVE=""
+        else
+          SPOOL_RETIRE_ERROR="$SPOOL_RETIRE_ERROR; the empty claimed archive may remain at $SPOOL_RETIRE_ARCHIVE"
+        fi
+        return 1
+      fi
+    fi
+    label="${e##*/}"
+    if mv -- "$e" "$dest/$label"; then
+      SPOOL_RETIRED_COUNT=$((SPOOL_RETIRED_COUNT + 1))
+      printf 'retired unverified spool record from %s because its stable identity is gone: %s -> %s\n' \
+        "$sender" "$e" "$dest/$label" >&2
+    else
+      # Another observer or teardown may have claimed the same regular file
+      # after this scan. Its absence is the completed outcome; anything still
+      # present is a failed archival move and must remain loud.
+      if [ -e "$e" ]; then
+        SPOOL_RETIRE_ERROR="cannot archive retired unverified spool record $e to $dest"
+        retire_failed=1
+        break
+      fi
+    fi
+  done
+  [ "$SPOOL_RETIRED_COUNT" -eq 0 ] \
+    || printf 'delete this retirement archive after recovery with: rm -rf -- %q\n' \
+      "$SPOOL_RETIRE_ARCHIVE" >&2
+  if [ "$SPOOL_RETIRED_COUNT" -eq 0 ] && [ -n "$SPOOL_RETIRE_ARCHIVE" ]; then
+    if ! rmdir -- "$dest" "$SPOOL_RETIRE_ARCHIVE" 2>/dev/null; then
+      printf 'retirement moved no records; delete its unused archive with: rm -rf -- %q\n' \
+        "$SPOOL_RETIRE_ARCHIVE" >&2
+    fi
+    [ -d "$SPOOL_RETIRE_ARCHIVE" ] || SPOOL_RETIRE_ARCHIVE=""
+  fi
+  [ "$retire_failed" -eq 0 ]
+}
+
+spool_retire_gone_unverified_report() { # $1 window; keep archive failure distinct from state
+  spool_retire_gone_unverified "$1" || {
+    printf '%s\n' "$(colour "$C_BAD" "spool retirement NOT completed: $SPOOL_RETIRE_ERROR")" >&2
+    return 0
+  }
+}
+
 spool_abandoned() { # $1 = a .writing- fragment; 0 = the sender that wrote it is gone
   # A STAGED BODY IS A MESSAGE THAT WAS NEVER PARKED. spool_stage writes it
   # under a name no drain reads and spool_commit renames it into the deliverable
@@ -6983,14 +7081,28 @@ spool_write() { # $1 window, $2 sender, $3 envelope, $4 fragment; sets SPOOL_ENT
   spool_commit
 }
 
+ARCHIVE_CLAIMED="" ARCHIVE_CLAIM_ERROR=""
+archive_claim_try() { # $1 = operation label; claim a fresh archive in ARCHIVE_CLAIMED
+  local root
+  ARCHIVE_CLAIMED="" ARCHIVE_CLAIM_ERROR=""
+  root="$(archive_root)"
+  if ! mkdir -p "$root"; then
+    ARCHIVE_CLAIM_ERROR="cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing the operation while the mail has nowhere to go"
+    return 1
+  fi
+  ARCHIVE_CLAIMED="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
+  if ! mkdir "$ARCHIVE_CLAIMED"; then
+    ARCHIVE_CLAIM_ERROR="cannot claim the archive directory $ARCHIVE_CLAIMED — refusing to write into one gang did not create"
+    ARCHIVE_CLAIMED=""
+    return 1
+  fi
+}
+
 ARCHIVE_DIR=""
 archive_establish() { # $1 = an archive-operation label; ARCHIVE_DIR = its directory
-  local root
   [ -z "$ARCHIVE_DIR" ] || return 0
-  root="$(archive_root)"
-  mkdir -p "$root" || die "cannot create the message archive at $root — set GANG_ARCHIVE_DIR somewhere writable; refusing the operation while the mail has nowhere to go"
-  ARCHIVE_DIR="$root/$1-$(date +%Y%m%dT%H%M%S)-$(mint_nonce)"
-  mkdir "$ARCHIVE_DIR" || die "cannot claim the archive directory $ARCHIVE_DIR — refusing to write into one gang did not create"
+  archive_claim_try "$1" || die "$ARCHIVE_CLAIM_ERROR"
+  ARCHIVE_DIR="$ARCHIVE_CLAIMED"
 }
 
 IDLE_NOTICE_FAILED=""
@@ -12481,6 +12593,7 @@ cmd_status() {
       printf '%s\n' "$(colour "$C_WORK" "parked native input: the harness queue holds a body Gangline recorded; recover it with gang flush $name")"
     fi
   fi
+  spool_retire_gone_unverified_report "$AGENT_ID"
   spooled="$(spool_count "$AGENT_ID")"
   if [ "$spooled" -ne 0 ]; then
     if age="$(spool_oldest_age "$AGENT_ID")"; then
@@ -12537,7 +12650,8 @@ cmd_status() {
 # READING YOUR OWN QUEUE IS ITS DELIVERY. A body the addressee has already read
 # is delivered again at the next turn boundary — the same message twice, once by
 # hand and once by the spool — so a read by the agent whose queue it is retires
-# what it printed. A read by anyone else is an inspection and touches nothing.
+# what it printed. A read by anyone else does not consume deliverable mail;
+# either kind of read may retire stale stable-sender ambiguity to an archive.
 cmd_mail() { # read a queue; its own agent's read archives what it consumes
   local name="${1:-}" id rc=0 dir e n=0 held=0
   local self="" mine=0 claim label heading=waiting mail_archive="" archived_name=""
@@ -12608,6 +12722,7 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     printf '%s\n' "$(colour "$C_WORK" "$heading #$n from $SPOOL_SENDER — $label")"
     printf '%s\n\n' "$SPOOL_BODY"
   done
+  spool_retire_gone_unverified_report "$id"
   # KEPT, NEVER CONSUMED, AND NAMED FOR WHICH KIND IT IS. A held entry is not
   # this read's to retire — nothing will deliver it, so a read that removed it
   # would be the last chance anyone had to see it. An `unverified-` one carries
@@ -12646,11 +12761,11 @@ cmd_mail() { # read a queue; its own agent's read archives what it consumes
     return 0
   fi
   if [ "$mine" -eq 1 ]; then
-    printf '%s\n' "$(colour "$C_DIM" "$n consumed by this read and archived at ${mail_archive:-<none>}, $held held (kept), in $dir")"
+    printf '%s\n' "$(colour "$C_DIM" "$n consumed by this read and archived at ${mail_archive:-<none>}, $held kept (not awaiting delivery), in $dir")"
     [ -z "$mail_archive" ] \
       || printf 'self-mail archived %s consumed message(s) at %s\n' "$n" "$mail_archive" >&2
   else
-    printf '%s\n' "$(colour "$C_DIM" "$n waiting, $held held, in $dir")"
+    printf '%s\n' "$(colour "$C_DIM" "$n waiting for delivery, $held kept (not awaiting delivery), in $dir")"
   fi
 }
 
@@ -12838,6 +12953,7 @@ roster_row() { # $1 window, $2 name, $3 current binary id;
     detail="$detail self-compact-failed"
   fi
   detail="$detail $(action_detail "$1")"
+  spool_retire_gone_unverified_report "$1"
   spooled="$(spool_count "$1")"
   if [ "$spooled" -ne 0 ]; then
     detail="$detail spooled=$spooled"

@@ -1353,9 +1353,10 @@ equal "a registration that is not a name never becomes an archive path" \
   "$([ -e "$traversal_escape" ] && printf escaped || printf contained) $([ -n "$traversal_archived" ] && printf archived || printf lost)"
 tmux kill-window -t "$traversal_id" 2>/dev/null || true
 
-# A FOREIGN MAIL READ INSPECTS THE QUEUE AND NOTHING ELSE. It does not load the
-# target's collar, claim entries, take the pane lock, or attempt delivery. A
-# self-read below consumes, but archives before a byte reaches stdout.
+# A FOREIGN MAIL READ DOES NOT CONSUME DELIVERABLE MAIL. It does not load the
+# target's collar, claim waiting entries, take the pane lock, or attempt
+# delivery. Stale-sender ambiguity is handled separately below. A self-read
+# consumes waiting mail, but archives before a byte reaches stdout.
 "$HITCH" mailer -c spoolable -d /tmp >/dev/null
 mailer_id="$(window_id mailer)"
 tmux send-keys -l -t "$mailer_id" 'HUMAN_DRAFT'
@@ -1554,6 +1555,194 @@ empty_mail_out="$("$GANG" mail empty-mailbox)"
 contains "mail exits cleanly on an empty queue" \
   "$empty_mail_out" "no mail waiting for empty-mailbox"
 "$GANG" drop empty-mailbox >/dev/null
+
+# AN UNVERIFIED SUBMISSION IS KEPT ONLY WHILE ITS ORIGINAL SENDER EXISTS. Its
+# stable spool token, not its remembered name, is the witness: once no window
+# carries that token the ambiguity cannot be resolved by that sender and the
+# record retires to the archive. A later agent reusing the name is a different
+# identity and cannot revive it.
+"$HITCH" held-target -c spoolable -d /tmp >/dev/null
+"$HITCH" held-sender -c spoolable -d /tmp >/dev/null
+held_target_id="$(window_id held-target)"
+held_target_spool="$GANG_LOCK_DIR/spool/$(tmux show-options -wqv \
+  -t "$held_target_id" @gl_spool)"
+held_sender_token="$(tmux show-options -wqv \
+  -t "$(window_id held-sender)" @gl_spool)"
+held_entry="$held_target_spool/unverified-00000000000000000009-deadbeef"
+printf 'v2\theld-sender\t%s\trequest\t-\tdeadbeefdeadbeef\n%s\n%s\n' \
+  "$held_sender_token" MARK_STABLE_HELD \
+  '[gang:held-sender#deadbeefdeadbeef] MARK_STABLE_HELD [/gang:held-sender#deadbeefdeadbeef]' \
+  > "$held_entry"
+held_live_mail="$("$GANG" mail held-target)"
+contains "an unverified submission from a live stable sender remains readable" \
+  "$held_live_mail" "MARK_STABLE_HELD"
+contains "mail distinguishes kept ambiguity from mail awaiting delivery" \
+  "$held_live_mail" "0 waiting for delivery, 1 kept (not awaiting delivery)"
+held_live_roster="$("$GANG" roster | grep '^held-target ')"
+contains "roster counts the live sender's kept record separately" \
+  "$held_live_roster" "spool-held=1"
+excludes "roster never counts a kept record as deliverable" \
+  "$held_live_roster" "spooled="
+
+"$GANG" drop held-sender >/dev/null
+held_retired_mail="$("$GANG" mail held-target 2>"$RUN_ROOT/held-retired-mail.err")"
+excludes "mail retires an unverified record whose stable sender is gone" \
+  "$held_retired_mail" "MARK_STABLE_HELD"
+contains "the retired record leaves no apparent mail behind" \
+  "$held_retired_mail" "no mail waiting for held-target"
+contains "retirement names the sender and the archived record outside stdout" \
+  "$(<"$RUN_ROOT/held-retired-mail.err")" \
+  "retired unverified spool record from held-sender because its stable identity is gone: $held_entry ->"
+contains "retirement prints the recovery archive deletion command" \
+  "$(<"$RUN_ROOT/held-retired-mail.err")" \
+  "delete this retirement archive after recovery with: rm -rf --"
+excludes "roster no longer counts the retired record as held" \
+  "$("$GANG" roster | grep '^held-target ')" "spool-held="
+held_archive=""
+for held_archived_entry in "$GANG_ARCHIVE_DIR"/*/held-target/unverified-*; do
+  [ -f "$held_archived_entry" ] || continue
+  grep -q MARK_STABLE_HELD "$held_archived_entry" \
+    && held_archive="$held_archived_entry"
+done
+[ -n "$held_archive" ] \
+  && pass "a retired unverified record remains readable in the archive" \
+  || fail "a retired unverified record remains readable in the archive" \
+    "no archived entry contains MARK_STABLE_HELD"
+"$HITCH" held-sender -c spoolable -d /tmp >/dev/null
+excludes "a fresh agent reusing the sender name does not revive the old record" \
+  "$("$GANG" mail held-target)" "MARK_STABLE_HELD"
+excludes "and name reuse does not restore its held roster count" \
+  "$("$GANG" roster | grep '^held-target ')" "spool-held="
+"$GANG" drop held-sender >/dev/null
+
+# A SELF-READ OWNS TWO DIFFERENT RECOVERY LIFETIMES. Consumed waiting mail goes
+# to the read archive the command tells its reader to delete; stale ambiguity
+# gets a fresh retirement archive, so following the first instruction cannot
+# destroy the second record.
+held_target_pane="$(tmux list-panes -t "$held_target_id" -F '#{pane_id}')"
+held_self_waiting="$held_target_spool/00000000000000000010-c0decafe"
+printf 'v2\tgangline\t-\tcontrol\t-\tc0decafec0decafe\n%s\n%s\n' \
+  MARK_SELF_WAITING \
+  '[gang:gangline#c0decafec0decafe] MARK_SELF_WAITING [/gang:gangline#c0decafec0decafe]' \
+  > "$held_self_waiting"
+held_self_retired="$held_target_spool/unverified-00000000000000000011-baddecaf"
+printf 'v2\theld-sender\t%s\trequest\t-\tbaddecafbaddecaf\n%s\n%s\n' \
+  "$held_sender_token" MARK_SELF_RETIRED \
+  '[gang:held-sender#baddecafbaddecaf] MARK_SELF_RETIRED [/gang:held-sender#baddecafbaddecaf]' \
+  > "$held_self_retired"
+TMUX_PANE="$held_target_pane" "$GANG" mail \
+  >"$RUN_ROOT/held-self-mail.out" 2>"$RUN_ROOT/held-self-mail.err"
+contains "self-mail consumes the waiting body" \
+  "$(<"$RUN_ROOT/held-self-mail.out")" "MARK_SELF_WAITING"
+excludes "self-mail retires gone-sender ambiguity instead of printing it" \
+  "$(<"$RUN_ROOT/held-self-mail.out")" "MARK_SELF_RETIRED"
+held_self_read_archive=""
+held_self_retire_archive=""
+for held_archived_entry in "$GANG_ARCHIVE_DIR"/*/held-target/*; do
+  [ -f "$held_archived_entry" ] || continue
+  if grep -q MARK_SELF_WAITING "$held_archived_entry"; then
+    held_self_read_archive="$(dirname "$(dirname "$held_archived_entry")")"
+  elif grep -q MARK_SELF_RETIRED "$held_archived_entry"; then
+    held_self_retire_archive="$(dirname "$(dirname "$held_archived_entry")")"
+  fi
+done
+[ -n "$held_self_read_archive" ] && [ -n "$held_self_retire_archive" ] \
+  && [ "$held_self_read_archive" != "$held_self_retire_archive" ] \
+  && pass "self-mail gives consumed mail and retired ambiguity separate archives" \
+  || fail "self-mail gives consumed mail and retired ambiguity separate archives" \
+    "read=${held_self_read_archive:-missing} retired=${held_self_retire_archive:-missing}"
+contains "self-mail reports the distinct retirement destination" \
+  "$(<"$RUN_ROOT/held-self-mail.err")" "$held_self_retire_archive/held-target"
+if [ -n "$held_self_read_archive" ]; then
+  rm -rf -- "$held_self_read_archive"
+fi
+[ -f "$held_self_retire_archive/held-target/${held_self_retired##*/}" ] \
+  && pass "deleting the read archive preserves the retired ambiguity" \
+  || fail "deleting the read archive preserves the retired ambiguity" \
+    "$held_self_retire_archive no longer holds the retired record"
+
+# PORCELAIN IS OBSERVATION-ONLY, AND ARCHIVE FAILURE IS NOT AGENT-STATE FAILURE.
+# Leave one stale record live, first prove the fixed porcelain row has no hidden
+# cleanup, then make the archive root unusable and require both status surfaces
+# to remain healthy and to report the still-kept record.
+held_failure_entry="$held_target_spool/unverified-00000000000000000012-fadefade"
+printf 'v2\theld-sender\t%s\trequest\t-\tfadefadefadefade\n%s\n%s\n' \
+  "$held_sender_token" MARK_RETIRE_FAILURE \
+  '[gang:held-sender#fadefadefadefade] MARK_RETIRE_FAILURE [/gang:held-sender#fadefadefadefade]' \
+  > "$held_failure_entry"
+"$GANG" roster --porcelain >"$RUN_ROOT/held-porcelain.out" \
+  2>"$RUN_ROOT/held-porcelain.err"
+[ -f "$held_failure_entry" ] \
+  && pass "porcelain roster does not retire records outside its fixed shape" \
+  || fail "porcelain roster does not retire records outside its fixed shape" \
+    "$held_failure_entry was moved"
+contains "porcelain still reports the target's readable state" \
+  "$(grep '^held-target' "$RUN_ROOT/held-porcelain.out")" $'held-target\tspoolable\tidle\t'
+held_archive_blocker="$RUN_ROOT/retirement-archive-not-a-directory"
+: > "$held_archive_blocker"
+held_failure_status_rc=0
+GANG_ARCHIVE_DIR="$held_archive_blocker" "$GANG" status held-target \
+  >"$RUN_ROOT/held-failure-status.out" 2>"$RUN_ROOT/held-failure-status.err" \
+  || held_failure_status_rc=$?
+equal "archive failure does not kill status" "0" "$held_failure_status_rc"
+contains "status keeps reporting the readable agent state" \
+  "$(<"$RUN_ROOT/held-failure-status.out")" "~idle~"
+contains "status keeps the unretired record visible" \
+  "$(<"$RUN_ROOT/held-failure-status.out")" "spool: 1 message(s)"
+contains "status reports retirement failure outside its state" \
+  "$(<"$RUN_ROOT/held-failure-status.err")" "spool retirement NOT completed:"
+held_failure_roster_rc=0
+GANG_ARCHIVE_DIR="$held_archive_blocker" "$GANG" roster \
+  >"$RUN_ROOT/held-failure-roster.out" 2>"$RUN_ROOT/held-failure-roster.err" \
+  || held_failure_roster_rc=$?
+equal "archive failure does not kill roster" "0" "$held_failure_roster_rc"
+held_failure_row="$(grep '^held-target ' "$RUN_ROOT/held-failure-roster.out")"
+contains "roster keeps reporting the readable agent state" \
+  "$held_failure_row" "~idle~"
+contains "roster keeps the unretired held count" \
+  "$held_failure_row" "spool-held=1"
+contains "roster reports retirement failure outside the row" \
+  "$(<"$RUN_ROOT/held-failure-roster.err")" "spool retirement NOT completed:"
+[ -f "$held_failure_entry" ] \
+  && pass "archive failure leaves the live record untouched" \
+  || fail "archive failure leaves the live record untouched" \
+    "$held_failure_entry was moved"
+rm -f -- "$held_archive_blocker"
+
+held_roster_entry="$held_target_spool/unverified-00000000000000000010-feedface"
+printf 'v2\theld-sender\t%s\trequest\t-\tfeedfacefeedface\n%s\n%s\n' \
+  "$held_sender_token" MARK_ROSTER_RETIRES \
+  '[gang:held-sender#feedfacefeedface] MARK_ROSTER_RETIRES [/gang:held-sender#feedfacefeedface]' \
+  > "$held_roster_entry"
+"$GANG" roster >"$RUN_ROOT/held-retiring-roster.out" \
+  2>"$RUN_ROOT/held-retiring-roster.err"
+held_retiring_row="$(grep '^held-target ' "$RUN_ROOT/held-retiring-roster.out")"
+excludes "roster itself retires stale stable-sender ambiguity" \
+  "$held_retiring_row" "spool-held="
+contains "roster retirement leaves the target in its readable state" \
+  "$held_retiring_row" "~idle~"
+excludes "roster retirement never degrades the target to unknown" \
+  "$held_retiring_row" "?unknown?"
+contains "roster reports each retirement's source and destination" \
+  "$(<"$RUN_ROOT/held-retiring-roster.err")" \
+  "retired unverified spool record from held-sender because its stable identity is gone:"
+[ ! -e "$held_roster_entry" ] \
+  && pass "roster moves the retired record out of the live spool" \
+  || fail "roster moves the retired record out of the live spool" \
+    "$held_roster_entry remains live"
+held_roster_archive=""
+for held_archived_entry in "$GANG_ARCHIVE_DIR"/*/held-target/unverified-*; do
+  [ -f "$held_archived_entry" ] || continue
+  grep -q MARK_ROSTER_RETIRES "$held_archived_entry" \
+    && held_roster_archive="$held_archived_entry"
+done
+[ -n "$held_roster_archive" ] \
+  && pass "roster preserves its retired record in the archive" \
+  || fail "roster preserves its retired record in the archive" \
+    "no archived entry contains MARK_ROSTER_RETIRES"
+excludes "mail cannot revive the record roster retired" \
+  "$("$GANG" mail held-target)" "MARK_ROSTER_RETIRES"
+"$GANG" drop held-target >/dev/null
 
 # PORCELAIN IS EXACT TSV, NOT THE HUMAN GLYPH TABLE. First spend the exact-row
 # assertion against the default roster and require it to fail; only then use it

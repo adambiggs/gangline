@@ -2264,3 +2264,16 @@ repeating invariant lookups in every guarded tmux client or command
 substitution. A failed derivation remains retryable at later call sites. The
 lock ownership check still uses the process's real effective uid, and its
 refusal reports that real value rather than the cached carrier.
+
+## Unverified spool ambiguity retires with its stable sender
+
+Keep an unverified submission in the live target spool only while the exact
+stable sender token still belongs to a window. Once that identity is gone,
+archive the record and omit it from mail and roster; a fresh window reusing the
+name has a different token and inherits nothing. Legacy or unreadable provenance
+remains kept because absence was not proved. Retirement preserves the unresolved
+body in a fresh archive and reports its source, destination, and deletion command
+on stderr, so the ambiguity stays recoverable and cannot disappear as an
+unexplained count change. Waiting delivery entries and kept ambiguity stay
+separate in operator output: `spooled` is mail Gangline will deliver, while
+`spool-held` is a record it will not deliver.

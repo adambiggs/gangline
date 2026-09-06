@@ -1027,16 +1027,25 @@ operator's tmux status formats.
 
 ### `gang mail [name]`
 
-Prints every message waiting in that agent's spool, oldest first, then every
-held entry, each with its sender and its entry filename, each body exactly as it
-would go onto the wire. A held entry says which kind it is: one Gangline typed
-and could not confirm warns its reader they may have seen the body already. Another agent's or the operator's read is inspection and
-touches nothing. The addressee's own read is delivery: it consumes each waiting
+Prints every message waiting for delivery in that agent's spool, oldest first,
+then every kept record, each with its sender and its entry filename, each body
+exactly as it would go onto the wire. The summary separates messages waiting
+for delivery from kept records that Gangline will not deliver. A kept record
+says which kind it is: one Gangline typed and could not confirm warns its reader
+they may have seen the body already. An unverified record with stable peer
+provenance remains kept while that exact sender identity exists. Once its
+sender's spool token no longer belongs to a live window, the record is archived
+and omitted; a newly hitched agent reusing the name has a different token and
+does not revive it. Legacy or unreadable provenance cannot prove retirement and
+remains kept. Another agent's or the operator's read never consumes deliverable
+mail, though any read can perform that stale-sender retirement. Each retired
+record's source, archive destination, and archive deletion command are printed
+on stderr. The addressee's own read is delivery: it consumes each waiting
 entry so a later native delivery opportunity cannot deliver the same message again. Before
 printing an entry, it moves it into a human-readable directory under
 `GANG_ARCHIVE_DIR`; the path and its explicit deletion command go to stderr, so
 an ordinary stdout filter cannot destroy the only copy or hide its recovery
-location. Held entries are never consumed. Mail takes no delivery lock and needs
+location. Kept entries are never consumed by the addressee's read. Mail takes no delivery lock and needs
 no loadable collar, because a queue is files on disk and the harness may be the
 reason you are reading it.
 
@@ -1215,6 +1224,12 @@ tick failure, and binary
 skew when the window has no hitch/adopt stamp or its executable-byte witness
 differs from the invoked `gang` binary. An unavailable witness is reported
 explicitly instead of treated as either match or mismatch.
+
+Before reporting spool counts, `status` applies the same stable-sender
+retirement as `mail`: stderr names every source and archive destination and
+prints the archive deletion command. If the archive cannot be established, the
+record remains kept, the failure is printed on stderr, and the agent's otherwise
+readable state is still reported.
 
 ### `gang whoami`
 
@@ -1417,8 +1432,15 @@ column: ordinary adopted windows and lights-off claude-code windows have no
 readable source, and one absent value must not make the team inventory fail.
 Use `gang context <name>` when a reading is wanted. Each row compares the
 window's binary stamp with the invoked `gang` binary and visibly marks skew; the
-comparison runs only for this snapshot. A non-empty queue reports both its depth
-and the age of its oldest waiting entry.
+comparison runs only for this snapshot. A non-empty delivery queue reports both
+its depth as `spooled=N` and the age of its oldest waiting entry. A separate
+`spool-held=N` reports kept records whose delivery will not be retried; it is not
+queue depth. In a plain roster, an unverified record whose exact stable sender
+identity is gone is archived before the row is printed and contributes to
+neither count. A fresh agent using the old sender name has a different identity
+and does not restore the count. If the archive cannot be established, the plain
+row still reports the agent's readable state and retained `spool-held` count,
+while stderr reports the retirement failure.
 
 Every agent in the team is listed, including the ones after an agent whose pane
 would not answer. A state Gangline could not read is that one agent's fact: its
@@ -1442,8 +1464,12 @@ word: `busy`, `waiting`, `idle`, `occupied`, `dead`, `bricked`, `session-lost`, 
 settle and one it could not read at all; the human row separates them and the
 porcelain word does not.
 unadopted windows and missing collars read `unadopted` and `collar-missing`.
-`spooled` is an integer. `oldest_age_s` is integer seconds or `-` for an empty
-queue or an unreadable age. A row Gangline could not produce at all falls back
+`spooled` is the deliverable-queue integer; kept records are deliberately absent
+from the fixed porcelain shape and remain visible as `spool-held=N` in the human
+row. Porcelain roster performs no retirement; it observes the fixed per-agent
+shape without the plain roster's archival side effect. `oldest_age_s` is integer
+seconds or `-` for an empty queue or an unreadable age. A row Gangline could not
+produce at all falls back
 to the name, the collar, `unknown`, and `-` in every remaining field. `session_id` is the exact stamp or `UNSTAMPED`.
 With no running session it prints no rows and exits successfully, like the human
 roster.
