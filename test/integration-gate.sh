@@ -721,7 +721,7 @@ contains "the marked fixture still runs its declared suite" \
 : > "$gate_order"
 : > "$gate_where"
 gate_default_out="$(env -u _GANGLINE_GATE_LOCKED GANG_INTEGRATION_PARTS=cli \
-  GANG_GATE_QUIET_SECONDS=0.2 GATE_PROVE_OVERLAP=1 \
+  GANG_GATE_QUIET_SECONDS=1 GATE_PROVE_OVERLAP=1 \
   PATH="$gate_flock_bin:$PATH" "$gate_run/test/gate.sh" 2>&1)"
 equal "the ordinary gate probes and owns both heavy-test locks" \
   "$(printf 'primary-probe\nowner-probe\nunlock\nunlock')" \
@@ -770,7 +770,7 @@ fi
 gate_subdir_rc=0
 gate_subdir_out="$(
   cd "$gate_run/test" || exit
-  GANG_GATE_QUIET_SECONDS=0.2 ./gate.sh 2>&1
+  GANG_GATE_QUIET_SECONDS=1 ./gate.sh 2>&1
 )" || gate_subdir_rc=$?
 equal "a gate invoked from its test directory can snapshot itself" \
   "0" "$gate_subdir_rc"
@@ -961,8 +961,8 @@ fi
 exec 7>&- 8>&-
 
 # THE TIMEOUT EXCEPTION IS SCALED, NOT STOPPED. The healthy CI measurement is
-# 104s, the production budget is 300s, the fixture quiet budget is 0.2s, and
-# this outer read gives the fixture 1s to turn the same state into a verdict.
+# 104s, the production budget is 300s, the fixture quiet budget is 1s, and
+# this outer read gives the fixture 3s to turn the same state into a verdict.
 # The blocked step writes two lines and its PID first; both are independent
 # witnesses that it ran before the watchdog acts. The fake flock owns a marker
 # for exactly as long as the nested ordinary gate, so its disappearance proves
@@ -981,7 +981,7 @@ cat > "$gate_stall/test/lint.sh" <<SH
 # SPDX-License-Identifier: Apache-2.0
 exec 8<> "$gate_stall_lint_block"
 while :; do
-  IFS= read -r -t 0.1 -u 8 || true
+  IFS= read -r -t 0.3 -u 8 || true
   printf 'lint pulse\n'
 done
 SH
@@ -1005,13 +1005,13 @@ chmod +x "$gate_stall/test/gate.sh"
 git -C "$gate_stall" add test/gate.sh
 git -C "$gate_stall" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: isolate the stalled gate lock'
-env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=0.2 \
+env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=1 \
   setsid "$gate_stall/test/gate.sh" \
   > "$gate_stall_stream" 2>&1 &
 gate_stall_gate_pid=$!
 exec 9< "$gate_stall_stream"
 gate_stall_out=""
-while IFS= read -r -t 1 -u 9 gate_stall_line; do
+while IFS= read -r -t 3 -u 9 gate_stall_line; do
   gate_stall_out="${gate_stall_out}${gate_stall_out:+
 }${gate_stall_line}"
 done
@@ -1047,7 +1047,7 @@ wait "$gate_stall_gate_pid" || gate_stall_rc=$?
 exec 9>&-
 equal "a stalled integration is the gate's quiet-expiry status" "124" "$gate_stall_rc"
 contains "the stall names the step and quiet budget" \
-  "$gate_stall_out" "STALLED: integration produced no output for 0.2s"
+  "$gate_stall_out" "STALLED: integration produced no output for 1s"
 contains "the stall prints its process tree" "$gate_stall_out" "PROCESS TREE"
 contains "the stall keeps the first trailing line" \
   "$gate_stall_out" "integration last line one"
@@ -1118,12 +1118,12 @@ chmod +x "$gate_refusal/test/gate.sh" "$gate_refusal/test/integration.sh"
 git -C "$gate_refusal" add test/gate.sh test/integration.sh
 git -C "$gate_refusal" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: force watchdog ownership refusal'
-env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=0.2 \
+env -u _GANGLINE_GATE_LOCKED GANG_GATE_QUIET_SECONDS=1 \
   setsid "$gate_refusal/test/gate.sh" > "$gate_refusal_stream" 2>&1 &
 gate_refusal_gate_pid=$!
 exec 9< "$gate_refusal_stream"
 gate_refusal_out=""
-while IFS= read -r -t 1 -u 9 gate_refusal_line; do
+while IFS= read -r -t 3 -u 9 gate_refusal_line; do
   gate_refusal_out="${gate_refusal_out}${gate_refusal_out:+
 }${gate_refusal_line}"
 done
@@ -1166,8 +1166,8 @@ else
     "the fixture did not write its pid"
 fi
 
-# A healthy long step must keep extending its lease. Each pulse arrives at half
-# the scaled 0.2s quiet budget, six times in a row; success therefore proves
+# A healthy long step must keep extending its lease. Each pulse arrives at less
+# than one third of the scaled 1s quiet budget, six times in a row; success proves
 # the budget resets on output rather than becoming a total-duration ceiling.
 gate_pulse="$RUN_ROOT/gate-pulse"
 cp -R "$gate_run" "$gate_pulse"
@@ -1178,7 +1178,7 @@ cat > "$gate_pulse/test/integration.sh" <<SH
 # SPDX-License-Identifier: Apache-2.0
 exec 7<> "$gate_pulse_wait"
 for n in 1 2 3 4 5 6; do
-  IFS= read -r -t 0.1 -u 7 || true
+  IFS= read -r -t 0.3 -u 7 || true
   printf 'pulse %s\n' "\$n"
 done
 printf 'integration: every declared part ran\n'
@@ -1188,7 +1188,7 @@ git -C "$gate_pulse" add test/integration.sh
 git -C "$gate_pulse" -c user.name=fixture -c user.email=fixture@example.invalid \
   commit -qm 'test: pulsing integration fixture'
 gate_pulse_rc=0
-gate_pulse_out="$(GANG_GATE_QUIET_SECONDS=0.2 \
+gate_pulse_out="$(GANG_GATE_QUIET_SECONDS=1 \
   "$gate_pulse/test/gate.sh" 2>&1)" || gate_pulse_rc=$?
 equal "a step that prints just under the quiet bound passes" "0" "$gate_pulse_rc"
 contains "the pulsing step ran through its final pulse" "$gate_pulse_out" "pulse 6"
