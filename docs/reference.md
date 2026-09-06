@@ -61,8 +61,11 @@ process group, cancels its sibling branch, and releases the host lock.
 The gate preserves the stalled step's 124 result when that cancellation leaves
 the sibling without a result. Status 125 is reserved for refusing an unsafe
 process-group kill; status 123 reports a branch that disappeared without either
-result. When holder fields are `unknown`, the gate also prints a local `fuser`
-command as a best-effort way to inspect legacy and third-party lock owners.
+result. The stall marker publishes 124 or 125 before the diagnostic begins, and
+a branch that owns such a marker is allowed to finish its report rather than
+being canceled with its sibling. When holder fields are `unknown`, the gate also
+prints a local `fuser` command as a best-effort way to inspect legacy and
+third-party lock owners.
 
 `GANG_GATE_QUIET_SECONDS` replaces the 300-second inactivity budget with any
 positive number of seconds. Every completed output line renews the budget, so

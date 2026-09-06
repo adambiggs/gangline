@@ -603,13 +603,19 @@ gate_monitored_step() { # $1 name, $2 output, $3 live, $4 cwd, rest = argv
       break
     fi
 
+    # Publish the verdict with the marker, before process-tree reporting can
+    # give the sibling time to finish. Rename makes marker visibility atomic:
+    # a main-shell reader sees the complete status or no marker at all.
+    printf '%s\n' 124 > "$WORK/$name.stalled.next"
+    mv -f -- "$WORK/$name.stalled.next" "$WORK/$name.stalled"
     printf '\ngate: STALLED: %s produced no output for %ss\n' \
       "$name" "$GATE_QUIET_SECONDS" >&2
     gate_step_tree "$pid"
     printf 'gate: LAST OUTPUT (%s, up to 30 lines)\n' "$name" >&2
     tail -n 30 "$output" >&2
-    : > "$WORK/$name.stalled"
     if ! gate_stop_step "$pid" "$parent" "$name"; then
+      printf '%s\n' 125 > "$WORK/$name.stalled.next"
+      mv -f -- "$WORK/$name.stalled.next" "$WORK/$name.stalled"
       exec {fd}<&-
       rm -f -- "$pidfile" "$fifo"
       return 125
@@ -847,10 +853,16 @@ main() {
   gate_suite_branch &
   suite_monitor_pid=$!
   wait -n "$lint_monitor_pid" "$suite_monitor_pid" 2>/dev/null || true
-  if [ -e "$WORK/lint.stalled" ] || [ -e "$WORK/smoke.stalled" ] \
-      || [ -e "$WORK/integration.stalled" ]; then
-    gate_cancel_branch "$lint_monitor_pid" lint || true
+  lint_stalled=0
+  suite_stalled=0
+  [ ! -e "$WORK/lint.stalled" ] || lint_stalled=1
+  if [ -e "$WORK/smoke.stalled" ] || [ -e "$WORK/integration.stalled" ]; then
+    suite_stalled=1
+  fi
+  if [ "$lint_stalled" -eq 1 ] && [ "$suite_stalled" -eq 0 ]; then
     gate_cancel_branch "$suite_monitor_pid" smoke integration || true
+  elif [ "$suite_stalled" -eq 1 ] && [ "$lint_stalled" -eq 0 ]; then
+    gate_cancel_branch "$lint_monitor_pid" lint || true
   fi
   wait "$lint_monitor_pid" 2>/dev/null || true
   wait "$suite_monitor_pid" 2>/dev/null || true
@@ -873,11 +885,11 @@ main() {
   # corresponding watchdog record, which is an orchestration failure of its
   # own rather than a claim about process ownership.
   if [ -e "$WORK/lint.stalled" ]; then
-    rc="$lint_rc"
+    rc="$(cat "$WORK/lint.stalled" 2>/dev/null || printf 124)"
   elif [ -e "$WORK/smoke.stalled" ]; then
-    rc="$smoke_rc"
+    rc="$(cat "$WORK/smoke.stalled" 2>/dev/null || printf 124)"
   elif [ -e "$WORK/integration.stalled" ]; then
-    rc="$integration_rc"
+    rc="$(cat "$WORK/integration.stalled" 2>/dev/null || printf 124)"
   elif [ "$lint_rc" = cancelled ] || [ "$smoke_rc" = cancelled ] \
       || [ "$integration_rc" = cancelled ]; then
     rc=123
@@ -887,6 +899,11 @@ main() {
     [ "$rc" -ne 0 ] || rc="$smoke_rc"
     [ "$rc" -ne 0 ] || rc="$integration_rc"
   fi
+  case "$rc" in
+    ''|*[!0-9]*)
+      printf 'gate: a stall verdict was unreadable; refusing as quiet expiry.\n' >&2
+      rc=124 ;;
+  esac
   if [ "$rc" -ne 0 ]; then
     keep=1
     decided=1

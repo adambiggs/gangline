@@ -1067,6 +1067,36 @@ else
     "before rescue, the private lock probe exited $gate_stall_lock_rc_before_rescue"
 fi
 
+# A STALL MARKER PRECEDES THE SLOW REPORT AND THE BRANCH'S STATUS WRITE. If the
+# sibling finishes during that window, the main shell may observe the marker
+# after cancellation has prevented the status file. Drive that exact state
+# directly so scheduler timing cannot turn the regression test green: the
+# marker itself must carry the watchdog result used for the final verdict.
+gate_status_race="$RUN_ROOT/gate-status-race"
+cp -R "$gate_run" "$gate_status_race"
+gate_status_race_lock="$RUN_ROOT/gate-status-race.lock"
+sed -e "s|GATE_HEAVY_LOCK=$gate_run_lock|GATE_HEAVY_LOCK=$gate_status_race_lock|" \
+  -e '/^gate_lint_branch() {/a\
+  : > "$WORK/lint.out"\
+  printf '\''124\\n'\'' > "$WORK/lint.stalled"\
+  return 0' \
+  "$gate_status_race/test/gate.sh" > "$gate_status_race/test/gate.sh.new"
+mv "$gate_status_race/test/gate.sh.new" "$gate_status_race/test/gate.sh"
+chmod +x "$gate_status_race/test/gate.sh"
+git -C "$gate_status_race" add test/gate.sh
+git -C "$gate_status_race" -c user.name=fixture -c user.email=fixture@example.invalid \
+  commit -qm 'test: stall marker before status fixture'
+gate_status_race_rc=0
+gate_status_race_out="$(env -u _GANGLINE_GATE_LOCKED \
+  "$gate_status_race/test/gate.sh" 2>&1)" || gate_status_race_rc=$?
+equal "a stall marker remains the gate verdict before its status write" \
+  "124" "$gate_status_race_rc"
+excludes "a recorded stall can never fall through to a passing verdict" \
+  "$gate_status_race_out" "VERDICT PASS"
+gate_status_race_kept="$(printf '%s\n' "$gate_status_race_out" \
+  | awk '/^  \/.*gangline-gate\./ { print $1; exit }')"
+[ -z "$gate_status_race_kept" ] || rm -rf -- "$gate_status_race_kept"
+
 # A PID ownership mismatch is a safety refusal, not permission to wait forever
 # on the child the gate deliberately declined to signal.
 gate_refusal="$RUN_ROOT/gate-refusal"

@@ -2243,3 +2243,6 @@ An unknown report includes a best-effort `fuser` command for rollout periods
 where legacy owners cannot provide a corroborated record. A stalled step's 124
 or ownership-refusal 125 takes precedence over the concurrent branch's internal
 cancellation; 123 is reserved for a branch that vanishes without either cause.
+The 124 or 125 is published atomically in the stall marker before diagnostics;
+the main shell reads that marker and never cancels a branch that owns one. Thus
+a sibling exit during reporting cannot erase the stall or truncate its evidence.
