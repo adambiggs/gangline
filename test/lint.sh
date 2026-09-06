@@ -35,8 +35,15 @@ suite_python3 >/dev/null || {
 # halves of the case are therefore built rather than waited for: a python3 that
 # refuses unless it finds a version file under $HOME, which is what a version
 # manager's shim does, standing in front of an interpreter shaped like a
-# virtual environment, which is what a pin can silently leave.
-python_cal="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+# virtual environment, which is what a pin can silently leave. The fixture is
+# reached through a symlink while the shim selects its physical location, so
+# platforms that canonicalize an executed path and platforms that retain its
+# spelling exercise the same comparison.
+python_cal_root="$(mktemp -d "${TMPDIR:-/tmp}/gangline-lint.XXXXXX")"
+mkdir -p "$python_cal_root/real"
+ln -s "$python_cal_root/real" "$python_cal_root/link"
+python_cal="$python_cal_root/link"
+python_cal_physical="$(cd "$python_cal" && pwd -P)"
 mkdir -p "$python_cal/bin" "$python_cal/versioned" "$python_cal/unversioned" "$python_cal/venv/bin"
 : > "$python_cal/versioned/.tool-versions"
 python_cal_real="$(suite_python3)"
@@ -55,7 +62,7 @@ cat > "$python_cal/bin/python3" <<SH
   echo 'python3: No version is set for command python3' >&2
   exit 126
 }
-exec '$python_cal/venv/bin/python3' "\$@"
+exec '$python_cal_physical/venv/bin/python3' "\$@"
 SH
 chmod +x "$python_cal/bin/python3"
 cat > "$python_cal/shebang" <<'SH'
@@ -94,18 +101,18 @@ cal_unusable_rc=0
 env PATH="$python_cal/bin:$PATH" HOME="$python_cal/versioned" \
   bash -c '. test/suite-python.sh; suite_python3_pin "$1/notadir"' _ "$python_cal" \
   >/dev/null 2>&1 || cal_unusable_rc=$?
-rm -rf -- "$python_cal"
+rm -rf -- "$python_cal_root"
 if [ "$cal_shim_rc" -eq 0 ] \
-   || [ "$cal_resolved" != "$python_cal/venv/bin/python3" ] \
+   || [ "$cal_resolved" != "$python_cal_physical/venv/bin/python3" ] \
    || [ "$cal_survives" != yes ] \
-   || [ "$cal_pinned" != "$python_cal/venv" ] \
+   || [ "$cal_pinned" != "$python_cal_physical/venv" ] \
    || [ "$cal_unpinned_rc" -eq 0 ] || [ "$cal_unusable_rc" -eq 0 ]; then
   printf '%s\n' \
     "lint: the interpreter rule in test/suite-python.sh does not hold its own calibration, so a run that gives itself a private HOME is not covered." \
     "home-bound shim refused with: $cal_shim_rc (0 means the fixture reproduced nothing)" \
-    "interpreter resolved: ${cal_resolved:-<none>}, wanted $python_cal/venv/bin/python3" \
+    "interpreter resolved: ${cal_resolved:-<none>}, wanted $python_cal_physical/venv/bin/python3" \
     "and it runs without the version file: $cal_survives" \
-    "pinned shebang program reported prefix: ${cal_pinned:-<nothing>}, wanted $python_cal/venv" \
+    "pinned shebang program reported prefix: ${cal_pinned:-<nothing>}, wanted $python_cal_physical/venv" \
     "unpinned shebang program exited: $cal_unpinned_rc (0 means the pin proved nothing)" \
     "pin into an unwritable destination exited: $cal_unusable_rc (0 means a failed pin reported success)" >&2
   exit 1
