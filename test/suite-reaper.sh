@@ -22,18 +22,19 @@
 # suite_reaper_sweep is exact and synchronous and belongs in the run's own
 # teardown. suite_reaper_start adds the half a trap cannot provide: a detached
 # watcher holding a pidfd for the run, which sweeps when the kernel reports
-# that process gone. It is detached into its own session, so a signal delivered
-# to the run's process group does not reach it.
+# that process gone. It runs as a transient user service, outside both the
+# caller's execution cgroup and any child PID namespace the caller occupies.
 #
 # A server whose socket lives outside the root — a `-L` label taken with
 # TMUX_TMPDIR unset resolves under the host's own tmux directory — is invisible
 # to that rule, so the run registers it with suite_reaper_track.
 #
 # THE WATCH IS EITHER PROVIDED OR REFUSED, NEVER ASSUMED. It rests on Linux
-# pidfds, on a readable /proc/net/unix, and on setsid to leave the run's process
-# group. A host missing any of them cannot be watched, and suite_reaper_start
-# fails there and says which piece is absent, because a suite that believes it
-# is protected and is not leaks in exactly the way this file exists to stop.
+# pidfds, on a readable /proc/net/unix, and on a systemd user manager that can
+# launch outside the run's execution boundary. A host missing any of them
+# cannot be watched, and suite_reaper_start fails there and says which piece is
+# absent, because a suite that believes it is protected and is not leaks in
+# exactly the way this file exists to stop.
 
 suite_reaper_program() { # stdout = the reaper this file ships beside
   # Builtins only: this is reached on the path that refuses a host missing the
@@ -101,15 +102,16 @@ suite_reaper_claim() { # $1 = a directory this shell owns, stdout = its token
 }
 
 suite_reaper_start() { # $1 = the run root this shell owns
-  local root="$1" python program started
+  local root="$1" python program parent_fd systemd error name
+  local -a service_env=()
   if ! suite_reaper_representable "$root"; then
     printf 'suite: %q cannot be a run root the reaper reads back\n' "$root" >&2
     return 1
   fi
-  if ! command -v setsid >/dev/null 2>&1; then
-    printf 'suite: no setsid, so a watcher would share this run'"'"'s process group\n' >&2
+  systemd="$(command -v systemd-run)" || {
+    printf 'suite: no systemd-run, so a watcher cannot leave this run'"'"'s execution boundary\n' >&2
     return 1
-  fi
+  }
   suite_reaper_resolve_python || return 1
   python="$SUITE_REAPER_PYTHON"
   program="$(suite_reaper_program)"
@@ -118,9 +120,35 @@ suite_reaper_start() { # $1 = the run root this shell owns
   [ -n "$SUITE_REAPER_TOKEN" ] || return 1
   SUITE_REAPER_ROOT="$root"
   export SUITE_REAPER_ROOT SUITE_REAPER_TOKEN
-  # The start time is what tells this process from a later one that reuses its
-  # number, so the watcher can refuse to wait on a stranger.
-  started="$("$python" "$program" --start-time "$$")" || return 1
-  setsid --fork "$python" "$program" --watch \
-    "$root" "$$" "$started" "$SUITE_REAPER_TOKEN" </dev/null >/dev/null 2>&1
+  # A PID NUMBER INSIDE A CHILD NAMESPACE DOES NOT NAME THIS PROCESS TO THE
+  # host user manager. Holding a fresh inode open gives the service one exact
+  # parent it can find through the host's /proc without translating a number.
+  # The systemd-run client has that descriptor closed, so readiness cannot
+  # deadlock on finding both the caller and the process launching its watcher.
+  # The outer transient service moves the inner systemd-run client through the
+  # user manager before that client creates the watcher. That bridge keeps both
+  # the launcher and watcher out of a caller's cgroup or PID namespace; the
+  # outer --wait still makes readiness and any launch refusal synchronous.
+  rm -f "$root/.suite-reaper-watch-error"
+  : > "$root/.suite-reaper-parent"
+  exec {parent_fd}< "$root/.suite-reaper-parent"
+  for name in SUITE_REAPER_DONE_SOCKET SUITE_REAPER_DONE_CHANNEL \
+    SUITE_REAPER_TMUX SUITE_REAPER_LOG SUITE_REAPER_UNIX_SOCKETS; do
+    [ -z "${!name:-}" ] || service_env+=("--setenv=$name=${!name}")
+  done
+  if ! "$systemd" --user --quiet --wait --pipe --collect --service-type=exec \
+      "$systemd" --user --quiet --collect --service-type=notify \
+      "${service_env[@]}" "$python" "$program" --watch \
+      "$root" "$SUITE_REAPER_TOKEN" {parent_fd}<&-; then
+    error="$(sed -n '1p' "$root/.suite-reaper-watch-error" 2>/dev/null)"
+    [ -n "$error" ] || error="suite: the detached watcher service could not be started"
+    printf '%s\n' "$error" >&2
+    exec {parent_fd}<&-
+    rm -f "$root/.suite-reaper" "$root/.suite-reaper-parent" \
+      "$root/.suite-reaper-watch-error"
+    SUITE_REAPER_ROOT=""
+    SUITE_REAPER_TOKEN=""
+    export SUITE_REAPER_ROOT SUITE_REAPER_TOKEN
+    return 1
+  fi
 }
