@@ -139,17 +139,23 @@ selected() { [ -z "${ROLE_ACS:-}" ] || case " $ROLE_ACS " in *" $1 "*) return 0 
 run_ac() { if selected "$1"; then "$1"; fi; }
 
 tmux -S "$TMUX_SOCKET" new-session -d -s role-grid-fixture -n grid "PS1='❯ ' bash --norc"
-# `window-size latest` sizes the first window of a detached `new-session` from
-# the terminal of the transient client that ran the command -- 80x23 where that
-# terminal is 80x24 and a status line is taken -- while `new-window` ignores its
-# command client and falls back to default-size. gang opens whichever of the two
-# the roster calls for, so on a tmux that reads the command client the grid below
-# reaches some agents and not others. `manual` is the documented branch that
-# answers every window from default-size, whichever build is running.
-tmux -S "$TMUX_SOCKET" set-option -g window-size manual
 tmux -S "$TMUX_SOCKET" set-option -g default-size "$PANE_GRID"
 tmux -S "$TMUX_SOCKET" resize-window -t '=role-grid-fixture:grid' \
   -x "${PANE_GRID%x*}" -y "${PANE_GRID#*x}"
+
+# EVERY AGENT WHOSE PANE A CHECK READS MUST ARRIVE IN A `new-window`. tmux
+# sizes the first window of a detached `new-session` from the terminal of the
+# transient client that ran the command -- 80x23 where that terminal is 80x24
+# and a status line is taken -- while `new-window` answers from default-size on
+# every build. This instrument drops each agent as it finishes, so without a
+# window that outlives them the session empties and the next hitch takes the
+# session-creating window and its grid. `window-size manual` would also answer
+# from default-size, but it kills a tmux 3.4 server on the next detached
+# new-session, so the session is held open instead. The keeper is hitched like
+# any agent, is never read and never dropped, and its own name matches no
+# expectation below.
+"$GANG" hitch role-grid-keeper -c bash -d /tmp >/dev/null \
+  || { printf 'role briefs: could not hold the session open\n' >&2; exit 1; }
 
 ac1() {
   local prefix="$TEST_ROOT/ac1-argv" value
